@@ -19,7 +19,7 @@ describe('CharacterCardExportMenu', () => {
         expect(screen.getByTestId('card-export-menu')).toBeInTheDocument();
     });
 
-    it('offers default, V2, V3 and JSON export options', () => {
+    it('offers default, V2, V3, JSON and CHARX export options', () => {
         const { trigger } = renderMenu();
         fireEvent.click(trigger);
 
@@ -29,6 +29,7 @@ describe('CharacterCardExportMenu', () => {
             expect.stringContaining('V2 PNG'),
             expect.stringContaining('V3 PNG'),
             expect.stringContaining('JSON'),
+            expect.stringContaining('CHARX'),
         ]);
         expect(items[0].textContent).toContain('default');
     });
@@ -50,9 +51,13 @@ describe('CharacterCardExportMenu', () => {
         expect(onExport).toHaveBeenLastCalledWith(character, 'v2');
 
         fireEvent.click(trigger);
+        fireEvent.click(screen.getByRole('menuitem', { name: /CHARX/ }));
+        expect(onExport).toHaveBeenLastCalledWith(character, 'charx');
+
+        fireEvent.click(trigger);
         fireEvent.click(screen.getByRole('menuitem', { name: /Default PNG/ }));
         expect(onExport).toHaveBeenLastCalledWith(character, 'default');
-        expect(onExport).toHaveBeenCalledTimes(4);
+        expect(onExport).toHaveBeenCalledTimes(5);
     });
 
     it('closes on Escape and on outside clicks', () => {

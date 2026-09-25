@@ -5,6 +5,7 @@ Centralizes helpers that were previously duplicated between
 world_integration_service.py and api/routes/world_vault/chats.py.
 """
 import logging
+import random
 import re
 from datetime import datetime, timezone
 
@@ -52,59 +53,300 @@ def resolve_context_tokens(chat) -> int:
 # SillyTavern template variable substitution
 # ---------------------------------------------------------------------------
 
-_SINGLE_BRACE_PATTERN = re.compile(r"\{([^{}]+)\}")
-_DOUBLE_BRACE_PATTERN = re.compile(r"\{\{([^{}]+)\}\}")
+# Macro bodies are scanned by hand (rather than a flat regex) so that macros
+# nest the way SillyTavern's engine does: {{random::{{char}}}} resolves the
+# inner macro first, and an unknown macro keeps its literal braces while any
+# nested macro inside it still expands.
+_MAX_MACRO_DEPTH = 4
+# Longest run of characters scanned while looking for a macro's closing "}}".
+_MAX_MACRO_SCAN = 2000
+# Bounds on argument-driven output so a hostile card cannot inflate a prompt.
+_MAX_ROLL_DICE = 100
+_MAX_NEWLINES = 10
+
+# droll syntax: [N]dM, optionally followed by a +/- modifier.
+_ROLL_DICE_PATTERN = re.compile(r"^(\d{1,3})?\s*[dD]\s*(\d{1,4})$")
+_ROLL_BARE_PATTERN = re.compile(r"^\+?(\d{1,4})$")
+_ROLL_MODIFIER_PATTERN = re.compile(r"^(.*?)\s*([+-])\s*(\d{1,4})$")
+
+# Macros whose value is fixed for the current call; they take no arguments, so
+# "{{time::UTC+8}}" and friends stay untouched rather than half-expanding.
+_FIXED_MACROS = ("char", "user", "persona", "original", "time", "date")
 
 
-def substitute_tavern_vars(text: str, *, char: str = "", user: str = "User") -> str:
+def _split_macro(raw: str) -> tuple[str, list[str]]:
+    """Split a macro body into ``(name, args)``.
+
+    SillyTavern argument syntax in precedence order: ``::`` separators, a
+    single ``:`` (legacy, still used by ST cards), then a plain space for
+    single-argument macros. The name is trimmed and lowercased — ST macro
+    names are case-insensitive.
+    """
+    if "::" in raw:
+        parts = [p.strip() for p in raw.split("::")]
+        return parts[0].lower(), parts[1:]
+    if ":" in raw:
+        name, _, rest = raw.partition(":")
+        return name.strip().lower(), [rest.strip()]
+    head, sep, rest = raw.strip().partition(" ")
+    return head.lower(), [rest.strip()] if sep else []
+
+
+def _roll_dice(expr: str) -> str | None:
+    """Evaluate a droll expression, e.g. ``2d20``, ``d6``, ``20``, ``2d6+3``.
+
+    Returns the expanded form (``"3 + 4 = 7"``; a lone number for a single
+    unmodified die) or ``None`` when the expression is unparseable or exceeds
+    the safety bounds, in which case the token is left intact.
+    """
+    expr = expr.strip()
+    if not expr:
+        return None
+
+    modifier = 0
+    mod_match = _ROLL_MODIFIER_PATTERN.match(expr)
+    if mod_match:
+        expr = mod_match.group(1).strip()
+        modifier = int(mod_match.group(3))
+        if mod_match.group(2) == "-":
+            modifier = -modifier
+
+    dice_match = _ROLL_DICE_PATTERN.match(expr)
+    if dice_match:
+        count = int(dice_match.group(1) or 1)
+        sides = int(dice_match.group(2))
+    elif not expr and modifier:
+        # A bare "+3" / "-3" is a constant roll.
+        return str(modifier)
+    else:
+        bare_match = _ROLL_BARE_PATTERN.match(expr)
+        if not bare_match:
+            return None
+        count, sides = 1, int(bare_match.group(1))
+
+    if count < 1 or count > _MAX_ROLL_DICE or sides < 1:
+        return None
+
+    rolls = [random.randint(1, sides) for _ in range(count)]
+    total = sum(rolls) + modifier
+    if len(rolls) == 1 and modifier == 0:
+        return str(rolls[0])
+    terms = [str(r) for r in rolls]
+    if modifier:
+        terms.append(f"{modifier:+d}")
+    return f"{' + '.join(terms)} = {total}"
+
+
+def _resolve_macro(
+    raw: str,
+    *,
+    char: str,
+    user: str,
+    persona_description: str,
+    original: str,
+    now: datetime,
+) -> str | None:
+    """Return the expansion for one macro body, or ``None`` when unknown.
+
+    ``None`` means "no substitution available" — the caller keeps the token
+    verbatim, which is how unknown macros behave in SillyTavern.
+    """
+    name, args = _split_macro(raw)
+
+    if name in _FIXED_MACROS:
+        # {{persona}} and {{original}} stay intact when the caller has no
+        # value for them, matching the pre-existing unknown-macro behaviour
+        # instead of silently deleting the token's content.
+        if args:
+            return None
+        if name == "char":
+            return char
+        if name == "user":
+            return user
+        if name == "persona":
+            return persona_description or None
+        if name == "original":
+            return original or None
+        if name == "time":
+            return now.strftime("%H:%M")
+        return now.strftime("%Y-%m-%d")
+
+    if name == "newline":
+        if not args:
+            return "\n"
+        try:
+            count = int(args[0])
+        except ValueError:
+            return None
+        if count < 1:
+            return None
+        return "\n" * min(count, _MAX_NEWLINES)
+
+    if name in ("random", "pick"):
+        options = [a for a in args if a]
+        # {{random}} re-rolls per expansion and {{pick}} is ST's sticky
+        # per-chat variant; without persisted pick state both are plain
+        # random choices here.
+        return random.choice(options) if options else None
+
+    if name == "roll":
+        return _roll_dice(args[0]) if args else None
+
+    return None
+
+
+def _find_macro_end(text: str, start: int) -> int | None:
+    """Index of the ``}}`` closing the ``{{`` opened before ``start``.
+
+    Nested ``{{`` / ``}}`` pairs are counted so a macro argument may itself
+    contain a macro. The scan is bounded both by the next ``}}`` in the string
+    and by ``_MAX_MACRO_SCAN`` characters, so pathological input (thousands of
+    unbalanced ``{{``) cannot turn a prompt build into quadratic work. Returns
+    ``None`` when the token is unterminated.
+    """
+    close = text.find("}}", start)
+    if close == -1 or close + 2 > start + _MAX_MACRO_SCAN:
+        # No "}}" anywhere near the opener: treat as unterminated rather than
+        # scanning the rest of a long prompt for every stray "{{".
+        return None
+    depth = 1
+    i = start
+    n = min(start + _MAX_MACRO_SCAN, len(text))
+    while i < n:
+        if text.startswith("{{", i):
+            depth += 1
+            i += 2
+        elif text.startswith("}}", i):
+            depth -= 1
+            if depth == 0:
+                return i
+            i += 2
+        else:
+            i += 1
+    return None
+
+
+def _expand_macros(text: str, depth: int, ctx: dict) -> str:
+    """Walk ``text`` once, expanding every macro token it can resolve."""
+    if depth > _MAX_MACRO_DEPTH:
+        return text
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    # Computed once so the unterminated-token retry path below stays O(1)
+    # instead of rescanning the tail for every stray "{{".
+    has_closing_brace = "}}" in text
+    while i < n:
+        if text[i] != "{":
+            out.append(text[i])
+            i += 1
+            continue
+
+        if text.startswith("{{", i):
+            end = _find_macro_end(text, i + 2)
+            if end is not None:
+                body = _expand_macros(text[i + 2:end], depth + 1, ctx)
+                resolved = _resolve_macro(body, **ctx)
+                if resolved is not None:
+                    out.append(resolved)
+                else:
+                    # Unknown/unresolvable macro: keep the token (with any
+                    # nested macro already expanded inside it).
+                    out.append("{{" + body + "}}")
+                i = end + 2
+                continue
+            if has_closing_brace:
+                # Unterminated "{{": keep both braces and continue after them,
+                # so no text is lost and nothing is half-expanded.
+                out.append("{{")
+                i += 2
+                continue
+            # Nothing closable remains — copy the tail verbatim.
+            out.append(text[i:])
+            break
+
+        end = text.find("}", i + 1)
+        if end != -1:
+            body = text[i + 1:end]
+            if "{" not in body:
+                resolved = _resolve_macro(_expand_macros(body, depth + 1, ctx), **ctx)
+                if resolved is not None:
+                    out.append(resolved)
+                    i = end + 1
+                    continue
+        out.append("{")
+        i += 1
+    return "".join(out)
+
+
+def substitute_tavern_vars(
+    text: str,
+    *,
+    char: str = "",
+    user: str = "User",
+    persona_description: str = "",
+    original: str = "",
+    now: datetime | None = None,
+) -> str:
     """Apply SillyTavern-compatible template variable substitution.
 
-    Handles both brace forms: ``{{char}}``/``{{user}}``/``{{time}}``/``{{date}}``/
-    ``{{random::a::b::...}}`` and the legacy single-brace ``{user}``/``{char}``
-    variants. Unknown variables are left untouched.
+    Handles both brace forms: ``{{char}}`` and the legacy single-brace
+    ``{char}`` variant. Supported macros:
 
-    Previously three independent implementations existed:
-    - api/routes/world_vault/chats.py (_substitute_tavern_vars + inline .replace)
-    - services/context_builder.py (inline _replace function)
+    ==================== =====================================================
+    ``{{char}}``         character name
+    ``{{user}}``         user / persona name
+    ``{{persona}}``      user persona description
+    ``{{original}}``     original character prompt (what a prompt override replaces)
+    ``{{time}}``         current UTC time, ``HH:MM``
+    ``{{date}}``         current UTC date, ``YYYY-MM-DD``
+    ``{{random::a::b}}`` random pick of the ``::``-separated options
+    ``{{pick::a::b}}``   same as ``random`` (ST keeps it sticky per chat)
+    ``{{roll::2d20}}``   dice roll, droll syntax, rendered ``"3 + 4 = 7"``
+    ``{{newline}}``      a literal newline (optionally ``{{newline::3}}``)
+    ==================== =====================================================
 
-    This is the single canonical version. All callers should import from here.
+    Macro names are case-insensitive, arguments may be separated by ``::``
+    (preferred), a legacy single ``:``, or a space, and macros nest. Unknown
+    macros are left untouched.
+
+    ``now`` is injectable for deterministic tests.
     """
     if not text:
         return text
 
-    now = datetime.now(timezone.utc)
-    replacements = {
+    ctx = {
         "char": char,
         "user": user,
-        "time": now.strftime("%H:%M"),
-        "date": now.strftime("%Y-%m-%d"),
+        "persona_description": persona_description,
+        "original": original,
+        "now": now or datetime.now(timezone.utc),
     }
+    return _expand_macros(text, 0, ctx)
 
-    def replace_match(m: re.Match) -> str:
-        key = m.group(1).strip().lower()
-        if key.startswith("random::"):
-            import random
-            options = [o.strip() for o in key[len("random::"):].split("::") if o.strip()]
-            return random.choice(options) if options else m.group(0)
-        return replacements.get(key, m.group(0))
 
-    # Mask double-brace markers before the single-brace pass so the inner
-    # "{user}" of a "{{user}}" token is not resolved prematurely (single-brace
-    # resolution would leave a stray brace-wrapped name behind). Sentinels are
-    # brace-free, so they survive the single-brace pass untouched.
-    masked: list[str] = []
-    def mask(m: re.Match) -> str:
-        token = f"\x00{len(masked)}\x00"
-        masked.append(m.group(0))
-        return token
+# ---------------------------------------------------------------------------
+# Character → chat link resolution
+# ---------------------------------------------------------------------------
 
-    if "{{" in text:
-        text = _DOUBLE_BRACE_PATTERN.sub(mask, text)
-    if "{" in text:
-        text = _SINGLE_BRACE_PATTERN.sub(replace_match, text)
-    for i, original in enumerate(masked):
-        text = text.replace(f"\x00{i}\x00", original)
-    return _DOUBLE_BRACE_PATTERN.sub(replace_match, text)
+
+def link_embedded_lorebook(active_lorebook_ids: list[str] | None, character) -> list[str]:
+    """Merge a character's embedded lorebook into a chat's active lorebooks.
+
+    SillyTavern card "character_book" lorebooks are stored as a Lorebook owned
+    by the character and are active in every chat with that character. Read
+    defensively via ``getattr`` so this stays a no-op until the
+    ``Character.embedded_lorebook_id`` column exists.
+
+    Order is preserved (requested ids first, embedded appended) and duplicates
+    are dropped, so re-running this is idempotent.
+    """
+    merged = [lid for lid in (active_lorebook_ids or []) if lid]
+    embedded_id = getattr(character, "embedded_lorebook_id", None)
+    if embedded_id and embedded_id not in merged:
+        merged.append(embedded_id)
+    return merged
+
 
 
 def insert_world_state_marker(session: Session, chat_id: str, changed: dict) -> None:

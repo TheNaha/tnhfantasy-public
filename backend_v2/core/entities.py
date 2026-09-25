@@ -797,7 +797,22 @@ class Character(SQLModel, table=True):
     # World Context
     default_time: str | None = Field(default=None)
     default_location: str | None = Field(default=None)
-    
+
+    # --- SillyTavern character card provenance ---------------------------
+    # Kept separate from the editable prompt fields so an imported card can be
+    # exported again without losing the author, the card version, or any field
+    # this app has no column for (see card_metadata).
+    card_spec: str | None = Field(default=None, index=True)  # chara_card_v1 / v2 / v3
+    card_spec_version: str | None = Field(default=None)  # 1.0 / 2.0 / 3.0
+    creator: str | None = Field(default=None)  # card author, NOT creator_notes
+    character_version: str | None = Field(default=None)  # author-side card version
+    group_greetings: list[str] | None = Field(default=None, sa_column=Column(JSONColumn))
+    # Residual card payload: every root/data/extensions/assets field that has no
+    # column above, so import -> export is lossless.
+    card_metadata: dict | None = Field(default=None, sa_column=Column(JSONColumn))
+    # Lorebook materialized from an embedded data.character_book (V2/V3).
+    embedded_lorebook_id: str | None = Field(default=None, foreign_key="lorebooks.id", index=True)
+
     avatar_path: str | None = Field(default=None)
     sort_order: int = Field(default=0, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

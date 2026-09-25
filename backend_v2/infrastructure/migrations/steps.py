@@ -1620,6 +1620,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Repair existing PostgreSQL foreign keys for branching, revisions, and world-vault links",
             apply_fn=_migration_063_repair_postgres_constraints,
         ),
+        MigrationStep(
+            version="064_add_character_card_metadata",
+            description="Add characters card_spec/card_spec_version/creator/character_version/group_greetings/card_metadata and embedded_lorebook_id FK for lossless SillyTavern cards",
+            apply_fn=_migration_064_add_character_card_metadata,
+        ),
     ]
 
 
@@ -2421,6 +2426,82 @@ def _migration_063_repair_postgres_constraints(conn) -> bool:
         if "idx_message_parent" not in indexes:
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_message_parent ON messages(parent_id)"))
             changed = True
+
+    return changed
+
+
+def _migration_064_add_character_card_metadata(conn) -> bool:
+    """Add lossless SillyTavern card provenance columns to `characters`.
+
+    The card_spec / creator / character_version / card_metadata columns keep an
+    imported card re-exportable, and embedded_lorebook_id points at the
+    Lorebook materialized from an embedded V2/V3 `character_book`.
+    """
+    inspector = inspect(conn)
+    tables = set(inspector.get_table_names())
+    if "characters" not in tables:
+        return False
+
+    changed = False
+    for column, sql_type in (
+        ("card_spec", "VARCHAR"),
+        ("card_spec_version", "VARCHAR"),
+        ("creator", "VARCHAR"),
+        ("character_version", "VARCHAR"),
+        ("group_greetings", "JSON"),
+        ("card_metadata", "JSON"),
+        ("embedded_lorebook_id", "VARCHAR"),
+    ):
+        if column in _get_table_columns(conn, "characters"):
+            continue
+        conn.execute(text(f"ALTER TABLE characters ADD COLUMN {column} {sql_type}"))
+        logger.info("migration_column_added", table="characters", column=column)
+        changed = True
+
+    # Indexed after the columns exist (the ALTERs above guarantee that), so a
+    # database whose columns came from the model but never got the indexes is
+    # repaired too.
+    index_names = {idx["name"] for idx in inspect(conn).get_indexes("characters")}
+    for index_name, column in (
+        ("ix_characters_card_spec", "card_spec"),
+        ("ix_characters_embedded_lorebook_id", "embedded_lorebook_id"),
+    ):
+        if index_name in index_names:
+            continue
+        conn.execute(text(f"CREATE INDEX {index_name} ON characters ({column})"))
+        changed = True
+
+    # Older PostgreSQL databases predate the FK on the new column; add it once
+    # (and only when lorebooks exists and no matching constraint is present).
+    # SQLite cannot add a constraint after the fact, and it already has the FK
+    # from SQLModel.metadata.create_all, so it is skipped there.
+    if conn.dialect.name == "postgresql" and "lorebooks" in tables:
+        foreign_keys = inspector.get_foreign_keys("characters")
+        already_linked = any(
+            fk.get("constrained_columns") == ["embedded_lorebook_id"]
+            and fk.get("referred_table") == "lorebooks"
+            for fk in foreign_keys
+        )
+        if not already_linked:
+            orphans = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM characters WHERE embedded_lorebook_id IS NOT NULL "
+                    "AND embedded_lorebook_id NOT IN (SELECT id FROM lorebooks)"
+                )
+            ).scalar() or 0
+            if orphans:
+                logger.warning(
+                    "migration_constraint_skipped",
+                    table="characters",
+                    column="embedded_lorebook_id",
+                    orphan_count=orphans,
+                )
+            else:
+                conn.execute(text(
+                    "ALTER TABLE characters ADD CONSTRAINT fk_characters_embedded_lorebook "
+                    "FOREIGN KEY (embedded_lorebook_id) REFERENCES lorebooks(id)"
+                ))
+                changed = True
 
     return changed
 

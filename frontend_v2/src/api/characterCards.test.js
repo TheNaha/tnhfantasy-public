@@ -21,13 +21,14 @@ describe('character card file validation', () => {
         expect(CARD_ACCEPT).toContain('.png');
         expect(CARD_ACCEPT).toContain('.json');
         expect(isCharacterCardFile(makeFile('Lyra.PNG'))).toBe(true);
-        expect(isCharacterCardFile(makeFile('lyra.json'))).toBe(true);
+        expect(CARD_ACCEPT).toContain('.charx');
+        expect(isCharacterCardFile(makeFile('lyra.charx'))).toBe(true);
         expect(isCharacterCardFile(makeFile('notes.txt'))).toBe(false);
         expect(isCharacterCardFile(null)).toBe(false);
     });
 
     it('rejects unsupported extensions with a readable message', () => {
-        expect(() => assertCharacterCardFile(makeFile('lyra.txt'))).toThrow(/png or .json/i);
+        expect(() => assertCharacterCardFile(makeFile('lyra.txt'))).toThrow(/png.*json.*charx/i);
         expect(() => assertCharacterCardFile(null)).toThrow(/no file selected/i);
     });
 

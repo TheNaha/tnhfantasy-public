@@ -1,15 +1,11 @@
-import base64
 import json
 import os
 import shutil
-import struct
-import zlib
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from io import BytesIO
-from PIL import Image, PngImagePlugin
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -17,7 +13,18 @@ from api.deps import get_session, get_character_repo
 from infrastructure.logging import get_logger
 from infrastructure.repositories.character_repo import CharacterRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Character, Collection
+from core.character_cards import (
+    CARD_SPEC_V1,
+    CARD_SPEC_V2,
+    CARD_SPEC_V3,
+    CardParseError,
+    build_card_payload,
+    encode_charx_card,
+    encode_png_card,
+    lorebook_from_character_book,
+    parse_card_file,
+)
+from core.entities import Character, Collection, Lorebook, LorebookEntry
 from core.exceptions import NotFoundError, ValidationError
 from core.upload_validation import (
     MAX_AVATAR_SIZE_MB,
@@ -34,6 +41,9 @@ router = APIRouter()
 
 MAX_AVATAR_BYTES = MAX_AVATAR_SIZE_MB * 1024 * 1024
 MAX_CARD_BYTES = MAX_CARD_SIZE_MB * 1024 * 1024
+
+CARD_FILE_SUFFIXES = (".png", ".json", ".charx")
+CARD_EXPORT_FORMATS = ("default", "v2", "v3", "json", "charx")
 
 
 class CharacterUpdateRequest(BaseModel):
@@ -69,122 +79,72 @@ def _character_to_dict(character: Character) -> dict:
     return d
 
 
+def _compatibility_report(
+    char_data: dict,
+    *,
+    source_format: str,
+    lorebook_created: bool,
+    lorebook_preserved_only: bool,
+) -> dict:
+    """Describe what an import kept, for the UI's compatibility report.
 
-def _parse_png_chunks(data: bytes) -> dict[str, bytes]:
-    """Extract tEXt/zTXt/iTXt chunks from PNG data, keyed by chunk name."""
-    chunks = {}
-    pos = 8  # Skip PNG signature
-    while pos < len(data):
-        if pos + 8 > len(data):
-            break
-        length = struct.unpack(">I", data[pos:pos+4])[0]
-        chunk_type = data[pos+4:pos+8].decode("ascii", errors="replace")
-        chunk_data = data[pos+8:pos+8+length]
-        if chunk_type == "IEND":
-            break
-        if chunk_type in ("tEXt", "zTXt", "iTXt"):
-            chunks[chunk_type] = chunk_data
-        pos += 12 + length  # 4 length + 4 type + data + 4 CRC
-    return chunks
+    `lost_fields` stays empty while the codec is lossless; anything the vault
+    cannot use functionally (an embedded book with no usable entries) is
+    reported as a warning plus the preserved location instead of being dropped
+    silently.
+    """
+    metadata = char_data.get("card_metadata") or {}
+    residual_data = metadata.get("data") or {}
+    preserved: list[dict] = []
+
+    for label, value in (
+        ("root fields", metadata.get("root") or {}),
+        ("data fields", {k: v for k, v in residual_data.items() if k not in ("extensions", "assets", "character_book")}),
+        ("data.extensions", residual_data.get("extensions") or {}),
+        ("data.assets", residual_data.get("assets") or {}),
+        ("data.character_book", residual_data.get("character_book") or {}),
+    ):
+        if value:
+            preserved.append({"name": label, "field": label, "detail": f"{len(value)} entr{'y' if len(value) == 1 else 'ies'}"})
+
+    warnings: list[dict] = []
+    if lorebook_preserved_only:
+        warnings.append({
+            "name": "character_book",
+            "field": "data.character_book",
+            "detail": "No usable entries; kept in card metadata only",
+        })
+
+    return {
+        "format": source_format,
+        "spec": char_data.get("card_spec") or CARD_SPEC_V1,
+        "spec_version": char_data.get("card_spec_version") or "",
+        "warnings": warnings,
+        "lost_fields": [],
+        "preserved_fields": preserved,
+        "lorebook_converted": lorebook_created,
+        "unknown_extensions_preserved": bool(residual_data.get("extensions")),
+    }
 
 
-def _decode_chara_payload(raw: bytes) -> dict | None:
-    """Try to decode a chara/ccv3 tEXt chunk value into a dict."""
+def _avatar_bytes(character: Character) -> bytes | None:
+    """Read the character's avatar for embedding in an exported PNG."""
+    if not character.avatar_path or not os.path.exists(character.avatar_path):
+        return None
     try:
-        text = raw.decode("utf-8", errors="replace")
-    except Exception:
+        with open(character.avatar_path, "rb") as handle:
+            return handle.read()
+    except OSError as exc:  # pragma: no cover - unreadable avatar
+        logger.warning("character_avatar_read_failed", character_id=character.id, error=str(exc))
         return None
 
-    # V2/V3: key=value format (keyword before null byte)
-    if "\x00" in text:
-        _, value = text.split("\x00", 1)
-    else:
-        value = text
 
-    value = value.strip()
-    if not value:
-        return None
+def _safe_card_basename(character: Character) -> str:
+    safe_name = "".join([c for c in (character.name or "") if c.isalpha() or c.isdigit() or c == " "]).rstrip()
+    if not safe_name:
+        safe_name = "character"
+    return safe_name.replace(" ", "_")
 
-    # Candidate payloads: the raw text first (plain-JSON cards), then the
-    # base64-decoded bytes, optionally zlib-decompressed (V2/V3 exports).
-    candidates = [value]
-    try:
-        decoded = base64.b64decode(value)
-        try:
-            candidates.append(zlib.decompress(decoded).decode("utf-8", errors="replace"))
-        except zlib.error:
-            candidates.append(decoded.decode("utf-8", errors="replace"))
-    except Exception as exc:
-        logger.debug("chara_chunk_decode_failed", error=str(exc))
-
-    for candidate in candidates:
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-    return None
-
-
-def parse_character_card(png_bytes: bytes) -> dict:
-    """Parse a SillyTavern V1/V2/V3 character card PNG into a dict of fields."""
-    chunks = _parse_png_chunks(png_bytes)
-    raw_chunks = {}
-    for ct, cd in chunks.items():
-        if ct == "tEXt":
-            # tEXt: keyword\x00value
-            sep = cd.find(b"\x00")
-            if sep >= 0:
-                keyword = cd[:sep].decode("ascii", errors="replace")
-                raw_chunks[keyword] = cd[sep+1:]
-
-    # Try ccv3 (V3) first, then chara (V2/V1)
-    payload = None
-    for key in ("ccv3", "chara"):
-        if key in raw_chunks:
-            payload = _decode_chara_payload(raw_chunks[key])
-            if payload:
-                break
-
-    if not payload:
-        raise ValidationError("Could not parse character card data from PNG")
-
-    # V2/V3 has a data wrapper; V1 is flat
-    data = payload.get("data", payload) if isinstance(payload, dict) else {}
-
-    # Map SillyTavern fields to TNHComfy Character fields
-    character = {}
-    character["name"] = data.get("name", "")
-    character["description"] = data.get("description", "")
-    character["personality"] = data.get("personality", "")
-    character["scenario"] = data.get("scenario", "")
-    character["first_mes"] = data.get("first_mes", "")
-    character["mes_example"] = data.get("mes_example", "")
-    character["system_prompt"] = data.get("system_prompt", "")
-    character["creator_notes"] = data.get("creator_notes", data.get("creator", ""))
-
-    # Tags
-    tags = data.get("tags", [])
-    if isinstance(tags, list):
-        character["visual_tags"] = tags
-
-    # TNHComfy extensions
-    extensions = data.get("extensions", {})
-    if isinstance(extensions, dict):
-        if "lora_triggers" in extensions:
-            character["lora_triggers"] = extensions["lora_triggers"]
-        if "visual_tags" in extensions:
-            character["visual_tags"] = extensions["visual_tags"]
-        if "voice_profile" in extensions:
-            character["voice_profile"] = extensions["voice_profile"]
-
-    # Alternate greetings -> store as first_mes if first_mes is empty
-    alt_greetings = data.get("alternate_greetings", [])
-    character["alternate_greetings"] = alt_greetings if isinstance(alt_greetings, list) else []
-    
-    if character["alternate_greetings"] and not character["first_mes"]:
-        character["first_mes"] = character["alternate_greetings"][0]
-
-    return {"character": character, "avatar_bytes": png_bytes}
 
 
 @router.get("")
@@ -217,47 +177,102 @@ def create_character(character: Character, session: Session = Depends(get_sessio
 
     return _character_to_dict(character)
 
+def _clone_lorebook(session: Session, lorebook_id: str, character_name: str) -> str | None:
+    """Copy a lorebook and its entries, returning the new lorebook id."""
+    source = session.get(Lorebook, lorebook_id)
+    if not source:
+        return None
+
+    clone = Lorebook(
+        name=f"{source.name} (Copy)" if source.name == character_name else source.name,
+        description=source.description,
+    )
+    session.add(clone)
+    session.commit()
+    session.refresh(clone)
+
+    for entry in session.exec(select(LorebookEntry).where(LorebookEntry.lorebook_id == source.id)).all():
+        row = entry.model_dump(exclude={"id", "lorebook_id", "created_at", "updated_at"})
+        session.add(LorebookEntry(lorebook_id=clone.id, **row))
+    session.commit()
+    return clone.id
+
+
+def _create_embedded_lorebook(session: Session, character_book: dict | None) -> str | None:
+    """Materialize an embedded `character_book` as a Lorebook, returning its id.
+
+    The card keeps the original book verbatim in `card_metadata`, so this is a
+    functional copy: dropping it later loses nothing from the card itself.
+    """
+    mapped = lorebook_from_character_book(character_book)
+    if not mapped:
+        return None
+
+    book_kwargs, entry_kwargs = mapped
+    lorebook = Lorebook(**book_kwargs)
+    session.add(lorebook)
+    session.commit()
+    session.refresh(lorebook)
+
+    for entry_kwargs_row in entry_kwargs:
+        session.add(LorebookEntry(lorebook_id=lorebook.id, **entry_kwargs_row))
+    session.commit()
+    return lorebook.id
+
+
 @router.post("/import")
 def import_character_card(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
 ):
-    if not file.filename or not file.filename.lower().endswith(".png"):
-        raise ValidationError("Only PNG files are supported")
+    filename = file.filename or ""
+    if not filename.lower().endswith(CARD_FILE_SUFFIXES):
+        raise ValidationError("Only PNG and JSON character cards are supported")
 
     # Bounded read: a card is a few hundred KB, so a huge body is refused after
     # the first over-limit chunk instead of being held in memory.
-    png_bytes = read_upload_file_bounded(file, MAX_CARD_BYTES)
+    payload = read_upload_file_bounded(file, MAX_CARD_BYTES)
 
-    if len(png_bytes) < 8 or png_bytes[:8] != b"\x89PNG\r\n\x1a\n":
-        raise ValidationError("Invalid PNG file")
+    if not payload:
+        raise ValidationError("Character card file is empty")
 
-    # Card dimensions are bounded like any other image upload.
-    inspect_image(png_bytes, field="file", label="Character card")
+    is_png = payload[:8] == b"\x89PNG\r\n\x1a\n"
+    if is_png:
+        # Card dimensions are bounded like any other image upload.
+        inspect_image(payload, field="file", label="Character card")
 
-    result = parse_character_card(png_bytes)
-    char_data = result["character"]
-    avatar_bytes = result["avatar_bytes"]
+    try:
+        char_data, avatar_bytes = parse_card_file(payload, filename)
+    except CardParseError as exc:
+        raise ValidationError(str(exc)) from exc
 
     if not char_data.get("name"):
         raise ValidationError("Character card must have a name")
 
-    character = Character(**{k: v for k, v in char_data.items() if v})
+    character_book = char_data.pop("character_book", None)
+    known_fields = set(Character.model_fields)
+    character = Character(**{k: v for k, v in char_data.items() if k in known_fields and v})
     character.created_at = datetime.now(timezone.utc)
     character.updated_at = character.created_at
     session.add(character)
     session.commit()
     session.refresh(character)
 
-    # Save avatar from card image
-    os.makedirs(f"{app_config.settings.character_avatar_dir}/{character.id}", exist_ok=True)
-    avatar_path = f"{app_config.settings.character_avatar_dir}/{character.id}/avatar.png"
-    with open(avatar_path, "wb") as f:
-        f.write(avatar_bytes)
-    character.avatar_path = avatar_path
+    lorebook_id = _create_embedded_lorebook(session, character_book)
+    if lorebook_id:
+        character.embedded_lorebook_id = lorebook_id
+
+    # Save avatar from card image (JSON cards carry no image)
+    if avatar_bytes:
+        os.makedirs(f"{app_config.settings.character_avatar_dir}/{character.id}", exist_ok=True)
+        avatar_path = f"{app_config.settings.character_avatar_dir}/{character.id}/avatar.png"
+        with open(avatar_path, "wb") as f:
+            f.write(avatar_bytes)
+        character.avatar_path = avatar_path
+
+    character.updated_at = datetime.now(timezone.utc)
     session.add(character)
     session.commit()
-    session.refresh(character)
 
     # Auto-create collection
     collection = Collection(
@@ -272,7 +287,15 @@ def import_character_card(
     # The final commit expires `character`; refresh so serialization works
     session.refresh(character)
 
-    return _character_to_dict(character)
+    report = _compatibility_report(
+        char_data,
+        source_format="png" if is_png else "json",
+        lorebook_created=bool(lorebook_id),
+        lorebook_preserved_only=bool(character_book) and not lorebook_id,
+    )
+    # The character dict is returned unchanged (existing consumers read id/name/...)
+    # with the compatibility report as an extra key.
+    return {**_character_to_dict(character), "compatibility": report}
 
 @router.get("/{character_id}/expressions")
 def get_character_expressions(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
@@ -515,13 +538,21 @@ def clone_character(character_id: str, session: Session = Depends(get_session), 
     character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
-        
-    char_dict = character.model_dump(exclude={"id", "created_at", "updated_at", "avatar_path"})
+
+    # The embedded lorebook is copied rather than shared, so edits to either
+    # character's book stay independent.
+    embedded_lorebook_id = character.embedded_lorebook_id
+
+    char_dict = character.model_dump(
+        exclude={"id", "created_at", "updated_at", "avatar_path", "embedded_lorebook_id"}
+    )
     char_dict["name"] = f"{character.name} (Copy)"
-    
+
     new_char = Character(**char_dict)
     new_char.created_at = datetime.now(timezone.utc)
     new_char.updated_at = new_char.created_at
+    if embedded_lorebook_id:
+        new_char.embedded_lorebook_id = _clone_lorebook(session, embedded_lorebook_id, character.name)
     session.add(new_char)
     session.commit()
     session.refresh(new_char)
@@ -552,66 +583,60 @@ def clone_character(character_id: str, session: Session = Depends(get_session), 
 
 
 @router.get("/{character_id}/export")
-def export_character(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+def export_character(
+    character_id: str,
+    export_format: str = Query(
+        default="default",
+        alias="format",
+        description="default/v2: PNG with chara + ccv3 chunks. v3: canonical V3 spec in ccv3. json: plain JSON card. charx: ZIP card with avatar assets.",
+    ),
+    session: Session = Depends(get_session),
+    character_repo: CharacterRepository = Depends(get_character_repo),
+):
+    """Export a character as a SillyTavern card.
+
+    PNG exports always carry the backward-compatible `chara` chunk plus the V3
+    `ccv3` chunk, so old and new clients both read the same file. Fields with no
+    column in the vault are written back from `card_metadata`, which makes
+    import -> export lossless.
+    """
     character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
 
-    v2_data = {
-        "spec": "chara2.0",
-        "spec_version": "2.0",
-        "data": {
-            "name": character.name,
-            "description": character.description or "",
-            "personality": character.personality or "",
-            "scenario": character.scenario or "",
-            "first_mes": character.first_mes or "",
-            "mes_example": character.mes_example or "",
-            "creator_notes": character.creator_notes or "",
-            "system_prompt": character.system_prompt or "",
-            "post_history_instructions": character.append_system_prompt or "",
-            "alternate_greetings": character.alternate_greetings or [],
-            "tags": character.visual_tags or [],
-            "creator": character.creator_notes or "",
-            "character_version": "",
-            "extensions": {
-                "lora_triggers": character.lora_triggers or [],
-                "visual_tags": character.visual_tags or [],
-                "voice_profile": character.voice_profile or "",
-            },
-        },
-    }
+    fmt = (export_format or "default").strip().lower()
+    if fmt not in CARD_EXPORT_FORMATS:
+        raise ValidationError(f"Unsupported card format '{export_format}'. Use one of: {', '.join(CARD_EXPORT_FORMATS)}")
 
-    json_str = json.dumps(v2_data, ensure_ascii=False)
-    b64_data = base64.b64encode(json_str.encode("utf-8")).decode("utf-8")
+    basename = _safe_card_basename(character)
 
-    if character.avatar_path and os.path.exists(character.avatar_path):
-        img = Image.open(character.avatar_path)
-        metadata = PngImagePlugin.PngInfo()
-        metadata.add_text("chara", b64_data)
+    if fmt == "json":
+        payload = build_card_payload(character, version=CARD_SPEC_V3)
+        body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{basename}.json"'},
+        )
 
-        output = BytesIO()
-        img.save(output, format="PNG", pnginfo=metadata)
-        output.seek(0)
+    if fmt == "charx":
+        return Response(
+            content=encode_charx_card(character, _avatar_bytes(character)),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{basename}.charx"'},
+        )
 
-        safe_name = "".join([c for c in character.name if c.isalpha() or c.isdigit() or c == " "]).rstrip()
-        if not safe_name:
-            safe_name = "character"
-        filename = f"{safe_name.replace(' ', '_')}_v2.png"
-
-        return StreamingResponse(output, media_type="image/png", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
-
-    img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
-    metadata = PngImagePlugin.PngInfo()
-    metadata.add_text("chara", b64_data)
-
-    output = BytesIO()
-    img.save(output, format="PNG", pnginfo=metadata)
-    output.seek(0)
-
-    safe_name = "".join([c for c in character.name if c.isalpha() or c.isdigit() or c == " "]).rstrip()
-    if not safe_name:
-        safe_name = "character"
-    filename = f"{safe_name.replace(' ', '_')}_v2.png"
-
-    return StreamingResponse(output, media_type="image/png", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    # `v3` pins the ccv3 payload to the canonical V3 spec even for characters
+    # that were created or imported as V1/V2.
+    png_bytes = encode_png_card(
+        _avatar_bytes(character),
+        character,
+        include_v3=True,
+        v3_spec=CARD_SPEC_V3 if fmt == "v3" else None,
+    )
+    suffix = "_v3.png" if fmt == "v3" else "_v2.png"
+    return StreamingResponse(
+        BytesIO(png_bytes),
+        media_type="image/png",
+        headers={"Content-Disposition": f'attachment; filename="{basename}{suffix}"'},
+    )

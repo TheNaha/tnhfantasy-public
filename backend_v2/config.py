@@ -81,7 +81,11 @@ DEFAULT_CONFIG = {
         },
     "api": {
         "gzip_minimum_size": 1000,
-        "cors_origins": ["http://localhost:5174"]
+        "cors_origins": [
+            "http://localhost:5174",
+            "https://comfy.lan.thenaha.my.id",
+            "https://100.150.0.4"
+        ]
     },
     "jobs_cleanup": {
         "max_age_hours": 24,
@@ -152,7 +156,11 @@ class Settings(BaseSettings):
     
     # API
     # Default to frontend dev server origin. Override via COMFY_CORS_ORIGINS for production.
-    cors_origins: list[str] = ["http://localhost:5174"]
+    cors_origins: list[str] = [
+        "http://localhost:5174",
+        "https://comfy.lan.thenaha.my.id",
+        "https://100.150.0.4"
+    ]
     gzip_minimum_size: int = 1000
     worker_backend_url: str = "http://backend_v2:8002"
     

@@ -1,7 +1,19 @@
 """Tests for api/routes/settings.py"""
+from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from config import DEFAULT_CONFIG
+
+
+@pytest.fixture(autouse=True)
+def _preserve_config_file():
+    config_path = Path(__file__).resolve().parents[1] / "config.json"
+    original = config_path.read_bytes() if config_path.exists() else None
+    yield
+    if original is not None:
+        config_path.write_bytes(original)
 
 
 class TestSettingsGet:

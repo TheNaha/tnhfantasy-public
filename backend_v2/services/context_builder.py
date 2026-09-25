@@ -235,6 +235,37 @@ def prune_context(
     return result
 
 
+def _load_constant_lorebook_entries(
+    session: Session,
+    lorebook_ids: list[str],
+    limit: int = 5,
+) -> list[LorebookEntry]:
+    """Load keyless ("constant") lorebook entries, which are always active.
+
+    SillyTavern world-book entries without keys need no keyword match to fire,
+    and that is exactly what a ``character_book`` imported with a character card
+    produces. Semantic search already prefers them, but it yields nothing when
+    RAG is disabled or the query matches nothing, so this is the fallback that
+    keeps imported lorebook context in the prompt.
+    """
+    entries: list[LorebookEntry] = []
+    try:
+        for lb_id in lorebook_ids:
+            rows = session.exec(
+                select(LorebookEntry)
+                .where(LorebookEntry.lorebook_id == lb_id)
+                .order_by(LorebookEntry.created_at)
+                .limit(limit * 2)
+            ).all()
+            entries.extend(e for e in rows if not e.keys)
+            if len(entries) >= limit:
+                break
+    except Exception as exc:  # pragma: no cover - defensive, never breaks a chat
+        logger.warning("lorebook_constant_fallback_failed: %s", str(exc))
+        return []
+    return entries[:limit]
+
+
 def build_system_prompt_sections(
     session: Session,
     character=None,
@@ -373,6 +404,12 @@ def build_system_prompt_sections(
         # Apply SillyTavern template variable substitution to character/override blocks
         from services.chat_utils import substitute_tavern_vars
 
+        # {{original}} is ST's "prompt an override would replace" macro, so it
+        # resolves to the primary character's assembled prompt.
+        original_prompt = ""
+        if primary_char is not None:
+            original_prompt = primary_char.system_prompt or build_character_system_prompt(primary_char) or ""
+
         substitutable = {"character", "override", "char_append", "chat_append", "persona"}
         for section in sections:
             if section["source"] in substitutable:
@@ -380,6 +417,8 @@ def build_system_prompt_sections(
                     section["content"],
                     char=(primary_char.name if primary_char else "") or "",
                     user=persona_name or "User",
+                    persona_description=persona_description or "",
+                    original=original_prompt,
                 )
 
     if lorebook_ids:
@@ -410,6 +449,11 @@ def build_system_prompt_sections(
                     select(LorebookEntry).where(LorebookEntry.lorebook_id == lb_id)
                 ).all()
                 entries.extend(lb_entries)
+
+        if not entries:
+            # Semantic search returns nothing when RAG is off or nothing
+            # matched; constant (keyless) entries are still always-on lore.
+            entries = _load_constant_lorebook_entries(session, lorebook_ids, limit=5)
 
         if entries:
             lore_block = "\n".join(f"- {e.content}" for e in entries)
@@ -783,12 +827,19 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
             persona_name = persona_name or persona.name
             persona_description = persona_description or persona.description
 
+    # A None override means "caller had no opinion" (e.g. the optional
+    # lorebook_ids field on a send-message request) and must not shadow the
+    # chat's own active lorebooks, or their context silently never loads.
+    lorebook_ids = overrides.get("lorebook_ids")
+    if lorebook_ids is None:
+        lorebook_ids = getattr(chat, "active_lorebook_ids", None) or None
+
     kwargs: dict[str, Any] = {
         "characters": characters,
         "character_id": overrides.get("character_id", getattr(chat, "character_id", None)),
         "story_character_ids": getattr(chat, "character_ids", None),
         "location_ids": getattr(chat, "location_ids", None),
-        "lorebook_ids": overrides.get("lorebook_ids", getattr(chat, "active_lorebook_ids", None) or None),
+        "lorebook_ids": lorebook_ids,
         "persona_name": persona_name,
         "persona_description": persona_description,
         "story_time": getattr(chat, "story_time", None),

@@ -21,7 +21,12 @@ from core.upload_validation import (
     read_upload_bounded,
     require_declared_size,
 )
-from services.chat_utils import insert_world_state_marker, resolve_voice_for_character, substitute_tavern_vars
+from services.chat_utils import (
+    insert_world_state_marker,
+    link_embedded_lorebook,
+    resolve_voice_for_character,
+    substitute_tavern_vars,
+)
 from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, chat_context_kwargs, prune_context
 from services.job_service import JobService
 from services.job_queue import QueueManager
@@ -223,6 +228,7 @@ def export_chat(chat_id: str, format: str = "json", session: Session = Depends(g
             "persona_description": chat.persona_description,
             "story_time": chat.story_time,
             "story_location": chat.story_location,
+            "active_lorebook_ids": chat.active_lorebook_ids or [],
             "created_at": chat.created_at.isoformat() if chat.created_at else None,
             "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
         },
@@ -342,6 +348,8 @@ async def import_chat(
         persona_name=persona_name or source_chat.get("persona_name"),
         story_time=source_chat.get("story_time"),
         story_location=source_chat.get("story_location"),
+        # Keep the imported character's embedded lorebook active in the new chat.
+        active_lorebook_ids=link_embedded_lorebook(source_chat.get("active_lorebook_ids"), primary),
     )
     session.add(chat)
     session.flush()
@@ -414,6 +422,10 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
         if not persona:
             raise NotFoundError("Persona", req.persona_id)
 
+    # A character card's embedded ("character_book") lorebook is active in every
+    # chat with that character, so link it alongside any requested lorebooks.
+    active_lorebook_ids = link_embedded_lorebook(req.active_lorebook_ids, character if req.character_id else None)
+
     chat = Chat(
         name=req.name,
         character_id=req.character_id,
@@ -422,7 +434,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
         story_time=req.story_time,
         story_location=req.story_location,
         location_id=req.location_id,
-        active_lorebook_ids=req.active_lorebook_ids or [],
+        active_lorebook_ids=active_lorebook_ids,
         max_agentic_depth=req.max_agentic_depth,
         idle_sim_enabled=req.idle_sim_enabled,
         persona_id=req.persona_id,
@@ -443,6 +455,8 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
                 raw_mes,
                 char=character.name or "",
                 user=chat.persona_name or "User",
+                persona_description=chat.persona_description or "",
+                original=character.description or "",
             )
             opening = Message(
                 chat_id=chat.id,
@@ -1297,6 +1311,14 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
 
     user_name = chat.persona_name or "User"
     char_name = character.name if character else "the AI"
+    # Macro inputs shared by both suggest instructions: SillyTavern config
+    # prompts may reference {{persona}} / {{original}} as well as {{user}}.
+    macro_ctx = {
+        "char": char_name,
+        "user": user_name,
+        "persona_description": chat.persona_description or "",
+        "original": (character.description if character else "") or "",
+    }
 
     if req.draft and req.draft.strip():
         # Draft provided: Refine the user's draft
@@ -1306,7 +1328,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
             "Rewrite the draft to be more descriptive, in-character, and engaging, while keeping the original intent. "
             "Write only the raw text of the final response — no labels, no quotes around the whole reply, no meta-commentary."
         )
-        suggest_instruction = substitute_tavern_vars(suggest_instruction, char=char_name, user=user_name)
+        suggest_instruction = substitute_tavern_vars(suggest_instruction, **macro_ctx)
         suggest_system = (
             f"You are {user_name}, the human participant in the following roleplay conversation "
             f"with {char_name}. Your job is to rewrite and improve {user_name}'s rough draft of the next message.\n\n"
@@ -1324,7 +1346,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
                 "Write only the raw text — no labels, no quotes around the whole reply, no meta-commentary."
             )
         )
-        suggest_instruction = substitute_tavern_vars(suggest_instruction, char=char_name, user=user_name)
+        suggest_instruction = substitute_tavern_vars(suggest_instruction, **macro_ctx)
         suggest_system = (
             f"You are {user_name}, the human participant in the following roleplay conversation "
             f"with {char_name}. Your job is to suggest what {user_name} might say or do next.\n\n"

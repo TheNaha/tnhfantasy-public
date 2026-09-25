@@ -19,10 +19,10 @@ import { CARD_MAX_BYTES, assertUploadAllowed } from './upload';
 export { CARD_MAX_BYTES };
 
 /** Extensions accepted by the card import endpoint. */
-export const CARD_FILE_EXTENSIONS = ['png', 'json'];
+export const CARD_FILE_EXTENSIONS = ['png', 'json', 'charx'];
 
 /** Value for the `accept` attribute of the card file input. */
-export const CARD_ACCEPT = '.png,.json,image/png,application/json';
+export const CARD_ACCEPT = '.png,.json,.charx,image/png,application/json,application/zip';
 
 /** Export format id that defers to the backend default (V2 PNG). */
 export const DEFAULT_CARD_EXPORT_FORMAT = 'default';
@@ -52,12 +52,19 @@ export const CARD_EXPORT_FORMATS = [
         extension: 'json',
         description: 'Plain JSON card. No avatar image.',
     },
+    {
+        id: 'charx',
+        label: 'CHARX',
+        extension: 'charx',
+        description: 'ZIP card with card.json and available avatar assets.',
+    },
 ];
 
 const EXPORT_SUFFIXES = {
     v2: '_v2.png',
     v3: '_v3.png',
     json: '.json',
+    charx: '.charx',
     default: '_v2.png',
 };
 
@@ -80,7 +87,7 @@ export function assertCharacterCardFile(file) {
         throw new ApiError('No file selected', 0, { code: 'UPLOAD_INVALID', field: 'file' });
     }
     if (!isCharacterCardFile(file)) {
-        throw new ApiError('Character cards must be a .png or .json file', 0, {
+        throw new ApiError('Character cards must be a .png, .json, or .charx file', 0, {
             code: 'UNSUPPORTED_FILE_TYPE',
             field: 'file',
         });

@@ -57,6 +57,8 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
     elif kind == "lorebook":
         _scrub_stories(session, "lorebook_ids", entity_id)
         _scrub_chats(session, "active_lorebook_ids", entity_id)
+        for character in session.exec(select(Character).where(Character.embedded_lorebook_id == entity_id)).all():
+            character.embedded_lorebook_id = None
     elif kind == "voice":
         for character in session.exec(select(Character).where(Character.voice_model_id == entity_id)).all():
             character.voice_model_id = None

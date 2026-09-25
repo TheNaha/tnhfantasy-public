@@ -162,7 +162,7 @@ describe('useCharacters', () => {
         await act(async () => {
             await expect(
                 result.current.mutateAsync(new File(['x'], 'notes.txt', { type: 'text/plain' }))
-            ).rejects.toThrow(/png or .json/i);
+            ).rejects.toThrow(/png.*json.*charx/i);
         });
         expect(apiMock.post).not.toHaveBeenCalled();
     });
