@@ -64,11 +64,15 @@ export function getLatestDate(dates = []) {
 }
 
 export function formatElapsed(startIso, endIso) {
-    if (!startIso) return null;
-    const createdAt = startIso.endsWith('Z') ? startIso : startIso + 'Z';
-    const start = new Date(createdAt);
-    const end = endIso ? new Date(endIso.endsWith('Z') ? endIso : endIso + 'Z') : new Date();
-    const elapsed = Math.floor((end - start) / 1000);
+    if (startIso === null || startIso === undefined || startIso === '') return null;
+    const start = parseGalleryDate(startIso);
+    const end = endIso !== null && endIso !== undefined && endIso !== ''
+        ? parseGalleryDate(endIso)
+        : new Date();
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+    const elapsed = Math.floor((endMs - startMs) / 1000);
     if (elapsed < 0) return '0s';
     if (elapsed < 60) return `${elapsed}s`;
     if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;

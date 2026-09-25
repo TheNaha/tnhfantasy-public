@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getItemTimelineDate, getLatestDate, parseGalleryDate } from './dateTime';
+import { formatElapsed, getItemTimelineDate, getLatestDate, parseGalleryDate } from './dateTime';
 
 describe('dateTime utils', () => {
     it('parses unix timestamps in seconds', () => {
@@ -38,6 +38,15 @@ describe('dateTime utils', () => {
         });
 
         expect(parsed.toISOString()).toBe('2026-03-07T02:00:00.000Z');
+    });
+
+    it('returns null for invalid timestamps instead of NaN text', () => {
+        expect(formatElapsed('not-a-date')).toBeNull();
+    });
+
+    it('formats numeric and offset timestamps', () => {
+        expect(formatElapsed('2026-01-01T00:00:00Z', '2026-01-01T00:02:05Z')).toBe('2m 5s');
+        expect(formatElapsed(1767225600, 1767225665)).toBe('1m 5s');
     });
 
     it('falls back to image timestamps when no timelineDate exists', () => {

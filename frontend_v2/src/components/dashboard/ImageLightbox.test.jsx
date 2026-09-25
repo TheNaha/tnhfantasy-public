@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import ImageLightbox from './ImageLightbox';
 
 // Mock ProgressiveImage to simplify testing
@@ -58,5 +58,27 @@ describe('ImageLightbox', () => {
         const activeDot = dots[1];
         expect(activeDot).toHaveAttribute('aria-pressed', 'true');
         expect(activeDot.className).toContain('focus-visible:ring-2');
+    });
+
+    it('moves to the next image on a left swipe and previous on a right swipe', () => {
+        const onNavigate = vi.fn();
+        render(
+            <ImageLightbox
+                image={mockImage}
+                images={mockImages}
+                currentIndex={1}
+                onNavigate={onNavigate}
+                onClose={() => {}}
+            />
+        );
+
+        const area = screen.getByTestId('lightbox-swipe-area');
+        fireEvent.touchStart(area, { touches: [{ clientX: 200, clientY: 200 }] });
+        fireEvent.touchEnd(area, { changedTouches: [{ clientX: 80, clientY: 205 }] });
+        expect(onNavigate).toHaveBeenLastCalledWith(2);
+
+        fireEvent.touchStart(area, { touches: [{ clientX: 80, clientY: 200 }] });
+        fireEvent.touchEnd(area, { changedTouches: [{ clientX: 200, clientY: 200 }] });
+        expect(onNavigate).toHaveBeenLastCalledWith(1);
     });
 });

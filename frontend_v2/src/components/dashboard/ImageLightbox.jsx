@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
@@ -22,6 +22,7 @@ export default memo(function ImageLightbox({
     reuseInProgress = false,
 }) {
     const [imgIndex, setImgIndex] = useState(currentIndex);
+    const touchStartRef = useRef(null);
 
     // Use image from images array if available, otherwise use the single image prop
     const displayImage = images.length > 0 ? images[imgIndex] : image;
@@ -48,7 +49,28 @@ export default memo(function ImageLightbox({
         onNavigate?.(newIndex);
     }, [imgIndex, images.length, onNavigate]);
 
-    // Keyboard navigation
+    const handleTouchStart = useCallback((event) => {
+        const touch = event.touches?.[0];
+        if (touch) {
+            touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+        }
+    }, []);
+
+    const handleTouchEnd = useCallback((event) => {
+        const start = touchStartRef.current;
+        const touch = event.changedTouches?.[0];
+        touchStartRef.current = null;
+        if (!start || !touch || !hasMultiple) return;
+        const deltaX = touch.clientX - start.x;
+        const deltaY = touch.clientY - start.y;
+        if (Math.abs(deltaX) < 50 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+        if (deltaX < 0) {
+            goToNext();
+        } else {
+            goToPrev();
+        }
+    }, [goToNext, goToPrev, hasMultiple]);
+
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.key === 'ArrowLeft' && hasMultiple) goToPrev();
@@ -87,7 +109,13 @@ export default memo(function ImageLightbox({
 
             <div className="flex flex-col lg:flex-row w-full h-full gap-4 max-w-7xl overflow-hidden">
                 {/* Image Container with carousel navigation */}
-                <div className="flex-1 flex flex-col items-center justify-center p-2 overflow-hidden bg-black relative">
+                <div
+                    data-testid="lightbox-swipe-area"
+                    onTouchStart={handleTouchStart}
+                    onTouchEnd={handleTouchEnd}
+                    style={{ touchAction: 'pan-y' }}
+                    className="flex-1 flex flex-col items-center justify-center p-2 overflow-hidden bg-black relative"
+                >
                     {/* Carousel Navigation - Previous (inside image container) */}
                     {hasMultiple && (
                         <button
@@ -147,7 +175,11 @@ export default memo(function ImageLightbox({
                         <div>
                             <h3 className="font-bold text-lg mb-2">Details</h3>
                             <p className="text-sm text-gray-400 break-all">{displayImage.name}</p>
-                            <p className="text-sm text-gray-500 mt-1">{(displayImage.size / 1024 / 1024).toFixed(2)} MB</p>
+                            <p className="text-sm text-gray-500 mt-1">
+                                {Number.isFinite(Number(displayImage.size))
+                                    ? `${(Number(displayImage.size) / 1024 / 1024).toFixed(2)} MB`
+                                    : 'Unknown size'}
+                            </p>
                         </div>
 
                         {/* Job Information - Issue 9 */}
