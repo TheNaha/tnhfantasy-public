@@ -6,6 +6,7 @@ import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useCharacters, useCharacterCollection, useCharacterCollections, getAvatarUrl } from '../hooks/useWorldVault';
 import SceneGallery from '../components/SceneGallery';
 import EmptyState from '../components/EmptyState';
+import RoleplayPageShell from '../components/RoleplayPageShell';
 
 const VIEW_MODES = {
     CARDS: 'cards',
@@ -44,31 +45,29 @@ export default function AvatarGallery() {
     };
 
     return (
-        <div className="p-6 max-w-7xl mx-auto">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                <div>
-                    <h1 className="text-2xl font-bold text-white mb-1">Character Avatar Gallery</h1>
-                    <p className="text-gray-400 text-sm">Browse character avatars, scenes, and expression sheets</p>
+        <RoleplayPageShell
+            title="Character Avatar Gallery"
+            description="Browse character avatars, scenes, and expression sheets"
+            icon={Images}
+            actions={
+                <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-1">
+                    <button
+                        onClick={() => setViewMode(VIEW_MODES.CARDS)}
+                        className={`rounded-md p-2 transition-colors ${viewMode === VIEW_MODES.CARDS ? 'bg-cyan-500/20 text-cyan-300' : 'text-gray-400 hover:text-white'}`}
+                        title="Card view"
+                    >
+                        <LayoutGrid size={16} />
+                    </button>
+                    <button
+                        onClick={() => setViewMode(VIEW_MODES.GRID)}
+                        className={`rounded-md p-2 transition-colors ${viewMode === VIEW_MODES.GRID ? 'bg-cyan-500/20 text-cyan-300' : 'text-gray-400 hover:text-white'}`}
+                        title="Grid view"
+                    >
+                        <Grid size={16} />
+                    </button>
                 </div>
-                <div className="flex items-center gap-2">
-                    <div className="flex items-center bg-gray-800/60 rounded-lg p-1 border border-white/10">
-                        <button
-                            onClick={() => setViewMode(VIEW_MODES.CARDS)}
-                            className={`p-2 rounded-md transition-colors ${viewMode === VIEW_MODES.CARDS ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
-                            title="Card view"
-                        >
-                            <LayoutGrid size={16} />
-                        </button>
-                        <button
-                            onClick={() => setViewMode(VIEW_MODES.GRID)}
-                            className={`p-2 rounded-md transition-colors ${viewMode === VIEW_MODES.GRID ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
-                            title="Grid view"
-                        >
-                            <Grid size={16} />
-                        </button>
-                    </div>
-                </div>
-            </div>
+            }
+        >
 
             <div className="mb-6">
                 <div className="relative max-w-md">
@@ -125,7 +124,7 @@ export default function AvatarGallery() {
                     />
                 )}
             </AnimatePresence>
-        </div>
+        </RoleplayPageShell>
     );
 }
 

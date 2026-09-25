@@ -18,6 +18,7 @@ import {
 } from '../hooks/useLorebooks';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
+import RoleplayPageShell from '../components/RoleplayPageShell';
 
 export default function Lorebooks() {
     const [searchQuery, setSearchQuery] = useState('');
@@ -92,19 +93,19 @@ export default function Lorebooks() {
     };
 
     return (
-        <div className="p-6 max-w-5xl mx-auto">
-            <div className="flex items-center justify-between mb-6">
-                <div>
-                    <h1 className="text-2xl font-bold text-white mb-1">Lorebooks</h1>
-                    <p className="text-gray-400 text-sm">Organize world knowledge into searchable entries</p>
-                </div>
+        <RoleplayPageShell
+            title="Lorebooks"
+            description="Organize world knowledge into searchable entries."
+            icon={BookOpen}
+            actions={
                 <button
                     onClick={() => { resetForm(); setShowForm(true); }}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                    className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-cyan-400"
                 >
                     <Plus size={16} /> New Lorebook
                 </button>
-            </div>
+            }
+        >
 
             <div className="mb-6">
                 <div className="relative max-w-md">
@@ -201,7 +202,7 @@ export default function Lorebooks() {
                     />
                 )}
             </AnimatePresence>
-        </div>
+        </RoleplayPageShell>
     );
 }
 

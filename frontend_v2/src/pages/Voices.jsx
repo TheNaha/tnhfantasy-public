@@ -15,6 +15,7 @@ import { assetUrl } from '../utils/assetUrl';
 import EmptyState from '../components/EmptyState';
 import FormInput from '../components/common/FormInput';
 import { useConfirmation } from '../store/confirmationStore';
+import RoleplayPageShell from '../components/RoleplayPageShell';
 
 const TYPE_OPTIONS = [
     { value: 'xtts', label: 'XTTS v2' },
@@ -126,21 +127,27 @@ export default function Voices() {
     };
 
     if (isLoading) {
-        return <div className="p-6">Loading voices...</div>;
+        return (
+            <RoleplayPageShell title="Voice Models" description="Reusable voices for narration and text-to-speech." icon={Volume2}>
+                <div className="py-12 text-center text-slate-400">Loading voices…</div>
+            </RoleplayPageShell>
+        );
     }
 
     return (
-        <div className="p-6 max-w-4xl mx-auto">
-            <div className="flex items-center justify-between mb-6">
-                <h1 className="text-2xl font-bold text-white">Voice Models</h1>
+        <RoleplayPageShell
+            title="Voice Models"
+            description="Reusable voices for narration and text-to-speech."
+            icon={Volume2}
+            actions={
                 <button
                     onClick={() => setShowCreate(true)}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 transition-colors"
+                    className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-cyan-400"
                 >
-                    <Plus size={18} />
-                    Create Voice
+                    <Plus size={18} /> Create Voice
                 </button>
-            </div>
+            }
+        >
 
             <AnimatePresence>
                 {showCreate && (
@@ -283,6 +290,6 @@ export default function Voices() {
                     ))}
                 </div>
             )}
-        </div>
+        </RoleplayPageShell>
     );
 }

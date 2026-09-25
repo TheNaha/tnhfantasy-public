@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw, Save, RotateCcw, X, Pencil } from 'lucide-react';
+import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw, Save, RotateCcw, X, Pencil, GitBranch } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWorldVaultRelationships, useGraphLayout, useSaveGraphLayout } from '../hooks/useWorldVaultSearch';
+import RoleplayPageShell from '../components/RoleplayPageShell';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
 const NODE_COLORS = {
@@ -415,52 +416,40 @@ export default function RelationshipGraph() {
     }
 
     return (
-        <div className="p-6 max-w-6xl mx-auto">
-            <div className="flex items-center justify-between mb-6">
-                <div>
-                    <h1 className="text-2xl font-bold text-white mb-1">Relationship Graph</h1>
-                    <p className="text-gray-400 text-sm">Drag nodes to reposition. Click to select and edit. Save to persist layout.</p>
-                </div>
+        <RoleplayPageShell
+            title="Relationship Graph"
+            description="Drag nodes to reposition. Click to select and edit. Save to persist layout."
+            icon={Users}
+            actions={
                 <div className="flex items-center gap-2">
                     <select
                         value={filter}
                         onChange={(e) => setFilter(e.target.value)}
-                        className="px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                        className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
                     >
                         <option value="all">All Entities</option>
                         {Object.entries(NODE_LABELS).map(([type, label]) => (
                             <option key={type} value={type}>{label}</option>
                         ))}
                     </select>
-                    <button
-                        onClick={handleResetLayout}
-                        className="p-2 bg-gray-800 border border-white/10 rounded-lg text-gray-400 hover:text-white hover:border-white/20 transition-colors"
-                        title="Reset layout"
-                    >
+                    <button onClick={handleResetLayout} className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition hover:bg-white/10 hover:text-white" title="Reset layout">
                         <RotateCcw size={16} />
                     </button>
-                    <button
-                        onClick={() => refetch()}
-                        className="p-2 bg-gray-800 border border-white/10 rounded-lg text-gray-400 hover:text-white hover:border-white/20 transition-colors"
-                        title="Refresh"
-                    >
+                    <button onClick={() => refetch()} className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition hover:bg-white/10 hover:text-white" title="Refresh">
                         <RefreshCw size={16} className={isFetching ? 'animate-spin' : ''} />
                     </button>
                     <button
                         onClick={handleSaveLayout}
                         disabled={!hasUnsavedChanges || saveLayout.isPending}
-                        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                            hasUnsavedChanges
-                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                : 'bg-gray-800 border border-white/10 text-gray-500 cursor-not-allowed'
-                        }`}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm transition-colors ${hasUnsavedChanges ? 'bg-cyan-500 text-slate-950 hover:bg-cyan-400' : 'cursor-not-allowed border border-white/10 bg-white/5 text-slate-500'}`}
                         title="Save layout"
                     >
                         <Save size={14} />
                         {saveLayout.isPending ? 'Saving...' : hasUnsavedChanges ? 'Save' : 'Saved'}
                     </button>
                 </div>
-            </div>
+            }
+        >
 
             <div className="flex flex-wrap gap-3 mb-4 text-xs">
                 {Object.entries(NODE_LABELS).map(([type, label]) => {
@@ -593,6 +582,6 @@ export default function RelationshipGraph() {
                     </TransformWrapper>
                 </div>
             )}
-        </div>
+        </RoleplayPageShell>
     );
 }

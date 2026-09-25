@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Filter, Users, MessageSquare, BookOpen, Music, Shield, Tag } from 'lucide-react';
+import { Search, Filter, Users, MessageSquare, BookOpen, Music, Shield, Tag, Globe } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWorldVaultSearch, useWorldVaultDashboard } from '../hooks/useWorldVaultSearch';
 import { useDebounce } from '../hooks/useDebounce';
+import RoleplayPageShell from '../components/RoleplayPageShell';
 
 const ENTITY_ICONS = {
     character: Users,
@@ -86,11 +87,11 @@ export default function WorldVaultHub() {
     ];
 
     return (
-        <div className="p-6 max-w-6xl mx-auto">
-            <div className="mb-6">
-                <h1 className="text-2xl font-bold text-white mb-2">World Vault</h1>
-                <p className="text-gray-400 text-sm">Central hub for all your fantasy entities — characters, chats, stories, voices, and more.</p>
-            </div>
+        <RoleplayPageShell
+            title="World Vault"
+            description="Central hub for all your fantasy entities — characters, chats, stories, voices, and more."
+            icon={Globe}
+        >
 
             <div className="flex gap-4 mb-6">
                 <div className="flex-1 relative">
@@ -185,6 +186,6 @@ export default function WorldVaultHub() {
                     })}
                 </div>
             )}
-        </div>
+        </RoleplayPageShell>
     );
 }

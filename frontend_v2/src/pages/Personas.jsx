@@ -11,6 +11,7 @@ import {
 import EmptyState from '../components/EmptyState';
 import FormInput from '../components/common/FormInput';
 import { useConfirmation } from '../store/confirmationStore';
+import RoleplayPageShell from '../components/RoleplayPageShell';
 
 export default function Personas() {
     const [editingId, setEditingId] = useState(null);
@@ -74,17 +75,19 @@ export default function Personas() {
     };
 
     return (
-        <div className="p-6 max-w-4xl mx-auto">
-            <div className="flex items-center justify-between mb-6">
-                <h1 className="text-2xl font-bold text-white">Personas</h1>
+        <RoleplayPageShell
+            title="Personas"
+            description="Reusable identities for chatting as a character."
+            icon={UserRound}
+            actions={
                 <button
                     onClick={() => setShowCreate(true)}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 transition-colors"
+                    className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-cyan-400"
                 >
-                    <Plus size={18} />
-                    Create Persona
+                    <Plus size={18} /> Create Persona
                 </button>
-            </div>
+            }
+        >
 
             <AnimatePresence>
                 {showCreate && (
@@ -180,6 +183,6 @@ export default function Personas() {
                     ))}
                 </div>
             )}
-        </div>
+        </RoleplayPageShell>
     );
 }

@@ -16,6 +16,7 @@ import { useChats } from '../hooks/useChats';
 import { useLocations } from '../hooks/useLocations';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
+import RoleplayPageShell from '../components/RoleplayPageShell';
 
 const FORM_FIELDS = [
     { key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'Campaign name' },
@@ -110,19 +111,19 @@ export default function Campaigns() {
     };
 
     return (
-        <div className="p-6 max-w-5xl mx-auto">
-            <div className="flex items-center justify-between mb-6">
-                <div>
-                    <h1 className="text-2xl font-bold text-white mb-1">Campaigns</h1>
-                    <p className="text-gray-400 text-sm">Organize your stories, characters, and locations into chronicles</p>
-                </div>
+        <RoleplayPageShell
+            title="Campaigns"
+            description="Organize your stories, characters, and locations into chronicles."
+            icon={Swords}
+            actions={
                 <button
                     onClick={() => { resetForm(); setShowForm(true); }}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                    className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-cyan-400"
                 >
                     <Plus size={16} /> New Campaign
                 </button>
-            </div>
+            }
+        >
 
             <div className="mb-6">
                 <div className="relative max-w-md">
@@ -197,7 +198,7 @@ export default function Campaigns() {
                     />
                 )}
             </AnimatePresence>
-        </div>
+        </RoleplayPageShell>
     );
 }
 

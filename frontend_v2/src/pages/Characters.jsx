@@ -29,6 +29,7 @@ import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 import filesApi from '../api/files';
 import MemoriesPanel from '../components/chat/MemoriesPanel';
+import RoleplayPageShell from '../components/RoleplayPageShell';
 
 
 const CHARACTER_FIELDS = [
@@ -894,32 +895,15 @@ export default function Characters() {
     };
 
     return (
-        <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="flex flex-col h-full"
-        >
-            {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 lg:mb-8">
-                <div>
-                    <h1 className="text-2xl md:text-3xl font-bold text-gray-100 flex items-center gap-3">
-                        <Users className="text-blue-500" />
-                        Character Vault
-                    </h1>
-                    <p className="text-gray-400 mt-1 max-w-2xl text-sm">
-                        Manage your roleplay characters. Import V2/V3 spec PNG cards or create new ones from scratch.
-                    </p>
-                </div>
-                
-                <div className="flex flex-wrap items-center gap-3">
-                    <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".png"
-                        className="hidden"
-                        onChange={handleImportCard}
-                    />
+        <RoleplayPageShell
+            title="Character Vault"
+            description="Manage your roleplay characters. Import V2/V3 spec PNG cards or create new ones from scratch."
+            icon={Users}
+            maxWidth="max-w-none"
+            className="flex h-full flex-col"
+            actions={
+                <>
+                    <input ref={fileInputRef} type="file" accept=".png" className="hidden" onChange={handleImportCard} />
                     <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={importCharacterCard.isPending}
@@ -932,8 +916,9 @@ export default function Characters() {
                         <Plus size={18} />
                         Create Character
                     </button>
-                </div>
-            </div>
+                </>
+            }
+        >
 
             {/* Search Bar */}
             <div className="glass-panel p-4 mb-6 flex flex-wrap gap-4 items-center">
@@ -1012,6 +997,6 @@ export default function Characters() {
                 onTabChange={setActiveTab}
             />
 
-        </motion.div>
+        </RoleplayPageShell>
     );
 }
