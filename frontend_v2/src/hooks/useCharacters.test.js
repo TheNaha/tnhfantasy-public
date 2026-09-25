@@ -24,6 +24,7 @@ import {
     useUploadAvatar,
     useDeleteCharacter,
     useImportCharacterCard,
+    useExportCharacterCard,
     useCharacterCollection,
 } from './useCharacters';
 
@@ -101,19 +102,112 @@ describe('useCharacters', () => {
     });
 
     it('useImportCharacterCard posts multipart and invalidates the list', async () => {
-        apiMock.post.mockResolvedValue({ id: 'ch9' });
+        apiMock.post.mockResolvedValue({ id: 'ch9', name: 'Imported' });
         const { wrapper, queryClient } = createWrapper();
         const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
         const { result } = renderHook(() => useImportCharacterCard(), { wrapper });
         const formData = new FormData();
         formData.append('file', new File(['png'], 'card.png'));
 
-        await act(async () => result.current.mutateAsync(formData));
+        let normalized;
+        await act(async () => {
+            normalized = await result.current.mutateAsync(formData);
+        });
         const [url, sentFormData, opts] = apiMock.post.mock.calls[0];
         expect(url).toBe('/api/v2/characters/import');
         expect(sentFormData).toBe(formData);
         expect(opts.headers['Content-Type']).toBe('multipart/form-data');
         expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'characters'] });
+        // A bare character response is normalized, and the report is flagged absent.
+        expect(normalized.character).toEqual({ id: 'ch9', name: 'Imported' });
+        expect(normalized.compatibility.hasReport).toBe(false);
+    });
+
+    it('useImportCharacterCard accepts a File and surfaces the compatibility report', async () => {
+        apiMock.post.mockResolvedValue({
+            character: { id: 'ch10', name: 'Sable' },
+            compatibility: {
+                format: 'json',
+                warnings: ['Tags mapped to visual tags'],
+                lost_fields: ['extensions.tavern_helper'],
+                preserved_fields: ['card_metadata'],
+            },
+        });
+        const { wrapper, queryClient } = createWrapper();
+        const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useImportCharacterCard(), { wrapper });
+        const file = new File(['{}'], 'sable.json', { type: 'application/json' });
+
+        let normalized;
+        await act(async () => {
+            normalized = await result.current.mutateAsync(file);
+        });
+
+        const [url, sentFormData] = apiMock.post.mock.calls[0];
+        expect(url).toBe('/api/v2/characters/import');
+        expect(sentFormData).toBeInstanceOf(FormData);
+        expect(sentFormData.get('file').name).toBe('sable.json');
+        expect(normalized.character).toEqual({ id: 'ch10', name: 'Sable' });
+        expect(normalized.compatibility.format).toBe('json');
+        expect(normalized.compatibility.lost.map((e) => e.label)).toEqual(['extensions.tavern_helper']);
+        expect(normalized.compatibility.preserved.map((e) => e.label)).toEqual(['card_metadata']);
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'characters'] });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'characters', 'ch10'] });
+    });
+
+    it('useImportCharacterCard rejects unsupported card files before uploading', async () => {
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useImportCharacterCard(), { wrapper });
+
+        await act(async () => {
+            await expect(
+                result.current.mutateAsync(new File(['x'], 'notes.txt', { type: 'text/plain' }))
+            ).rejects.toThrow(/png or .json/i);
+        });
+        expect(apiMock.post).not.toHaveBeenCalled();
+    });
+
+    it('useExportCharacterCard downloads the requested format', async () => {
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useExportCharacterCard(), { wrapper });
+        const clicks = [];
+        const originalCreate = document.createElement.bind(document);
+        const spy = vi.spyOn(document, 'createElement').mockImplementation((tag) => {
+            const el = originalCreate(tag);
+            if (tag === 'a') {
+                el.click = () =>
+                    clicks.push({ href: el.getAttribute('href'), download: el.download });
+            }
+            return el;
+        });
+
+        try {
+            let outcome;
+            await act(async () => {
+                outcome = await result.current.mutateAsync({
+                    character: { id: 'ch1', name: 'Lyra Vane' },
+                    format: 'v3',
+                });
+            });
+            expect(outcome.url).toBe('/api/v2/characters/ch1/export?format=v3');
+            expect(clicks).toEqual([
+                { href: '/api/v2/characters/ch1/export?format=v3', download: 'Lyra_Vane_v3.png' },
+            ]);
+
+            await act(async () => {
+                await result.current.mutateAsync({ character: { id: 'ch1', name: 'Lyra Vane' } });
+            });
+            expect(clicks[1]).toEqual({
+                href: '/api/v2/characters/ch1/export',
+                download: 'Lyra_Vane_v2.png',
+            });
+
+            await act(async () => {
+                await expect(result.current.mutateAsync({})).rejects.toThrow(/required to export/i);
+            });
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     it('useCharacterCollection fetches from the legacy collections route and gates on id', async () => {

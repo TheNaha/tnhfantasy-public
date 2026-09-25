@@ -16,13 +16,17 @@ import {
     arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Users, Plus, Upload, Download, Copy, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Brain, GripVertical } from 'lucide-react';
+import { Users, Plus, Upload, Copy, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Brain, GripVertical } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, useExportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter } from '../hooks/useWorldVault';
+import { CARD_ACCEPT, cardExportFormatLabel } from '../api/characterCards';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import SceneGallery, { SceneCount } from '../components/SceneGallery';
+import CharacterCardExportMenu from '../components/characters/CharacterCardExportMenu';
+import CharacterCardImportReport from '../components/characters/CharacterCardImportReport';
+import CharacterCardSpecBadge from '../components/characters/CharacterCardSpecBadge';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import useSettingsStore from '../store/settingsStore';
 import EmptyState from '../components/EmptyState';
@@ -704,6 +708,12 @@ function CharacterCard({ character, collections, onEdit, onDelete, onChat, onExp
                 <p className="text-xs text-gray-500 mt-3 line-clamp-2 italic">"{character.personality}"</p>
             )}
 
+            {(character.card_spec || character.card_metadata) && (
+                <div className="mt-3">
+                    <CharacterCardSpecBadge character={character} />
+                </div>
+            )}
+
             {character.visual_tags?.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-3">
                     {character.visual_tags.slice(0, 5).map((tag, idx) => (
@@ -731,9 +741,7 @@ function CharacterCard({ character, collections, onEdit, onDelete, onChat, onExp
                 <button onClick={() => onEdit(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors" title="Edit character">
                     <Edit3 size={14} /> Edit
                 </button>
-                <button onClick={() => onExport(character)} className="flex items-center px-2 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors" title="Export SillyTavern V2 PNG card">
-                    <Download size={14} />
-                </button>
+                <CharacterCardExportMenu character={character} onExport={onExport} />
                 <button onClick={() => onClone(character)} disabled={isCloning} className="flex items-center px-2 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors disabled:opacity-50" title="Clone character">
                     {isCloning ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
                 </button>
@@ -750,6 +758,7 @@ export default function Characters() {
     const [modalOpen, setModalOpen] = useState(false);
     const [editingCharacter, setEditingCharacter] = useState(null);
     const [activeTab, setActiveTab] = useState('details');
+    const [importReport, setImportReport] = useState(null);
     const fileInputRef = useRef(null);
     const [cloningId, setCloningId] = useState(null);
 
@@ -763,6 +772,7 @@ export default function Characters() {
     const updateCharacter = useUpdateCharacter();
     const deleteCharacter = useDeleteCharacter();
     const importCharacterCard = useImportCharacterCard();
+    const exportCharacterCard = useExportCharacterCard();
     const reorderCharacters = useReorderCharacters();
     const cloneCharacter = useCloneCharacter();
 
@@ -845,30 +855,29 @@ export default function Characters() {
         toast(`Starting chat with ${character.name}...`, { icon: '💬' });
     };
 
-    const handleImportCard = (e) => {
+    const handleImportCard = async (e) => {
         const file = e.target.files?.[0];
-        if (!file) return;
-        const formData = new FormData();
-        formData.append('file', file);
-        toast.promise(
-            importCharacterCard.mutateAsync(formData),
-            {
-                loading: 'Importing character card...',
-                success: (character) => `"${character.name}" imported successfully`,
-                error: (err) => err?.response?.data?.detail || 'Failed to import card',
-            }
-        );
         e.target.value = '';
+        if (!file) return;
+
+        try {
+            const { character, compatibility } = await importCharacterCard.mutateAsync(file);
+            setImportReport({ character, compatibility, filename: file.name });
+            toast.success(`"${character?.name || file.name}" imported`);
+        } catch (err) {
+            toast.error(err?.data?.detail || err?.message || 'Failed to import card');
+        }
     };
 
-    const handleExportCard = (character) => {
-        const a = document.createElement('a');
-        a.href = `/api/v2/characters/${character.id}/export`;
-        a.download = `${(character.name || 'character').replace(/[^a-z0-9]+/gi, '_')}_v2.png`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        toast.success(`Exporting "${character.name}" card...`, { icon: '📤' });
+    const handleExportCard = async (character, format) => {
+        try {
+            const { filename } = await exportCharacterCard.mutateAsync({ character, format });
+            toast.success(`Exporting "${character.name}" as ${cardExportFormatLabel(format)}`, { icon: '📤' });
+            return filename;
+        } catch {
+            toast.error('Failed to export character card');
+            return null;
+        }
     };
 
     const handleCloneCharacter = async (character) => {
@@ -897,13 +906,20 @@ export default function Characters() {
     return (
         <RoleplayPageShell
             title="Character Vault"
-            description="Manage your roleplay characters. Import V2/V3 spec PNG cards or create new ones from scratch."
+            description="Manage your roleplay characters. Import SillyTavern V2/V3 PNG or JSON cards, or create new ones from scratch."
             icon={Users}
             maxWidth="max-w-none"
             className="flex h-full flex-col"
             actions={
                 <>
-                    <input ref={fileInputRef} type="file" accept=".png" className="hidden" onChange={handleImportCard} />
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept={CARD_ACCEPT}
+                        title="Import a SillyTavern card (.png or .json)"
+                        className="hidden"
+                        onChange={handleImportCard}
+                    />
                     <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={importCharacterCard.isPending}
@@ -996,6 +1012,24 @@ export default function Characters() {
                 activeTab={activeTab}
                 onTabChange={setActiveTab}
             />
+
+            {/* Post-import compatibility report */}
+            {importReport && (
+                <CharacterCardImportReport
+                    character={importReport.character}
+                    compatibility={importReport.compatibility}
+                    filename={importReport.filename}
+                    onClose={() => setImportReport(null)}
+                    onEdit={(character) => {
+                        setImportReport(null);
+                        if (character) openEdit(character);
+                    }}
+                    onChat={(character) => {
+                        setImportReport(null);
+                        if (character) handleStartChat(character);
+                    }}
+                />
+            )}
 
         </RoleplayPageShell>
     );

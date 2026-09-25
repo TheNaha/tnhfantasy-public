@@ -12,6 +12,9 @@ import { ApiError, getBaseUrl } from './client';
 
 export const MB = 1024 * 1024;
 
+/** Mirrors MAX_CARD_SIZE_MB in backend_v2/core/upload_validation.py. */
+export const CARD_MAX_BYTES = 25 * MB;
+
 /**
  * Client-side limits. The backend remains the authority - these only avoid
  * wasting a round trip, and its error payload always wins when it disagrees.
@@ -23,6 +26,8 @@ export const UPLOAD_LIMITS = {
     file: { maxBytes: 500 * MB, imageOnly: false },
     // character avatars / location images
     avatar: { maxBytes: 20 * MB, imageOnly: true },
+    // /api/v2/characters/import (PNG or JSON card)
+    card: { maxBytes: CARD_MAX_BYTES, imageOnly: false },
     // /api/files/batch-download
     export: { maxFiles: 500 },
 };
