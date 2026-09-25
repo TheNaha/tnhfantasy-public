@@ -76,4 +76,5 @@ remote_agent/build/tnhcomfy-agent/xref-tnhcomfy-agent.html
 frontend_v2/test-results/.last-run.json
 frontend_v2/playwright-report/index.html
 test.sh
+.kilo/kilo.jsonc
 .kilo/plans/remediation-plan.md

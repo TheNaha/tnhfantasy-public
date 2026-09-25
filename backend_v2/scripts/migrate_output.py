@@ -34,7 +34,7 @@ except ImportError:
 def get_output_dir() -> Path:
     """Get the output directory path."""
     # Output is in parent project folder: comfyui/output (not backend_v2/output)
-    default_path = os.path.join(os.path.dirname(__file__), "../../output")
+    default_path = Path(__file__).resolve().parents[2] / "data" / "output"
     return Path(os.environ.get("OUTPUT_DIR", default_path))
 
 

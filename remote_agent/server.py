@@ -17,7 +17,10 @@ from provider_core.models import MODEL_DIRECTORIES
 app = FastAPI(title="TNHComfy Remote Agent")
 
 DATA_DIR = os.getenv("DATA_DIR", "./data")  # STORAGE ROOT (not `models/`)
-TOKEN = os.getenv("REMOTE_AGENT_TOKEN", "")
+TOKEN = os.getenv("REMOTE_AGENT_TOKEN", "").strip()
+ALLOW_INSECURE = os.getenv("REMOTE_AGENT_ALLOW_INSECURE", "").lower() in {"1", "true", "yes"}
+if not TOKEN and not ALLOW_INSECURE:
+    raise RuntimeError("REMOTE_AGENT_TOKEN must be set unless REMOTE_AGENT_ALLOW_INSECURE=1")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
 DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "1800"))
@@ -79,7 +82,7 @@ def _is_sidecar(name: str) -> bool:
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "data_dir": DATA_DIR}
+    return {"status": "healthy"}
 
 
 @app.post("/setup", dependencies=[Depends(verify_token)])
@@ -277,10 +280,10 @@ async def upload_file(req: UploadFileRequest):
     content = base64.b64decode(req.content_base64)
     target_dir = _data_path(req.directory)
     os.makedirs(target_dir, exist_ok=True)
-    path = os.path.join(target_dir, req.filename)
+    path = _data_path(os.path.join(req.directory, req.filename))
     with open(path, "wb") as f:
         f.write(content)
-    rel_path = os.path.join(req.directory, req.filename).replace("\\", "/")
+    rel_path = os.path.relpath(path, DATA_DIR).replace("\\", "/")
     return {"status": "success", "path": rel_path, "size": len(content)}
 
 

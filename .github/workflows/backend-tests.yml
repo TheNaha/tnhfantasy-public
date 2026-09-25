@@ -15,6 +15,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: comfy
+          POSTGRES_PASSWORD: comfy
+          POSTGRES_DB: comfy
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGVECTOR_TEST_URL: postgresql://comfy:comfy@localhost:5432/comfy
 
     defaults:
       run:

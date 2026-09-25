@@ -1,65 +1,45 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Exit immediately if a command exits with a non-zero status
-set -e
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$ROOT_DIR/backend_v2"
+FRONTEND_DIR="$ROOT_DIR/frontend_v2"
+VENV_DIR="$BACKEND_DIR/.venv"
+BACKEND_PID=""
+FRONTEND_PID=""
 
-echo "==================================="
-echo "Starting Jules environment setup..."
-echo "==================================="
+cleanup() {
+    trap - EXIT INT TERM
+    if [ -n "$FRONTEND_PID" ]; then kill "$FRONTEND_PID" 2>/dev/null || true; fi
+    if [ -n "$BACKEND_PID" ]; then kill "$BACKEND_PID" 2>/dev/null || true; fi
+}
+trap cleanup EXIT INT TERM
 
-# 1. Setup Backend (FastAPI / uvicorn)
-echo "[1/2] Setting up Backend_v2..."
-cd backend_v2
-
-# Create a virtual environment if it doesn't exist
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
+if [ ! -d "$VENV_DIR" ]; then
+    python3 -m venv "$VENV_DIR"
 fi
 
-# Activate the virtual environment
-source venv/bin/activate
+"$VENV_DIR/bin/python" -m pip install -r "$BACKEND_DIR/requirements.txt"
+(cd "$FRONTEND_DIR" && npm ci)
 
-# Install the necessary pip requirements
-pip install -r requirements.txt
+if [ -f "$ROOT_DIR/.env" ]; then
+    set -a
+    source "$ROOT_DIR/.env"
+    set +a
+fi
 
-# Start the backend server in the background inside a subshell to isolate environment variables
-echo "Starting Backend server..."
+UVICORN_ARGS=(--host 0.0.0.0 --port 8002)
+if [ "${COMFY_UVICORN_RELOAD:-1}" = "1" ]; then
+    UVICORN_ARGS+=(--reload)
+fi
 (
-    if [ -f "../.env" ]; then
-        echo "Loading environment variables from root .env..."
-        set -a
-        source ../.env
-        set +a
-    fi
-    uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
+    cd "$BACKEND_DIR"
+    exec "$VENV_DIR/bin/uvicorn" api.main:app "${UVICORN_ARGS[@]}"
 ) &
 BACKEND_PID=$!
 
-cd ..
-
-
-# 2. Setup Frontend (Vite / React)
-echo "[2/2] Setting up Frontend_v2..."
-cd frontend_v2
-
-# Install Node dependencies
-npm install
-
-# Start the frontend dev server in the background
-# Allowing it to be accessed externally via 0.0.0.0
-echo "Starting Frontend server..."
-npm run dev -- --host 0.0.0.0 --port 5174 &
+(cd "$FRONTEND_DIR" && exec npm run dev -- --host 0.0.0.0 --port 5174) &
 FRONTEND_PID=$!
 
-cd ..
-
-trap 'kill $BACKEND_PID $FRONTEND_PID 2>/dev/null' EXIT
-
-echo "==================================="
-echo "Setup complete! Services are running:"
-echo "- Backend API: http://localhost:8002"
-echo "- Frontend UI: http://localhost:5174"
-echo "==================================="
-
-# Keep the script running to prevent the background jobs from dying
-wait $BACKEND_PID $FRONTEND_PID
+printf '%s\n' 'Setup complete. Backend: http://localhost:8002; Frontend: http://localhost:5174'
+wait "$BACKEND_PID" "$FRONTEND_PID"

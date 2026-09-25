@@ -1,46 +1,25 @@
 import os
-import re
 from playwright.sync_api import sync_playwright
 
 SCREENSHOT_DIR = os.environ.get("VERIFY_SCREENSHOT_DIR", "/tmp/verification/screenshots")
 VIDEO_DIR = os.environ.get("VERIFY_VIDEO_DIR", "/tmp/verification/videos")
+VERIFY_URL = os.environ.get("VERIFY_URL", "http://localhost:5174/advanced")
+
 
 def run_cuj(page):
-    # Navigate to Advanced Generate page, which renders QueueVisualization inside GenerateLayout
-    page.goto("http://localhost:5174/generate/advanced")
-    page.wait_for_timeout(2000)
-
-    page.evaluate("""
-        () => {
-            localStorage.setItem('job-storage', JSON.stringify({
-                state: {
-                    activeJobs: [
-                        { id: '1', status: 'running', progress: 45, prompt: 'Running Job 1' },
-                        { id: '2', status: 'running', progress: 12, prompt: 'Running Job 2' },
-                        { id: '3', status: 'pending', queue_position: 1, prompt: 'Pending Job 1' },
-                        { id: '4', status: 'pending', queue_position: 2, prompt: 'Pending Job 2' }
-                    ],
-                    history: [],
-                    queuePosition: 2
-                },
-                version: 1
-            }));
-            window.location.reload();
-        }
-    """)
-    page.wait_for_timeout(2000)
-
+    page.goto(VERIFY_URL, wait_until="domcontentloaded")
+    page.locator("h1").first.wait_for(state="visible")
     os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-    page.screenshot(path=os.path.join(SCREENSHOT_DIR, "verification.png"))
-    page.wait_for_timeout(1000)
+    page.screenshot(path=os.path.join(SCREENSHOT_DIR, "verification.png"), full_page=True)
 
-if __name__ == "__main__":
+
+def main():
     os.makedirs(VIDEO_DIR, exist_ok=True)
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(
             record_video_dir=VIDEO_DIR,
-            viewport={'width': 1280, 'height': 800}
+            viewport={"width": 1280, "height": 800},
         )
         page = context.new_page()
         try:
@@ -48,3 +27,7 @@ if __name__ == "__main__":
         finally:
             context.close()
             browser.close()
+
+
+if __name__ == "__main__":
+    main()

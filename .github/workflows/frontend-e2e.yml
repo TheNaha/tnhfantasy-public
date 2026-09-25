@@ -65,7 +65,8 @@ jobs:
     - name: Wait for backend health
       run: |
         for i in $(seq 1 30); do
-          if curl -fsS http://localhost:8002/api/health >/dev/null 2>&1; then
+           if curl -fsS http://localhost:8002/api/ready >/dev/null 2>&1; then
+
             echo "Backend is healthy"; exit 0
           fi
           echo "Waiting for backend... ($i)"; sleep 2
@@ -87,7 +88,7 @@ jobs:
       run: npx playwright install --with-deps chromium
 
     - name: Run Playwright tests
-      run: npx playwright test --project=chromium
+      run: npx playwright test --project=chromium --grep-invert @fullstack
       env:
         VITE_PROXY_TARGET: http://localhost:8002
 

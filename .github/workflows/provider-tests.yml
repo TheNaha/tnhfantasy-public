@@ -35,6 +35,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements-test.txt
 
+    - name: Compile provider sources
+      run: python -m compileall -q provider_core image_worker llm_worker
+
     - name: Run tests with pytest
       run: |
         pytest tests -v

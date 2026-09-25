@@ -19,7 +19,7 @@ COPY . .
 
 # Create unprivileged user
 RUN useradd -r -u 1000 -s /bin/false comfy && \
-    mkdir -p /data/db /data/input /data/output && \
+    mkdir -p /data/db /data/input /data/output /data/hf-cache /data/cache && \
     chown -R comfy:comfy /app /data
 
 USER comfy

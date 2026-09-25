@@ -1,18 +1,25 @@
+x-bounded-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: pgvector/pgvector:pg16
     container_name: tnhcomfy-db
     environment:
-      - POSTGRES_USER=comfy
-      - POSTGRES_PASSWORD=comfy
-      - POSTGRES_DB=comfy
+      - POSTGRES_USER=${POSTGRES_USER:-comfy}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-comfy}
+      - POSTGRES_DB=${POSTGRES_DB:-comfy}
     volumes:
       - ./data/pgdata:/var/lib/postgresql/data
     networks:
       - tnhcomfy
     restart: unless-stopped
+    logging: *bounded-logging
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U comfy"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-comfy}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -34,16 +41,21 @@ services:
     environment:
       - OUTPUT_DIR=/data/output
       - INPUT_DIR=/data/input
-      - COMFY_DATABASE_URL=postgresql://comfy:comfy@db:5432/comfy
+      - COMFY_DATABASE_URL=postgresql://${POSTGRES_USER:-comfy}:${POSTGRES_PASSWORD:-comfy}@db:5432/${POSTGRES_DB:-comfy}
       - COMFY_PREVIEW_CACHE_DIR=/data/models/cache
       - COMFY_PREVIEW_PREFETCH_ENABLED=true
+      - HF_HOME=/data/hf-cache
+      - XDG_CACHE_HOME=/data/cache
+      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
+      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
+      - COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS=${COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS:-0}
       - COMFY_UVICORN_RELOAD=0
     networks:
       - tnhcomfy
       - metrics
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/api/health')\""]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/api/ready')\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -123,7 +135,10 @@ services:
       - PROVIDER_ID=modal-zetsuke
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
+      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
+      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
     user: "1000:1000"
+    logging: *bounded-logging
     # Mount /data so provider workers can access models, input, output
     volumes:
       - ./data:/data
@@ -158,7 +173,10 @@ services:
       - PROVIDER_ID=modal-hp196
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
+      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
+      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
     user: "1000:1000"
+    logging: *bounded-logging
     # Mount /data so provider workers can access models, input, output
     volumes:
       - ./data:/data
@@ -193,7 +211,10 @@ services:
       - PROVIDER_ID=modal-stepmania
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
+      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
+      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
     user: "1000:1000"
+    logging: *bounded-logging
     # Mount /data so provider workers can access models, input, output
     volumes:
       - ./data:/data
@@ -228,6 +249,8 @@ services:
       - PROVIDER_ID=llm-local
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
+      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
+      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
       - ENGINE=openai_compat
     user: "1000:1000"
     volumes:

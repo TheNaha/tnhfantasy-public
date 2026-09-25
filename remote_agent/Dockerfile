@@ -32,4 +32,8 @@ ENV PYTHONPATH=/app:/app/remote_agent \
 
 EXPOSE 8001
 
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin agent \
+    && chown -R agent:agent /app
+USER agent
+
 CMD ["python", "/app/remote_agent/server.py"]
