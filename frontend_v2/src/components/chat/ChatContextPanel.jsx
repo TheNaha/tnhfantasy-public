@@ -1,17 +1,21 @@
 import clsx from 'clsx';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     User, Clock, MapPin, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown, NotebookPen,
 } from 'lucide-react';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
+import { useLocations } from '../../hooks/useLocations';
 import ContextField from './ContextField';
 import ContextSlider from './ContextSlider';
 import SamplingControls from '../common/SamplingControls';
 import SystemPromptPanel from './SystemPromptPanel';
 import ExpressionSelector from './ExpressionSelector';
 import MemoriesPanel from './MemoriesPanel';
+import EntityContextInspector from '../workspace/EntityContextInspector';
 import { useChatWorkspace } from '../../contexts/ChatWorkspaceContext';
+
+const LOREBOOK_CONTEXT_TAIL = 12;
 
 function ChatContextPanel() {
     const {
@@ -33,7 +37,9 @@ function ChatContextPanel() {
         handleChatUpdate,
         voices,
         personas = [],
+        messages = [],
     } = useChatWorkspace();
+    const { data: locations = [] } = useLocations();
 
     const navigate = useNavigate();
 
@@ -46,8 +52,31 @@ function ChatContextPanel() {
     const onShowCharacterDetails = () => setShowCharacterDetails(true);
     const onShowScenes = () => setShowScenesModal(true);
 
+    const lorebookContextText = useMemo(
+        () => messages
+            .slice(-LOREBOOK_CONTEXT_TAIL)
+            .map(m => m?.content || '')
+            .join('\n'),
+        [messages]
+    );
+
     return (
         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
+            <EntityContextInspector
+                title="Entity Inspector"
+                subtitle="What this chat currently feeds the model"
+                characters={characters}
+                characterIds={[activeChat?.character_id, ...(activeChat?.additional_character_ids || [])].filter(Boolean)}
+                primaryCharacterId={activeChat?.character_id || null}
+                lorebooks={lorebooks}
+                lorebookIds={selectedLorebooks}
+                locations={locations}
+                locationIds={activeChat?.location_id ? [activeChat.location_id] : []}
+                freeformLocation={activeChat?.story_location || null}
+                contextText={lorebookContextText}
+                onEditCharacter={() => setShowCharacterDetails(true)}
+            />
+
             {/* Persona Name */}
             <div className="glass-panel p-4 rounded-xl border border-white/5">
                 <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">

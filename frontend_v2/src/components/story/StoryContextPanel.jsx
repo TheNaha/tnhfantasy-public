@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2, Plus, MapPin, Eye, Target } from 'lucide-react';
 import clsx from 'clsx';
 import { assetUrl } from '../../utils/assetUrl';
 import SamplingControls from '../common/SamplingControls';
+import EntityContextInspector from '../workspace/EntityContextInspector';
+import StoryOutlinePanel from './StoryOutlinePanel';
 
 export default React.memo(function StoryContextPanel({
     activeStory,
@@ -19,8 +21,16 @@ export default React.memo(function StoryContextPanel({
     onUpdateStory,
     onEditCharacter,
     onEditLorebook,
-    onEditLocation
+    onEditLocation,
+    onOpenRevisions,
+    onSnapshotChapter,
+    isSnapshotting
 }) {
+    const lorebookContextText = useMemo(
+        () => [activeStory?.memory, activeChapter?.content].filter(Boolean).join('\n'),
+        [activeStory?.memory, activeChapter?.content]
+    );
+
     return (
         <>
             <div className="lg:hidden absolute top-3 right-4 z-50">
@@ -36,6 +46,35 @@ export default React.memo(function StoryContextPanel({
             </div>
             
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
+                <EntityContextInspector
+                    title="Entity Inspector"
+                    subtitle="What this story currently feeds the model"
+                    characters={characters}
+                    characterIds={activeStory?.character_ids || []}
+                    lorebooks={lorebooks}
+                    lorebookIds={activeStory?.lorebook_ids || []}
+                    locations={locations}
+                    locationIds={activeStory?.location_ids || []}
+                    contextText={lorebookContextText}
+                    onEditCharacter={onEditCharacter}
+                    onEditLorebook={onEditLorebook}
+                    onEditLocation={onEditLocation}
+                    extraLinks={[
+                        { to: '/world-timeline', label: 'Timeline', icon: Calendar },
+                        { to: '/world-graph', label: 'Relationships', icon: Layers },
+                    ]}
+                />
+
+                <StoryOutlinePanel
+                    storyId={activeStory?.id}
+                    chapters={chapters}
+                    activeChapterId={activeChapter?.id}
+                    wordCountGoal={activeStory?.word_count_goal}
+                    onOpenRevisions={onOpenRevisions}
+                    onSnapshot={onSnapshotChapter}
+                    isSnapshotting={isSnapshotting}
+                />
+
                 <div className="glass-panel p-4 rounded-xl border border-white/5">
                     <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                         <Layers size={14} /> Characters

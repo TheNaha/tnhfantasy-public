@@ -154,6 +154,16 @@ function renderWithProviders(ui) {
     );
 }
 
+// The editor hydrates chapter prose on the next tick. AI-action tests must wait
+// for it, otherwise the action modal opens with an empty selection (summarize
+// falls back to the whole chapter) and the Generate button stays disabled.
+const waitForEditorHydrated = () =>
+    waitFor(() => {
+        expect(
+            screen.getAllByRole('textbox').some(el => el.value?.includes('Once upon a time'))
+        ).toBe(true);
+    }, { timeout: 3000 });
+
 describe('StorySandbox page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -394,6 +404,7 @@ describe('StorySandbox page', () => {
         await waitFor(() => {
             expect(screen.getByTitle(/summarize the selected text/i)).toBeInTheDocument();
         });
+        await waitForEditorHydrated();
         fireEvent.click(screen.getByTitle(/summarize the selected text/i));
         await waitFor(() => {
             expect(screen.getByText('Summarize')).toBeInTheDocument();
@@ -407,6 +418,7 @@ describe('StorySandbox page', () => {
         await waitFor(() => {
             expect(screen.getByTitle(/summarize the selected text/i)).toBeInTheDocument();
         });
+        await waitForEditorHydrated();
         fireEvent.click(screen.getByTitle(/summarize the selected text/i));
         await waitFor(() => {
             expect(screen.getByRole('dialog')).toBeInTheDocument();

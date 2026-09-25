@@ -1058,6 +1058,9 @@ export default function StorySandbox() {
                             onEditCharacter={setEditingCharacter}
                             onEditLorebook={(lb) => { setEditingLorebook(lb); setShowLorebookModal(true); }}
                             onEditLocation={(loc) => { setEditingLocation(loc); setShowLocationModal(true); }}
+                            onOpenRevisions={activeChapterId ? () => setRevisionsOpen(true) : undefined}
+                            onSnapshotChapter={activeChapterId ? handleSaveRevision : undefined}
+                            isSnapshotting={createRevision.isPending}
                         />
                     </motion.div>
                 )}
