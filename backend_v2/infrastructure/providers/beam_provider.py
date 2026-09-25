@@ -19,7 +19,8 @@ class BeamProvider(ServerlessProvider):
         super().__init__(provider_id, config)
         
         # Container mode settings
-        self.container_port = 8000
+        runtime = config.get("runtime_config") or {}
+        self.container_port = int(runtime.get("port") or config.get("port") or 8000)
         self.container_name = provider_container_name(provider_id)
         
         # Worker URL (inside podman network)

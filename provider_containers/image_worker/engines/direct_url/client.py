@@ -38,11 +38,28 @@ MODEL_INPUT_NAMES = {
 }
 
 
+def _normalize_directory(directory: str | None) -> str:
+    value = (directory or "").strip().strip("/")
+    if value == "models":
+        return ""
+    if value.startswith("models/"):
+        value = value[len("models/"):]
+    return value
+
+
 class DirectUrlProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
         self.comfy_url = os.getenv("COMFYUI_URL", "http://localhost:8188")
-        self._http = httpx.AsyncClient(base_url=self.comfy_url, timeout=30.0)
+        self._http_headers = {}
+        api_key = os.getenv("COMFYUI_API_KEY")
+        if api_key:
+            self._http_headers["Authorization"] = f"Bearer {api_key}"
+        self._http = httpx.AsyncClient(
+            base_url=self.comfy_url,
+            timeout=30.0,
+            headers=self._http_headers,
+        )
 
     async def close(self):
         await self._http.aclose()
@@ -54,6 +71,7 @@ class DirectUrlProviderClient(BaseProviderClient):
         MODEL_INPUT_NAMES parsing logic lives in exactly one place.
         """
         paths: list[str] = []
+        directory = _normalize_directory(directory)
         for node_type, node_info in object_info.items():
             target_dir = NODE_TO_DIRECTORY.get(node_type)
             if not target_dir:
@@ -216,7 +234,7 @@ class DirectUrlProviderClient(BaseProviderClient):
             return {"status": "error", "message": f"Failed to query ComfyUI: {e}"}
 
     async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
-        backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+        backend_url = os.getenv("BACKEND_URL", "http://localhost:8002")
         
         async def perform_reconciliation():
             try:
@@ -225,6 +243,17 @@ class DirectUrlProviderClient(BaseProviderClient):
                 object_info = resp.json()
             except Exception as e:
                 self.logger.error(f"Failed to query ComfyUI: {e}")
+                from provider_core.http_client import get_http_client
+                from provider_core.reconciliation import push_reconciliation_event
+                client = get_http_client()
+                await push_reconciliation_event(
+                    backend_url=backend_url,
+                    provider_id=PROVIDER_ID,
+                    status="failed",
+                    phase="failed",
+                    message=f"Failed to query ComfyUI: {e}",
+                    http_client=client,
+                )
                 return
 
             paths = self._iter_object_info_model_paths(object_info, "")
@@ -255,6 +284,7 @@ class DirectUrlProviderClient(BaseProviderClient):
                         status="completed",
                         phase="completed",
                         message=f"Discovered and registered {len(paths)} models from ComfyUI",
+                        stats={"files_discovered": len(paths), "storage_bytes": 0},
                         http_client=client
                     )
                 else:

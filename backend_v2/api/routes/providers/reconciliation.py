@@ -138,7 +138,7 @@ async def push_reconciliation_event(
         "reconciling": EventType.RECONCILIATION_PROGRESS,
         "progress": EventType.RECONCILIATION_PROGRESS,
         "completed": EventType.RECONCILIATION_COMPLETED,
-        "failed": EventType.RECONCILIATION_COMPLETED,  # Use completed for failure too
+        "failed": EventType.RECONCILIATION_FAILED,
     }
     
     event_type = status_to_event.get(request.status, EventType.RECONCILIATION_PROGRESS)

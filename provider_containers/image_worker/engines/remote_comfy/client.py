@@ -22,7 +22,7 @@ from provider_core.models import MODEL_DIRECTORIES
 logger = get_logger("image_worker.remote_comfy.client")
 
 PROVIDER_ID = os.getenv("PROVIDER_ID", "remote-comfy-worker")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8002")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
 REMOTE_AGENT_URL = os.getenv("REMOTE_AGENT_URL", "http://localhost:8001")
@@ -32,7 +32,11 @@ class RemoteComfyProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
         self.comfy_url = os.getenv("COMFYUI_URL", "http://localhost:8188")
-        self._http = httpx.AsyncClient(base_url=self.comfy_url, timeout=30.0)
+        headers = {}
+        api_key = os.getenv("COMFYUI_API_KEY", "").strip()
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        self._http = httpx.AsyncClient(base_url=self.comfy_url, timeout=30.0, headers=headers)
 
     async def close(self):
         await self._http.aclose()

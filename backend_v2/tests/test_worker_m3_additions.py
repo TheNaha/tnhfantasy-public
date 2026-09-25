@@ -95,6 +95,7 @@ async def test_load_balancer_health_checks(session: Session, monkeypatch):
     # Create LoadBalancer and force health checks enabled
     lb = LoadBalancer(session, strategy="round-robin")
     lb.health_check_enabled = True
+    monkeypatch.setenv("COMFY_PROVIDER_AUTOSTART_ENABLED", "1")
 
     # Mock health check function
     async def mock_check_health(self_lb, provider):

@@ -21,7 +21,8 @@ class DirectUrlProvider(ServerlessProvider):
         super().__init__(provider_id, config)
         
         # Container mode settings
-        self.container_port = 8000
+        runtime = config.get("runtime_config") or {}
+        self.container_port = int(runtime.get("port") or config.get("port") or 8000)
         self.container_name = provider_container_name(provider_id)
         
         # Worker URL (inside podman network)
@@ -105,11 +106,15 @@ def build_direct_url_env_vars(credentials: dict[str, Any], config: dict[str, Any
     env_vars["ENGINE"] = "direct_url"
     if config.get("id"):
         env_vars["PROVIDER_ID"] = config["id"]
-    from config import settings
-    env_vars["BACKEND_URL"] = settings.worker_backend_url
+    from config import get_worker_backend_url
+    env_vars["BACKEND_URL"] = get_worker_backend_url()
 
     if config.get("comfy_url"):
         env_vars["COMFYUI_URL"] = config["comfy_url"]
+
+    api_key = credentials.get("comfyui_api_key") or config.get("api_key")
+    if api_key:
+        env_vars["COMFYUI_API_KEY"] = api_key
 
     return env_vars
 
@@ -120,7 +125,7 @@ DIRECT_URL_PROVIDER_CONFIG = ProviderTypeConfig(
     
     # Required credentials
     required_credentials=[],
-    optional_credentials=[],
+    optional_credentials=["comfyui_api_key"],
     
     # Required config
     required_config=["comfy_url"],

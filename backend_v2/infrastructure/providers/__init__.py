@@ -19,6 +19,7 @@ from . import (
     modal_config,  # noqa: F401 - Registers Modal provider type
     modal_llm_config,  # noqa: F401 - Registers Modal LLM provider type
     openai_compat_config,  # noqa: F401 - Registers OpenAI Compat provider type
+    remote_comfy_config,  # noqa: F401 - Registers Remote Comfy provider type
 )
 from .runtime import get_provider_worker_base_url
 

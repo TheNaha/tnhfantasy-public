@@ -45,8 +45,8 @@ def test_build_deploy_compatibility_response_with_absolute_backend_url():
 
     assert payload["status"] == "deprecated"
     assert payload["source_of_truth"] == "backend_orchestrator"
-    assert payload["backend_deploy_endpoint"] == "http://backend_v2:8002/api/providers/modal-primary/deploy"
-    assert payload["backend_deploy_status_endpoint"] == "http://backend_v2:8002/api/providers/modal-primary/deploy-status"
+    assert payload["backend_deploy_endpoint"] == "http://backend_v2:8002/api/v2/providers/modal-primary/deploy"
+    assert payload["backend_deploy_status_endpoint"] == "http://backend_v2:8002/api/v2/providers/modal-primary/deploy-status"
 
 
 def test_build_deploy_compatibility_response_with_relative_fallback():
@@ -58,5 +58,5 @@ def test_build_deploy_compatibility_response_with_relative_fallback():
 
     assert payload["accepted"] is False
     assert payload["compatibility_mode"] is True
-    assert payload["backend_deploy_endpoint"] == "/api/providers/beam-primary/deploy"
-    assert payload["backend_deploy_status_endpoint"] == "/api/providers/beam-primary/deploy-status"
+    assert payload["backend_deploy_endpoint"] == "/api/v2/providers/beam-primary/deploy"
+    assert payload["backend_deploy_status_endpoint"] == "/api/v2/providers/beam-primary/deploy-status"

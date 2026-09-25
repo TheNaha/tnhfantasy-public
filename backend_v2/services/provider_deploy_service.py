@@ -447,6 +447,19 @@ class ProviderDeployService:
                     provider_id=provider.id,
                     error=str(e)
                 )
+                failed_state = self._build_deploy_state(
+                    provider_id=provider.id,
+                    provider_type=provider.type,
+                    status="failed",
+                    attempt_id=attempt_id,
+                    started_at=started_at,
+                    finished_at=utcnow_iso(),
+                    message=f"Deployment tests failed: {e}",
+                    completed_steps=list(completed_steps),
+                    steps=results,
+                )
+                await self._persist_deploy_state(provider, failed_state)
+                raise ProviderError(provider.id, "Deployment tests failed") from e
 
             return {
                 "status": "succeeded",

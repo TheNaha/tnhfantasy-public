@@ -138,7 +138,7 @@ class TestBeamTaskEventParity:
     async def test_connection_error_emits_retryable_failure(self, monkeypatch):
         import websockets as ws_mod
 
-        async def bad_connect(*a, **k):
+        def bad_connect(*a, **k):
             raise websockets.exceptions.ConnectionClosedError(1006, "boom")
 
         monkeypatch.setattr(ws_mod, "connect", bad_connect)

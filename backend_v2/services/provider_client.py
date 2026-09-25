@@ -1,3 +1,4 @@
+import codecs
 import json
 import time
 
@@ -119,6 +120,7 @@ async def stream_task_events(
                 await job_service.update_job(job_id, status=JobStatus.CONNECTED, message="Connected to provider...")
 
                 buffer = ""
+                decoder = codecs.getincrementaldecoder("utf-8")()
 
                 async def process_line(raw: str) -> None:
                     line = raw.strip()
@@ -139,10 +141,11 @@ async def stream_task_events(
 
                 _terminal_result = None
                 async for chunk in response.aiter_bytes():
-                    buffer += chunk.decode("utf-8")
+                    buffer += decoder.decode(chunk, final=False)
                     while "\n" in buffer:
                         line, buffer = buffer.split("\n", 1)
                         await process_line(line)
+                buffer += decoder.decode(b"", final=True)
                 if buffer.strip():
                     await process_line(buffer)
 

@@ -38,7 +38,7 @@ BEAM_GPU_URL = os.getenv("BEAM_GPU_URL", "")
 BEAM_STORAGE_URL = os.getenv("BEAM_STORAGE_URL", "")
 BEAM_DOWNLOAD_URL = os.getenv("BEAM_DOWNLOAD_URL", "")
 BEAM_EXTRACTOR_URL = os.getenv("BEAM_EXTRACTOR_URL", "")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8002")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
 

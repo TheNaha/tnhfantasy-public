@@ -118,8 +118,10 @@ class ContainerManager:
         Returns:
             Image tag
         """
-        worker_dir = self.containers_dir / f"{provider_type}_worker"
-        dockerfile_path = f"{provider_type}_worker/Dockerfile"
+        worker_image = ProviderRegistry.get_worker_image(provider_type)
+        worker_kind = "llm" if "llm" in worker_image else "image"
+        worker_dir = self.containers_dir / f"{worker_kind}_worker"
+        dockerfile_path = f"{worker_kind}_worker/Dockerfile"
         
         if not worker_dir.exists():
             raise ValueError(f"Worker directory not found: {worker_dir}")
@@ -173,7 +175,8 @@ class ContainerManager:
         port: int,
         env_vars: dict[str, str] | None = None,
         env_file: str | None = None,
-        rebuild: bool = False
+        rebuild: bool = False,
+        container_name: str | None = None,
     ):
         """Start a provider worker container."""
         logger.info("container_start_request", provider_id=provider_id, port=port)
@@ -198,25 +201,15 @@ class ContainerManager:
         # Prepare environment
         environment = {
             "PROVIDER_ID": provider_id,
-            "PORT": "8000",
+            "PORT": str(port),
             "BACKEND_URL": get_worker_backend_url(),
         }
-        
-        # Pass through download tokens from backend to worker
-        import os as env_os
-        if env_os.getenv("HF_TOKEN"):
-            environment["HF_TOKEN"] = env_os.getenv("HF_TOKEN")
-            logger.debug("token_passed", token_type="HF_TOKEN")
-        
-        if env_os.getenv("CIVITAI_TOKEN"):
-            environment["CIVITAI_TOKEN"] = env_os.getenv("CIVITAI_TOKEN")
-            logger.debug("token_passed", token_type="CIVITAI_TOKEN")
         
         if env_vars:
             environment.update(env_vars)
         
         # Container configuration
-        container_name = provider_container_name(provider_id)
+        container_name = container_name or provider_container_name(provider_id)
         
         # Check if container already exists
         try:
@@ -250,7 +243,7 @@ class ContainerManager:
             container_config = {
                 "image": image_tag,
                 "name": container_name,
-                "ports": {"8000/tcp": port},
+                "ports": {f"{port}/tcp": port},
                 "environment": environment,
                 "volumes": volumes,
                 "detach": True,
@@ -286,9 +279,18 @@ class ContainerManager:
             targets.append((name, url))
 
         container_name = getattr(container, "name", None)
+        port = 8000
+        if isinstance(getattr(container, "ports", None), dict):
+            for port_key in container.ports:
+                if str(port_key).endswith("/tcp"):
+                    try:
+                        port = int(str(port_key).split("/", 1)[0])
+                    except ValueError:
+                        pass
+                    break
         if container_name:
             # Primary path when backend and worker are on the same container network.
-            add_target("container_dns", f"http://{container_name}:8000/health")
+            add_target("container_dns", f"http://{container_name}:{port}/health")
 
         container_attrs = getattr(container, "attrs", None) or {}
         if isinstance(container_attrs, dict):
@@ -301,9 +303,9 @@ class ContainerManager:
                             continue
                         ip_address = net_data.get("IPAddress")
                         if ip_address:
-                            add_target("container_ip", f"http://{ip_address}:8000/health")
+                            add_target("container_ip", f"http://{ip_address}:{port}/health")
 
-        ports = container.ports.get("8000/tcp") if isinstance(container.ports, dict) else None
+        ports = container.ports.get(f"{port}/tcp") if isinstance(container.ports, dict) else None
         if ports and len(ports) > 0:
             host_port = ports[0].get("HostPort")
             if host_port:

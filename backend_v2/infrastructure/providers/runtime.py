@@ -13,6 +13,13 @@ def resolve_provider_health_url(provider, port: int = 8000) -> str:
     like Modal/Beam have no Docker-DNS name), falling back to the container
     network hostname for containerized workers.
     """
-    worker_url = getattr(provider, "worker_url", None)
+    config = getattr(provider, "config", {}) or {}
+    container_config = getattr(provider, "container_config", {}) or {}
+    worker_url = (
+        getattr(provider, "worker_url", None)
+        or config.get("worker_url")
+        or config.get("discovery_url")
+        or container_config.get("internal_url")
+    )
     base = worker_url or get_provider_worker_base_url(provider.id, port)
     return f"{base.rstrip('/')}/health"

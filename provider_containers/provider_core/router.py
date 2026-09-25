@@ -1,5 +1,6 @@
+import os
 from typing import Protocol, Any, Dict, Optional
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -36,7 +37,14 @@ class ProviderClient(Protocol):
     def update_config(self, new_config: Dict[str, Any]) -> Dict[str, Any]: ...
     async def get_object_info(self) -> Dict[str, Any]: ...
 
+async def _require_worker_token(request: Request) -> None:
+    expected = os.getenv("PROVIDER_WORKER_TOKEN", "").strip()
+    if expected and request.headers.get("X-Provider-Token", "") != expected:
+        raise HTTPException(status_code=401, detail="invalid provider worker token")
+
+
 def attach_provider_routes(app: FastAPI, client: ProviderClient):
+    protected = [Depends(_require_worker_token)]
     @app.exception_handler(StarletteHTTPException)
     async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPException):
         detail = exc.detail
@@ -105,7 +113,7 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
     async def info():
         return await client.get_info()
 
-    @app.get("/config")
+    @app.get("/config", dependencies=protected)
     async def config_get():
         return client.get_config()
 
@@ -113,82 +121,82 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
     async def provider_stats():
         return await client.get_storage_stats()
 
-    @app.post("/config")
+    @app.post("/config", dependencies=protected)
     async def config_post(config: dict):
         return client.update_config(config)
 
-    @app.post("/cancel-job")
+    @app.post("/cancel-job", dependencies=protected)
     async def cancel_job(request: CancelJobRequest):
         return await client.cancel_job(request)
 
-    @app.post("/inference")
+    @app.post("/inference", dependencies=protected)
     async def inference(request: InferenceRequest):
         return await client.inference(request)
 
-    @app.post("/setup")
+    @app.post("/setup", dependencies=protected)
     async def setup():
         return await client.setup_models()
 
-    @app.post("/download-model")
+    @app.post("/download-model", dependencies=protected)
     async def download_model(request: DownloadRequest):
         return await client.download_model(request)
 
-    @app.post("/list-models")
-    @app.get("/list-models")
+    @app.post("/list-models", dependencies=protected)
+    @app.get("/list-models", dependencies=protected)
     async def list_models(request: Optional[ListModelsRequest] = None):
         if request is None:
             request = ListModelsRequest(directory="")
         return await client.list_models(request)
 
-    @app.post("/delete-model")
+    @app.post("/delete-model", dependencies=protected)
     async def delete_model(request: DeleteModelRequest):
         return await client.delete_model(request)
 
-    @app.delete("/delete-model")
+    @app.delete("/delete-model", dependencies=protected)
     async def delete_model_query(path: str):
         return await client.delete_model(DeleteModelRequest(path=path))
 
-    @app.get("/get-file/{path:path}")
+    @app.get("/get-file/{path:path}", dependencies=protected)
     async def get_file(path: str):
         return await client.get_file(path)
 
-    @app.post("/delete-file")
+    @app.post("/delete-file", dependencies=protected)
     async def delete_file(request: DeleteFileRequest):
         return await client.delete_file(request.path)
 
-    @app.delete("/delete-file")
+    @app.delete("/delete-file", dependencies=protected)
     async def delete_file_query(path: str):
         return await client.delete_file(path)
 
-    @app.post("/upload-file")
+    @app.post("/upload-file", dependencies=protected)
     async def upload_file(request: UploadFileRequest):
         return await client.upload_file(request)
 
-    @app.post("/deploy")
+    @app.post("/deploy", dependencies=protected)
     async def deploy(payload: dict):
         return await client.deploy(payload)
 
-    @app.get("/deploy-status")
+    @app.get("/deploy-status", dependencies=protected)
     async def deploy_status():
         return await client.get_deploy_status()
 
-    @app.post("/validate-models")
+    @app.post("/validate-models", dependencies=protected)
     async def validate_models(request: ValidateModelsRequest):
         return await client.validate_models(request)
 
-    @app.post("/validate-all-models")
+    @app.post("/validate-all-models", dependencies=protected)
     async def validate_all_models():
         return await client.validate_all_models()
 
-    @app.post("/reconcile")
+    @app.post("/reconcile", dependencies=protected)
     async def reconcile(request: Optional[ReconcileRequest] = None):
         quick_sync = request.quick_sync if request else False
         return await client.run_reconciliation(quick_sync=quick_sync)
 
-    @app.get("/reconciliation-status")
+    @app.get("/reconciliation-status", dependencies=protected)
     async def reconciliation_status():
         return client.get_reconciliation_status()
 
-    @app.get("/object-info")
+    @app.get("/object-info", dependencies=protected)
     async def object_info():
         return await client.get_object_info()

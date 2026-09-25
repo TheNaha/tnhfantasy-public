@@ -28,8 +28,8 @@ def build_beam_env_vars(credentials: dict[str, Any], config: dict[str, Any]) -> 
     env_vars["ENGINE"] = "beam"
     if config.get("id"):
         env_vars["PROVIDER_ID"] = config["id"]
-    from config import settings
-    env_vars["BACKEND_URL"] = settings.worker_backend_url
+    from config import get_worker_backend_url
+    env_vars["BACKEND_URL"] = get_worker_backend_url()
 
     # Beam authentication
     if credentials.get("api_key"):

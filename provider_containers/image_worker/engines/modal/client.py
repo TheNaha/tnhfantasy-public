@@ -32,7 +32,7 @@ from provider_core.models import MODEL_DIRECTORIES
 MODAL_APP_NAME = os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
 MODAL_USERNAME = os.getenv("MODAL_USERNAME", "")
 PROVIDER_ID = os.getenv("PROVIDER_ID", "modal-worker")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8002")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
 

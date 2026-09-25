@@ -104,13 +104,23 @@ async def register_worker(provider_id: str, ws: WebSocket) -> ConnectedWorker:
 
 
 async def unregister_worker(provider_id: str, worker: ConnectedWorker | None = None) -> None:
-    """Remove a worker from the registry."""
+    """Remove a worker and fail any dispatch still waiting on it."""
     async with _workers_lock:
+        if worker is not None and connected_workers.get(provider_id) is not worker:
+            return
+        connected_workers.pop(provider_id, None)
+        current_job = worker.current_job if worker is not None else None
         if worker is not None:
-            if connected_workers.get(provider_id) is worker:
-                connected_workers.pop(provider_id, None)
-        else:
-            connected_workers.pop(provider_id, None)
+            worker.current_job = None
+    if current_job:
+        await resolve_job_future(
+            current_job,
+            error=ProviderCallError(
+                f"Worker {provider_id} disconnected before completing the job",
+                provider_id=provider_id,
+                is_retryable=True,
+            ),
+        )
 
 
 async def touch_heartbeat(worker: ConnectedWorker) -> None:
@@ -144,6 +154,13 @@ async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: floa
     if not worker:
         raise ProviderCallError(
             f"No external worker connected for provider {provider_id}",
+            provider_id=provider_id,
+            is_retryable=True,
+        )
+
+    if worker.current_job:
+        raise ProviderCallError(
+            f"Worker {provider_id} is busy with job {worker.current_job}",
             provider_id=provider_id,
             is_retryable=True,
         )

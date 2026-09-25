@@ -21,6 +21,7 @@ from api.deps import (
     get_provider_service,
     get_session_context,
 )
+from core.entities import Job, JobStatus
 from core.exceptions import NotFoundError
 from infrastructure.worker_registry import (  # noqa: F401
     _get_live_worker,
@@ -35,15 +36,24 @@ from infrastructure.worker_registry import (  # noqa: F401
     track_job_future,
     unregister_worker,
 )
-from services.job_processing import (
-    finalize_persisted_job_outputs,
-    normalize_external_outputs,
-)
+from services.job_processing import normalize_external_outputs
 from services.provider_client import ProviderCallError
 
 logger = get_logger("worker_ws")
 
 router = APIRouter(tags=["worker-ws"])
+
+
+async def _worker_owns_job(job_id: str | None, provider_id: str) -> bool:
+    if not job_id:
+        return False
+    async with get_session_context() as session:
+        job = session.get(Job, job_id)
+    if job is None:
+        return False
+    if isinstance(job, Job):
+        return job.provider_id in {None, provider_id}
+    return True
 
 # Re-exported from infrastructure.worker_registry so callers (including tests)
 # that historically imported these from the API route keep working.
@@ -125,16 +135,23 @@ async def worker_websocket(
             
             elif msg_type == "job_started":
                 job_id = data.get("job_id")
+                if not await _worker_owns_job(job_id, provider_id) or (worker.current_job and worker.current_job != job_id):
+                    await websocket.send_json({"type": "error", "message": "job is not assigned to this worker"})
+                    continue
                 worker.current_job = job_id
                 logger.info("job_started", job_id=job_id)
                 async with get_session_context() as session:
-                    from core.entities import JobStatus
                     job_service = get_job_service(session)
                     await job_service.update_job(job_id, status=JobStatus.CONNECTED, message="Connected to external worker...")
             
             elif msg_type == "job_progress":
                 payload = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
                 job_id = data.get("job_id") or payload.get("job_id") or payload.get("id")
+                if not await _worker_owns_job(job_id, provider_id) or (worker.current_job is not None and worker.current_job != job_id):
+                    await websocket.send_json({"type": "error", "message": "job is not assigned to this worker"})
+                    continue
+                if worker.current_job is None:
+                    worker.current_job = job_id
                 if job_id:
                     updates = {}
 
@@ -168,9 +185,18 @@ async def worker_websocket(
             
             elif msg_type == "job_completed":
                 job_id = data.get("job_id")
+                if not await _worker_owns_job(job_id, provider_id) or (worker.current_job is not None and worker.current_job != job_id):
+                    await websocket.send_json({"type": "error", "message": "job is not assigned to this worker"})
+                    continue
+                if worker.current_job is None:
+                    worker.current_job = job_id
                 result = data.get("result", {})
+                async with get_session_context() as session:
+                    job_service = get_job_service(session)
+                    job = await job_service.get_job(job_id)
+                    allow_text = getattr(job, "task_type", None) == "llm"
                 try:
-                    outputs = normalize_external_outputs(result.get("outputs", []))
+                    outputs = normalize_external_outputs(result.get("outputs", []), allow_text=allow_text)
                 except ValueError as exc:
                     async with get_session_context() as session:
                         from core.entities import JobStatus
@@ -189,11 +215,17 @@ async def worker_websocket(
                 try:
                     async with get_session_context() as session:
                         job_service = get_job_service(session)
-                        await finalize_persisted_job_outputs(
-                            job_service=job_service,
+                        job = await job_service.get_job(job_id)
+                        from services.job_processing import finalize_successful_job
+
+                        await finalize_successful_job(
+                            job=job,
                             job_id=job_id,
-                            outputs=outputs,
+                            job_service=job_service,
+                            load_balancer=None,
                             provider_id=provider_id,
+                            final_result=result,
+                            process_image_background_fn=None,
                         )
                 finally:
                     await resolve_job_future(job_id, result={
@@ -206,6 +238,11 @@ async def worker_websocket(
 
             elif msg_type == "job_failed":
                 job_id = data.get("job_id")
+                if not await _worker_owns_job(job_id, provider_id) or (worker.current_job is not None and worker.current_job != job_id):
+                    await websocket.send_json({"type": "error", "message": "job is not assigned to this worker"})
+                    continue
+                if worker.current_job is None:
+                    worker.current_job = job_id
                 error = data.get("error", "Unknown error")
                 
                 try:

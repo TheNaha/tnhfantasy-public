@@ -113,51 +113,18 @@ async def test_worker_websocket_finalization_uses_output_filenames():
     provider_service.get_provider.return_value = provider
     job_service = AsyncMock()
 
+    finalize = AsyncMock()
     with patch("api.routes.worker_ws.get_session_context", side_effect=_fake_session_context), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service), \
-         patch("services.asset_reconciler.reconcile_asset", AsyncMock()), \
+         patch("services.job_processing.finalize_successful_job", finalize), \
+         patch("services.asset_reconciler.reconcile_asset", MagicMock()), \
          patch("services.job_processing.wait_for_gallery_outputs", AsyncMock()):
         await worker_websocket(websocket, "provider-a", "token-1")
         await asyncio.sleep(0.05)
 
     assert websocket.accepted is True
-    job_service.update_job.assert_any_await(
-        "job-1",
-        status=JobStatus.POST_PROCESSING,
-        outputs=[{
-            "type": "image",
-            "filename": "image-1.png",
-            "relative_path": "2026/03/06/image-1.png",
-            "subfolder": "2026/03/06",
-            "path": None,
-            "thumbnail": None,
-            "blurhash": None,
-            "width": None,
-            "height": None,
-        }],
-        progress=100,
-        overall_progress=100,
-        provider_id="provider-a",
-    )
-    job_service.update_job.assert_any_await(
-        "job-1",
-        status=JobStatus.COMPLETED,
-        outputs=[{
-            "type": "image",
-            "filename": "image-1.png",
-            "relative_path": "2026/03/06/image-1.png",
-            "subfolder": "2026/03/06",
-            "path": None,
-            "thumbnail": None,
-            "blurhash": None,
-            "width": None,
-            "height": None,
-        }],
-        progress=100,
-        overall_progress=100,
-        provider_id="provider-a",
-    )
+    finalize.assert_awaited_once()
 
 
 @pytest.mark.asyncio

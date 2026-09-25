@@ -72,23 +72,26 @@ class SharedHttpClient:
         return await self._request_with_retry(client.get, url, **kwargs)
     
     async def post(self, url: str, **kwargs) -> httpx.Response:
-        """Perform POST request with optional retry."""
+        """Perform POST request without automatic retries by default."""
         client = await self.get_client()
-        return await self._request_with_retry(client.post, url, **kwargs)
-    
+        retry = kwargs.pop("_retry", False)
+        return await self._request_with_retry(client.post, url, **kwargs, retry=retry)
+
     async def put(self, url: str, **kwargs) -> httpx.Response:
-        """Perform PUT request with optional retry."""
+        """Perform PUT request without automatic retries by default."""
         client = await self.get_client()
-        return await self._request_with_retry(client.put, url, **kwargs)
-    
+        retry = kwargs.pop("_retry", False)
+        return await self._request_with_retry(client.put, url, **kwargs, retry=retry)
+
     async def delete(self, url: str, **kwargs) -> httpx.Response:
-        """Perform DELETE request with optional retry."""
+        """Perform DELETE request without automatic retries by default."""
         client = await self.get_client()
-        return await self._request_with_retry(client.delete, url, **kwargs)
-    
-    async def _request_with_retry(self, method, url: str, **kwargs) -> httpx.Response:
+        retry = kwargs.pop("_retry", False)
+        return await self._request_with_retry(client.delete, url, **kwargs, retry=retry)
+
+    async def _request_with_retry(self, method, url: str, *, retry: bool = True, **kwargs) -> httpx.Response:
         """Execute request with retry logic if tenacity is available."""
-        if TENACITY_AVAILABLE and self.config.retry_attempts > 1:
+        if retry and TENACITY_AVAILABLE and self.config.retry_attempts > 1:
             return await self._retry_request(method, url, **kwargs)
         else:
             return await method(url, **kwargs)

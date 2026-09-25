@@ -50,11 +50,11 @@ def build_deploy_compatibility_response(
     """Return a compatibility payload for deprecated worker-local deploy endpoints."""
     base_url = (backend_url or "").rstrip("/")
     if base_url:
-        deploy_endpoint = f"{base_url}/api/providers/{provider_id}/deploy"
-        status_endpoint = f"{base_url}/api/providers/{provider_id}/deploy-status"
+        deploy_endpoint = f"{base_url}/api/v2/providers/{provider_id}/deploy"
+        status_endpoint = f"{base_url}/api/v2/providers/{provider_id}/deploy-status"
     else:
-        deploy_endpoint = f"/api/providers/{provider_id}/deploy"
-        status_endpoint = f"/api/providers/{provider_id}/deploy-status"
+        deploy_endpoint = f"/api/v2/providers/{provider_id}/deploy"
+        status_endpoint = f"/api/v2/providers/{provider_id}/deploy-status"
 
     return {
         "status": "deprecated",

@@ -71,8 +71,8 @@ def default_deploy_targets(provider_type: str) -> list[dict[str, Any]]:
         return [
             {
                 "name": "modal_app",
-                "entrypoint": "/app/modal_app.py",
-                "command": ["modal", "deploy", "/app/modal_app.py"],
+                "entrypoint": "/app/image_worker/engines/modal/modal_app.py",
+                "command": ["modal", "deploy", "/app/image_worker/engines/modal/modal_app.py"],
             }
         ]
     if provider_type == "modal_llm":
@@ -87,18 +87,18 @@ def default_deploy_targets(provider_type: str) -> list[dict[str, Any]]:
         return [
             {
                 "name": "comfy_gpu",
-                "entrypoint": "/app/beam_app.py:comfy_gpu",
-                "command": ["beta9", "deploy", "beam_app.py:comfy_gpu"],
+                "entrypoint": "/app/image_worker/engines/beam/beam_app.py:comfy_gpu",
+                "command": ["beta9", "deploy", "image_worker/engines/beam/beam_app.py:comfy_gpu"],
             },
             {
                 "name": "comfy_storage",
-                "entrypoint": "/app/beam_app.py:comfy_storage",
-                "command": ["beta9", "deploy", "beam_app.py:comfy_storage"],
+                "entrypoint": "/app/image_worker/engines/beam/beam_app.py:comfy_storage",
+                "command": ["beta9", "deploy", "image_worker/engines/beam/beam_app.py:comfy_storage"],
             },
             {
                 "name": "comfy_download",
-                "entrypoint": "/app/beam_app.py:comfy_download",
-                "command": ["beta9", "deploy", "beam_app.py:comfy_download"],
+                "entrypoint": "/app/image_worker/engines/beam/beam_app.py:comfy_download",
+                "command": ["beta9", "deploy", "image_worker/engines/beam/beam_app.py:comfy_download"],
             },
         ]
     return []

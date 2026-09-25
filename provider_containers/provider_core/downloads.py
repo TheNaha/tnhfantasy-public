@@ -51,10 +51,14 @@ def build_authenticated_download_request(
     used_hf_token = False
     used_civitai_token = False
 
-    if "huggingface.co" in url and resolved_hf_token:
+    hostname = (urlparse(url).hostname or "").lower()
+    is_huggingface = hostname == "huggingface.co" or hostname.endswith(".huggingface.co")
+    is_civitai = hostname in {"civitai.com", "civitai.red"} or hostname.endswith(".civitai.com")
+
+    if is_huggingface and resolved_hf_token:
         headers["Authorization"] = f"Bearer {resolved_hf_token}"
         used_hf_token = True
-    elif ("civitai.com" in url or "civitai.red" in url) and resolved_civitai_token:
+    elif is_civitai and resolved_civitai_token:
         resolved_url = _append_query_param(url, "token", resolved_civitai_token)
         used_civitai_token = True
 

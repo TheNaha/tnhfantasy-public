@@ -36,6 +36,11 @@ def _normalize_server_url(server_address: str) -> str:
     return server_address
 
 
+def _comfy_auth_headers() -> dict[str, str]:
+    api_key = os.getenv("COMFYUI_API_KEY", "").strip()
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
 async def _connect_with_retry(
     ws_url: str,
     *,
@@ -48,7 +53,19 @@ async def _connect_with_retry(
 
     for attempt in range(max_retries):
         try:
-            return await websockets.connect(ws_url), websockets
+            auth_headers = _comfy_auth_headers()
+            if not auth_headers:
+                return await websockets.connect(ws_url), websockets
+            try:
+                return await websockets.connect(
+                    ws_url,
+                    additional_headers=auth_headers,
+                ), websockets
+            except TypeError:
+                return await websockets.connect(
+                    ws_url,
+                    extra_headers=auth_headers,
+                ), websockets
         except Exception as error:  # pragma: no cover - provider runtime dependent
             if attempt >= max_retries - 1:
                 raise
@@ -75,7 +92,12 @@ async def _queue_prompt(
 
     try:
         client = get_http_client()
-        response = await client.post(endpoint, json=payload, timeout=10.0)
+        response = await client.post(
+            endpoint,
+            json=payload,
+            headers=_comfy_auth_headers(),
+            timeout=10.0,
+        )
         response.raise_for_status()
         response_data = response.json()
     except httpx.HTTPStatusError as error:
@@ -105,7 +127,11 @@ async def _get_history(server_address: str, prompt_id: str) -> tuple[Dict[str, A
     endpoint = f"{server_address}/history/{prompt_id}"
     try:
         client = get_http_client()
-        response = await client.get(endpoint, timeout=10.0)
+        response = await client.get(
+            endpoint,
+            headers=_comfy_auth_headers(),
+            timeout=10.0,
+        )
         response.raise_for_status()
         history = response.json()
     except Exception as error:
@@ -188,7 +214,11 @@ async def _collect_images_via_view_api(
             url = f"{server_address}/view?filename={urllib.parse.quote(filename)}&subfolder={urllib.parse.quote(subfolder)}&type={urllib.parse.quote(folder_type)}"
 
             try:
-                response = await client.get(url, timeout=view_timeout_seconds)
+                response = await client.get(
+                    url,
+                    headers=_comfy_auth_headers(),
+                    timeout=view_timeout_seconds,
+                )
                 response.raise_for_status()
                 data = response.content
                 b64_data = base64.b64encode(data).decode('utf-8')
@@ -308,7 +338,11 @@ async def execute_comfy_workflow(
                 _log(logger, logging.ERROR, f"Workflow websocket closed unexpectedly: {error}")
                 try:
                     client = get_http_client()
-                    await client.post(f"{_normalize_server_url(server_address)}/interrupt", timeout=5.0)
+                    await client.post(
+                        f"{_normalize_server_url(server_address)}/interrupt",
+                        headers=_comfy_auth_headers(),
+                        timeout=5.0,
+                    )
                 except Exception as e:
                     _log(logger, logging.ERROR, f"Failed to send interrupt after connection closed: {e}")
 
@@ -379,7 +413,11 @@ async def execute_comfy_workflow(
         _log(logger, logging.INFO, "Workflow execution cancelled. Interrupting ComfyUI.")
         try:
             client = get_http_client()
-            await client.post(f"{_normalize_server_url(server_address)}/interrupt", timeout=5.0)
+            await client.post(
+                f"{_normalize_server_url(server_address)}/interrupt",
+                headers=_comfy_auth_headers(),
+                timeout=5.0,
+            )
         except Exception as e:
             _log(logger, logging.ERROR, f"Failed to send interrupt: {e}")
         raise

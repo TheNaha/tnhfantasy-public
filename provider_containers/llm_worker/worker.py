@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(
                 auto_discovery_loop(
                     provider_id=PROVIDER_ID,
-                    provider_type=ENGINE,
+                    provider_type="modal_llm" if ENGINE == "modal" else ENGINE,
                     backend_url=BACKEND_URL,
                     interval_seconds=60,
                     worker_type="llm",

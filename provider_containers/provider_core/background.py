@@ -50,11 +50,15 @@ async def auto_discovery_loop(
                 "hostname": hostname
             }
             
+            discovery_headers = {}
+            discovery_token = os.getenv("COMFY_DISCOVERY_TOKEN", "").strip()
+            if discovery_token:
+                discovery_headers["X-Discovery-Token"] = discovery_token
             if http_client:
-                response = await http_client.post(discovery_url, json=payload, timeout=30.0)
+                response = await http_client.post(discovery_url, json=payload, headers=discovery_headers, timeout=30.0)
             else:
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(discovery_url, json=payload)
+                    response = await client.post(discovery_url, json=payload, headers=discovery_headers)
                     
             if response.status_code in (200, 201):
                 pass # Silent success
@@ -100,7 +104,7 @@ async def reconciliation_loop(
     
     while True:
         try:
-            reconcile_url = f"{backend_url}/api/providers/{provider_id}/reconcile?force=true"
+            reconcile_url = f"{backend_url}/api/v2/providers/{provider_id}/reconcile?force=true"
             logger.info(f"[Worker Reconciliation] Attempting to reconcile (force override)...")
             
             if http_client:

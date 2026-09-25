@@ -51,8 +51,9 @@ class ProviderLifecycleService:
         container = await container_manager.start_container(
             provider_id=provider_id,
             provider_type=provider.type,
-            port=container_config["port"],
+            port=container_config.get("port", 8000),
             env_vars=self.provider_service.build_provider_environment(provider),
+            container_name=container_config.get("container_name"),
         )
         self.invalidate_caches(provider_id)
         await emit_provider_event(
@@ -102,7 +103,9 @@ class ProviderLifecycleService:
 
     async def get_container_status(self, provider_id: str) -> dict[str, Any]:
         container_manager = self._require_container_manager()
-        container_name = provider_container_name(provider_id)
+        provider = await self.provider_service.get_provider(provider_id)
+        container_config = provider.container_config or {}
+        container_name = container_config.get("container_name") or provider_container_name(provider_id)
 
         try:
             container = await asyncio.to_thread(container_manager.client.containers.get, container_name)
@@ -121,7 +124,7 @@ class ProviderLifecycleService:
             if health_status:
                 healthy = health_status == "healthy"
             else:
-                port = container.ports.get("8000/tcp")
+                port = container.ports.get(f"{container_config.get('port', 8000)}/tcp")
                 if port:
                     host_port = port[0].get("HostPort")
                     if host_port:
@@ -188,6 +191,9 @@ class ProviderLifecycleService:
             ),
             "result": result,
         }
+
+    async def sync_provider_models(self, provider_id: str) -> dict[str, Any]:
+        return await self.trigger_reconciliation(provider_id, force=True, quick_sync=True)
 
     async def trigger_reconciliation(self, provider_id: str, force: bool = False, quick_sync: bool = False) -> dict[str, Any]:
         provider = await self.provider_service.get_provider(provider_id)

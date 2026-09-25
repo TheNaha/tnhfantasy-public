@@ -22,7 +22,7 @@ from provider_core.http_client import get_http_client, close_http_client
 
 ENGINE = os.getenv("ENGINE", "modal").lower()
 PROVIDER_ID = os.getenv("PROVIDER_ID", f"{ENGINE}-worker")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8002")
 
 # Worker settings
 MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))

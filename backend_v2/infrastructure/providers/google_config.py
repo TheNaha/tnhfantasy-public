@@ -17,7 +17,8 @@ class GoogleProvider(LLMClientGracefulStubMixin, ServerlessProvider):
     def __init__(self, provider_id: str, config: dict[str, Any]):
         super().__init__(provider_id, config)
 
-        self.container_port = 8000
+        runtime = config.get("runtime_config") or {}
+        self.container_port = int(runtime.get("port") or config.get("port") or 8000)
         self.container_name = provider_container_name(provider_id)
         self.worker_url = get_provider_worker_base_url(provider_id, self.container_port)
 
@@ -40,8 +41,8 @@ def build_google_env_vars(credentials: dict[str, Any], config: dict[str, Any]) -
     env_vars["ENGINE"] = "google"
     if config.get("id"):
         env_vars["PROVIDER_ID"] = config["id"]
-    from config import settings
-    env_vars["BACKEND_URL"] = settings.worker_backend_url
+    from config import get_worker_backend_url
+    env_vars["BACKEND_URL"] = get_worker_backend_url()
 
     if credentials.get("api_key"):
         env_vars["GOOGLE_API_KEY"] = credentials["api_key"]

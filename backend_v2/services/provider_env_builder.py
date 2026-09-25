@@ -26,8 +26,8 @@ def build_provider_environment(provider: Provider) -> dict[str, str]:
     env_vars: dict[str, str] = {}
     env_vars["PROVIDER_ID"] = provider.id
 
-    from config import settings
-    env_vars["BACKEND_URL"] = settings.worker_backend_url
+    from config import get_worker_backend_url
+    env_vars["BACKEND_URL"] = get_worker_backend_url()
 
     worker_config = clean_dict(runtime_config.get("worker"))
     if "max_concurrent_downloads" in worker_config:

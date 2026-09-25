@@ -49,7 +49,7 @@ def _get_ws_cors_origins():
 # Create Socket.IO server with CORS support
 sio = socketio.AsyncServer(
     async_mode='asgi',
-    cors_allowed_origins='*',
+    cors_allowed_origins=_get_ws_cors_origins(),
     logger=False,
     engineio_logger=False,
     ping_timeout=120,
@@ -59,7 +59,10 @@ sio = socketio.AsyncServer(
 
 # Track connected clients and their subscriptions
 connected_clients: dict[str, set[str]] = {}  # sid -> set of rooms
-WS_BROADCAST_QUEUE_SIZE = max(int(os.getenv("COMFY_WS_BROADCAST_QUEUE_SIZE", "500")), 1)
+try:
+    WS_BROADCAST_QUEUE_SIZE = max(int(os.getenv("COMFY_WS_BROADCAST_QUEUE_SIZE", "500")), 1)
+except (TypeError, ValueError):
+    WS_BROADCAST_QUEUE_SIZE = 500
 
 
 class WebSocketManager:
@@ -156,6 +159,7 @@ async def subscribe(sid, data):
     if not topics and 'topic' in data:
         topics = [data['topic']]
     
+    topics = [topic for topic in topics if topic in {"job", "download", "provider", "reconciliation", "model"}]
     for topic in topics:
         await sio.enter_room(sid, topic)
         connected_clients.setdefault(sid, set()).add(topic)

@@ -72,7 +72,7 @@ Containers with `BACKEND_URL` set will self-register via `POST /api/v2/providers
 
 **Option B: Backend API**
 ```bash
-curl -X POST http://localhost:8002/api/providers \
+curl -X POST http://localhost:8002/api/v2/providers \
   -H "Content-Type: application/json" \
   -d '{
     "id": "modal-primary",
@@ -105,7 +105,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
 
 Or use Docker Compose from the project root:
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
 ```
 
 The backend will automatically:
@@ -131,7 +131,7 @@ abc123...      tnhcomfy-modal-account1   0.0.0.0:8001->8000/tcp
 Submit a job and watch the load balancer distribute across providers:
 
 ```bash
-curl http://localhost:8002/api/providers/
+curl http://localhost:8002/api/v2/providers/
 ```
 
 Should return both providers.

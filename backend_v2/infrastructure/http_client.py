@@ -2,6 +2,8 @@
 # Provides a singleton httpx AsyncClient for efficient connection reuse
 
 from contextlib import asynccontextmanager
+import os
+from urllib.parse import urlparse
 
 import httpx
 
@@ -13,6 +15,23 @@ logger = http_logger()
 _client: httpx.AsyncClient | None = None
 
 
+class _ProviderTokenClient(httpx.AsyncClient):
+    async def request(self, method, url, **kwargs):
+        token = os.getenv("PROVIDER_WORKER_TOKEN", "").strip()
+        if token:
+            hostname = (urlparse(str(url)).hostname or "").lower()
+            allowed_hosts = {
+                host.strip().lower()
+                for host in os.getenv("COMFY_WORKER_HOSTS", "").split(",")
+                if host.strip()
+            }
+            if hostname.startswith("tnhcomfy-") or hostname in allowed_hosts:
+                headers = dict(kwargs.pop("headers", {}) or {})
+                headers.setdefault("X-Provider-Token", token)
+                kwargs["headers"] = headers
+        return await super().request(method, url, **kwargs)
+
+
 def get_http_client() -> httpx.AsyncClient:
     """
     Get or create the singleton HTTP client with connection pooling.
@@ -22,7 +41,7 @@ def get_http_client() -> httpx.AsyncClient:
     """
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(
+        _client = _ProviderTokenClient(
             # Connection pooling limits
             limits=httpx.Limits(
                 max_keepalive_connections=20,  # Keep up to 20 connections alive
@@ -70,7 +89,7 @@ async def get_streaming_client(timeout: float = 600.0):
     Yields:
         httpx.AsyncClient configured for streaming
     """
-    async with httpx.AsyncClient(
+    async with _ProviderTokenClient(
         limits=httpx.Limits(
             max_keepalive_connections=5,
             max_connections=10,

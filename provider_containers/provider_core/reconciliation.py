@@ -152,7 +152,7 @@ async def push_reconciliation_event(
         message: Optional status message
         http_client: Optional shared HTTP client
     """
-    url = f"{backend_url}/api/providers/{provider_id}/reconciliation-event"
+    url = f"{backend_url}/api/v2/providers/{provider_id}/reconciliation-event"
     payload = {
         "status": status,
         "phase": phase,
