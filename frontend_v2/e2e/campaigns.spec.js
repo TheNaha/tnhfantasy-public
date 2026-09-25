@@ -142,7 +142,7 @@ test.describe('Campaigns (World Vault)', () => {
 
     await expectToast(page, /Campaign created/);
 
-    const all = await apiGet(page, '/v2/campaigns');
+    const all = await apiGet(page, '/campaigns');
     const saved = all.find((c) => c.name === name);
     expect(saved, 'created campaign must exist via API').toBeTruthy();
     expect(saved.character_ids).toContain(character.id);
@@ -189,7 +189,7 @@ test.describe('Campaigns (World Vault)', () => {
     await expectToast(page, /Campaign updated/);
     await expect(campaignCard(page, newName)).toBeVisible({ timeout: 10000 });
 
-    const saved = await apiGet(page, `/v2/campaigns/${campaign.id}`);
+    const saved = await apiGet(page, `/campaigns/${campaign.id}`);
     expect(saved.name).toBe(newName);
     expect(saved.description).toBe('An updated chronicle.');
   });
@@ -209,7 +209,7 @@ test.describe('Campaigns (World Vault)', () => {
     await expectToast(page, /Campaign deleted/);
     await expect(campaignCard(page, campaign.name)).toHaveCount(0);
 
-    const all = await apiGet(page, '/v2/campaigns');
+    const all = await apiGet(page, '/campaigns');
     expect(all.some((c) => c.name === campaign.name)).toBe(false);
   });
 });

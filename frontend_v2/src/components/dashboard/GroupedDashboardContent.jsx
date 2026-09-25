@@ -8,7 +8,7 @@ import ImageGroup from './ImageGroup';
 import JobCard from './JobCard';
 import ProgressiveImage from '../ProgressiveImage';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
-import { assetUrl, thumbUrl } from '../../utils/assetUrl';
+import { assetUrl, thumbUrl, assetPath } from '../../utils/assetUrl';
 import { formatTimestamp } from '../../utils/dateTime';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 
@@ -19,7 +19,7 @@ import { useWindowVirtualizer } from '@tanstack/react-virtual';
 const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, selectionMode, isFavorite, toggleSelection, handleImageClick, handleToggleFavorite }) {
     const onCardClick = useCallback(() => {
         if (selectionMode) {
-            toggleSelection(item.name);
+            toggleSelection(assetPath(item));
         } else {
             handleImageClick(item);
         }
@@ -27,8 +27,8 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
 
     const onFavoriteClick = useCallback((event) => {
         event.stopPropagation();
-        handleToggleFavorite(item.name);
-    }, [handleToggleFavorite, item.name]);
+        handleToggleFavorite(assetPath(item));
+    }, [handleToggleFavorite, item]);
 
     return (
         <div
@@ -40,8 +40,8 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
             <div className="w-full h-full relative">
                 <ProgressiveImage
                     blurhash={item.blurhash}
-                    src={assetUrl(item.name)}
-                    medium={item.thumbnail_medium || thumbUrl(item.name)}
+                    src={assetUrl(assetPath(item))}
+                    medium={item.thumbnail_medium || thumbUrl(assetPath(item))}
                     alt={item.name}
                     size="medium"
                     className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
@@ -120,8 +120,8 @@ const ListImageGroupCard = memo(function ListImageGroupCard({ item, selected, se
                 <div className="relative bg-[#0B0E14] rounded-xl overflow-hidden group-hover:ring-2 ring-blue-500/30 transition-all">
                     <ProgressiveImage
                         blurhash={item.images[0].blurhash}
-                        src={assetUrl(item.images[0].name)}
-                        medium={item.images[0].thumbnail_medium || thumbUrl(item.images[0].name)}
+                        src={assetUrl(assetPath(item.images[0]))}
+                        medium={item.images[0].thumbnail_medium || thumbUrl(assetPath(item.images[0]))}
                         alt={item.images[0].name}
                         size="medium"
                         aspectRatio="auto"
@@ -148,7 +148,7 @@ const ListImageGroupCard = memo(function ListImageGroupCard({ item, selected, se
 const ListSingleImageCard = memo(function ListSingleImageCard({ item, selected, selectionMode, handleImageClick, toggleSelection }) {
     const onCardClick = useCallback(() => {
         if (selectionMode) {
-            toggleSelection(item.name);
+            toggleSelection(assetPath(item));
         } else {
             handleImageClick(item);
         }
@@ -180,8 +180,8 @@ const ListSingleImageCard = memo(function ListSingleImageCard({ item, selected, 
             >
                 <ProgressiveImage
                     blurhash={item.blurhash}
-                    src={assetUrl(item.name)}
-                    medium={item.thumbnail_medium || thumbUrl(item.name)}
+                    src={assetUrl(assetPath(item))}
+                    medium={item.thumbnail_medium || thumbUrl(assetPath(item))}
                     alt={item.name}
                     size="medium"
                     aspectRatio="auto"
@@ -242,7 +242,7 @@ export default memo(function GroupedDashboardContent({
 }) {
     // ⚡ Bolt: Use a stable callback to prevent re-renders in memoized ImageGroup components
     const handleImageGroupSelection = useCallback((images) => {
-        images.forEach((image) => toggleSelection(image.name));
+        images.forEach((image) => toggleSelection(assetPath(image)));
     }, [toggleSelection]);
 
     const virtualizer = useWindowVirtualizer({

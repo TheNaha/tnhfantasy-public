@@ -269,7 +269,7 @@ export default function Providers() {
                 </div>
             ) : filteredProviders.length > 0 ? (
                 <div className="space-y-8">
-                    {filteredProviders.some(p => p.type !== 'llm') && (
+                    {filteredProviders.some(p => p.worker_type !== 'llm') && (
                         <div>
                             <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">Image Workers</h2>
                             <div className="space-y-4">

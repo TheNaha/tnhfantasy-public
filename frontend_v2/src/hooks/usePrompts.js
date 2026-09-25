@@ -80,8 +80,8 @@ export function useCreatePrompt() {
 export function useUpdatePrompt() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: async ({ id, updates }) => {
-            return promptsApi.updatePrompt(id, updates);
+        mutationFn: async ({ id, updates, ...inlineUpdates }) => {
+            return promptsApi.updatePrompt(id, updates ?? inlineUpdates);
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['prompts'] });
@@ -104,8 +104,8 @@ export function useDeletePrompt() {
 export function useImportPrompts() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: async (jsonString) => {
-            const imported = JSON.parse(jsonString);
+        mutationFn: async (payload) => {
+            const imported = typeof payload === 'string' ? JSON.parse(payload) : payload;
             if (!Array.isArray(imported)) {
                 throw new Error('Invalid format: expected array');
             }

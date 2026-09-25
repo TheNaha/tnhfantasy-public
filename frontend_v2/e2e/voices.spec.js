@@ -76,7 +76,7 @@ test.describe('Voices (World Vault)', () => {
     await expect(card).toContainText(`Profile: ${profile}`);
     await expect(card).toContainText(`Preview: "${preview}"`);
 
-    const all = await apiGet(page, '/v2/voices');
+    const all = await apiGet(page, '/voices');
     const saved = all.find((v) => v.name === name);
     expect(saved, 'created voice must exist via API').toBeTruthy();
     expect(saved.type).toBe('xtts');
@@ -105,7 +105,7 @@ test.describe('Voices (World Vault)', () => {
     await expectToast(page, /Voice model updated/);
     await expect(voiceCard(page, newName)).toBeVisible({ timeout: 10000 });
 
-    const saved = await apiGet(page, `/v2/voices/${voice.id}`);
+    const saved = await apiGet(page, `/voices/${voice.id}`);
     expect(saved.name).toBe(newName);
     expect(saved.voice_profile).toBe('updated_speaker');
     expect(saved.preview_text).toBe('Updated preview line.');
@@ -127,7 +127,7 @@ test.describe('Voices (World Vault)', () => {
     await expectToast(page, /Voice model deleted/);
     await expect(voiceCard(page, voice.name)).toHaveCount(0);
 
-    const all = await apiGet(page, '/v2/voices');
+    const all = await apiGet(page, '/voices');
     expect(all.some((v) => v.name === voice.name)).toBe(false);
   });
 });

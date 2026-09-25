@@ -22,6 +22,24 @@ export function useStoryStreaming({
     const streamSafetyTimerRef = useRef(null);
 
     useEffect(() => {
+        let active = true;
+        queueMicrotask(() => {
+            if (!active) return;
+            setIsStreaming(false);
+            setIsIllustrating(false);
+            streamingRef.current = '';
+            streamingBaseRef.current = '';
+        });
+        return () => {
+            active = false;
+            if (streamSafetyTimerRef.current) {
+                window.clearTimeout(streamSafetyTimerRef.current);
+                streamSafetyTimerRef.current = null;
+            }
+        };
+    }, [activeStoryId, activeChapterId]);
+
+    useEffect(() => {
         isStreamingRef.current = isStreaming;
     }, [isStreaming]);
 

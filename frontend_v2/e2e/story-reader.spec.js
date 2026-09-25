@@ -27,7 +27,7 @@ test.afterEach(async ({ page }) => {
 
 // Publish a seeded story and return its public read URL.
 async function publishStory(page, storyId) {
-  const res = await apiPost(page, `/v2/stories/${storyId}/publish`);
+  const res = await apiPost(page, `/stories/${storyId}/publish`);
   return res.read_url;
 }
 

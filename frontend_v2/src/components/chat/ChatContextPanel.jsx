@@ -38,7 +38,11 @@ function ChatContextPanel() {
     const navigate = useNavigate();
 
     const onChatUpdate = (data) => handleChatUpdate(data);
-    const onCharacterPatch = (data) => patchCharacterMutation.mutate(data);
+    const onCharacterPatch = (data) => {
+        if (linkedCharacter?.id) {
+            patchCharacterMutation.mutate({ ...data, id: linkedCharacter.id });
+        }
+    };
     const onShowCharacterDetails = () => setShowCharacterDetails(true);
     const onShowScenes = () => setShowScenesModal(true);
 

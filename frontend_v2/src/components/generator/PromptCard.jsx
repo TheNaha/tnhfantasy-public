@@ -28,10 +28,10 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
                         <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded border border-blue-500/30">
                             {prompt.category}
                         </span>
-                        {prompt.usageCount > 0 && (
+                        {(prompt.usage_count ?? prompt.usageCount ?? 0) > 0 && (
                             <span className="text-xs text-gray-500 flex items-center gap-1">
                                 <TrendingUp size={12} />
-                                {prompt.usageCount}
+                                {prompt.usage_count ?? prompt.usageCount}
                             </span>
                         )}
                     </div>
@@ -133,7 +133,7 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
 
             {/* Metadata Footer */}
             <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500">
-                Created {new Date(prompt.createdAt).toLocaleDateString()}
+                Created {new Date(prompt.created_at ?? prompt.createdAt).toLocaleDateString()}
             </div>
         </div>
     );

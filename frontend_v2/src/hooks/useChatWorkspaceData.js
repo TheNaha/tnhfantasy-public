@@ -21,7 +21,7 @@ export function useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQue
     const { data: searchResults } = useSearchChats(chatSearchQuery);
     const { data: messagesData = [] } = useMessages(
         activeChatId,
-        { limit: messagePageCount * 100, offset: 0, branchId: activeBranch, search: messageSearch || null }
+        { limit: messagePageCount * 100, offset: 0, branchId: activeBranch, search: messageSearch || null, tail: true }
     );
     const { data: activeChat } = useChat(activeChatId);
     const { data: lorebooks = [] } = useLorebooks();

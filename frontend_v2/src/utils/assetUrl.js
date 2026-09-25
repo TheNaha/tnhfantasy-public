@@ -10,18 +10,36 @@
  * filenames containing spaces or other reserved characters.
  */
 
-const OUTPUT_PREFIX = "/api/view/output";
-const THUMBNAIL_PREFIX = "/api/thumbnail";
+import { getApiUrl } from '../api/config';
+
+function encodeAssetPath(filename) {
+  return String(filename)
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
 
 /** Full-resolution output asset URL. */
-export function assetUrl(filename) {
-  return `${OUTPUT_PREFIX}/${encodeURIComponent(filename)}`;
+export function assetPath(asset) {
+    if (typeof asset === 'string') return asset;
+    return asset?.relative_path || asset?.path || asset?.name || '';
 }
+
+function apiPath(path) {
+    const base = String(getApiUrl() || '').replace(/\/$/, '');
+    return `${base}${path}`;
+}
+
+export function assetUrl(filename) {
+    return apiPath(`/api/view/output/${encodeAssetPath(filename)}`);
+}
+
 
 /** Metadata (.json) URL for an output asset. */
 export function assetMetadataUrl(filename) {
-  return `${OUTPUT_PREFIX}/${encodeURIComponent(filename)}.json`;
+    return apiPath(`/api/view/output/${encodeAssetPath(filename)}.json`);
 }
+
 
 /**
  * Thumbnail URL for an output asset.
@@ -29,7 +47,8 @@ export function assetMetadataUrl(filename) {
  * @param {{size?: string}} [opts]  thumbnail size, e.g. "medium" (default)
  */
 export function thumbUrl(filename, { size = "medium" } = {}) {
-  return `${THUMBNAIL_PREFIX}/${size}/${encodeURIComponent(filename)}`;
+    return apiPath(`/api/thumbnail/${size}/${encodeAssetPath(filename)}`);
 }
+
 
 export default { assetUrl, assetMetadataUrl, thumbUrl };

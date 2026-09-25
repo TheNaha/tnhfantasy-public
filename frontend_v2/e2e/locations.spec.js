@@ -59,7 +59,7 @@ test.describe('Locations', () => {
     await expect(locationCard(page, name).getByText(tag, { exact: true })).toBeVisible();
 
     // Track the created row via API for cleanup.
-    const locations = await apiGet(page, '/v2/locations');
+    const locations = await apiGet(page, '/locations');
     const loc = locations.find((l) => l.name === name);
     expect(loc, 'created location must exist via API').toBeTruthy();
     expect(loc.tags).toContain(tag);
@@ -98,7 +98,7 @@ test.describe('Locations', () => {
 
     await expect(locationCard(page, seed.name).getByText(newDescription)).toBeVisible();
 
-    const fromApi = await apiGet(page, `/v2/locations/${seed.id}`);
+    const fromApi = await apiGet(page, `/locations/${seed.id}`);
     expect(fromApi.description).toBe(newDescription);
   });
 

@@ -59,8 +59,8 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
         if (searchQuery.trim()) {
             const lowerQuery = searchQuery.toLowerCase();
             filtered = filtered.filter(p =>
-                p.name.toLowerCase().includes(lowerQuery) ||
-                p.text.toLowerCase().includes(lowerQuery) ||
+                (p.name || '').toLowerCase().includes(lowerQuery) ||
+                (p.text || '').toLowerCase().includes(lowerQuery) ||
                 p.description?.toLowerCase().includes(lowerQuery) ||
                 p.tags?.some(tag => tag.toLowerCase().includes(lowerQuery))
             );

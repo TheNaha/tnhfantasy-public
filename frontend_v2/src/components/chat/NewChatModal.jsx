@@ -10,8 +10,8 @@ function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose 
     const [selectedPersonaId, setSelectedPersonaId] = useState('');
     const [storyTime, setStoryTime] = useState('');
     const [storyLocation, setStoryLocation] = useState('');
+    const [isCreating, setIsCreating] = useState(false);
 
-    /* eslint-disable react-hooks/set-state-in-effect */
     useEffect(() => {
         if (selectedCharacter) {
             setChatName(`Chat with ${selectedCharacter.name}`);
@@ -48,13 +48,22 @@ function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose 
             setStoryLocation('');
         }
     }, [selectedCharacter]);
-    /* eslint-enable react-hooks/set-state-in-effect */
 
     const toggleLorebook = (id) => {
         if (selectedLorebooks.includes(id)) {
             setSelectedLorebooks(selectedLorebooks.filter(l => l !== id));
         } else {
             setSelectedLorebooks([...selectedLorebooks, id]);
+        }
+    };
+
+    const handleCreate = async () => {
+        if (isCreating) return;
+        setIsCreating(true);
+        try {
+            await onCreate({ chatName: chatName.trim() || 'New Chat', characterId: selectedCharacter?.id || null, personaName: personaName.trim() || null, personaId: selectedPersonaId || null, storyTime, storyLocation, selectedLorebooks });
+        } finally {
+            setIsCreating(false);
         }
     };
 
@@ -163,8 +172,9 @@ function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose 
                         Cancel
                     </button>
                     <button 
-                        onClick={() => onCreate({ chatName: chatName.trim() || 'New Chat', characterId: selectedCharacter?.id || null, personaName: personaName.trim() || null, personaId: selectedPersonaId || null, storyTime, storyLocation, selectedLorebooks })}
-                        className="px-5 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-lg"
+                        onClick={handleCreate}
+                        disabled={isCreating}
+                        className="px-5 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-lg disabled:opacity-50"
                     >
                         Create
                     </button>

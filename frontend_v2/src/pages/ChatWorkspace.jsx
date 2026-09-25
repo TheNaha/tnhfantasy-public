@@ -59,7 +59,7 @@ function ChatWorkspaceLayout() {
     } = context;
 
     useEffect(() => {
-        if (searchParams.get('new') === '1' && !activeChatId) {
+        if (searchParams.get('new') === '1') {
             setShowNewChatModal(true);
             setSearchParams({}, { replace: true });
         }
@@ -258,7 +258,7 @@ function ChatWorkspaceLayout() {
                                 <ImageIcon size={16} className="text-purple-400" />
                                 {linkedCharacter?.name || 'Character'} Scenes
                             </h3>
-                            <button onClick={() => setShowScenesModal(false)} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                            <button type="button" aria-label="Close scenes gallery" onClick={() => setShowScenesModal(false)} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
                                 <X size={18} />
                             </button>
                         </div>

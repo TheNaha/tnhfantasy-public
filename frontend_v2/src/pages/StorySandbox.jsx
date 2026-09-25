@@ -165,6 +165,7 @@ export default function StorySandbox() {
     const { data: llmModels = [] } = useLLMAvailableModels();
     const { data: defaultLlmConfig } = useLLMDefaultProvider();
     const updateStory = useUpdateStory();
+    const updateStoryMutate = updateStory.mutate;
 
         const runLLMJob = useLLMJobResult();
     const { confirm } = useConfirmation();
@@ -219,7 +220,7 @@ export default function StorySandbox() {
             const mentions = [];
             let match;
             while ((match = regex.exec(editorContent)) !== null) {
-                mentions.push({ type: match[1], id: match[2] });
+                mentions.push({ type: match[2], id: match[3] });
             }
 
             const currentCharIds = activeStory.character_ids || [];
@@ -236,7 +237,7 @@ export default function StorySandbox() {
                 newLocIds.length !== currentLocIds.length;
 
             if (hasChanges) {
-                updateStory.mutate({
+                updateStoryMutate({
                     id: activeStoryId,
                     character_ids: newCharIds,
                     lorebook_ids: newLoreIds,
@@ -248,7 +249,7 @@ export default function StorySandbox() {
         return () => {
             if (resolveMentionsTimerRef.current) clearTimeout(resolveMentionsTimerRef.current);
         };
-    }, [editorContent, activeStoryId, activeStory, updateStory]);
+    }, [editorContent, activeStoryId, activeStory, updateStoryMutate]);
 
     const handleParseStoryComplete = async (text) => {
         setShowParseModal(false);
@@ -299,20 +300,25 @@ export default function StorySandbox() {
         if (activeChapterId !== loadedChapterIdRef.current) return;
 
         const currentContent = editorContent;
-        autoSaveTimerRef.current = setTimeout(() => {
+        autoSaveTimerRef.current = setTimeout(async () => {
             if (
                 activeChapterId &&
-                !isStreamingRef.current &&
-                currentContent === editorContent
+                activeChapterId === loadedChapterIdRef.current &&
+                !isStreamingRef.current
             ) {
-                updateChapter.mutate({
-                    storyId: activeStoryId,
-                    chapterId: activeChapterId,
-                    content: currentContent,
-                });
-                isDirtyRef.current = false;
+                try {
+                    await updateChapter.mutateAsync({
+                        storyId: activeStoryId,
+                        chapterId: activeChapterId,
+                        content: currentContent,
+                    });
+                    isDirtyRef.current = false;
+                } catch {
+                    toast.error('Chapter auto-save failed');
+                }
             }
         }, 2000);
+
         return () => clearTimeout(autoSaveTimerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [editorContent, activeChapterId, isStreaming, activeStoryId, updateChapter, activeChapter?.content]);
@@ -851,7 +857,9 @@ export default function StorySandbox() {
         if (!activeStoryId || !newTitle.trim()) return;
         try {
             await updateStory.mutateAsync({ id: activeStoryId, title: newTitle });
-        } catch { /* silent */ }
+        } catch {
+            toast.error('Failed to save story title');
+        }
     };
 
     const handleSaveImageToCollection = useCallback(async (collectionId, path) => {

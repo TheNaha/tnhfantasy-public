@@ -108,6 +108,9 @@ export function useAddModelToProviders() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['providers-page', 'providers'] });
+            queryClient.invalidateQueries({ queryKey: ['models', 'installed'] });
+            queryClient.invalidateQueries({ queryKey: ['model-directories'] });
+            queryClient.invalidateQueries({ queryKey: ['provider-models'] });
         },
     });
 }

@@ -140,7 +140,7 @@ test.describe('Settings & Configuration (Module F)', () => {
     });
 
     test('AI: LLM worker status reflects enabled providers', async ({ page }) => {
-        const providers = await apiGet(page, '/v2/llm/providers');
+        const providers = await apiGet(page, '/llm/providers');
         const enabled = providers.filter((p) => p.enabled);
 
         await page.goto('/settings');
@@ -158,12 +158,12 @@ test.describe('Settings & Configuration (Module F)', () => {
     test('AI: default LLM provider save flow updates backend, then restores', async ({ page }) => {
         let original = null;
         try {
-            original = await apiGet(page, '/v2/llm/default-provider');
+            original = await apiGet(page, '/llm/default-provider');
         } catch {
             original = null; // 404: no default configured yet
         }
 
-        const providers = await apiGet(page, '/v2/llm/providers');
+        const providers = await apiGet(page, '/llm/providers');
         const llmProviders = providers.filter((p) => p.worker_type === 'llm' || (p.provider_id || p.id || '').startsWith('llm'));
         const target = llmProviders.find((p) => (p.provider_id || p.id) === 'llm-local') ?? llmProviders[0];
         expect(target, 'an enabled LLM provider must exist on this stack').toBeTruthy();
@@ -177,11 +177,11 @@ test.describe('Settings & Configuration (Module F)', () => {
         await card.getByRole('button', { name: 'Save', exact: true }).click();
         await expectToast(page, /Default LLM provider updated/);
 
-        const saved = await apiGet(page, '/v2/llm/default-provider');
+        const saved = await apiGet(page, '/llm/default-provider');
         expect(saved.provider_id).toBe(targetId);
 
         if (original) {
-            await apiPut(page, '/v2/llm/default-provider', {
+            await apiPut(page, '/llm/default-provider', {
                 provider_id: original.provider_id,
                 model_id: original.model_id,
             });

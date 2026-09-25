@@ -39,8 +39,8 @@ export default function Prompts() {
         if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();
             filtered = filtered.filter(p =>
-                p.name.toLowerCase().includes(q) ||
-                p.text.toLowerCase().includes(q) ||
+                (p.name || '').toLowerCase().includes(q) ||
+                (p.text || '').toLowerCase().includes(q) ||
                 (p.category || '').toLowerCase().includes(q)
             );
         }
@@ -72,7 +72,11 @@ export default function Prompts() {
         }
     };
 
-    const handleToggleFavorite = async (prompt) => {
+    const handleToggleFavorite = async (promptOrId) => {
+        const prompt = typeof promptOrId === 'string'
+            ? prompts.find((candidate) => candidate.id === promptOrId)
+            : promptOrId;
+        if (!prompt) return;
         try {
             await updatePromptMutation.mutateAsync({ id: prompt.id, favorite: !prompt.favorite });
         } catch {

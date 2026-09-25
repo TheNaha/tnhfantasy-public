@@ -162,24 +162,32 @@ export const useSendMessage = () => {
     return useMutation({
         mutationFn: ({ chatId, message }) => api.post(`/api/v2/chats/${chatId}/messages`, message),
         onMutate: async ({ chatId, message }) => {
-            await queryClient.cancelQueries({ queryKey: ['world_vault', 'messages', chatId] });
-            const previous = queryClient.getQueryData(['world_vault', 'messages', chatId]);
-            queryClient.setQueryData(['world_vault', 'messages', chatId], (old) => [
+            const keyPrefix = ['world_vault', 'messages', chatId];
+            await queryClient.cancelQueries({ queryKey: keyPrefix });
+            const previous = queryClient.getQueriesData({ queryKey: keyPrefix });
+            const baseKey = ['world_vault', 'messages', chatId];
+            const basePrevious = queryClient.getQueryData(baseKey);
+            const optimisticMessage = {
+                id: `temp-${crypto.randomUUID()}`,
+                role: message.role,
+                content: message.content,
+                chat_id: chatId,
+                created_at: new Date().toISOString(),
+                optimistic: true,
+            };
+            queryClient.setQueriesData({ queryKey: keyPrefix }, (old) => [
                 ...(old || []),
-                {
-                    id: `temp-${crypto.randomUUID()}`,
-                    role: message.role,
-                    content: message.content,
-                    chat_id: chatId,
-                    created_at: new Date().toISOString(),
-                    optimistic: true,
-                },
+                optimisticMessage,
             ]);
-            return { previous };
+            queryClient.setQueryData(baseKey, [...(basePrevious || []), optimisticMessage]);
+            return { previous, basePrevious };
         },
         onError: (_, { chatId }, context) => {
-            if (context?.previous) {
-                queryClient.setQueryData(['world_vault', 'messages', chatId], context.previous);
+            context?.previous?.forEach(([key, data]) => queryClient.setQueryData(key, data));
+            if (context?.basePrevious !== undefined) {
+                queryClient.setQueryData(['world_vault', 'messages', chatId], context.basePrevious);
+            } else {
+                queryClient.removeQueries({ queryKey: ['world_vault', 'messages', chatId], exact: true });
             }
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', chatId] });
         },

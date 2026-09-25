@@ -799,6 +799,7 @@ export default function Characters() {
         deepLinkCharRef.current = targetChar;
         setEditingCharacter(deepLinkCharRef.current);
         setModalOpen(true);
+        window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
     }, [characters, editingCharacter?.id]);
 
     const filteredCharacters = useMemo(() => {

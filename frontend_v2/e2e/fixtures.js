@@ -1,7 +1,7 @@
 import { expect } from '@playwright/test';
 import zlib from 'node:zlib';
 
-const API_BASE = '/api';
+const API_BASE = '/api/v2';
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -160,7 +160,7 @@ function toDataUrl(pngBuffer) {
 // ---------------------------------------------------------------------------
 
 async function seedCharacter(page, overrides = {}) {
-  return apiPost(page, '/v2/characters', {
+  return apiPost(page, '/characters', {
     name: overrides.name || uniqueName('e2e-char'),
     description: overrides.description || 'A test character created by the e2e suite.',
     personality: overrides.personality || 'Friendly and curious.',
@@ -171,7 +171,7 @@ async function seedCharacter(page, overrides = {}) {
 }
 
 async function seedLorebook(page, overrides = {}) {
-  return apiPost(page, '/v2/lorebooks', {
+  return apiPost(page, '/lorebooks', {
     name: overrides.name || uniqueName('e2e-lorebook'),
     description: overrides.description || 'A test lorebook created by the e2e suite.',
     ...overrides,
@@ -179,7 +179,7 @@ async function seedLorebook(page, overrides = {}) {
 }
 
 async function seedLorebookEntry(page, lorebookId, overrides = {}) {
-  return apiPost(page, `/v2/lorebooks/${lorebookId}/entries`, {
+  return apiPost(page, `/lorebooks/${lorebookId}/entries`, {
     keys: ['testkey'],
     content: 'The test kingdom of E2ELAND is ruled by the Clockwork King.',
     ...overrides,
@@ -187,7 +187,7 @@ async function seedLorebookEntry(page, lorebookId, overrides = {}) {
 }
 
 async function seedChat(page, overrides = {}) {
-  return apiPost(page, '/v2/chats', {
+  return apiPost(page, '/chats', {
     name: overrides.name || uniqueName('e2e-chat'),
     persona_name: overrides.persona_name || 'Test User',
     ...overrides,
@@ -195,7 +195,7 @@ async function seedChat(page, overrides = {}) {
 }
 
 async function seedStory(page, overrides = {}) {
-  return apiPost(page, '/v2/stories', {
+  return apiPost(page, '/stories', {
     title: overrides.title || uniqueName('e2e-story'),
     description: overrides.description || 'A test story created by the e2e suite.',
     genre: overrides.genre || 'Fantasy',
@@ -204,14 +204,14 @@ async function seedStory(page, overrides = {}) {
 }
 
 async function seedStoryChapter(page, storyId, overrides = {}) {
-  return apiPost(page, `/v2/stories/${storyId}/chapters`, {
+  return apiPost(page, `/stories/${storyId}/chapters`, {
     title: overrides.title || 'Chapter 1',
     ...overrides,
   });
 }
 
 async function seedChatMessage(page, chatId, overrides = {}) {
-  return apiPost(page, `/v2/chats/${chatId}/messages`, {
+  return apiPost(page, `/chats/${chatId}/messages`, {
     role: overrides.role || 'char',
     content: overrides.content || uniqueName('e2e-message'),
     ...overrides,
@@ -219,7 +219,7 @@ async function seedChatMessage(page, chatId, overrides = {}) {
 }
 
 async function seedLocation(page, overrides = {}) {
-  return apiPost(page, '/v2/locations', {
+  return apiPost(page, '/locations', {
     name: overrides.name || uniqueName('e2e-location'),
     description: overrides.description || 'A misty valley where the gates of the test realm open.',
     atmosphere: overrides.atmosphere || 'Misty and quiet.',
@@ -229,7 +229,7 @@ async function seedLocation(page, overrides = {}) {
 }
 
 async function seedCampaign(page, overrides = {}) {
-  return apiPost(page, '/v2/campaigns', {
+  return apiPost(page, '/campaigns', {
     name: overrides.name || uniqueName('e2e-campaign'),
     description: overrides.description || 'A chronicle of the e2e realm.',
     character_ids: overrides.character_ids || [],
@@ -241,7 +241,7 @@ async function seedCampaign(page, overrides = {}) {
 }
 
 async function seedScenario(page, overrides = {}) {
-  return apiPost(page, '/v2/scenarios', {
+  return apiPost(page, '/scenarios', {
     name: overrides.name || uniqueName('e2e-scenario'),
     description: overrides.description || 'A test scenario created by the e2e suite.',
     prompt_template: overrides.prompt_template ?? 'You stand at the edge of the E2ELAND, where every choice echoes through the mist.',
@@ -250,7 +250,7 @@ async function seedScenario(page, overrides = {}) {
 }
 
 async function seedVoice(page, overrides = {}) {
-  return apiPost(page, '/v2/voices', {
+  return apiPost(page, '/voices', {
     name: overrides.name || uniqueName('e2e-voice'),
     description: overrides.description || 'A test voice model created by the e2e suite.',
     type: overrides.type || 'xtts',
@@ -313,23 +313,23 @@ async function seedModel(page, overrides = {}) {
     },
     selected_versions: [{ version_id: versionId, is_default: true }],
   };
-  return apiPost(page, '/v2/models', body);
+  return apiPost(page, '/models', body);
 }
 
 const DELETE_PATHS = {
-  chat: (id) => `/v2/chats/${id}`,
-  story: (id) => `/v2/stories/${id}`,
-  chapter: (id) => `/v2/stories/${id.split(':')[0]}/chapters/${id.split(':')[1]}`,
-  character: (id) => `/v2/characters/${id}`,
-  lorebook: (id) => `/v2/lorebooks/${id}`,
+  chat: (id) => `/chats/${id}`,
+  story: (id) => `/stories/${id}`,
+  chapter: (id) => `/stories/${id.split(':')[0]}/chapters/${id.split(':')[1]}`,
+  character: (id) => `/characters/${id}`,
+  lorebook: (id) => `/lorebooks/${id}`,
   collection: (id) => `/collections/${id}`,
   prompt: (id) => `/prompts/${id}`,
   job: (id) => `/jobs/${id}`,
-  model: (id) => `/v2/models/${id}`,
-  location: (id) => `/v2/locations/${id}`,
-  campaign: (id) => `/v2/campaigns/${id}`,
-  scenario: (id) => `/v2/scenarios/${id}`,
-  voice: (id) => `/v2/voices/${id}`,
+  model: (id) => `/models/${id}`,
+  location: (id) => `/locations/${id}`,
+  campaign: (id) => `/campaigns/${id}`,
+  scenario: (id) => `/scenarios/${id}`,
+  voice: (id) => `/voices/${id}`,
 };
 
 async function cleanupEntities(page, entities) {

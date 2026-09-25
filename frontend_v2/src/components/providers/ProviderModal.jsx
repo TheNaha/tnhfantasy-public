@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 
 const INPUT_CLASS = 'w-full rounded-lg border border-gray-700 bg-gray-800/80 px-4 py-3 text-white outline-none transition-colors focus:border-blue-500';
+const LLM_PROVIDER_TYPES = new Set(['ollama', 'openai_compat', 'anthropic', 'google', 'modal_llm']);
 
 function defaultDeployConfig(type) {
     if (type === 'beam') {
@@ -16,25 +17,13 @@ function defaultDeployConfig(type) {
         };
     }
     
-    if (type === 'llm-local') {
+    if (type === 'ollama' || type === 'openai_compat' || type === 'anthropic' || type === 'google' || type === 'modal_llm') {
         return {
             deploy_mode: 'manual',
         };
     }
 
-    if (type === 'llm-openai-compat') {
-        return {
-            deploy_mode: 'manual',
-        };
-    }
-
-    if (type === 'llm-anthropic') {
-        return {
-            deploy_mode: 'manual',
-        };
-    }
-
-    if (type === 'llm-google') {
+    if (type === 'direct_url' || type === 'remote_comfy') {
         return {
             deploy_mode: 'manual',
         };
@@ -50,7 +39,7 @@ function defaultDeployConfig(type) {
 function defaultRuntimeConfig() {
     return {
         mode: 'container',
-        port: 8001,
+        port: 8000,
     };
 }
 
@@ -80,27 +69,27 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
     const accountLabel = credentialSummary.account_label || null;
 
     const credentialFields = useMemo(() => {
-        if (formData.type === 'llm-local') {
+        if (formData.type === 'ollama') {
             return [
                 { key: 'endpoint_url', label: 'API Endpoint URL', type: 'text', placeholder: 'http://localhost:11434' },
                 { key: 'api_key', label: 'API Key (Optional)', type: 'password', placeholder: 'sk-...' },
             ];
         }
 
-        if (formData.type === 'llm-openai-compat') {
+        if (formData.type === 'openai_compat') {
             return [
                 { key: 'endpoint_url', label: 'API Base URL', type: 'text', placeholder: 'https://api.openai.com/v1' },
                 { key: 'api_key', label: 'API Key', type: 'password', placeholder: 'sk-...' },
             ];
         }
 
-        if (formData.type === 'llm-anthropic') {
+        if (formData.type === 'anthropic') {
             return [
                 { key: 'api_key', label: 'Anthropic API Key', type: 'password', placeholder: 'sk-ant-...' },
             ];
         }
 
-        if (formData.type === 'llm-google') {
+        if (formData.type === 'google') {
             return [
                 { key: 'api_key', label: 'Google AI API Key', type: 'password', placeholder: 'AIza...' },
             ];
@@ -115,10 +104,18 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
             ];
         }
 
-        if (formData.type === 'kaggle') {
+        if (formData.type === 'direct_url') {
             return [
-                { key: 'username', label: 'Kaggle Username', type: 'text', placeholder: 'kaggle-username' },
-                { key: 'api_key', label: 'Kaggle API Key', type: 'password', placeholder: 'kaggle-key' },
+                { key: 'comfy_url', label: 'ComfyUI URL', type: 'text', placeholder: 'http://localhost:8188' },
+                { key: 'comfyui_api_key', label: 'ComfyUI API Key (Optional)', type: 'password', placeholder: 'API key' },
+            ];
+        }
+
+        if (formData.type === 'remote_comfy') {
+            return [
+                { key: 'remote_agent_url', label: 'Remote Agent URL', type: 'text', placeholder: 'http://remote-agent:8001' },
+                { key: 'remote_agent_token', label: 'Remote Agent Token', type: 'password', placeholder: 'Agent token' },
+                { key: 'comfyui_api_key', label: 'ComfyUI API Key (Optional)', type: 'password', placeholder: 'API key' },
                 { key: 'hf_token', label: 'HuggingFace Token', type: 'password', placeholder: 'hf_...' },
                 { key: 'civitai_token', label: 'CivitAI Token', type: 'password', placeholder: 'CivitAI token' },
             ];
@@ -170,13 +167,13 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         const payload = {
             id: formData.id.trim(),
             type: formData.type,
-            worker_type: formData.type.startsWith('llm') ? 'llm' : 'image',
+            worker_type: LLM_PROVIDER_TYPES.has(formData.type) ? 'llm' : 'image',
             enabled: formData.enabled,
             priority: Number(formData.priority) || 1,
             runtime_config: enableRuntime
                 ? {
                     ...(formData.runtime_config || defaultRuntimeConfig()),
-                    port: Number(formData.runtime_config?.port || 8001),
+                    port: Number(formData.runtime_config?.port || 8000),
                 }
                 : null,
             deploy_config: {
@@ -186,6 +183,17 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         };
 
         const credentials = sanitizeCredentials(formData.credentials);
+        if (credentials.endpoint_url || credentials.comfy_url || credentials.remote_agent_url) {
+            payload.runtime_config = {
+                ...(payload.runtime_config || {}),
+                ...(credentials.endpoint_url ? { api_base: credentials.endpoint_url } : {}),
+                ...(credentials.comfy_url ? { comfy_url: credentials.comfy_url } : {}),
+                ...(credentials.remote_agent_url ? { remote_agent_url: credentials.remote_agent_url } : {}),
+            };
+            delete credentials.endpoint_url;
+            delete credentials.comfy_url;
+            delete credentials.remote_agent_url;
+        }
         if (!provider || Object.keys(credentials).length > 0) {
             payload.credentials = credentials;
         }
@@ -245,13 +253,15 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                     <optgroup label="Image Workers">
                                         <option value="modal">Modal (ComfyUI)</option>
                                         <option value="beam">Beam.cloud (ComfyUI)</option>
-                                        <option value="kaggle">Kaggle (ComfyUI)</option>
+                                        <option value="direct_url">Direct URL (ComfyUI)</option>
+                                        <option value="remote_comfy">Remote ComfyUI Agent</option>
                                     </optgroup>
                                     <optgroup label="LLM Workers">
-                                        <option value="llm-local">Local LLM Worker (Ollama / LM Studio)</option>
-                                        <option value="llm-openai-compat">OpenAI / OpenAI-Compatible API</option>
-                                        <option value="llm-anthropic">Anthropic (Claude)</option>
-                                        <option value="llm-google">Google AI (Gemini)</option>
+                                        <option value="ollama">Local LLM Worker (Ollama / LM Studio)</option>
+                                        <option value="openai_compat">OpenAI / OpenAI-Compatible API</option>
+                                        <option value="anthropic">Anthropic (Claude)</option>
+                                        <option value="google">Google AI (Gemini)</option>
+                                        <option value="modal_llm">Modal LLM</option>
                                     </optgroup>
                                 </select>
                             </Field>
@@ -335,7 +345,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                         <input
                                             type="number"
                                             min="1"
-                                            value={formData.runtime_config?.port || 8001}
+                                            value={formData.runtime_config?.port || 8000}
                                             onChange={(event) => updateRuntimeConfig({ port: Number(event.target.value) })}
                                             className={INPUT_CLASS}
                                         />

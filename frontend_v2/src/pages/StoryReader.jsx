@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Download, Share2, BookOpen, Play, Pause, FileDown } from 'lucide-react';
 import { api } from '../api';
+import { assetUrl } from '../utils/assetUrl';
 import toast from 'react-hot-toast';
 import ExportModal from '../components/story/ExportModal';
 
@@ -173,7 +174,7 @@ export default function StoryReader() {
                                     {ch.image_paths.map((img, i) => (
                                         <img
                                             key={i}
-                                            src={img.startsWith('/static') ? img : `/static/${img}`}
+                                            src={img.startsWith('/static') ? img : assetUrl(img)}
                                             alt={`Chapter ${ch.chapter_number} illustration`}
                                             className="rounded-lg border border-gray-700"
                                         />

@@ -72,14 +72,14 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
     });
     expect(entry.id).toBeTruthy();
 
-    const list = await apiGet(page, '/v2/lorebooks');
+    const list = await apiGet(page, '/lorebooks');
     const fromApi = list.find((l) => l.id === lorebook.id);
     expect(fromApi).toBeTruthy();
 
     await cleanupEntities(page, [{ kind: 'lorebook', id: lorebook.id }]);
     created.length = 0;
 
-    const after = await apiGet(page, '/v2/lorebooks');
+    const after = await apiGet(page, '/lorebooks');
     expect(after.find((l) => l.id === lorebook.id)).toBeFalsy();
   });
 
@@ -175,7 +175,7 @@ test.describe('World Vault Hub', () => {
   });
 
   test('seeded entities bump the dashboard count cards', async ({ page }) => {
-    const before = await apiGet(page, '/v2/world-vault/entities');
+    const before = await apiGet(page, '/world-vault/entities');
     const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
     hubCreated.push({ kind: 'character', id: character.id });
     const story = await seedStory(page, { title: uniqueName('e2e-story') });

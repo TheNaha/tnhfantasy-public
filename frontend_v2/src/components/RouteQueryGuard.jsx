@@ -10,9 +10,13 @@ import { useStory } from '../hooks/useStories';
  * redirects to the collection's fallback path. Pass-through so it can wrap
  * route elements without owning their UI.
  */
-function RouteQueryGuard({ query, fallbackPath, message, children = null }) {
+function RouteQueryGuard({ query, fallbackPath, message, resetKey, children = null }) {
     const navigate = useNavigate();
     const notifiedRef = useRef(false);
+
+    useEffect(() => {
+        notifiedRef.current = false;
+    }, [resetKey]);
 
     useEffect(() => {
         if (query.isError && !notifiedRef.current) {
@@ -31,7 +35,7 @@ function RouteQueryGuard({ query, fallbackPath, message, children = null }) {
 export function ChatRouteGuard({ chatId, children = null }) {
     const query = useChat(chatId);
     return (
-        <RouteQueryGuard query={query} fallbackPath="/chat" message="Chat not found or no longer available">
+        <RouteQueryGuard query={query} resetKey={chatId} fallbackPath="/chat" message="Chat not found or no longer available">
             {children}
         </RouteQueryGuard>
     );
@@ -40,7 +44,7 @@ export function ChatRouteGuard({ chatId, children = null }) {
 export function StoryRouteGuard({ storyId, children = null }) {
     const query = useStory(storyId);
     return (
-        <RouteQueryGuard query={query} fallbackPath="/story" message="Story not found or no longer available">
+        <RouteQueryGuard query={query} resetKey={storyId} fallbackPath="/story" message="Story not found or no longer available">
             {children}
         </RouteQueryGuard>
     );

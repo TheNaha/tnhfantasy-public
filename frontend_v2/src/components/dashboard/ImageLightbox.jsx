@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { getProviderDisplayName } from '../../utils/providerUtils';
-import { assetUrl } from '../../utils/assetUrl';
+import { assetUrl, assetPath } from '../../utils/assetUrl';
 
 import { memo } from 'react';
 
@@ -25,6 +25,7 @@ export default memo(function ImageLightbox({
 
     // Use image from images array if available, otherwise use the single image prop
     const displayImage = images.length > 0 ? images[imgIndex] : image;
+    const displayPath = assetPath(displayImage);
     const hasMultiple = images.length > 1;
 
     // Sync internal index with external currentIndex prop
@@ -110,7 +111,7 @@ export default memo(function ImageLightbox({
                     )}
                     <ProgressiveImage
                         blurhash={displayImage.blurhash}
-                        src={assetUrl(displayImage.name)}
+                        src={assetUrl(displayPath)}
                         thumb={displayImage.thumb ? `${displayImage.thumb}` : null}
                         medium={displayImage.medium ? `${displayImage.medium}` : null}
                         alt={displayImage.name}
@@ -176,7 +177,7 @@ export default memo(function ImageLightbox({
 
                         <div className="flex gap-2">
                             <a
-                                href={assetUrl(displayImage.name)}
+                                href={assetUrl(displayPath)}
                                 download
                                 aria-label="Download image"
                                 className="flex-1 bg-gray-800 hover:bg-gray-700 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"
@@ -184,7 +185,7 @@ export default memo(function ImageLightbox({
                                 <Download size={16} /> Download
                             </a>
                             <button
-                                onClick={() => onDelete(displayImage.name)}
+                                onClick={() => onDelete(displayPath)}
                                 aria-label="Delete image"
                                 className="flex-1 bg-red-900/20 hover:bg-red-900/40 text-red-400 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"
                             >

@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
-import { assetMetadataUrl } from '../utils/assetUrl';
+import { assetMetadataUrl, assetPath } from '../utils/assetUrl';
 
 export function useSelectedImageState() {
     const [selectedImage, setSelectedImage] = useState(null);
 
     const { data: serverMetadata, isFetching } = useQuery({
-        queryKey: ['metadata', selectedImage?.name],
+        queryKey: ['metadata', assetPath(selectedImage)],
         queryFn: async () => {
-            const data = await api.get(assetMetadataUrl(selectedImage.name));
+            const data = await api.get(assetMetadataUrl(assetPath(selectedImage)));
             return data;
         },
         enabled: !!selectedImage,
@@ -42,11 +42,5 @@ export function useSelectedImageState() {
         };
     }, [selectedImage]);
 
-    return {
-        selectedImage,
-        metadata,
-        loadingMeta,
-        selectImage,
-        closeSelectedImage,
-    };
+    return { selectedImage, metadata, loadingMeta, selectImage, closeSelectedImage };
 }

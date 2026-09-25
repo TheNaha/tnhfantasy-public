@@ -81,6 +81,7 @@ export const useContinueChapter = () => {
             queryClient.setQueryData(['world_vault', 'stories', variables.storyId, 'chapters'], (old) =>
                 old?.map((ch) => ch.id === variables.chapterId ? { ...ch, _isStreaming: false } : ch)
             );
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
         },
     });
 };

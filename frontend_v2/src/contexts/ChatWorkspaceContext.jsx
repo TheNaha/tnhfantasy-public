@@ -89,12 +89,12 @@ export function ChatWorkspaceProvider({ children }) {
     }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
-        if (activeChatId && activeChatId !== urlChatId) {
+        if (urlChatId && activeChatId !== urlChatId) {
+            setActiveChatId(urlChatId);
+        } else if (!urlChatId && activeChatId) {
             navigate(`/chat/${activeChatId}`, { replace: true });
-        } else if (!activeChatId && urlChatId) {
-            navigate('/chat', { replace: true });
         }
-    }, [activeChatId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [activeChatId, urlChatId, navigate, setActiveChatId]);
 
     const [suggestJobId, setSuggestJobId] = useState(null);
     const suggestJobIdRef = useRef(null);
@@ -109,6 +109,19 @@ export function ChatWorkspaceProvider({ children }) {
             }
         };
     }, []);
+
+    const previousChatIdRef = useRef(activeChatId);
+    useEffect(() => {
+        if (previousChatIdRef.current && previousChatIdRef.current !== activeChatId) {
+            setMessage('');
+            setPendingAttachment(null);
+            setActiveCommand(null);
+            setTargetCharacterId('');
+            setMessageSearch('');
+            setActiveBranchState(null);
+        }
+        previousChatIdRef.current = activeChatId;
+    }, [activeChatId]);
 
     const [activeCommand, setActiveCommand] = useState(null);
     const [targetCharacterId, setTargetCharacterId] = useState('');
@@ -281,12 +294,8 @@ export function ChatWorkspaceProvider({ children }) {
             }
         }
 
-        setMessage('');
         const attachmentFilename = pendingAttachment?.filename || null;
-        setPendingAttachment(null);
-        
         const currentCommand = activeCommand;
-        setActiveCommand(null);
         
         let msgContent = msgContentRaw;
         let role = 'user';
@@ -314,12 +323,18 @@ export function ChatWorkspaceProvider({ children }) {
                 if (!arg) { toast.error("Provide a time"); return; }
                 try {
                     await updateChatMutation.mutateAsync({ chatId: chatIdToUse, story_time: arg });
+                    setMessage('');
+                    setPendingAttachment(null);
+                    setActiveCommand(null);
                 } catch { toast.error("Failed to update time"); }
                 return;
             } else if (cmd === '/location') {
                 if (!arg) { toast.error("Provide a location"); return; }
                 try {
                     await updateChatMutation.mutateAsync({ chatId: chatIdToUse, story_location: arg });
+                    setMessage('');
+                    setPendingAttachment(null);
+                    setActiveCommand(null);
                 } catch { toast.error("Failed to update location"); }
                 return;
             } else if (cmd === '/me' || cmd === '/action') {
@@ -328,6 +343,9 @@ export function ChatWorkspaceProvider({ children }) {
             } else if (cmd === '/suggest') {
                 try {
                     const res = await suggestReplyMutation.mutateAsync({ chatId: chatIdToUse, draft: arg || undefined });
+                    setMessage('');
+                    setPendingAttachment(null);
+                    setActiveCommand(null);
                     if (res.job_id) { setSuggestJobId(res.job_id); }
                 } catch { toast.error("Failed to generate suggestion"); }
                 return;
@@ -348,8 +366,12 @@ export function ChatWorkspaceProvider({ children }) {
                     generator_checkpoint: settings.generator?.defaultCheckpoint || null,
                     no_reply: noReply
                 }
-            });
+                });
+            setMessage('');
+            setPendingAttachment(null);
+            setActiveCommand(null);
             if (res.job_id) {
+
                 setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: chatIdToUse });
             }
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', chatIdToUse] });
@@ -377,7 +399,7 @@ export function ChatWorkspaceProvider({ children }) {
         }
     }, [activeChatId, message, suggestReplyMutation]);
 
-    const handleTextChange = (e) => {
+    const handleTextChange = useCallback((e) => {
         const val = e.target.value;
         if (!activeCommand && val.startsWith('/')) {
             const spaceIdx = val.indexOf(' ');
@@ -392,7 +414,7 @@ export function ChatWorkspaceProvider({ children }) {
             }
         }
         setMessage(val);
-    };
+    }, [activeCommand, setMessage]);
 
     const handleKeyDown = useCallback((e) => {
         if (e.key === 'Backspace' && message === '' && activeCommand) {
@@ -789,7 +811,7 @@ export function ChatWorkspaceProvider({ children }) {
         agenticMode,
         availableModels,
         avatarModalSrc,
-        canSend,
+        canSend: canSend(),
         characters,
         chatCollection,
         personas,

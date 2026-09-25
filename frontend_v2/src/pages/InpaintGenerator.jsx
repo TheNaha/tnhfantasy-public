@@ -225,7 +225,7 @@ export default function InpaintGenerator() {
                         progress={progress}
                         disabled={canGenerate}
                         onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
-                        onGenerate={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
+                        onGenerate={() => handleGenerate({ trackQueuedJob: true })}
                         label="Generate Inpaint"
                         gradientClass="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-lg shadow-purple-900/30"
                         progressBarClass="from-purple-400 to-pink-400"
@@ -257,7 +257,7 @@ export default function InpaintGenerator() {
                     progress={progress}
                     disabled={canGenerate}
                     onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
-                    onGenerate={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
+                    onGenerate={() => handleGenerate({ trackQueuedJob: true })}
                     label="Generate Inpaint"
                     gradientClass="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-lg shadow-purple-900/30"
                     progressBarClass="from-purple-400 to-pink-400"

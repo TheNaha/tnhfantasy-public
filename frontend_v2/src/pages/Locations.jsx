@@ -1,8 +1,10 @@
 import React, { useState, useMemo, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Edit3, Trash2, Search, MapPin, X, Upload, Image as ImageIcon, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../api';
+import { assetUrl } from '../utils/assetUrl';
 import {
     useLocations,
     useCreateLocation,
@@ -51,6 +53,7 @@ export default function Locations() {
     const [form, setForm] = useState(DEFAULT_FORM);
     const [tagInput, setTagInput] = useState('');
 
+    const queryClient = useQueryClient();
     const { data: locations = [], isLoading } = useLocations();
     const createMutation = useCreateLocation();
     const updateMutation = useUpdateLocation();
@@ -136,8 +139,8 @@ export default function Locations() {
             const formData = new FormData();
             formData.append('file', file);
             await api.post(`/api/v2/locations/${editingLocation.id}/image`, formData);
+            await queryClient.invalidateQueries({ queryKey: ['world_vault', 'locations'] });
             toast.success('Image uploaded');
-            window.location.reload();
         } catch {
             toast.error('Failed to upload image');
         } finally {
@@ -220,7 +223,7 @@ export default function Locations() {
                         >
                             {location.image_path && (
                                 <img
-                                    src={location.image_path.startsWith('/') ? location.image_path : `/static/${location.image_path}`}
+                                    src={location.image_path.startsWith('/static') ? location.image_path : assetUrl(location.image_path)}
                                     alt={location.name}
                                     className="w-full h-32 rounded-lg object-cover mb-3 border border-white/10"
                                 />
@@ -343,7 +346,7 @@ export default function Locations() {
                                         />
                                         {editingLocation.image_path ? (
                                             <img
-                                                src={editingLocation.image_path.startsWith('/') ? editingLocation.image_path : `/static/${editingLocation.image_path}`}
+                                                src={editingLocation.image_path.startsWith('/static') ? editingLocation.image_path : assetUrl(editingLocation.image_path)}
                                                 alt={editingLocation.name}
                                                 className="w-16 h-16 rounded-lg object-cover border border-white/10"
                                             />

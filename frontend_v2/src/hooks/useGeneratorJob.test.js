@@ -56,8 +56,27 @@ describe('useGeneratorJob', () => {
         expect(mockRunSubmission).toHaveBeenCalledTimes(1);
         expect(result.current.currentJobId).toBe('job-1');
         expect(toast.success).toHaveBeenCalledWith('Job queued!', { icon: '⏳' });
-        expect(mockNavigate).toHaveBeenCalledWith('/');
+        expect(mockNavigate).not.toHaveBeenCalled();
         expect(randomizeSeed).toHaveBeenCalled();
+    });
+
+    it('redirects after generation when the setting is enabled', async () => {
+        mockUseSettingsStore.mockImplementation((sel) =>
+            sel({ settings: { generator: { redirectAfterGenerate: true, redirectDelay: 0 } } })
+        );
+        const { result } = renderHook(() =>
+            useGeneratorJob({
+                runSubmission: mockRunSubmission,
+                type: 'simple',
+                setGeneratingOnQueue: false,
+            })
+        );
+
+        await act(async () => {
+            await result.current.handleGenerate();
+        });
+
+        expect(mockNavigate).toHaveBeenCalledWith('/');
     });
 
     it('silently queues (no progress, no job tracking) when setGeneratingOnQueue=false', async () => {

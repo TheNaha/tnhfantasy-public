@@ -37,7 +37,7 @@ test.describe('Character Vault (Module D)', () => {
     const nameInput = page.getByPlaceholder(/character name/i);
     await expect(nameInput).toBeVisible();
     await nameInput.fill('Updated Character Name');
-    await page.getByRole('button', { name: /update/i }).first().click();
+    await page.getByRole('button', { name: 'Update', exact: true }).click();
     await expectToast(page, /updated/i, 5000);
     await expect(page.getByRole('heading', { name: 'Updated Character Name' }).first()).toBeVisible();
   });
@@ -74,18 +74,21 @@ test.describe('Character Vault (Module D)', () => {
   });
 
   test('Delete Character', async ({ page }) => {
-    const character = await seedCharacter(page, { name: 'To Be Deleted' });
+    const name = uniqueName('to-be-deleted');
+    const character = await seedCharacter(page, { name });
     created.push({ kind: 'character', id: character.id });
 
     await page.goto('/characters');
-    await expect(page.getByRole('heading', { name: 'To Be Deleted' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 10000 });
 
-    const deleteBtn = page.getByRole('button', { name: /trash|delete/i }).first();
+    const characterCard = page.locator('div.glass-panel').filter({ has: page.getByRole('heading', { name }) }).first();
+    const deleteBtn = characterCard.getByTitle('Delete character');
     await expect(deleteBtn).toBeVisible({ timeout: 10000 });
-    await deleteBtn.click();
+    await deleteBtn.dispatchEvent('click');
+    await expect(page.getByText('Delete Character?')).toBeVisible({ timeout: 10000 });
 
-    const confirmBtn = page.getByRole('button', { name: 'Delete', exact: true });
-    await expect(confirmBtn).toBeVisible();
+    const confirmBtn = page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true });
+    await expect(confirmBtn).toBeVisible({ timeout: 10000 });
     await confirmBtn.click();
     await expectToast(page, /deleted/i, 5000);
   });

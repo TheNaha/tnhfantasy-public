@@ -158,7 +158,18 @@ const useSettingsStore = create(
         {
             // localStorage key – must be unique across all persisted stores
             name: 'comfyui-settings-storage',
-            version: 1
+            version: 1,
+            merge: (persistedState, currentState) => {
+                const persistedSettings = persistedState?.settings || {};
+                const settings = { ...currentState.settings };
+                for (const [category, defaults] of Object.entries(currentState.settings)) {
+                    const persistedCategory = persistedSettings[category];
+                    if (persistedCategory && typeof persistedCategory === 'object' && !Array.isArray(persistedCategory)) {
+                        settings[category] = { ...defaults, ...persistedCategory };
+                    }
+                }
+                return { ...currentState, settings };
+            }
         }
     )
 );

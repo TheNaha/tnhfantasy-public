@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { generateApi, ApiError } from '../api';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { useJobStatus } from '../hooks/useJobStatus';
+import { assetUrl } from '../utils/assetUrl';
 
 const PRESETS = {
     character_sheet: {
@@ -424,14 +425,15 @@ function BatchJobRow({ jobId, index, onSettled }) {
         }
     }, [job, status, jobId, onSettled]);
 
-    const imageName = job?.outputs?.[0]?.content;
+    const output = job?.outputs?.[0];
+    const imagePath = output?.relative_path || output?.filename || output?.name || output?.content;
 
     return (
         <div className="flex items-center gap-3 p-3 bg-gray-900/50 rounded-lg border border-white/5">
             <span className="text-xs text-gray-500 font-mono w-6">{index + 1}</span>
-            {imageName ? (
+            {imagePath ? (
                 <img
-                    src={`/api/view/output/${imageName}`}
+                    src={assetUrl(imagePath)}
                     alt={job.metadata?.prompt || 'Generated image'}
                     className="w-14 h-14 object-cover rounded-md border border-white/10"
                 />

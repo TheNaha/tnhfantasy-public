@@ -80,7 +80,7 @@ export default function SimpleGenerator() {
                     generating={generating}
                     progress={progress}
                     prompt={prompt}
-                    onGenerate={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
+                    onGenerate={() => handleGenerate({ trackQueuedJob: true })}
                     onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
                     onGenerateVariations={handleGenerateVariations}
                 />

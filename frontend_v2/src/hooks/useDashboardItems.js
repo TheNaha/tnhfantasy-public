@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer } from 'react';
 
 import { buildDashboardItems } from '../utils/dashboardItems';
 import { getItemTimelineDate, getLocalDateKey } from '../utils/dateTime';
+import { assetPath } from '../utils/assetUrl';
 
 const MAX_JOB_TIMELINE_ANCHORS = 1000;
 
@@ -84,12 +85,16 @@ export function useDashboardItems({
         // ⚡ Bolt: Pre-compute Set for O(1) lookups to prevent O(N^2) complexity during filtering
         if (activeCollection && collections[activeCollection]) {
             const collectionImagesSet = new Set(collections[activeCollection].images);
-            items = items.filter((item) => item.type === 'image' && collectionImagesSet.has(item.name));
+            items = items.filter((item) => item.type === 'image' && (
+                collectionImagesSet.has(item.name) || collectionImagesSet.has(assetPath(item))
+            ));
         }
 
         if (showFavorites) {
             const favoritesSet = new Set(favorites);
-            items = items.filter((item) => item.type === 'image' && favoritesSet.has(item.name));
+            items = items.filter((item) => item.type === 'image' && (
+                favoritesSet.has(item.name) || favoritesSet.has(assetPath(item))
+            ));
         }
 
         return items;

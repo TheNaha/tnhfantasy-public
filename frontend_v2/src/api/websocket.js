@@ -192,7 +192,6 @@ export async function subscribe(topics) {
         }
     });
 
-    // Ensure connected
     await connect();
 
     if (socket && topicsToSubscribe.length > 0) {
@@ -429,7 +428,9 @@ export const EventTypes = {
  * @param {string|string[]} topics - Topics to subscribe to
  * @returns {object} { isConnected, subscribe: fn, on: fn }
  */
-export function useWebSocket(topics = []) {
+const DEFAULT_TOPICS = [];
+
+export function useWebSocket(topics = DEFAULT_TOPICS) {
     const [connected, setConnected] = useState(isConnected);
     const topicArray = useMemo(() => (Array.isArray(topics) ? topics : [topics]), [topics]);
 

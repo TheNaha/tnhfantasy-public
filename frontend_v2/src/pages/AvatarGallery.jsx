@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, User, Images, MessageSquare, ExternalLink, Grid, LayoutGrid, Filter } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useCharacters, useCharacterCollection, useCharacterCollections, getAvatarUrl } from '../hooks/useWorldVault';
 import SceneGallery from '../components/SceneGallery';
 import EmptyState from '../components/EmptyState';
@@ -19,6 +20,7 @@ export default function AvatarGallery() {
     const { data: characters = [], isLoading } = useCharacters();
     const { data: characterCollections } = useCharacterCollections(characters.map(c => c.id));
     const navigate = useNavigate();
+    const setActiveChatId = useWorldVaultStore((state) => state.setActiveChat);
 
     const filteredCharacters = useMemo(() => {
         if (!searchQuery.trim()) return characters;
@@ -33,6 +35,7 @@ export default function AvatarGallery() {
     const handleChat = (characterId) => {
         // ChatWorkspaceContext auto-creates (or reuses) a chat for this
         // character when /chat is entered with location.state.characterId.
+        setActiveChatId(null);
         navigate('/chat', { state: { characterId } });
     };
 

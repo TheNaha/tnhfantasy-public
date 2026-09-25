@@ -31,8 +31,10 @@ export default React.memo(function StoryHeader({
                 </div>
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 min-w-0">
-                        <input
-                            type="text"
+      <input
+        key={`story-title-${activeStory?.id || 'none'}`}
+        type="text"
+
                             defaultValue={activeStory?.title || ''}
                             onBlur={onTitleChange}
                             className="bg-transparent font-semibold text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 rounded px-1 transition-all w-full truncate text-sm sm:text-base"

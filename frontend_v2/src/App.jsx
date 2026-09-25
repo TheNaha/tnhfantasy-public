@@ -145,6 +145,11 @@ function GlobalHooks() {
     // states so the user has at least a minimal signal that the operation
     // completed or failed.
     useEffect(() => {
+        let mounted = true;
+        const topics = ['download', 'model'];
+        ws.subscribe(topics).catch((error) => {
+            if (mounted) console.warn('Failed to subscribe global realtime topics:', error);
+        });
         const unsubs = [];
         const toastFor = (label, event) => {
             if (event.type?.endsWith('.completed')) {
@@ -164,7 +169,9 @@ function GlobalHooks() {
         unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_FAILED, (e) => toastFor('Model sync', e)));
 
         return () => {
+            mounted = false;
             unsubs.forEach((fn) => { try { fn(); } catch { /* ignore */ } });
+            ws.unsubscribe(topics);
         };
     }, []);
 

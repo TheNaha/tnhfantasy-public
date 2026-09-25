@@ -83,7 +83,10 @@ export function useGeneratorJob(opts = {}) {
             setCurrentJobId(null);
             toast.success('Generation complete!', { icon: '✨' });
             if (redirectAfterGenerate) {
-                redirectTimerRef.current = setTimeout(() => navigate('/'), redirectDelay);
+                redirectTimerRef.current = setTimeout(
+                    () => navigate('/'),
+                    Number.isFinite(Number(redirectDelay)) ? Number(redirectDelay) : 0,
+                );
             }
             return;
         }
@@ -114,7 +117,7 @@ export function useGeneratorJob(opts = {}) {
     }, [jobData, currentJobId, navigate, redirectAfterGenerate, redirectDelay]);
 
     // ---- Shared generate handler (port of Simple/Img2Img/Inpaint handleGenerate) ----
-    const handleGenerate = async ({ shouldRedirect = true, trackQueuedJob = true } = {}) => {
+    const handleGenerate = async ({ shouldRedirect = redirectAfterGenerate, trackQueuedJob = true } = {}) => {
         const validationError = validate ? validate() : null;
         if (validationError) {
             toast.error(validationError);

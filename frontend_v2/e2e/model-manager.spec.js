@@ -167,7 +167,7 @@ test.describe('Model manager — Installed', () => {
     await expectToast(page, /Deleted .* and synced providers/);
     await expect.poll(() => page.getByTitle(seed.name).count()).toBe(0);
 
-    const all = await apiGet(page, '/v2/models/all');
+    const all = await apiGet(page, '/models/all');
     expect(all.some((m) => m.name === seed.name), 'model should be gone via API').toBe(false);
 
     created.splice(created.findIndex((e) => e.id === seed.id), 1);

@@ -118,13 +118,13 @@ describe('StoryReader page', () => {
         expect(prose.querySelector('strong').textContent).toBe('a dragon');
     });
 
-    it('renders chapter illustrations with normalized static paths', async () => {
+    it('renders chapter illustrations with normalized asset paths', async () => {
         renderPage();
         await screen.findByText('The Dragon of Ashvale');
         const imgs = screen.getAllByAltText('Chapter 1 illustration');
         expect(imgs).toHaveLength(2);
         expect(imgs[0]).toHaveAttribute('src', '/static/dragon.png');
-        expect(imgs[1]).toHaveAttribute('src', '/static/cave.png');
+        expect(imgs[1]).toHaveAttribute('src', '/api/view/output/cave.png');
     });
 
     it('copies the share link and toasts success', async () => {

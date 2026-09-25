@@ -19,7 +19,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { on, EventTypes, getConnectionStatus } from '../api/websocket';
 
-const getJob = (event) => event?.job ?? event;
+const getJob = (event) => event?.data?.job ?? event?.job ?? event?.data ?? event;
+
+const getOutputText = (job) => {
+    const output = job?.outputs?.[0];
+    if (!output) return null;
+    if (typeof output === 'string') return output;
+    return output.text ?? output.content ?? output.result?.text ?? null;
+};
 
 /**
  * Await the text output of an already-submitted LLM job id.
@@ -44,7 +51,7 @@ export function awaitJobText({ jobId, queryClient = null, pollInterval = 1000, m
 
         const onCompleted = finish((event) => {
             const job = getJob(event);
-            resolve({ jobId, text: job?.outputs?.[0]?.content ?? null });
+            resolve({ jobId, text: getOutputText(job) });
         });
         const onFailed = finish(() => reject(new Error('LLM job failed')));
         const onCancelled = finish(() => resolve({ jobId, text: null, cancelled: true }));

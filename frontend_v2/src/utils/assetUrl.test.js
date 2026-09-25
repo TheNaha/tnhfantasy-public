@@ -9,6 +9,10 @@ describe('assetUrl', () => {
     it('URL-encodes the filename', () => {
         expect(assetUrl('my image.png')).toBe('/api/view/output/my%20image.png');
     });
+
+    it('preserves output subdirectories', () => {
+        expect(assetUrl('default_user/story/a b.png')).toBe('/api/view/output/default_user/story/a%20b.png');
+    });
 });
 
 describe('assetMetadataUrl', () => {

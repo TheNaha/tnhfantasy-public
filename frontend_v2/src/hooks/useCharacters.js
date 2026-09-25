@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { getApiUrl } from '../api/config';
 
 export const useCharacters = () => {
     return useQuery({
@@ -42,7 +43,7 @@ export const usePatchCharacter = () => {
 };
 
 export const getAvatarUrl = (characterId) =>
-    characterId ? `/api/v2/characters/${characterId}/avatar` : null;
+    characterId ? `${getApiUrl()}/api/v2/characters/${characterId}/avatar` : null;
 
 export const useUploadAvatar = () => {
     const queryClient = useQueryClient();
@@ -131,7 +132,7 @@ export const useAnimateCharacterAvatar = () => {
                 prompt,
                 checkpoint
             });
-            return response.data;
+            return response;
         },
         onSuccess: (data, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });

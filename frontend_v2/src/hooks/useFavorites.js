@@ -16,12 +16,12 @@ export function useFavorites() {
   });
 
   const mutation = useMutation({
+    scope: { id: 'favorites' },
     mutationFn: async (newFavorites) => {
       const res = await settingsApi.updateFavorites(newFavorites);
       return res.favorites;
     },
-    onMutate: async (newFavorites) => {
-      await queryClient.cancelQueries({ queryKey: ['favorites'] });
+    onMutate: (newFavorites) => {
       const previousFavorites = queryClient.getQueryData(['favorites']);
       queryClient.setQueryData(['favorites'], newFavorites);
       return { previousFavorites };
@@ -37,11 +37,11 @@ export function useFavorites() {
   const favorites = query.data || EMPTY_ARRAY;
 
   const toggleFavorite = useCallback((filename) => {
-    const current = favorites;
+    const current = queryClient.getQueryData(['favorites']) || favorites;
     const isFav = current.includes(filename);
     const newFavorites = isFav ? current.filter(f => f !== filename) : [...current, filename];
     mutation.mutate(newFavorites);
-  }, [favorites, mutation]);
+  }, [favorites, mutation, queryClient]);
 
   const isFavorite = useCallback((filename) => {
     return favorites.includes(filename);

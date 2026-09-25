@@ -14,6 +14,11 @@ export default function AddModelToProviderModal({ providers, onClose }) {
 
     const directories = PROVIDER_MODEL_DIRECTORIES;
 
+    const handleDirectoryChange = (event) => {
+        setDirectory(event.target.value);
+        setSelectedProviders([]);
+    };
+
     const toggleProvider = (providerId) => {
         setSelectedProviders(prev =>
             prev.includes(providerId)
@@ -24,7 +29,7 @@ export default function AddModelToProviderModal({ providers, onClose }) {
 
     const isLlmDir = directory.startsWith('models/llm');
     const filteredProviders = providers.filter(p => {
-        const isLlmProvider = p.type === 'llm-local';
+        const isLlmProvider = p.worker_type === 'llm' || ['llm-local', 'llm-openai-compat', 'llm-anthropic', 'llm-google', 'openai_compat', 'anthropic', 'google', 'ollama', 'modal_llm'].includes(p.type);
         return isLlmDir ? isLlmProvider : !isLlmProvider;
     });
 
@@ -104,7 +109,7 @@ export default function AddModelToProviderModal({ providers, onClose }) {
                         </label>
                         <select
                             value={directory}
-                            onChange={(e) => setDirectory(e.target.value)}
+                            onChange={handleDirectoryChange}
                             className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-blue-500 focus:outline-none"
                         >
                             {directories.map(dir => (

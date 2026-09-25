@@ -23,7 +23,7 @@ import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
 import ContextMenu, { createImageActions } from "../ContextMenu";
 import { getCheckpointDisplayName } from "../../utils/modelDisplay";
-import { assetMetadataUrl, assetUrl } from "../../utils/assetUrl";
+import { assetMetadataUrl, assetUrl, assetPath } from "../../utils/assetUrl";
 import { formatTimestamp } from "../../utils/dateTime";
 import { copyToClipboard } from "../../utils/clipboard";
 import {
@@ -45,8 +45,9 @@ const FeedCard = memo(function FeedCard({
   const reuseLockRef = useRef(false);
   const navigate = useNavigate();
   const settings = useSettingsStore((state) => state.settings);
-  const metadataEndpoint = assetMetadataUrl(item.name);
-  const imageEndpoint = assetUrl(item.name);
+  const itemPath = assetPath(item);
+  const metadataEndpoint = assetMetadataUrl(itemPath);
+  const imageEndpoint = assetUrl(itemPath);
   const detailsId = useId();
 
   // Lazy-load full metadata using React Query when user expands details, reuses, or remixes
@@ -55,14 +56,14 @@ const FeedCard = memo(function FeedCard({
   const [detailsLoading, setDetailsLoading] = useState(false);
 
   // If we already have it in the react-query cache, we can use it immediately.
-  const cachedMeta = queryClient.getQueryData(['metadata', item.name]);
+  const cachedMeta = queryClient.getQueryData(['metadata', itemPath]);
   const metadata = cachedMeta || item.metadata;
 
   const ensureMetadata = useCallback(async () => {
     if (metadata) return metadata;
     try {
       const data = await queryClient.fetchQuery({
-        queryKey: ['metadata', item.name],
+        queryKey: ['metadata', itemPath],
         queryFn: () => api.get(metadataEndpoint),
         staleTime: Infinity, // metadata doesn't change
       });
@@ -71,7 +72,7 @@ const FeedCard = memo(function FeedCard({
       if (error instanceof ApiError && error.status === 404) return null;
       throw error;
     }
-  }, [metadata, item.name, metadataEndpoint, queryClient]);
+  }, [metadata, itemPath, metadataEndpoint, queryClient]);
 
   const loadImageBlob = useCallback(async () => {
     const controller = new AbortController();
@@ -202,7 +203,7 @@ const FeedCard = memo(function FeedCard({
       navigate("/img2img", {
         state: {
           sourceImage: {
-            filename: item.name,
+            filename: itemPath,
             previewUrl,
             width: img.width,
             height: img.height,
@@ -214,7 +215,7 @@ const FeedCard = memo(function FeedCard({
     } catch {
       toast.error("Failed to load image");
     }
-  }, [item.name, loadImageBlob, navigate]);
+  }, [itemPath, loadImageBlob, navigate]);
 
   // Navigate to Inpaint with this image as source
   const handleInpaint = useCallback(async () => {
@@ -233,7 +234,7 @@ const FeedCard = memo(function FeedCard({
       navigate("/inpaint", {
         state: {
           sourceImage: {
-            filename: item.name,
+            filename: itemPath,
             previewUrl,
             width: img.width,
             height: img.height,
@@ -245,7 +246,7 @@ const FeedCard = memo(function FeedCard({
     } catch {
       toast.error("Failed to load image");
     }
-  }, [item.name, loadImageBlob, navigate]);
+  }, [itemPath, loadImageBlob, navigate]);
 
   const handleShowDetails = async () => {
     if (!showDetails && !metadata) {
@@ -257,7 +258,7 @@ const FeedCard = memo(function FeedCard({
   };
 
   const handleMoveAsset = useCallback(async () => {
-    const assetId = item.id || item.name;
+    const assetId = item.id || itemPath;
     const workspace = prompt("Move to workspace (leave empty to keep current):") || undefined;
     const ok = await confirm({
         title: 'Move Asset',
@@ -276,10 +277,10 @@ const FeedCard = memo(function FeedCard({
         toast.error("Failed to move asset");
       }
     }
-  }, [item, queryClient, confirm]);
+  }, [item, itemPath, queryClient, confirm]);
 
   const handleCopyAsset = useCallback(async () => {
-    const assetId = item.id || item.name;
+    const assetId = item.id || itemPath;
     const workspace = prompt("Copy to workspace (leave empty for current):") || undefined;
     const ok = await confirm({
         title: 'Copy Asset',
@@ -298,7 +299,7 @@ const FeedCard = memo(function FeedCard({
         toast.error("Failed to copy asset");
       }
     }
-  }, [item, queryClient, confirm]);
+  }, [item, itemPath, queryClient, confirm]);
 
   const checkpointDisplayName = getCheckpointDisplayName(metadata) || getCheckpointDisplayName(item) || "Unknown Model";
 
@@ -371,7 +372,7 @@ const FeedCard = memo(function FeedCard({
           },
           onViewParams: () => onClick(item),
           onRemix: handleRemix,
-          onDelete: () => onDelete(item.name),
+          onDelete: () => onDelete(itemPath),
           onMoveAsset: handleMoveAsset,
           onCopyAsset: handleCopyAsset,
         })}
@@ -379,7 +380,7 @@ const FeedCard = memo(function FeedCard({
         <div
           className="relative group cursor-pointer bg-black/50"
           onClick={() => {
-            if (selectionMode) onSelect(item.name);
+            if (selectionMode) onSelect(itemPath);
             else onClick(item);
           }}
         >

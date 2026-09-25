@@ -312,10 +312,14 @@ export default React.memo(function StoryContextPanel({
                         <Tag size={12} className="text-purple-400" /> Genre
                     </label>
                     <input
+                        key={`story-genre-${activeStory?.id || 'none'}`}
                         type="text"
-                        value={activeStory?.genre || ''}
-                        onChange={(e) => {
-                            onUpdateStory({ genre: e.target.value.trim() || null });
+                        defaultValue={activeStory?.genre || ''}
+                        onBlur={(e) => {
+                            const value = e.target.value.trim() || null;
+                            if (value !== (activeStory?.genre || null)) {
+                                onUpdateStory({ genre: value });
+                            }
                         }}
                         placeholder="e.g. Fantasy, Cyberpunk, Horror"
                         className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 transition-colors"
@@ -346,12 +350,16 @@ export default React.memo(function StoryContextPanel({
                     <div>
                         <label className="block text-[10px] text-gray-500 mb-1">Word count goal (optional)</label>
                         <input
+                            key={`story-word-count-${activeStory?.id || 'none'}`}
                             type="number"
                             min="0"
-                            value={activeStory?.word_count_goal ?? ''}
-                            onChange={(e) => {
-                                const v = parseInt(e.target.value, 10);
-                                onUpdateStory({ word_count_goal: Number.isFinite(v) && v > 0 ? v : null });
+                            defaultValue={activeStory?.word_count_goal ?? ''}
+                            onBlur={(e) => {
+                                const value = parseInt(e.target.value, 10);
+                                const nextValue = Number.isFinite(value) && value > 0 ? value : null;
+                                if (nextValue !== (activeStory?.word_count_goal ?? null)) {
+                                    onUpdateStory({ word_count_goal: nextValue });
+                                }
                             }}
                             placeholder="e.g. 50000"
                             className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 transition-colors"
@@ -366,9 +374,13 @@ export default React.memo(function StoryContextPanel({
                         Description
                     </label>
                     <textarea
-                        value={activeStory?.description || ''}
-                        onChange={(e) => {
-                            onUpdateStory({ description: e.target.value.trim() || null });
+                        key={`story-description-${activeStory?.id || 'none'}`}
+                        defaultValue={activeStory?.description || ''}
+                        onBlur={(e) => {
+                            const value = e.target.value.trim() || null;
+                            if (value !== (activeStory?.description || null)) {
+                                onUpdateStory({ description: value });
+                            }
                         }}
                         placeholder="A brief description of this story world..."
                         rows={3}
@@ -382,9 +394,13 @@ export default React.memo(function StoryContextPanel({
                         <PenTool size={12} className="text-amber-400" /> Memory (Author's Note)
                     </label>
                     <textarea
-                        value={activeStory?.memory || ''}
-                        onChange={(e) => {
-                            onUpdateStory({ memory: e.target.value.trim() || null });
+                        key={`story-memory-${activeStory?.id || 'none'}`}
+                        defaultValue={activeStory?.memory || ''}
+                        onBlur={(e) => {
+                            const value = e.target.value.trim() || null;
+                            if (value !== (activeStory?.memory || null)) {
+                                onUpdateStory({ memory: value });
+                            }
                         }}
                         placeholder="Persistent facts the AI should always remember (e.g. the protagonist is cursed to turn to stone at midnight)..."
                         rows={3}

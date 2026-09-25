@@ -123,7 +123,7 @@ export default function Img2ImgGenerator() {
                         progress={progress}
                         disabled={canGenerate}
                         onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
-                        onGenerate={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
+                        onGenerate={() => handleGenerate({ trackQueuedJob: true })}
                         label="Generate Img2Img"
                         gradientClass="bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white shadow-lg shadow-orange-900/30"
                         progressBarClass="from-orange-400 to-yellow-400"
@@ -149,7 +149,7 @@ export default function Img2ImgGenerator() {
                     progress={progress}
                     disabled={canGenerate}
                     onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
-                    onGenerate={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
+                    onGenerate={() => handleGenerate({ trackQueuedJob: true })}
                     label="Generate Img2Img"
                     gradientClass="bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white shadow-lg shadow-orange-900/30"
                     progressBarClass="from-orange-400 to-yellow-400"

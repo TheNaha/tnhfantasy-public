@@ -53,7 +53,7 @@ test.describe('Scenarios (World Vault)', () => {
     await expect(card).toContainText(description);
     await expect(card).toContainText(promptTemplate);
 
-    const all = await apiGet(page, '/v2/scenarios');
+    const all = await apiGet(page, '/scenarios');
     const saved = all.find((s) => s.name === name);
     expect(saved, 'created scenario must exist via API').toBeTruthy();
     expect(saved.description).toBe(description);
@@ -81,7 +81,7 @@ test.describe('Scenarios (World Vault)', () => {
     await card.getByTitle('Apply to chat or story').click();
     await expectToast(page, /Applied to story/);
 
-    const savedStory = await apiGet(page, `/v2/stories/${story.id}`);
+    const savedStory = await apiGet(page, `/stories/${story.id}`);
     expect(savedStory.scenario_id).toBe(scenario.id);
   });
 
@@ -105,7 +105,7 @@ test.describe('Scenarios (World Vault)', () => {
     await expectToast(page, /Scenario updated/);
     await expect(scenarioCard(page, newName)).toBeVisible({ timeout: 10000 });
 
-    const saved = await apiGet(page, `/v2/scenarios/${scenario.id}`);
+    const saved = await apiGet(page, `/scenarios/${scenario.id}`);
     expect(saved.name).toBe(newName);
     expect(saved.description).toBe('An updated description.');
     expect(saved.prompt_template).toBe('Updated: the mist has lifted.');
@@ -127,7 +127,7 @@ test.describe('Scenarios (World Vault)', () => {
     await expectToast(page, /Scenario deleted/);
     await expect(scenarioCard(page, scenario.name)).toHaveCount(0);
 
-    const all = await apiGet(page, '/v2/scenarios');
+    const all = await apiGet(page, '/scenarios');
     expect(all.some((s) => s.name === scenario.name)).toBe(false);
   });
 });

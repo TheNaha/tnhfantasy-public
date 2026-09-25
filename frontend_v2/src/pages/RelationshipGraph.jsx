@@ -344,7 +344,7 @@ export default function RelationshipGraph() {
     }, [edges, filteredNodes]);
 
     const handleSaveLayout = useCallback(() => {
-        const nodesToSave = filteredNodes.map(n => {
+        const nodesToSave = nodes.map(n => {
             const pos = positions.get(n.id);
             return {
                 entity_type: n.type,
@@ -356,7 +356,7 @@ export default function RelationshipGraph() {
         saveLayout.mutate({ name: 'default', nodes: nodesToSave }, {
             onSuccess: () => setHasUnsavedChanges(false),
         });
-    }, [filteredNodes, positions, saveLayout]);
+    }, [nodes, positions, saveLayout]);
 
     const handleResetLayout = useCallback(() => {
         window.location.reload();

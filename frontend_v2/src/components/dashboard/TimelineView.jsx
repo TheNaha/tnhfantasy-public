@@ -5,7 +5,7 @@ import ProgressiveImage from '../ProgressiveImage';
 import JobCard from './JobCard';
 import { getItemTimelineDate } from '../../utils/dateTime';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
-import { assetUrl } from '../../utils/assetUrl';
+import { assetUrl, assetPath } from '../../utils/assetUrl';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 
 /**
@@ -258,7 +258,7 @@ const TimelineImageCard = memo(function TimelineImageCard({
 
     const handleClick = () => {
         if (selectionMode) {
-            onToggleSelection?.(item.name);
+            onToggleSelection?.(assetPath(item));
         } else {
             onImageClick?.(item);
         }
@@ -277,7 +277,7 @@ const TimelineImageCard = memo(function TimelineImageCard({
                 <div className="relative flex-shrink-0 w-32 h-32 bg-gray-900 rounded-lg overflow-hidden">
                     <ProgressiveImage
                         blurhash={item.blurhash}
-                        src={assetUrl(item.name)}
+                        src={assetUrl(assetPath(item))}
                         thumb={item.thumb ? `${item.thumb}` : null}
                         medium={item.medium ? `${item.medium}` : null}
                         alt={item.name}
@@ -313,7 +313,7 @@ const TimelineImageCard = memo(function TimelineImageCard({
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            onToggleFavorite(item.name);
+                                            onToggleFavorite(assetPath(item));
                                         }}
                                         className="p-1.5 rounded-full hover:bg-gray-700 transition-colors"
                                         title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}

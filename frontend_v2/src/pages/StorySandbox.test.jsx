@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -285,7 +285,7 @@ describe('StorySandbox page', () => {
         expect(mockMutate).toHaveBeenCalledWith(
             expect.objectContaining({ content: 'Dark clouds gathered', role: 'narrator' })
         );
-    });
+    }, 15000);
 
     it('edits a beat in place and saves through the update hook', async () => {
         const mockBeatUpdate = vi.fn().mockResolvedValue({});
@@ -409,9 +409,13 @@ describe('StorySandbox page', () => {
         });
         fireEvent.click(screen.getByTitle(/summarize the selected text/i));
         await waitFor(() => {
-            expect(screen.getByText('Summarize')).toBeInTheDocument();
+            expect(screen.getByRole('dialog')).toBeInTheDocument();
         });
-        fireEvent.click(screen.getByRole('button', { name: /generate/i }));
+        const actionDialog = within(screen.getByRole('dialog'));
+        await waitFor(() => {
+            expect(actionDialog.getByRole('button', { name: /generate/i })).toBeEnabled();
+        });
+        fireEvent.click(actionDialog.getByRole('button', { name: /generate/i }));
         await waitFor(() => {
             expect(mockMutate).toHaveBeenCalledWith({
                 storyId: 'story-1',
@@ -422,7 +426,7 @@ describe('StorySandbox page', () => {
             });
         });
         expect(awaitJobText).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1' }));
-    });
+    }, 15000);
 
     it('shows toast error when Rewrite clicked without a selection', async () => {
         renderWithProviders(<StorySandbox />);

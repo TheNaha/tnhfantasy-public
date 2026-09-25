@@ -54,13 +54,13 @@ test.describe('Chat Workspace Nuances (Module H)', () => {
     await imgSwitch.click();
     await expect(imgSwitch).toHaveAttribute('aria-checked', 'false');
     await expect
-      .poll(async () => (await apiGet(page, `/v2/chats/${chat.id}`)).allow_image_generation, { timeout: 15000 })
+      .poll(async () => (await apiGet(page, `/chats/${chat.id}`)).allow_image_generation, { timeout: 15000 })
       .toBe(false);
 
     await imgSwitch.click();
     await expect(imgSwitch).toHaveAttribute('aria-checked', 'true');
     await expect
-      .poll(async () => (await apiGet(page, `/v2/chats/${chat.id}`)).allow_image_generation, { timeout: 15000 })
+      .poll(async () => (await apiGet(page, `/chats/${chat.id}`)).allow_image_generation, { timeout: 15000 })
       .toBe(true);
   });
 
@@ -79,13 +79,13 @@ test.describe('Chat Workspace Nuances (Module H)', () => {
 
     await expect(panel.getByRole('button', { name: 'Clear override' })).toBeVisible();
     await expect
-      .poll(async () => (await apiGet(page, `/v2/chats/${chat.id}`)).system_prompt_override, { timeout: 15000 })
+      .poll(async () => (await apiGet(page, `/chats/${chat.id}`)).system_prompt_override, { timeout: 15000 })
       .toBe(overrideText);
 
     await panel.getByRole('button', { name: 'Clear override' }).click();
     await expect(panel.getByRole('button', { name: 'Clear override' })).toBeHidden();
     await expect
-      .poll(async () => (await apiGet(page, `/v2/chats/${chat.id}`)).system_prompt_override, { timeout: 15000 })
+      .poll(async () => (await apiGet(page, `/chats/${chat.id}`)).system_prompt_override, { timeout: 15000 })
       .toBeNull();
   });
 
@@ -99,7 +99,7 @@ test.describe('Chat Workspace Nuances (Module H)', () => {
     await expectToast(page, /Title generated!/, 120000);
 
     await expect
-      .poll(async () => (await apiGet(page, `/v2/chats/${chat.id}`)).name, { timeout: 15000 })
+      .poll(async () => (await apiGet(page, `/chats/${chat.id}`)).name, { timeout: 15000 })
       .not.toBe(chat.name);
   });
 
@@ -131,7 +131,7 @@ test.describe('Chat Workspace Nuances (Module H)', () => {
     await expect(heading).toBeVisible();
 
     // The modal close button is an icon-only X beside the heading
-    await heading.locator('..').locator('button').click();
+    await page.getByRole('button', { name: 'Close scenes gallery' }).click();
     await expect(heading).toBeHidden();
   });
 
@@ -140,7 +140,7 @@ test.describe('Chat Workspace Nuances (Module H)', () => {
     created.push({ kind: 'chat', id: chat.id });
 
     // Seed one user message without triggering an LLM reply
-    await apiPost(page, `/v2/chats/${chat.id}/messages`, {
+    await apiPost(page, `/chats/${chat.id}/messages`, {
       role: 'user',
       content: 'A single seeded message.',
       no_reply: true,

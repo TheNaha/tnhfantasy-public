@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { DataRow, StatusRow, ActionBtn } from './Shared';
 import { STATUS_TONE, humanize } from './utils';
 import { useLLMProviderTest } from '../../../hooks/useLLMProviderStatus';
+import { api } from '../../../api';
 
 // ── LLM-specific panel shown inside RuntimeTab for LLM workers ──────────────
 function LLMRuntimePanel({ provider }) {
@@ -97,10 +98,11 @@ export default function RuntimeTab({
         setPingStatus('loading');
         setPingLatency(null);
         const start = Date.now();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
         try {
-            const res = await fetch(`/api/v2/providers/${provider.id}/ping`, { method: 'POST' });
-            const data = await res.json();
-            if (res.ok && data?.healthy) {
+            const data = await api.post(`/api/v2/providers/${provider.id}/ping`, {}, { signal: controller.signal });
+            if (data?.healthy) {
                 const latency = data.latency_ms ?? Date.now() - start;
                 setPingLatency(latency);
                 setPingStatus('success');
@@ -111,6 +113,8 @@ export default function RuntimeTab({
         } catch {
             setPingStatus('error');
             setTimeout(() => setPingStatus(null), 3000);
+        } finally {
+            clearTimeout(timeoutId);
         }
     };
 
