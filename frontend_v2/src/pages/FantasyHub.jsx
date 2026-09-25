@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Wand2, MessageSquare, BookOpen, Image as ImageIcon, Sparkles, Gamepad2, Tag, Volume2,
-    PenLine, Feather, Zap,
+    Feather, Zap, Compass,
 } from 'lucide-react';
 import clsx from 'clsx';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
@@ -11,10 +11,10 @@ import { isSetupComplete } from '../utils/setupComplete';
 
 const QUICK_ACTIONS = [
     {
-        to: '/chat?new=1',
-        icon: PenLine,
-        title: 'New Chat',
-        description: 'Start a roleplay with a character',
+        to: '/roleplay',
+        icon: Compass,
+        title: 'Open Roleplay',
+        description: 'Start simply, then build your world as you go',
         gradient: 'from-purple-500/10 to-pink-500/10',
         iconColor: 'text-purple-400',
     },

@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images, MapPin, User, Sparkles, Calendar, Swords, GitBranch, HelpCircle, Command, Mic, FileText, BookMarked } from 'lucide-react';
+import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images, MapPin, User, Sparkles, Calendar, Swords, GitBranch, HelpCircle, Command, Mic, FileText, BookMarked, Compass, ChevronDown, Layers3 } from 'lucide-react';
 import { useMemo, useState, memo, useEffect } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -114,6 +114,7 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
 
 export default function Layout({ children }) {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+    const [showRoleplayTools, setShowRoleplayTools] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
     const [showCommandPalette, setShowCommandPalette] = useState(false);
     const { data: branding } = useBranding();
@@ -228,19 +229,35 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/inpaint" icon={Paintbrush} label="Inpaint" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/advanced" icon={Settings} label="Advanced" />
                     
-                    <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Roleplay</div>
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Chat Workspace" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Story Sandbox" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/characters" icon={Users} label="Characters" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/avatar-gallery" icon={User} label="Avatar Gallery" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-timeline" icon={Calendar} label="World Timeline" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/campaigns" icon={Swords} label="Campaigns" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-graph" icon={GitBranch} label="World Graph" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-vault" icon={Globe} label="World Vault" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/locations" icon={MapPin} label="Locations" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/scenarios" icon={Sparkles} label="Scenarios" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/voices" icon={Mic} label="Voices" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/lorebooks" icon={BookMarked} label="Lorebooks" />
+                     <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Roleplay</div>
+                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/roleplay" icon={Compass} label="Roleplay Home" />
+                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Play" />
+                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Stories" />
+                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-vault" icon={Globe} label="World" />
+                     <button
+                         type="button"
+                         onClick={() => setShowRoleplayTools((open) => !open)}
+                         aria-expanded={showRoleplayTools}
+                         className="mt-2 flex w-[calc(100%_-_2rem)] items-center gap-3 rounded-xl px-4 py-2.5 text-left text-xs font-medium text-gray-500 transition hover:bg-white/5 hover:text-gray-200"
+                     >
+                         <Layers3 size={17} aria-hidden="true" />
+                         <span className="flex-1">Expert tools</span>
+                         <ChevronDown size={14} className={showRoleplayTools ? 'rotate-180 transition-transform' : 'transition-transform'} aria-hidden="true" />
+                     </button>
+                     {showRoleplayTools && (
+                         <div className="mt-1 space-y-1 border-l border-white/10 pl-3 ml-4">
+                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/characters" icon={Users} label="Characters" />
+                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/avatar-gallery" icon={User} label="Avatar Gallery" />
+                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-timeline" icon={Calendar} label="World Timeline" />
+                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/campaigns" icon={Swords} label="Campaigns" />
+                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-graph" icon={GitBranch} label="World Graph" />
+                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/locations" icon={MapPin} label="Locations" />
+                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/scenarios" icon={Sparkles} label="Scenarios" />
+                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/voices" icon={Mic} label="Voices" />
+                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/lorebooks" icon={BookMarked} label="Lorebooks" />
+                         </div>
+                     )}
+
                     
                     <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Resources</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" />

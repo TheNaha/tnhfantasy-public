@@ -34,6 +34,7 @@ import { providersApi } from './api/providers';
 import * as ws from './api/websocket';
 // Lazy-loaded pages to minimise initial JS bundle
 const FantasyHub = lazy(() => import('./pages/FantasyHub'));
+const RoleplayWorkspace = lazy(() => import('./pages/RoleplayWorkspace'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const SimpleGenerator = lazy(() => import('./pages/SimpleGenerator'));
 const AdvancedGenerator = lazy(() => import('./pages/AdvancedGenerator'));
@@ -93,6 +94,7 @@ function AnimatedRoutes() {
         <AnimatePresence mode="wait">
             <Routes location={location} key={routeKey}>
                 <Route path="/" element={<Boundary routeKey={routeKey}><FantasyHub /></Boundary>} />
+                <Route path="/roleplay" element={<Boundary routeKey={routeKey}><RoleplayWorkspace /></Boundary>} />
                 <Route path="/gallery" element={<Boundary routeKey={routeKey}><Dashboard /></Boundary>} />
                 <Route path="/generate" element={<Boundary routeKey={routeKey}><SimpleGenerator /></Boundary>} />
                 <Route path="/img2img" element={<Boundary routeKey={routeKey}><Img2ImgGenerator /></Boundary>} />
