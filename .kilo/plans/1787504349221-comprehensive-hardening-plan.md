@@ -23,8 +23,8 @@ Future frontiers (VISION.md): RAG memory, visual-novel compiler, relationship gr
 | Frontend lint | 0 errors (eslint) |
 | Backend lint | `ruff check .` passes |
 | E2E specs | 28 Playwright spec files in `frontend_v2/e2e/` |
-| E2E in CI | `frontend-e2e.yml` runs on push/PR to `frontend_v2/**` |
-| Migrations | 054 (latest) in `infrastructure/migrations/steps.py` |
+| E2E in CI | `frontend-e2e.yml` runs Playwright on `frontend_v2/**` and `backend_v2/**` changes |
+| Migrations | 063 (latest at the audit snapshot) in `infrastructure/migrations/steps.py` |
 | Git state | 3 commits ahead of `origin/master` + 1 uncommitted file |
 
 ### 1.1 Already Done (committed in the 3 commits, **do not redo**)

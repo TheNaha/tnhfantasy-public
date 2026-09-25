@@ -15,7 +15,7 @@
 
 TNHComfy is a serverless ComfyUI wrapper with three parts:
 
-- `backend_v2/`: FastAPI + SQLite (WAL) + async job queue
+- `backend_v2/`: FastAPI + PostgreSQL/pgvector (SQLite-compatible tests) + async job queue
 - `frontend_v2/`: React + Vite + Tailwind
 - `provider_containers/`: provider workers (`modal_worker/`, `beam_worker/`) plus shared `provider_core/`
 
@@ -32,7 +32,7 @@ Use these entry points unless a task requires something else.
 bash setup_jules.sh
 
 # Full stack (Docker)
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up -d
 
 # Backend (from backend_v2/)
 pip install -r requirements.txt
@@ -40,7 +40,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
 pytest
 
 # Frontend (from frontend_v2/)
-npm install
+npm ci
 npm run dev -- --host 0.0.0.0 --port 5174
 npm test
 ```
@@ -53,7 +53,7 @@ npm test
 - Route handlers should resolve dependencies via `api/deps.py` (`get_session`, `get_*_service`).
 - Emit domain events through `core/events.py` helpers (`emit_job_event`, `emit_download_event`).
 - Use `core/exceptions.py` (`ComfyError` hierarchy) for domain errors.
-- Migrations are manual in `infrastructure/database.py` (`_run_migrations()`), no Alembic.
+- Migrations are ordered startup steps in `infrastructure/migrations/`, with no Alembic.
 - Config precedence is: `COMFY_*` env vars > `config.json` > `DEFAULT_CONFIG` in `config.py`.
 - `metadata` is represented as `metadata_` in Python models and aliased back to `metadata` in API payloads.
 

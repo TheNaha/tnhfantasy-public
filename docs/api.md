@@ -41,7 +41,6 @@ Behavior:
 
 - `POST /api/generate`: Submit a single generation workflow.
 - `POST /api/generate/batch`: Submit multiple workflows in one request.
-- `POST /api/providers/save-image`: Save an image from a provider.
 
 ### Models V2 (`/api/v2/models`)
 
@@ -169,7 +168,6 @@ pgvector-backed semantic knowledge entries (`LorebookEntry.embedding` is `Vector
 
 - `GET /api/view/{path:path}` — Serve a source/output file (URL-decoded server-side).
 - `GET /api/thumbnail/{size}/{filename:path}` — Serve a pre-generated thumbnail (`size=medium`); falls back to the full image.
-- `GET /api/files/events` — Server-Sent Events stream of file/job lifecycle events (also bridged over Socket.IO).
 
 ## WebSocket / Socket.IO (`/socket.io`)
 
@@ -181,37 +179,37 @@ Real-time job lifecycle, downloads, reconciliation, and provider status (replace
 - `download.progress` — file download progress.
 - `GET /api/v2/models/external/huggingface`: Search HuggingFace.
 
-### Providers (`/api/providers`)
+### Providers (`/api/v2/providers`)
 
-- `GET /api/providers`: List all configured providers.
-- `POST /api/providers`: Register a new provider.
-- `GET /api/providers/{id}`: Get provider details.
-- `PUT /api/providers/{id}`: Update provider config/credentials.
-- `PATCH /api/providers/{id}`: Update provider (alias for PUT).
-- `DELETE /api/providers/{id}`: Remove provider.
-- `POST /api/providers/wake`: Warm/ensure providers are ready.
-- `GET /api/providers/load-balancing`: Current load-balancer strategy (alias).
-- `PUT /api/providers/load-balancing`: Update load-balancer strategy (alias).
-- `GET /api/providers/config/load-balancing`: Current load-balancer configuration with stats.
-- `PUT /api/providers/config/load-balancing`: Update load-balancer configuration.
-- `GET /api/providers/load-balancer/stats`: Load-balancer statistics.
-- `POST /api/providers/{id}/reconcile`: Trigger model sync for a provider.
-- `GET /api/providers/{id}/reconciliation-status`: Get reconciliation status for a provider.
-- `POST /api/providers/{id}/reconciliation-event`: Trigger a reconciliation event.
-- `GET /api/providers/containers/list`: List all provider containers.
-- `GET /api/providers/containers/status`: Get status of all provider containers (cached 10s).
-- `GET /api/providers/status-cards`: Canonical status payloads for all providers.
-- `GET /api/providers/{id}/status-card`: Status payload for a single provider.
-- `GET /api/providers/{id}/modal-stats`: Provider storage/model counts (cached 30s).
-- `GET /api/providers/{id}/sync-status`: V2-backed sync counts for a provider.
-- `GET /api/providers/{id}/models`: Provider models grouped by directory.
-- `DELETE /api/providers/{id}/models`: Delete a model file from a provider.
-- `POST /api/providers/models/custom`: Create a custom model entry and trigger downloads.
-- `POST /api/providers/{id}/setup`: Run provider setup (initialize directories).
-- `GET /api/providers/{id}/deploy-status`: Get persisted deploy state.
-- `POST /api/providers/{id}/deploy`: Deploy provider app (Modal or Beam).
-- `POST /api/providers/cleanup-orphaned-statuses`: Clean up orphaned provider status records.
-- `POST /api/providers/state/cleanup`: Maintenance cleanup for provider state.
+- `GET /api/v2/providers`: List all configured providers.
+- `POST /api/v2/providers`: Register a new provider.
+- `GET /api/v2/providers/{id}`: Get provider details.
+- `PUT /api/v2/providers/{id}`: Update provider config/credentials.
+- `PATCH /api/v2/providers/{id}`: Update provider (alias for PUT).
+- `DELETE /api/v2/providers/{id}`: Remove provider.
+- `POST /api/v2/providers/wake`: Warm/ensure providers are ready.
+- `GET /api/v2/providers/load-balancing`: Current load-balancer strategy (alias).
+- `PUT /api/v2/providers/load-balancing`: Update load-balancer strategy (alias).
+- `GET /api/v2/providers/config/load-balancing`: Current load-balancer configuration with stats.
+- `PUT /api/v2/providers/config/load-balancing`: Update load-balancer configuration.
+- `GET /api/v2/providers/load-balancer/stats`: Load-balancer statistics.
+- `POST /api/v2/providers/{id}/reconcile`: Trigger model sync for a provider.
+- `GET /api/v2/providers/{id}/reconciliation-status`: Get reconciliation status for a provider.
+- `POST /api/v2/providers/{id}/reconciliation-event`: Trigger a reconciliation event.
+- `GET /api/v2/providers/containers/list`: List all provider containers.
+- `GET /api/v2/providers/containers/status`: Get status of all provider containers (cached 10s).
+- `GET /api/v2/providers/status-cards`: Canonical status payloads for all providers.
+- `GET /api/v2/providers/{id}/status-card`: Status payload for a single provider.
+- `GET /api/v2/providers/{id}/modal-stats`: Provider storage/model counts (cached 30s).
+- `GET /api/v2/providers/{id}/sync-status`: V2-backed sync counts for a provider.
+- `GET /api/v2/providers/{id}/models`: Provider models grouped by directory.
+- `DELETE /api/v2/providers/{id}/models`: Delete a model file from a provider.
+- `POST /api/v2/providers/models/custom`: Create a custom model entry and trigger downloads.
+- `POST /api/v2/providers/{id}/setup`: Run provider setup (initialize directories).
+- `GET /api/v2/providers/{id}/deploy-status`: Get persisted deploy state.
+- `POST /api/v2/providers/{id}/deploy`: Deploy provider app (Modal or Beam).
+- `POST /api/v2/providers/cleanup-orphaned-statuses`: Clean up orphaned provider status records.
+- `POST /api/v2/providers/state/cleanup`: Maintenance cleanup for provider state.
 
 ### Provider Discovery (`/api/v2/providers`)
 
@@ -342,7 +340,8 @@ Real-time job lifecycle, downloads, reconciliation, and provider status (replace
 
 ### Health
 
-- `GET /api/health`: Health check endpoint.
+- `GET /api/health`: Liveness check endpoint.
+- `GET /api/ready`: Readiness check, including a database query.
 
 ### Metrics
 

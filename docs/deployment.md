@@ -8,10 +8,12 @@ Deploying TNHComfy is designed to be straightforward, leveraging Docker and Dock
 - Optional: A domain name and SSL certificate if exposing to the public internet.
 
 ## Configuration (.env)
-Before deploying, you must configure the environment variables. Copy the `.env.example` file to `.env` in the root directory and provide the necessary credentials:
+Before deploying, configure the backend environment and each provider environment file referenced by the Compose file:
 ```bash
 cp .env.example .env
+cp .env.example.provider .env.modal-hp196
 ```
+Repeat the provider step for every provider service that should run. Keep all credential files out of version control.
 Key variables:
 - `HF_TOKEN`: Hugging Face API token for downloading models.
 - `CIVITAI_TOKEN`: Civitai API token for accessing specific models.
@@ -22,7 +24,7 @@ Key variables:
 The provided `docker-compose.yml` orchestrates the backend, frontend, and provider containers.
 
 ### Architecture
-- **backend_v2**: FastAPI server on port 8002. Runs as `user: "1000:1000"`. Health check hits `/api/health`.
+- **backend_v2**: FastAPI server on port 8002. Runs as `user: "1000:1000"`. Readiness check hits `/api/ready`.
 - **frontend_v2**: React/Vite dev server or Nginx (prod). Depends on backend health. Proxied via Traefik.
 - **provider-modal** (and other providers): Serverless worker containers. Container names must be `tnhcomfy-{PROVIDER_ID}` for backend auto-detection. Depends on backend health.
 
@@ -31,7 +33,7 @@ The `./data` directory is mounted into all containers at `/data`. This shared vo
 - Models (`data/models/`)
 - Input files (`data/input/`)
 - Output images (`data/output/`)
-- Database (`data/db` — PostgreSQL volume)
+- PostgreSQL data (`data/pgdata`)
 
 ### Start the Application
 There are two ways to run the application: Production and Development.
@@ -41,7 +43,7 @@ Runs the optimized, pre-built frontend and backend without hot-reloading.
 1. Ensure the `.env` file is properly configured.
 2. Run the following command from the root directory:
    ```bash
-   docker compose up -d --build
+   docker compose -f docker-compose.yml --profile providers up -d --build -V
    ```
 
 **Development Mode:**
@@ -64,14 +66,20 @@ The application should now be accessible.
 2. Set a unique `PROVIDER_ID` environment variable.
 3. Set `container_name` to `tnhcomfy-{PROVIDER_ID}` (required for backend detection).
 
-### Stop the Application
+### Remote Agent
+The optional remote ComfyUI agent has its own environment file:
+```bash
+cp remote_agent/.env.agent.example remote_agent/.env.agent
+```
+Replace the example model path in `remote_agent/docker-compose.yml` before starting that stack.
+
 To gracefully shut down the application:
 ```bash
 docker compose down
 ```
 
 ## Production Considerations
-- **Security:** Ensure that `.env`, the PostgreSQL volume (`data/db`), and generated images (`output` directory) are protected and not publicly accessible.
+- **Security:** Ensure that `.env`, provider credential files, the PostgreSQL volume (`data/pgdata`), and generated images (`output` directory) are protected and not publicly accessible.
 - **Reverse Proxy:** The `docker-compose.yml` includes Traefik labels for routing. Configure Traefik according to your domain setup.
 - **Persistent Data:** The `./data` directory is mapped to the host filesystem via volumes, ensuring data persists across container restarts.
 - **Frontend Polling:** Docker frontend file watching requires polling mode (`usePolling: true` in `vite.config.js`).

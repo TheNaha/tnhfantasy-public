@@ -19,7 +19,7 @@ These instructions apply to backend code in backend_v2 only.
 
 ## Data And Config Rules
 
-- Preserve current migration model in infrastructure/database.py (_run_migrations()); do not introduce Alembic unless explicitly requested.
+- Preserve the ordered migration runner in `infrastructure/migrations/`; do not introduce Alembic unless explicitly requested.
 - Preserve config precedence: COMFY_* env vars > config.json > DEFAULT_CONFIG in config.py.
 - Keep metadata alias behavior intact: metadata_ in Python models, metadata in API payloads.
 

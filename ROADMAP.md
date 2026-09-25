@@ -68,7 +68,7 @@ These exist but are **unverified**; validate and polish rather than rebuild.
 
 ## 4. Track C — QA & quality-of-life (parallel, ongoing)
 
-- [ ] **E2E in CI**: wire Playwright into `.github/workflows/frontend-tests.yml` (currently not in CI). Remove duplicate `world-vault-hub.spec.js`.
+- [x] **E2E in CI**: Playwright runs in `frontend-e2e.yml` against the PostgreSQL/pgvector service; fullstack-tagged provider billing tests remain opt-in.
 - [ ] **Keybindings** (already partially present): verify Chat `Ctrl+Enter`/`Ctrl+N`, Story `Ctrl+S`/`Ctrl+Shift+C`.
 - [ ] **Image gallery virtualization** (`@tanstack/react-virtual`) for `Dashboard.jsx`.
 - [ ] **Branding live reactivity** (poll/WS) without refresh.
@@ -154,7 +154,7 @@ These were listed as bugs in `REMEDIATION_PLAN_v2.md` but are **already fixed or
 | # | Issue | File | Action |
 |---|-------|------|--------|
 | 10.1.1 | **Undefined `job_workflow`** in `_finalize_llm_job` agentic branch — crashes when a chat reply contains tool_calls | `services/job_processing.py:405` | Replace `job_workflow.get("tools")` with `job.metadata_.get("tools")` (or `job.workflow`); add test |
-| 10.1.2 | **CI E2E uses plain Postgres 16** — `vector` extension missing, backend fails to start, workflow times out | `.github/workflows/frontend-e2e.yml:23` | Change image to `pgvector/pgvector:pg16` |
+| 10.1.2 | **CI E2E uses plain Postgres 16** — resolved by using `pgvector/pgvector:pg16` in `frontend-e2e.yml` | `.github/workflows/frontend-e2e.yml` | Completed; keep the pgvector service image |
 
 ### 10.2 High priority (P1) — Fix in current sprint
 

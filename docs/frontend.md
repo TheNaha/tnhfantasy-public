@@ -24,13 +24,13 @@ React Query is used exclusively for fetching, caching, synchronizing, and updati
 - **Server State Caching:** Auto-caching with configurable stale times.
 - **WebSocket State:** Real-time job updates bridged into React Query cache via `useJobsRealtime`.
 - **Mutations:** POST/PUT/DELETE operations with automatic cache invalidation.
-- **Canonical Provider Data:** `useProvidersPageData` owns `/api/providers` and load-balancer data, and shares one realtime bridge across `Layout` and `Providers`.
+- **Canonical Provider Data:** `useProvidersPageData` owns `/api/v2/providers` and load-balancer data, and shares one realtime bridge across `Layout` and `Providers`.
 
 ## Provider Data Flow
 
 Provider server data now follows a single path:
 
-1. `useProvidersPageData` fetches canonical provider records from `/api/providers`.
+1. `useProvidersPageData` fetches canonical provider records from `/api/v2/providers`.
 2. The hook attaches one shared websocket subscription layer for provider, reconciliation, and model topics.
 3. `Layout` and the `Providers` page read from the same React Query cache instead of maintaining duplicate provider stores or duplicate websocket listeners.
 
@@ -49,7 +49,7 @@ This avoids requiring eager image hydration just to display collection counts or
 ## Core Features
 - **Job Tracking:** Real-time job status updates (pending, processing, completed, failed) via WebSockets.
 - **Image Gallery:** Visual display of generated images fetched from the backend.
-- **Provider Management:** Shared provider status, reconciliation, and storage state via `/api/providers`.
+- **Provider Management:** Shared provider status, reconciliation, and storage state via `/api/v2/providers`.
 - **Generation Parameters:** Interfaces for adjusting prompts, negative prompts, steps, CFG scale, models, and LoRAs.
 - **Optimistic Updates:** Immediate UI feedback for actions like deleting a job before the server confirms.
 
@@ -59,7 +59,7 @@ This avoids requiring eager image hydration just to display collection counts or
 2. Navigate to `frontend_v2`:
    ```bash
    cd frontend_v2
-   npm install
+   npm ci
    ```
 3. Start the development server:
    ```bash

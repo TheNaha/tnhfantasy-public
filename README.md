@@ -19,12 +19,13 @@ This project serves as a dynamic, containerized wrapper around ComfyUI that inte
 - **provider-workers** (Serverless instances on Modal or Beam)
 
 ## Quick Start
-1. Copy `.env.example` to `.env` and configure your API tokens (HF_TOKEN, CIVITAI_TOKEN).
-2. Start the project using Docker Compose. This single command brings up the frontend, backend, and the serverless provider workers:
+1. Copy `.env.example` to `.env` and configure the backend settings.
+2. Copy `.env.example.provider` to each provider environment file referenced by `docker-compose.yml` (for example `.env.modal-hp196`) and configure that provider's credentials.
+3. Start the project with the development Compose override and provider profile:
    ```bash
-   docker compose up -d
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
    ```
-3. Access the Web UI via the configured frontend port (default: 5174).
+4. Access the Web UI on port 5174.
 
 ## Package Manager
 The frontend workspace in `frontend_v2` is `npm`-only.

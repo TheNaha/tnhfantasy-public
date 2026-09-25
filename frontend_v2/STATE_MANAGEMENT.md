@@ -48,7 +48,7 @@ Use React Query for:
 - **Server State Caching**: Auto-cache with 5min stale time
 - **Background Refetching**: Keep data fresh on window focus
 - **Mutations**: POST/PUT/DELETE with automatic cache invalidation
-- **Shared Provider Cache**: Provider records from `/api/providers` via `useProvidersPageData`
+- **Shared Provider Cache**: Provider records from `/api/v2/providers` via `useProvidersPageData`
 
 **Example Usage:**
 
@@ -114,7 +114,7 @@ const { providers, refreshAll } = useProvidersPageData();
 ```javascript
 const mutation = useMutation({
   mutationFn: (newProvider) =>
-    fetch("/api/providers", {
+    fetch("/api/v2/providers", {
       method: "POST",
       body: JSON.stringify(newProvider),
     }),
