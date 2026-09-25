@@ -1,4 +1,4 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useRef } from "react";
 import { motion } from 'framer-motion';
 import { Calendar, Check, Star } from 'lucide-react';
 
@@ -10,6 +10,7 @@ import { getCheckpointDisplayName } from '../../utils/modelDisplay';
 import { assetUrl, thumbUrl, assetPath } from '../../utils/assetUrl';
 import { formatTimestamp } from '../../utils/dateTime';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
+import { useVirtualListScrollMargin } from '../../hooks/useVirtualListScrollMargin';
 
 
 
@@ -244,6 +245,8 @@ export default memo(function GroupedDashboardContent({
         images.forEach((image) => toggleSelection(assetPath(image)));
     }, [toggleSelection]);
 
+    const listRef = useRef(null);
+    const scrollMargin = useVirtualListScrollMargin(listRef);
     const virtualizer = useWindowVirtualizer({
         count: sortedGroupedEntries.length,
         estimateSize: (index) => {
@@ -257,14 +260,16 @@ export default memo(function GroupedDashboardContent({
             return Math.max(280, Math.min(2000, 160 + itemCount * 220));
         },
         getItemKey: (index) => sortedGroupedEntries[index]?.[0] || `group-${index}`,
+        scrollMargin,
         overscan: 2,
     });
 
     return (
-        <div
-            style={{
-                height: `${virtualizer.getTotalSize()}px`,
-                position: 'relative',
+            <div
+                ref={listRef}
+                style={{
+                    height: `${virtualizer.getTotalSize()}px`,
+                    position: 'relative',
                 width: '100%',
                 overflow: 'hidden',
             }}
@@ -281,7 +286,7 @@ export default memo(function GroupedDashboardContent({
                         top: 0,
                         left: 0,
                         width: '100%',
-                        transform: `translateY(${virtualItem.start}px)`,
+                        transform: `translateY(${virtualItem.start - scrollMargin}px)`,
                         paddingBottom: '2rem'
                     }}
                 >

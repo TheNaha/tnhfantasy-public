@@ -1,4 +1,4 @@
-import { useMemo, memo } from 'react';
+import { useMemo, memo, useRef } from 'react';
 import { Calendar, Clock, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import ProgressiveImage from '../ProgressiveImage';
@@ -7,6 +7,7 @@ import { getItemTimelineDate } from '../../utils/dateTime';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
 import { assetUrl, assetPath } from '../../utils/assetUrl';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
+import { useVirtualListScrollMargin } from '../../hooks/useVirtualListScrollMargin';
 
 /**
  * TimelineView Component
@@ -85,6 +86,8 @@ export const TimelineView = memo(function TimelineView({
         return Object.values(groups).sort((a, b) => b.timestamp - a.timestamp);
     }, [items, sort]);
 
+    const listRef = useRef(null);
+    const scrollMargin = useVirtualListScrollMargin(listRef);
     const virtualizer = useWindowVirtualizer({
         count: timelineGroups.length,
         estimateSize: (index) => {
@@ -92,6 +95,7 @@ export const TimelineView = memo(function TimelineView({
             return Math.max(320, Math.min(2200, 180 + itemCount * 190));
         },
         getItemKey: (index) => timelineGroups[index]?.date || `timeline-${index}`,
+        scrollMargin,
         overscan: 2,
     });
 
@@ -109,7 +113,7 @@ export const TimelineView = memo(function TimelineView({
             {/* Timeline Line */}
             <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-500 via-purple-500 to-transparent hidden md:block" />
 
-            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%', overflow: 'hidden' }}>
+            <div ref={listRef} style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%', overflow: 'hidden' }}>
                 {virtualizer.getVirtualItems().map((virtualItem) => {
                     const group = timelineGroups[virtualItem.index];
                     const stats = group.stats;
@@ -124,7 +128,7 @@ export const TimelineView = memo(function TimelineView({
                                 top: 0,
                                 left: 0,
                                 width: '100%',
-                                transform: `translateY(${virtualItem.start}px)`,
+                                transform: `translateY(${virtualItem.start - scrollMargin}px)`,
                                 paddingBottom: '3rem'
                             }}
                         >
