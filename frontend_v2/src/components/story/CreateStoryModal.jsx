@@ -4,13 +4,16 @@ export default React.memo(function CreateStoryModal({ title, onTitleChange, onCo
     return (
         <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-story-title"
             onClick={onClose}
         >
             <div
                 className="glass-panel p-6 rounded-2xl border border-white/10 w-full max-w-sm mx-4 space-y-4"
                 onClick={(e) => e.stopPropagation()}
             >
-                <h3 className="text-lg font-bold text-white">Create Story</h3>
+                <h3 id="create-story-title" className="text-lg font-bold text-white">Create Story</h3>
                 <input
                     autoFocus
                     type="text"
