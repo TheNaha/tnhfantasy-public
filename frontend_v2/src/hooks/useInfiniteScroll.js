@@ -1,31 +1,24 @@
 import { useEffect, useRef, useCallback } from 'react';
 
-/**
- * Custom hook for implementing infinite scroll using Intersection Observer.
- * Triggers the onLoadMore callback when the sentinel element comes into view.
- * 
- * @param {Object} options
- * @param {boolean} options.hasMore - Whether there are more items to load
- * @param {Function} options.onLoadMore - Callback to load more items
- * @param {boolean} options.loading - Whether currently loading
- * @param {string} options.rootMargin - Margin around root (default: '200px')
- * @returns {React.RefObject} - Ref to attach to sentinel element
- */
+const SCROLL_IDLE_MS = 180;
+
 export function useInfiniteScroll({
     hasMore,
     onLoadMore,
     loading,
-    rootMargin = '200px'  // Reduced from 400px to prevent premature loading
-}) {
+    rootMargin = '200px',
+    scrollRoot = null,
+} = {}) {
     const sentinelRef = useRef(null);
     const isLoadingRef = useRef(false);
+    const isUserScrollingRef = useRef(false);
+    const pendingLoadRef = useRef(false);
     const lastCallTimeRef = useRef(0);
-    const debounceMs = 500;  // Minimum time between calls
+    const idleTimerRef = useRef(null);
+    const debounceMs = 500;
 
-    // Reset loading lock when loading prop becomes false
     useEffect(() => {
         if (!loading) {
-            // Small delay before allowing next load to prevent race conditions
             const timer = setTimeout(() => {
                 isLoadingRef.current = false;
             }, 100);
@@ -33,57 +26,79 @@ export function useInfiniteScroll({
         }
     }, [loading]);
 
-    // Stable callback reference
-    const handleLoadMore = useCallback(() => {
+    const requestLoad = useCallback(() => {
         const now = Date.now();
-
-        // Prevent duplicate calls with multiple guards
-        if (isLoadingRef.current) {
+        if (isLoadingRef.current || loading || !hasMore || now - lastCallTimeRef.current < debounceMs) {
             return;
         }
-        if (loading) {
-            return;
-        }
-        if (!hasMore) {
-            return;
-        }
-        if (now - lastCallTimeRef.current < debounceMs) {
-            return;
-        }
-
-        // Set synchronous lock immediately
+        pendingLoadRef.current = false;
         isLoadingRef.current = true;
         lastCallTimeRef.current = now;
         onLoadMore();
-    }, [onLoadMore, loading, hasMore]);
+    }, [hasMore, loading, onLoadMore]);
+
+    const scheduleIdleLoad = useCallback(() => {
+        if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = setTimeout(() => {
+            idleTimerRef.current = null;
+            isUserScrollingRef.current = false;
+            if (pendingLoadRef.current) requestLoad();
+        }, SCROLL_IDLE_MS);
+    }, [requestLoad]);
+
+    const markUserActivity = useCallback(() => {
+        isUserScrollingRef.current = true;
+        if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    }, []);
+
+    const endUserActivity = useCallback(() => {
+        scheduleIdleLoad();
+    }, [scheduleIdleLoad]);
+
+    useEffect(() => {
+        const root = scrollRoot || window;
+        const options = { passive: true };
+        root.addEventListener('touchstart', markUserActivity, options);
+        root.addEventListener('touchmove', markUserActivity, options);
+        root.addEventListener('touchend', endUserActivity, options);
+        root.addEventListener('touchcancel', endUserActivity, options);
+        root.addEventListener('wheel', markUserActivity, options);
+        root.addEventListener('scroll', markUserActivity, options);
+
+        return () => {
+            root.removeEventListener('touchstart', markUserActivity);
+            root.removeEventListener('touchmove', markUserActivity);
+            root.removeEventListener('touchend', endUserActivity);
+            root.removeEventListener('touchcancel', endUserActivity);
+            root.removeEventListener('wheel', markUserActivity);
+            root.removeEventListener('scroll', markUserActivity);
+            if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+        };
+    }, [endUserActivity, markUserActivity, scrollRoot]);
 
     useEffect(() => {
         const currentSentinel = sentinelRef.current;
-        if (!currentSentinel) return;
-
-        // Don't even observe if no more items
-        if (!hasMore) return;
+        if (!currentSentinel || !hasMore) return undefined;
 
         const observer = new IntersectionObserver(
-            (entries) => {
-                const [entry] = entries;
-                if (entry.isIntersecting) {
-                    handleLoadMore();
+            ([entry]) => {
+                if (!entry.isIntersecting) return;
+                if (isUserScrollingRef.current) {
+                    pendingLoadRef.current = true;
+                    return;
                 }
+                requestLoad();
             },
             {
-                root: null,
+                root: scrollRoot,
                 rootMargin,
-                threshold: 0.1
-            }
+                threshold: 0.1,
+            },
         );
 
         observer.observe(currentSentinel);
-
-        return () => {
-            observer.disconnect();
-        };
-    }, [handleLoadMore, rootMargin, hasMore]);
+        return () => observer.disconnect();
+    }, [hasMore, requestLoad, rootMargin, scrollRoot]);
 
     return sentinelRef;
 }
