@@ -9,6 +9,7 @@ For comprehensive details on architecture, frontend, backend, deployment, and AP
 - [Backend Documentation](docs/backend.md)
 - [Deployment Guide](docs/deployment.md)
 - [API Reference](docs/api.md)
+- [SillyTavern Card Compatibility](docs/sillytavern-compatibility.md)
 
 ## Overview
 This project serves as a dynamic, containerized wrapper around ComfyUI that integrates provider-based serverless inferencing (Modal, Beam), a custom job queuing system, an image gallery, and a local model management system without permanently storing large checkpoints on the backend.
