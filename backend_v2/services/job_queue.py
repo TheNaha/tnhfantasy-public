@@ -2,12 +2,11 @@
 import asyncio
 import threading
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from typing import Any
 
-from core.entities import JobStatus
-from core.events import EventType, emit_job_event
 from infrastructure.database import database_url
 from infrastructure.logging import get_logger
+from services.job_service import STALE_JOB_TIMEOUT_SECONDS
 
 logger = get_logger("job_queue")
 
@@ -522,74 +521,57 @@ class QueueManager:
     async def recover_pending_jobs(self, job_service) -> tuple:
         """Recover pending jobs, routing each to the correct queue by task_type."""
 
-        session = getattr(job_service, "session", None)
-        total_recovered = 0
-        total_failed = 0
+        summary = await self.recover(job_service)
+        return summary["recovered"], summary["failed"]
+
+    async def recover(
+        self,
+        job_service,
+        *,
+        timeout_seconds: int = STALE_JOB_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Requeue interrupted work and fail jobs wedged past the stale timeout.
+
+        Used at startup and by `POST /api/jobs/recover`, so an operator can run
+        the exact same recovery on a live instance when a worker dies without
+        taking the queue down. Returns a summary instead of raising.
+        """
+        stale_jobs = await job_service.fail_stale_running_jobs(timeout_seconds=timeout_seconds)
+        stale_ids = {job.id for job in stale_jobs}
 
         pending = list(job_service.get_pending_jobs())
         running = list(job_service.get_running_jobs())
+        recoverable_running = [job for job in running if job.id not in stale_ids]
 
-        timeout_seconds = 300
-        now = datetime.now(timezone.utc)
-        stale_running = []
-        recoverable_running = []
-        for job in running:
-            if job.started_at:
-                elapsed = (now - job.started_at).total_seconds()
-                if elapsed > timeout_seconds:
-                    stale_running.append((job, elapsed))
-                    continue
-            recoverable_running.append(job)
-
-        # Mark stale jobs failed before the DB reset so they stay FAILED
-        # instead of being reset back to PENDING by _reset_claims_and_requeue_sync.
-        if stale_running and session is not None:
-            error_message = "Server restart during processing - job timed out"
-            try:
-                for job, _elapsed in stale_running:
-                    job.status = JobStatus.FAILED
-                    job.error = error_message
-                    job.completed_at = now
-                    job.updated_at = now
-                    session.add(job)
-                session.commit()
-                for job, elapsed in stale_running:
-                    total_failed += 1
-                    logger.warning("job_recovery_timeout", job_id=job.id, elapsed=f"{elapsed:.0f}s")
-                    try:
-                        await emit_job_event(EventType.JOB_FAILED, job_service._job_to_dict(job))
-                    except Exception as exc:
-                        logger.warning("job_recovery_emit_failed", job_id=job.id, error=str(exc))
-            except Exception as exc:
-                if session:
-                    session.rollback()
-                logger.error("job_recovery_atomic_update_failed", error=str(exc))
+        summary: dict[str, Any] = {
+            "mode": "db_claims" if _DB_CLAIMS_ENABLED else "in_memory",
+            "recovered": 0,
+            "failed": len(stale_jobs),
+            "failed_job_ids": [job.id for job in stale_jobs],
+            "pending": len(pending),
+            "running": len(recoverable_running),
+        }
 
         if _DB_CLAIMS_ENABLED:
             # DB mode: claims are stale after a restart. Reset every active job
             # back to PENDING (same semantic as lifecycle requeue) and clear all
             # claims so workers can re-claim them from the DB.
             await asyncio.to_thread(self._reset_claims_and_requeue_sync)
-            total_recovered += len(pending) + len(recoverable_running)
+            summary["recovered"] = len(pending) + len(recoverable_running)
             self.image._schedule_notify()
             self.llm._schedule_notify()
             logger.info("queue_manager_recovery_db_reset", pending=len(pending), running=len(recoverable_running))
-            return total_recovered, total_failed
+            return summary
 
-        for job in pending:
+        for job in [*pending, *recoverable_running]:
             task_type = getattr(job, "task_type", "image") or "image"
             await self.get_queue(task_type).enqueue(job.id, job.provider_id)
-            total_recovered += 1
+            summary["recovered"] += 1
 
-        for job in recoverable_running:
-            task_type = getattr(job, "task_type", "image") or "image"
-            await self.get_queue(task_type).enqueue(job.id, job.provider_id)
-            total_recovered += 1
+        if summary["recovered"] > 0 or summary["failed"] > 0:
+            logger.info("queue_manager_recovery_complete", recovered=summary["recovered"], failed=summary["failed"])
 
-        if total_recovered > 0 or total_failed > 0:
-            logger.info("queue_manager_recovery_complete", recovered=total_recovered, failed=total_failed)
-
-        return total_recovered, total_failed
+        return summary
 
     @staticmethod
     def _reset_claims_and_requeue_sync() -> None:

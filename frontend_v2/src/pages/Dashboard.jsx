@@ -37,6 +37,7 @@ import useStore from '../store/useStore';
 
 // Components
 import QueueVisualization from '../components/QueueVisualization';
+import FailedJobsPanel from '../components/dashboard/FailedJobsPanel';
 import GeneratorFloatingButton from '../components/dashboard/GeneratorFloatingButton';
 import DashboardOverlays from '../components/dashboard/DashboardOverlays';
 import DashboardGalleryGrid from '../components/dashboard/DashboardGalleryGrid';
@@ -483,6 +484,7 @@ export default function Dashboard() {
             />
             <div className="max-w-7xl mx-auto space-y-4 md:space-y-8">
                 <QueueVisualization onJobClick={handleJobClick} />
+                <FailedJobsPanel />
 
                 <DashboardHeaderToolbar
                     viewMode={viewMode}

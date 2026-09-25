@@ -26,6 +26,7 @@ export function useJobsRealtime() {
     // setQueryData on live events; this covers anything that raced a gap.
     const refreshServerState = useCallback(() => {
         queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+        queryClient.invalidateQueries({ queryKey: ['jobs', 'failed'] });
         queryClient.invalidateQueries({ queryKey: ['gallery'] });
         queryClient.invalidateQueries({ queryKey: ['statistics'] });
     }, [queryClient]);
@@ -45,6 +46,7 @@ export function useJobsRealtime() {
         }
         // After replay, invalidate to ensure consistency regardless.
         queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+        queryClient.invalidateQueries({ queryKey: ['jobs', 'failed'] });
     }, [queryClient]);
 
     useEffect(() => {
@@ -106,6 +108,12 @@ export function useJobsRealtime() {
 
             const isImageJob = job.task_type === 'image';
 
+            // A job just failed/cancelled: the failed-job diagnostics view is
+            // driven by ['jobs','failed'] and must not show a stale list.
+            if (type === 'failed' || type === 'cancelled') {
+                queryClient.invalidateQueries({ queryKey: ['jobs', 'failed'] });
+            }
+
             queryClient.setQueryData(['jobs', 'active'], (old = []) => {
                 const remaining = old.filter(j => j.id !== job.id);
                 if (isImageJob && old.length > 0 && remaining.length === 0) {
@@ -147,7 +155,6 @@ export function useJobsRealtime() {
         unsubs.push(ws.on(ws.EventTypes.JOB_COMPLETED, (e) => handleTermination(e, 'completed')));
         unsubs.push(ws.on(ws.EventTypes.JOB_FAILED, (e) => handleTermination(e, 'failed')));
         unsubs.push(ws.on(ws.EventTypes.JOB_CANCELLED, (e) => handleTermination(e, 'cancelled')));
-
         // Connection events
         unsubs.push(ws.on('connection', (data) => {
             if (data.connected) {

@@ -100,6 +100,29 @@ class JobRepository:
         stmt = select(Job).where(Job.status.in_(statuses)).order_by(Job.created_at)
         return list(self.session.exec(stmt).all())
 
+    def get_failed(
+        self, *, limit: int = 25, offset: int = 0, task_type: str | None = None
+    ) -> tuple[list[Job], int]:
+        """Get failed jobs newest-first, plus the total failure count.
+
+        Backs the failed-job diagnostics view; the `task_type` filter is
+        applied in SQL so the totals line up with the returned page.
+        """
+        filters = [Job.status == JobStatus.FAILED]
+        if task_type:
+            filters.append(Job.task_type == task_type)
+
+        total = self.session.exec(select(func.count()).select_from(Job).where(*filters)).one()
+
+        stmt = (
+            select(Job)
+            .where(*filters)
+            .order_by(col(Job.created_at).desc(), col(Job.id).desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(self.session.exec(stmt).all()), total
+
     def get_queue_items(self, statuses: list[JobStatus]) -> list[JobQueueItem]:
         """
         Get lightweight queue items for specified statuses.

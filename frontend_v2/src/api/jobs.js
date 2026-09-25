@@ -24,8 +24,57 @@ export const jobsApi = {
     // Clear all jobs
     clear: () => api.delete('/api/jobs'),
 
-    // Retry a failed job
-    retry: (jobId) => api.post(`/api/jobs/${jobId}/retry`),
+    /**
+     * Retry a failed job.
+     * Creates a new job linked to the original via diagnostics.retry_of.
+     * @param {string} jobId
+     * @param {object} [options]
+     * @param {boolean} [options.keepProvider] - Keep the original preferred provider
+     *   instead of letting the load balancer pick a healthy one.
+     */
+    retry: (jobId, options = {}) =>
+        api.post(`/api/jobs/${jobId}/retry`, { keep_provider: !!options.keepProvider }),
+
+    /**
+     * Cancel a queued or in-flight job. Signals the provider worker and marks
+     * the job cancelled. Rejects with 400 for terminal jobs.
+     * @param {string} jobId
+     * @param {string} [reason]
+     */
+    cancel: (jobId, reason = null) => api.post(`/api/jobs/${jobId}/cancel`, { reason }),
+
+    /**
+     * Failure diagnostics for a single job (provider, model, attempt history,
+     * duration, failure kind, retryability).
+     * @param {string} jobId
+     */
+    getDiagnostics: (jobId) => api.get(`/api/jobs/${jobId}/diagnostics`),
+
+    /**
+     * List failed jobs (newest first) with diagnostics and a page summary.
+     * @param {object} [params]
+     * @param {number} [params.limit]
+     * @param {number} [params.offset]
+     * @param {string} [params.taskType]
+     */
+    getFailed: (params = {}) => {
+        const query = {};
+        if (params.limit != null) query.limit = params.limit;
+        if (params.offset != null) query.offset = params.offset;
+        if (params.taskType) query.task_type = params.taskType;
+        return api.get('/api/jobs/failed', { params: query });
+    },
+
+    /**
+     * Requeue interrupted work and fail jobs wedged past the stale timeout.
+     * @param {object} [params]
+     * @param {number} [params.timeoutSeconds]
+     */
+    recover: (params = {}) => {
+        const query = {};
+        if (params.timeoutSeconds != null) query.timeout_seconds = params.timeoutSeconds;
+        return api.post('/api/jobs/recover', {}, { params: query });
+    },
 
     /**
      * Validate workflow model availability before submission.

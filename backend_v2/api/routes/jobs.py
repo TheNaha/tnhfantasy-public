@@ -4,14 +4,21 @@
 #   POST   /api/jobs            – Create and enqueue a new job
 #   GET    /api/jobs            – List jobs with pagination
 #   GET    /api/jobs/{id}       – Get a single job by ID
+#   GET    /api/jobs/{id}/diagnostics – Failure diagnostics for a single job
 #   DELETE /api/jobs/{id}       – Delete a job record
 #   DELETE /api/jobs            – Clear all job records
 #   POST   /api/jobs/{id}/retry – Re-submit a failed job with the same workflow
+#   POST   /api/jobs/{id}/cancel– Cancel a queued or in-flight job
+#   GET    /api/jobs/failed     – Failed jobs with diagnostics + summary
+#   POST   /api/jobs/recover    – Requeue interrupted work / fail wedged jobs
 #   POST   /api/jobs/validate   – Pre-flight model-availability check
 #
 # Optional idempotency:
 #   - POST /api/jobs accepts `Idempotency-Key` for short-window response reuse
 #     to prevent duplicate submissions from client retries.
+#
+# Every serialized job carries a `diagnostics` block (provider, model, attempt
+# history, duration, failure kind, retryability) built in JobService.
 #
 # Real-time updates are delivered via WebSocket (routes/websocket.py).
 # The job queue itself lives in services/job_queue.py.
@@ -36,11 +43,21 @@ logger = api_logger()
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
+MAX_FAILED_PAGE_SIZE = 100
+
 
 class CreateJobRequest(BaseModel):
     workflow: dict
     metadata: dict = {}
     task_type: str = "image"
+
+
+class RetryJobRequest(BaseModel):
+    keep_provider: bool = False
+
+
+class CancelJobRequest(BaseModel):
+    reason: str | None = None
 
 
 class ValidateWorkflowRequest(BaseModel):
@@ -284,6 +301,61 @@ def get_job_stats(service: JobService = Depends(get_job_service)):
     return service.get_job_stats()
 
 
+@router.get("/failed")
+async def list_failed_jobs(
+    limit: int = 25,
+    offset: int = 0,
+    task_type: str | None = None,
+    service: JobService = Depends(get_job_service),
+):
+    """
+    List failed jobs (newest first) with diagnostics for the failure view.
+
+    Each job includes the `diagnostics` block (provider, model, attempt history,
+    duration, failure kind, whether it is retryable). The `summary` counters
+    describe the returned page; `total` is the full failure count for the filter.
+    """
+    limit = max(1, min(limit, MAX_FAILED_PAGE_SIZE))
+    offset = max(0, offset)
+
+    jobs, total = await service.get_failed_jobs(
+        limit=limit, offset=offset, task_type=task_type
+    )
+    return {
+        "jobs": jobs,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "summary": service.summarize_failed_jobs(jobs),
+    }
+
+
+@router.post("/recover")
+async def recover_jobs(
+    timeout_seconds: int = 300,
+    service: JobService = Depends(get_job_service),
+):
+    """
+    Requeue interrupted work and fail jobs wedged past the stale timeout.
+
+    Same recovery the backend runs at startup: jobs left in an active state by a
+    dead worker are re-queued, and jobs stuck beyond `timeout_seconds` are failed
+    with a `stale_recovery` failure kind so they show up in the diagnostics view
+    instead of blocking the queue forever.
+    """
+    from services.job_queue import queue_manager
+
+    timeout_seconds = max(30, min(timeout_seconds, 3600))
+    summary = await queue_manager.recover(service, timeout_seconds=timeout_seconds)
+    logger.info(
+        "job_recovery_requested",
+        recovered=summary["recovered"],
+        failed=summary["failed"],
+        timeout_seconds=timeout_seconds,
+    )
+    return {"status": "success", **summary}
+
+
 @router.get("/breakdown")
 async def get_jobs_breakdown(
     key: str = "model",
@@ -317,31 +389,110 @@ async def get_job(
     return service._job_to_dict(job)
 
 
+@router.get("/{job_id}/diagnostics")
+async def get_job_diagnostics(
+    job_id: str,
+    service: JobService = Depends(get_job_service),
+):
+    """
+    Failure diagnostics for a single job.
+
+    Returns the same `diagnostics` block embedded in job payloads, plus the
+    attempt history in isolation so a UI can render a timeline without having to
+    pick fields out of the full job record.
+    """
+    job = await service.get_job(job_id)
+    diagnostics = service._job_to_dict(job)["diagnostics"]
+    return {
+        "id": job.id,
+        "task_type": job.task_type,
+        "status": job.status.value,
+        "provider_id": job.provider_id,
+        "error": job.error,
+        "diagnostics": diagnostics,
+        "attempts": diagnostics["attempts"],
+    }
+
+
 @router.post("/{job_id}/retry")
 async def retry_job(
     job_id: str,
+    request: RetryJobRequest | None = None,
     service: JobService = Depends(get_job_service),
     submission_service: JobSubmissionService = Depends(get_job_submission_service)
 ):
-    """Retry a failed job by creating a new job with the same workflow."""
+    """
+    Retry a failed job by creating a new job with the same workflow.
+
+    The new job is linked back to the original through `diagnostics.retry_of`.
+    A stale `preferred_provider_id` is dropped by default so the retry can land
+    on a healthy provider instead of failing on the same one again; pass
+    `keep_provider: true` to pin it. Model availability is re-validated, so a
+    retry of a job whose models went missing is rejected with 400.
+    """
     original_job = await service.get_job(job_id)
-    
+
     if original_job.status != JobStatus.FAILED:
-        raise ValidationError("Only failed jobs can be retried")
-    
+        raise ValidationError("Only failed jobs can be retried", field="status")
+
+    if not original_job.workflow:
+        raise ValidationError("Job has no workflow to retry", field="workflow")
+
+    keep_provider = bool(request.keep_provider) if request else False
+    metadata = dict(original_job.metadata_ or {})
+    if not keep_provider:
+        metadata.pop("preferred_provider_id", None)
+
+    job_service = submission_service.job_service
+    from services.job_service import JOB_DIAGNOSTICS_KEY
+
+    diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
+    diagnostics["retry_of"] = job_id
+    diagnostics["retry_count"] = int(diagnostics.get("retry_count") or 0) + 1
+    metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
+
     new_job = await submission_service.create_and_enqueue_job(
         original_job.workflow,
-        original_job.metadata_,
+        metadata,
         task_type=original_job.task_type,
     )
-    
-    logger.info("job_retried", original_job_id=job_id, new_job_id=new_job.id)
-    
+
+    logger.info(
+        "job_retried",
+        original_job_id=job_id,
+        new_job_id=new_job.id,
+        keep_provider=keep_provider,
+    )
+
     return {
         "status": "success",
         "new_job_id": new_job.id,
-        "original_job_id": job_id
+        "original_job_id": job_id,
+        "new_job": job_service._job_to_dict(new_job),
     }
+
+
+@router.post("/{job_id}/cancel")
+async def cancel_job(
+    job_id: str,
+    request: CancelJobRequest | None = None,
+    service: JobService = Depends(get_job_service),
+):
+    """
+    Cancel a queued or in-flight job.
+
+    Signals the provider worker (best effort) and records the terminal
+    CANCELLED state so the job stops occupying the queue. Terminal jobs are
+    rejected with 400 — there is no provider work left to stop.
+    """
+    from services.job_processing import cancel_job as cancel_job_processing
+
+    result = await cancel_job_processing(
+        job_service=service,
+        job_id=job_id,
+        reason=request.reason if request else None,
+    )
+    return {"status": "success", **result}
 
 
 @router.delete("/{job_id}")

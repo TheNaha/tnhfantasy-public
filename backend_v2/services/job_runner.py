@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 from core.entities import JobStatus, Provider
 from core.exceptions import NotFoundError
@@ -6,7 +7,10 @@ from core.workflow_parser import extract_models_from_workflow
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from services.job_processing import finalize_successful_job
-from services.job_service import JobService
+from services.job_service import (
+    FAILURE_UNEXPECTED,
+    JobService,
+)
 from services.load_balancer import LoadBalancer
 from services.load_balancer_factory import create_load_balancer
 from services.provider_client import (
@@ -18,6 +22,35 @@ from services.provider_runtime import resolve_provider_runtime
 from services.provider_service import ProviderService
 
 logger = get_logger("job_runner")
+
+
+def track_attempt(job_service, job_id: str, *, provider_id: str | None, attempt: int):
+    """Return a recorder for the outcome of a single provider attempt.
+
+    Each call site closes its attempt with `await record("timeout"|"error"|...)`
+    so `diagnostics.attempts` explains which providers were tried, in what
+    order, and how long each took. Recording failures are swallowed — losing a
+    diagnostic must never abort job execution.
+    """
+    started_at = datetime.now(timezone.utc)
+
+    async def _record(outcome: str, error: str | None = None) -> None:
+        duration = max((datetime.now(timezone.utc) - started_at).total_seconds(), 0.0)
+        try:
+            await job_service.record_attempt(
+                job_id,
+                provider_id=provider_id,
+                attempt=attempt,
+                outcome=outcome,
+                error=error,
+                duration_seconds=round(duration, 3),
+            )
+        except Exception as exc:  # pragma: no cover - record_attempt already guards
+            logger.warning(
+                "job_attempt_record_failed", job_id=job_id, provider=provider_id, error=str(exc)
+            )
+
+    return _record
 
 
 async def mark_provider_exhausted(
@@ -120,7 +153,7 @@ async def _get_job_status(job_service, job_id: str):
         return None
 
 
-async def _signal_provider_cancellation(*, runtime, provider_id: str, job_id: str) -> bool:
+async def signal_provider_cancellation(*, runtime, provider_id: str, job_id: str) -> bool:
     """Best-effort cancellation request to the active provider runtime."""
     try:
         if runtime.mode in ("container_http", "discovery") and runtime.worker_url:
@@ -176,7 +209,7 @@ async def _handle_provider_failure(
     Handles provider cancellation signal and checks job status.
     Returns True if the job is terminal (should stop processing), False otherwise.
     """
-    cancel_signal_delivered = await _signal_provider_cancellation(
+    cancel_signal_delivered = await signal_provider_cancellation(
         runtime=runtime,
         provider_id=provider_id,
         job_id=job_id,
@@ -203,6 +236,11 @@ async def execute_job(
     get_stagger_delay_fn=None,
 ):
     """Execute a queued job against providers with retry and fallback handling."""
+    # Bound before the try so the failure handler can always release/annotate,
+    # even when the failure happened before a provider was ever selected.
+    exhausted_providers: set[str] = set()
+    current_provider: Provider | None = None
+    load_balancer = None
     async with session_context_manager() as session:
         try:
             job_service = JobService(session)
@@ -229,8 +267,6 @@ async def execute_job(
             max_delay = get_retry_max_delay_fn(task_type)
             stagger_delay = get_stagger_delay_fn() if get_stagger_delay_fn else 0.0
 
-            exhausted_providers = set()
-            current_provider = None
             retry_count = 0
             required_models = extract_models_from_workflow(job.workflow) if isinstance(job.workflow, dict) else {}
 
@@ -289,10 +325,18 @@ async def execute_job(
                     message=f"Starting on {current_provider.id}...",
                 )
 
+                record_attempt = track_attempt(
+                    job_service,
+                    job_id,
+                    provider_id=current_provider.id,
+                    attempt=attempt,
+                )
+
                 runtime = resolve_provider_runtime(current_provider)
                 if not runtime.connected:
                     logger.warning("provider_runtime_unavailable", job_id=job_id, provider=current_provider.id, mode=runtime.mode)
                     await load_balancer.report_failure(current_provider.id)
+                    await record_attempt("unavailable", f"Provider runtime {runtime.mode} unavailable")
                     await mark_provider_exhausted(
                         load_balancer=load_balancer,
                         exhausted_providers=exhausted_providers,
@@ -365,9 +409,11 @@ async def execute_job(
                         return
 
                     if final_result.get("__handled_by_external_worker"):
+                        await record_attempt("completed")
                         await load_balancer.report_success(current_provider.id)
                         await load_balancer.release_job(current_provider.id)
                     else:
+                        await record_attempt("completed")
                         await finalize_successful_job(
                             job=job,
                             job_id=job_id,
@@ -381,6 +427,7 @@ async def execute_job(
 
                 except JobCancelledError as error:
                     logger.info("job_cancelled_by_provider", job_id=job_id, provider=current_provider.id, message=str(error))
+                    await record_attempt("cancelled", str(error))
                     latest_status = await _get_job_status(job_service, job_id)
                     if latest_status != JobStatus.CANCELLED:
                         await job_service.update_job(
@@ -392,8 +439,9 @@ async def execute_job(
                     await load_balancer.release_job(current_provider.id)
                     return
 
-                except JobTimeoutError:
+                except JobTimeoutError as error:
                     logger.warning("job_timeout", job_id=job_id, provider=current_provider.id)
+                    await record_attempt("timeout", str(error) or "Provider timed out")
                     await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "timeout")
                     should_retry, retry_count = await maybe_retry_current_provider(
                         job_service=job_service,
@@ -428,6 +476,9 @@ async def execute_job(
                         provider=current_provider.id,
                         provider_error_id=error.provider_id,
                         error=str(error),
+                    )
+                    await record_attempt(
+                        "retryable_error" if error.is_retryable else "error", str(error)
                     )
                     await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "provider_error")
                     should_retry = False
@@ -469,6 +520,7 @@ async def execute_job(
 
                 except asyncio.TimeoutError:
                     logger.error("job_timeout_exceeded", job_id=job_id, timeout=timeout)
+                    await record_attempt("timeout", f"Timed out after {timeout}s")
                     await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "timeout_exceeded")
                     await mark_provider_exhausted(
                         load_balancer=load_balancer,
@@ -485,16 +537,16 @@ async def execute_job(
             logger.error("job_processing_error", job_id=job_id, error=str(error), exc_info=True)
 
             try:
-                if current_provider is not None:
+                if current_provider is not None and load_balancer is not None:
                     await load_balancer.release_job(current_provider.id)
                 job_service = JobService(session)
                 latest_status = await _get_job_status(job_service, job_id)
                 if latest_status in {JobStatus.CANCELLED, JobStatus.COMPLETED, JobStatus.FAILED}:
                     return
-                await job_service.update_job(
+                await job_service.mark_failed(
                     job_id,
-                    status=JobStatus.FAILED,
                     error=str(error),
+                    error_type=FAILURE_UNEXPECTED,
                 )
             except Exception as update_error:
                 logger.error("job_update_failed", job_id=job_id, error=str(update_error))

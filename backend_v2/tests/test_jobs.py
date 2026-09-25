@@ -1,5 +1,19 @@
 # Job API tests
+import pytest
+
 from infrastructure.request_dedup import clear_dedup_cache
+
+
+@pytest.fixture(autouse=True)
+def _isolate_dedup_cache():
+    """GET /api/jobs responses are cached process-wide for a few seconds.
+
+    Clear before and after every test here so a cached list from another module
+    can never be served to a test that expects an empty database.
+    """
+    clear_dedup_cache()
+    yield
+    clear_dedup_cache()
 
 
 def test_create_job(client, sample_job_data):

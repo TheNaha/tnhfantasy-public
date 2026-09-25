@@ -11,6 +11,7 @@ from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
 from services.chat_utils import extract_first_text
 from services.image_processing import build_job_outputs, normalize_persisted_output
+from services.job_service import FAILURE_FINALIZATION
 from services.orchestrator_service import MAX_AGENTIC_DEPTH, get_max_agentic_depth
 
 logger = get_logger("job_processing")
@@ -46,6 +47,57 @@ async def _reserve_finalization(job_id: str) -> bool:
 async def _release_finalization(job_id: str) -> None:
     async with _get_finalization_lock():
         _finalizing_jobs.discard(job_id)
+
+
+async def cancel_job(
+    *,
+    job_service,
+    job_id: str,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Cancel a queued or in-flight job and report what happened.
+
+    The provider signal is best-effort: the terminal CANCELLED state is always
+    recorded, and the job runner stops on its next status check regardless of
+    whether the worker acknowledged the request. Terminal jobs raise
+    ValidationError because there is no provider work left to stop.
+    """
+    from services.job_runner import signal_provider_cancellation
+    from services.provider_runtime import resolve_provider_runtime
+    from services.provider_service import ProviderService
+
+    job = await job_service.get_job(job_id)
+    provider_id = job.provider_id
+    provider_signalled = False
+
+    if provider_id:
+        try:
+            provider = await ProviderService(job_service.session).get_provider(provider_id)
+            runtime = resolve_provider_runtime(provider)
+            provider_signalled = await signal_provider_cancellation(
+                runtime=runtime,
+                provider_id=provider_id,
+                job_id=job_id,
+            )
+        except Exception as exc:
+            # The provider record may be gone or unreachable — still cancel the
+            # job locally so it stops occupying the queue.
+            logger.warning("job_cancel_provider_signal_failed", job_id=job_id, error=str(exc))
+
+    cancelled = await job_service.cancel_job(job_id, reason=reason)
+    logger.info(
+        "job_cancelled",
+        job_id=job_id,
+        provider_id=provider_id,
+        provider_signalled=provider_signalled,
+    )
+
+    return {
+        "job_id": cancelled.id,
+        "job_status": cancelled.status.value,
+        "provider_id": provider_id,
+        "provider_signalled": provider_signalled,
+    }
 
 
 def normalize_external_outputs(outputs, *, allow_text: bool = False) -> list[dict[str, Any]]:
@@ -250,10 +302,10 @@ async def finalize_persisted_job_outputs(
                 logger.info("job_completed", job_id=job_id, outputs=len(outputs), provider_id=provider_id)
             except Exception as exc:
                 logger.error("job_finalize_failed", job_id=job_id, provider_id=provider_id, error=str(exc), exc_info=True)
-                await active_job_service.update_job(
+                await active_job_service.mark_failed(
                     job_id,
-                    status=JobStatus.FAILED,
                     error=str(exc),
+                    error_type=FAILURE_FINALIZATION,
                     provider_id=provider_id,
                 )
                 if load_balancer and provider_id:

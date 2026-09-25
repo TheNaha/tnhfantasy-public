@@ -14,6 +14,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
     if (!job) return null;
 
     const meta = job.metadata || job.metadata_ || {};
+    const diagnostics = job.diagnostics || null;
     const checkpoint = typeof meta.checkpoint === 'object' ? meta.checkpoint?.name : meta.checkpoint;
     const isProcessing = ['retrying', 'sent-to-provider', 'connected', 'pre-generation', 'generating', 'processing', 'executing', 'progress', 'running', 'post-processing'].includes(job.status);
     const isPending = ['pending', 'queued'].includes(job.status);
@@ -57,6 +58,13 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
 
     // Calculate elapsed time
     const getElapsedTime = () => formatElapsed(job.created_at, job.completed_at);
+
+    const formatDuration = (seconds) => {
+        if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
+        if (seconds < 60) return `${Math.round(seconds)}s`;
+        if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+        return `${Math.round(seconds / 3600)}h`;
+    };
 
     const providerName = getProviderDisplayName(job.provider_id);
 
@@ -110,6 +118,62 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                     {job.error && (
                         <div className="bg-red-900/20 p-3 rounded-lg border border-red-500/30">
                             <p className="text-sm text-red-400 break-words">{job.error}</p>
+                        </div>
+                    )}
+
+                    {/* Diagnostics — why the job failed and whether it can be retried */}
+                    {diagnostics && (isFailed || diagnostics.attempt_count > 0 || diagnostics.error_type) && (
+                        <div className="bg-gray-900 p-3 rounded-lg border border-gray-700 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs text-gray-500 uppercase font-medium">Diagnostics</span>
+                                {diagnostics.error_type && (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-400/30">
+                                        {diagnostics.error_type.replace(/_/g, ' ')}
+                                    </span>
+                                )}
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                <div className="bg-gray-800/60 p-2 rounded text-center">
+                                    <span className="text-[10px] text-gray-500 block">Attempts</span>
+                                    <span className="text-sm text-white">{diagnostics.attempt_count || 0}</span>
+                                </div>
+                                <div className="bg-gray-800/60 p-2 rounded text-center">
+                                    <span className="text-[10px] text-gray-500 block">Duration</span>
+                                    <span className="text-sm text-white">
+                                        {formatDuration(diagnostics.duration_seconds) || '—'}
+                                    </span>
+                                </div>
+                                <div className="bg-gray-800/60 p-2 rounded text-center">
+                                    <span className="text-[10px] text-gray-500 block">Provider</span>
+                                    <span className="text-sm text-white truncate block" title={diagnostics.last_provider_id || ''}>
+                                        {diagnostics.last_provider_id || '—'}
+                                    </span>
+                                </div>
+                                <div className="bg-gray-800/60 p-2 rounded text-center">
+                                    <span className="text-[10px] text-gray-500 block">Retryable</span>
+                                    <span className="text-sm text-white">{diagnostics.is_retryable ? 'Yes' : 'No'}</span>
+                                </div>
+                            </div>
+                            {diagnostics.retry_of && (
+                                <p className="text-[10px] text-gray-600 break-all">
+                                    Retry of {diagnostics.retry_of}
+                                </p>
+                            )}
+                            {Array.isArray(diagnostics.attempts) && diagnostics.attempts.length > 0 && (
+                                <ol className="text-xs text-gray-400 space-y-1 pt-1 border-t border-gray-700">
+                                    {diagnostics.attempts.map((attempt, index) => (
+                                        <li key={index} className="flex items-center gap-2 flex-wrap">
+                                            <span className="text-gray-600">#{index + 1}</span>
+                                            <span className="text-gray-300">{attempt.provider_id || 'unassigned'}</span>
+                                            <span className="text-gray-500">{attempt.outcome}</span>
+                                            {attempt.duration_seconds != null && (
+                                                <span className="text-gray-600">{formatDuration(attempt.duration_seconds)}</span>
+                                            )}
+                                            {attempt.error && <span className="text-red-400/80 break-words">— {attempt.error}</span>}
+                                        </li>
+                                    ))}
+                                </ol>
+                            )}
                         </div>
                     )}
 
@@ -272,8 +336,12 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                                     toast.error(e.message || 'Failed to retry job');
                                 }
                             }}
+                            disabled={diagnostics?.is_retryable === false}
                             aria-label="Retry this job"
-                            className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+                            title={diagnostics?.is_retryable === false
+                                ? 'This job has no workflow to retry'
+                                : 'Retry this job'}
+                            className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-blue-600"
                         >
                             <RefreshCw size={16} /> Retry Job
                         </button>
