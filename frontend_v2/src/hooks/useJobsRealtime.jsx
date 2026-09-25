@@ -2,7 +2,6 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as ws from '../api/websocket';
 import toast from 'react-hot-toast';
-import useSettingsStore from '../store/settingsStore';
 
 export function useJobsRealtime() {
     const queryClient = useQueryClient();
@@ -118,13 +117,7 @@ export function useJobsRealtime() {
             queryClient.setQueryData(['jobs', job.id], (old) =>
                 old ? { ...old, ...job } : job
             );
-            // Queue membership changed — refresh the queue panel. Gallery refresh
-            // respects the user's autoRefreshOnJobComplete setting (it's a
-            // bandwidth/preference choice, not a correctness one).
             queryClient.invalidateQueries({ queryKey: ['jobs', 'queue'] });
-            if (useSettingsStore.getState().settings.gallery.autoRefreshOnJobComplete) {
-                queryClient.invalidateQueries({ queryKey: ['gallery'] });
-            }
 
             if (type === 'completed' && isImageJob) {
                 toast.success(

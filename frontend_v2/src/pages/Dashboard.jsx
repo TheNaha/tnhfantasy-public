@@ -234,16 +234,9 @@ export default function Dashboard() {
         hasMore: hasNextPage,
         onLoadMore: fetchNextPage,
         loading: isFetchingNextPage,
-        rootMargin: '600px'
+        rootMargin: '160px 0px'
     });
 
-    const hasInitializedRef = useRef(false);
-    useEffect(() => {
-        if (hasInitializedRef.current) return;
-        hasInitializedRef.current = true;
-        void refetch();
-    }, [refetch]);
-    
     useGalleryAutoRefresh({
         lastCompletedJob,
         autoRefreshOnJobComplete,
@@ -480,7 +473,7 @@ export default function Dashboard() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            style={{ position: 'relative', overflowAnchor: 'none' }}
+            style={{ position: 'relative' }}
         >
             <PullToRefreshIndicator
                 pullDistance={pullDistance}

@@ -28,7 +28,9 @@ export function useGallery(filters = {}) {
             // Fetch Assets and Jobs using API client
             const [assetsData, jobsData] = await Promise.all([
                 assetsApi.list(params),
-                jobsApi.list({ limit: LIMIT, sort: 'created_at_desc' }).catch(() => ({ jobs: [] })) // fallback if jobs fails
+                pageParam
+                    ? Promise.resolve({ jobs: [] })
+                    : jobsApi.list({ limit: LIMIT, sort: 'created_at_desc' }).catch(() => ({ jobs: [] })),
             ]);
 
             return {

@@ -70,16 +70,24 @@ export default function DashboardGalleryGrid({
 
     if (displayedItems.length === 0) {
         return (
-            <EmptyState
-                type={
-                    showFavorites ? 'favorites' :
-                        activeCollection ? 'collection' :
-                            filters.search ? 'search' :
-                                'gallery'
-                }
-                onAction={onClearFilters}
-                showTutorialHint={!showFavorites && !activeCollection && allItems.length === 0}
-            />
+            <>
+                <EmptyState
+                    type={
+                        showFavorites ? 'favorites' :
+                            activeCollection ? 'collection' :
+                                filters.search ? 'search' :
+                                    'gallery'
+                    }
+                    onAction={onClearFilters}
+                    showTutorialHint={!showFavorites && !activeCollection && allItems.length === 0}
+                />
+                <div ref={sentinelRef} className="h-4" />
+                {isFetchingNextPage && (
+                    <div className="flex justify-center py-8">
+                        <Loader2 className="animate-spin text-gray-400" size={32} />
+                    </div>
+                )}
+            </>
         );
     }
 
@@ -115,10 +123,10 @@ export default function DashboardGalleryGrid({
                 />
             )}
 
-            <div ref={sentinelRef} className="h-4" style={{ overflowAnchor: 'none' }} />
+            <div ref={sentinelRef} className="h-4" />
 
             {isFetchingNextPage && (
-                <div className="flex justify-center py-8" style={{ overflowAnchor: 'none' }}>
+                <div className="flex justify-center py-8">
                     <Loader2 className="animate-spin text-gray-400" size={32} />
                 </div>
             )}

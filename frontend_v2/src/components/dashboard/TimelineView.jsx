@@ -1,4 +1,4 @@
-import { useMemo, memo, useLayoutEffect, useRef } from 'react';
+import { useMemo, memo } from 'react';
 import { Calendar, Clock, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import ProgressiveImage from '../ProgressiveImage';
@@ -87,23 +87,12 @@ export const TimelineView = memo(function TimelineView({
 
     const virtualizer = useWindowVirtualizer({
         count: timelineGroups.length,
-        estimateSize: () => 600,
+        estimateSize: (index) => {
+            const itemCount = timelineGroups[index]?.items.length || 1;
+            return Math.max(320, Math.min(2200, 180 + itemCount * 190));
+        },
+        getItemKey: (index) => timelineGroups[index]?.date || `timeline-${index}`,
         overscan: 2,
-    });
-
-    const prevCountRef = useRef(timelineGroups.length);
-    const savedScrollYRef = useRef(0);
-
-    useLayoutEffect(() => {
-        const currentCount = timelineGroups.length;
-        if (currentCount > prevCountRef.current) {
-            const currentY = window.scrollY;
-            if (Math.abs(currentY - savedScrollYRef.current) > 200) {
-                window.scrollTo({ top: savedScrollYRef.current, behavior: 'auto' });
-            }
-        }
-        savedScrollYRef.current = window.scrollY;
-        prevCountRef.current = currentCount;
     });
 
     if (timelineGroups.length === 0) {
@@ -120,7 +109,7 @@ export const TimelineView = memo(function TimelineView({
             {/* Timeline Line */}
             <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-500 via-purple-500 to-transparent hidden md:block" />
 
-            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%', overflowAnchor: 'none', overflow: 'hidden' }}>
+            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%', overflow: 'hidden' }}>
                 {virtualizer.getVirtualItems().map((virtualItem) => {
                     const group = timelineGroups[virtualItem.index];
                     const stats = group.stats;

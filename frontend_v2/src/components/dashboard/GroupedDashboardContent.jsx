@@ -1,5 +1,4 @@
-import { memo, useLayoutEffect, useRef } from "react";
-import { useCallback } from "react";
+import { memo, useCallback } from "react";
 import { motion } from 'framer-motion';
 import { Calendar, Check, Star } from 'lucide-react';
 
@@ -247,23 +246,18 @@ export default memo(function GroupedDashboardContent({
 
     const virtualizer = useWindowVirtualizer({
         count: sortedGroupedEntries.length,
-        estimateSize: () => 800,
-        overscan: 2,
-    });
-
-    const prevCountRef = useRef(sortedGroupedEntries.length);
-    const savedScrollYRef = useRef(0);
-
-    useLayoutEffect(() => {
-        const currentCount = sortedGroupedEntries.length;
-        if (currentCount > prevCountRef.current) {
-            const currentY = window.scrollY;
-            if (Math.abs(currentY - savedScrollYRef.current) > 200) {
-                window.scrollTo({ top: savedScrollYRef.current, behavior: 'auto' });
+        estimateSize: (index) => {
+            const itemCount = sortedGroupedEntries[index]?.[1]?.length || 1;
+            if (viewMode === 'grid') {
+                return Math.max(320, Math.min(1800, 180 + Math.ceil(itemCount / Math.max(gridCols, 1)) * 260));
             }
-        }
-        savedScrollYRef.current = window.scrollY;
-        prevCountRef.current = currentCount;
+            if (viewMode === 'list') {
+                return Math.max(220, Math.min(2200, 120 + itemCount * 180));
+            }
+            return Math.max(280, Math.min(2000, 160 + itemCount * 220));
+        },
+        getItemKey: (index) => sortedGroupedEntries[index]?.[0] || `group-${index}`,
+        overscan: 2,
     });
 
     return (
@@ -272,7 +266,6 @@ export default memo(function GroupedDashboardContent({
                 height: `${virtualizer.getTotalSize()}px`,
                 position: 'relative',
                 width: '100%',
-                overflowAnchor: 'none',
                 overflow: 'hidden',
             }}
         >

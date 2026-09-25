@@ -1,7 +1,41 @@
-import { expect } from '@playwright/test';
+import { expect, test as testBase } from '@playwright/test';
 import zlib from 'node:zlib';
 
 const API_BASE = '/api/v2';
+const TRACKED_ENTITIES = new WeakMap();
+const ENTITY_KINDS = {
+  characters: 'character',
+  chats: 'chat',
+  stories: 'story',
+  locations: 'location',
+  lorebooks: 'lorebook',
+  campaigns: 'campaign',
+  collections: 'collection',
+  prompts: 'prompt',
+  scenarios: 'scenario',
+  voices: 'voice',
+  models: 'model',
+  providers: 'provider',
+};
+
+function trackCreatedEntity(page, path, data) {
+  const match = path.split('?')[0].match(/^\/(characters|chats|stories|locations|lorebooks|campaigns|collections|prompts|scenarios|voices|models|providers)$/);
+  if (match) {
+    const entityId = data?.id;
+    if (entityId) {
+      const tracked = TRACKED_ENTITIES.get(page) || [];
+      tracked.push({ kind: ENTITY_KINDS[match[1]], id: entityId });
+      TRACKED_ENTITIES.set(page, tracked);
+    }
+    return;
+  }
+  const chapterMatch = path.split('?')[0].match(/^\/stories\/([^/]+)\/chapters$/);
+  if (chapterMatch && data?.id) {
+    const tracked = TRACKED_ENTITIES.get(page) || [];
+    tracked.push({ kind: 'chapter', id: `${chapterMatch[1]}:${data.id}` });
+    TRACKED_ENTITIES.set(page, tracked);
+  }
+}
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -27,7 +61,9 @@ async function apiPost(page, path, body) {
     headers: { 'Content-Type': 'application/json' },
   });
   if (!res.ok()) throw new Error(`POST ${path} failed: ${res.status()}`);
-  return res.json();
+  const data = await res.json();
+  trackCreatedEntity(page, path, data);
+  return data;
 }
 
 async function apiPut(page, path, body) {
@@ -330,6 +366,7 @@ const DELETE_PATHS = {
   campaign: (id) => `/campaigns/${id}`,
   scenario: (id) => `/scenarios/${id}`,
   voice: (id) => `/voices/${id}`,
+  provider: (id) => `/providers/${id}`,
 };
 
 async function cleanupEntities(page, entities) {
@@ -349,6 +386,19 @@ async function cleanupEntities(page, entities) {
   }
   if (errors.length) throw new Error(`Cleanup errors: ${errors.join('; ')}`);
 }
+
+testBase.afterEach(async ({ page }) => {
+  const tracked = TRACKED_ENTITIES.get(page) || [];
+  if (tracked.length) {
+    const ordered = [...tracked].sort((a, b) => {
+      const aRank = a.kind === 'chapter' ? 0 : 1;
+      const bRank = b.kind === 'chapter' ? 0 : 1;
+      return aRank - bRank;
+    });
+    await cleanupEntities(page, ordered);
+    TRACKED_ENTITIES.delete(page);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Misc UI helpers
