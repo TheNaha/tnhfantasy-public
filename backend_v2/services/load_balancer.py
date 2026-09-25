@@ -494,7 +494,7 @@ class LoadBalancer:
             # background and return immediately. Job selection never blocks here:
             # dispatch failures during the boot window fall through retry backoff,
             # and the warm-up task fills the health cache when ready.
-            if selected_provider:
+            if selected_provider and os.getenv("COMFY_PROVIDER_AUTOSTART_ENABLED", "0") == "1":
                 start_background_task(
                     self._warm_provider_in_background(selected_provider),
                     task_name=f"lb_warm:{selected_provider.id}",

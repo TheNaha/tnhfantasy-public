@@ -7,19 +7,21 @@ from sqlmodel import Session, select
 from core.dtos import JobQueueItem
 from core.entities import Job, JobStatus
 from core.events import EventType, emit_job_event
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, ValidationError
 from infrastructure.logging import job_logger
+from infrastructure.metrics import metrics
 from infrastructure.repositories import JobRepository
 
 logger = job_logger()
 
 JOB_STATUS_TRANSITIONS = {
     JobStatus.PENDING: {JobStatus.SENT_TO_PROVIDER, JobStatus.CANCELLED},
-    JobStatus.SENT_TO_PROVIDER: {JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.CONNECTED: {JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.PRE_GENERATION: {JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.GENERATING: {JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.POST_PROCESSING: {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.SENT_TO_PROVIDER: {JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.CONNECTED: {JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.PRE_GENERATION: {JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.GENERATING: {JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.POST_PROCESSING: {JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.RETRYING: {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
     JobStatus.COMPLETED: set(),
     JobStatus.FAILED: {JobStatus.PENDING},
     JobStatus.CANCELLED: set(),
@@ -60,6 +62,7 @@ class JobService:
             self.session.refresh(job)
         
         logger.info("job_created", job_id=job.id)
+        metrics.track_job_created()
         
         # Emit creation event
         await emit_job_event(EventType.JOB_CREATED, self._job_to_dict(job))
@@ -166,7 +169,13 @@ class JobService:
         job = self.repo.update(job_id, **updates)
         
         if status:
-            logger.info("job_status_changed", job_id=job_id, status=status.value if hasattr(status, 'value') else status)
+            status_value = status.value if hasattr(status, "value") else str(status)
+            logger.info("job_status_changed", job_id=job_id, status=status_value)
+            if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+                duration = None
+                if job.started_at and job.completed_at:
+                    duration = max((job.completed_at - job.started_at).total_seconds(), 0.0)
+                metrics.track_job_completed(status_value, duration)
         
         # Determine event type based on status
         if status == JobStatus.COMPLETED:
@@ -196,7 +205,9 @@ class JobService:
         return True
     
     async def clear_all_jobs(self) -> int:
-        """Clear all jobs. Returns count of deleted jobs."""
+        """Clear terminal jobs while preserving active work."""
+        if self.get_running_jobs():
+            raise ValidationError("Cannot clear jobs while active jobs exist")
         count = self.repo.delete_all()
         logger.info("jobs_cleared", count=count)
         return count
@@ -260,7 +271,18 @@ class JobService:
     
     def get_job_stats(self) -> dict[str, int]:
         """Get job counts by status."""
-        return self.repo.count_by_status()
+        stats = self.repo.count_by_status()
+        metrics.set_queue_size(stats.get("pending", 0))
+        active_states = (
+            JobStatus.SENT_TO_PROVIDER,
+            JobStatus.CONNECTED,
+            JobStatus.PRE_GENERATION,
+            JobStatus.GENERATING,
+            JobStatus.POST_PROCESSING,
+            JobStatus.RETRYING,
+        )
+        metrics.set_active_jobs(sum(stats.get(state.value, 0) for state in active_states))
+        return stats
     
     def get_job_stats_detailed(self, days: int = 7) -> dict[str, Any]:
         """

@@ -104,14 +104,18 @@ def create_db_and_tables() -> None:
 
 
 async def vacuum_database() -> None:
-    """Run SQLite VACUUM to reclaim disk space and optimize performance."""
+    """Run database maintenance using the configured dialect."""
     from sqlalchemy import text
 
     logger.info("vacuum_start")
     try:
-        with engine.connect() as conn:
-            conn.execute(text("VACUUM"))
-            conn.commit()
+        if database_url.startswith("sqlite"):
+            with engine.connect() as conn:
+                conn.execute(text("VACUUM"))
+                conn.commit()
+        else:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.execute(text("VACUUM (ANALYZE)"))
         logger.info("vacuum_complete")
     except Exception as exc:
         logger.error("vacuum_failed", error=str(exc))

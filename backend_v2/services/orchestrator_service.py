@@ -606,6 +606,19 @@ async def _tool_narrate_scene(
                     except Exception as persist_exc:
                         logger.warning("narrator_message_persist_failed", chat_id=chat_id, error=str(persist_exc))
 
+                from services.job_processing import complete_job
+                await complete_job(
+                    job_service=_job_service,
+                    job_id=job.id,
+                    outputs=outputs,
+                    provider_id=provider.id,
+                    event_extra={
+                        "type": "narrator",
+                        "chat_id": chat_id,
+                        "character_id": character_id,
+                        "content": content,
+                    },
+                )
                 return {"status": "success", "narration": content, "job_id": job.id}
             except (JobCancelledError, JobTimeoutError, ProviderCallError) as exc:
                 logger.warning("tool_narrate_scene_inline_failed", job_id=job.id, error=str(exc))

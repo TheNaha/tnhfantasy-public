@@ -26,7 +26,7 @@ from api.routes import (
 )
 from api.routes import settings as settings_routes
 from api.routes.websocket import socket_app
-from config import get_cors_origins, settings
+from config import get_cors_origins, get_gzip_minimum_size
 from infrastructure.logging import api_logger
 from infrastructure.metrics import metrics
 
@@ -44,7 +44,7 @@ def configure_app(app: FastAPI):
 
     app.add_middleware(
         GZipMiddleware,
-        minimum_size=settings.gzip_minimum_size,
+        minimum_size=get_gzip_minimum_size(),
     )
 
     @app.middleware("http")
@@ -76,6 +76,8 @@ def configure_app(app: FastAPI):
         skip_paths = ["/api/health", "/api/files/events", "/metrics"]
 
         if not any(path.startswith(skip) for skip in skip_paths):
+            route = request.scope.get("route")
+            metric_path = getattr(route, "path", None) or "unmatched"
             log = api_logger()
             log.info(
                 "http_request",
@@ -85,7 +87,7 @@ def configure_app(app: FastAPI):
                 status_code=response.status_code,
                 duration_ms=duration_ms,
             )
-            metrics.track_request(request.method, path, response.status_code, duration_seconds)
+            metrics.track_request(request.method, metric_path, response.status_code, duration_seconds)
 
         response.headers["X-Request-ID"] = request_id
         return response

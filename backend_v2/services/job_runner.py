@@ -219,6 +219,9 @@ async def execute_job(
                 logger.debug("job_not_pending", job_id=job_id, status=job.status)
                 return
 
+            if preferred_provider_id is None:
+                preferred_provider_id = (job.metadata_ or {}).get("preferred_provider_id")
+
             task_type = job.task_type
             timeout = get_timeout_fn(task_type)
             max_retries = get_max_retries_fn(task_type)

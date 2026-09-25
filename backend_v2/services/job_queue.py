@@ -609,6 +609,7 @@ class QueueManager:
                 UPDATE jobs
                 SET status = 'PENDING', started_at = NULL, claimed_at = NULL
                 WHERE status IN ('SENT_TO_PROVIDER', 'CONNECTED', 'PRE_GENERATION', 'GENERATING', 'POST_PROCESSING', 'RETRYING')
+                   OR (status = 'PENDING' AND claimed_at IS NOT NULL)
                 """
             ))
 

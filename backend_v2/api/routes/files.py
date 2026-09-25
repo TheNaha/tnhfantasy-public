@@ -141,7 +141,15 @@ async def _sync_file_to_providers(session: Session, filename: str, content: byte
                         timeout=30.0,
                     )
                     if response.status_code == 200:
-                        synced_count += 1
+                        try:
+                            response_body = response.json()
+                        except ValueError:
+                            response_body = {}
+                        if response_body.get("status") == "error":
+                            failed_count += 1
+                            logger.warning("sync_provider_failed", provider_id=provider_id, reason=response_body.get("message"))
+                        else:
+                            synced_count += 1
                     else:
                         failed_count += 1
                         logger.warning("sync_provider_failed", provider_id=provider_id, status=response.status_code)
@@ -224,9 +232,8 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
     if not clean_path:
         raise ValidationError("Invalid path: path cannot be empty")
 
-    # Resolve full path
-    full_path = os.path.abspath(os.path.join(base_dir, clean_path))
-    base_path = os.path.abspath(base_dir)
+    base_path = os.path.realpath(os.path.abspath(base_dir))
+    full_path = os.path.realpath(os.path.join(base_path, clean_path))
 
     # Use commonpath so mixed separators and platform differences are handled correctly.
     try:
@@ -325,7 +332,10 @@ def _resolve_asset_path(rel_or_filename: str) -> str | None:
     OUTPUT_DIR so requests still work during/after the partition migration.
     """
     rel = rel_or_filename.lstrip("/\\")
-    direct = os.path.join(OUTPUT_DIR, rel)
+    try:
+        direct = get_safe_path(OUTPUT_DIR, rel)
+    except ValidationError:
+        return None
     if os.path.exists(direct):
         return direct
     asset = None
@@ -341,13 +351,13 @@ def _resolve_asset_path(rel_or_filename: str) -> str | None:
     except Exception:
         asset = None
     if asset:
-            cand = os.path.join(OUTPUT_DIR, asset.relative_path)
+            cand = get_safe_path(OUTPUT_DIR, asset.relative_path)
             if os.path.exists(cand):
                 return cand
-            leg = os.path.join(OUTPUT_DIR, asset.filename)
+            leg = get_safe_path(OUTPUT_DIR, asset.filename)
             if os.path.exists(leg):
                 return leg
-    leg = os.path.join(OUTPUT_DIR, os.path.basename(rel))
+    leg = get_safe_path(OUTPUT_DIR, os.path.basename(rel))
     return leg if os.path.exists(leg) else None
 
 
@@ -535,9 +545,9 @@ async def serve_asset_file(asset_id: str):
         asset = session.get(Asset, asset_id)
         if not asset or asset.deleted_at is not None:
             raise NotFoundError("Asset not found")
-        path = os.path.join(OUTPUT_DIR, asset.relative_path)
+        path = get_safe_path(OUTPUT_DIR, asset.relative_path)
         if not os.path.exists(path):
-            path = os.path.join(OUTPUT_DIR, asset.filename)
+            path = get_safe_path(OUTPUT_DIR, asset.filename)
         if not os.path.exists(path):
             _soft_delete_assets(asset.relative_path)
             raise NotFoundError("Asset file missing on disk")
@@ -550,9 +560,9 @@ async def serve_asset_thumb(asset_id: str):
         asset = session.get(Asset, asset_id)
         if not asset or asset.deleted_at is not None or not asset.thumbnail_relative_path:
             raise NotFoundError("Thumbnail not found")
-        path = os.path.join(OUTPUT_DIR, asset.thumbnail_relative_path)
+        path = get_safe_path(OUTPUT_DIR, asset.thumbnail_relative_path)
         if not os.path.exists(path):
-            orig_path = os.path.join(OUTPUT_DIR, asset.relative_path)
+            orig_path = get_safe_path(OUTPUT_DIR, asset.relative_path)
             if not os.path.exists(orig_path):
                 _soft_delete_assets(asset.relative_path)
             raise NotFoundError("Thumbnail missing on disk")
@@ -575,7 +585,7 @@ async def move_asset(asset_id: str, body: MoveAssetRequest, session: Session = D
     if not any([body.workspace, body.character_id, body.story_id]):
         raise ValidationError("Provide at least one of workspace, character_id, or story_id")
 
-    source_path = os.path.join(OUTPUT_DIR, asset.relative_path)
+    source_path = get_safe_path(OUTPUT_DIR, asset.relative_path)
     if not os.path.exists(source_path):
         _soft_delete_assets(asset.relative_path)
         raise NotFoundError("Asset file missing on disk")
@@ -590,7 +600,7 @@ async def move_asset(asset_id: str, body: MoveAssetRequest, session: Session = D
         *([target_story_id] if target_story_id else []),
         asset.filename,
     )
-    target_path = os.path.join(OUTPUT_DIR, target_rel)
+    target_path = get_safe_path(OUTPUT_DIR, target_rel)
 
     if body.copy_file:
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
@@ -968,7 +978,7 @@ async def serve_thumbnail(size: str, filename: str):
                 select(Asset).where(Asset.filename == rel).where(Asset.deleted_at.is_(None))
             ).first()
         if asset and asset.thumbnail_relative_path:
-            indexed_thumb = os.path.join(OUTPUT_DIR, asset.thumbnail_relative_path)
+            indexed_thumb = get_safe_path(OUTPUT_DIR, asset.thumbnail_relative_path)
             if os.path.exists(indexed_thumb):
                 stat = os.stat(indexed_thumb)
                 etag = hashlib.md5(f"{indexed_thumb}:{stat.st_mtime}".encode()).hexdigest()[:16]

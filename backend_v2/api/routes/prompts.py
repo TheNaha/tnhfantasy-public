@@ -151,6 +151,15 @@ async def get_most_used(
     return {"prompts": prompts}
 
 
+@router.get("/export")
+async def export_prompts(session: Session = Depends(get_session)):
+    """Export all prompts as JSON (for backup)."""
+    from api.deps import get_prompt_repo
+    repo = get_prompt_repo(session)
+    prompts = repo.get_all_prompts()
+    return {"prompts": prompts}
+
+
 @router.get("/{prompt_id}")
 async def get_prompt(prompt_id: str, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
     """Get a single prompt by ID."""
@@ -258,13 +267,6 @@ async def import_prompts(data: PromptBulkImport, session: Session = Depends(get_
     }
 
 
-@router.get("/export")
-async def export_prompts(session: Session = Depends(get_session)):
-    """Export all prompts as JSON (for backup)."""
-    from api.deps import get_prompt_repo
-    repo = get_prompt_repo(session)
-    prompts = repo.get_all_prompts()
-    return {"prompts": prompts}
 
 @router.post("/magic")
 async def magic_prompt(

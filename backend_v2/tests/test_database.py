@@ -4,7 +4,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlmodel import Session, create_engine
 from sqlmodel.pool import StaticPool
 
@@ -155,14 +155,14 @@ class TestGetSession:
 
 
 class TestCreateDbAndTables:
-    def test_create_db_and_tables_runs(self):
-        """Test that create_db_and_tables runs without error."""
-        # This may already be run in test setup, but should be idempotent
-        try:
-            db_module.create_db_and_tables()
-        except Exception as e:
-            # If it fails for database-specific reasons, that's ok
-            assert "migration" in str(e).lower() or "table" in str(e).lower() or True
+    def test_create_db_and_tables_runs(self, monkeypatch):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        monkeypatch.setattr(db_module, "engine", engine)
+        monkeypatch.setattr(db_module, "database_url", "sqlite://")
+
+        db_module.create_db_and_tables()
+
+        assert "jobs" in inspect(engine).get_table_names()
 
 
 class TestRunMigrations:
@@ -306,6 +306,18 @@ class TestRunMigrations:
             "059_add_story_chapter_revisions",
             "061_add_personas_and_chat_persona_fields",
         ]
+
+    def test_branching_migration_is_idempotent_with_existing_columns(self, tmp_path):
+        engine = create_engine(f"sqlite:///{tmp_path / 'branching.db'}")
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE messages (id TEXT PRIMARY KEY, chat_id TEXT, parent_id TEXT, branch_id TEXT, branch_name VARCHAR(128))"))
+            conn.execute(text("CREATE TABLE characters (id TEXT PRIMARY KEY, expressions JSON DEFAULT '{}', expressions_lora JSON DEFAULT '[]')"))
+
+        from infrastructure.migrations.steps import _migration_042_add_branching_and_expressions
+
+        with engine.begin() as conn:
+            assert _migration_042_add_branching_and_expressions(conn) is True
+            assert _migration_042_add_branching_and_expressions(conn) is True
 
     def test_run_migrations_normalizes_legacy_job_statuses(self, tmp_path):
         db_path = tmp_path / "legacy_job_statuses.db"

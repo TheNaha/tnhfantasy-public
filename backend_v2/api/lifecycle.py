@@ -236,8 +236,8 @@ async def startup_application(process_job, ws_manager):
     )
 
     logger.info("startup_init", phase="job_recovery")
-    await recover_pending_jobs()
     await recover_post_processing_jobs()
+    await recover_pending_jobs()
 
     logger.info("startup_init", phase="scheduler")
     start_scheduler()
@@ -267,14 +267,22 @@ async def startup_application(process_job, ws_manager):
     from services.agent_simulation import run_idle_simulation_tick
     from infrastructure.scheduler import add_interval_job
     interval_env = os.getenv("COMFY_IDLE_SIM_INTERVAL_SECONDS")
-    interval = int(interval_env) if interval_env else int(get_config().get("ai", {}).get("idleSimIntervalSeconds", 600))
-    add_interval_job(
-        run_idle_simulation_tick,
-        interval_seconds=interval,
-        job_id="idle_simulation",
-        start_immediately=False,
-    )
-    logger.info("idle_simulation_registered", enabled=idle_sim_enabled, interval_seconds=interval)
+    try:
+        interval = int(interval_env) if interval_env else int(get_config().get("ai", {}).get("idleSimIntervalSeconds", 600))
+    except (TypeError, ValueError):
+        interval = 600
+    if interval <= 0:
+        interval = 600
+    if idle_sim_enabled:
+        add_interval_job(
+            run_idle_simulation_tick,
+            interval_seconds=interval,
+            job_id="idle_simulation",
+            start_immediately=False,
+        )
+        logger.info("idle_simulation_registered", enabled=True, interval_seconds=interval)
+    else:
+        logger.info("idle_simulation_disabled")
 
     logger.info("startup_init", phase="civitai_resync")
     from api.routes.models.maintenance import run_background_resync

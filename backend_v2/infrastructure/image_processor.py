@@ -14,6 +14,15 @@ from infrastructure.logging import get_logger
 logger = get_logger("image_processor")
 
 
+def _safe_component(value: str, default: str) -> str:
+    normalized = str(value or default).replace("\\", "/").strip()
+    parts = normalized.split("/")
+    if not normalized or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("Invalid output path component")
+    return "/".join(parts)
+
+
+
 def get_output_path(base_dir: str = None, subdir: str = None, user_id: str = "default_user", workspace: str = "main") -> str:
     """
     Generate a partitioned, date-based output path.
@@ -38,9 +47,14 @@ def get_output_path(base_dir: str = None, subdir: str = None, user_id: str = "de
         base_dir = app_config.settings.output_dir
 
     # Partition: /{user_id}/{workspace}/  (skip empty segments)
-    partition = os.path.join(base_dir, user_id or "default_user", workspace or "main")
+    base_dir = os.path.realpath(os.path.abspath(base_dir))
+    partition = os.path.join(
+        base_dir,
+        _safe_component(user_id, "default_user"),
+        _safe_component(workspace, "main"),
+    )
     if subdir:
-        partition = os.path.join(partition, subdir)
+        partition = os.path.join(partition, _safe_component(subdir, ""))
 
     if app_config.get_output_date_hierarchy():
         now = datetime.now()
@@ -165,31 +179,28 @@ def generate_thumbnails(image_path: str, sizes: dict = None, output_base_dir: st
     
     for suffix, max_size in sizes.items():
         # Open a fresh copy for each size to avoid PIL's thumbnail() mutation
-        img = Image.open(image_path)
-        
-        # Convert RGBA to RGB if needed (for WebP/JPEG compatibility)
-        if img.mode == 'RGBA':
-            background = Image.new('RGB', img.size, (255, 255, 255))
-            background.paste(img, mask=img.split()[3])  # Use alpha channel as mask
-            img = background
-        elif img.mode != 'RGB':
-            img = img.convert('RGB')
-        
-        # Calculate new size maintaining aspect ratio
-        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-        
-        # Build thumbnail path in thumb directory with proper format
-        # e.g., output/thumb/2025/12/07/Generated_2025-12-07_23-54-29_00001.webp
-        thumb_filename = f"{original_filename}.{thumb_format}"
-        thumb_path = os.path.join(thumb_output_dir, thumb_filename)
-        
-        # Save thumbnail in configured format
-        if thumb_format == 'webp':
-            img.save(thumb_path, format='WEBP', quality=quality, method=4)
-        elif thumb_format == 'jpg' or thumb_format == 'jpeg':
-            img.save(thumb_path, format='JPEG', quality=quality, optimize=True)
-        else:
-            img.save(thumb_path, quality=quality, optimize=True)
+        with Image.open(image_path) as source_img:
+            if source_img.mode == 'RGBA':
+                background = Image.new('RGB', source_img.size, (255, 255, 255))
+                background.paste(source_img, mask=source_img.split()[3])
+                img = background
+            elif source_img.mode != 'RGB':
+                img = source_img.convert('RGB')
+            else:
+                img = source_img.copy()
+
+            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+
+            thumb_filename = f"{original_filename}.{thumb_format}"
+            thumb_path = os.path.join(thumb_output_dir, thumb_filename)
+
+            if thumb_format == 'webp':
+                img.save(thumb_path, format='WEBP', quality=quality, method=4)
+            elif thumb_format == 'jpg' or thumb_format == 'jpeg':
+                img.save(thumb_path, format='JPEG', quality=quality, optimize=True)
+            else:
+                img.save(thumb_path, quality=quality, optimize=True)
+            img.close()
         
         thumbnail_paths[suffix] = thumb_path
         

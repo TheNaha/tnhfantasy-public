@@ -61,10 +61,11 @@ class ModelDownloader:
             for version in target_versions:
                 file = self.repo.get_primary_file_for_version(version.id)
                 if file:
+                    status = "not_installed" if getattr(provider, "type", None) in {"direct_url", "remote_comfy"} else "pending"
                     self.repo.update_provider_status(
                         file_id=file.id,
                         provider_id=provider.id,
-                        status="pending",
+                        status=status,
                         force_create=True
                     )
         
@@ -88,6 +89,14 @@ class ModelDownloader:
                     "provider_id": provider.id,
                     "status": "skipped",
                     "error": "LLM workers do not reconcile model files",
+                })
+                continue
+
+            if getattr(provider, "type", None) in {"direct_url", "remote_comfy"}:
+                results["providers"].append({
+                    "provider_id": provider.id,
+                    "status": "external",
+                    "message": "Model files are managed by the external ComfyUI host",
                 })
                 continue
 
@@ -157,12 +166,20 @@ class ModelDownloader:
                 worker_url = runtime.worker_url
                 
                 try:
-                    import urllib.parse
-                    encoded_path = urllib.parse.quote(storage_path, safe='')
-                    response = await http_client.delete(
-                        f"{worker_url}/delete-file/{encoded_path}",
-                        timeout=10.0,
-                    )
+                    if hasattr(http_client, "request"):
+                        response = await http_client.request(
+                            "DELETE",
+                            f"{worker_url}/delete-file",
+                            json={"path": storage_path},
+                            timeout=10.0,
+                        )
+                    else:
+                        import urllib.parse
+                        encoded_path = urllib.parse.quote(storage_path, safe="")
+                        response = await http_client.delete(
+                            f"{worker_url}/delete-file/{encoded_path}",
+                            timeout=10.0,
+                        )
                     if response.status_code == 200:
                         results["deleted"] += 1
                         results["providers"].append({

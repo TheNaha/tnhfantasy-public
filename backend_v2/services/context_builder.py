@@ -785,6 +785,9 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
 
     kwargs: dict[str, Any] = {
         "characters": characters,
+        "character_id": overrides.get("character_id", getattr(chat, "character_id", None)),
+        "story_character_ids": getattr(chat, "character_ids", None),
+        "location_ids": getattr(chat, "location_ids", None),
         "lorebook_ids": overrides.get("lorebook_ids", getattr(chat, "active_lorebook_ids", None) or None),
         "persona_name": persona_name,
         "persona_description": persona_description,

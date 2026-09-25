@@ -96,21 +96,12 @@ def create_branch(
     ).all()
 
     if not branch_msgs:
-        # Fallback for legacy chats without branch_id: walk the parent_id
-        # chain from the anchor up to the root so the new branch contains
-        # the full linear history.
-        chain: list[Message] = []
-        cursor: Message | None = anchor
-        seen: set[str] = set()
-        while cursor is not None and cursor.id not in seen:
-            seen.add(cursor.id)
-            chain.append(cursor)
-            if cursor.parent_id is None:
-                break
-            cursor = session.get(Message, cursor.parent_id)
-            if cursor is None or cursor.chat_id != chat_id:
-                break
-        branch_msgs = list(reversed(chain))
+        branch_msgs = session.exec(
+            select(Message)
+            .where(Message.chat_id == chat_id)
+            .where(Message.created_at <= anchor.created_at)
+            .order_by(Message.created_at)
+        ).all()
 
     for msg in branch_msgs:
         if msg.id != anchor.id and msg.created_at > anchor.created_at:
@@ -122,6 +113,7 @@ def create_branch(
             chat_id=chat_id,
             role=msg.role,
             kind=msg.kind,
+            character_id=msg.character_id,
             content=msg.content,
             image_path=msg.image_path,
             tool_calls=dict(msg.tool_calls) if msg.tool_calls else None,

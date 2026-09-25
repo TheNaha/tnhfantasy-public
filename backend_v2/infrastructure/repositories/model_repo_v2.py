@@ -399,7 +399,9 @@ class ModelRepositoryV2:
     
     def set_default_version(self, model_id: int, version_id: int) -> bool:
         """Set a version as the default for a model."""
-        # Unset current default
+        target = self.session.get(ModelVersion, version_id)
+        if not target or str(target.model_id) != str(model_id):
+            return False
         versions = self.get_versions_for_model(model_id)
         for v in versions:
             v.is_default = (v.id == version_id)

@@ -183,6 +183,8 @@ def list_characters(session: Session = Depends(get_session), character_repo: Cha
 
 @router.post("")
 def create_character(character: Character, session: Session = Depends(get_session)):
+    if character.avatar_path:
+        raise ValidationError("Use the avatar upload endpoint to set avatar_path")
     character.created_at = datetime.now(timezone.utc)
     character.updated_at = character.created_at
     session.add(character)

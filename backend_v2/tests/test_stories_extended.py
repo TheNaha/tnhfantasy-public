@@ -245,7 +245,9 @@ def test_resolve_story_image_path(tmp_path):
     PILImage.new("RGB", (10, 10), (1, 2, 3)).save(existing)
     missing_relative = "does_not_exist.png"
 
-    # absolute existing path resolves as-is
+    app_config.settings.output_dir = str(tmp_path)
+
+    # absolute existing path inside the output root resolves as-is
     assert _resolve_story_image_path(str(existing)) == str(existing)
     # relative path resolves against configured output_dir when present
     monkeypatch_dir = tmp_path / "out"

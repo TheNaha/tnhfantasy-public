@@ -50,6 +50,14 @@ def normalize_persisted_output(output: dict[str, Any]) -> dict[str, Any]:
         except ValueError:
             normalized["relative_path"] = None
 
+    if normalized["relative_path"]:
+        candidate = os.path.realpath(os.path.join(settings.output_dir, normalized["relative_path"]))
+        try:
+            if os.path.commonpath([candidate, os.path.realpath(settings.output_dir)]) != os.path.realpath(settings.output_dir):
+                normalized["relative_path"] = None
+        except ValueError:
+            normalized["relative_path"] = None
+
     if not normalized["subfolder"] and normalized["relative_path"]:
         subfolder = os.path.dirname(normalized["relative_path"]).replace("\\", "/")
         normalized["subfolder"] = "" if subfolder == "." else subfolder
@@ -71,6 +79,7 @@ def build_job_outputs(
     """
     from infrastructure.image_processor import (
         get_output_path,
+        _safe_component,
         save_image_with_metadata,
         write_metadata_sidecar,
     )
@@ -89,8 +98,13 @@ def build_job_outputs(
             duration_seconds = (now - job_started_at).total_seconds()
 
     for img in images:
-        filename = img.get("filename", "output.png")
+        raw_filename = img.get("filename", "output.png")
+        filename = os.path.basename(str(raw_filename or "output.png").replace("\\", "/"))
+        if filename in {"", ".", ".."}:
+            filename = "output.png"
         subfolder = img.get("subfolder", "")
+        if subfolder:
+            subfolder = _safe_component(subfolder, "")
 
         if img.get("data"):
             image_data = base64.b64decode(img["data"])
@@ -131,8 +145,8 @@ def build_job_outputs(
                         full_metadata[key] = job.metadata_[key]
 
             try:
-                img_obj = Image.open(io.BytesIO(image_data))
-                save_image_with_metadata(img_obj, output_path, full_metadata)
+                with Image.open(io.BytesIO(image_data)) as img_obj:
+                    save_image_with_metadata(img_obj, output_path, full_metadata)
                 logger.debug("image_saved_with_metadata", path=output_path, bytes=len(image_data))
             except Exception as exc:
                 logger.error(

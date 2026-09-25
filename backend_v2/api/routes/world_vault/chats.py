@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -20,6 +21,7 @@ from services.context_builder import build_chat_context_async, build_system_prom
 from services.job_service import JobService
 from services.job_queue import QueueManager
 from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
+from config import settings
 
 MAX_CONTEXT_MESSAGES = 200
 # Hard cap for endpoints that stream an entire chat history into memory
@@ -469,15 +471,23 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session), chat_repo
 
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
-def list_messages(chat_id: str, branch_id: str | None = None, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo),   limit: int = 100, offset: int = 0, q: str | None = None):
+def list_messages(chat_id: str, branch_id: str | None = None, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo),   limit: int = 100, offset: int = 0, q: str | None = None, tail: bool = False):
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
+    if limit < 1 or limit > 1000:
+        raise ValidationError("limit must be between 1 and 1000")
+    if offset < 0:
+        raise ValidationError("offset must be non-negative")
     query = select(Message).where(Message.chat_id == chat_id)
     if branch_id:
         query = query.where(Message.branch_id == branch_id)
     if q:
         query = query.where(Message.content.ilike(f"%{q}%"))
+    if tail:
+        rows = list(session.exec(query.order_by(Message.created_at.desc()).offset(offset).limit(limit)).all())
+        rows.reverse()
+        return rows
     return session.exec(query.order_by(Message.created_at).offset(offset).limit(limit)).all()
 
 
@@ -589,6 +599,16 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
     if not chat:
         raise NotFoundError("Chat", chat_id)
         
+    if request.image_path:
+        output_root = os.path.realpath(settings.output_dir)
+        image_candidate = os.path.realpath(
+            request.image_path
+            if os.path.isabs(request.image_path)
+            else os.path.join(output_root, request.image_path.lstrip("/\\"))
+        )
+        if os.path.commonpath([image_candidate, output_root]) != output_root:
+            raise ValidationError("Image path is outside the output directory")
+
     message = Message(
         chat_id=chat_id,
         role=request.role,
@@ -1356,7 +1376,9 @@ async def generate_scene(
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
-        
+    if not chat.allow_image_generation:
+        raise ValidationError("Image generation is disabled for this chat")
+
     past_messages = message_repo.list_by_chat(chat_id)
     if not past_messages:
         raise ValidationError("No messages in chat to base scene on")

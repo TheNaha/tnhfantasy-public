@@ -48,8 +48,8 @@ async def _release_finalization(job_id: str) -> None:
         _finalizing_jobs.discard(job_id)
 
 
-def normalize_external_outputs(outputs) -> list[dict[str, Any]]:
-    """Accept only persisted structured outputs from external workers."""
+def normalize_external_outputs(outputs, *, allow_text: bool = False) -> list[dict[str, Any]]:
+    """Accept structured persisted outputs and, for LLM jobs, text outputs."""
     if not isinstance(outputs, list):
         raise ValueError("Worker result outputs must be a list")
 
@@ -57,6 +57,13 @@ def normalize_external_outputs(outputs) -> list[dict[str, Any]]:
     for output in outputs:
         if not isinstance(output, dict):
             raise ValueError("External worker outputs must be structured objects")
+        if allow_text and (output.get("content") is not None or output.get("text") is not None):
+            normalized.append({
+                "type": "text",
+                "content": output.get("content", output.get("text")),
+                "role": output.get("role", "assistant"),
+            })
+            continue
         if not output.get("filename"):
             raise ValueError("External worker outputs must include filename")
         if not (output.get("relative_path") or output.get("path") or output.get("subfolder")):
@@ -193,6 +200,13 @@ async def finalize_persisted_job_outputs(
 
     async def complete_when_ready():
         async with get_session_context() as reconcile_session:
+            from services.job_service import JobService
+            reconcile_job_service = JobService(reconcile_session)
+            active_job_service = reconcile_job_service
+            try:
+                await reconcile_job_service.get_job(job_id)
+            except NotFoundError:
+                active_job_service = job_service
             try:
                 for output in outputs:
                     if output.get("type") == "text":
@@ -226,7 +240,7 @@ async def finalize_persisted_job_outputs(
 
                 await wait_for_gallery_outputs(outputs)
                 await complete_job(
-                    job_service=job_service,
+                    job_service=active_job_service,
                     job_id=job_id,
                     outputs=outputs,
                     provider_id=provider_id,
@@ -236,7 +250,7 @@ async def finalize_persisted_job_outputs(
                 logger.info("job_completed", job_id=job_id, outputs=len(outputs), provider_id=provider_id)
             except Exception as exc:
                 logger.error("job_finalize_failed", job_id=job_id, provider_id=provider_id, error=str(exc), exc_info=True)
-                await job_service.update_job(
+                await active_job_service.update_job(
                     job_id,
                     status=JobStatus.FAILED,
                     error=str(exc),
@@ -402,6 +416,14 @@ async def _finalize_llm_job(
             },
         )
         return
+    elif job_type == "story_parse":
+        story_id = (job.metadata_.get("story_id") if job.metadata_ else None) or final_result.get("story_id")
+        event_extra = {
+            "type": "story_parse",
+            "metadata": {"story_id": story_id, "type": "story_parse"},
+            "story_id": story_id,
+            "content": extract_first_text(final_result) or "",
+        }
     elif job_type in ("chat_reply", "story_continue"):
         assistant_content = ""
         assistant_output: dict[str, Any] = {}
@@ -518,13 +540,6 @@ async def _finalize_llm_job(
                 "metadata": {"chat_id": entity_id, "type": event_type_str, "regenerated": job.metadata_.get("regenerated") if job.metadata_ else False},
                 "chat_id": entity_id,
                 "content": assistant_content,
-            }
-        elif job_type == "story_parse":
-            story_id = (job.metadata_.get("story_id") if job.metadata_ else None)
-            event_extra = {
-                "type": "story_parse",
-                "metadata": {"story_id": story_id, "type": "story_parse"},
-                "story_id": story_id,
             }
         else:
             story_id = (job.metadata_.get("story_id") if job.metadata_ else None)

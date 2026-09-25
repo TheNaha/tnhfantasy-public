@@ -175,6 +175,7 @@ class ModelReconciliationService:
                     imported += 1
                     results.append({"path": storage_path, "file_id": file.id, "status": "imported"})
             except Exception as exc:
+                self.session.rollback()
                 errors += 1
                 results.append({"path": storage_path, "file_id": None, "status": "error", "reason": str(exc)})
 

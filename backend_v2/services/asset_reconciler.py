@@ -18,8 +18,9 @@ import traceback
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from core.entities import Asset
 from infrastructure.image_processor import (
@@ -207,7 +208,9 @@ def upsert_asset(
     metadata: dict | None = None,
 ) -> None:
     """Idempotent UPSERT of a single asset row (keyed by relative_path)."""
-    stmt = pg_insert(Asset).values(
+    dialect_name = session.get_bind().dialect.name
+    dialect_insert = pg_insert if dialect_name == "postgresql" else sqlite_insert if dialect_name == "sqlite" else insert
+    stmt = dialect_insert(Asset).values(
         relative_path=relative_path,
         filename=filename,
         user_id=user_id,
@@ -505,7 +508,7 @@ def _asset_as_file_data(asset: Asset, output_dir: str) -> dict[str, Any]:
     file_data = {
         "name": name,
         "relative_path": rel,
-        "full_path": full_path,
+        "full_path": rel,
         "size": size,
         "date": ts,
         "mtime": mtime,

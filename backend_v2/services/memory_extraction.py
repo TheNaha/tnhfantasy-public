@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
-from core.entities import CharacterMemory, Message
+from core.entities import CharacterMemory, Message, MessageRole
 from infrastructure.logging import get_logger
 
 logger = get_logger("memory_extraction")
@@ -34,11 +34,11 @@ def should_extract_memories(session: Session, chat_id: str) -> bool:
     recent = session.exec(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(20)
     ).all()
-    user_msgs = [m for m in recent if m.is_user]
+    user_msgs = [m for m in recent if m.role == MessageRole.USER]
     return len(user_msgs) >= 2
 
 
-def build_extraction_messages(session: Session, chat_id: str) -> list[dict]:
+def build_extraction_messages(session: Session, chat_id: str) -> list[str]:
     """Build the message list for the extraction LLM prompt."""
     messages = session.exec(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(20)
@@ -46,7 +46,7 @@ def build_extraction_messages(session: Session, chat_id: str) -> list[dict]:
     messages.reverse()
     lines = []
     for m in messages:
-        role = "User" if m.is_user else "Character"
+        role = "User" if m.role == MessageRole.USER else "Character"
         lines.append(f"{role}: {m.content}")
     return lines
 

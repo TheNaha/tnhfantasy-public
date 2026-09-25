@@ -236,6 +236,7 @@ def get_queue_status(service: JobService = Depends(get_job_service)):
     # Build queue items with ETA (per task_type)
     queue = []
     cumulative_by_type = {}
+    pending_position = {}
 
     for job in running:
         avg_duration = avg_durations.get(job.task_type, 30.0)
@@ -256,11 +257,12 @@ def get_queue_status(service: JobService = Depends(get_job_service)):
         avg_duration = avg_durations.get(job.task_type, 30.0)
         cumulative = cumulative_by_type.get(job.task_type, 0)
         eta = cumulative + avg_duration
+        pending_position[job.task_type] = pending_position.get(job.task_type, 0) + 1
         queue.append({
             "id": job.id,
             "task_type": job.task_type,
             "status": "pending",
-            "position": pending_by_type[job.task_type].index(job) + 1,
+            "position": pending_position[job.task_type],
             "progress": 0,
             "eta_seconds": eta,
             "prompt": job.metadata_.get("prompt", "")[:50] if job.metadata_ else "",

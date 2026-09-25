@@ -32,10 +32,15 @@ class JobSubmissionService:
         required_models = extract_models_from_workflow(workflow)
         availability = self.availability_service.check_availability(required_models)
 
-        if preferred_provider_id and preferred_provider_id not in availability.eligible_providers:
-            availability.missing_models = {
-                preferred_provider_id: availability.missing_models.get(preferred_provider_id, {})
-            }
+        if preferred_provider_id:
+            if preferred_provider_id in availability.eligible_providers:
+                availability.eligible_providers = [preferred_provider_id]
+            else:
+                availability.eligible_providers = []
+                availability.valid = False
+                availability.missing_models = {
+                    preferred_provider_id: availability.missing_models.get(preferred_provider_id, {})
+                }
 
         return required_models, availability
 
@@ -67,6 +72,17 @@ class JobSubmissionService:
         task_type: str = "image",
     ):
         metadata = metadata or {}
+        if task_type == "llm" and not preferred_provider_id:
+            from services.llm_config import resolve_default_provider
+            try:
+                resolved = resolve_default_provider(self.session)
+            except Exception:
+                resolved = None
+            if resolved:
+                preferred_provider_id = resolved[0]
+                metadata.setdefault("llm_model", resolved[1])
+        if preferred_provider_id:
+            metadata = {**metadata, "preferred_provider_id": preferred_provider_id}
         required_models, availability = self.validate_workflow(
             workflow,
             preferred_provider_id=preferred_provider_id,

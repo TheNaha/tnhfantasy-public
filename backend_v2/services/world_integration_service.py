@@ -17,7 +17,7 @@ from core.entities import (
     LorebookEntry,
     Location,
 )
-from core.events import event_bus, Event, EventType
+from core.events import event_bus, EventType
 from infrastructure.deps import get_session_context
 from infrastructure.logging import get_logger
 from sqlmodel import select
@@ -509,6 +509,7 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                 session.add(entry)
                 new_lorebook_ids.append(lorebook.id)
 
+
             for lore_data in (parsed.get("lorebooks") or []):
                 if not lore_data.get("name"):
                     continue
@@ -527,12 +528,15 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                 session.add(entry)
                 new_lorebook_ids.append(lorebook.id)
 
+
             # Link created entities to the story
-            if new_character_ids or new_lorebook_ids:
+            if new_character_ids or new_lorebook_ids or new_location_ids:
                 existing_chars = set(story.character_ids or [])
                 existing_lore = set(story.lorebook_ids or [])
+                existing_locations = set(story.location_ids or [])
                 story.character_ids = list(existing_chars | set(new_character_ids))
                 story.lorebook_ids = list(existing_lore | set(new_lorebook_ids))
+                story.location_ids = list(existing_locations | set(new_location_ids))
                 session.add(story)
                 session.commit()
 
@@ -629,7 +633,7 @@ async def _handle_avatar_animate(job_data: dict[str, Any]):
     import shutil
     import os
     from infrastructure.deps import get_session_context
-    from config import app_config
+    from config import settings
     from core.entities import Character
     
     metadata = job_data.get("metadata", {})
@@ -645,6 +649,8 @@ async def _handle_avatar_animate(job_data: dict[str, Any]):
     )
     if not video_path:
         return
+    if not os.path.isabs(video_path):
+        video_path = os.path.join(settings.output_dir, video_path)
     if not os.path.exists(video_path):
         return
         
@@ -653,7 +659,7 @@ async def _handle_avatar_animate(job_data: dict[str, Any]):
         if not character:
             return
             
-        avatar_dir = f"{app_config.settings.character_avatar_dir}/{character_id}"
+        avatar_dir = f"{settings.character_avatar_dir}/{character_id}"
         os.makedirs(avatar_dir, exist_ok=True)
         # Using .webp because our VHS_VideoCombine format is video/webp which works natively in <img> tags
         new_avatar_path = f"{avatar_dir}/avatar.webp"
@@ -662,8 +668,3 @@ async def _handle_avatar_animate(job_data: dict[str, Any]):
         character.avatar_path = new_avatar_path
         session.add(character)
         session.commit()
-        
-        await event_bus.publish(Event(type=EventType.JOB_COMPLETED, data={
-            "job": job_data,
-            "character_avatar_updated": {"character_id": character_id, "path": new_avatar_path}
-        }))

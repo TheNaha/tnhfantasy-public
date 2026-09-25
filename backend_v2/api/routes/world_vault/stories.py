@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 from PIL import Image, ImageDraw, ImageFont
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 import config as app_config
 from api.deps import get_job_service, get_session, get_queue_manager, get_story_repo, get_story_chapter_repo, get_story_revision_repo
@@ -134,15 +134,16 @@ def _resolve_story_image_path(value: str | None) -> str | None:
     """
     if not value:
         return None
-    if os.path.isabs(value) and os.path.exists(value):
-        return value
-    output_dir = app_config.settings.output_dir
-    candidate = os.path.join(output_dir, value)
-    if os.path.exists(candidate):
-        return candidate
-    if os.path.exists(value):
-        return value
-    return None
+    output_dir = os.path.realpath(app_config.settings.output_dir)
+    candidate = os.path.realpath(
+        value if os.path.isabs(value) else os.path.join(output_dir, value.lstrip("/\\"))
+    )
+    try:
+        if os.path.commonpath([candidate, output_dir]) != output_dir:
+            return None
+    except ValueError:
+        return None
+    return candidate if os.path.exists(candidate) else None
 
 
 def _collect_story_illustration_assets(session: Session, story_id: str) -> list[str]:
@@ -725,6 +726,10 @@ def delete_story(story_id: str, session: Session = Depends(get_session), story_r
     scrub_entity_references(session, "story", story_id)
     chapters = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id)).all()
     for ch in chapters:
+        session.exec(
+            delete(StoryChapterRevision)
+            .where(StoryChapterRevision.chapter_id == ch.id)
+        )
         session.delete(ch)
     session.delete(story)
     session.commit()
@@ -766,6 +771,14 @@ def update_chapter(story_id: str, chapter_id: str, chapter_update: StoryChapter,
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
         
+    if chapter_update.content is not None and chapter_update.content != chapter.content:
+        session.add(StoryChapterRevision(
+            chapter_id=chapter.id,
+            story_id=story_id,
+            content=chapter.content or "",
+            source="manual",
+            word_count=len((chapter.content or "").split()),
+        ))
     if chapter_update.content is not None:
         chapter.content = chapter_update.content
     if chapter_update.beats is not None:
@@ -783,6 +796,10 @@ def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(ge
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
         
+    session.exec(
+        delete(StoryChapterRevision)
+        .where(StoryChapterRevision.chapter_id == chapter_id)
+    )
     session.delete(chapter)
     session.commit()
     return {"message": "Chapter deleted"}

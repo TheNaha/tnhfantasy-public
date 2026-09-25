@@ -381,7 +381,7 @@ async def backfill_provider_statuses(
                 await service.update_provider_file_status(
                     provider_id=provider_id,
                     file_id=file_id,
-                    status="downloaded"
+                    status="ready"
                 )
                 results["models_updated"] += 1
             except Exception as e:

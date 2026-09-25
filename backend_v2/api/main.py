@@ -17,6 +17,7 @@
 # RETRY STRATEGY (for provider calls):
 #   Uses tenacity with exponential back-off (base 1 s, max 60 s).
 #   Non-retryable errors (e.g. 400 Bad Request from provider) bypass retries.
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -43,7 +44,7 @@ from config import (
 )
 
 # Structured logging - use structlog for consistent output
-from infrastructure.logging import get_logger
+from infrastructure.logging import configure_logging, get_logger
 from services.job_runner import execute_job
 from services.provider_client import call_image_provider as _call_image_provider, call_llm_provider as _call_llm_provider
 
@@ -94,13 +95,17 @@ async def lifespan(app: FastAPI):
     Application lifespan handler.
     Runs on startup and shutdown.
     """
+    configure_logging(
+        os.getenv("COMFY_LOG_LEVEL", "INFO"),
+        os.getenv("COMFY_LOG_FORMAT", "compact").strip().lower() == "json",
+    )
     from infrastructure.deps import set_global_container_manager
     from services.container_manager import ContainerManager
     
     try:
         container_manager = ContainerManager()
     except Exception as e:
-        logger.warning("container_manager_init_failed", error=str(e))
+        logger.debug("container_manager_init_failed", error=str(e))
         container_manager = None
         
     app.state.container_manager = container_manager

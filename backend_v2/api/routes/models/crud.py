@@ -185,6 +185,20 @@ async def add_model(
     if not selected_version_ids:
         raise ValidationError("At least one version must be selected")
     
+    available_version_ids = {
+        version.get("id")
+        for version in (request.civitai_data.get("modelVersions") or [])
+        if version.get("id") is not None
+    }
+    unknown_version_ids = [
+        version_id for version_id in selected_version_ids
+        if version_id not in available_version_ids
+    ]
+    if unknown_version_ids:
+        raise ValidationError(
+            f"Selected versions are not present in the model response: {unknown_version_ids}"
+        )
+
     # Check for already installed versions
     already_installed = []
     new_version_ids = []

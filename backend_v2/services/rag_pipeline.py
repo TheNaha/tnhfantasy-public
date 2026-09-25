@@ -125,9 +125,12 @@ def search_lorebook_entries(
     q_vec = _try_embedding(query) if query and _is_postgres(session) else None
 
     results: list[LorebookEntry] = []
+    global_limit = max(limit * 3, limit)
     seen: set[str] = set()
 
     for lb_id in lorebook_ids:
+        if len(results) >= global_limit:
+            break
         if q_vec:
             try:
                 top = session.exec(
@@ -191,7 +194,7 @@ def search_lorebook_entries(
 
         results.extend(matched)
 
-    return results
+    return results[:global_limit]
 
 
 def backfill_lorebook_embeddings(session: Session, lorebook_id: str | None = None) -> int:

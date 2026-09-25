@@ -9,7 +9,7 @@ from api.deps import get_session, get_location_repo
 from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Location
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, ValidationError
 import config as app_config
 
 router = APIRouter()
@@ -46,6 +46,8 @@ def list_locations(session: Session = Depends(get_session), location_repo: Locat
 
 @router.post("", response_model=Location)
 def create_location(location_in: LocationCreate, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
+    if location_in.image_path:
+        raise ValidationError("Use the image upload endpoint to set image_path")
     location = Location(
         name=location_in.name,
         description=location_in.description,
@@ -87,6 +89,8 @@ def update_location(location_id: str, update_data: LocationUpdate, session: Sess
         raise NotFoundError("Location", location_id)
 
     update_dict = update_data.model_dump(exclude_unset=True)
+    if update_dict.get("image_path"):
+        raise ValidationError("Use the image upload endpoint to set image_path")
     for key, value in update_dict.items():
         setattr(location, key, value)
 
@@ -104,6 +108,8 @@ def patch_location(location_id: str, update_data: LocationUpdate, session: Sessi
         raise NotFoundError("Location", location_id)
 
     update_dict = update_data.model_dump(exclude_unset=True)
+    if update_dict.get("image_path"):
+        raise ValidationError("Use the image upload endpoint to set image_path")
     for key, value in update_dict.items():
         setattr(location, key, value)
 

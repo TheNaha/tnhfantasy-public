@@ -6,6 +6,7 @@ entity is deleted, every referencing row must have the dangling id removed,
 otherwise the vault leaks stale references (ghost characters in stories,
 broken dashboard links, etc.).
 """
+from sqlalchemy import Text, cast
 from sqlmodel import Session, select
 
 from core.entities import Campaign, Character, Chat, Message, Story
@@ -24,7 +25,9 @@ def _scrub_json_array(session, model, field, entity_id):
     full-table scans on every delete.
     """
     pattern = f'%"{entity_id}"%'
-    rows = session.exec(select(model).where(getattr(model, field).like(pattern))).all()
+    rows = session.exec(
+        select(model).where(cast(getattr(model, field), Text).like(pattern))
+    ).all()
     for row in rows:
         setattr(row, field, _without(getattr(row, field), entity_id))
 
@@ -57,6 +60,8 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
     elif kind == "voice":
         for character in session.exec(select(Character).where(Character.voice_model_id == entity_id)).all():
             character.voice_model_id = None
+        for chat in session.exec(select(Chat).where(Chat.tts_voice_id == entity_id)).all():
+            chat.tts_voice_id = None
     elif kind == "scenario":
         for story in session.exec(select(Story).where(Story.scenario_id == entity_id)).all():
             story.scenario_id = None
@@ -68,4 +73,7 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
     elif kind == "chat":
         _scrub_campaigns(session, "chat_ids", entity_id)
     elif kind == "location":
+        _scrub_stories(session, "location_ids", entity_id)
         _scrub_campaigns(session, "location_ids", entity_id)
+        for chat in session.exec(select(Chat).where(Chat.location_id == entity_id)).all():
+            chat.location_id = None

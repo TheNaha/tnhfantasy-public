@@ -167,7 +167,7 @@ class ModelServiceV2:
         else:
             version = self.repo.get_default_version(model_id)
         
-        if not version:
+        if not version or str(version.model_id) != str(model_id):
             raise NotFoundError("Version", str(version_id or "default"))
         
         # Get the primary file

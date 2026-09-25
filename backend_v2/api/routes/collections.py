@@ -231,6 +231,37 @@ def get_character_collections_batch(
     return result
 
 
+@router.get("/export")
+def export_collections(repo: CollectionRepository = Depends(get_collection_repo)):
+    """Export all collections (for backup)."""
+    from collections import defaultdict
+
+    collections = repo.get_all_collections()
+    if not collections:
+        return {"collections": []}
+
+    collection_ids = [c.id for c in collections]
+    all_images = repo.get_images_for_collections(collection_ids)
+
+    images_by_collection = defaultdict(list)
+    for img in all_images:
+        images_by_collection[img.collection_id].append(img.image_filename)
+
+    result = []
+    for col in collections:
+        result.append({
+            "id": col.id,
+            "name": col.name,
+            "color": col.color,
+            "description": col.description,
+            "images": images_by_collection.get(col.id, []),
+            "created_at": col.created_at.isoformat(),
+            "updated_at": col.updated_at.isoformat()
+        })
+
+    return {"collections": result}
+
+
 @router.get("/{collection_id}")
 def get_collection(
     collection_id: str, 
@@ -375,36 +406,3 @@ def remove_images_from_collection(
     session.commit()
     
     return {"success": True, "removed": removed}
-
-
-
-
-@router.get("/export")
-def export_collections(repo: CollectionRepository = Depends(get_collection_repo)):
-    """Export all collections (for backup)."""
-    from collections import defaultdict
-
-    collections = repo.get_all_collections()
-    if not collections:
-        return {"collections": []}
-
-    collection_ids = [c.id for c in collections]
-    all_images = repo.get_images_for_collections(collection_ids)
-
-    images_by_collection = defaultdict(list)
-    for img in all_images:
-        images_by_collection[img.collection_id].append(img.image_filename)
-
-    result = []
-    for col in collections:
-        result.append({
-            "id": col.id,
-            "name": col.name,
-            "color": col.color,
-            "description": col.description,
-            "images": images_by_collection.get(col.id, []),
-            "created_at": col.created_at.isoformat(),
-            "updated_at": col.updated_at.isoformat()
-        })
-    
-    return {"collections": result}

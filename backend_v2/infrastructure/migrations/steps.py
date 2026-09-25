@@ -931,6 +931,14 @@ def _migration_add_jobs_claimed_at(conn) -> bool:
 
     existing = {c["name"] for c in inspector.get_columns("jobs")}
     if "claimed_at" in existing:
+        if conn.dialect.name == "postgresql":
+            existing_indexes = {index["name"] for index in inspector.get_indexes("jobs")}
+            if "ix_jobs_claim" not in existing_indexes:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_jobs_claim "
+                    "ON jobs (task_type, status) WHERE status = 'PENDING' AND claimed_at IS NULL"
+                ))
+                return True
         return False
 
     if conn.dialect.name == "postgresql":
@@ -1607,6 +1615,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add scenario default_checkpoint/voice_profile; add lorebook entry category/tags/depth/case_sensitive/selective_logic/probability",
             apply_fn=_migration_062_add_scenario_fields_and_lorebook_entry_taxonomy,
         ),
+        MigrationStep(
+            version="063_repair_postgres_constraints",
+            description="Repair existing PostgreSQL foreign keys for branching, revisions, and world-vault links",
+            apply_fn=_migration_063_repair_postgres_constraints,
+        ),
     ]
 
 
@@ -1627,10 +1640,10 @@ def _migration_049_seed_starter_pack(conn) -> bool:
                 text("""
                     INSERT INTO characters (
                         id, name, description, personality, scenario, first_mes,
-                        system_prompt, visual_tags, created_at, updated_at
+                        system_prompt, visual_tags, sort_order, created_at, updated_at
                     ) VALUES (
                         :id, :name, :description, :personality, :scenario, :first_mes,
-                        :system_prompt, :visual_tags, :created_at, :updated_at
+                        :system_prompt, :visual_tags, 0, :created_at, :updated_at
                     )
                 """),
                 {
@@ -1683,15 +1696,14 @@ def _migration_049_seed_starter_pack(conn) -> bool:
             {"id": "llm-local"},
         ).scalar()
         if not exists:
-            now = datetime.now(timezone.utc).isoformat()
             conn.execute(
                 text("""
                     INSERT INTO providers (
                         id, type, worker_type, enabled, priority,
-                        credentials, config, container_config, created_at, updated_at
+                        credentials, config, container_config
                     ) VALUES (
                         :id, :type, :worker_type, :enabled, :priority,
-                        :credentials, :config, :container_config, :created_at, :updated_at
+                        :credentials, :config, :container_config
                     )
                 """),
                 {
@@ -1703,8 +1715,6 @@ def _migration_049_seed_starter_pack(conn) -> bool:
                     "credentials": json.dumps({}),
                     "config": json.dumps({"seeded": True, "discovered": True, "api_base": "http://localhost:11434/v1"}),
                     "container_config": json.dumps({"container_name": "tnhcomfy-llm-local"}),
-                    "created_at": now,
-                    "updated_at": now,
                 },
             )
             seeded = True
@@ -1804,8 +1814,8 @@ def _migration_042_add_branching_and_expressions(conn) -> bool:
     inspector = inspect(conn)
     touched = False
 
-    # --- Messages: add parent_id, branch_id, branch_name ---
     if "messages" in set(inspector.get_table_names()):
+        touched = True
         columns = {col["name"] for col in inspector.get_columns("messages")}
         for col_name, col_type in (
             ("parent_id", "TEXT"),
@@ -1814,37 +1824,37 @@ def _migration_042_add_branching_and_expressions(conn) -> bool:
         ):
             if col_name not in columns:
                 conn.execute(text(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}"))
+                columns.add(col_name)
                 logger.info("migration_column_added", table="messages", column=col_name)
-                touched = True
-        # Self-referential FK for parent_id (deferred on SQLite)
-        if "parent_id" in {col["name"] for col in inspector.get_columns("messages")}:
-            if conn.dialect.name == "postgresql":
+
+        if conn.dialect.name == "postgresql" and "parent_id" in columns:
+            foreign_keys = inspector.get_foreign_keys("messages")
+            has_parent_fk = any(
+                fk.get("referred_table") == "messages"
+                and fk.get("constrained_columns") == ["parent_id"]
+                for fk in foreign_keys
+            )
+            if not has_parent_fk:
                 conn.execute(text(
                     "ALTER TABLE messages ADD CONSTRAINT fk_messages_parent "
                     "FOREIGN KEY (parent_id) REFERENCES messages(id)"
                 ))
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_message_parent ON messages(parent_id)"
-            ))
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_message_branch ON messages(chat_id, branch_id)"
-            ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_message_parent ON messages(parent_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_message_branch ON messages(chat_id, branch_id)"
+        ))
 
-    # --- Characters: add expressions JSON column ---
     if "characters" in set(inspector.get_table_names()):
+        touched = True
         columns = {col["name"] for col in inspector.get_columns("characters")}
         if "expressions" not in columns:
             conn.execute(text("ALTER TABLE characters ADD COLUMN expressions JSON DEFAULT '{}'"))
             logger.info("migration_column_added", table="characters", column="expressions")
-            touched = True
-
-    # --- Characters: add expressions_lora JSON column ---
-    if "characters" in set(inspector.get_table_names()):
-        columns = {col["name"] for col in inspector.get_columns("characters")}
         if "expressions_lora" not in columns:
             conn.execute(text("ALTER TABLE characters ADD COLUMN expressions_lora JSON DEFAULT '[]'"))
             logger.info("migration_column_added", table="characters", column="expressions_lora")
-            touched = True
 
     return touched
 
@@ -2262,13 +2272,22 @@ def _migration_059_add_story_chapter_revisions(conn) -> bool:
     """Create story_chapter_revisions table for chapter snapshot history."""
     inspector = inspect(conn)
     if "story_chapter_revisions" in inspector.get_table_names():
-        return False
+        changed = False
+        if conn.dialect.name == "postgresql":
+            foreign_keys = inspector.get_foreign_keys("story_chapter_revisions")
+            if not any(fk.get("constrained_columns") == ["chapter_id"] for fk in foreign_keys):
+                conn.execute(text("ALTER TABLE story_chapter_revisions ADD CONSTRAINT fk_revision_chapter FOREIGN KEY (chapter_id) REFERENCES story_chapters(id) ON DELETE CASCADE"))
+                changed = True
+            if not any(fk.get("constrained_columns") == ["story_id"] for fk in foreign_keys):
+                conn.execute(text("ALTER TABLE story_chapter_revisions ADD CONSTRAINT fk_revision_story FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE"))
+                changed = True
+        return changed
 
     conn.execute(text("""
         CREATE TABLE story_chapter_revisions (
             id TEXT PRIMARY KEY,
-            chapter_id TEXT NOT NULL,
-            story_id TEXT NOT NULL,
+            chapter_id TEXT NOT NULL REFERENCES story_chapters(id) ON DELETE CASCADE,
+            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             content TEXT NOT NULL DEFAULT '',
             source TEXT NOT NULL DEFAULT 'manual',
             word_count INTEGER NOT NULL DEFAULT 0,
@@ -2276,6 +2295,7 @@ def _migration_059_add_story_chapter_revisions(conn) -> bool:
         )
     """))
     conn.execute(text("CREATE INDEX idx_revision_chapter_id ON story_chapter_revisions (chapter_id)"))
+    conn.execute(text("CREATE INDEX idx_revision_story_id ON story_chapter_revisions (story_id)"))
     logger.info("migration_table_created", table="story_chapter_revisions")
     return True
 
@@ -2345,5 +2365,62 @@ def _migration_062_add_scenario_fields_and_lorebook_entry_taxonomy(conn) -> bool
         if "idx_lorebook_entry_category" not in index_names:
             conn.execute(text("CREATE INDEX idx_lorebook_entry_category ON lorebook_entries (category)"))
             changed = True
+    return changed
+
+
+def _migration_063_repair_postgres_constraints(conn) -> bool:
+    """Repair constraints that may be absent from databases created by older baselines."""
+    if conn.dialect.name != "postgresql":
+        return False
+
+    inspector = inspect(conn)
+    tables = set(inspector.get_table_names())
+    changed = False
+
+    def add_fk(table: str, column: str, referenced_table: str, constraint_name: str) -> None:
+        nonlocal changed
+        if table not in tables or column not in _get_table_columns(conn, table):
+            return
+        foreign_keys = inspector.get_foreign_keys(table)
+        if any(
+            fk.get("constrained_columns") == [column]
+            and fk.get("referred_table") == referenced_table
+            for fk in foreign_keys
+        ):
+            return
+        orphan_count = conn.execute(
+            text(
+                f"SELECT COUNT(*) FROM {table} WHERE {column} IS NOT NULL "
+                f"AND {column} NOT IN (SELECT id FROM {referenced_table})"
+            )
+        ).scalar() or 0
+        if orphan_count:
+            logger.warning(
+                "migration_constraint_skipped",
+                table=table,
+                column=column,
+                orphan_count=orphan_count,
+            )
+            return
+        conn.execute(text(
+            f"ALTER TABLE {table} ADD CONSTRAINT {constraint_name} "
+            f"FOREIGN KEY ({column}) REFERENCES {referenced_table}(id)"
+        ))
+        changed = True
+
+    add_fk("messages", "parent_id", "messages", "fk_messages_parent")
+    add_fk("story_chapter_revisions", "chapter_id", "story_chapters", "fk_revision_chapter")
+    add_fk("story_chapter_revisions", "story_id", "stories", "fk_revision_story")
+    add_fk("characters", "voice_model_id", "voice_models", "fk_characters_voice_model")
+    add_fk("chats", "location_id", "locations", "fk_chats_location")
+    add_fk("chats", "tts_voice_id", "voice_models", "fk_chats_tts_voice")
+    add_fk("jobs", "provider_id", "providers", "fk_jobs_provider")
+
+    if "messages" in tables:
+        indexes = {index["name"] for index in inspector.get_indexes("messages")}
+        if "idx_message_parent" not in indexes:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_message_parent ON messages(parent_id)"))
+            changed = True
+
     return changed
 

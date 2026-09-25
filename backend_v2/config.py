@@ -617,7 +617,18 @@ def get_cors_origins() -> list[str]:
 
 def get_gzip_minimum_size() -> int:
     """Get GZip minimum size in bytes."""
-    return get_config()["api"]["gzip_minimum_size"]
+    if _env_var_is_set("GZIP_MINIMUM_SIZE"):
+        try:
+            return max(0, int(os.environ["COMFY_GZIP_MINIMUM_SIZE"]))
+        except (TypeError, ValueError):
+            _cfg_logger.warning("invalid_gzip_minimum_size", value=os.environ.get("COMFY_GZIP_MINIMUM_SIZE"))
+    configured = get_config().get("api", {}).get("gzip_minimum_size")
+    if configured is not None:
+        try:
+            return max(0, int(configured))
+        except (TypeError, ValueError):
+            pass
+    return max(0, int(settings.gzip_minimum_size))
 
 
 # Jobs cleanup settings

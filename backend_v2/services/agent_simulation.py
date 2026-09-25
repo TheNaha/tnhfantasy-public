@@ -90,6 +90,7 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
                     JobStatus.PRE_GENERATION,
                     JobStatus.GENERATING,
                     JobStatus.POST_PROCESSING,
+                    JobStatus.RETRYING,
                 )
                 for j in recent_jobs
             )
