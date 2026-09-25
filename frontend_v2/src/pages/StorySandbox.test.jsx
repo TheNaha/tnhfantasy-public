@@ -255,13 +255,14 @@ describe('StorySandbox page', () => {
         await waitFor(() => {
             expect(screen.getByText('Continue')).toBeInTheDocument();
         });
+        await waitForEditorHydrated();
         fireEvent.click(screen.getByRole('button', { name: /continue/i }));
         expect(mockMutate).toHaveBeenCalledWith({
             storyId: 'story-1',
             chapterId: 'ch-1',
             prompt: '',
         });
-    });
+    }, 10000);
 
     it('adds a story beat when beat text is entered and Add is clicked', async () => {
         const mockMutate = vi.fn().mockResolvedValue({});

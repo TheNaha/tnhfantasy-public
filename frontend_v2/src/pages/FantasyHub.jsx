@@ -19,6 +19,14 @@ const QUICK_ACTIONS = [
         iconColor: 'text-purple-400',
     },
     {
+        to: '/chat?new=1',
+        icon: MessageSquare,
+        title: 'New Chat',
+        description: 'Start a roleplay with a character',
+        gradient: 'from-purple-500/10 to-pink-500/10',
+        iconColor: 'text-purple-400',
+    },
+    {
         to: '/story',
         icon: Feather,
         title: 'Write a Story',
