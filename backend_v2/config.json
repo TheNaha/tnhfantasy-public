@@ -40,7 +40,9 @@
   "api": {
     "gzip_minimum_size": 1000,
     "cors_origins": [
-      "http://localhost:5174"
+      "http://localhost:5174",
+      "https://comfy.lan.thenaha.my.id",
+      "https://100.150.0.4"
     ]
   },
   "jobs_cleanup": {

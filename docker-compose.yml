@@ -49,6 +49,7 @@ services:
       - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
       - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
       - COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS=${COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS:-0}
+      - COMFY_CORS_ORIGINS=${COMFY_CORS_ORIGINS:-["http://localhost:5174","https://comfy.lan.thenaha.my.id","https://100.150.0.4"]}
       - COMFY_UVICORN_RELOAD=0
     networks:
       - tnhcomfy

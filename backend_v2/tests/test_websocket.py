@@ -4,6 +4,7 @@ import pytest
 
 from api.routes.websocket import (
     WebSocketManager,
+    _get_ws_cors_origins,
     cancel_job,
     connect,
     connected_clients,
@@ -25,6 +26,12 @@ def mock_sio():
 @pytest.fixture
 def manager():
     return WebSocketManager()
+
+
+def test_deployed_https_origin_is_allowed():
+    origins = _get_ws_cors_origins()
+    assert "https://comfy.lan.thenaha.my.id" in origins
+
 
 @pytest.mark.asyncio
 async def test_manager_start_stop_broadcasting(manager, mock_sio):

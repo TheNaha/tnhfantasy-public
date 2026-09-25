@@ -56,7 +56,9 @@ export function useJobsRealtime() {
         ws.connect().catch((error) => {
             console.warn('[useJobsRealtime] Initial connect failed:', error?.message || error);
         });
-        void ws.subscribe('job');
+        void ws.subscribe('job').catch((error) => {
+            console.warn('[useJobsRealtime] Initial subscription failed:', error?.message || error);
+        });
 
         const unsubs = [];
 
