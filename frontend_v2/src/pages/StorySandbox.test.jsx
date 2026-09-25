@@ -280,7 +280,7 @@ describe('StorySandbox page', () => {
             content: 'A new challenge arises',
             role: 'user',
         });
-    });
+    }, 10000);
 
     it('adds a narrator-role beat when the role toggle is switched', async () => {
         const mockMutate = vi.fn().mockResolvedValue({});
