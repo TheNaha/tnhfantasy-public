@@ -19,10 +19,21 @@ from infrastructure.repositories.character_repo import CharacterRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Character, Collection
 from core.exceptions import NotFoundError, ValidationError
+from core.upload_validation import (
+    MAX_AVATAR_SIZE_MB,
+    MAX_CARD_SIZE_MB,
+    inspect_image,
+    read_upload_bounded,
+    read_upload_file_bounded,
+    require_declared_size,
+)
 import config as app_config
 
 logger = get_logger("characters_route")
 router = APIRouter()
+
+MAX_AVATAR_BYTES = MAX_AVATAR_SIZE_MB * 1024 * 1024
+MAX_CARD_BYTES = MAX_CARD_SIZE_MB * 1024 * 1024
 
 
 class CharacterUpdateRequest(BaseModel):
@@ -214,9 +225,15 @@ def import_character_card(
     if not file.filename or not file.filename.lower().endswith(".png"):
         raise ValidationError("Only PNG files are supported")
 
-    png_bytes = file.file.read()
+    # Bounded read: a card is a few hundred KB, so a huge body is refused after
+    # the first over-limit chunk instead of being held in memory.
+    png_bytes = read_upload_file_bounded(file, MAX_CARD_BYTES)
+
     if len(png_bytes) < 8 or png_bytes[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValidationError("Invalid PNG file")
+
+    # Card dimensions are bounded like any other image upload.
+    inspect_image(png_bytes, field="file", label="Character card")
 
     result = parse_character_card(png_bytes)
     char_data = result["character"]
@@ -413,11 +430,17 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...), session
     if not character:
         raise NotFoundError("Character", character_id)
 
+    # Avatars are rendered inline everywhere, so they are bounded tightly and
+    # must be a real image (an .html or .svg renamed to .png is rejected).
+    require_declared_size(file, MAX_AVATAR_BYTES)
+    content = await read_upload_bounded(file, MAX_AVATAR_BYTES)
+    inspect_image(content, field="file", label="Avatar")
+
     os.makedirs(f"{app_config.settings.character_avatar_dir}/{character_id}", exist_ok=True)
     avatar_path = f"{app_config.settings.character_avatar_dir}/{character_id}/avatar.png"
 
     with open(avatar_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        buffer.write(content)
 
     character.avatar_path = avatar_path
     character.updated_at = datetime.now(timezone.utc)

@@ -39,6 +39,53 @@ class ValidationError(ComfyError):
         super().__init__(message=message, code="VALIDATION_ERROR")
         self.field = field
 
+class UploadValidationError(ValidationError):
+    """Bounded upload/export validation failure.
+
+    Subclasses ValidationError so the existing 400 handler applies, but carries a
+    specific machine-readable `code` plus limit metadata so every upload/export
+    failure reads the same way for API clients and the UI.
+
+    Codes:
+      UPLOAD_TOO_LARGE        – body exceeded the route's byte budget
+      UNSUPPORTED_FILE_TYPE   – extension not in the route's allowlist
+      INVALID_IMAGE           – bytes are not a readable image
+      IMAGE_DIMENSIONS_TOO_LARGE – image wider/taller than allowed
+      IMAGE_PIXEL_LIMIT       – image pixel count above the bomb guard
+      UPLOAD_CANCELLED        – client went away mid-upload
+      UPLOAD_TIMEOUT          – upload stalled
+      EXPORT_TOO_LARGE        – archive would exceed the export budget
+      EXPORT_TOO_MANY_FILES   – more files requested than the export allows
+      EXPORT_NO_MATCHING_FILES – nothing in the request resolved on disk
+    """
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "UPLOAD_INVALID",
+        field: str | None = None,
+        max_bytes: int | None = None,
+        received_bytes: int | None = None,
+        details: dict | None = None,
+    ):
+        super().__init__(message=message, field=field)
+        self.code = code
+        self.max_bytes = max_bytes
+        self.received_bytes = received_bytes
+        self.details = details or {}
+
+    def to_payload(self) -> dict:
+        """Render the API error body (superset of the ValidationError shape)."""
+        payload: dict = {"error": self.message, "code": self.code, "field": self.field}
+        if self.max_bytes is not None:
+            payload["max_bytes"] = self.max_bytes
+        if self.received_bytes is not None:
+            payload["received_bytes"] = self.received_bytes
+        if self.details:
+            payload["details"] = self.details
+        return payload
+
+
 class MissingModelsError(ComfyError):
     """Workflow requires models that are not available."""
     def __init__(self, required_models: dict, global_missing: dict, missing_by_provider: dict, can_trigger_download: bool):

@@ -34,7 +34,7 @@ export function useDashboardSelection({
         const filesToDownload = Array.from(selectedFiles);
         toast.promise(
             (async () => {
-                const blob = await filesApi.batchDownload(filesToDownload);
+                const { blob, missingCount } = await filesApi.batchDownload(filesToDownload);
                 const url = window.URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
@@ -43,11 +43,14 @@ export function useDashboardSelection({
                 link.click();
                 document.body.removeChild(link);
                 window.URL.revokeObjectURL(url);
+                return missingCount;
             })(),
             {
                 loading: `Zipping and downloading ${filesToDownload.length} images...`,
-                success: `Downloaded ${filesToDownload.length} images!`,
-                error: 'Download failed'
+                success: (missingCount) => (missingCount > 0
+                    ? `Downloaded ${filesToDownload.length - missingCount} images (${missingCount} no longer on disk)`
+                    : `Downloaded ${filesToDownload.length} images!`),
+                error: (err) => `Download failed: ${err?.message || 'unknown error'}`
             }
         );
         setSelectionMode(false);

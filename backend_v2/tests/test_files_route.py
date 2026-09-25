@@ -11,6 +11,21 @@ from api.error_handlers import register_exception_handlers
 from api.routes.files import get_safe_path, router
 
 
+def _png_bytes(width: int = 2, height: int = 2, fmt: str = "PNG") -> bytes:
+    """Real image bytes - the upload routes verify content, not just extension."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), (255, 0, 0)).save(buf, format=fmt)
+    return buf.getvalue()
+
+
+PNG_BYTES = _png_bytes()
+JPEG_BYTES = _png_bytes(fmt="JPEG")
+
+
 # Setup database fixtures
 @pytest.fixture(name="engine")
 def engine_fixture():
@@ -144,7 +159,7 @@ class TestFilesRoute:
     @patch("os.makedirs")
     @patch("builtins.open", new_callable=mock_open)
     def test_upload_file(self, mock_file, mock_makedirs, mock_getsize, client):
-        files = {"file": ("test.png", b"content", "image/png")}
+        files = {"file": ("test.png", PNG_BYTES, "image/png")}
         with patch("api.routes.files.get_safe_path", return_value="/tmp/output/input"):
             response = client.post("/api/upload", files=files)
             assert response.status_code == 200
@@ -159,10 +174,11 @@ class TestFilesRoute:
         mock_service.list_providers.return_value = []
         mock_get_provider_service.return_value = mock_service
 
-        files = {"file": ("test.png", b"content", "image/png")}
+        files = {"file": ("test.png", PNG_BYTES, "image/png")}
         response = client.post("/api/upload/input", files=files)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+        assert response.json()["width"] == 2
 
     @patch("os.makedirs")
     @patch("builtins.open", new_callable=mock_open)
@@ -172,14 +188,15 @@ class TestFilesRoute:
         mock_service.list_providers.return_value = []
         mock_get_provider_service.return_value = mock_service
 
+        import base64
+
         payload = {
-            "mask_data": "base64,data",
+            "mask_data": "data:image/png;base64," + base64.b64encode(PNG_BYTES).decode(),
             "source_filename": "source.png"
         }
-        with patch("base64.b64decode", return_value=b"content"):
-            response = client.post("/api/upload/mask", json=payload)
-            assert response.status_code == 200
-            assert response.json()["status"] == "success"
+        response = client.post("/api/upload/mask", json=payload)
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
 
     @patch("os.remove")
     @patch("os.path.exists")

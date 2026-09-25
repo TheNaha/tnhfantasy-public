@@ -12,13 +12,20 @@
 #   POST /api/upload/input                 – Upload a source image (Img2Img)
 #   POST /api/upload/mask                  – Upload an inpainting mask (base64→PNG)
 #   DELETE /api/files/{filename}           – Delete a file and its thumbnail
+#
+# UPLOAD/EXPORT HARDENING:
+#   All upload endpoints bound their body (see core/upload_validation.py), read
+#   it in chunks so an oversized request dies early, verify that image bytes are
+#   actually a readable image within the dimension budget, and sanitize the
+#   client filename before it reaches the filesystem. Rejections raise
+#   UploadValidationError -> HTTP 400 with a machine-readable `code`.
 import asyncio
 import base64
 import json
 import os
 import tempfile
 
-from fastapi import APIRouter, Depends, File, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -34,6 +41,25 @@ from infrastructure.logging import get_logger
 from config import settings
 from core.entities import Asset
 from core.exceptions import ComfyError, NotFoundError, ValidationError
+from core.upload_validation import (
+    ALLOWED_UPLOAD_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    MAX_BATCH_ITEMS,
+    MAX_EXPORT_FILES,
+    MAX_EXPORT_FILE_MB,
+    MAX_EXPORT_TOTAL_MB,
+    MAX_INPUT_SIZE_MB,
+    MAX_UPLOAD_SIZE_MB,
+    UploadValidationError,
+    decode_base64_bounded,
+    human_size,
+    inspect_image,
+    read_upload_bounded,
+    require_batch_size,
+    require_declared_size,
+    require_extension,
+    sanitize_filename,
+)
 from services.provider_service import ProviderService
 
 
@@ -50,7 +76,32 @@ OUTPUT_DIR = settings.output_dir
 INPUT_DIR = settings.input_dir
 CACHE_DIR = os.environ.get("CACHE_DIR", os.path.join(os.path.dirname(__file__), "../../cache"))
 
-MAX_INPUT_SIZE_MB = 50
+# Byte budgets (overridable via COMFY_MAX_* env vars, see core/upload_validation)
+MAX_INPUT_BYTES = MAX_INPUT_SIZE_MB * 1024 * 1024
+MAX_UPLOAD_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+MAX_EXPORT_FILE_BYTES = MAX_EXPORT_FILE_MB * 1024 * 1024
+MAX_EXPORT_TOTAL_BYTES = MAX_EXPORT_TOTAL_MB * 1024 * 1024
+MAX_PATH_LENGTH = 1024
+
+
+def _cancel_checker(request: Request):
+    """Build a should_cancel() hook that trips when the client disconnects.
+
+    Polling the request on every chunk is cheap (the body is already spooled to
+    a temp file) but not free, so it is sampled every few chunks.
+    """
+    state = {"ticks": 0}
+
+    async def _should_cancel() -> bool:
+        state["ticks"] += 1
+        if state["ticks"] % 4:
+            return False
+        try:
+            return await request.is_disconnected()
+        except Exception:  # pragma: no cover - defensive, never block the upload
+            return False
+
+    return _should_cancel
 
 
 def _delete_thumbnails(local_path: str) -> None:
@@ -178,43 +229,154 @@ class BatchDownloadRequest(BaseModel):
     files: list[str]
 
 
+def _unique_arcname(arcname: str, taken: set[str]) -> str:
+    """Keep two same-named files from clobbering each other inside the ZIP."""
+    if arcname not in taken:
+        taken.add(arcname)
+        return arcname
+    stem, ext = os.path.splitext(arcname)
+    for index in range(2, 1000):
+        candidate = f"{stem} ({index}){ext}"
+        if candidate not in taken:
+            taken.add(candidate)
+            return candidate
+    candidate = f"{stem}-{os.urandom(4).hex()}{ext}"
+    taken.add(candidate)
+    return candidate
+
+
 @router.post("/api/files/batch-download")
-async def batch_download(request: BatchDownloadRequest):
-    """Create a ZIP file of multiple images for batch download."""
+async def batch_download(req: BatchDownloadRequest):
+    """Create a ZIP file of multiple images for batch download.
+
+    Bounded by design: the request is capped at MAX_EXPORT_FILES entries, every
+    file at MAX_EXPORT_FILE_MB and the archive at MAX_EXPORT_TOTAL_MB. The byte
+    budget is checked *before* zipping so an over-budget request fails fast with
+    a clear message instead of filling the temp volume. Files that no longer
+    resolve are reported through `X-Missing-Count` / `X-Missing-Files`; if none
+    of them resolve the request fails outright rather than returning a broken
+    empty archive.
+    """
     import zipfile
+
+    if not req.files:
+        raise UploadValidationError(
+            "No files requested for download",
+            code="EXPORT_NO_MATCHING_FILES",
+            field="files",
+        )
+
+    if len(req.files) > MAX_EXPORT_FILES:
+        raise UploadValidationError(
+            f"Too many files requested: {len(req.files)} (limit {MAX_EXPORT_FILES}). "
+            "Narrow the selection and try again.",
+            code="EXPORT_TOO_MANY_FILES",
+            field="files",
+            details={"received": len(req.files), "max_files": MAX_EXPORT_FILES},
+        )
+
+    # Resolve + measure first: cheaper than writing a ZIP we would discard.
+    resolved: list[tuple[str, str]] = []  # (source_path, arcname)
+    missing: list[str] = []
+    total_bytes = 0
+    taken: set[str] = set()
+
+    for filename in req.files:
+        source_path = _resolve_asset_path(filename)
+        if not source_path:
+            try:
+                candidate = get_safe_path(OUTPUT_DIR, filename)
+                if os.path.exists(candidate):
+                    source_path = candidate
+            except ValidationError:
+                source_path = None
+
+        if not source_path or not os.path.isfile(source_path):
+            missing.append(filename)
+            continue
+
+        try:
+            size = os.path.getsize(source_path)
+        except OSError as exc:
+            logger.warning("batch_download_stat_failed", filename=filename, error=str(exc))
+            missing.append(filename)
+            continue
+
+        if size > MAX_EXPORT_FILE_BYTES:
+            raise UploadValidationError(
+                f"'{os.path.basename(filename)}' is {human_size(size)}, above the "
+                f"{human_size(MAX_EXPORT_FILE_BYTES)} per-file export limit",
+                code="EXPORT_TOO_LARGE",
+                field="files",
+                max_bytes=MAX_EXPORT_FILE_BYTES,
+                received_bytes=size,
+                details={"filename": os.path.basename(filename)},
+            )
+
+        total_bytes += size
+        if total_bytes > MAX_EXPORT_TOTAL_BYTES:
+            raise UploadValidationError(
+                f"Export would total more than the {human_size(MAX_EXPORT_TOTAL_BYTES)} "
+                "limit. Download fewer files at a time.",
+                code="EXPORT_TOO_LARGE",
+                field="files",
+                max_bytes=MAX_EXPORT_TOTAL_BYTES,
+                received_bytes=total_bytes,
+            )
+
+        resolved.append((source_path, _unique_arcname(os.path.basename(filename), taken)))
+
+    if not resolved:
+        preview = ", ".join(os.path.basename(name) or name for name in missing[:5])
+        raise UploadValidationError(
+            f"None of the {len(missing)} requested files exist ({preview}"
+            f"{', ...' if len(missing) > 5 else ''})",
+            code="EXPORT_NO_MATCHING_FILES",
+            field="files",
+            details={"missing": [os.path.basename(n) for n in missing[:20]]},
+        )
+
+    if missing:
+        logger.warning("batch_download_missing_files", missing=len(missing), requested=len(req.files))
 
     fd, temp_path = tempfile.mkstemp(suffix=".zip")
     os.close(fd)
 
     try:
         with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for filename in request.files:
-                indexed_path = _resolve_asset_path(filename)
-                if indexed_path and os.path.exists(indexed_path):
-                    zipf.write(indexed_path, arcname=os.path.basename(filename))
-                else:
-                    try:
-                        safe_path = get_safe_path(OUTPUT_DIR, filename)
-                        if os.path.exists(safe_path):
-                            zipf.write(safe_path, arcname=os.path.basename(filename))
-                    except Exception as e:
-                        logger.warning("batch_download_file_error", filename=filename, error=str(e))
-                        
+            for source_path, arcname in resolved:
+                zipf.write(source_path, arcname=arcname)
+
+        headers = {"Content-Disposition": "attachment; filename=batch_download.zip"}
+        if missing:
+            headers["X-Missing-Count"] = str(len(missing))
+            headers["X-Missing-Files"] = ",".join(
+                os.path.basename(name) for name in missing[:20]
+            )[:1000]
+
         return FileResponse(
             temp_path,
             media_type="application/zip",
-            headers={"Content-Disposition": "attachment; filename=batch_download.zip"},
+            headers=headers,
             background=BackgroundTask(os.remove, temp_path)
         )
+    except UploadValidationError:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
     except Exception as e:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        from core.exceptions import ComfyError
         raise ComfyError(f"Failed to create batch download: {e!s}")
+
 
 def get_safe_path(base_dir: str, requested_path: str) -> str:
     """
     Resolve and validate a path to prevent directory traversal.
+
+    Normalizes both separator styles (a Windows client may send `..\\..\\x`),
+    rejects NUL bytes and absurdly long paths, and confirms the fully resolved
+    path (symlinks included) is still inside the base directory.
 
     Args:
         base_dir: The trusted base directory.
@@ -224,13 +386,21 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
         The absolute resolved path if valid.
 
     Raises:
-       (403) if path traversal is detected.
+        ValidationError (400) if the path is empty, malformed, or escapes the
+        base directory.
     """
-    # Remove leading slashes to prevent absolute path interpretation
-    clean_path = requested_path.lstrip("/\\")
+    # Remove leading slashes to prevent absolute path interpretation and fold
+    # backslashes so Windows-style traversal cannot slip past the checks below.
+    clean_path = requested_path.lstrip("/\\").replace("\\", "/")
 
-    if not clean_path:
+    if not clean_path or clean_path.strip("/") == "":
         raise ValidationError("Invalid path: path cannot be empty")
+
+    if "\0" in requested_path:
+        raise ValidationError("Invalid path: null bytes are not allowed")
+
+    if len(clean_path) > MAX_PATH_LENGTH:
+        raise ValidationError(f"Invalid path: exceeds {MAX_PATH_LENGTH} characters")
 
     base_path = os.path.realpath(os.path.abspath(base_dir))
     full_path = os.path.realpath(os.path.join(base_path, clean_path))
@@ -1131,49 +1301,50 @@ async def serve_thumbnail(size: str, filename: str):
     raise NotFoundError("Resource", "File not found")
 
 
-MAX_UPLOAD_SIZE_MB = 500
-
-ALLOWED_UPLOAD_EXTENSIONS = {
-    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff',
-    '.safetensors', '.ckpt', '.pt', '.pth', '.bin',
-    '.json', '.yaml', '.yml', '.txt', '.csv',
-    '.zip', '.tar', '.gz',
-    '.onnx', '.gguf',
-}
-
-
 @router.post("/api/upload")
-async def upload_file_endpoint(file: UploadFile = File(...), path: str = "input"):
-    """Upload a file to storage."""
-    from core.exceptions import ValidationError
+async def upload_file_endpoint(
+    file: UploadFile = File(...),
+    path: str = "input",
+    request: Request = None,
+):
+    """Upload a file to storage.
 
+    Bounded by MAX_UPLOAD_BYTES, restricted to ALLOWED_UPLOAD_EXTENSIONS, and
+    written under a sanitized filename inside a path-checked directory. Image
+    extensions are additionally verified to be readable images within the
+    dimension budget, so a `.png` that is really something else never lands on
+    disk.
+    """
     if not file.filename:
-        raise ValidationError("Filename is required")
-
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
-        raise ValidationError(
-            f"File type '{ext}' is not allowed. "
-            f"Allowed types: {', '.join(sorted(ALLOWED_UPLOAD_EXTENSIONS))}"
+        raise UploadValidationError(
+            "Filename is required", code="UPLOAD_INVALID", field="file"
         )
 
-    if file.size is not None and file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
-        raise ValidationError(
-            f"File size exceeds the {MAX_UPLOAD_SIZE_MB} MB limit. "
-            f"Received: {file.size / (1024 * 1024):.1f} MB"
-        )
-
-    content = await file.read()
-    actual_size = len(content)
-    if actual_size > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
-        raise ValidationError(
-            f"File size exceeds the {MAX_UPLOAD_SIZE_MB} MB limit. "
-            f"Received: {actual_size / (1024 * 1024):.1f} MB"
-        )
-
+    # Resolve the target directory before reading the body so a bad `path` is
+    # refused without spending bandwidth.
     upload_dir = get_safe_path(OUTPUT_DIR, path)
-    filename = os.path.basename(file.filename)
-    file_path = os.path.join(upload_dir, filename)
+    filename = sanitize_filename(file.filename, default="upload")
+
+    require_extension(filename, ALLOWED_UPLOAD_EXTENSIONS, field="file")
+    require_declared_size(file, MAX_UPLOAD_BYTES)
+
+    content = await read_upload_bounded(
+        file,
+        MAX_UPLOAD_BYTES,
+        field="file",
+        should_cancel=_cancel_checker(request) if request is not None else None,
+    )
+
+    if not content:
+        raise UploadValidationError(
+            "Uploaded file is empty", code="UPLOAD_INVALID", field="file"
+        )
+
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in IMAGE_EXTENSIONS:
+        inspect_image(content, field="file", label="Uploaded file")
+
+    file_path = get_safe_path(upload_dir, filename)
 
     def _write_file():
         os.makedirs(upload_dir, exist_ok=True)
@@ -1189,63 +1360,57 @@ async def upload_file_endpoint(file: UploadFile = File(...), path: str = "input"
 async def upload_input_image(
     file: UploadFile = File(...),
     provider_id: str | None = None,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    request: Request = None,
 ):
     """
     Upload an image for Img2Img or Inpainting.
     Saves locally and syncs to ALL active providers to ensure availability.
-    
+
+    The payload is verified as a real image (not just an image extension) and
+    capped at MAX_INPUT_BYTES plus the shared dimension budget. The stored
+    extension comes from the format Pillow detected, so a mislabelled file is
+    saved truthfully.
+
     Args:
         file: Image file to upload
         provider_id: Deprecated - now syncs to all active providers
     """
-    import io
     import uuid
 
-    from PIL import Image
-    
-    # Size guard: reject oversized uploads before reading into memory
-    if file.size is not None and file.size > MAX_INPUT_SIZE_MB * 1024 * 1024:
-        raise ValidationError(
-            f"File size exceeds the {MAX_INPUT_SIZE_MB} MB limit. "
-            f"Received: {file.size / (1024 * 1024):.1f} MB"
-        )
-    
-    # Generate unique filename to avoid collisions
-    ext = os.path.splitext(file.filename)[1] or ".png"
+    require_declared_size(file, MAX_INPUT_BYTES)
+
+    content = await read_upload_bounded(
+        file,
+        MAX_INPUT_BYTES,
+        field="file",
+        should_cancel=_cancel_checker(request) if request is not None else None,
+    )
+
+    # Content-based validation: rejects non-images regardless of extension and
+    # caps resolution so a decompression bomb cannot reach a worker.
+    width, height, ext = inspect_image(content, field="file", label="Uploaded image")
+
+    # Unique filename to avoid collisions
     unique_name = f"{uuid.uuid4().hex}{ext}"
-    
-    content = await file.read()
-    
-    if len(content) > MAX_INPUT_SIZE_MB * 1024 * 1024:
-        raise ValidationError(
-            f"File size exceeds the {MAX_INPUT_SIZE_MB} MB limit."
-        )
-    
+
     # Save locally first (for preview/fallback) - use dedicated input folder
     local_path = os.path.join(INPUT_DIR, unique_name)
 
-    def _save_and_measure():
+    def _save():
         os.makedirs(INPUT_DIR, exist_ok=True)
         with open(local_path, "wb") as f:
             f.write(content)
-        # Get image dimensions
-        try:
-            img = Image.open(io.BytesIO(content))
-            return img.size
-        except Exception as e:
-            logger.warning("upload_image_dimensions_failed", error=str(e))
-            return (0, 0)
 
-    width, height = await asyncio.to_thread(_save_and_measure)
-    
+    await asyncio.to_thread(_save)
+
     # Sync to ALL active providers (so job can go to any of them)
     sync_result = await _sync_file_to_providers(session, unique_name, content, "input")
     synced_count = sync_result["synced_count"]
     failed_count = sync_result["failed_count"]
 
     logger.info("upload_complete", filename=unique_name, synced=synced_count, failed=failed_count)
-    
+
     return {
         "status": "success",
         "filename": unique_name,
@@ -1268,42 +1433,36 @@ async def upload_mask_image(
     Upload a mask image for inpainting.
     Accepts base64 data URL from canvas export.
     Syncs to ALL active providers.
+
+    The decoded payload is bounded *before* decoding and must be a real image
+    within the shared dimension budget - the endpoint always stores PNG, so a
+    non-image would previously have been written with an image extension.
     """
-    import base64
     import uuid
-    
+
+    if not isinstance(request, dict):
+        raise UploadValidationError(
+            "Request body must be a JSON object", code="UPLOAD_INVALID", field="body"
+        )
+
     mask_data = request.get("mask_data")
-    source_filename = request.get("source_filename", "")
-    
-    # Sanitize source filename
-    if source_filename:
-        source_filename = os.path.basename(source_filename)
+    source_filename = sanitize_filename(request.get("source_filename") or "", default="")
 
     if not mask_data:
         raise ValidationError("mask_data is required")
-    
-    # Parse data URL: data:image/png;base64,iVBORw0KGgoAAAA...
-    if ',' in mask_data:
-        header, b64_data = mask_data.split(',', 1)
-    else:
-        b64_data = mask_data
-    
-    try:
-        content = base64.b64decode(b64_data)
-    except Exception as e:
-        raise ValidationError(f"Invalid base64 data: {e}")
-    
-    if len(content) > MAX_INPUT_SIZE_MB * 1024 * 1024:
-        raise ValidationError(
-            f"Decoded file size exceeds the {MAX_INPUT_SIZE_MB} MB limit."
-        )
-    
+
+    content = decode_base64_bounded(
+        mask_data, MAX_INPUT_BYTES, field="mask_data", label="Mask data"
+    )
+
+    inspect_image(content, field="mask_data", label="Mask")
+
     # Generate filename linked to source
     source_base = os.path.splitext(source_filename)[0] if source_filename else "mask"
     mask_filename = f"{source_base}_mask_{uuid.uuid4().hex[:8]}.png"
-    
+
     # Save locally to dedicated input folder
-    local_path = os.path.join(INPUT_DIR, mask_filename)
+    local_path = get_safe_path(INPUT_DIR, mask_filename)
 
     def _save_mask():
         os.makedirs(INPUT_DIR, exist_ok=True)
@@ -1311,10 +1470,10 @@ async def upload_mask_image(
             f.write(content)
 
     await asyncio.to_thread(_save_mask)
-    
+
     # Sync to ALL active providers
     sync_result = await _sync_file_to_providers(session, mask_filename, content, "input")
-    
+
     return {
         "status": "success",
         "filename": mask_filename,
@@ -1411,7 +1570,11 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
         ]
         if req.directory not in allowed_dirs:
             raise ValidationError("Invalid directory")
-        
+
+        # Bound the batch before touching the filesystem: a 100k-entry delete
+        # list would otherwise fan out into 100k stat/glob/unlink calls.
+        require_batch_size(req.files, MAX_BATCH_ITEMS, field="files")
+
         success_count = 0
         for filename in req.files:
             filename = filename.lstrip("/\\")
@@ -1484,7 +1647,11 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                         logger.warning("delete_file_failed", filename=filename, error=str(e))
         
         return {"status": "success", "deleted": success_count, "total": len(req.files)}
-        
+
+    except ComfyError:
+        # Validation/upload errors keep their own status and code (400) instead
+        # of being flattened into a generic 500.
+        raise
     except Exception as e:
         raise ComfyError(str(e))
 
@@ -1548,6 +1715,8 @@ async def batch_get_metadata(request: BatchMetadataRequest):
         Dict mapping paths to their metadata
     """
     from infrastructure.image_processor import read_image_metadata
+
+    require_batch_size(request.paths, MAX_BATCH_ITEMS, field="paths")
 
     def _process(paths: list[str]) -> dict:
         results = {}

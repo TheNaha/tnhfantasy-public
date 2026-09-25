@@ -11,6 +11,7 @@ from core.exceptions import (
     MissingModelsError,
     NotFoundError,
     ProviderError,
+    UploadValidationError,
     ValidationError,
 )
 from infrastructure.logging import get_logger
@@ -36,6 +37,17 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=400,
             content={"error": exc.message, "code": exc.code, "field": exc.field},
         )
+
+    @app.exception_handler(UploadValidationError)
+    async def upload_validation_handler(request: Request, exc: UploadValidationError):
+        logger.warning(
+            "upload_validation_error",
+            path=request.url.path,
+            error=exc.message,
+            code=exc.code,
+            field=exc.field,
+        )
+        return JSONResponse(status_code=400, content=exc.to_payload())
 
     @app.exception_handler(ProviderError)
     async def provider_error_handler(request: Request, exc: ProviderError):

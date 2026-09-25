@@ -1,9 +1,25 @@
 /**
  * Files API
  * Gallery/file-related API calls.
+ *
+ * Upload helpers apply the client-side size/type pre-check (clear errors
+ * without a round trip) and accept `{ signal, onProgress }` so callers can
+ * cancel a slow upload and show progress. The backend response is always
+ * authoritative and its `{ error, code }` payload is surfaced in `error.message`.
  */
 
 import api, { API_V2_BASE } from './client';
+import { UPLOAD_LIMITS, assertUploadAllowed, uploadWithProgress } from './upload';
+
+/** Route an upload through XHR when the caller wants progress, else fetch. */
+function sendUpload(endpoint, formData, options) {
+    if (options?.onProgress) {
+        return uploadWithProgress(endpoint, formData, options);
+    }
+    const { onProgress, ...rest } = options || {};
+    return api.post(endpoint, formData, rest);
+}
+
 export const filesApi = {
     list: (params = {}, options = {}) => api.get('/api/files', {
         params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)),
@@ -16,57 +32,120 @@ export const filesApi = {
         files: filenames
     }),
 
-    // Download multiple files as a ZIP archive
-    batchDownload: async (filenames) => {
-        const response = await api.post('/api/files/batch-download', {
-            files: filenames
-        });
-        return await response.blob();
+    /**
+     * Download multiple files as a ZIP archive.
+     *
+     * @param {string[]} filenames
+     * @param {{signal?: AbortSignal, timeout?: number}} [options]
+     * @returns {Promise<{blob: Blob, missing: string[], missingCount: number}>}
+     *   the archive plus the files the backend could not find (reported via
+     *   X-Missing-Files / X-Missing-Count).
+     */
+    batchDownload: async (filenames, options = {}) => {
+        if (!Array.isArray(filenames) || filenames.length === 0) {
+            throw new Error('Select at least one file to download');
+        }
+        if (filenames.length > UPLOAD_LIMITS.export.maxFiles) {
+            throw new Error(
+                `Too many files selected (${filenames.length}). ` +
+                `Download at most ${UPLOAD_LIMITS.export.maxFiles} at a time.`
+            );
+        }
+
+        const response = await api.post('/api/files/batch-download', { files: filenames }, options);
+
+        // The endpoint answers with a zip; anything else means the server
+        // refused the export and saving it would hand the user a broken file.
+        let blob;
+        if (response instanceof Blob) {
+            blob = response;
+        } else if (typeof response?.blob === 'function') {
+            const contentType = response.headers?.get?.('content-type') || '';
+            if (contentType && !contentType.includes('zip')) {
+                let detail = '';
+                try {
+                    detail = (await response.text()).slice(0, 300);
+                } catch {
+                    detail = '';
+                }
+                throw new Error(`Download failed: ${detail || 'server did not return an archive'}`);
+            }
+            blob = await response.blob();
+        } else {
+            throw new Error('Download failed: unexpected response from server');
+        }
+
+        const headers = response?.headers;
+        const missingHeader = headers?.get?.('x-missing-files') || '';
+        const missingCount = Number(headers?.get?.('x-missing-count') || 0);
+
+        return {
+            blob,
+            missing: missingHeader ? missingHeader.split(',').filter(Boolean) : [],
+            missingCount,
+        };
     },
 
     /**
      * Upload image for Img2Img or Inpainting.
-     * Saves locally and syncs to the specified provider's Modal volume.
-     * 
+     * Saves locally and syncs to all active providers.
+     *
      * @param {File} file - Image file to upload
      * @param {string|null} providerId - Provider ID to sync to (optional)
+     * @param {{signal?: AbortSignal, onProgress?: Function}} [options]
      * @returns {Promise<{status, filename, path, width, height, sync_status}>}
      */
-    uploadInput: async (file, providerId = null) => {
+    uploadInput: async (file, providerId = null, options = {}) => {
+        assertUploadAllowed(file, 'input');
+
         const formData = new FormData();
         formData.append('file', file);
 
         const params = providerId ? `?provider_id=${providerId}` : '';
-        return api.post(`/api/upload/input${params}`, formData);
+        return sendUpload(`/api/upload/input${params}`, formData, options);
     },
 
     /**
      * Upload mask for Inpainting.
      * Accepts base64 data URL from canvas export.
-     * 
+     *
      * @param {string} maskDataUrl - Base64 data URL of the mask (data:image/png;base64,...)
      * @param {string} sourceFilename - Filename of the source image (for naming)
      * @param {string|null} providerId - Provider ID to sync to (optional)
      * @returns {Promise<{status, filename, path, sync_status}>}
      */
-    uploadMask: async (maskDataUrl, sourceFilename, providerId = null) => {
+    uploadMask: async (maskDataUrl, sourceFilename, providerId = null, options = {}) => {
+        if (typeof maskDataUrl !== 'string' || !maskDataUrl) {
+            throw new Error('Mask data is missing');
+        }
+        // base64 inflates by ~4/3; check the encoded size against the same budget.
+        if (maskDataUrl.length > UPLOAD_LIMITS.input.maxBytes * 1.4) {
+            throw new Error(
+                `Mask is too large. Max size is ${Math.round(UPLOAD_LIMITS.input.maxBytes / (1024 * 1024))} MB.`
+            );
+        }
+
         const params = providerId ? `?provider_id=${providerId}` : '';
+        const { onProgress, ...rest } = options || {};
 
         return api.post(`/api/upload/mask${params}`, {
-                mask_data: maskDataUrl,
-                source_filename: sourceFilename
-        });
+            mask_data: maskDataUrl,
+            source_filename: sourceFilename
+        }, rest);
     },
 
     /**
      * Upload a chat attachment (image) to the chat attachments directory.
      *
      * @param {FormData} formData - FormData containing the file under the 'file' key
+     * @param {{signal?: AbortSignal, onProgress?: Function}} [options]
      * @returns {Promise<{filename, path, ...}>}
      */
-    uploadChatAttachment: (formData) => api.post('/api/upload?path=chat_attachments', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-    }),
+    uploadChatAttachment: (formData, options = {}) => {
+        const file = formData?.get?.('file');
+        if (file) assertUploadAllowed(file, 'file');
+        return sendUpload('/api/upload?path=chat_attachments', formData, options);
+    },
 
     // Fetch metadata for multiple images in a single request
     batchMetadata: (paths) => api.post('/api/files/metadata/batch', { paths }),

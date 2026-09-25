@@ -40,6 +40,10 @@ def configure_app(app: FastAPI):
         allow_credentials="*" not in cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Export responses report skipped files through these headers; without
+        # exposing them a cross-origin UI cannot tell a partial download apart
+        # from a complete one.
+        expose_headers=["X-Missing-Count", "X-Missing-Files", "Content-Disposition"],
     )
 
     app.add_middleware(

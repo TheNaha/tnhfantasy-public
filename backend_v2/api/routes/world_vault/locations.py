@@ -10,9 +10,17 @@ from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Location
 from core.exceptions import NotFoundError, ValidationError
+from core.upload_validation import (
+    MAX_AVATAR_SIZE_MB,
+    inspect_image,
+    read_upload_bounded,
+    require_declared_size,
+)
 import config as app_config
 
 router = APIRouter()
+
+MAX_LOCATION_IMAGE_BYTES = MAX_AVATAR_SIZE_MB * 1024 * 1024
 
 
 class LocationCreate(BaseModel):
@@ -137,14 +145,18 @@ async def upload_location_image(location_id: str, file: UploadFile = File(...), 
     if not location:
         raise NotFoundError("Location", location_id)
 
+    # Bounded + content-verified: the client-supplied extension is replaced by
+    # the detected format so the stored path always matches the bytes.
+    require_declared_size(file, MAX_LOCATION_IMAGE_BYTES)
+    content = await read_upload_bounded(file, MAX_LOCATION_IMAGE_BYTES)
+    _, _, ext = inspect_image(content, field="file", label="Location image")
+
     base_dir = app_config.settings.location_image_dir
     os.makedirs(f"{base_dir}/{location_id}", exist_ok=True)
-    ext = os.path.splitext(file.filename or "")[1] or ".png"
     image_path = f"{base_dir}/{location_id}/image{ext}"
 
     with open(image_path, "wb") as buffer:
-        from shutil import copyfileobj
-        copyfileobj(file.file, buffer)
+        buffer.write(content)
 
     location.image_path = image_path
     location.updated_at = datetime.now(timezone.utc)

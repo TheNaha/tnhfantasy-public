@@ -16,6 +16,11 @@ from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Chat, Character, Job, JobStatus, Message, MessageKind, MessageRole, Persona, VoiceModel
 from core.exceptions import ComfyError, NotFoundError, ValidationError
+from core.upload_validation import (
+    MAX_CARD_SIZE_MB,
+    read_upload_bounded,
+    require_declared_size,
+)
 from services.chat_utils import insert_world_state_marker, resolve_voice_for_character, substitute_tavern_vars
 from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, chat_context_kwargs, prune_context
 from services.job_service import JobService
@@ -28,6 +33,9 @@ MAX_CONTEXT_MESSAGES = 200
 # (rollback, regenerate, swipe). Bounds RAM on multi-year single-user campaigns
 # without affecting normal context-window behavior.
 CHAT_HISTORY_HARD_CAP = 5000
+# Chat exports are JSON/JSONL text; 25 MB is far beyond any real campaign and
+# keeps a hostile upload from exhausting memory during decode.
+MAX_CHAT_IMPORT_BYTES = MAX_CARD_SIZE_MB * 1024 * 1024
 
 router = APIRouter()
 
@@ -269,10 +277,17 @@ async def import_chat(
     character_repo: CharacterRepository = Depends(get_character_repo),
 ):
     """Import a chat from a SillyTavern JSONL export or this app's JSON export."""
+    # Bounded read: a chat export is text, so a huge body is refused after the
+    # first over-limit chunk instead of being decoded whole.
+    require_declared_size(file, MAX_CHAT_IMPORT_BYTES)
+    raw = await read_upload_bounded(file, MAX_CHAT_IMPORT_BYTES)
     try:
-        text = (await file.read()).decode("utf-8-sig")
+        text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValidationError("Chat file must be UTF-8 encoded") from exc
+
+    if not text.strip():
+        raise ValidationError("Chat file is empty")
 
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if not lines:

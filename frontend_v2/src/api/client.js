@@ -11,7 +11,8 @@ const DEFAULT_TIMEOUT = 30000; // 30 seconds
 // In production, nginx proxies /api/ to the backend.
 // In development, Vite's proxy handles CORS.
 // Only use an absolute URL when the user explicitly sets VITE_API_URL or localStorage.
-const getBaseUrl = () => {
+// Exported so the XHR-based uploader (which cannot use fetch) resolves the same base.
+export const getBaseUrl = () => {
     const apiUrl = getApiUrl();
     if (apiUrl && apiUrl !== DEFAULT_API_URL) {
         return apiUrl;
