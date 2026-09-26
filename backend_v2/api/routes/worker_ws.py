@@ -13,6 +13,8 @@ Protocol:
 """
 
 
+import hmac
+
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from api.deps import (
@@ -107,7 +109,11 @@ async def worker_websocket(
             
             # Verify token matches provider's configured token
             expected_token = provider.config.get("worker_token") if provider.config else None
-            if not expected_token or token != expected_token:
+            # Constant-time: every other bearer-token gate in the repo
+            # (discovery, the provider X-Provider-Token header, remote_agent)
+            # uses hmac.compare_digest, and a `!=` here is a timing oracle on a
+            # credential that is now mintable through the API.
+            if not expected_token or not hmac.compare_digest(token, expected_token):
                 await websocket.close(code=4002, reason="Invalid token")
                 return
     except NotFoundError:

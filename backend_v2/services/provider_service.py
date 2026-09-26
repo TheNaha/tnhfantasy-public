@@ -1,5 +1,6 @@
 # Provider Service - Business logic for provider management
 import os
+import secrets
 from copy import deepcopy
 from typing import Any
 
@@ -289,6 +290,55 @@ class ProviderService:
         
         return provider
     
+    def _base_config(self, provider: Provider) -> dict[str, Any]:
+        """The provider's composed config, ready to have one key changed.
+
+        `_normalize_provider_for_storage` cannot be used to *remove* a key: it
+        merges the payload over the existing config, so a payload without
+        `worker_token` leaves the stored token in place. Revoking that way
+        returned `revoked: true` while leaving the credential live — the one
+        outcome worse than not having the feature. Normalising with an empty
+        payload gives the composed config, which is then written back verbatim;
+        doing so is idempotent.
+        """
+        return self._normalize_provider_for_storage({}, existing=provider)["config"]
+
+    async def mint_worker_token(self, provider_id: str) -> str:
+        """Generate a fresh external-worker token for `provider_id` and return it.
+
+        The external-worker WebSocket (`/ws/worker/{provider_id}`) authenticates
+        against `config.worker_token`. That key was readable but had no way to be
+        produced: nothing in the backend, the provider containers, the frontend,
+        compose or the docs ever set it, so the check could only ever fail, no
+        worker could ever register, `is_worker_connected` was permanently False,
+        and `resolve_provider_runtime` could never return `mode="external_worker"`.
+        The tests passed because they hand-built a provider with the key already
+        present.
+
+        Rotating replaces any previous token, so a leaked one is invalidated by
+        minting again. The token is returned once and never re-read through the
+        provider payload: `_provider_to_dict` redacts it.
+
+        This app has no authentication, so minting is as reachable as every other
+        provider write here. It is no weaker than the rest of the surface, but it
+        does write a credential — see docs/audit-2026-09-26-followup.md.
+        """
+        config = self._base_config(await self.get_provider(provider_id))
+        token = secrets.token_urlsafe(32)
+        config["worker_token"] = token
+        self.repo.update(provider_id, {"config": config})
+        logger.info("provider_worker_token_minted", provider_id=provider_id)
+        return token
+
+    async def revoke_worker_token(self, provider_id: str) -> bool:
+        """Remove the external-worker token, disconnecting the mode entirely."""
+        config = self._base_config(await self.get_provider(provider_id))
+        if not config.pop("worker_token", None):
+            return False
+        self.repo.update(provider_id, {"config": config})
+        logger.info("provider_worker_token_revoked", provider_id=provider_id)
+        return True
+
     async def delete_provider(self, provider_id: str) -> bool:
         from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
         from services.load_balancer import LoadBalancer
@@ -400,6 +450,12 @@ class ProviderService:
             deploy_config=deploy_config,
         )
         provider_config = clean_dict(provider.config or {})
+        # Only specific keys are read off `provider_config` below, so the token was
+        # not being emitted today. Popping it here means that stays true if anyone
+        # ever spreads the whole config into the payload, and `has_worker_token` is
+        # the only thing the UI needs to know about it.
+        has_worker_token = bool(provider_config.get("worker_token"))
+        provider_config.pop("worker_token", None)
         return {
             "id": provider.id,
             "type": provider.type,
@@ -410,6 +466,7 @@ class ProviderService:
             "deploy_config": deploy_config,
             "deploy_state": deploy_state,
             "reconciliation_state": reconciliation_state,
+            "has_worker_token": has_worker_token,
             "runtime_state": {
                 "mode": runtime.mode,
                 "connected": runtime.connected,

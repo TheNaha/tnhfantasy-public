@@ -6,7 +6,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from core.entities import LoadBalancerState
+from core.entities import LoadBalancerState, Provider
 from core.exceptions import NotFoundError, ProviderError
 from services.provider_service import ProviderService
 from services.provider_utils import utcnow_iso
@@ -272,6 +272,74 @@ class TestProviderServiceDelete:
         session.refresh(job)
         assert job.provider_id is None
         assert session.get(Job, job.id) is not None
+
+
+class TestProviderServiceWorkerToken:
+    """The external-worker token, and making the mode reachable at all.
+
+    `/ws/worker/{provider_id}` authenticates against `config.worker_token`, and
+    nothing in the repo produced that key, so no worker could ever register and
+    the `external_worker` runtime mode was unreachable.
+    """
+
+    async def test_mint_returns_a_token_and_stores_it(self, service, session, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+        token = await service.mint_worker_token("test-provider")
+
+        assert len(token) >= 32
+        assert session.get(Provider, "test-provider").config["worker_token"] == token
+
+    async def test_mint_rotates_the_previous_token(self, service, session, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+        first = await service.mint_worker_token("test-provider")
+        second = await service.mint_worker_token("test-provider")
+
+        assert first != second
+        assert session.get(Provider, "test-provider").config["worker_token"] == second
+
+    async def test_revoke_removes_the_token(self, service, session, sample_provider_data):
+        """Revoking used to report success and leave the credential live.
+
+        `_normalize_provider_for_storage` merges the payload *over* the existing
+        config, so a payload without `worker_token` put the stored token straight
+        back. The base config is now derived from the normalised existing config
+        and written back verbatim.
+        """
+        await service.create_provider(sample_provider_data)
+        await service.mint_worker_token("test-provider")
+
+        assert await service.revoke_worker_token("test-provider") is True
+        assert "worker_token" not in (session.get(Provider, "test-provider").config or {})
+
+    async def test_revoke_is_idempotent(self, service, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+        await service.mint_worker_token("test-provider")
+
+        assert await service.revoke_worker_token("test-provider") is True
+        assert await service.revoke_worker_token("test-provider") is False
+
+    async def test_revoke_on_a_provider_with_no_token_is_false(self, service, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+        assert await service.revoke_worker_token("test-provider") is False
+
+    async def test_token_is_never_returned_in_the_provider_payload(self, service, session, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+        token = await service.mint_worker_token("test-provider")
+
+        payload = service._provider_to_dict(session.get(Provider, "test-provider"))
+        assert payload["has_worker_token"] is True
+        assert token not in str(payload)
+
+    async def test_rotate_preserves_the_rest_of_the_config(self, service, session, sample_provider_data):
+        """Writing the token must not clobber the composed runtime/deploy config."""
+        await service.create_provider(sample_provider_data)
+        before = dict(session.get(Provider, "test-provider").config or {})
+
+        await service.mint_worker_token("test-provider")
+        after = dict(session.get(Provider, "test-provider").config or {})
+
+        assert "worker_token" not in before
+        assert set(before) <= set(after)
 
 
 class TestProviderServiceLoadBalancing:
