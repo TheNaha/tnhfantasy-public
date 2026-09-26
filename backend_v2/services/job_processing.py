@@ -533,9 +533,14 @@ async def _finalize_llm_job(
                     chapter_id=(metadata.get("chapter_id") if metadata else None),
                 )
                 if chained:
-                    if provider_id:
+                    # load_balancer is None for the external-worker path (the only
+                    # production caller), where the job was dispatched without
+                    # the in-process pool. An unguarded call here raised
+                    # AttributeError, and the caller's except block then marked an
+                    # already-paid-for, already-completed job FAILED.
+                    if load_balancer and provider_id:
                         await load_balancer.report_success(provider_id)
-                    await load_balancer.release_job(provider_id)
+                        await load_balancer.release_job(provider_id)
                     try:
                         from core.entities import JobStatus
                         await job_service.update_job(
