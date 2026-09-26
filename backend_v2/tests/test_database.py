@@ -187,8 +187,10 @@ class TestRunMigrations:
 
         assert "started_at" in columns
         assert "completed_at" in columns
+        assert "acknowledged_at" in columns
         assert applied == {
             "001_jobs_started_completed",
+            "069_add_job_acknowledged_at",
             "004_normalize_legacy_job_statuses",
             "006_deleted_file_tombstones",
             "007_add_job_task_type",
@@ -305,6 +307,7 @@ class TestRunMigrations:
             "056_add_graph_layouts",
             "059_add_story_chapter_revisions",
             "061_add_personas_and_chat_persona_fields",
+            "069_add_job_acknowledged_at",
         ]
 
     def test_branching_migration_is_idempotent_with_existing_columns(self, tmp_path):

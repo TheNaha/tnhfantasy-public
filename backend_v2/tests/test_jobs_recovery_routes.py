@@ -62,6 +62,9 @@ class TestFailedJobsEndpoint:
             "total": 0,
             "limit": 25,
             "offset": 0,
+            # How many failures are hidden because the user dismissed them. Zero
+            # here; the failure panel uses it to offer a way back.
+            "acknowledged_count": 0,
             "summary": {
                 "by_error_type": {},
                 "by_provider": {},

@@ -318,6 +318,7 @@ async def list_failed_jobs(
     limit: int = 25,
     offset: int = 0,
     task_type: str | None = None,
+    include_acknowledged: bool = False,
     service: JobService = Depends(get_job_service),
 ):
     """
@@ -326,12 +327,19 @@ async def list_failed_jobs(
     Each job includes the `diagnostics` block (provider, model, attempt history,
     duration, failure kind, whether it is retryable). The `summary` counters
     describe the returned page; `total` is the full failure count for the filter.
+
+    Jobs the user has acknowledged are excluded unless `include_acknowledged` is
+    set, and `acknowledged_count` reports how many were hidden so the UI can
+    offer to show them again.
     """
     limit = max(1, min(limit, MAX_FAILED_PAGE_SIZE))
     offset = max(0, offset)
 
     jobs, total = await service.get_failed_jobs(
-        limit=limit, offset=offset, task_type=task_type
+        limit=limit,
+        offset=offset,
+        task_type=task_type,
+        include_acknowledged=include_acknowledged,
     )
     return {
         "jobs": jobs,
@@ -339,6 +347,9 @@ async def list_failed_jobs(
         "limit": limit,
         "offset": offset,
         "summary": service.summarize_failed_jobs(jobs),
+        "acknowledged_count": 0
+        if include_acknowledged
+        else await service.count_acknowledged_failed(task_type=task_type),
     }
 
 
@@ -423,6 +434,67 @@ async def get_job_diagnostics(
         "error": job.error,
         "diagnostics": diagnostics,
         "attempts": diagnostics["attempts"],
+    }
+
+
+class AcknowledgeJobRequest(BaseModel):
+    acknowledged: bool = True
+
+
+class AcknowledgeAllRequest(BaseModel):
+    acknowledged: bool = True
+    task_type: str | None = None
+
+
+@router.post("/acknowledge-all")
+async def acknowledge_all_failed_jobs(
+    request: AcknowledgeAllRequest,
+    service: JobService = Depends(get_job_service),
+):
+    """Acknowledge, or restore, every failed job matching the filter.
+
+    The panel had only two actions — retry, or recover the queue — so a user who
+    had read a failure and did not want it retried had no way to stop seeing it.
+    Deleting the job was the only escape, and that discards the only record of
+    what the provider did.
+
+    Idempotent: the filter ignores the current acknowledged state, so calling it
+    twice is a no-op the second time and `acknowledged: false` restores the full
+    set rather than only the part still visible.
+    """
+    updated = await service.acknowledge_all(
+        acknowledged=request.acknowledged, task_type=request.task_type
+    )
+    return {
+        "status": "success",
+        "acknowledged": request.acknowledged,
+        "updated": updated,
+    }
+
+
+@router.post("/{job_id}/acknowledge")
+async def acknowledge_job(
+    job_id: str,
+    request: AcknowledgeJobRequest | None = None,
+    service: JobService = Depends(get_job_service),
+):
+    """Acknowledge (or un-acknowledge) a single failed job.
+
+    Reversible: `acknowledged: false` clears the timestamp and the failure comes
+    back. Returns `updated: 0` for a job that was already in the requested state,
+    so a client can report a no-op honestly instead of implying a change.
+    """
+    acknowledged = True if request is None else request.acknowledged
+    # `get_job` raises NotFoundError for a missing id, which the app's handler
+    # turns into a 404. Same shape as retry_job above.
+    await service.get_job(job_id)
+
+    updated = await service.acknowledge_jobs([job_id], acknowledged=acknowledged)
+    return {
+        "status": "success",
+        "job_id": job_id,
+        "acknowledged": acknowledged,
+        "updated": updated,
     }
 
 

@@ -1,6 +1,7 @@
 # Job Service - Business logic for job management
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from collections.abc import Sequence
 
 from sqlmodel import Session, select
 
@@ -265,15 +266,49 @@ class JobService:
         return [{"value": value, "count": count} for value, count in rows]
 
     async def get_failed_jobs(
-        self, *, limit: int = 25, offset: int = 0, task_type: str | None = None
+        self,
+        *,
+        limit: int = 25,
+        offset: int = 0,
+        task_type: str | None = None,
+        include_acknowledged: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         """List failed jobs (newest first) with diagnostics attached.
 
         Returns the serialized jobs and the total number of failed jobs
-        matching the filter.
+        matching the filter. Acknowledged jobs are excluded unless asked for, so
+        a failure the user has dismissed stops counting towards the panel.
         """
-        jobs, total = self.repo.get_failed(limit=limit, offset=offset, task_type=task_type)
+        jobs, total = self.repo.get_failed(
+            limit=limit,
+            offset=offset,
+            task_type=task_type,
+            include_acknowledged=include_acknowledged,
+        )
         return [self._job_to_dict(job) for job in jobs], total
+
+    async def acknowledge_jobs(
+        self, job_ids: Sequence[str], *, acknowledged: bool = True
+    ) -> int:
+        """Acknowledge (or un-acknowledge) specific jobs.
+
+        Acknowledgement hides a failure the user has read without retrying it and
+        without deleting the only record of what the provider did. Returns the
+        number of rows changed so a caller can report a no-op honestly.
+        """
+        return self.repo.set_acknowledged(job_ids, acknowledged)
+
+    async def acknowledge_all(
+        self, *, acknowledged: bool = True, task_type: str | None = None
+    ) -> int:
+        """Acknowledge (or restore) every failed job matching the filter."""
+        return self.repo.set_acknowledged_filtered(
+            acknowledged=acknowledged, task_type=task_type
+        )
+
+    async def count_acknowledged_failed(self, task_type: str | None = None) -> int:
+        """How many failures are currently dismissed, for the 'show dismissed' toggle."""
+        return self.repo.count_acknowledged_failed(task_type=task_type)
 
     def summarize_failed_jobs(self, jobs: list[dict[str, Any]]) -> dict[str, Any]:
         """Group a page of serialized failed jobs by cause/provider/task type.
@@ -722,6 +757,10 @@ class JobService:
             "updated_at": job.updated_at.isoformat() if job.updated_at else None,
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            # Present so a client can tell a dismissed failure from one that has
+            # not been seen yet, and so the "show dismissed" toggle can label
+            # what it is about to show.
+            "acknowledged_at": job.acknowledged_at.isoformat() if job.acknowledged_at else None,
             "workflow": job.workflow,
             "metadata": metadata,
             "outputs": job.outputs,

@@ -1645,6 +1645,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add assets.job_completed_at so a time-windowed statistics query filters on an indexed timestamp instead of re-parsing jsonb",
             apply_fn=_migration_068_add_asset_job_completed_at,
         ),
+        MigrationStep(
+            version="069_add_job_acknowledged_at",
+            description="Add jobs.acknowledged_at so a read failure can be dismissed without being retried or deleted",
+            apply_fn=_migration_069_add_job_acknowledged_at,
+        ),
     ]
 
 
@@ -2737,3 +2742,28 @@ def _migration_068_add_asset_job_completed_at(conn) -> bool:
     )
     logger.info("migration_asset_job_completed_at_backfilled")
     return changed
+
+
+def _migration_069_add_job_acknowledged_at(conn) -> bool:
+    """Add `jobs.acknowledged_at` and index it.
+
+    The failure panel had exactly two actions — retry everything, or recover the
+    queue — so a user who had read a failure and did not want it retried had no
+    way to stop seeing it. Deleting the job was the only escape, and that throws
+    away the only record of what the provider actually did.
+
+    Nullable, so existing rows are un-acknowledged and the panel is unchanged for
+    them.
+    """
+    inspector = inspect(conn)
+    if "jobs" not in inspector.get_table_names():
+        return False
+
+    existing = {col["name"] for col in inspector.get_columns("jobs")}
+    if "acknowledged_at" in existing:
+        return False
+
+    conn.execute(text("ALTER TABLE jobs ADD COLUMN acknowledged_at TIMESTAMP"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_acknowledged_at ON jobs (acknowledged_at)"))
+    logger.info("migration_column_added", table="jobs", column="acknowledged_at")
+    return True

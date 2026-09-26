@@ -93,6 +93,16 @@ def _redirect_sync_sessions(engine):
 
     original_infra = _infra_db.get_session_sync
     original_deps = _api_deps.get_session_sync
+    # Also redirect the module-level `engine`. Code that constructs
+    # `Session(engine)` or `engine.begin()` directly bypasses `get_session_sync`
+    # entirely, and in tests that resolved to the developer's real
+    # `data/comfy.db` — a background job-finalize task did exactly that, ran
+    # against a stale schema, and failed with "no such column", leaving the job
+    # stuck in post-processing while the test polled for a terminal state. The
+    # `get_session_sync` redirect alone does not cover that path.
+    original_engine = _infra_db.engine
+    _infra_db.engine = engine
+
     known_originals = {id(original_infra), id(original_deps)}
 
     rebound: list[tuple[object, str, object]] = []
@@ -111,6 +121,7 @@ def _redirect_sync_sessions(engine):
     finally:
         _infra_db.get_session_sync = original_infra
         _api_deps.get_session_sync = original_deps
+        _infra_db.engine = original_engine
         for module, original in rebound:
             module.get_session_sync = original
 

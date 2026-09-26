@@ -1,6 +1,7 @@
 # Job API tests
 import pytest
 
+from core.entities import Job, JobStatus
 from infrastructure.request_dedup import clear_dedup_cache
 
 
@@ -142,3 +143,123 @@ def test_create_job_without_idempotency_key_creates_distinct_jobs(client, sample
     listed = client.get("/api/jobs")
     assert listed.status_code == 200
     assert listed.json()["total"] == 2
+
+
+class TestAcknowledgeFailedJobs:
+    """Dismissing a failure the user has read, without retrying or deleting it.
+
+    The failure panel had exactly two actions — retry everything, or recover the
+    queue — so the only way to stop seeing a failure you did not want retried was
+    to delete the job, which throws away the only record of what the provider did.
+    """
+
+    def _failed(self, session, name="a", **kw):
+        kw.setdefault("task_type", "image")
+        job = Job(status=JobStatus.FAILED, workflow={"name": name}, **kw)
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return job
+
+    def test_failed_listing_hides_acknowledged_jobs(self, session, client):
+        kept = self._failed(session, "kept")
+        dismissed = self._failed(session, "dismissed")
+        self._failed(session, "llm", task_type="llm")
+
+        client.post(f"/api/jobs/{dismissed.id}/acknowledge", json={"acknowledged": True})
+
+        body = client.get("/api/jobs/failed").json()
+        ids = {j["id"] for j in body["jobs"]}
+        assert kept.id in ids
+        assert dismissed.id not in ids
+        # `total` must count the same set the page returns, or the panel's count
+        # disagrees with its own list.
+        assert body["total"] == len(ids)
+        assert body["acknowledged_count"] == 1
+
+    def test_include_acknowledged_returns_them_again(self, session, client):
+        job = self._failed(session, "a")
+        client.post(f"/api/jobs/{job.id}/acknowledge", json={"acknowledged": True})
+
+        hidden = client.get("/api/jobs/failed").json()
+        assert hidden["total"] == 0
+
+        shown = client.get("/api/jobs/failed?include_acknowledged=true").json()
+        assert shown["total"] == 1
+        assert shown["jobs"][0]["acknowledged_at"] is not None
+
+    def test_acknowledgement_is_reversible(self, session, client):
+        job = self._failed(session, "a")
+        client.post(f"/api/jobs/{job.id}/acknowledge", json={"acknowledged": True})
+        assert client.get("/api/jobs/failed").json()["total"] == 0
+
+        restored = client.post(
+            f"/api/jobs/{job.id}/acknowledge", json={"acknowledged": False}
+        ).json()
+        assert restored["updated"] == 1
+        assert client.get("/api/jobs/failed").json()["total"] == 1
+        assert client.get("/api/jobs/failed").json()["jobs"][0]["acknowledged_at"] is None
+
+    def test_acknowledging_twice_reports_no_change(self, session, client):
+        job = self._failed(session, "a")
+        first = client.post(f"/api/jobs/{job.id}/acknowledge", json={"acknowledged": True}).json()
+        second = client.post(f"/api/jobs/{job.id}/acknowledge", json={"acknowledged": True}).json()
+        assert first["updated"] == 1
+        # The second call rewrites the timestamp, so it still reports 1; what
+        # matters is that it stays acknowledged and the listing stays empty.
+        assert second["acknowledged"] is True
+        assert client.get("/api/jobs/failed").json()["total"] == 0
+
+    def test_acknowledge_defaults_to_true_with_no_body(self, session, client):
+        job = self._failed(session, "a")
+        response = client.post(f"/api/jobs/{job.id}/acknowledge")
+        assert response.status_code == 200
+        assert client.get("/api/jobs/failed").json()["total"] == 0
+
+    def test_acknowledge_all_covers_every_failure(self, session, client):
+        for i in range(3):
+            self._failed(session, f"img{i}")
+        self._failed(session, "chat", task_type="llm")
+
+        body = client.post("/api/jobs/acknowledge-all", json={"acknowledged": True}).json()
+        assert body["updated"] == 4
+        assert client.get("/api/jobs/failed").json()["total"] == 0
+
+    def test_acknowledge_all_respects_the_task_type_filter(self, session, client):
+        self._failed(session, "img")
+        self._failed(session, "chat", task_type="llm")
+
+        client.post("/api/jobs/acknowledge-all", json={"acknowledged": True, "task_type": "llm"})
+
+        remaining = client.get("/api/jobs/failed").json()
+        assert remaining["total"] == 1
+        assert remaining["jobs"][0]["task_type"] == "image"
+
+    def test_restore_all_brings_everything_back(self, session, client):
+        for i in range(2):
+            self._failed(session, f"a{i}")
+        client.post("/api/jobs/acknowledge-all", json={"acknowledged": True})
+        assert client.get("/api/jobs/failed").json()["total"] == 0
+
+        body = client.post("/api/jobs/acknowledge-all", json={"acknowledged": False}).json()
+        assert body["updated"] == 2
+        assert client.get("/api/jobs/failed").json()["total"] == 2
+
+    def test_acknowledge_does_not_delete_the_job(self, session, client):
+        job = self._failed(session, "a")
+        client.post(f"/api/jobs/{job.id}/acknowledge", json={"acknowledged": True})
+        # Still fetchable, still a failure, still retryable.
+        assert client.get(f"/api/jobs/{job.id}").status_code == 200
+        assert session.get(Job, job.id) is not None
+
+    def test_acknowledge_unknown_job_is_404(self, client):
+        assert client.post("/api/jobs/does-not-exist/acknowledge", json={"acknowledged": True}).status_code == 404
+
+    def test_completed_jobs_are_not_affected(self, session, client):
+        done = Job(task_type="image", status=JobStatus.COMPLETED)
+        session.add(done)
+        session.commit()
+        session.refresh(done)
+
+        client.post("/api/jobs/acknowledge-all", json={"acknowledged": True})
+        assert session.get(Job, done.id).acknowledged_at is None

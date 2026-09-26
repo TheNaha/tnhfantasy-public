@@ -1,10 +1,11 @@
 # Job Repository - Data access layer for jobs
 from datetime import datetime, timezone
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import func, text
-from sqlmodel import Session, col, delete, select
+from sqlmodel import Session, col, delete, select, update
 
 from core.dtos import JobQueueItem
 from core.entities import Job, JobStatus
@@ -101,16 +102,27 @@ class JobRepository:
         return list(self.session.exec(stmt).all())
 
     def get_failed(
-        self, *, limit: int = 25, offset: int = 0, task_type: str | None = None
+        self,
+        *,
+        limit: int = 25,
+        offset: int = 0,
+        task_type: str | None = None,
+        include_acknowledged: bool = False,
     ) -> tuple[list[Job], int]:
         """Get failed jobs newest-first, plus the total failure count.
 
         Backs the failed-job diagnostics view; the `task_type` filter is
         applied in SQL so the totals line up with the returned page.
+
+        Acknowledged jobs are hidden unless asked for. They are filtered in SQL
+        rather than in the route so `total` — which drives the panel's count —
+        counts the same set the page returns.
         """
         filters = [Job.status == JobStatus.FAILED]
         if task_type:
             filters.append(Job.task_type == task_type)
+        if not include_acknowledged:
+            filters.append(Job.acknowledged_at.is_(None))
 
         total = self.session.exec(select(func.count()).select_from(Job).where(*filters)).one()
 
@@ -122,6 +134,55 @@ class JobRepository:
             .offset(offset)
         )
         return list(self.session.exec(stmt).all()), total
+
+    def set_acknowledged(self, job_ids: Sequence[str], acknowledged: bool) -> int:
+        """Set or clear `acknowledged_at` on the given jobs. Idempotent.
+
+        Returns the number of rows actually changed, so a caller can tell a
+        no-op from a real update.
+        """
+        if not job_ids:
+            return 0
+        value = datetime.now(timezone.utc) if acknowledged else None
+        stmt = (
+            update(Job)
+            .where(Job.id.in_(list(job_ids)))
+            .values(acknowledged_at=value, updated_at=datetime.now(timezone.utc))
+        )
+        result = self.session.exec(stmt)
+        self.session.commit()
+        return result.rowcount or 0
+
+    def count_acknowledged_failed(self, task_type: str | None = None) -> int:
+        """Count dismissed failures, so the UI can offer to show them again."""
+        filters = [Job.status == JobStatus.FAILED, Job.acknowledged_at.is_not(None)]
+        if task_type:
+            filters.append(Job.task_type == task_type)
+        return self.session.exec(
+            select(func.count()).select_from(Job).where(*filters)
+        ).one()
+
+    def set_acknowledged_filtered(
+        self, *, acknowledged: bool, task_type: str | None = None
+    ) -> int:
+        """Acknowledge (or un-acknowledge) every FAILED job matching the filter.
+
+        Deliberately ignores the current acknowledged state, so "dismiss all" is
+        idempotent and "show everything again" restores the full set rather than
+        only the un-acknowledged part.
+        """
+        value = datetime.now(timezone.utc) if acknowledged else None
+        filters = [Job.status == JobStatus.FAILED]
+        if task_type:
+            filters.append(Job.task_type == task_type)
+        stmt = (
+            update(Job)
+            .where(*filters)
+            .values(acknowledged_at=value, updated_at=datetime.now(timezone.utc))
+        )
+        result = self.session.exec(stmt)
+        self.session.commit()
+        return result.rowcount or 0
 
     def get_queue_items(self, statuses: list[JobStatus]) -> list[JobQueueItem]:
         """

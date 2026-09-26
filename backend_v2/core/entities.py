@@ -77,6 +77,11 @@ class Job(SQLModel, table=True):
     progress: float = Field(default=0.0)
     overall_progress: float = Field(default=0.0)
     message: str | None = Field(default=None)
+    # Set when the user has read a failure and does not want it surfaced or
+    # retried. Distinct from deletion on purpose: the job history is the only
+    # record of what a provider did, so a failure the user has dealt with is
+    # hidden rather than removed, and clearing this brings it back.
+    acknowledged_at: datetime | None = Field(default=None, index=True)
     error: str | None = Field(default=None)
     
     # Provider assignment
