@@ -1518,7 +1518,12 @@ async def illustrate_chat(
             select(Message)
             .where(
                 Message.chat_id == chat_id,
-                Message.role.in_(["char", "user"]),
+                # Must use the enum, not the lowercase literals: on Postgres
+                # messages.role is a native enum stored under its member NAMES
+                # (CHAR/USER), so a string-literal IN ('char','user') predicate
+                # matched zero rows and this endpoint could never find a
+                # fallback prompt.
+                Message.role.in_([MessageRole.CHAR, MessageRole.USER]),
                 Message.content.is_not(None),
             )
             .order_by(Message.created_at.desc())

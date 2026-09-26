@@ -12,10 +12,10 @@ import asyncio
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from core.entities import JobStatus, MessageKind
+from core.entities import JobStatus, Message, MessageKind, MessageRole
 from infrastructure.logging import get_logger
 from services.chat_utils import insert_world_state_marker
 from services.job_service import JobService
@@ -449,8 +449,6 @@ async def _tool_narrate_scene(
             messages.extend(source_context[-12:])
         elif chat_id:
             from sqlmodel import select
-            from core.entities import Message, MessageRole
-            from datetime import datetime, timedelta, timezone
             cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
             recent = session.exec(
                 select(Message)
