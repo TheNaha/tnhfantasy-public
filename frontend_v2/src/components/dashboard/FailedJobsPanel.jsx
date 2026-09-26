@@ -13,34 +13,13 @@ import toast from 'react-hot-toast';
 import { useJobRecovery } from '../../hooks/useJobRecovery';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatTimestamp } from '../../utils/dateTime';
+import { describeErrorType, describeGroupSize, formatDuration, groupFailedJobs } from '../gallery/groupFailedJobs';
 
 /**
- * Human-readable labels + guidance for the `diagnostics.error_type` values the
- * backend records. Anything unmapped falls back to the raw value so new server
- * side kinds still render instead of disappearing.
+ * The expanded group list is capped so no number of failures can push the
+ * gallery grid off the first screen. The list scrolls inside the cap.
  */
-const ERROR_TYPE_INFO = {
-    no_providers: { label: 'No providers', hint: 'No enabled provider can run this workflow.' },
-    providers_exhausted: { label: 'Providers exhausted', hint: 'Every provider was tried and failed.' },
-    provider_error: { label: 'Provider error', hint: 'The provider rejected or crashed on this job.' },
-    timeout: { label: 'Timed out', hint: 'The provider did not answer in time.' },
-    stale_recovery: { label: 'Interrupted', hint: 'A restart or dead worker left this job running.' },
-    finalization_failed: { label: 'Post-processing failed', hint: 'Output was produced but saving it failed.' },
-    unexpected: { label: 'Unexpected error', hint: 'The job runner hit an unhandled error.' },
-    cancelled: { label: 'Cancelled', hint: 'The job was cancelled.' },
-    unknown: { label: 'Failed', hint: 'No further detail was recorded.' },
-};
-
-function describeErrorType(errorType) {
-    return ERROR_TYPE_INFO[errorType] || { label: errorType || 'Failed', hint: '' };
-}
-
-function formatDuration(seconds) {
-    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
-    if (seconds < 60) return `${Math.round(seconds)}s`;
-    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-    return `${Math.round(seconds / 3600)}h`;
-}
+const GROUP_LIST_MAX_HEIGHT = 'max-h-[40vh]';
 
 /**
  * FailedJobsPanel — user-facing failure diagnostics with a retry action.
@@ -49,9 +28,15 @@ function formatDuration(seconds) {
  * duration) and offers one-click retry, plus a queue recovery action for jobs
  * wedged by a restart or a dead worker. Renders nothing when no job has failed,
  * so it costs no space on a healthy instance.
+ *
+ * Two bounds keep it from becoming the page: failures are grouped by cause so
+ * one outage is one row rather than N identical cards, and the whole body
+ * starts collapsed behind a header that still carries the cause summary and
+ * the Recover action.
  */
 export default function FailedJobsPanel({ limit = 5 }) {
-    const [isCollapsed, setIsCollapsed] = useState(false);
+    const [isCollapsed, setIsCollapsed] = useState(true);
+    const [expandedGroupKeys, setExpandedGroupKeys] = useState(() => new Set());
     const [expandedJobId, setExpandedJobId] = useState(null);
 
     const {
@@ -71,7 +56,18 @@ export default function FailedJobsPanel({ limit = 5 }) {
         [summary]
     );
 
+    const groups = useMemo(() => groupFailedJobs(jobs), [jobs]);
+
     if (isLoading || jobs.length === 0) return null;
+
+    const toggleGroup = (key) => {
+        setExpandedGroupKeys((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    };
 
     const handleRetry = async (jobId) => {
         try {
@@ -118,7 +114,7 @@ export default function FailedJobsPanel({ limit = 5 }) {
                         {errorTypeEntries.map(([errorType, count]) => (
                             <span
                                 key={errorType}
-                                className="text-[10px] text-red-300 bg-red-500/10 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-red-400/20"
+                                className="text-xs text-red-300 bg-red-500/10 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-red-400/20"
                             >
                                 {describeErrorType(errorType).label} · {count}
                             </span>
@@ -143,138 +139,73 @@ export default function FailedJobsPanel({ limit = 5 }) {
             </div>
 
             {!isCollapsed && (
-                <ul className="px-5 pb-5 space-y-2">
-                    {jobs.map((job) => {
-                        const diagnostics = job.diagnostics || {};
-                        const errorType = diagnostics.error_type;
-                        const info = describeErrorType(errorType);
-                        const provider = getProviderDisplayName(job.provider_id) || job.provider_id;
-                        const duration = formatDuration(diagnostics.duration_seconds);
-                        const attempts = Array.isArray(diagnostics.attempts) ? diagnostics.attempts : [];
-                        const isExpanded = expandedJobId === job.id;
-                        const canRetry = diagnostics.is_retryable !== false && diagnostics.failure_kind !== 'cancelled';
-                        const isThisRetrying = isRetrying && retryingJobId === job.id;
-                        const prompt = (job.metadata || job.metadata_ || {}).prompt;
+                <div className={`px-5 pb-5 ${GROUP_LIST_MAX_HEIGHT} overflow-y-auto`}>
+                    <ul className="space-y-2">
+                        {groups.map((group) => {
+                            // A group of one has nothing to fold away, so it
+                            // renders its detail without an extra click.
+                            const isGroupOpen =
+                                group.count === 1 || expandedGroupKeys.has(group.key);
 
-                        return (
-                            <li
-                                key={job.id}
-                                className="rounded-xl border border-red-500/20 bg-red-500/5 p-3 space-y-2"
-                            >
-                                <div className="flex items-start justify-between gap-3 flex-wrap">
-                                    <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-400/30">
-                                                {info.label}
-                                            </span>
-                                            {provider && (
-                                                <span className="px-2 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-400/30 flex items-center gap-1">
+                            return (
+                                <li
+                                    key={group.key}
+                                    className="rounded-xl border border-red-500/20 bg-red-500/5"
+                                >
+                                    <div className="flex items-start justify-between gap-3 flex-wrap p-3">
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-400/30">
+                                                    {group.label}
+                                                </span>
+                                                <span className="px-2 py-0.5 rounded text-xs bg-purple-500/20 text-purple-300 border border-purple-400/30 flex items-center gap-1">
                                                     <Server size={10} aria-hidden="true" />
-                                                    {provider}
+                                                    {group.providerLabel}
                                                 </span>
-                                            )}
-                                            {diagnostics.model && (
-                                                <span
-                                                    className="px-2 py-0.5 rounded text-[10px] bg-gray-700/60 text-gray-300 border border-gray-600 truncate max-w-[12rem]"
-                                                    title={diagnostics.model}
-                                                >
-                                                    {diagnostics.model.replace('.safetensors', '')}
-                                                </span>
-                                            )}
-                                            {duration && (
-                                                <span className="px-2 py-0.5 rounded text-[10px] bg-gray-700/60 text-gray-300 border border-gray-600 flex items-center gap-1">
-                                                    <Timer size={10} aria-hidden="true" />
-                                                    {duration}
-                                                </span>
-                                            )}
+                                            </div>
+                                            <p className="text-sm text-red-300 break-words mt-1">
+                                                {describeGroupSize(group.count)}
+                                                {group.hint ? ` — ${group.hint}` : ''}
+                                            </p>
                                         </div>
 
-                                        <p className="text-sm text-red-300 break-words mt-1">
-                                            {job.error || job.message || 'No error detail recorded'}
-                                        </p>
-                                        {info.hint && (
-                                            <p className="text-xs text-gray-500 mt-0.5">{info.hint}</p>
-                                        )}
-                                        {prompt && (
-                                            <p className="text-xs text-gray-500 truncate mt-1" title={prompt}>
-                                                {prompt}
-                                            </p>
-                                        )}
-                                        <p className="text-[10px] text-gray-600 mt-1">
-                                            {diagnostics.attempt_count > 0
-                                                ? `${diagnostics.attempt_count} attempt${diagnostics.attempt_count === 1 ? '' : 's'}`
-                                                : 'No attempt history'}
-                                            {diagnostics.retry_of ? ' · retry' : ''}
-                                            {job.completed_at ? ` · ${formatTimestamp(job.completed_at)}` : ''}
-                                        </p>
-                                    </div>
-
-                                    <div className="flex items-center gap-2 flex-shrink-0">
-                                        {attempts.length > 0 && (
+                                        {group.count > 1 && (
                                             <button
-                                                onClick={() =>
-                                                    setExpandedJobId(isExpanded ? null : job.id)
-                                                }
-                                                aria-expanded={isExpanded}
-                                                aria-label={`Toggle attempt history for job ${job.id}`}
-                                                className="p-2 rounded-lg bg-gray-700/60 hover:bg-gray-600 text-gray-300 transition-colors"
+                                                onClick={() => toggleGroup(group.key)}
+                                                aria-expanded={isGroupOpen}
+                                                aria-label={`${isGroupOpen ? 'Hide' : 'Show'} the ${group.count} jobs that failed on ${group.providerLabel}`}
+                                                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gray-700/60 hover:bg-gray-600 text-gray-200 text-sm font-medium transition-colors flex-shrink-0"
                                             >
-                                                {isExpanded ? (
+                                                {isGroupOpen ? (
                                                     <ChevronUp size={14} aria-hidden="true" />
                                                 ) : (
                                                     <ChevronDown size={14} aria-hidden="true" />
                                                 )}
+                                                {isGroupOpen ? 'Hide' : 'Show'} jobs
                                             </button>
                                         )}
-                                        <button
-                                            onClick={() => handleRetry(job.id)}
-                                            disabled={!canRetry || isThisRetrying}
-                                            aria-label={`Retry failed job ${job.id}`}
-                                            title={canRetry ? 'Retry this job' : 'This job cannot be retried'}
-                                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                        >
-                                            <RefreshCw
-                                                size={14}
-                                                className={isThisRetrying ? 'animate-spin' : ''}
-                                                aria-hidden="true"
-                                            />
-                                            Retry
-                                        </button>
                                     </div>
-                                </div>
 
-                                {isExpanded && attempts.length > 0 && (
-                                    <ol className="text-xs space-y-1 border-t border-red-500/10 pt-2">
-                                        {attempts.map((attempt, index) => (
-                                            <li
-                                                key={`${job.id}-attempt-${index}`}
-                                                className="flex items-center gap-2 text-gray-400"
-                                            >
-                                                <span className="text-gray-600">#{index + 1}</span>
-                                                <span className="text-gray-300">
-                                                    {getProviderDisplayName(attempt.provider_id) ||
-                                                        attempt.provider_id ||
-                                                        'unassigned'}
-                                                </span>
-                                                <span className="text-gray-500">{attempt.outcome}</span>
-                                                {formatDuration(attempt.duration_seconds) && (
-                                                    <span className="text-gray-600">
-                                                        {formatDuration(attempt.duration_seconds)}
-                                                    </span>
-                                                )}
-                                                {attempt.error && (
-                                                    <span className="text-red-400/80 truncate">
-                                                        — {attempt.error}
-                                                    </span>
-                                                )}
-                                            </li>
-                                        ))}
-                                    </ol>
-                                )}
-                            </li>
-                        );
-                    })}
-                </ul>
+                                    {isGroupOpen && (
+                                        <ul className="px-3 pb-3 space-y-2">
+                                            {group.jobs.map((job) => (
+                                                <FailedJobCard
+                                                    key={job.id}
+                                                    job={job}
+                                                    onRetry={handleRetry}
+                                                    isRetrying={isRetrying}
+                                                    retryingJobId={retryingJobId}
+                                                    expandedJobId={expandedJobId}
+                                                    onToggleAttempts={setExpandedJobId}
+                                                />
+                                            ))}
+                                        </ul>
+                                    )}
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </div>
             )}
 
             {jobs.length === 0 && !isLoading && (
@@ -283,5 +214,126 @@ export default function FailedJobsPanel({ limit = 5 }) {
                 </p>
             )}
         </section>
+    );
+}
+
+/**
+ * One failed job inside a group. The cause and provider live on the group
+ * header, so this carries only what is unique to the job: its error, model,
+ * duration, prompt, attempt count and timestamp.
+ */
+function FailedJobCard({
+    job,
+    onRetry,
+    isRetrying,
+    retryingJobId,
+    expandedJobId,
+    onToggleAttempts,
+}) {
+    const diagnostics = job.diagnostics || {};
+    const duration = formatDuration(diagnostics.duration_seconds);
+    const attempts = Array.isArray(diagnostics.attempts) ? diagnostics.attempts : [];
+    const isExpanded = expandedJobId === job.id;
+    const canRetry = diagnostics.is_retryable !== false && diagnostics.failure_kind !== 'cancelled';
+    const isThisRetrying = isRetrying && retryingJobId === job.id;
+    const prompt = (job.metadata || job.metadata_ || {}).prompt;
+
+    return (
+        <li className="rounded-lg border border-red-500/15 bg-gray-900/40 p-3 space-y-2">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {diagnostics.model && (
+                            <span
+                                className="px-2 py-0.5 rounded text-xs bg-gray-700/60 text-gray-300 border border-gray-600 truncate max-w-[12rem]"
+                                title={diagnostics.model}
+                            >
+                                {diagnostics.model.replace('.safetensors', '')}
+                            </span>
+                        )}
+                        {duration && (
+                            <span className="px-2 py-0.5 rounded text-xs bg-gray-700/60 text-gray-300 border border-gray-600 flex items-center gap-1">
+                                <Timer size={10} aria-hidden="true" />
+                                {duration}
+                            </span>
+                        )}
+                    </div>
+
+                    <p className="text-sm text-red-300 break-words mt-1">
+                        {job.error || job.message || 'No error detail recorded'}
+                    </p>
+                    {prompt && (
+                        <p className="text-xs text-gray-500 truncate mt-1" title={prompt}>
+                            {prompt}
+                        </p>
+                    )}
+                    <p className="text-xs text-gray-600 mt-1">
+                        {diagnostics.attempt_count > 0
+                            ? `${diagnostics.attempt_count} attempt${diagnostics.attempt_count === 1 ? '' : 's'}`
+                            : 'No attempt history'}
+                        {diagnostics.retry_of ? ' · retry' : ''}
+                        {job.completed_at ? ` · ${formatTimestamp(job.completed_at)}` : ''}
+                    </p>
+                </div>
+
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    {attempts.length > 0 && (
+                        <button
+                            onClick={() => onToggleAttempts(isExpanded ? null : job.id)}
+                            aria-expanded={isExpanded}
+                            aria-label={`Toggle attempt history for job ${job.id}`}
+                            className="p-2 rounded-lg bg-gray-700/60 hover:bg-gray-600 text-gray-300 transition-colors"
+                        >
+                            {isExpanded ? (
+                                <ChevronUp size={14} aria-hidden="true" />
+                            ) : (
+                                <ChevronDown size={14} aria-hidden="true" />
+                            )}
+                        </button>
+                    )}
+                    <button
+                        onClick={() => onRetry(job.id)}
+                        disabled={!canRetry || isThisRetrying}
+                        aria-label={`Retry failed job ${job.id}`}
+                        title={canRetry ? 'Retry this job' : 'This job cannot be retried'}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                        <RefreshCw
+                            size={14}
+                            className={isThisRetrying ? 'animate-spin' : ''}
+                            aria-hidden="true"
+                        />
+                        Retry
+                    </button>
+                </div>
+            </div>
+
+            {isExpanded && attempts.length > 0 && (
+                <ol className="text-xs space-y-1 border-t border-red-500/10 pt-2">
+                    {attempts.map((attempt, index) => (
+                        <li
+                            key={`${job.id}-attempt-${index}`}
+                            className="flex items-center gap-2 text-gray-400"
+                        >
+                            <span className="text-gray-600">#{index + 1}</span>
+                            <span className="text-gray-300">
+                                {getProviderDisplayName(attempt.provider_id) ||
+                                    attempt.provider_id ||
+                                    'unassigned'}
+                            </span>
+                            <span className="text-gray-500">{attempt.outcome}</span>
+                            {formatDuration(attempt.duration_seconds) && (
+                                <span className="text-gray-600">
+                                    {formatDuration(attempt.duration_seconds)}
+                                </span>
+                            )}
+                            {attempt.error && (
+                                <span className="text-red-400/80 truncate">— {attempt.error}</span>
+                            )}
+                        </li>
+                    ))}
+                </ol>
+            )}
+        </li>
     );
 }

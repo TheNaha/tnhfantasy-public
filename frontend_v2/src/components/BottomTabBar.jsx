@@ -35,9 +35,9 @@ function TabButton({ tab, value, onChange }) {
         >
             <span className="relative flex flex-col items-center gap-0.5">
                 {tab.icon ? <tab.icon size={20} aria-hidden="true" /> : null}
-                <span className="text-[10px] font-medium leading-tight">{tab.label}</span>
+                <span className="text-xs font-medium leading-tight">{tab.label}</span>
                 {hasBadge && (
-                    <span className="absolute -top-1 -right-2 flex items-center justify-center min-w-[16px] h-4 px-1 text-[8px] font-bold text-white bg-blue-500 rounded-full">
+                    <span className="absolute -top-1 -right-2 flex items-center justify-center min-w-[16px] h-4 px-1 text-2xs font-bold text-white bg-blue-500 rounded-full">
                         {tab.badge > 99 ? '99+' : tab.badge}
                     </span>
                 )}

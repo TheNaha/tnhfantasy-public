@@ -94,7 +94,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
             {/* Top Row: Provider + Status */}
             <div className="absolute top-0 left-0 right-0 flex justify-between items-start p-1.5 sm:p-2 z-10">
                 {/* Provider Badge */}
-                <div className="px-2 py-1 rounded text-[10px] sm:text-xs bg-purple-500/20 text-purple-400 flex items-center gap-1 backdrop-blur-sm">
+                <div className="px-2 py-1 rounded text-xs sm:text-xs bg-purple-500/20 text-purple-400 flex items-center gap-1 backdrop-blur-sm">
                     <Server size={10} />
                     {providerName}
                 </div>
@@ -174,7 +174,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                         </div>
 
                         {/* Progress Message */}
-                        <p className="text-[10px] sm:text-sm font-medium text-white truncate w-full mb-1 sm:mb-2">
+                        <p className="text-xs sm:text-sm font-medium text-white truncate w-full mb-1 sm:mb-2">
                             {job.message || 'Processing...'}
                         </p>
 
@@ -186,7 +186,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                                     style={{ width: `${job.overall_progress || 0}%` }}
                                 />
                             </div>
-                            <div className="flex justify-between text-[10px] sm:text-xs text-gray-500 mt-1">
+                            <div className="flex justify-between text-xs sm:text-xs text-gray-500 mt-1">
                                 <span>Workflow</span>
                                 <span>{Math.round(job.overall_progress || 0)}%</span>
                             </div>
@@ -201,7 +201,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                                         style={{ width: `${job.progress}%` }}
                                     />
                                 </div>
-                                <div className="flex justify-between items-center text-[10px] sm:text-xs text-blue-400 mt-1">
+                                <div className="flex justify-between items-center text-xs sm:text-xs text-blue-400 mt-1">
                                     <div className="flex items-center gap-1">
                                         <Loader2 size={10} className="animate-spin" />
                                         <span>Node</span>

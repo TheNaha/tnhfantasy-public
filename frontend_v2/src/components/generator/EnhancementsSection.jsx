@@ -68,7 +68,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                                 Performs a second pass to upscale the image and add finer details. Use Latent for hallucinated details or a Pixel upscaler for structural preservation.
                             </p>
                             <div className="space-y-1.5">
-                                <label className="block text-[11px] font-bold text-yellow-400 uppercase tracking-widest px-1">Upscaler</label>
+                                <label className="block text-2xs font-bold text-yellow-400 uppercase tracking-widest px-1">Upscaler</label>
                                 <select
                                     value={hiresUpscaler || 'Latent'}
                                     onChange={(e) => setHiresUpscaler(e.target.value)}
@@ -82,7 +82,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div className="space-y-1.5">
-                                    <label className="block text-[11px] font-bold text-yellow-400 uppercase tracking-widest px-1">Scale</label>
+                                    <label className="block text-2xs font-bold text-yellow-400 uppercase tracking-widest px-1">Scale</label>
                                     <input
                                         type="number"
                                         step="0.1"
@@ -92,7 +92,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                                     />
                                 </div>
                                 <div className="space-y-1.5">
-                                    <label className="block text-[11px] font-bold text-yellow-400 uppercase tracking-widest px-1">Denoise</label>
+                                    <label className="block text-2xs font-bold text-yellow-400 uppercase tracking-widest px-1">Denoise</label>
                                     <input
                                         type="number"
                                         step="0.05"
@@ -103,7 +103,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                                 </div>
                             </div>
                             <div className="space-y-1.5">
-                                <label className="block text-[11px] font-bold text-yellow-400 uppercase tracking-widest px-1">Steps</label>
+                                <label className="block text-2xs font-bold text-yellow-400 uppercase tracking-widest px-1">Steps</label>
                                 <input
                                     type="number"
                                     value={hiresSteps || 20}
@@ -138,7 +138,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                                 Automatically detects faces, hands, or other objects to fix structural issues by performing localized inpainting.
                             </p>
                             <div className="space-y-1.5">
-                                <label className="block text-[11px] font-bold text-orange-400 uppercase tracking-widest px-1">Model</label>
+                                <label className="block text-2xs font-bold text-orange-400 uppercase tracking-widest px-1">Model</label>
                                 <select
                                     value={adetailerModel || ''}
                                     onChange={(e) => setAdetailerModel(e.target.value)}
@@ -150,7 +150,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                                 </select>
                             </div>
                             <div className="space-y-1.5">
-                                <label className="block text-[11px] font-bold text-orange-400 uppercase tracking-widest px-1">Prompt (Optional)</label>
+                                <label className="block text-2xs font-bold text-orange-400 uppercase tracking-widest px-1">Prompt (Optional)</label>
                                 <input
                                     type="text"
                                     value={adetailerPrompt || ''}
@@ -161,7 +161,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div className="space-y-1.5">
-                                    <label className="block text-[11px] font-bold text-orange-400 uppercase tracking-widest px-1">Steps</label>
+                                    <label className="block text-2xs font-bold text-orange-400 uppercase tracking-widest px-1">Steps</label>
                                     <input
                                         type="number"
                                         value={adetailerSteps || 20}
@@ -170,7 +170,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                                     />
                                 </div>
                                 <div className="space-y-1.5">
-                                    <label className="block text-[11px] font-bold text-orange-400 uppercase tracking-widest px-1">Denoise</label>
+                                    <label className="block text-2xs font-bold text-orange-400 uppercase tracking-widest px-1">Denoise</label>
                                     <input
                                         type="number"
                                         step="0.05"
@@ -243,7 +243,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                             Enhances structural coherence and overall image quality without requiring additional training or prompt changes. (Ignored for Flux)
                         </p>
                         <div className="space-y-1.5">
-                            <label className="block text-[11px] font-bold text-purple-400 uppercase tracking-widest px-1">PAG Scale</label>
+                            <label className="block text-2xs font-bold text-purple-400 uppercase tracking-widest px-1">PAG Scale</label>
                             <input
                                 type="number"
                                 step="0.1"
@@ -277,7 +277,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
 
                         <div className={`space-y-4 transition-all duration-300 ${enableLatentUpscale ? 'opacity-100 max-h-[500px]' : 'opacity-30 pointer-events-none max-h-0 overflow-hidden'}`}>
                             <div className="space-y-1.5">
-                                <label className="block text-[11px] font-bold text-pink-400 uppercase tracking-widest px-1">Scale Multiplier</label>
+                                <label className="block text-2xs font-bold text-pink-400 uppercase tracking-widest px-1">Scale Multiplier</label>
                                 <input
                                     type="number"
                                     step="0.1"

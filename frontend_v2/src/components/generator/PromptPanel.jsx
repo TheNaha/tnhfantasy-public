@@ -86,7 +86,7 @@ export default function PromptPanel() {
             </div>
             
             <div className="space-y-1 group">
-                <label className="block text-[11px] font-bold text-blue-400 uppercase tracking-widest mb-2 px-1">Positive Prompt</label>
+                <label className="block text-2xs font-bold text-blue-400 uppercase tracking-widest mb-2 px-1">Positive Prompt</label>
                 <textarea
                     ref={promptRef}
                     className="w-full bg-[#0B0E14]/80 border border-white/10 rounded-xl p-3 lg:p-4 text-sm text-white min-h-[4rem] lg:min-h-[8rem] focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none resize-y overflow-hidden transition-all shadow-inner glow-focus placeholder-gray-600"
@@ -97,7 +97,7 @@ export default function PromptPanel() {
             </div>
             
             <div className="space-y-1 group">
-                <label className="block text-[11px] font-bold text-pink-400 uppercase tracking-widest mb-2 px-1">Negative Prompt</label>
+                <label className="block text-2xs font-bold text-pink-400 uppercase tracking-widest mb-2 px-1">Negative Prompt</label>
                 <textarea
                     ref={negPromptRef}
                     className="w-full bg-[#0B0E14]/80 border border-white/10 rounded-xl p-3 lg:p-4 text-sm text-white min-h-[3rem] lg:min-h-[5rem] focus:ring-2 focus:ring-pink-500/50 focus:border-pink-500/50 outline-none resize-y overflow-hidden transition-all shadow-inner glow-focus placeholder-gray-600"

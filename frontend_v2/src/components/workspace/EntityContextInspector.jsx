@@ -29,7 +29,7 @@ function EntryRow({ entry }) {
             <div className="flex items-start gap-2">
                 <span
                     className={clsx(
-                        'mt-0.5 text-[8px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
+                        'mt-0.5 text-2xs font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
                         entry._alwaysOn
                             ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
                             : 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30'
@@ -39,11 +39,11 @@ function EntryRow({ entry }) {
                 </span>
                 <div className="min-w-0 flex-1">
                     {entry._matchedKeys?.length > 0 && (
-                        <p className="text-[9px] text-indigo-300/80 truncate">
+                        <p className="text-2xs text-indigo-300/80 truncate">
                             {entry._matchedKeys.join(', ')}
                         </p>
                     )}
-                    <p className="text-[11px] text-gray-300 leading-snug line-clamp-3">{entry.content}</p>
+                    <p className="text-2xs text-gray-300 leading-snug line-clamp-3">{entry.content}</p>
                 </div>
             </div>
         </li>
@@ -59,26 +59,26 @@ function LorebookEntryList({ lorebookId, contextText }) {
 
     if (isLoading) {
         return (
-            <div className="flex items-center gap-2 px-2 py-2 text-[10px] text-gray-500">
+            <div className="flex items-center gap-2 px-2 py-2 text-xs text-gray-500">
                 <Loader2 size={12} className="animate-spin" /> Loading entries…
             </div>
         );
     }
     if (isError) {
-        return <p className="px-2 py-2 text-[10px] text-red-300/80">Could not load entries.</p>;
+        return <p className="px-2 py-2 text-xs text-red-300/80">Could not load entries.</p>;
     }
     if (total === 0) {
-        return <p className="px-2 py-2 text-[10px] text-gray-600">No entries in this lorebook.</p>;
+        return <p className="px-2 py-2 text-xs text-gray-600">No entries in this lorebook.</p>;
     }
 
     return (
         <div className="space-y-1.5 pt-1">
-            <p className="text-[9px] text-gray-500 px-1">
+            <p className="text-2xs text-gray-500 px-1">
                 {activated.length} of {total} {total === 1 ? 'entry' : 'entries'} would be injected now
             </p>
             {activated.map(entry => <EntryRow key={entry.id} entry={entry} />)}
             {idle.length > 0 && (
-                <p className="text-[9px] text-gray-600 px-1">
+                <p className="text-2xs text-gray-600 px-1">
                     {idle.length} dormant {idle.length === 1 ? 'entry' : 'entries'} — keys not present in context
                 </p>
             )}
@@ -102,10 +102,10 @@ function CollapsibleGroup({ icon: Icon, title, count, defaultOpen = false, child
                     onClick={() => setOpen(o => !o)}
                     className="w-full flex items-center justify-between gap-2 px-2.5 py-2 text-left hover:bg-white/5 transition-colors"
                 >
-                    <span className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-widest min-w-0">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-widest min-w-0">
                         {Icon && <Icon size={12} className="shrink-0" />}
                         <span className="truncate">{title}</span>
-                        <span className="text-[9px] text-gray-600 shrink-0">({count})</span>
+                        <span className="text-2xs text-gray-600 shrink-0">({count})</span>
                     </span>
                     <ChevronDown size={13} className={clsx('text-gray-500 shrink-0 transition-transform', open && 'rotate-180')} aria-hidden="true" />
                 </button>
@@ -175,11 +175,11 @@ export default function EntityContextInspector({
                     className="w-full flex items-center justify-between gap-2 p-4 text-left hover:bg-white/5 transition-colors rounded-xl"
                 >
                     <span className="min-w-0">
-                        <span className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-300 uppercase tracking-widest">
+                        <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-300 uppercase tracking-widest">
                             <PanelRightOpen size={12} className="text-indigo-400" />
                             {title}
                         </span>
-                        <span className="block text-[9px] text-gray-500 mt-0.5 truncate">
+                        <span className="block text-2xs text-gray-500 mt-0.5 truncate">
                             {totalLinked === 0
                                 ? 'Nothing linked yet'
                                 : [
@@ -195,10 +195,10 @@ export default function EntityContextInspector({
 
             {open && (
                 <div id={contentId} role="region" aria-labelledby={headerId} className="px-3 pb-3 space-y-2">
-                    {subtitle && <p className="text-[9px] text-gray-600 px-1">{subtitle}</p>}
+                    {subtitle && <p className="text-2xs text-gray-600 px-1">{subtitle}</p>}
 
                     {totalLinked === 0 && (
-                        <p className="text-[10px] text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
+                        <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
                             {emptyHint}
                         </p>
                     )}
@@ -215,9 +215,9 @@ export default function EntityContextInspector({
                                         )}
                                     </div>
                                     <div className="min-w-0 flex-1">
-                                        <p className="text-[11px] text-gray-200 truncate">{character.name}</p>
+                                        <p className="text-2xs text-gray-200 truncate">{character.name}</p>
                                         {character.description && (
-                                            <p className="text-[9px] text-gray-500 truncate">{character.description}</p>
+                                            <p className="text-2xs text-gray-500 truncate">{character.description}</p>
                                         )}
                                     </div>
                                     {onEditCharacter && (!primaryCharacterId || primaryCharacterId === character.id) && (
@@ -240,9 +240,9 @@ export default function EntityContextInspector({
                             {linkedLocations.map(location => (
                                 <div key={location.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-800/40 group">
                                     <div className="min-w-0 flex-1">
-                                        <p className="text-[11px] text-gray-200 truncate">{location.name}</p>
+                                        <p className="text-2xs text-gray-200 truncate">{location.name}</p>
                                         {(location.atmosphere || location.description) && (
-                                            <p className="text-[9px] text-gray-500 truncate">{location.atmosphere || location.description}</p>
+                                            <p className="text-2xs text-gray-500 truncate">{location.atmosphere || location.description}</p>
                                         )}
                                     </div>
                                     {onEditLocation && (
@@ -258,9 +258,9 @@ export default function EntityContextInspector({
                                 </div>
                             ))}
                             {linkedLocations.length === 0 && freeformLocation && (
-                                <p className="px-2 py-1.5 text-[11px] text-gray-400 bg-gray-800/40 rounded-lg truncate">
+                                <p className="px-2 py-1.5 text-2xs text-gray-400 bg-gray-800/40 rounded-lg truncate">
                                     {freeformLocation}
-                                    <span className="text-[9px] text-gray-600 ml-1.5">free-text, not linked to a Location</span>
+                                    <span className="text-2xs text-gray-600 ml-1.5">free-text, not linked to a Location</span>
                                 </p>
                             )}
                         </CollapsibleGroup>
@@ -280,7 +280,7 @@ export default function EntityContextInspector({
                                                 className="flex-1 min-w-0 flex items-center gap-1.5 text-left"
                                             >
                                                 <ChevronDown size={11} className={clsx('text-gray-500 shrink-0 transition-transform', isExpanded && 'rotate-180')} aria-hidden="true" />
-                                                <span className="text-[11px] text-gray-200 truncate">{lorebook.name}</span>
+                                                <span className="text-2xs text-gray-200 truncate">{lorebook.name}</span>
                                             </button>
                                             {onEditLorebook && (
                                                 <button
@@ -310,7 +310,7 @@ export default function EntityContextInspector({
                                 key={to}
                                 type="button"
                                 onClick={() => navigateTo(to)}
-                                className="inline-flex items-center gap-1 px-2 py-1 text-[9px] text-gray-400 hover:text-indigo-300 bg-gray-800/40 hover:bg-gray-800 rounded-md border border-white/5 transition-colors"
+                                className="inline-flex items-center gap-1 px-2 py-1 text-2xs text-gray-400 hover:text-indigo-300 bg-gray-800/40 hover:bg-gray-800 rounded-md border border-white/5 transition-colors"
                             >
                                 <LinkIcon size={10} />
                                 {label}
@@ -321,7 +321,7 @@ export default function EntityContextInspector({
                                 key={link.to}
                                 type="button"
                                 onClick={() => navigateTo(link.to)}
-                                className="inline-flex items-center gap-1 px-2 py-1 text-[9px] text-gray-400 hover:text-indigo-300 bg-gray-800/40 hover:bg-gray-800 rounded-md border border-white/5 transition-colors"
+                                className="inline-flex items-center gap-1 px-2 py-1 text-2xs text-gray-400 hover:text-indigo-300 bg-gray-800/40 hover:bg-gray-800 rounded-md border border-white/5 transition-colors"
                             >
                                 {link.icon ? <link.icon size={10} /> : <ExternalLink size={10} />}
                                 {link.label}

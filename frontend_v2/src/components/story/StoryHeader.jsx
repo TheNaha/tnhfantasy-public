@@ -78,7 +78,7 @@ export default React.memo(function StoryHeader({
                                  const wordCount = activeChapter.content.trim().split(/\s+/).filter(Boolean).length;
                                  const readingTime = Math.ceil(wordCount / 200);
                                  return (
-                                     <p className="text-[10px] text-gray-500 flex items-center gap-1">
+                                     <p className="text-xs text-gray-500 flex items-center gap-1">
                                          <FileText size={10} />
                                          <span>{wordCount} words · {readingTime} min read</span>
                                      </p>
@@ -89,7 +89,7 @@ export default React.memo(function StoryHeader({
                             <button 
                                 onClick={onAutoGenerateTitle} 
                                 disabled={isGeneratingTitle}
-                                className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded hover:bg-indigo-500/20 transition-colors flex items-center gap-1 disabled:opacity-50 shrink-0"
+                                className="text-xs bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded hover:bg-indigo-500/20 transition-colors flex items-center gap-1 disabled:opacity-50 shrink-0"
                                 title="Auto-generate chapter title using AI"
                             >
                                 {isGeneratingTitle ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}

@@ -83,7 +83,7 @@ const SamplingSettings = memo(function SamplingSettings() {
             <div className="grid grid-cols-2 gap-4 pt-2">
                 <div className="space-y-1.5 group">
                     <div className="flex items-center">
-                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Sampler</label>
+                        <label className="block text-2xs font-bold text-gray-400 uppercase tracking-widest px-1">Sampler</label>
                         {renderLockIcon('sampler')}
                     </div>
                     <select
@@ -99,7 +99,7 @@ const SamplingSettings = memo(function SamplingSettings() {
                 </div>
                 <div className="space-y-1.5 group">
                     <div className="flex items-center">
-                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Scheduler</label>
+                        <label className="block text-2xs font-bold text-gray-400 uppercase tracking-widest px-1">Scheduler</label>
                         {renderLockIcon('scheduler')}
                     </div>
                     <select
@@ -117,7 +117,7 @@ const SamplingSettings = memo(function SamplingSettings() {
 
             <div className="pt-2 border-t border-white/5 space-y-3">
                 <div className="flex items-center justify-between">
-                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Seed</label>
+                    <label className="text-2xs font-bold text-gray-400 uppercase tracking-widest px-1">Seed</label>
                     <label className="flex items-center gap-2 cursor-pointer group">
                         <input
                             type="checkbox"

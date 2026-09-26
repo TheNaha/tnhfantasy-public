@@ -21,7 +21,7 @@ function ImportanceDot({ value }) {
             : 'bg-red-400';
     return (
         <span
-            className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold text-gray-900 shrink-0 ${color}`}
+            className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-2xs font-bold text-gray-900 shrink-0 ${color}`}
             title={`Importance: ${value}/10`}
         >
             {value}
@@ -31,7 +31,7 @@ function ImportanceDot({ value }) {
 
 function MemoryTag({ label }) {
     return (
-        <span className="px-1.5 py-0.5 text-[10px] bg-indigo-500/15 text-indigo-300 rounded border border-indigo-500/25 leading-none">
+        <span className="px-1.5 py-0.5 text-xs bg-indigo-500/15 text-indigo-300 rounded border border-indigo-500/25 leading-none">
             {label}
         </span>
     );
@@ -221,7 +221,7 @@ export default function MemoriesPanel({ characterId }) {
                     {/* Importance slider */}
                     <div>
                         <div className="flex items-center justify-between mb-1">
-                            <label className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
+                            <label className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
                                 Importance
                             </label>
                             <span className={`text-xs font-bold ${importanceColor}`}>
@@ -237,7 +237,7 @@ export default function MemoriesPanel({ characterId }) {
                             onChange={(e) => setNewImportance(Number(e.target.value))}
                             className="w-full accent-blue-500"
                         />
-                        <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                        <div className="flex justify-between text-2xs text-gray-600 mt-0.5">
                             <span>Low</span>
                             <span>Medium</span>
                             <span>High</span>
@@ -246,7 +246,7 @@ export default function MemoriesPanel({ characterId }) {
 
                     {/* Tags */}
                     <div>
-                        <label className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
+                        <label className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
                             Tags (comma-separated)
                         </label>
                         <input
@@ -278,13 +278,13 @@ export default function MemoriesPanel({ characterId }) {
             {editingMemory && (
                 <div className="glass-panel rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 space-y-2.5">
                     <div className="flex items-center justify-between">
-                        <label className="text-[10px] text-indigo-300 uppercase tracking-wider font-semibold">
+                        <label className="text-xs text-indigo-300 uppercase tracking-wider font-semibold">
                             Editing memory
                         </label>
                         <button
                             type="button"
                             onClick={cancelEdit}
-                            className="p-1 text-gray-500 hover:text-gray-300 rounded transition-colors"
+                            className="p-1 min-w-6 min-h-6 inline-flex items-center justify-center text-gray-500 hover:text-gray-300 rounded transition-colors"
                             title="Cancel edit"
                         >
                             <X size={12} />
@@ -300,7 +300,7 @@ export default function MemoriesPanel({ characterId }) {
                     />
                     <div>
                         <div className="flex items-center justify-between mb-1">
-                            <label className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
+                            <label className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
                                 Importance
                             </label>
                             <span className={`text-xs font-bold ${
@@ -367,7 +367,7 @@ export default function MemoriesPanel({ characterId }) {
             ) : (
                 <div className="space-y-2">
                     {isSearching && (
-                        <p className="text-[10px] text-gray-500 px-1">
+                        <p className="text-xs text-gray-500 px-1">
                             {displayed.length} semantic match{displayed.length !== 1 ? 'es' : ''} for &ldquo;{searchQuery}&rdquo;
                         </p>
                     )}
@@ -397,7 +397,7 @@ export default function MemoriesPanel({ characterId }) {
                                 )}
 
                                 {/* Timestamps */}
-                                <p className="text-[9px] text-gray-600">
+                                <p className="text-2xs text-gray-600">
                                     {memory.created_at
                                         ? new Date(memory.created_at).toLocaleDateString(undefined, {
                                               month: 'short',
@@ -418,7 +418,7 @@ export default function MemoriesPanel({ characterId }) {
                                 <button
                                     type="button"
                                     onClick={() => startEdit(memory)}
-                                    className="p-1 text-gray-400 hover:text-indigo-400 rounded transition-colors"
+                                    className="p-1 min-w-6 min-h-6 inline-flex items-center justify-center text-gray-400 hover:text-indigo-400 rounded transition-colors"
                                     title="Edit memory"
                                 >
                                     <Pencil size={13} />
@@ -427,7 +427,7 @@ export default function MemoriesPanel({ characterId }) {
                                     type="button"
                                     onClick={() => handleDelete(memory)}
                                     disabled={deleteMutation.isPending}
-                                    className="p-1 text-red-500/70 hover:text-red-400 transition-all rounded"
+                                    className="p-1 min-w-6 min-h-6 inline-flex items-center justify-center text-red-500/70 hover:text-red-400 transition-all rounded"
                                     title="Delete memory"
                                 >
                                     <Trash2 size={13} />
@@ -440,7 +440,7 @@ export default function MemoriesPanel({ characterId }) {
 
             {/* Footer count */}
             {!isSearching && memories.length > 0 && (
-                <p className="text-[10px] text-gray-600 text-right px-1">
+                <p className="text-xs text-gray-600 text-right px-1">
                     {memories.length} memor{memories.length !== 1 ? 'ies' : 'y'}
                 </p>
             )}

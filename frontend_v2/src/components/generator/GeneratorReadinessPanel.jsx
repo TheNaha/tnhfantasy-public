@@ -42,7 +42,7 @@ export default function GeneratorReadinessPanel({
                         {providersLoading ? (
                             <Loader2 size={16} className="animate-spin text-blue-400 drop-shadow-[0_0_5px_rgba(59,130,246,0.5)]" />
                         ) : (
-                            <span className={`text-[11px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border border-current/20 bg-current/10 ${providerTone}`}>
+                            <span className={`text-2xs font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border border-current/20 bg-current/10 ${providerTone}`}>
                                 {onlineProviders}/{totalProviders} online
                             </span>
                         )}
@@ -68,7 +68,7 @@ export default function GeneratorReadinessPanel({
                             )}
                             <span className="text-sm font-bold text-white tracking-wide">Model preflight</span>
                         </div>
-                        <span className={`text-[11px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border border-current/20 bg-current/10 ${readinessTone}`}>
+                        <span className={`text-2xs font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border border-current/20 bg-current/10 ${readinessTone}`}>
                             {isChecking
                                 ? 'Checking'
                                 : validationSummary?.valid

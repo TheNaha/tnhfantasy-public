@@ -81,7 +81,7 @@ export default function ChapterRevisionsModal({
                                         data-testid="revision-row"
                                     >
                                         <div className="flex items-center gap-2 mb-1">
-                                            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${meta.className}`}>
+                                            <span className={`text-xs px-1.5 py-0.5 rounded border ${meta.className}`}>
                                                 {meta.label}
                                             </span>
                                             <span className="text-xs text-gray-500">{formatTime(rev.created_at)}</span>

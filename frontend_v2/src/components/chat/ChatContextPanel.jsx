@@ -79,11 +79,13 @@ function ChatContextPanel() {
 
             {/* Persona Name */}
             <div className="glass-panel p-4 rounded-xl border border-white/5">
-                <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
                     <User size={12} /> Your Persona
                 </h4>
                 <ContextField
+                    inline
                     label="Your Persona"
+                    fieldLabel="Persona name"
                     icon={User}
                     value={activeChat?.persona_name}
                     placeholder="Default (User)"
@@ -91,10 +93,11 @@ function ChatContextPanel() {
                 />
                 {/* Persona description */}
                 <div className="mt-3">
-                    <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                    <label htmlFor="persona-description" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
                         Description
                     </label>
                     <textarea
+                        id="persona-description"
                         key={`persona-desc-${activeChat?.id}`}
                         defaultValue={activeChat?.persona_description || ''}
                         onBlur={(e) => {
@@ -106,7 +109,7 @@ function ChatContextPanel() {
                         placeholder={
                             linkedCharacter?.suggested_persona
                                 ? `Suggested: ${linkedCharacter.suggested_persona.slice(0, 60)}…`
-                                : 'Describe your character — who you are in this roleplay…'
+                                : 'Who you are in this roleplay…'
                         }
                         rows={2}
                         className="w-full bg-gray-800/60 border border-white/5 text-xs rounded-lg px-2.5 py-2 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/40 resize-none"
@@ -115,21 +118,22 @@ function ChatContextPanel() {
                         <button
                             type="button"
                             onClick={() => onChatUpdate({ persona_description: linkedCharacter.suggested_persona })}
-                            className="mt-1 text-[9px] text-blue-400 hover:text-blue-300 transition-colors"
+                            className="mt-1 inline-flex items-center min-h-[24px] py-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
                         >
                             Use {linkedCharacter.name}'s suggestion
                         </button>
                     )}
                 </div>
-                <p className="text-[10px] text-gray-600 mt-2 px-1">
-                    Sets <code className="text-gray-500">{'{{user}}'}</code> and injects a persona block into the system prompt.
+                <p className="text-xs text-gray-500 mt-2 px-1">
+                    Sets <code className="text-gray-400">{'{{user}}'}</code> and injects a persona block into the system prompt.
                 </p>
                 {personas.length > 0 && (
                     <div className="mt-3">
-                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                        <label htmlFor="library-persona" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
                             Library Persona
                         </label>
                         <select
+                            id="library-persona"
                             data-testid="chat-persona-select"
                             value={activeChat?.persona_id || ''}
                             onChange={(e) => onChatUpdate({ persona_id: e.target.value || null })}
@@ -140,43 +144,34 @@ function ChatContextPanel() {
                                 <option key={p.id} value={p.id}>{p.name}</option>
                             ))}
                         </select>
-                        <p className="text-[10px] text-gray-600 mt-1 px-1">
+                        <p className="text-xs text-gray-500 mt-1 px-1">
                             Library values fill any persona field left blank above. Manage in{' '}
-                            <button type="button" onClick={() => navigate('/personas')} className="text-blue-400 hover:text-blue-300 underline">
+                            <button
+                                type="button"
+                                onClick={() => navigate('/personas')}
+                                className="inline-flex items-center min-h-[24px] py-1 align-baseline text-blue-400 hover:text-blue-300 underline"
+                            >
                                 Personas
-                            </button>.
+                            </button>
+                            .
                         </p>
                     </div>
                 )}
             </div>
 
-            {/* Author's Note */}
-            <AuthorsNoteSection key={`an-${activeChat?.id}`} chat={activeChat} onSave={onChatUpdate} />
-            
-            {/* World State */}
-            <ContextField
-                label="Story Time"
-                icon={Clock}
-                value={activeChat?.story_time}
-                placeholder="Not set"
-                onSave={val => onChatUpdate({ story_time: val })}
-            />
-            
-            <ContextField
-                label="Location"
-                icon={MapPin}
-                value={activeChat?.story_location}
-                placeholder="Not set"
-                onSave={val => onChatUpdate({ story_location: val })}
+            <SceneOverridesSection
+                key={`so-${activeChat?.id}`}
+                chat={activeChat}
+                onSave={onChatUpdate}
             />
 
             {/* Chat Jobs (LLM + image progress for this chat) */}
             <div className="glass-panel p-4 rounded-xl border border-white/5">
                 <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
                         <Activity size={12} /> Jobs
                     </h4>
-                    <span className="text-[9px] text-gray-600">{chatJobs?.length || 0} total</span>
+                    <span className="text-xs text-gray-600 shrink-0">{chatJobs?.length || 0} total</span>
                 </div>
                 {!chatJobs?.length ? (
                     <p className="text-xs text-gray-600">No jobs tracked for this chat yet.</p>
@@ -189,16 +184,16 @@ function ChatContextPanel() {
                             const isComplete = job.status === 'completed';
                             return (
                                 <div key={job.id} className={clsx(
-                                    "flex items-center gap-2 px-2.5 py-2 rounded-lg text-[10px] border",
+                                    "flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs border",
                                     isFailed ? "bg-red-500/5 border-red-500/15 text-red-300" :
                                     isComplete ? (isImage ? "bg-emerald-500/5 border-emerald-500/15 text-emerald-300" : "bg-blue-500/5 border-blue-500/15 text-blue-300") :
                                     isRunning ? "bg-amber-500/5 border-amber-500/15 text-amber-300" : "bg-gray-800/30 border-gray-700/30 text-gray-400"
                                 )}>
                                     <span className={clsx("w-1.5 h-1.5 rounded-full shrink-0", isFailed ? "bg-red-400" : isComplete ? (isImage ? "bg-emerald-400" : "bg-blue-400") : isRunning ? "bg-amber-400 animate-pulse" : "bg-gray-600")} />
                                     <span className="truncate flex-1 font-medium">{isImage ? (job.type === 'agentic_image' ? 'Image generation' : 'Image job') : 'LLM reply'}</span>
-                                    <span className="text-[9px] text-gray-500 shrink-0">{isFailed ? 'Failed' : isComplete ? 'Done' : isRunning ? 'Active' : job.status}</span>
+                                    <span className="text-xs text-gray-500 shrink-0">{isFailed ? 'Failed' : isComplete ? 'Done' : isRunning ? 'Active' : job.status}</span>
                                     {isRunning && job.overall_progress != null && (
-                                        <span className="text-[9px] text-amber-300/80 shrink-0">{Math.round(job.overall_progress)}%</span>
+                                        <span className="text-xs text-amber-300/80 shrink-0">{Math.round(job.overall_progress)}%</span>
                                     )}
                                 </div>
                             );
@@ -210,14 +205,14 @@ function ChatContextPanel() {
             {/* Character */}
             <div className="glass-panel p-4 rounded-xl border border-white/5">
                 <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 whitespace-nowrap shrink-0">
                         <User size={12} /> Character
                     </h4>
                     {/* Constrained width + native truncation so long names don't overflow */}
                     <select
                         value={activeChat?.character_id || ''}
                         onChange={(e) => onChatUpdate({ character_id: e.target.value || null })}
-                        className="bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1 text-gray-300 focus:outline-none max-w-[140px] truncate"
+                        className="bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1 text-gray-300 focus:outline-none max-w-[140px] min-w-0 truncate"
                     >
                         <option value="">None</option>
                         {characters.map(c => (
@@ -239,7 +234,7 @@ function ChatContextPanel() {
                         </div>
                         <div className="min-w-0 flex-1">
                             <p className="text-sm text-gray-200 truncate font-medium group-hover:text-blue-100 transition-colors">{linkedCharacter.name}</p>
-                            <p className="text-[10px] text-blue-400 mt-0.5 opacity-80 group-hover:opacity-100">View details</p>
+                            <p className="text-xs text-blue-400 mt-0.5 opacity-80 group-hover:opacity-100">View details</p>
                         </div>
                     </div>
                 ) : (
@@ -251,7 +246,7 @@ function ChatContextPanel() {
                 {/* Additional Characters */}
                 <div className="mt-4 pt-4 border-t border-white/5">
                     <div className="flex items-center justify-between mb-3">
-                        <h5 className="text-[10px] font-semibold text-gray-500 uppercase tracking-widest">
+                        <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-widest whitespace-nowrap shrink-0">
                             Group Members
                         </h5>
                         <select
@@ -265,7 +260,7 @@ function ChatContextPanel() {
                                     }
                                 }
                             }}
-                            className="bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1 text-gray-300 focus:outline-none max-w-[120px] truncate"
+                            className="bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1 text-gray-300 focus:outline-none max-w-[120px] min-w-0 truncate"
                         >
                             <option value="">+ Add Member</option>
                             {characters
@@ -294,7 +289,7 @@ function ChatContextPanel() {
                                     </div>
                                     <button
                                         type="button"
-                                        className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-300 transition-opacity"
+                                        className="opacity-0 group-hover:opacity-100 p-1 min-w-6 min-h-6 inline-flex items-center justify-center text-red-400 hover:text-red-300 transition-opacity"
                                         title="Remove from group"
                                         onClick={() => {
                                             const current = activeChat?.additional_character_ids || [];
@@ -307,7 +302,7 @@ function ChatContextPanel() {
                             );
                         })}
                         {!(activeChat?.additional_character_ids || []).length && (
-                            <p className="text-[10px] text-gray-600 text-center py-2">
+                            <p className="text-xs text-gray-600 text-center py-2">
                                 Add more characters for a group chat
                             </p>
                         )}
@@ -318,7 +313,7 @@ function ChatContextPanel() {
             {/* AI Model + Image generation */}
             <div className="glass-panel p-4 rounded-xl border border-white/5 space-y-3">
                 <div>
-                    <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-2">
+                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-2">
                         <Sparkles size={12} /> AI Model
                     </h4>
                     <select
@@ -338,7 +333,7 @@ function ChatContextPanel() {
                 <div>
                     <div className="flex items-center justify-between mb-1.5">
                         <p className="text-xs text-gray-300 font-medium">Context Window</p>
-                        <span className="text-[10px] text-gray-500 font-mono">
+                        <span className="text-xs text-gray-500 font-mono">
                             {activeChat?.max_context_tokens
                                 ? `${(activeChat.max_context_tokens / 1024).toFixed(0)}k tokens`
                                 : 'Global default'}
@@ -348,13 +343,13 @@ function ChatContextPanel() {
                         activeChat={activeChat}
                         onChange={(val) => onChatUpdate({ max_context_tokens: val })}
                     />
-                    <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                    <div className="flex justify-between text-xs text-gray-600 mt-0.5">
                         <span>2k</span><span>32k</span><span>64k</span><span>128k</span>
                     </div>
                     {activeChat?.max_context_tokens && (
                         <button
                             onClick={() => onChatUpdate({ max_context_tokens: null })}
-                            className="mt-1 text-[9px] text-gray-500 hover:text-red-400 transition-colors"
+                            className="mt-1 inline-flex items-center min-h-[24px] text-xs text-gray-500 hover:text-red-400 transition-colors"
                         >
                             Reset to global default
                         </button>
@@ -364,7 +359,7 @@ function ChatContextPanel() {
                 <div>
                     <div className="flex items-center justify-between mb-1.5">
                         <p className="text-xs text-gray-300 font-medium">Agentic Loop Depth</p>
-                        <span className="text-[10px] text-gray-500 font-mono">
+                        <span className="text-xs text-gray-500 font-mono">
                             {activeChat?.max_agentic_depth
                                 ? `${activeChat.max_agentic_depth} steps`
                                 : 'Global default (5)'}
@@ -377,16 +372,16 @@ function ChatContextPanel() {
                         step="1"
                         value={activeChat?.max_agentic_depth || 5}
                         onChange={(e) => onChatUpdate({ max_agentic_depth: parseInt(e.target.value) })}
-                        className="w-full accent-purple-500"
+                        className="w-full accent-purple-500 min-h-[24px]"
                         title="Max agentic tool-call loops per reply. Higher = more autonomous but slower."
                     />
-                    <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                    <div className="flex justify-between text-xs text-gray-600 mt-0.5">
                         <span>1</span><span>5</span><span>10</span>
                     </div>
                     {activeChat?.max_agentic_depth && (
                         <button
                             onClick={() => onChatUpdate({ max_agentic_depth: null })}
-                            className="mt-1 text-[9px] text-gray-500 hover:text-red-400 transition-colors"
+                            className="mt-1 inline-flex items-center min-h-[24px] text-xs text-gray-500 hover:text-red-400 transition-colors"
                         >
                             Reset to global default
                         </button>
@@ -395,7 +390,7 @@ function ChatContextPanel() {
                 <div className="flex items-center justify-between">
                     <div>
                         <p className="text-xs text-gray-300 font-medium">Allow image generation</p>
-                        <p className="text-[10px] text-gray-600 mt-0.5">
+                        <p className="text-xs text-gray-600 mt-1">
                             Lets the LLM call the <code className="text-gray-500">generate_image</code> tool in agentic mode.
                         </p>
                     </div>
@@ -404,12 +399,12 @@ function ChatContextPanel() {
                         aria-checked={activeChat?.allow_image_generation !== false}
                         onClick={() => onChatUpdate({ allow_image_generation: activeChat?.allow_image_generation === false })}
                         className={clsx(
-                            "relative w-10 h-5 rounded-full transition-colors shrink-0",
+                            "relative w-10 h-6 rounded-full transition-colors shrink-0",
                             activeChat?.allow_image_generation !== false ? "bg-purple-500" : "bg-gray-700"
                         )}
                     >
                         <span className={clsx(
-                            "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all",
+                            "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
                             activeChat?.allow_image_generation !== false ? "left-5.5" : "left-0.5"
                         )} />
                     </button>
@@ -417,7 +412,7 @@ function ChatContextPanel() {
                 <div className="flex items-center justify-between">
                     <div>
                         <p className="text-xs text-gray-300 font-medium">Allow narration</p>
-                        <p className="text-[10px] text-gray-600 mt-0.5">
+                        <p className="text-xs text-gray-600 mt-1">
                             Lets the LLM call the <code className="text-gray-500">narrate_scene</code> tool when the story calls for it.
                         </p>
                     </div>
@@ -426,12 +421,12 @@ function ChatContextPanel() {
                         aria-checked={activeChat?.allow_narration !== false}
                         onClick={() => onChatUpdate({ allow_narration: activeChat?.allow_narration === false })}
                         className={clsx(
-                            "relative w-10 h-5 rounded-full transition-colors shrink-0",
+                            "relative w-10 h-6 rounded-full transition-colors shrink-0",
                             activeChat?.allow_narration !== false ? "bg-purple-500" : "bg-gray-700"
                         )}
                     >
                         <span className={clsx(
-                            "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all",
+                            "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
                             activeChat?.allow_narration !== false ? "left-5.5" : "left-0.5"
                         )} />
                     </button>
@@ -449,13 +444,13 @@ function ChatContextPanel() {
                                 <option key={v.id} value={v.id}>{v.name}</option>
                             ))}
                         </select>
-                        <p className="text-[10px] text-gray-600 mt-0.5">Applied to every message in this chat.</p>
+                        <p className="text-xs text-gray-600 mt-1">Applied to every message in this chat.</p>
                     </div>
                 )}
                 <div className="flex items-center justify-between">
                     <div>
                         <p className="text-xs text-gray-300 font-medium">Idle simulation</p>
-                        <p className="text-[10px] text-gray-600 mt-0.5">
+                        <p className="text-xs text-gray-600 mt-1">
                             Character keeps the scene alive with proactive in-character messages while you're away.
                         </p>
                     </div>
@@ -464,12 +459,12 @@ function ChatContextPanel() {
                         aria-checked={activeChat?.idle_sim_enabled === true}
                         onClick={() => onChatUpdate({ idle_sim_enabled: !activeChat?.idle_sim_enabled })}
                         className={clsx(
-                            "relative w-10 h-5 rounded-full transition-colors shrink-0",
+                            "relative w-10 h-6 rounded-full transition-colors shrink-0",
                             activeChat?.idle_sim_enabled === true ? "bg-purple-500" : "bg-gray-700"
                         )}
                     >
                         <span className={clsx(
-                            "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all",
+                            "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
                             activeChat?.idle_sim_enabled === true ? "left-5.5" : "left-0.5"
                         )} />
                     </button>
@@ -488,7 +483,7 @@ function ChatContextPanel() {
             {/* Scenes */}
             <div className="glass-panel p-4 rounded-xl border border-white/5">
                 <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
                         <ImageIcon size={12} /> Scenes
                     </h4>
                     {(() => {
@@ -497,12 +492,12 @@ function ChatContextPanel() {
                         );
                         const pctNum = Number.isFinite(sceneStream?.jobData?.progress) ? Math.min(100, Math.max(0, Math.round(sceneStream.jobData.progress))) : null;
                         return (sceneStream && pctNum != null) ? (
-                            <span className="text-[10px] text-green-400 flex items-center gap-1">
+                            <span className="text-xs text-green-400 flex items-center gap-1">
                                 <Loader2 size={10} className="animate-spin" />
                                 {pctNum}%
                             </span>
                         ) : (
-                            <span className="text-[10px] text-gray-600">
+                            <span className="text-xs text-gray-600 shrink-0">
                                 {chatCollection?.image_count || 0} image{(chatCollection?.image_count || 0) !== 1 ? 's' : ''}
                             </span>
                         );
@@ -516,7 +511,7 @@ function ChatContextPanel() {
                     const pct = Number.isFinite(prog) ? Math.min(100, Math.max(0, Math.round(prog))) : null;
                     return (
                         <div className="mb-2">
-                            <div className="flex items-center gap-2 text-[10px] text-purple-400 mb-1">
+                            <div className="flex items-center gap-2 text-xs text-purple-400 mb-1">
                                 <Loader2 size={12} className="animate-spin" />
                                 {pct != null ? `Generating scene image… ${pct}%` : 'Generating scene image...'}
                             </div>
@@ -547,10 +542,10 @@ function ChatContextPanel() {
             {/* Lorebooks */}
             <div className="glass-panel p-4 rounded-xl border border-white/5">
                 <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
                         <BookOpen size={12} /> Lorebooks
                     </h4>
-                    <a href="/characters" className="text-[9px] text-blue-400 hover:text-blue-300 font-medium px-1.5 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors">
+                    <a href="/characters" className="inline-flex items-center min-h-[24px] px-2 text-xs text-blue-400 hover:text-blue-300 font-medium rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors">
                         Manage
                     </a>
                 </div>
@@ -589,7 +584,7 @@ function ChatContextPanel() {
                     </div>
                 )}
                 {selectedLorebooks.length > 0 && (
-                    <p className="text-[10px] text-gray-500 mt-2 px-1">
+                    <p className="text-xs text-gray-500 mt-2 px-1">
                         {selectedLorebooks.length} lorebook{selectedLorebooks.length !== 1 ? 's' : ''} active
                     </p>
                 )}
@@ -600,7 +595,7 @@ function ChatContextPanel() {
                 <div className="glass-panel rounded-xl border border-white/5">
                     <details className="group">
                         <summary className="flex items-center justify-between p-4 cursor-pointer list-none">
-                            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
                                 <Brain size={12} /> Memories
                             </h4>
                             <ChevronDown size={14} className="text-gray-500 transition-transform group-open:rotate-180" />
@@ -620,58 +615,105 @@ function ChatContextPanel() {
     );
 }
 
-function AuthorsNoteSection({ chat, onSave }) {
+/**
+ * Author's Note (with its depth), Story Time and Location, behind one
+ * disclosure. They were three sibling panels in an eleven-panel column; they
+ * are advanced knobs that most sessions never touch, so they now cost one row
+ * until asked for. Everything stays in the DOM and reachable by opening it.
+ */
+function SceneOverridesSection({ chat, onSave }) {
     const [depth, setDepth] = useState(chat?.authors_note_depth ?? 4);
     const savedDepth = chat?.authors_note_depth ?? 4;
 
+    const setCount = [
+        chat?.authors_note,
+        chat?.story_time,
+        chat?.story_location,
+    ].filter(Boolean).length;
+
     return (
-        <div className="glass-panel p-4 rounded-xl border border-white/5">
-            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                <NotebookPen size={12} /> Author's Note
-            </h4>
-            <textarea
-                data-testid="authors-note-input"
-                defaultValue={chat?.authors_note || ''}
-                onBlur={(e) => {
-                    const val = e.target.value.trim() || null;
-                    if (val !== (chat?.authors_note || null)) onSave({ authors_note: val });
-                }}
-                placeholder="A directive injected N messages from the end of context (survives pruning)…"
-                rows={2}
-                className="w-full bg-gray-800/60 border border-white/5 text-xs rounded-lg px-2.5 py-2 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/40 resize-none"
-            />
-            <div className="mt-2 flex items-center gap-3">
-                <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0">Depth</span>
-                <input
-                    data-testid="authors-note-depth"
-                    type="range"
-                    min={0}
-                    max={20}
-                    step={1}
-                    value={depth}
-                    onChange={(e) => setDepth(Number(e.target.value))}
-                    onMouseUp={() => { if (depth !== savedDepth) onSave({ authors_note_depth: depth }); }}
-                    onTouchEnd={() => { if (depth !== savedDepth) onSave({ authors_note_depth: depth }); }}
-                    className="flex-1 accent-sky-500 h-1"
-                />
-                <span className={`text-[10px] font-mono w-8 text-right ${depth !== savedDepth ? 'text-amber-400' : 'text-sky-400'}`}>
-                    {depth}{depth !== savedDepth ? '*' : ''}
+        <details data-testid="scene-overrides" className="group glass-panel rounded-xl border border-white/5">
+            <summary className="flex items-center justify-between gap-2 p-4 cursor-pointer list-none">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <NotebookPen size={12} /> Scene Overrides
+                </h4>
+                <span className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-xs text-gray-500 truncate">
+                        {setCount ? `${setCount} set` : 'None set'}
+                    </span>
+                    <ChevronDown size={14} className="shrink-0 text-gray-500 transition-transform group-open:rotate-180" />
                 </span>
-                {chat?.authors_note_depth != null && (
-                    <button
-                        type="button"
-                        onClick={() => onSave({ authors_note_depth: null })}
-                        className="text-[9px] text-gray-500 hover:text-gray-300 transition-colors shrink-0"
-                        title="Reset to global default depth (4)"
-                    >
-                        reset
-                    </button>
-                )}
+            </summary>
+            <div className="px-4 pb-4 -mt-1 space-y-4">
+                <div>
+                    <label htmlFor="authors-note" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                        <NotebookPen size={12} /> Author's Note
+                    </label>
+                    <textarea
+                        id="authors-note"
+                        data-testid="authors-note-input"
+                        defaultValue={chat?.authors_note || ''}
+                        onBlur={(e) => {
+                            const val = e.target.value.trim() || null;
+                            if (val !== (chat?.authors_note || null)) onSave({ authors_note: val });
+                        }}
+                        placeholder="e.g. Keep replies under 3 sentences."
+                        title="A directive injected N messages from the end of context (survives pruning). 0 pins it to the very end; the default depth is 4 messages from the tail."
+                        rows={2}
+                        className="w-full bg-gray-800/60 border border-white/5 text-xs rounded-lg px-2.5 py-2 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/40 resize-none"
+                    />
+                    <div className="mt-2 flex items-center gap-3">
+                        <span className="text-xs text-gray-500 uppercase tracking-wider shrink-0">Depth</span>
+                        <input
+                            data-testid="authors-note-depth"
+                            type="range"
+                            min={0}
+                            max={20}
+                            step={1}
+                            value={depth}
+                            onChange={(e) => setDepth(Number(e.target.value))}
+                            onMouseUp={() => { if (depth !== savedDepth) onSave({ authors_note_depth: depth }); }}
+                            onTouchEnd={() => { if (depth !== savedDepth) onSave({ authors_note_depth: depth }); }}
+                            className="flex-1 min-w-0 accent-sky-500 min-h-[24px]"
+                        />
+                        <span className={`text-xs font-mono w-8 text-right ${depth !== savedDepth ? 'text-amber-400' : 'text-sky-400'}`}>
+                            {depth}{depth !== savedDepth ? '*' : ''}
+                        </span>
+                        {chat?.authors_note_depth != null && (
+                            <button
+                                type="button"
+                                onClick={() => onSave({ authors_note_depth: null })}
+                                className="inline-flex items-center min-h-[24px] px-1 text-xs text-gray-500 hover:text-gray-300 transition-colors shrink-0"
+                                title="Reset to global default depth (4)"
+                            >
+                                reset
+                            </button>
+                        )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                        A directive injected N messages from the end of context, so it survives pruning. 0 pins the note to the very end; the default is 4 messages from the tail.
+                    </p>
+                </div>
+                <ContextField
+                    inline
+                    showLabel
+                    label="Story Time"
+                    icon={Clock}
+                    value={chat?.story_time}
+                    placeholder="Not set"
+                    onSave={val => onSave({ story_time: val })}
+                />
+                <ContextField
+                    inline
+                    showLabel
+                    label="Location"
+                    icon={MapPin}
+                    value={chat?.story_location}
+                    placeholder="Not set"
+                    onSave={val => onSave({ story_location: val })}
+                />
             </div>
-            <p className="text-[10px] text-gray-600 mt-1 px-1">
-                0 pins the note to the very end; default is 4 messages from the tail.
-            </p>
-        </div>
+        </details>
     );
 }
 

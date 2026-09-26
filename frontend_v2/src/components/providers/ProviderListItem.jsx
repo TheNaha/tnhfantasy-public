@@ -143,29 +143,29 @@ function ProviderListItem({
                         <h3 className="truncate text-base font-bold text-white tracking-wide">
                             {provider.id}
                         </h3>
-                        <span className="flex-shrink-0 rounded-lg bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-indigo-300 shadow-inner">
+                        <span className="flex-shrink-0 rounded-lg bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-indigo-300 shadow-inner">
                             P{provider.priority}
                         </span>
-                        <span className="flex-shrink-0 rounded-lg bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-purple-300 shadow-inner">
+                        <span className="flex-shrink-0 rounded-lg bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-purple-300 shadow-inner">
                             {deployBadge}
                         </span>
                         {!provider.enabled && (
-                            <span className="flex-shrink-0 rounded-lg bg-gray-500/10 border border-gray-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 shadow-inner">
+                            <span className="flex-shrink-0 rounded-lg bg-gray-500/10 border border-gray-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-gray-400 shadow-inner">
                                 Disabled
                             </span>
                         )}
                         {!['online', 'offline', 'configured', 'disabled'].includes(statusSummary.stage) && (
-                            <span className={`flex-shrink-0 rounded-lg border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest shadow-inner ${providerBadgeToneClass(statusSummary.stage)}`}>
+                            <span className={`flex-shrink-0 rounded-lg border px-2 py-0.5 text-xs font-bold uppercase tracking-widest shadow-inner ${providerBadgeToneClass(statusSummary.stage)}`}>
                                 {statusSummary.label}
                             </span>
                         )}
                         {hasIssues && (
-                            <span className="flex-shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-amber-300 shadow-inner">
+                            <span className="flex-shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-amber-300 shadow-inner">
                                 ⚠
                             </span>
                         )}
                         {isReconciling && (
-                            <span className="flex-shrink-0 rounded-lg bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-blue-300 animate-pulse shadow-inner">
+                            <span className="flex-shrink-0 rounded-lg bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-blue-300 animate-pulse shadow-inner">
                                 Syncing
                             </span>
                         )}
@@ -180,7 +180,7 @@ function ProviderListItem({
                         )}
                     </div>
                     {statusSummary.message && (
-                        <p className="mt-1.5 truncate text-[11px] font-medium text-gray-400/80" title={statusSummary.message}>
+                        <p className="mt-1.5 truncate text-2xs font-medium text-gray-400/80" title={statusSummary.message}>
                             {statusSummary.message}
                         </p>
                     )}
@@ -191,14 +191,14 @@ function ProviderListItem({
                 <div className="hidden items-center gap-2 md:flex">
                     {vramHistory.length > 0 && (
                         <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/5 bg-black/40 shadow-inner">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">VRAM</span>
+                            <span className="text-xs font-bold uppercase tracking-widest text-gray-500">VRAM</span>
                             <SparkLine data={vramHistory} color="#3b82f6" />
                             <span className="text-xs font-bold text-blue-400 min-w-[3ch]">{vramHistory[vramHistory.length - 1]}%</span>
                         </div>
                     )}
                     {tempHistory.length > 0 && (
                         <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/5 bg-black/40 shadow-inner">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">GPU</span>
+                            <span className="text-xs font-bold uppercase tracking-widest text-gray-500">GPU</span>
                             <SparkLine data={tempHistory} color="#ef4444" domain={[30, 90]} />
                             <span className="text-xs font-bold text-red-400 min-w-[3ch]">{tempHistory[tempHistory.length - 1]}°</span>
                         </div>

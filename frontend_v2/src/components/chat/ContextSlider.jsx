@@ -22,7 +22,7 @@ function ContextSlider({ activeChat, onChange }) {
             onMouseUp={() => onChange(localVal)}
             onTouchEnd={() => onChange(localVal)}
             onKeyUp={(e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') onChange(localVal); }}
-            className="w-full accent-blue-500"
+            className="w-full accent-blue-500 min-h-[24px]"
             title="Max tokens sent to the LLM. Higher = remembers more but costs more."
         />
     );

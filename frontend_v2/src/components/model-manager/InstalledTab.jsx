@@ -158,7 +158,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                     <button
                         key={cat.id}
                         onClick={() => setCategory(cat.id)}
-                        className={`shrink-0 px-5 py-2.5 rounded-full text-[11px] font-bold uppercase tracking-widest whitespace-nowrap transition-all duration-300 shadow-lg ${category === cat.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-[#0B0E14]/80 text-gray-400 border border-white/5 hover:bg-black/40 hover:text-white hover:border-white/10'
+                        className={`shrink-0 px-5 py-2.5 rounded-full text-2xs font-bold uppercase tracking-widest whitespace-nowrap transition-all duration-300 shadow-lg ${category === cat.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-[#0B0E14]/80 text-gray-400 border border-white/5 hover:bg-black/40 hover:text-white hover:border-white/10'
                             }`}
                     >
                         {cat.label}
@@ -204,7 +204,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                     <option value="TextualInversion">Embedding</option>
                 </select>
 
-                <label className="flex items-center gap-2.5 bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-[11px] font-bold text-gray-400 uppercase tracking-widest cursor-pointer hover:border-white/20 transition-colors shadow-inner">
+                <label className="flex items-center gap-2.5 bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-2xs font-bold text-gray-400 uppercase tracking-widest cursor-pointer hover:border-white/20 transition-colors shadow-inner">
                     <input
                         type="checkbox"
                         checked={showNSFW}
@@ -221,7 +221,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                             setFilterType('all');
                             setShowNSFW(true);
                         }}
-                        className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2 text-[11px] font-bold text-red-400 uppercase tracking-widest hover:bg-red-500/20 hover:border-red-500/30 transition-colors shadow-inner"
+                        className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2 text-2xs font-bold text-red-400 uppercase tracking-widest hover:bg-red-500/20 hover:border-red-500/30 transition-colors shadow-inner"
                     >
                         Clear Filters
                     </button>
@@ -295,7 +295,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         <div className="relative group">
                             <button className="flex items-center gap-2 px-5 py-3 bg-[#0B0E14]/80 border border-white/10 rounded-xl text-gray-300 hover:text-white hover:border-white/20 shadow-inner transition-all">
                                 <Filter size={20} />
-                                <span className="font-bold text-[11px] uppercase tracking-widest">Tags ({selectedTags.length})</span>
+                                <span className="font-bold text-2xs uppercase tracking-widest">Tags ({selectedTags.length})</span>
                             </button>
                             <div className="absolute right-0 mt-2 w-64 max-h-96 overflow-y-auto glass-panel border border-white/10 rounded-2xl shadow-2xl p-3 hidden group-hover:block z-20 backdrop-blur-xl">
                                 {availableTags.map(tag => (
@@ -390,7 +390,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                         {file.display_name || file.name}
                                     </h3>
                                     {file.description?.includes("Auto-discovered") && (
-                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/50 mb-1">
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/50 mb-1">
                                             Auto-discovered
                                         </span>
                                     )}
@@ -399,7 +399,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                             <span className="shrink-0">{(file.size / 1024 / 1024).toFixed(0)} MB</span>
                                             {showAvailabilityBadge && (
                                                 <span
-                                                    className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] sm:text-[11px] font-medium shrink-0 max-w-full truncate ${availabilityTone(availability.label)}`}
+                                                    className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-xs sm:text-2xs font-medium shrink-0 max-w-full truncate ${availabilityTone(availability.label)}`}
                                                     title={availability.detail || availability.label}
                                                 >
                                                     {availabilityLabel}

@@ -37,7 +37,7 @@ export default function LiveConsoleTab({ providerId }) {
                     )}
                 </span>
             </div>
-            <div className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed text-gray-300 whitespace-pre-wrap break-words rounded-lg bg-black/60 p-3 ring-1 ring-inset ring-white/[0.05] shadow-inner scrollbar-thin">
+            <div className="flex-1 overflow-y-auto font-mono text-2xs leading-relaxed text-gray-300 whitespace-pre-wrap break-words rounded-lg bg-black/60 p-3 ring-1 ring-inset ring-white/[0.05] shadow-inner scrollbar-thin">
                 {logs.length === 0 ? (
                     <span className="text-gray-500 italic">No logs available...</span>
                 ) : (

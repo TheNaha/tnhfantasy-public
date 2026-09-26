@@ -76,7 +76,7 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
             )}
         >
             <span className={clsx(
-                "mt-0.5 shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded inline-flex items-center gap-1",
+                "mt-0.5 shrink-0 text-2xs font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded inline-flex items-center gap-1",
                 isUser
                     ? "bg-blue-500/15 text-blue-300"
                     : beat?.role === 'system_tts'
@@ -103,7 +103,7 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
                         <select
                             value={draftRole}
                             onChange={(e) => setDraftRole(e.target.value)}
-                            className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-[10px] text-gray-300 focus:outline-none focus:border-indigo-500/60"
+                            className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500/60"
                             title="Beat role"
                         >
                             {BEAT_ROLE_OPTIONS.map((r) => (
@@ -113,7 +113,7 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
                         <button
                             onClick={saveEdit}
                             disabled={!draft.trim() || saving || isStreaming}
-                            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-30 transition-colors"
+                            className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-30 transition-colors"
                             title="Save beat (Ctrl+Enter)"
                         >
                             {saving ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
@@ -122,7 +122,7 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
                         <button
                             onClick={() => setEditing(false)}
                             disabled={saving}
-                            className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 hover:bg-gray-700 transition-colors"
+                            className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 hover:bg-gray-700 transition-colors"
                         >
                             Cancel
                         </button>
@@ -138,7 +138,7 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
                         <button
                             onClick={startEdit}
                             disabled={!beatId || isStreaming}
-                            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-20 transition-colors"
+                            className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-20 transition-colors"
                             title="Edit this beat"
                         >
                             <Pencil size={10} />
@@ -146,7 +146,7 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
                         <button
                             onClick={() => onDeleteBeat(beatId)}
                             disabled={!beatId || isStreaming}
-                            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-20 transition-colors"
+                            className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-20 transition-colors"
                             title="Delete this beat and its prose"
                         >
                             <Trash2 size={10} />
@@ -155,7 +155,7 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
                     <button
                         onClick={() => onBranch(beatId)}
                         disabled={!beatId || isStreaming || branchPending || branchingBeatId === beatId}
-                        className="shrink-0 opacity-60 group-hover:opacity-100 disabled:opacity-20 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-colors"
+                        className="shrink-0 opacity-60 group-hover:opacity-100 disabled:opacity-20 flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-colors"
                         title="Branch the story from this beat into a new chapter"
                     >
                         {branchingBeatId === beatId ? <Loader2 size={10} className="animate-spin" /> : <GitBranch size={10} />}
@@ -198,7 +198,7 @@ export default React.memo(function StoryBeatsPanel({
     return (
         <div className="max-w-3xl mx-auto mb-3 max-h-56 overflow-y-auto custom-scrollbar rounded-xl border border-white/5 bg-gray-950/60 p-3 space-y-1.5">
             <div className="flex items-center justify-between mb-1.5">
-                <h4 className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                <h4 className="text-2xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
                     <GitBranch size={11} /> Story Beats
                 </h4>
                 <div className="flex items-center gap-1">

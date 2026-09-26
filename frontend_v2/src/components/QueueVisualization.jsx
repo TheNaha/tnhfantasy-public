@@ -79,7 +79,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                         Queue <span className="text-gray-400 font-normal">({stats.total_running} running, {stats.total_pending} pending)</span>
                     </span>
                     {!stats.has_history && (
-                        <span className="text-[10px] text-yellow-400 bg-yellow-400/10 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-yellow-400/20">
+                        <span className="text-xs text-yellow-400 bg-yellow-400/10 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-yellow-400/20">
                             Calculating ETA...
                         </span>
                     )}

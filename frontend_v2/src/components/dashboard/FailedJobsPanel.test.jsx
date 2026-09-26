@@ -67,6 +67,26 @@ function renderPanel() {
     );
 }
 
+/** The panel body starts collapsed so failures never fill the first screen. */
+function expandPanel() {
+    fireEvent.click(screen.getByRole('button', { name: /failed jobs/i }));
+}
+
+/** A second job that failed the same way on the same provider. */
+function siblingJob(id, durationSeconds) {
+    return {
+        ...FAILED_JOB,
+        id,
+        completed_at: '2026-01-01T12:00:05Z',
+        error: 'All providers failed: Every provider was tried and failed',
+        metadata: { prompt: `a dog, take ${id}`, checkpoint: 'dreamshaper.safetensors' },
+        diagnostics: {
+            ...FAILED_JOB.diagnostics,
+            duration_seconds: durationSeconds,
+        },
+    };
+}
+
 describe('FailedJobsPanel', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -93,6 +113,7 @@ describe('FailedJobsPanel', () => {
             })
         );
         renderPanel();
+        expandPanel();
 
         expect(screen.getByLabelText('Failed jobs')).toBeInTheDocument();
         expect(screen.getByText('Providers exhausted · 1')).toBeInTheDocument();
@@ -121,6 +142,7 @@ describe('FailedJobsPanel', () => {
             })
         );
         renderPanel();
+        expandPanel();
 
         expect(screen.getByText('Interrupted · 1')).toBeInTheDocument();
         expect(
@@ -134,6 +156,7 @@ describe('FailedJobsPanel', () => {
             makeRecovery({ jobs: [FAILED_JOB], total: 1, retryJob })
         );
         renderPanel();
+        expandPanel();
 
         fireEvent.click(screen.getByLabelText('Retry failed job job-1'));
 
@@ -153,6 +176,7 @@ describe('FailedJobsPanel', () => {
             })
         );
         renderPanel();
+        expandPanel();
 
         expect(screen.getByLabelText('Retry failed job job-1')).toBeDisabled();
     });
@@ -162,6 +186,7 @@ describe('FailedJobsPanel', () => {
             makeRecovery({ jobs: [FAILED_JOB], total: 1 })
         );
         renderPanel();
+        expandPanel();
 
         expect(screen.queryByText('provider hung')).not.toBeInTheDocument();
         fireEvent.click(screen.getByLabelText('Toggle attempt history for job job-1'));
@@ -183,14 +208,31 @@ describe('FailedJobsPanel', () => {
         expect(recoverJobs).toHaveBeenCalled();
     });
 
-    it('collapses the job list when the header is toggled', async () => {
+    it('keeps Recover reachable while the panel is collapsed', () => {
+        const recoverJobs = vi.fn().mockResolvedValue({ recovered: 0, failed: 0 });
+        useJobRecovery.mockReturnValue(
+            makeRecovery({ jobs: [FAILED_JOB], total: 1, recoverJobs })
+        );
+        renderPanel();
+
+        expect(screen.queryByText('All providers failed: p1')).not.toBeInTheDocument();
+        fireEvent.click(
+            screen.getByLabelText('Recover stuck jobs and requeue interrupted work')
+        );
+
+        expect(recoverJobs).toHaveBeenCalled();
+    });
+
+    it('expands the job list on demand and collapses it again', async () => {
         useJobRecovery.mockReturnValue(
             makeRecovery({ jobs: [FAILED_JOB], total: 1 })
         );
         renderPanel();
 
+        expect(screen.queryByText('All providers failed: p1')).not.toBeInTheDocument();
+        expandPanel();
         expect(screen.getByText('All providers failed: p1')).toBeInTheDocument();
-        fireEvent.click(screen.getByRole('button', { name: /failed jobs/i }));
+        expandPanel();
         expect(screen.queryByText('All providers failed: p1')).not.toBeInTheDocument();
     });
 
@@ -203,5 +245,125 @@ describe('FailedJobsPanel', () => {
         await waitFor(() =>
             expect(screen.getByText(/1 of 12/)).toBeInTheDocument()
         );
+    });
+
+    describe('grouping', () => {
+        it('renders one group for jobs that share a cause, with the right count', () => {
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [FAILED_JOB, siblingJob('job-2', 7), siblingJob('job-3', 8)],
+                    total: 3,
+                    summary: { by_error_type: { providers_exhausted: 3 }, retryable: 3 },
+                })
+            );
+            renderPanel();
+            expandPanel();
+
+            expect(screen.getByText('3 jobs failed — Every provider was tried and failed.')).toBeInTheDocument();
+            expect(screen.getAllByText('Providers exhausted')).toHaveLength(1);
+        });
+
+        it('renders one group per distinct cause', () => {
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [
+                        FAILED_JOB,
+                        siblingJob('job-2', 7),
+                        {
+                            ...FAILED_JOB,
+                            id: 'job-3',
+                            provider_id: 'llm-local',
+                            error: 'The provider did not answer in time.',
+                            diagnostics: {
+                                ...FAILED_JOB.diagnostics,
+                                error_type: 'timeout',
+                            },
+                        },
+                    ],
+                    total: 3,
+                    summary: { by_error_type: { providers_exhausted: 2, timeout: 1 }, retryable: 3 },
+                })
+            );
+            renderPanel();
+            expandPanel();
+
+            expect(screen.getByText(/2 jobs failed/)).toBeInTheDocument();
+            expect(screen.getByText(/1 job failed/)).toBeInTheDocument();
+            expect(screen.getByText('Timed out')).toBeInTheDocument();
+        });
+
+        it('splits the same cause across different providers', () => {
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [
+                        FAILED_JOB,
+                        { ...FAILED_JOB, id: 'job-2', provider_id: 'modal-p2' },
+                    ],
+                    total: 2,
+                })
+            );
+            renderPanel();
+            expandPanel();
+
+            expect(screen.getAllByText('Providers exhausted')).toHaveLength(2);
+            expect(screen.getByText('p1')).toBeInTheDocument();
+            expect(screen.getByText('p2')).toBeInTheDocument();
+        });
+
+        it('keeps the per-job detail reachable one click away', () => {
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [FAILED_JOB, siblingJob('job-2', 7), siblingJob('job-3', 8)],
+                    total: 3,
+                })
+            );
+            renderPanel();
+            expandPanel();
+
+            // Grouped away by default: no job card, model or prompt is shown.
+            expect(screen.queryByText('All providers failed: p1')).not.toBeInTheDocument();
+            expect(screen.queryByText('a cat')).not.toBeInTheDocument();
+
+            fireEvent.click(
+                screen.getByLabelText('Show the 3 jobs that failed on p1')
+            );
+
+            // Every job is still there, each with its own model, prompt and retry.
+            expect(screen.getByLabelText('Retry failed job job-1')).toBeInTheDocument();
+            expect(screen.getByLabelText('Retry failed job job-2')).toBeInTheDocument();
+            expect(screen.getByLabelText('Retry failed job job-3')).toBeInTheDocument();
+            expect(screen.getByText('a cat')).toBeInTheDocument();
+            expect(screen.getByText('a dog, take job-2')).toBeInTheDocument();
+        });
+
+        it('retries a grouped job individually without changing retry behaviour', () => {
+            const retryJob = vi.fn().mockResolvedValue({});
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [FAILED_JOB, siblingJob('job-2', 7)],
+                    total: 2,
+                    retryJob,
+                })
+            );
+            renderPanel();
+            expandPanel();
+            fireEvent.click(screen.getByLabelText('Show the 2 jobs that failed on p1'));
+            fireEvent.click(screen.getByLabelText('Retry failed job job-2'));
+
+            expect(retryJob).toHaveBeenCalledTimes(1);
+            expect(retryJob).toHaveBeenCalledWith('job-2');
+        });
+
+        it('caps the expanded list height so it cannot fill the screen', () => {
+            useJobRecovery.mockReturnValue(
+                makeRecovery({ jobs: [FAILED_JOB, siblingJob('job-2', 7)], total: 2 })
+            );
+            renderPanel();
+            expandPanel();
+
+            const list = screen.getByText(/2 jobs failed/).closest('div.px-5');
+            expect(list.className).toContain('overflow-y-auto');
+            expect(list.className).toContain('max-h-[40vh]');
+        });
     });
 });

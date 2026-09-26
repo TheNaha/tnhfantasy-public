@@ -41,13 +41,13 @@ export default function StoryOutlinePanel({
                     aria-controls="story-outline-body"
                     className="flex-1 min-w-0 text-left"
                 >
-                    <span className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-300 uppercase tracking-widest">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-300 uppercase tracking-widest">
                         <ListTree size={12} className="text-purple-400" />
                         Story Outline
-                        <span className="text-[9px] text-gray-600">({outline.chapters.length})</span>
+                        <span className="text-2xs text-gray-600">({outline.chapters.length})</span>
                         <ChevronDown size={13} className={clsx('text-gray-500 transition-transform', open && 'rotate-180')} aria-hidden="true" />
                     </span>
-                    <span className="block text-[9px] text-gray-500 mt-0.5">
+                    <span className="block text-2xs text-gray-500 mt-0.5">
                         {formatWordCount(outline.totalWords)}
                         {outline.wordCountGoal ? ` of ${formatWordCount(outline.wordCountGoal)}` : ''}
                     </span>
@@ -57,7 +57,7 @@ export default function StoryOutlinePanel({
                     onClick={onSnapshot}
                     disabled={!hasActiveChapter || isSnapshotting || !onSnapshot}
                     title="Save a snapshot of the current chapter"
-                    className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[9px] text-sky-300 hover:text-sky-200 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/25 rounded-md transition-colors disabled:opacity-40"
+                    className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-2xs text-sky-300 hover:text-sky-200 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/25 rounded-md transition-colors disabled:opacity-40"
                 >
                     {isSnapshotting ? <Loader2 size={10} className="animate-spin" /> : <Camera size={10} />}
                     Snapshot
@@ -67,7 +67,7 @@ export default function StoryOutlinePanel({
                     onClick={onOpenRevisions}
                     disabled={!hasActiveChapter || !onOpenRevisions}
                     title="Browse and restore snapshots"
-                    className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[9px] text-gray-400 hover:text-white bg-gray-800/50 hover:bg-gray-800 border border-white/5 rounded-md transition-colors disabled:opacity-40"
+                    className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-2xs text-gray-400 hover:text-white bg-gray-800/50 hover:bg-gray-800 border border-white/5 rounded-md transition-colors disabled:opacity-40"
                 >
                     <History size={10} />
                     History
@@ -84,12 +84,12 @@ export default function StoryOutlinePanel({
                                     style={{ width: `${outline.progress}%` }}
                                 />
                             </div>
-                            <p className="text-[9px] text-gray-500 mt-0.5">{outline.progress}% of word count goal</p>
+                            <p className="text-2xs text-gray-500 mt-0.5">{outline.progress}% of word count goal</p>
                         </div>
                     )}
 
                     {outline.chapters.length === 0 ? (
-                        <p className="text-[10px] text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
+                        <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
                             No chapters yet — add one to start the outline.
                         </p>
                     ) : (
@@ -106,14 +106,14 @@ export default function StoryOutlinePanel({
                                 )}
                             >
                                 <div className="flex items-center gap-2">
-                                    <span className="text-[9px] text-gray-500 font-mono shrink-0">{chapter.number}.</span>
-                                    <span className={clsx('text-[11px] truncate flex-1', chapter.isActive ? 'text-purple-200' : 'text-gray-200')}>
+                                    <span className="text-2xs text-gray-500 font-mono shrink-0">{chapter.number}.</span>
+                                    <span className={clsx('text-2xs truncate flex-1', chapter.isActive ? 'text-purple-200' : 'text-gray-200')}>
                                         {chapter.title}
                                     </span>
-                                    <span className="text-[9px] text-gray-500 shrink-0">{formatWordCount(chapter.wordCount)}</span>
+                                    <span className="text-2xs text-gray-500 shrink-0">{formatWordCount(chapter.wordCount)}</span>
                                 </div>
                                 {chapter.excerpt && (
-                                    <p className="text-[9px] text-gray-500 mt-0.5 line-clamp-2 leading-snug">{chapter.excerpt}</p>
+                                    <p className="text-2xs text-gray-500 mt-0.5 line-clamp-2 leading-snug">{chapter.excerpt}</p>
                                 )}
                             </button>
                         ))

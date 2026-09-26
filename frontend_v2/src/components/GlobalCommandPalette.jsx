@@ -106,7 +106,7 @@ export default function GlobalCommandPalette({ onClose }) {
                         className="flex-1 bg-transparent text-gray-200 placeholder-gray-500 outline-none text-sm"
                         aria-label="Command palette search"
                     />
-                    <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-gray-500 bg-white/5 border border-white/10 rounded-md px-1.5 py-0.5">
+                    <span className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-gray-500 bg-white/5 border border-white/10 rounded-md px-1.5 py-0.5">
                         <Command size={11} />
                         K
                     </span>
@@ -125,7 +125,7 @@ export default function GlobalCommandPalette({ onClose }) {
                             }`}
                         >
                             <span className="text-sm font-medium">{item.label}</span>
-                            <span className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">
+                            <span className="text-xs uppercase tracking-wider text-gray-500 font-bold">
                                 {item.kind === 'action' ? 'action' : 'page'}
                             </span>
                         </button>
@@ -134,7 +134,7 @@ export default function GlobalCommandPalette({ onClose }) {
                         <p className="px-4 py-6 text-center text-sm text-gray-500">No matches for “{query}”</p>
                     )}
                 </div>
-                <div className="flex items-center gap-4 px-5 py-3 border-t border-white/5 text-[10px] font-medium text-gray-500">
+                <div className="flex items-center gap-4 px-5 py-3 border-t border-white/5 text-xs font-medium text-gray-500">
                     <span><kbd className="kbd">↑</kbd> <kbd className="kbd">↓</kbd> navigate</span>
                     <span><kbd className="kbd">Enter</kbd> open</span>
                     <span><kbd className="kbd">Esc</kbd> close</span>

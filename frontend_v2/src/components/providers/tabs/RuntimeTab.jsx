@@ -47,7 +47,7 @@ function LLMRuntimePanel({ provider }) {
             {testResult?.healthy && (
                 <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">
                     <div className="px-4 py-2.5 border-b border-white/[0.03] flex items-center justify-between">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                        <span className="text-xs font-bold uppercase tracking-widest text-gray-500">
                             Available Models ({testResult.models?.length ?? 0})
                         </span>
                         <button

@@ -71,7 +71,7 @@ const ResolutionSettings = memo(function ResolutionSettings() {
             </div>
 
             <div className="space-y-3 lg:space-y-4">
-                <label className="text-[11px] font-bold text-blue-400 uppercase tracking-widest px-1 flex items-center">
+                <label className="text-2xs font-bold text-blue-400 uppercase tracking-widest px-1 flex items-center">
                     Resolution
                 </label>
 
@@ -95,7 +95,7 @@ const ResolutionSettings = memo(function ResolutionSettings() {
                                     }}
                                 />
                             </div>
-                            <span className="text-[10px] font-bold">{p.label}</span>
+                            <span className="text-xs font-bold">{p.label}</span>
                         </button>
                     ))}
                 </div>
@@ -103,7 +103,7 @@ const ResolutionSettings = memo(function ResolutionSettings() {
                 <div className="flex items-end gap-3 pt-2">
                     <div className="flex-1 space-y-1.5">
                         <div className="flex items-center">
-                            <label htmlFor="width-input" className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Width</label>
+                            <label htmlFor="width-input" className="block text-2xs font-bold text-gray-400 uppercase tracking-widest px-1">Width</label>
                             {renderLockIcon('width')}
                         </div>
                         <input
@@ -126,7 +126,7 @@ const ResolutionSettings = memo(function ResolutionSettings() {
                     </button>
                     <div className="flex-1 space-y-1.5">
                         <div className="flex items-center">
-                            <label htmlFor="height-input" className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Height</label>
+                            <label htmlFor="height-input" className="block text-2xs font-bold text-gray-400 uppercase tracking-widest px-1">Height</label>
                             {renderLockIcon('height')}
                         </div>
                         <input
@@ -143,7 +143,7 @@ const ResolutionSettings = memo(function ResolutionSettings() {
 
             <div className="space-y-1.5">
                 <div className="flex items-center">
-                    <label className="block text-[11px] font-bold text-blue-400 uppercase tracking-widest px-1">Batch Size</label>
+                    <label className="block text-2xs font-bold text-blue-400 uppercase tracking-widest px-1">Batch Size</label>
                     {renderLockIcon('batchSize')}
                 </div>
                 <input

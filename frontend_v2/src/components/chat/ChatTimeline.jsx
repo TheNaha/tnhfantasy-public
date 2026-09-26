@@ -109,7 +109,7 @@ export default function ChatTimeline({ chatId, activeBranch, onBranchChange, onN
                                             </div>
                                             <button
                                                 onClick={() => handleCreateBranch(msg.id)}
-                                                className="p-1 text-gray-500 hover:text-gray-400"
+                                                className="p-1 min-w-6 min-h-6 inline-flex items-center justify-center text-gray-500 hover:text-gray-400"
                                                 title="Branch from here"
                                             >
                                                 <Plus size={12} />

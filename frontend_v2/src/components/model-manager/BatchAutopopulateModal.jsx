@@ -53,7 +53,7 @@ function CandidateSelector({ model, candidatesData, onDecision }) {
             <div className="flex items-start justify-between">
                 <div>
                     <p className="text-white text-sm font-medium leading-tight">{model.name}</p>
-                    <p className="text-gray-500 text-[10px] mt-0.5">{model.directory}</p>
+                    <p className="text-gray-500 text-xs mt-0.5">{model.directory}</p>
                 </div>
                 <div className="flex gap-2 shrink-0">
                     <button
@@ -91,7 +91,7 @@ function CandidateSelector({ model, candidatesData, onDecision }) {
                             )}
                             <div>
                                 <p className="text-xs text-white font-medium line-clamp-1" title={cm.name}>{cm.name}</p>
-                                <p className="text-[10px] text-gray-400 mt-1 flex justify-between items-center">
+                                <p className="text-xs text-gray-400 mt-1 flex justify-between items-center">
                                     <span>{c.score}% Match</span>
                                     <a href={`https://civitai.com/models/${cm.id}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline inline-flex items-center gap-1" onClick={e => e.stopPropagation()}>
                                         View <ExternalLink size={10} />

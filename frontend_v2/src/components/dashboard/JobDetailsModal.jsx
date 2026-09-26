@@ -131,35 +131,35 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                             <div className="flex items-center justify-between gap-2">
                                 <span className="text-xs text-gray-500 uppercase font-medium">Diagnostics</span>
                                 {diagnostics.error_type && (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-400/30">
+                                    <span className="px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-400/30">
                                         {diagnostics.error_type.replace(/_/g, ' ')}
                                     </span>
                                 )}
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                 <div className="bg-gray-800/60 p-2 rounded text-center">
-                                    <span className="text-[10px] text-gray-500 block">Attempts</span>
+                                    <span className="text-xs text-gray-500 block">Attempts</span>
                                     <span className="text-sm text-white">{diagnostics.attempt_count || 0}</span>
                                 </div>
                                 <div className="bg-gray-800/60 p-2 rounded text-center">
-                                    <span className="text-[10px] text-gray-500 block">Duration</span>
+                                    <span className="text-xs text-gray-500 block">Duration</span>
                                     <span className="text-sm text-white">
                                         {formatDuration(diagnostics.duration_seconds) || '—'}
                                     </span>
                                 </div>
                                 <div className="bg-gray-800/60 p-2 rounded text-center">
-                                    <span className="text-[10px] text-gray-500 block">Provider</span>
+                                    <span className="text-xs text-gray-500 block">Provider</span>
                                     <span className="text-sm text-white truncate block" title={diagnostics.last_provider_id || ''}>
                                         {diagnostics.last_provider_id || '—'}
                                     </span>
                                 </div>
                                 <div className="bg-gray-800/60 p-2 rounded text-center">
-                                    <span className="text-[10px] text-gray-500 block">Retryable</span>
+                                    <span className="text-xs text-gray-500 block">Retryable</span>
                                     <span className="text-sm text-white">{diagnostics.is_retryable ? 'Yes' : 'No'}</span>
                                 </div>
                             </div>
                             {diagnostics.retry_of && (
-                                <p className="text-[10px] text-gray-600 break-all">
+                                <p className="text-xs text-gray-600 break-all">
                                     Retry of {diagnostics.retry_of}
                                 </p>
                             )}

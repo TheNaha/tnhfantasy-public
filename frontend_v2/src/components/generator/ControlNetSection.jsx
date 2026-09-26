@@ -43,7 +43,7 @@ const ControlNetSection = memo(function ControlNetSection({
                     <p className="text-xs text-gray-400">
                         Guide the generation using structural references like edges, poses, or depth maps.
                     </p>
-                    <button onClick={() => addControlNet(controlNetModels[0]?.name)} className="text-[11px] font-bold uppercase tracking-widest flex items-center gap-1.5 text-green-400 hover:text-green-300 hover:scale-105 transition-all">
+                    <button onClick={() => addControlNet(controlNetModels[0]?.name)} className="text-2xs font-bold uppercase tracking-widest flex items-center gap-1.5 text-green-400 hover:text-green-300 hover:scale-105 transition-all">
                         <Plus size={14} strokeWidth={3} /> Add ControlNet
                     </button>
                 </div>
@@ -56,7 +56,7 @@ const ControlNetSection = memo(function ControlNetSection({
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                             <div className="space-y-1.5">
-                                <label className="block text-[11px] font-bold text-green-400 uppercase tracking-widest px-1">Model</label>
+                                <label className="block text-2xs font-bold text-green-400 uppercase tracking-widest px-1">Model</label>
                                 <select
                                     className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white focus:ring-2 focus:ring-green-500/50 focus:border-green-500/50 outline-none transition-all glow-focus"
                                     value={cn.name}
@@ -69,7 +69,7 @@ const ControlNetSection = memo(function ControlNetSection({
                                 </select>
                             </div>
                             <div className="space-y-1.5">
-                                <label className="block text-[11px] font-bold text-green-400 uppercase tracking-widest px-1">Strength</label>
+                                <label className="block text-2xs font-bold text-green-400 uppercase tracking-widest px-1">Strength</label>
                                 <input
                                     type="number"
                                     step="0.1"
@@ -81,7 +81,7 @@ const ControlNetSection = memo(function ControlNetSection({
                         </div>
 
                         <div className="space-y-1.5">
-                            <label className="block text-[11px] font-bold text-green-400 uppercase tracking-widest px-1">Input Image</label>
+                            <label className="block text-2xs font-bold text-green-400 uppercase tracking-widest px-1">Input Image</label>
                             <div className="flex gap-3 items-center bg-black/20 p-2 rounded-xl border border-white/5">
                                 <input
                                     type="file"
@@ -93,7 +93,7 @@ const ControlNetSection = memo(function ControlNetSection({
                         </div>
 
                         <div className="space-y-1.5">
-                            <label className="block text-[11px] font-bold text-green-400 uppercase tracking-widest px-1">Preprocessor</label>
+                            <label className="block text-2xs font-bold text-green-400 uppercase tracking-widest px-1">Preprocessor</label>
                             <select
                                 className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white focus:ring-2 focus:ring-green-500/50 focus:border-green-500/50 outline-none transition-all glow-focus"
                                 value={cn.preprocessor}

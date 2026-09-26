@@ -131,8 +131,8 @@ export default function ChatSidebar({
                                 })()}
                                 <span className="truncate flex-1">{chat.name || 'Unnamed Chat'}</span>
                                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                                    <button onClick={e => { e.stopPropagation(); startRename(chat); }} aria-label="Rename chat" className="p-1 hover:text-white text-gray-500 rounded"><Edit3 size={11} /></button>
-                                    <button onClick={e => { e.stopPropagation(); handleDeleteChat(chat); }} aria-label="Delete chat" className="p-1 hover:text-red-400 text-gray-500 rounded"><Trash2 size={11} /></button>
+                                    <button onClick={e => { e.stopPropagation(); startRename(chat); }} aria-label="Rename chat" className="p-1 min-w-6 min-h-6 inline-flex items-center justify-center hover:text-white text-gray-500 rounded"><Edit3 size={11} /></button>
+                                    <button onClick={e => { e.stopPropagation(); handleDeleteChat(chat); }} aria-label="Delete chat" className="p-1 min-w-6 min-h-6 inline-flex items-center justify-center hover:text-red-400 text-gray-500 rounded"><Trash2 size={11} /></button>
                                 </div>
                             </div>
                         )}

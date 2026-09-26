@@ -19,7 +19,7 @@ export default function RoleplayPageShell({
                         <Icon size={21} aria-hidden="true" />
                     </span>
                     <div className="min-w-0">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300">{eyebrow}</p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">{eyebrow}</p>
                         <h1 className="mt-1 text-2xl font-bold tracking-tight text-white sm:text-3xl">{title}</h1>
                         {description && <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">{description}</p>}
                     </div>

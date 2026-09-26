@@ -489,7 +489,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                                     {field.key !== 'creator_notes' && field.key !== 'default_time' && field.key !== 'default_location' && (
                                         <button
                                             onClick={() => handleGenerateField(field.key)}
-                                            className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-500/20 transition-colors flex items-center gap-1"
+                                            className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-xs font-bold uppercase tracking-wider hover:bg-indigo-500/20 transition-colors flex items-center gap-1"
                                             title={`Auto-generate ${field.label}`}
                                         >
                                             <Sparkles size={12} /> Auto-Fill
@@ -521,11 +521,11 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                             <div className="flex items-center justify-between mb-1">
                                 <div>
                                     <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Visual Tags</label>
-                                    <p className="text-[11px] text-gray-500">Tags for image generation (e.g., 1girl, blue hair, school uniform)</p>
+                                    <p className="text-2xs text-gray-500">Tags for image generation (e.g., 1girl, blue hair, school uniform)</p>
                                 </div>
                                 <button
                                     onClick={() => handleGenerateField('visual_tags')}
-                                    className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-500/20 transition-colors flex items-center gap-1"
+                                    className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-xs font-bold uppercase tracking-wider hover:bg-indigo-500/20 transition-colors flex items-center gap-1"
                                     title="Auto-generate Visual Tags"
                                 >
                                     <Sparkles size={12} /> Auto-Fill
@@ -555,7 +555,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                         {/* LoRA Triggers */}
                         <div>
                             <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">LoRA Triggers</label>
-                            <p className="text-[11px] text-gray-500 mb-2">LoRA trigger words for this character</p>
+                            <p className="text-2xs text-gray-500 mb-2">LoRA trigger words for this character</p>
                             <div className="flex flex-wrap gap-2 mb-2">
                                 {form.lora_triggers.map((tag, idx) => (
                                     <span key={idx} className="px-2 py-1 text-xs bg-blue-500/20 text-blue-300 rounded-full border border-blue-500/30 flex items-center gap-1">

@@ -64,15 +64,16 @@ export default function ChatWorkspaceHeader({
                     <h2 className="font-semibold text-gray-100 flex items-center gap-2 text-sm sm:text-base">
                         <span className="truncate">{activeChat?.name || 'Roleplay Session'}</span>
                         <button
+                            type="button"
                             onClick={triggerAutoTitle}
                             disabled={isGeneratingTitle}
-                            className="text-[9px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded hover:bg-blue-500/20 transition-colors flex items-center gap-1 disabled:opacity-50 shrink-0"
+                            className="text-xs bg-blue-500/10 text-blue-400 px-2 min-h-[24px] rounded hover:bg-blue-500/20 transition-colors inline-flex items-center gap-1 disabled:opacity-50 shrink-0"
                         >
-                            {isGeneratingTitle ? <Loader2 size={9} className="animate-spin" /> : <Sparkles size={9} />}
+                            {isGeneratingTitle ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
                             <span className="hidden sm:inline">Title</span>
                         </button>
                     </h2>
-                    <p className="text-[10px] text-gray-500 truncate">
+                    <p className="text-xs text-gray-500 truncate">
                         {linkedCharacter ? `${linkedCharacter.name}` : (activeChatId ? 'No character' : 'Select a chat')}
                         {activeChat?.persona_name && ` · as ${activeChat.persona_name}`}
                     </p>
@@ -104,13 +105,13 @@ export default function ChatWorkspaceHeader({
                     {searchOpen ? <X size={18} /> : <Search size={18} />}
                 </button>
                 {activeChat?.story_time && (
-                    <div className="px-2.5 py-1 bg-gray-800/50 border border-white/5 rounded text-[11px] font-medium text-gray-300 flex items-center gap-1.5 shadow-sm" title="Story Time">
+                    <div className="px-2.5 py-1 bg-gray-800/50 border border-white/5 rounded text-2xs font-medium text-gray-300 flex items-center gap-1.5 shadow-sm" title="Story Time">
                         <Clock size={12} className="text-indigo-400/70" /> 
                         <span className="max-w-[120px] truncate">{activeChat.story_time}</span>
                     </div>
                 )}
                 {activeChat?.story_location && (
-                    <div className="px-2.5 py-1 bg-gray-800/50 border border-white/5 rounded text-[11px] font-medium text-gray-300 flex items-center gap-1.5 shadow-sm" title="Story Location">
+                    <div className="px-2.5 py-1 bg-gray-800/50 border border-white/5 rounded text-2xs font-medium text-gray-300 flex items-center gap-1.5 shadow-sm" title="Story Location">
                         <MapPin size={12} className="text-rose-400/70" /> 
                         <span className="max-w-[160px] truncate">{activeChat.story_location}</span>
                     </div>

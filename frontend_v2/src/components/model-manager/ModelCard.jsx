@@ -44,14 +44,14 @@ function ModelCard({ model, onSelect, source, installedInfo = null }) {
 
                 {/* Base Model badge */}
                 {model.modelVersions?.[0]?.baseModel && (
-                    <div className="absolute top-3 left-3 bg-purple-500/20 text-purple-300 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border border-purple-500/30 shadow-lg backdrop-blur-md">
+                    <div className="absolute top-3 left-3 bg-purple-500/20 text-purple-300 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest border border-purple-500/30 shadow-lg backdrop-blur-md">
                         {model.modelVersions[0].baseModel}
                     </div>
                 )}
 
                 {/* Installed badge */}
                 {isInstalled && (
-                    <div className="absolute top-3 right-3 bg-green-500/20 text-green-400 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border border-green-500/30 shadow-lg flex items-center gap-1.5 backdrop-blur-md">
+                    <div className="absolute top-3 right-3 bg-green-500/20 text-green-400 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest border border-green-500/30 shadow-lg flex items-center gap-1.5 backdrop-blur-md">
                         <Check size={14} strokeWidth={3} />
                         Installed
                     </div>
@@ -72,7 +72,7 @@ function ModelCard({ model, onSelect, source, installedInfo = null }) {
                     {model.name}
                 </h3>
                 <div className="flex justify-between items-center mt-2">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">{model.type}</span>
+                    <span className="text-xs font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">{model.type}</span>
                     {model.stats && (
                         <div className="flex items-center gap-3 text-xs font-medium text-gray-400">
                             {source === 'civitai' && model.stats.downloadCount !== undefined && (

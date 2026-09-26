@@ -155,7 +155,7 @@ export default React.memo(function StoryContextPanel({
                                             {isActive ? <Check size={14} className="text-indigo-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
                                             <div className="min-w-0">
                                                 <p className="truncate font-medium">{lb.name}</p>
-                                                {lb.description && <p className="text-[10px] text-gray-500 truncate">{lb.description}</p>}
+                                                {lb.description && <p className="text-xs text-gray-500 truncate">{lb.description}</p>}
                                             </div>
                                         </button>
                                         <button
@@ -210,7 +210,7 @@ export default React.memo(function StoryContextPanel({
                                             {isActive ? <Check size={14} className="text-emerald-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
                                             <div className="min-w-0">
                                                 <p className="truncate font-medium">{loc.name}</p>
-                                                {loc.description && <p className="text-[10px] text-gray-500 truncate">{loc.description}</p>}
+                                                {loc.description && <p className="text-xs text-gray-500 truncate">{loc.description}</p>}
                                             </div>
                                         </button>
                                         <button
@@ -237,7 +237,7 @@ export default React.memo(function StoryContextPanel({
                         </h4>
                         <button
                             onClick={onShowGallery}
-                            className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors"
+                            className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
                         >
                             View all ({storyImages.length})
                         </button>
@@ -276,13 +276,13 @@ export default React.memo(function StoryContextPanel({
                                  <option key={m.id} value={m.id}>{m.name || m.id}</option>
                              ))}
                          </select>
-                         <p className="text-[10px] text-gray-500 mt-1">Per-story model override; used for continuations and titles.</p>
+                         <p className="text-xs text-gray-500 mt-1">Per-story model override; used for continuations and titles.</p>
                      </div>
                      <SamplingControls values={activeStory || {}} onChange={onUpdateStory} />
                       <div>
                           <div className="flex items-center justify-between mb-1.5">
                               <p className="text-xs text-gray-300 font-medium">Autonomous Illustration</p>
-                              <span className="text-[10px] text-gray-500 font-mono">
+                              <span className="text-xs text-gray-500 font-mono">
                                   {activeStory?.max_agentic_depth != null
                                       ? (activeStory.max_agentic_depth > 0
                                           ? `${activeStory.max_agentic_depth} image${activeStory.max_agentic_depth === 1 ? '' : 's'} max`
@@ -300,14 +300,14 @@ export default React.memo(function StoryContextPanel({
                               className="w-full accent-purple-500"
                               title="How many images the AI may generate on its own while continuing the story. 0 disables autonomous illustration."
                           />
-                          <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                          <div className="flex justify-between text-2xs text-gray-600 mt-0.5">
                               <span>Off</span><span>5</span><span>10</span>
                           </div>
-                          <p className="text-[10px] text-gray-500 mt-1">While continuing the story, the AI can illustrate scenes itself; generated art attaches to this chapter.</p>
+                          <p className="text-xs text-gray-500 mt-1">While continuing the story, the AI can illustrate scenes itself; generated art attaches to this chapter.</p>
                           {activeStory?.max_agentic_depth != null && (
                               <button
                                   onClick={() => onUpdateStory({ max_agentic_depth: null })}
-                                  className="mt-1 text-[9px] text-gray-500 hover:text-red-400 transition-colors"
+                                  className="mt-1 text-2xs text-gray-500 hover:text-red-400 transition-colors"
                               >
                                   Reset to global default
                               </button>
@@ -315,7 +315,7 @@ export default React.memo(function StoryContextPanel({
                       </div>
                  </div>
                 <div className="glass-panel p-4 rounded-xl border border-white/5">
-                    <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                         <Book size={14} /> Story Info
                     </h4>
                     <div className="space-y-3 text-xs text-gray-400">
@@ -326,7 +326,7 @@ export default React.memo(function StoryContextPanel({
                                 onClick={() => onUpdateStory({ is_archived: !activeStory?.is_archived })}
                                 disabled={!activeStory}
                                 className={clsx(
-                                    "text-[9px] font-medium px-1.5 py-0.5 rounded transition-colors",
+                                    "text-2xs font-medium px-1.5 py-0.5 rounded transition-colors",
                                     activeStory?.is_archived
                                         ? "bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
                                         : "bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
@@ -347,7 +347,7 @@ export default React.memo(function StoryContextPanel({
 
                 {/* Genre */}
                 <div className="glass-panel p-4 rounded-xl border border-white/5">
-                    <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                         <Tag size={12} className="text-purple-400" /> Genre
                     </label>
                     <input
@@ -363,16 +363,16 @@ export default React.memo(function StoryContextPanel({
                         placeholder="e.g. Fantasy, Cyberpunk, Horror"
                         className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 transition-colors"
                     />
-                    <p className="text-[10px] text-gray-500 mt-1">Steer story continuation tone/style.</p>
+                    <p className="text-xs text-gray-500 mt-1">Steer story continuation tone/style.</p>
                 </div>
 
                 {/* Writing preferences */}
                 <div className="glass-panel p-4 rounded-xl border border-white/5 space-y-3">
-                    <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
                         <Eye size={12} className="text-sky-400" /> Writing Preferences
                     </label>
                     <div>
-                        <label className="block text-[10px] text-gray-500 mb-1">Narration perspective</label>
+                        <label className="block text-xs text-gray-500 mb-1">Narration perspective</label>
                         <select
                             value={activeStory?.pov || ''}
                             onChange={(e) => {
@@ -387,7 +387,7 @@ export default React.memo(function StoryContextPanel({
                         </select>
                     </div>
                     <div>
-                        <label className="block text-[10px] text-gray-500 mb-1">Word count goal (optional)</label>
+                        <label className="block text-xs text-gray-500 mb-1">Word count goal (optional)</label>
                         <input
                             key={`story-word-count-${activeStory?.id || 'none'}`}
                             type="number"
@@ -403,13 +403,13 @@ export default React.memo(function StoryContextPanel({
                             placeholder="e.g. 50000"
                             className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 transition-colors"
                         />
-                        <p className="text-[10px] text-gray-500 mt-1"><Target size={9} className="inline mr-0.5 -mt-px" />Shows a progress bar in the editor.</p>
+                        <p className="text-xs text-gray-500 mt-1"><Target size={9} className="inline mr-0.5 -mt-px" />Shows a progress bar in the editor.</p>
                     </div>
                 </div>
 
                 {/* Description */}
                 <div className="glass-panel p-4 rounded-xl border border-white/5">
-                    <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
                         Description
                     </label>
                     <textarea
@@ -429,7 +429,7 @@ export default React.memo(function StoryContextPanel({
 
                 {/* Memory / Author's Note */}
                 <div className="glass-panel p-4 rounded-xl border border-white/5">
-                    <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                         <PenTool size={12} className="text-amber-400" /> Memory (Author's Note)
                     </label>
                     <textarea
@@ -445,7 +445,7 @@ export default React.memo(function StoryContextPanel({
                         rows={3}
                         className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-amber-500/50 resize-none"
                     />
-                    <p className="text-[10px] text-gray-500 mt-1">Injected into every story continuation prompt.</p>
+                    <p className="text-xs text-gray-500 mt-1">Injected into every story continuation prompt.</p>
                 </div>
             </div>
         </>

@@ -53,7 +53,7 @@ function SystemPromptsEditor() {
                 {fields.map(f => (
                     <div key={f.key}>
                         <label className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-1">{f.label}</label>
-                        <p className="text-[10px] text-gray-600 mb-1">{f.desc}</p>
+                        <p className="text-xs text-gray-600 mb-1">{f.desc}</p>
                         <textarea
                             value={draft[f.key] || ''}
                             onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
@@ -160,7 +160,7 @@ export default function Settings() {
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
                     {/* Sidebar Tabs */}
                     <div className="md:col-span-3 space-y-2 glass-panel p-4 rounded-3xl border border-white/5 shadow-2xl h-fit sticky top-8">
-                        <div className="px-4 py-2 mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">Categories</div>
+                        <div className="px-4 py-2 mb-2 text-xs font-bold uppercase tracking-widest text-gray-500">Categories</div>
                         {tabs.map(tab => (
                             <button
                                 key={tab.id}
@@ -326,7 +326,7 @@ function BrandingSettings() {
                         </div>
                         <div className="space-y-1.5">
                             <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Current</span>
+                                <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Current</span>
                                 <span className="text-sm font-medium text-gray-300 bg-white/5 px-2.5 py-1 rounded-lg border border-white/5">{effectiveBranding.logoUrl}</span>
                             </div>
                             <p className="text-xs text-gray-400 font-medium">To change: upload a new file to <code className="text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">/frontend/public/logo.png</code></p>
@@ -350,7 +350,7 @@ function BrandingSettings() {
                         </div>
                         <div className="space-y-1.5">
                             <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Current</span>
+                                <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Current</span>
                                 <span className="text-sm font-medium text-gray-300 bg-white/5 px-2.5 py-1 rounded-lg border border-white/5">{effectiveBranding.faviconUrl}</span>
                             </div>
                             <p className="text-xs text-gray-400 font-medium">To change: upload a new file to <code className="text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">/frontend/public/favicon.ico</code></p>
@@ -421,7 +421,7 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                     action={
                         <button
                             onClick={() => onTestToast('success')}
-                            className="text-[11px] font-bold uppercase tracking-widest px-4 py-1.5 bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 transition-colors shadow-inner"
+                            className="text-2xs font-bold uppercase tracking-widest px-4 py-1.5 bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 transition-colors shadow-inner"
                         >
                             Test
                         </button>
@@ -447,7 +447,7 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                     action={
                         <button
                             onClick={() => onTestToast('error')}
-                            className="text-[11px] font-bold uppercase tracking-widest px-4 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 transition-colors shadow-inner"
+                            className="text-2xs font-bold uppercase tracking-widest px-4 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 transition-colors shadow-inner"
                         >
                             Test
                         </button>
@@ -861,7 +861,7 @@ function AISettings({ settings, onUpdate, onReset }) {
                                     <span key={p.provider_id} className="px-2.5 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs font-bold flex items-center gap-1.5">
                                         <Server size={10} />
                                         {p.provider_id}
-                                        {p.is_default && <span className="text-[9px] bg-purple-400/20 px-1 py-0.5 rounded">DEFAULT</span>}
+                                        {p.is_default && <span className="text-2xs bg-purple-400/20 px-1 py-0.5 rounded">DEFAULT</span>}
                                     </span>
                                 ))}
                             </div>
@@ -956,7 +956,7 @@ function AISettings({ settings, onUpdate, onReset }) {
                             { key: 'presencePenalty', label: 'Presence Penalty', min: -2, max: 2, step: 0.1 },
                         ].map(({ key, label, min, max, step }) => (
                             <label key={key} className="flex flex-col gap-1.5">
-                                <span className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">{label}</span>
+                                <span className="text-xs uppercase tracking-wider text-gray-500 font-bold">{label}</span>
                                 <div className="flex items-center gap-1">
                                     <input
                                         type="number"
@@ -989,7 +989,7 @@ function AISettings({ settings, onUpdate, onReset }) {
                     action={
                         <button
                             onClick={() => onUpdate('ttsEnabled', !settings.ttsEnabled)}
-                            className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+                            className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
                                 settings.ttsEnabled
                                     ? 'bg-green-500/20 border border-green-500/30 text-green-400'
                                     : 'bg-gray-500/20 border border-gray-600/30 text-gray-500'
@@ -1012,7 +1012,7 @@ function AISettings({ settings, onUpdate, onReset }) {
                     action={
                         <button
                             onClick={() => onUpdate('ragEnabled', settings.ragEnabled === false)}
-                            className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+                            className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
                                 settings.ragEnabled !== false
                                     ? 'bg-green-500/20 border border-green-500/30 text-green-400'
                                     : 'bg-gray-500/20 border border-gray-600/30 text-gray-500'
@@ -1035,7 +1035,7 @@ function AISettings({ settings, onUpdate, onReset }) {
                     action={
                         <button
                             onClick={() => onUpdate('idleSimEnabled', !settings.idleSimEnabled)}
-                            className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+                            className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
                                 settings.idleSimEnabled
                                     ? 'bg-green-500/20 border border-green-500/30 text-green-400'
                                     : 'bg-gray-500/20 border border-gray-600/30 text-gray-500'
@@ -1052,7 +1052,7 @@ function AISettings({ settings, onUpdate, onReset }) {
                     </p>
                     {settings.idleSimEnabled && (
                         <div className="mt-3 flex items-center gap-2">
-                            <span className="text-[10px] text-gray-500 uppercase tracking-wider">Interval (min)</span>
+                            <span className="text-xs text-gray-500 uppercase tracking-wider">Interval (min)</span>
                             <input
                                 type="number"
                                 min="5"

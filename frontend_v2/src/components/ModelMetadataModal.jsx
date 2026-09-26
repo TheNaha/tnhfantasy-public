@@ -350,10 +350,10 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                                                     <span className="text-sm text-gray-200 truncate">{row.providerName}</span>
                                                 </div>
                                                 <div className="flex items-center gap-2">
-                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] capitalize ${row.online ? 'text-green-300 bg-green-500/10 border-green-500/30' : 'text-gray-300 bg-gray-500/10 border-gray-500/30'}`}>
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-2xs capitalize ${row.online ? 'text-green-300 bg-green-500/10 border-green-500/30' : 'text-gray-300 bg-gray-500/10 border-gray-500/30'}`}>
                                                         {row.online ? 'online' : 'offline'}
                                                     </span>
-                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] capitalize ${modelStatusTone(row.modelStatus)}`}>
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-2xs capitalize ${modelStatusTone(row.modelStatus)}`}>
                                                         {row.modelStatus}
                                                     </span>
                                                 </div>

@@ -120,7 +120,7 @@ function SamplingField({ field, serverValue, onCommit }) {
 
     return (
         <label className="flex flex-col gap-1">
-            <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold">{label}</span>
+            <span className="text-2xs uppercase tracking-wider text-gray-500 font-bold">{label}</span>
             <div className="flex items-center gap-1">
                 <input
                     type="number"
@@ -167,7 +167,7 @@ export default function SamplingControls({ values = {}, onChange }) {
         <div>
             <div className="flex items-center justify-between mb-1.5">
                 <p className="text-xs text-gray-300 font-medium">Sampling</p>
-                <span className="text-[10px] text-gray-500 font-mono">
+                <span className="text-xs text-gray-500 font-mono">
                     {anySet ? 'custom overrides' : 'Global defaults'}
                 </span>
             </div>
@@ -184,7 +184,7 @@ export default function SamplingControls({ values = {}, onChange }) {
             {anySet && (
                 <button
                     onClick={() => onChange(Object.fromEntries(FIELDS.map(f => [f.key, null])))}
-                    className="mt-1.5 text-[9px] text-gray-500 hover:text-red-400 transition-colors"
+                    className="mt-1.5 text-2xs text-gray-500 hover:text-red-400 transition-colors"
                 >
                     Reset all to global defaults
                 </button>

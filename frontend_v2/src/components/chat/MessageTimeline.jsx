@@ -69,7 +69,7 @@ export default function MessageTimeline() {
         if (jobData.taskType === 'image' || jobData.type === 'image') {
             return (
                 <div className="self-start w-full max-w-[85%] sm:max-w-md">
-                    <div className="text-[10px] text-green-400 ml-1 flex items-center gap-1.5 mb-1">
+                    <div className="text-xs text-green-400 ml-1 flex items-center gap-1.5 mb-1">
                         <ImageIcon size={10} /> Generating scene image
                     </div>
                     <div className="rounded-2xl border border-gray-700/40 bg-gray-900/60 p-3 overflow-hidden shadow-inner">
@@ -84,13 +84,13 @@ export default function MessageTimeline() {
                                         <div className="h-1.5 w-full rounded-full bg-gray-800 overflow-hidden">
                                             <div className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all" style={{ width: `${jobData.progress}%` }} />
                                         </div>
-                                        <div className="text-[10px] text-green-400/80 mt-1 flex items-center gap-1">
+                                        <div className="text-xs text-green-400/80 mt-1 flex items-center gap-1">
                                             <Loader2 size={10} className="animate-spin" />
                                             Rendering {jobData.progress}%
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="pt-2 text-[10px] text-purple-400 flex items-center gap-1">
+                                    <div className="pt-2 text-xs text-purple-400 flex items-center gap-1">
                                         <Wand2 size={10} className="animate-pulse" />
                                         Preparing generation...
                                     </div>
@@ -117,7 +117,7 @@ export default function MessageTimeline() {
                     }
                 </button>
                 <div className="flex flex-col max-w-full">
-                    <div className="text-[10px] mb-1 text-gray-400 flex items-center gap-1.5">
+                    <div className="text-xs mb-1 text-gray-400 flex items-center gap-1.5">
                         <span>{pendingSpeaker?.name || 'AI'}</span>
                         <span className="inline-flex items-center gap-0.5 text-blue-400/70">
                             <span className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '0ms' }} />

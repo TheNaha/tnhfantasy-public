@@ -73,7 +73,7 @@ export default React.memo(function StoryEditor({ isPreviewMode, editorContent, o
                     </div>
                     
                     {!isPreviewMode && (
-                        <div className="flex items-center justify-between text-[10px] text-gray-600 mt-2 px-1">
+                        <div className="flex items-center justify-between text-xs text-gray-600 mt-2 px-1">
                             <span>{wordCount?.toLocaleString?.() || 0} words</span>
                             <span>{readingTimeMinutes || 0} min read</span>
                         </div>
@@ -81,7 +81,7 @@ export default React.memo(function StoryEditor({ isPreviewMode, editorContent, o
 
                     {!isPreviewMode && !!wordCountGoal && (
                         <div className="mt-1 px-1">
-                            <div className="flex items-center justify-between text-[10px] mb-1">
+                            <div className="flex items-center justify-between text-xs mb-1">
                                 <span className={wordCount >= wordCountGoal ? 'text-emerald-400' : 'text-sky-400'}>
                                     Goal: {Math.min(100, Math.round((wordCount / wordCountGoal) * 100))}%
                                 </span>

@@ -34,7 +34,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
         return (
             <div className="flex items-center gap-3 w-full max-w-full self-center my-1.5 select-none">
                 <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-600/50 to-transparent" />
-                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-gray-800/70 border border-gray-700/50 text-[10px] text-gray-400 tracking-wide whitespace-nowrap">
+                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-gray-800/70 border border-gray-700/50 text-xs text-gray-400 tracking-wide whitespace-nowrap">
                     {meta.location && (
                         <span className="flex items-center gap-1.5">
                             <MapPin size={10} className="text-amber-400" />
@@ -84,7 +84,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                 </button>
             )}
             <div className="flex flex-col max-w-full">
-                <div className={clsx("text-[10px] mb-1", msg.role === 'user' ? "text-gray-500 text-right" : "text-gray-400")}>
+                <div className={clsx("text-xs mb-1", msg.role === 'user' ? "text-gray-500 text-right" : "text-gray-400")}>
                     {msg.role === 'user'
                         ? (activeChat?.persona_name || 'You')
                         : isNarrator
@@ -137,7 +137,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                         {typeof meta.orchestrator_depth === 'number' && (
                                             <span
                                                 title={`Agentic loop depth ${meta.orchestrator_depth} / 5 (${5 - meta.orchestrator_depth} remaining)`}
-                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-gray-800/40 border border-gray-700 text-[10px] text-gray-400 font-mono"
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-gray-800/40 border border-gray-700 text-xs text-gray-400 font-mono"
                                             >
                                                 <Activity size={9} />
                                                 Step {meta.orchestrator_depth}/{5}
@@ -159,7 +159,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                                 <span
                                                     key={tc.id || idx}
                                                     title="Agentic tool call"
-                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-500/10 border border-purple-500/25 text-[10px] text-purple-300 font-mono"
+                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-500/10 border border-purple-500/25 text-xs text-purple-300 font-mono"
                                                 >
                                                     <Activity size={9} />
                                                     {fn.name || 'tool'}
@@ -178,17 +178,17 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                     <div className="flex items-center gap-1.5 mt-0.5 select-none">
                                         <button
                                             onClick={() => onSwipe?.(msg.id, 'left')}
-                                            className="p-0.5 rounded text-gray-600 hover:text-blue-400 transition-colors"
+                                            className="p-0.5 min-w-6 min-h-6 inline-flex items-center justify-center rounded text-gray-600 hover:text-blue-400 transition-colors"
                                             title="Previous reply"
                                         >
                                             <ChevronLeft size={14} />
                                         </button>
-                                        <span className="text-[10px] text-gray-600 font-mono tabular-nums">
+                                        <span className="text-xs text-gray-600 font-mono tabular-nums">
                                             {activeIndex + 1}/{altCount}
                                         </span>
                                         <button
                                             onClick={() => onSwipe?.(msg.id, 'right')}
-                                            className="p-0.5 rounded text-gray-600 hover:text-blue-400 transition-colors"
+                                            className="p-0.5 min-w-6 min-h-6 inline-flex items-center justify-center rounded text-gray-600 hover:text-blue-400 transition-colors"
                                             title="Next reply"
                                         >
                                             <ChevronRight size={14} />
@@ -226,7 +226,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                         <span
                                             key={tc.id || idx}
                                             title="Agentic tool call"
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/25 text-[10px] text-purple-300 font-mono"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/25 text-xs text-purple-300 font-mono"
                                         >
                                             <Activity size={10} />
                                             {fn.name || 'tool'}
@@ -250,7 +250,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 <>
                                     <button
                                         onClick={() => { setDraft(msg.content); setEditing(true); }}
-                                        className="p-1 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
+                                        className="p-1 min-w-6 min-h-6 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
                                         title="Edit message"
                                     >
                                         <Pencil size={11} />
@@ -265,7 +265,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                              });
                                              if (ok) onDelete?.(msg.id);
                                          }}
-                                         className="p-1 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5 transition-colors"
+                                         className="p-1 min-w-6 min-h-6 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5 transition-colors"
                                          title="Delete message"
                                      >
                                         <Trash2 size={11} />
@@ -277,7 +277,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                     <button
                                         onClick={() => onSwipe?.(msg.id, 'left')}
                                         disabled={activeIndex <= 0}
-                                        className="p-1 hover:text-white disabled:opacity-30 transition-colors"
+                                        className="p-1 min-w-6 min-h-6 hover:text-white disabled:opacity-30 transition-colors"
                                     >
                                         {'<'}
                                     </button>
@@ -287,7 +287,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                     <button
                                         onClick={() => onSwipe?.(msg.id, 'right')}
                                         disabled={activeIndex >= altCount - 1}
-                                        className="p-1 hover:text-white disabled:opacity-30 transition-colors"
+                                        className="p-1 min-w-6 min-h-6 hover:text-white disabled:opacity-30 transition-colors"
                                     >
                                         {'>'}
                                     </button>
@@ -296,7 +296,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                             {msg.role === 'char' && (
                                 <button
                                     onClick={() => onGenerateSwipe?.(msg.id)}
-                                    className="p-1 rounded-md text-gray-500 hover:text-purple-400 hover:bg-white/5 transition-colors"
+                                    className="p-1 min-w-6 min-h-6 rounded-md text-gray-500 hover:text-purple-400 hover:bg-white/5 transition-colors"
                                     title="Generate alternate reply (Swipe)"
                                 >
                                     <Sparkles size={11} />
@@ -305,7 +305,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                             {(canRegenerate || msg.role === 'user') && (
                                 <button
                                     onClick={() => onRegenerate?.(msg.id)}
-                                    className="p-1 rounded-md text-gray-500 hover:text-green-400 hover:bg-white/5 transition-colors"
+                                    className="p-1 min-w-6 min-h-6 rounded-md text-gray-500 hover:text-green-400 hover:bg-white/5 transition-colors"
                                     title="Regenerate from here (Deletes following messages)"
                                 >
                                     <RotateCcw size={11} />
@@ -315,7 +315,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 <div className="relative">
                                     <button
                                         onClick={() => onGenerateTTS?.(msg.id)}
-                                        className="p-1 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
+                                        className="p-1 min-w-6 min-h-6 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
                                         title="Generate TTS"
                                     >
                                         <Volume2 size={11} />
@@ -324,7 +324,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                         <button
                                             ref={voiceBtnRef}
                                             onClick={(e) => { e.stopPropagation(); setVoiceMenuOpen(!voiceMenuOpen); }}
-                                            className="p-0.5 -mr-0.5 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
+                                            className="p-0.5 min-w-6 min-h-6 -mr-0.5 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
                                             title="Choose TTS voice (per-message override)"
                                         >
                                             <ChevronDown size={10} />
@@ -362,14 +362,14 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                             )}
                             <button
                                 onClick={() => onIllustrate?.(msg.id)}
-                                className="p-1 rounded-md text-gray-500 hover:text-purple-400 hover:bg-white/5 transition-colors"
+                                className="p-1 min-w-6 min-h-6 rounded-md text-gray-500 hover:text-purple-400 hover:bg-white/5 transition-colors"
                                 title="Illustrate Message"
                             >
                                 <ImageIcon size={11} />
                             </button>
                             <button
                                 onClick={() => onRollback?.(msg.id)}
-                                className="p-1 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5 transition-colors"
+                                className="p-1 min-w-6 min-h-6 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5 transition-colors"
                                 title="Rollback chat to here"
                             >
                                 <Undo2 size={11} />
@@ -377,7 +377,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                             <button
                                 onClick={() => onPin?.(msg.id, !!msg.pinned)}
                                 className={clsx(
-                                    "p-1 rounded-md hover:bg-white/5 transition-colors",
+                                    "p-1 min-w-6 min-h-6 rounded-md hover:bg-white/5 transition-colors",
                                     msg.pinned ? "text-amber-400 hover:text-amber-300" : "text-gray-500 hover:text-amber-400"
                                 )}
                                 title={msg.pinned ? "Unpin message" : "Pin message (preserved in context)"}

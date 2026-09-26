@@ -554,7 +554,7 @@ function EntryManagerModal({ lorebook, onClose }) {
                                         {entry.keys?.length > 0 && (
                                             <div className="flex flex-wrap gap-1 mb-1.5">
                                                 {entry.keys.map((k) => (
-                                                    <span key={k} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] bg-indigo-500/15 text-indigo-300 rounded border border-indigo-500/25">
+                                                    <span key={k} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs bg-indigo-500/15 text-indigo-300 rounded border border-indigo-500/25">
                                                         <Key size={9} /> {k}
                                                     </span>
                                                 ))}

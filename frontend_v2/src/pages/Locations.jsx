@@ -260,7 +260,7 @@ export default function Locations() {
                             {location.tags && location.tags.length > 0 && (
                                 <div className="flex flex-wrap gap-1">
                                     {location.tags.map(tag => (
-                                        <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/20">
+                                        <span key={tag} className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/20">
                                             {tag}
                                         </span>
                                     ))}

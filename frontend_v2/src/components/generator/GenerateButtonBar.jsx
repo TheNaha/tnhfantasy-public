@@ -40,7 +40,7 @@ const GenerateButtonBar = memo(function GenerateButtonBar({
 
                 {showVariationsMenu && (
                     <div className="absolute bottom-[calc(100%+0.5rem)] right-0 glass-panel border-white/10 rounded-2xl shadow-2xl py-2 min-w-[180px] z-50 backdrop-blur-xl">
-                        <div className="px-4 py-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-white/5 mb-1">Seed Variations</div>
+                        <div className="px-4 py-2 text-xs font-bold text-gray-400 uppercase tracking-widest border-b border-white/5 mb-1">Seed Variations</div>
                         {[2, 4, 8].map(count => (
                             <button
                                 key={count}
@@ -82,7 +82,7 @@ const GenerateButtonBar = memo(function GenerateButtonBar({
                     <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-blue-400 to-purple-400 transition-all duration-300 ease-out shadow-[0_0_10px_rgba(168,85,247,0.8)]" style={{ width: `${progress.value}%` }} />
                 )}
                 {generating && progress?.node && (
-                    <div className="absolute top-1 left-0 right-0 text-center text-[10px] font-medium text-white/50 tracking-wider">
+                    <div className="absolute top-1 left-0 right-0 text-center text-xs font-medium text-white/50 tracking-wider">
                         {progress.node}
                     </div>
                 )}

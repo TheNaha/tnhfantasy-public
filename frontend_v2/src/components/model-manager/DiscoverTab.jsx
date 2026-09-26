@@ -15,7 +15,7 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
     const [open, setOpen] = useState(false);
     return (
         <div className="relative flex flex-col gap-1.5">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">{label}</label>
+            <label className="text-xs font-bold uppercase tracking-widest text-gray-500">{label}</label>
             <div 
                 className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white cursor-pointer select-none h-10 flex items-center min-w-[120px] shadow-inner transition-colors hover:border-white/20"
                 onClick={() => setOpen(!open)}
@@ -251,7 +251,7 @@ export default function DiscoverTab() {
                 <div className="flex flex-col gap-4">
                     {(filterUsername || filterTag) && (
                         <div className="flex flex-wrap items-center gap-3">
-                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Active Filters:</span>
+                            <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">Active Filters:</span>
                             {filterUsername && (
                                 <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-300 px-3 py-1.5 rounded-full text-xs shadow-inner">
                                     <span className="font-bold tracking-wide">@{filterUsername}</span>
@@ -268,12 +268,12 @@ export default function DiscoverTab() {
                     )}
                     {popularTags.length > 0 && (
                         <div className="flex overflow-x-auto no-scrollbar items-center gap-2 pb-2 px-1">
-                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest whitespace-nowrap sticky left-0 bg-[#0B0E14] pr-4 z-10 shrink-0">Trending</span>
+                            <span className="text-xs font-bold text-gray-500 uppercase tracking-widest whitespace-nowrap sticky left-0 bg-[#0B0E14] pr-4 z-10 shrink-0">Trending</span>
                             {popularTags.map(t => (
                                 <button
                                     key={t.name}
                                     onClick={() => setFilterTag(filterTag === t.name ? "" : t.name)}
-                                    className={`shrink-0 whitespace-nowrap px-4 py-1.5 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all duration-300 shadow-inner ${
+                                    className={`shrink-0 whitespace-nowrap px-4 py-1.5 rounded-full text-2xs font-bold tracking-widest uppercase transition-all duration-300 shadow-inner ${
                                         filterTag === t.name 
                                             ? 'bg-purple-600/20 border border-purple-500 text-purple-300 shadow-[0_0_10px_rgba(168,85,247,0.3)]' 
                                             : 'bg-[#0B0E14]/80 border border-white/5 text-gray-400 hover:bg-white/5 hover:text-white hover:border-white/10'
@@ -297,7 +297,7 @@ export default function DiscoverTab() {
                         onChange={setFilterTypes} 
                     />
                     <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Sort</label>
+                        <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Sort</label>
                         <select value={filterSort} onChange={e => setFilterSort(e.target.value)}
                             className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white h-10 shadow-inner glow-focus focus:ring-2 focus:ring-blue-500/50 outline-none">
                             {SORT_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -310,7 +310,7 @@ export default function DiscoverTab() {
                         onChange={setFilterBaseModels} 
                     />
                     <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">NSFW</label>
+                        <label className="text-xs font-bold uppercase tracking-widest text-gray-500">NSFW</label>
                         <select value={filterNsfw} onChange={e => setFilterNsfw(e.target.value)}
                             className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white h-10 shadow-inner glow-focus focus:ring-2 focus:ring-blue-500/50 outline-none">
                             <option value="">All</option>
@@ -319,14 +319,14 @@ export default function DiscoverTab() {
                         </select>
                     </div>
                     <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Period</label>
+                        <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Period</label>
                         <select value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)}
                             className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white h-10 shadow-inner glow-focus focus:ring-2 focus:ring-blue-500/50 outline-none">
                             {PERIOD_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                         </select>
                     </div>
                     <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Creator</label>
+                        <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Creator</label>
                         <input 
                             type="text" 
                             placeholder="@username"
@@ -336,7 +336,7 @@ export default function DiscoverTab() {
                         />
                     </div>
                     <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Tag</label>
+                        <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Tag</label>
                         <input 
                             type="text" 
                             placeholder="#tag"
@@ -355,7 +355,7 @@ export default function DiscoverTab() {
                             setFilterUsername("");
                             setFilterTag("");
                         }}
-                            className="text-[11px] font-bold uppercase tracking-widest text-red-400 hover:text-white px-4 py-2.5 rounded-xl border border-red-500/20 bg-red-500/10 hover:bg-red-500/20 transition-colors shadow-inner h-10">
+                            className="text-2xs font-bold uppercase tracking-widest text-red-400 hover:text-white px-4 py-2.5 rounded-xl border border-red-500/20 bg-red-500/10 hover:bg-red-500/20 transition-colors shadow-inner h-10">
                             Clear
                         </button>
                     </div>

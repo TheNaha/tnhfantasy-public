@@ -90,7 +90,7 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
                     </span>
                     {hasFailure && (
                         <span
-                            className="text-[11px] font-medium text-red-400 truncate"
+                            className="text-2xs font-medium text-red-400 truncate"
                             title="At least one provider is disabled or reporting errors"
                         >
                             needs attention
@@ -136,11 +136,11 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
                                     <span className={`text-xs truncate font-medium ${providerTextToneClass(summary.stage)}`}>
                                         {provider.id}
                                     </span>
-                                    <span className={`inline-flex items-center rounded border px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide bg-white/5 ${providerBadgeToneClass(summary.stage)}`}>
+                                    <span className={`inline-flex items-center rounded border px-1 py-0.5 text-2xs font-semibold uppercase tracking-wide bg-white/5 ${providerBadgeToneClass(summary.stage)}`}>
                                         {summary.label}
                                     </span>
                                     {summary.isDisabled && (
-                                        <span className="text-[11px] text-gray-500 ml-auto font-medium">off</span>
+                                        <span className="text-2xs text-gray-500 ml-auto font-medium">off</span>
                                     )}
                                 </div>
                             );
@@ -281,7 +281,7 @@ export default function Layout({ children }) {
                         WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 44px), transparent 100%)',
                     }}
                 >
-                    <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">Menu</div>
+                    <div className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">Menu</div>
                     {/* Points at the roleplay front door. This used to be `/`, which
                         was the workspace picker, so "Home" and "Roleplay Home" were
                         two names for two different landing pages. Now there is one
@@ -295,7 +295,7 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/inpaint" icon={Paintbrush} label="Inpaint" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/advanced" icon={Settings} label="Advanced" />
                     
-                     <div className="mt-4 mb-1.5 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Roleplay</div>
+                     <div className="mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider">Roleplay</div>
                      <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Play" />
                      <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Stories" />
                      <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-vault" icon={Globe} label="World" />
@@ -324,11 +324,11 @@ export default function Layout({ children }) {
                      )}
 
                     
-                    <div className="mt-4 mb-1.5 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Resources</div>
+                    <div className="mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider">Resources</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/discover" icon={Globe} label="Discover Models" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/providers" icon={Server} label="Providers" />
-                    <div className="mt-4 mb-1.5 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">System</div>
+                    <div className="mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider">System</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/statistics" icon={BarChart3} label="Statistics" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/settings" icon={Settings2} label="Settings" />
                 </nav>

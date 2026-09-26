@@ -222,10 +222,10 @@ export default function CharacterCard({
             {character.visual_tags?.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-3">
                     {character.visual_tags.slice(0, VISIBLE_TAG_LIMIT).map((tag, idx) => (
-                        <span key={idx} className="px-1.5 py-0.5 text-[10px] bg-purple-500/10 text-purple-400 rounded border border-purple-500/20">{tag}</span>
+                        <span key={idx} className="px-1.5 py-0.5 text-xs bg-purple-500/10 text-purple-400 rounded border border-purple-500/20">{tag}</span>
                     ))}
                     {character.visual_tags.length > VISIBLE_TAG_LIMIT && (
-                        <span className="px-1.5 py-0.5 text-[10px] text-gray-500">+{character.visual_tags.length - VISIBLE_TAG_LIMIT}</span>
+                        <span className="px-1.5 py-0.5 text-xs text-gray-500">+{character.visual_tags.length - VISIBLE_TAG_LIMIT}</span>
                     )}
                 </div>
             )}

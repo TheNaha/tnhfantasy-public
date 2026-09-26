@@ -34,7 +34,7 @@ export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, c
         <div className={`space-y-1 ${className}`}>
             {label && (
                 <div className="flex justify-between items-center mb-1">
-                    <label htmlFor={inputId} className="text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1 flex items-center">{label}</label>
+                    <label htmlFor={inputId} className="text-2xs font-bold text-gray-400 uppercase tracking-widest px-1 flex items-center">{label}</label>
                     <input
                         id={inputId}
                         type="number"

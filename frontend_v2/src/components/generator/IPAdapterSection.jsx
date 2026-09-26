@@ -45,7 +45,7 @@ const IPAdapterSection = memo(function IPAdapterSection({
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {/* Left: Image Uploader */}
                             <div className="space-y-2">
-                                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Reference Image</label>
+                                <label className="block text-2xs font-bold text-gray-400 uppercase tracking-widest px-1">Reference Image</label>
                                 <div className="h-48 border border-white/10 rounded-xl overflow-hidden bg-black/40">
                                     <ImageUploader
                                         image={ip.image}
@@ -58,7 +58,7 @@ const IPAdapterSection = memo(function IPAdapterSection({
                             {/* Right: Settings */}
                             <div className="space-y-4">
                                 <div className="space-y-1.5">
-                                    <label className="block text-[11px] font-bold text-pink-400 uppercase tracking-widest px-1">IP-Adapter Model</label>
+                                    <label className="block text-2xs font-bold text-pink-400 uppercase tracking-widest px-1">IP-Adapter Model</label>
                                     <ModelSelector
                                         label=""
                                         value={ip.model || ''}
@@ -68,7 +68,7 @@ const IPAdapterSection = memo(function IPAdapterSection({
                                     />
                                 </div>
                                 <div className="space-y-1.5">
-                                    <label className="block text-[11px] font-bold text-pink-400 uppercase tracking-widest px-1">CLIP Vision Model</label>
+                                    <label className="block text-2xs font-bold text-pink-400 uppercase tracking-widest px-1">CLIP Vision Model</label>
                                     <ModelSelector
                                         label=""
                                         value={ip.clipVision || ''}
@@ -81,8 +81,8 @@ const IPAdapterSection = memo(function IPAdapterSection({
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="space-y-1.5">
                                         <div className="flex justify-between items-center px-1">
-                                            <label className="text-[11px] font-bold text-pink-400 uppercase tracking-widest">Weight</label>
-                                            <span className="text-[11px] text-gray-400 font-mono">{Number(ip.weight).toFixed(2)}</span>
+                                            <label className="text-2xs font-bold text-pink-400 uppercase tracking-widest">Weight</label>
+                                            <span className="text-2xs text-gray-400 font-mono">{Number(ip.weight).toFixed(2)}</span>
                                         </div>
                                         <input
                                             type="range"
@@ -94,8 +94,8 @@ const IPAdapterSection = memo(function IPAdapterSection({
                                     </div>
                                     <div className="space-y-1.5">
                                         <div className="flex justify-between items-center px-1">
-                                            <label className="text-[11px] font-bold text-pink-400 uppercase tracking-widest">Ends At</label>
-                                            <span className="text-[11px] text-gray-400 font-mono">{Number(ip.stopAt).toFixed(2)}</span>
+                                            <label className="text-2xs font-bold text-pink-400 uppercase tracking-widest">Ends At</label>
+                                            <span className="text-2xs text-gray-400 font-mono">{Number(ip.stopAt).toFixed(2)}</span>
                                         </div>
                                         <input
                                             type="range"

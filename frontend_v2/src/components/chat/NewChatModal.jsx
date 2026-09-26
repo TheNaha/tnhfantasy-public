@@ -90,10 +90,10 @@ function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose 
                     </button>
                 </div>
                 
-                <div className="flex items-center gap-2 border-b border-white/5 px-6 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                <div className="flex items-center gap-2 border-b border-white/5 px-6 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                     {['Basics', 'Cast & scene', 'Context'].map((label, index) => (
                         <div key={label} className="flex flex-1 items-center gap-2 last:flex-none">
-                            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] ${index <= step ? 'bg-cyan-500 text-slate-950' : 'bg-white/10 text-slate-500'}`}>{index + 1}</span>
+                            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs ${index <= step ? 'bg-cyan-500 text-slate-950' : 'bg-white/10 text-slate-500'}`}>{index + 1}</span>
                             <span className={index === step ? 'text-cyan-300' : 'hidden sm:inline'}>{label}</span>
                             {index < 2 && <span className="h-px flex-1 bg-white/10" />}
                         </div>

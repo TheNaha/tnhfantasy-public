@@ -81,7 +81,7 @@ const ModelSection = memo(function ModelSection({
             </div>
 
             <div className="space-y-1.5 group">
-                <label className="text-[11px] font-bold text-purple-400 uppercase tracking-widest px-1">VAE</label>
+                <label className="text-2xs font-bold text-purple-400 uppercase tracking-widest px-1">VAE</label>
                 <select
                     value={selectedVae}
                     onChange={(e) => setSelectedVae(e.target.value)}
@@ -105,7 +105,7 @@ const ModelSection = memo(function ModelSection({
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div className="space-y-1">
-                            <label className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">
+                            <label className="text-xs uppercase text-gray-500 font-bold tracking-wider">
                                 {isFluxModel(selectedCheckpoint) ? "T5XXL Encoder" : "Primary Encoder"}
                             </label>
                             <select
@@ -140,7 +140,7 @@ const ModelSection = memo(function ModelSection({
 
                         {(isFluxModel(selectedCheckpoint) || isPonyModel(selectedCheckpoint)) && (
                             <div className="space-y-1">
-                                <label className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">CLIP-L Encoder</label>
+                                <label className="text-xs uppercase text-gray-500 font-bold tracking-wider">CLIP-L Encoder</label>
                                 <select
                                     value={selectedClip2 || ""}
                                     onChange={(e) => setSelectedClip2(e.target.value)}
@@ -256,7 +256,7 @@ const ModelSection = memo(function ModelSection({
                                                 {lora.display_name || lora.name || 'Select LoRA...'}
                                             </div>
                                             {lora.base_model && (
-                                                <span className="text-[9px] text-gray-500">{lora.base_model}</span>
+                                                <span className="text-2xs text-gray-500">{lora.base_model}</span>
                                             )}
                                         </button>
 
@@ -311,7 +311,7 @@ const ModelSection = memo(function ModelSection({
                                                                 ...prev,
                                                                 [groupKey]: !isExpanded
                                                             }))}
-                                                            className="w-full text-left text-[9px] bg-gray-800/50 hover:bg-gray-700/50 text-gray-400 px-1.5 py-1 rounded flex items-center gap-1 transition-colors"
+                                                            className="w-full text-left text-2xs bg-gray-800/50 hover:bg-gray-700/50 text-gray-400 px-1.5 py-1 rounded flex items-center gap-1 transition-colors"
                                                         >
                                                             <ChevronDown
                                                                 size={10}
@@ -325,7 +325,7 @@ const ModelSection = memo(function ModelSection({
                                                             <div className="flex flex-wrap gap-1 pl-2">
                                                                 <button
                                                                     onClick={() => handleAddTriggerWordsUI([group.fullGroup])}
-                                                                    className="text-[9px] bg-green-900/30 text-green-300 px-1.5 py-0.5 rounded hover:bg-green-900/50 transition-colors"
+                                                                    className="text-2xs bg-green-900/30 text-green-300 px-1.5 py-0.5 rounded hover:bg-green-900/50 transition-colors"
                                                                 >
                                                                     + All
                                                                 </button>
@@ -333,7 +333,7 @@ const ModelSection = memo(function ModelSection({
                                                                     <button
                                                                         key={tagIdx}
                                                                         onClick={() => setPrompt(prompt ? `${prompt}, ${tag}` : tag)}
-                                                                        className="text-[9px] bg-blue-900/30 text-blue-300 px-1.5 py-0.5 rounded hover:bg-blue-900/50 transition-colors"
+                                                                        className="text-2xs bg-blue-900/30 text-blue-300 px-1.5 py-0.5 rounded hover:bg-blue-900/50 transition-colors"
                                                                     >
                                                                         +{tag}
                                                                     </button>

@@ -67,7 +67,7 @@ export default function LoadBalancerBar({ config, stats, onUpdateStrategy, provi
                     <div className="flex flex-wrap items-center gap-2 md:gap-3 text-xs md:text-sm">
                         <span className="font-bold tracking-wide text-white">Load Balancer</span>
                         <span className="hidden sm:inline text-gray-600">·</span>
-                        <span className="rounded-lg bg-indigo-500/15 px-2.5 py-1 text-[10px] sm:text-[11px] font-bold uppercase tracking-widest text-indigo-300 border border-indigo-500/20 shadow-inner">
+                        <span className="rounded-lg bg-indigo-500/15 px-2.5 py-1 text-xs sm:text-2xs font-bold uppercase tracking-widest text-indigo-300 border border-indigo-500/20 shadow-inner">
                             {humanizeStrategy(strategy)}
                         </span>
                         <span className="hidden sm:inline text-gray-600">·</span>
@@ -77,7 +77,7 @@ export default function LoadBalancerBar({ config, stats, onUpdateStrategy, provi
                         {fallback && (
                             <>
                                 <span className="hidden sm:inline text-gray-600">·</span>
-                                <span className="text-gray-500 text-[10px] sm:text-xs font-bold uppercase tracking-widest">Fallback on</span>
+                                <span className="text-gray-500 text-xs sm:text-xs font-bold uppercase tracking-widest">Fallback on</span>
                             </>
                         )}
                     </div>
@@ -101,7 +101,7 @@ export default function LoadBalancerBar({ config, stats, onUpdateStrategy, provi
                         className="overflow-hidden bg-black/40 border-t border-white/5"
                     >
                         <div className="px-5 py-5">
-                            <div className="mb-4 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                            <div className="mb-4 text-xs font-bold uppercase tracking-widest text-gray-500">
                                 Routing Strategy
                             </div>
                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
@@ -109,7 +109,7 @@ export default function LoadBalancerBar({ config, stats, onUpdateStrategy, provi
                                     <button
                                         key={s.id}
                                         type="button"
-                                        className={`px-3 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 shadow-inner ${
+                                        className={`px-3 py-2.5 rounded-xl text-2xs font-bold uppercase tracking-widest transition-all duration-300 shadow-inner ${
                                             strategy === s.id
                                                 ? 'bg-blue-600/20 border border-blue-500/50 text-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.2)]'
                                                 : 'bg-white/5 border border-white/5 text-gray-400 hover:bg-white/10 hover:text-white'
@@ -120,7 +120,7 @@ export default function LoadBalancerBar({ config, stats, onUpdateStrategy, provi
                                     </button>
                                 ))}
                             </div>
-                            <div className="mt-5 flex flex-wrap items-center gap-5 text-[11px] font-bold uppercase tracking-widest text-gray-500">
+                            <div className="mt-5 flex flex-wrap items-center gap-5 text-2xs font-bold uppercase tracking-widest text-gray-500">
                                 <span className="flex items-center gap-2">
                                     <span className="inline-block h-2 w-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.5)]" />
                                     {activeCount} provider{activeCount !== 1 ? 's' : ''} active

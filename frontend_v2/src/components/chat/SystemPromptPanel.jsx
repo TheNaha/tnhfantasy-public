@@ -19,14 +19,14 @@ function SectionPreview({ sec }) {
             <button
                 type="button"
                 onClick={() => setExpanded(v => !v)}
-                className="w-full text-left text-[9px] font-semibold text-gray-500 px-2.5 py-1.5 bg-gray-800/30 uppercase tracking-wider border-b border-white/5 flex items-center gap-1.5 hover:bg-gray-800/60 transition-colors"
+                className="w-full text-left text-2xs font-semibold text-gray-500 px-2.5 py-1.5 bg-gray-800/30 uppercase tracking-wider border-b border-white/5 flex items-center gap-1.5 hover:bg-gray-800/60 transition-colors"
             >
                 <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', SOURCE_DOT[sec.source] ?? 'bg-gray-500')} />
                 <span className="flex-1 truncate">{sec.label}</span>
                 <span className="text-gray-600 ml-1">{expanded ? '▲' : '▼'}</span>
             </button>
             {expanded && (
-                <div className="max-h-40 overflow-y-auto px-2.5 py-2 text-[10px] leading-relaxed text-gray-300 whitespace-pre-wrap custom-scrollbar">
+                <div className="max-h-40 overflow-y-auto px-2.5 py-2 text-xs leading-relaxed text-gray-300 whitespace-pre-wrap custom-scrollbar">
                     {sec.content || '—'}
                 </div>
             )}
@@ -87,13 +87,13 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
         <div className="glass-panel p-4 rounded-xl border border-white/5 space-y-3">
             {/* Header */}
             <div className="flex items-center justify-between">
-                <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
                     <Brain size={12} /> System Prompt
                 </h4>
                 {hasOverride && (
                     <button
                         onClick={() => { setOverrideVal(''); onChatUpdate({ system_prompt_override: null }); }}
-                        className="text-[9px] text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 transition-colors"
+                        className="text-2xs text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 transition-colors"
                     >
                         Clear override
                     </button>
@@ -108,7 +108,7 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
                         type="button"
                         onClick={() => setActiveTab(t.id)}
                         className={clsx(
-                            'flex-1 py-1 text-[10px] font-bold uppercase tracking-wider rounded transition-all relative',
+                            'flex-1 py-1 text-xs font-bold uppercase tracking-wider rounded transition-all relative',
                             activeTab === t.id
                                 ? 'bg-gray-700 text-white shadow'
                                 : 'text-gray-500 hover:text-gray-300'
@@ -130,12 +130,12 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
                             <SectionPreview key={i} sec={sec} />
                         ))
                     ) : (
-                        <p className="text-[10px] text-gray-600 text-center py-3">
+                        <p className="text-xs text-gray-600 text-center py-3">
                             {activeChat ? 'No system prompt sections assembled yet.' : 'Select a chat to preview.'}
                         </p>
                     )}
                     {systemPromptData && (
-                        <p className="text-[9px] text-gray-600 pt-1 text-right">
+                        <p className="text-2xs text-gray-600 pt-1 text-right">
                             ~{systemPromptData.context_tokens ?? '?'} tokens · {systemPromptData.message_count ?? 0} messages in context
                         </p>
                     )}
@@ -144,7 +144,7 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
 
             {activeTab === 'override' && (
                 <div className="space-y-2">
-                    <p className="text-[10px] text-gray-500 leading-relaxed">
+                    <p className="text-xs text-gray-500 leading-relaxed">
                         <span className="text-orange-400 font-semibold">Chat System Prompt</span> is applied only to this chat.
                         It is appended after the character's core instructions.
                     </p>
@@ -159,7 +159,7 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
                     <button
                         type="button"
                         onClick={saveOverride}
-                        className="w-full py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg bg-orange-500/10 text-orange-300 hover:bg-orange-500/20 border border-orange-500/20 transition-colors"
+                        className="w-full py-1.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-orange-500/10 text-orange-300 hover:bg-orange-500/20 border border-orange-500/20 transition-colors"
                     >
                         Save override
                     </button>
@@ -173,20 +173,20 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
                     <div className="space-y-2">
                         <div className="flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-teal-400 shrink-0" />
-                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
                                 This chat
                             </p>
                             {hasChatAppend && (
                                 <button
                                     type="button"
                                     onClick={() => { setChatAppendVal(''); onChatUpdate({ append_system_prompt: null }); }}
-                                    className="ml-auto text-[9px] text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 transition-colors"
+                                    className="ml-auto text-2xs text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 transition-colors"
                                 >
                                     Clear
                                 </button>
                             )}
                         </div>
-                        <p className="text-[10px] text-gray-600 leading-relaxed">
+                        <p className="text-xs text-gray-600 leading-relaxed">
                             Appended after the character card, before global instructions. Only affects this chat.
                         </p>
                         <textarea
@@ -200,7 +200,7 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
                         <button
                             type="button"
                             onClick={saveChatAppend}
-                            className="w-full py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg bg-teal-500/10 text-teal-300 hover:bg-teal-500/20 border border-teal-500/20 transition-colors"
+                            className="w-full py-1.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-teal-500/10 text-teal-300 hover:bg-teal-500/20 border border-teal-500/20 transition-colors"
                         >
                             Save chat append
                         </button>
@@ -210,14 +210,14 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
                     <div className="space-y-2 pt-2 border-t border-white/5">
                         <div className="flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
-                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
                                 {linkedCharacter ? linkedCharacter.name : 'Character'} (all chats)
                             </p>
                             {hasCharAppend && (
                                 <button
                                     type="button"
                                     onClick={() => { setCharAppendVal(''); onCharacterPatch({ append_system_prompt: null }); }}
-                                    className="ml-auto text-[9px] text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 transition-colors"
+                                    className="ml-auto text-2xs text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 transition-colors"
                                 >
                                     Clear
                                 </button>
@@ -225,7 +225,7 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
                         </div>
                         {linkedCharacter ? (
                             <>
-                                <p className="text-[10px] text-gray-600 leading-relaxed">
+                                <p className="text-xs text-gray-600 leading-relaxed">
                                     Appended after the character card in <em>every</em> chat that uses {linkedCharacter.name}. Use this for permanent personality tweaks.
                                 </p>
                                 <textarea
@@ -239,13 +239,13 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
                                 <button
                                     type="button"
                                     onClick={saveCharAppend}
-                                    className="w-full py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 border border-sky-500/20 transition-colors"
+                                    className="w-full py-1.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 border border-sky-500/20 transition-colors"
                                 >
                                     Save character append
                                 </button>
                             </>
                         ) : (
-                            <p className="text-[10px] text-gray-600 text-center py-2 border border-dashed border-gray-700/50 rounded-lg">
+                            <p className="text-xs text-gray-600 text-center py-2 border border-dashed border-gray-700/50 rounded-lg">
                                 Assign a character to edit their append block.
                             </p>
                         )}

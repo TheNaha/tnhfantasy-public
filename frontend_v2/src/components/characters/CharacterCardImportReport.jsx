@@ -72,7 +72,7 @@ export default function CharacterCardImportReport({
             >
                 <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-white/5">
                     <div className="min-w-0">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">
                             Card imported
                         </p>
                         <h2 id="card-import-report-title" className="mt-1 text-lg font-bold text-gray-100">

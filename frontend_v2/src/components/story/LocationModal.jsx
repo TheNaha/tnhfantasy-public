@@ -109,7 +109,7 @@ export function LocationModal({ isOpen, onClose, location }) {
                                     className="w-full h-24 bg-black/40 border border-gray-700 rounded-lg px-4 py-3 text-gray-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none custom-scrollbar"
                                     placeholder="e.g. Misty, foreboding, bustling market square..."
                                 />
-                                <p className="text-[10px] text-gray-500 mt-1">Sensory details and mood of the location.</p>
+                                <p className="text-xs text-gray-500 mt-1">Sensory details and mood of the location.</p>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-400 mb-1.5 flex items-center gap-1.5">
@@ -122,7 +122,7 @@ export function LocationModal({ isOpen, onClose, location }) {
                                     className="w-full bg-black/40 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                                     placeholder="e.g. city, tavern, dungeon (comma-separated)"
                                 />
-                                <p className="text-[10px] text-gray-500 mt-1">Tags help with semantic lorebook lookups.</p>
+                                <p className="text-xs text-gray-500 mt-1">Tags help with semantic lorebook lookups.</p>
                             </div>
                         </div>
                     </div>

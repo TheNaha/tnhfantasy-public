@@ -42,7 +42,7 @@ function GreetingPickerModal({ character, onSelect, onClose }) {
                             className="w-full text-left p-4 rounded-xl bg-gray-800/50 border border-white/5 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all text-sm text-gray-300 group"
                         >
                             <div className="flex items-start gap-3">
-                                <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded shrink-0 mt-0.5">
+                                <span className="text-xs font-bold text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded shrink-0 mt-0.5">
                                     {idx === 0 ? 'Default' : `Alt ${idx}`}
                                 </span>
                                 <p className="line-clamp-3 leading-relaxed">{greeting}</p>

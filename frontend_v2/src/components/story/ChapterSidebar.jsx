@@ -50,7 +50,7 @@ const ChapterItem = React.memo(function ChapterItem({ chapter, isActive, onSelec
                     isActive ? "bg-indigo-500/20 text-indigo-300" : "text-gray-400 hover:bg-white/5"
                 )}
             >
-                <span className="font-mono text-[10px] text-gray-500">{chapter.chapter_number}</span>
+                <span className="font-mono text-xs text-gray-500">{chapter.chapter_number}</span>
                 <span className="truncate">{chapter.title || `Chapter ${chapter.chapter_number}`}</span>
             </button>
             {hasDelete && (
@@ -113,7 +113,7 @@ export default React.memo(function ChapterSidebar({ chapters, activeChapterId, o
                 {isLoading ? (
                     <div className="flex justify-center p-3"><Loader2 className="animate-spin text-gray-500" size={14} /></div>
                 ) : chapters?.length === 0 ? (
-                    <p className="text-[11px] text-gray-500 text-center p-3">No chapters yet</p>
+                    <p className="text-2xs text-gray-500 text-center p-3">No chapters yet</p>
                 ) : canReorder ? (
                     <DndContext
                         sensors={sensors}

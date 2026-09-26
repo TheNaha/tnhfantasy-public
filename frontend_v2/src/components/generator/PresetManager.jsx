@@ -179,7 +179,7 @@ export const PresetManager = () => {
                                                         {preset.description}
                                                     </div>
                                                 )}
-                                                <div className="text-[10px] text-gray-600 mt-1 font-mono">
+                                                <div className="text-xs text-gray-600 mt-1 font-mono">
                                                     {preset.data.width}x{preset.data.height} • {preset.data.steps} steps
                                                 </div>
                                             </div>

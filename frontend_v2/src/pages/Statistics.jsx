@@ -319,7 +319,7 @@ const Statistics = () => {
                                 <button
                                     key={w.value}
                                     onClick={() => setWorkspace(w.value)}
-                                    className={`px-4 py-2 rounded-xl text-[11px] font-bold tracking-widest uppercase transition-all duration-300 ${workspace === w.value ? 'bg-white/10 text-white border border-white/20' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'}`}
+                                    className={`px-4 py-2 rounded-xl text-2xs font-bold tracking-widest uppercase transition-all duration-300 ${workspace === w.value ? 'bg-white/10 text-white border border-white/20' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'}`}
                                 >
                                     {w.label}
                                 </button>
@@ -330,7 +330,7 @@ const Statistics = () => {
                             <button
                                 key={r.value}
                                 onClick={() => setTimeRange(r.value)}
-                                className={`px-6 py-2 rounded-xl text-[11px] font-bold tracking-widest uppercase transition-all duration-300 ${timeRange === r.value ? 'bg-gradient-to-r from-blue-600/50 to-violet-600/50 text-white shadow-[0_0_15px_rgba(59,130,246,0.3)] border border-blue-500/50' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'}`}
+                                className={`px-6 py-2 rounded-xl text-2xs font-bold tracking-widest uppercase transition-all duration-300 ${timeRange === r.value ? 'bg-gradient-to-r from-blue-600/50 to-violet-600/50 text-white shadow-[0_0_15px_rgba(59,130,246,0.3)] border border-blue-500/50' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'}`}
                             >
                                 {r.label}
                             </button>
@@ -347,7 +347,7 @@ const Statistics = () => {
                             <Sparkles size={28} className="drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
                         </div>
                         <div className="relative z-10">
-                            <h3 className="text-[10px] text-blue-400 font-bold tracking-widest uppercase mb-1">Aesthetic Signature</h3>
+                            <h3 className="text-xs text-blue-400 font-bold tracking-widest uppercase mb-1">Aesthetic Signature</h3>
                             <p className="text-gray-300 text-sm font-medium leading-relaxed">{getTopCheckpointInsight()}</p>
                         </div>
                     </motion.div>
@@ -357,7 +357,7 @@ const Statistics = () => {
                             <Zap size={28} className="drop-shadow-[0_0_8px_rgba(168,85,247,0.5)]" />
                         </div>
                         <div className="relative z-10">
-                            <h3 className="text-[10px] text-purple-400 font-bold tracking-widest uppercase mb-1">Workflow Preference</h3>
+                            <h3 className="text-xs text-purple-400 font-bold tracking-widest uppercase mb-1">Workflow Preference</h3>
                             <p className="text-gray-300 text-sm font-medium leading-relaxed">{getTopSamplerInsight()}</p>
                         </div>
                     </motion.div>
@@ -370,7 +370,7 @@ const Statistics = () => {
                         </div>
                         <div className="flex items-center gap-2 mb-4 text-gray-500 relative z-10">
                             <Image size={16} />
-                            <span className="text-[10px] font-bold uppercase tracking-widest">Total Volume</span>
+                            <span className="text-xs font-bold uppercase tracking-widest">Total Volume</span>
                         </div>
                         <div className="text-4xl font-black tracking-tight text-white relative z-10 drop-shadow-md">{data.total_images ?? 0}</div>
                     </motion.div>
@@ -381,7 +381,7 @@ const Statistics = () => {
                         </div>
                         <div className="flex items-center gap-2 mb-4 text-gray-500 relative z-10">
                             <Clock size={16} />
-                            <span className="text-[10px] font-bold uppercase tracking-widest">Avg Speed</span>
+                            <span className="text-xs font-bold uppercase tracking-widest">Avg Speed</span>
                         </div>
                         <div className="text-4xl font-black tracking-tight text-white relative z-10 drop-shadow-md">{data?.performance?.avg_time || 0}<span className="text-xl text-gray-500 ml-1">s</span></div>
                     </motion.div>
@@ -392,7 +392,7 @@ const Statistics = () => {
                         </div>
                         <div className="flex items-center gap-2 mb-4 text-gray-500 relative z-10">
                             <Hash size={16} />
-                            <span className="text-[10px] font-bold uppercase tracking-widest">Unique Words</span>
+                            <span className="text-xs font-bold uppercase tracking-widest">Unique Words</span>
                         </div>
                         <div className="text-4xl font-black tracking-tight text-white relative z-10 drop-shadow-md">{Object.keys(data?.prompts?.keywords || {}).length}</div>
                     </motion.div>
@@ -403,7 +403,7 @@ const Statistics = () => {
                         </div>
                         <div className="flex items-center gap-2 mb-4 text-emerald-500 relative z-10">
                             <Activity size={16} />
-                            <span className="text-[10px] font-bold uppercase tracking-widest">Success Rate</span>
+                            <span className="text-xs font-bold uppercase tracking-widest">Success Rate</span>
                         </div>
                         <div className="text-4xl font-black tracking-tight text-emerald-400 relative z-10 drop-shadow-[0_0_15px_rgba(52,211,153,0.3)]">
                             {data?.performance?.success_rate != null
@@ -422,7 +422,7 @@ const Statistics = () => {
                                 </div>
                                 Generation Streak
                             </h3>
-                            <span className="text-[10px] font-bold tracking-widest bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-lg border border-emerald-500/20 shadow-inner uppercase">
+                            <span className="text-xs font-bold tracking-widest bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-lg border border-emerald-500/20 shadow-inner uppercase">
                                 {currentStreak} DAY STREAK
                             </span>
                         </div>
@@ -442,7 +442,7 @@ const Statistics = () => {
                         <div className="grid grid-cols-2 gap-4 relative z-10 flex-1 content-center">
                             <div className="col-span-2 bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner flex justify-between items-end">
                                 <div>
-                                    <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1 flex items-center gap-2">
+                                    <div className="text-gray-500 text-xs font-bold uppercase tracking-widest mb-1 flex items-center gap-2">
                                         <Cpu size={14} /> GPU Hours
                                     </div>
                                     <div className="text-2xl md:text-3xl font-black text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.3)]">
@@ -452,7 +452,7 @@ const Statistics = () => {
                             </div>
                             
                             <div className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner flex flex-col justify-between">
-                                <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Power</div>
+                                <div className="text-gray-500 text-xs font-bold uppercase tracking-widest mb-1">Power</div>
                                 <div className="flex items-end gap-1">
                                     <div className="text-xl font-black text-white drop-shadow-sm">{KWH.toFixed(2)}</div>
                                     <span className="text-xs font-bold text-gray-500 mb-0.5">kWh</span>
@@ -460,7 +460,7 @@ const Statistics = () => {
                             </div>
 
                             <div className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner flex flex-col justify-between">
-                                <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Carbon</div>
+                                <div className="text-gray-500 text-xs font-bold uppercase tracking-widest mb-1">Carbon</div>
                                 <div className="flex items-end gap-1">
                                     <div className="text-xl font-black text-white drop-shadow-sm">{CO2_EMISSIONS.toFixed(2)}</div>
                                     <span className="text-xs font-bold text-gray-500 mb-0.5">kg</span>
@@ -530,7 +530,7 @@ const Statistics = () => {
 
                 <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl">
-                        <h3 className="text-[10px] font-bold tracking-widest uppercase mb-6 text-gray-500 flex items-center gap-2">
+                        <h3 className="text-xs font-bold tracking-widest uppercase mb-6 text-gray-500 flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-emerald-500" />
                             Steps Curve
                         </h3>
@@ -546,7 +546,7 @@ const Statistics = () => {
                     </div>
 
                     <div className="glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl">
-                        <h3 className="text-[10px] font-bold tracking-widest uppercase mb-6 text-gray-500 flex items-center gap-2">
+                        <h3 className="text-xs font-bold tracking-widest uppercase mb-6 text-gray-500 flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-blue-500" />
                             Samplers
                         </h3>
@@ -563,7 +563,7 @@ const Statistics = () => {
                     </div>
 
                     <div className="glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl">
-                        <h3 className="text-[10px] font-bold tracking-widest uppercase mb-6 text-gray-500 flex items-center gap-2">
+                        <h3 className="text-xs font-bold tracking-widest uppercase mb-6 text-gray-500 flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-pink-500" />
                             Resolutions
                         </h3>
@@ -641,7 +641,7 @@ const Statistics = () => {
                             ] : [])
                         ].map((p) => (
                             <div key={p.label} className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                                <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">{p.label}</div>
+                                <div className="text-gray-500 text-xs font-bold uppercase tracking-widest mb-1">{p.label}</div>
                                 <div className={`text-2xl font-black tracking-tight ${p.color}`}>{p.value ?? 0}</div>
                             </div>
                         ))}

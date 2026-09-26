@@ -47,7 +47,7 @@ export default React.memo(function StoryActionBar({
                 >
                     <GitBranch size={14} />
                     <span className="hidden sm:inline">Beats</span>
-                    <span className="text-[10px] text-gray-500">({beatCount})</span>
+                    <span className="text-xs text-gray-500">({beatCount})</span>
                 </button>
                 <button
                     onClick={onContinue}
@@ -139,7 +139,7 @@ export default React.memo(function StoryActionBar({
                                     type="button"
                                     onClick={() => onBeatRoleChange(r)}
                                     className={clsx(
-                                        "px-2.5 text-[10px] font-semibold uppercase tracking-wide transition-colors",
+                                        "px-2.5 text-xs font-semibold uppercase tracking-wide transition-colors",
                                         beatRole === r
                                             ? r === 'user'
                                                 ? "bg-blue-500/20 text-blue-300"

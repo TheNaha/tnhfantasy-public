@@ -35,7 +35,7 @@ export default function DeployTab({ deploy, deployBadge, capabilities, capabilit
                                 <span className="font-medium text-sm text-white">Console Logs</span>
                                 {deploy.status === 'deploying' && <Loader2 size={14} className="text-blue-400 animate-spin" />}
                             </div>
-                            <div className="h-[400px] overflow-y-auto font-mono text-[11px] leading-relaxed text-gray-300 whitespace-pre-wrap break-words rounded bg-black/40 p-3 ring-1 ring-inset ring-white/5 scrollbar-thin flex flex-col-reverse">
+                            <div className="h-[400px] overflow-y-auto font-mono text-2xs leading-relaxed text-gray-300 whitespace-pre-wrap break-words rounded bg-black/40 p-3 ring-1 ring-inset ring-white/5 scrollbar-thin flex flex-col-reverse">
                                 <div>{deploy.logs}</div>
                             </div>
                         </div>
@@ -44,7 +44,7 @@ export default function DeployTab({ deploy, deployBadge, capabilities, capabilit
                             <div key={step.name} className="rounded-xl border border-gray-800 bg-gray-950/70 p-4">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="font-medium text-sm text-white">{step.name}</span>
-                                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                                    <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
                                         step.skipped
                                             ? 'border-gray-600 text-gray-400'
                                             : step.success

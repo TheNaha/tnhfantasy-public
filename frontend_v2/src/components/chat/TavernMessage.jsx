@@ -10,7 +10,7 @@ const TavernMessage = memo(function TavernMessage({ content, alignRight }) {
             {segments.map((seg, i) => {
                 if (seg.type === 'action') {
                     return (
-                        <div key={i} className="text-gray-400 italic font-medium opacity-90 text-[13px] px-1 py-0.5 leading-relaxed">
+                        <div key={i} className="text-gray-400 italic font-medium opacity-90 text-sm px-1 py-0.5 leading-relaxed">
                             {seg.content}
                         </div>
                     );

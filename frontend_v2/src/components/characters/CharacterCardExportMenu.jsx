@@ -81,9 +81,9 @@ export default function CharacterCardExportMenu({ character, onExport, disabled 
                                 <span className="min-w-0">
                                     <span className="block text-xs font-medium text-gray-200">
                                         {format.label}
-                                        {isDefault && <span className="ml-1.5 text-[10px] text-gray-500">default</span>}
+                                        {isDefault && <span className="ml-1.5 text-xs text-gray-500">default</span>}
                                     </span>
-                                    <span className="block text-[11px] leading-4 text-gray-500">
+                                    <span className="block text-2xs leading-4 text-gray-500">
                                         {format.description}
                                     </span>
                                 </span>

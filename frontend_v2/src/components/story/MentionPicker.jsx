@@ -104,7 +104,7 @@ export default function MentionPicker({ textareaRef, editorContent, onSelect }) 
                 top: pickerState.y + 10 // small offset below text
             }}
         >
-            <div className="px-3 py-1.5 bg-gray-800/50 border-b border-white/5 text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
+            <div className="px-3 py-1.5 bg-gray-800/50 border-b border-white/5 text-xs text-gray-500 uppercase tracking-wider font-semibold">
                 Link Entity
             </div>
             <div className="max-h-48 overflow-y-auto">
@@ -124,7 +124,7 @@ export default function MentionPicker({ textareaRef, editorContent, onSelect }) 
                         >
                             <Icon size={14} className={isSelected ? 'text-blue-400' : 'text-gray-500'} />
                             <span className="text-sm">{item.name}</span>
-                            <span className="text-[10px] text-gray-500 ml-auto capitalize">{item._type}</span>
+                            <span className="text-xs text-gray-500 ml-auto capitalize">{item._type}</span>
                         </div>
                     );
                 })}

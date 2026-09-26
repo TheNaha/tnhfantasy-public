@@ -56,7 +56,7 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
                             </p>
                         )}
                         {item.checkpoint && (
-                            <p className="text-[10px] uppercase tracking-wider text-blue-300 mt-2 font-bold drop-shadow-md">
+                            <p className="text-xs uppercase tracking-wider text-blue-300 mt-2 font-bold drop-shadow-md">
                                 {getCheckpointDisplayName(item.checkpoint)}
                             </p>
                         )}

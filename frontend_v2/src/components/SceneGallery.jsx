@@ -75,7 +75,7 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
 
     if (imagesList.length === 0) {
         return (
-            <div className="text-[10px] text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
+            <div className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
                 No scenes generated yet
             </div>
         );
@@ -151,7 +151,7 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
                             alt=""
                             className="max-h-[85vh] max-w-full rounded-xl shadow-2xl object-contain"
                         />
-                        <p className="text-[10px] text-gray-500 text-center mt-2 truncate">{imagesList[selectedIdx]}</p>
+                        <p className="text-xs text-gray-500 text-center mt-2 truncate">{imagesList[selectedIdx]}</p>
                     </div>
                     <button
                         className="p-2.5 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors ml-2"
@@ -170,7 +170,7 @@ export function SceneCount({ count }) {
     return (
         <div className="flex items-center gap-1.5 mb-1.5">
             <Images size={12} className="text-gray-500" />
-            <span className="text-[11px] text-gray-500">{count} scene{count !== 1 ? 's' : ''}</span>
+            <span className="text-2xs text-gray-500">{count} scene{count !== 1 ? 's' : ''}</span>
         </div>
     );
 }

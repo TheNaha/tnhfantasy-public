@@ -15,7 +15,7 @@ function matchTone(score) {
 function ScoreBadge({ score, label }) {
     const color = matchTone(score);
     return (
-        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${color}`}>
+        <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${color}`}>
             {score}% · {label}
         </span>
     );
@@ -108,7 +108,7 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
                                 </div>
                                 <p className="text-xs text-gray-500 mt-2 line-clamp-2">{data?.model_description || 'No description'}</p>
                                 {data?.raw_filenames?.length > 0 && (
-                                    <p className="text-[10px] text-gray-600 mt-2 font-mono truncate max-w-md" title={data.raw_filenames[0]}>
+                                    <p className="text-xs text-gray-600 mt-2 font-mono truncate max-w-md" title={data.raw_filenames[0]}>
                                         {data.raw_filenames[0]}
                                     </p>
                                 )}
@@ -191,7 +191,7 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
                                                 )}
 
                                                 {/* Type badge */}
-                                                <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur text-white text-[10px] px-2 py-0.5 rounded">
+                                                <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur text-white text-xs px-2 py-0.5 rounded">
                                                     {cm.type}
                                                 </div>
                                             </div>
@@ -214,7 +214,7 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
                                                     )}
                                                 </div>
                                                 {cm.creator?.username && (
-                                                    <p className="text-[10px] text-gray-500 mt-1">by {cm.creator.username}</p>
+                                                    <p className="text-xs text-gray-500 mt-1">by {cm.creator.username}</p>
                                                 )}
                                             </div>
                                         </div>
@@ -286,7 +286,7 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
                                                                 </svg>
                                                             </div>
                                                         )}
-                                                        <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur text-white text-[10px] px-2 py-0.5 rounded">{cm.type}</div>
+                                                        <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur text-white text-xs px-2 py-0.5 rounded">{cm.type}</div>
                                                     </div>
                                                     <div className="p-3">
                                                         <h4 className="text-sm font-semibold text-white line-clamp-1" title={cm.name}>{cm.name}</h4>

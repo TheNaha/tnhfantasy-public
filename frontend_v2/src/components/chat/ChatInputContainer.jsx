@@ -23,7 +23,7 @@ export default function ChatInputContainer({
                     <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl text-sm text-blue-300">
                         <ImageIcon size={13} className="shrink-0" />
                         <span className="truncate flex-1 text-xs">{pendingAttachment.name}</span>
-                        <button onClick={() => setPendingAttachment(null)} className="p-1 hover:text-red-400 transition-colors shrink-0">
+                        <button onClick={() => setPendingAttachment(null)} className="p-1 min-w-6 min-h-6 inline-flex items-center justify-center hover:text-red-400 transition-colors shrink-0">
                             <X size={13} />
                         </button>
                     </div>
@@ -31,7 +31,7 @@ export default function ChatInputContainer({
                 <div className="relative">
                     {activeChat?.additional_character_ids?.length > 0 && (
                         <div className="absolute -top-10 right-0 flex items-center gap-2 bg-gray-900/80 backdrop-blur border border-gray-700 rounded-lg px-2 py-1 shadow-xl">
-                            <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Reply as:</span>
+                            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">Reply as:</span>
                             <select
                                 value={targetCharacterId}
                                 onChange={(e) => setTargetCharacterId(e.target.value)}
@@ -250,7 +250,7 @@ export default function ChatInputContainer({
                         </div>
                     </div>
                 </div>
-                <div className="mt-1.5 hidden sm:flex items-center justify-between px-1 text-[10px] text-gray-600">
+                <div className="mt-1.5 hidden sm:flex items-center justify-between px-1 text-xs text-gray-600">
                     <span><kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700 text-gray-500">Enter</kbd> to send · <kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700 text-gray-500">Shift+Enter</kbd> for newline</span>
                     <span className="flex items-center gap-2">
                         {narrateMode && (

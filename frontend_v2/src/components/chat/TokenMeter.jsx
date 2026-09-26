@@ -42,7 +42,7 @@ export default function TokenMeter({ text }) {
     if (tokens == null) return null;
     return (
         <span
-            className="text-[9px] text-gray-600 font-mono tabular-nums mr-1 select-none"
+            className="text-2xs text-gray-600 font-mono tabular-nums mr-1 select-none"
             title="Estimated tokens in the composer"
         >
             ~{tokens} tok

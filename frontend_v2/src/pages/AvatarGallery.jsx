@@ -145,7 +145,7 @@ function CharacterGridItem({ character, collections, onNavigateToCharacter }) {
                     </div>
                 )}
                 {collection?.image_count > 0 && (
-                    <div className="absolute top-2 right-2 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <div className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full flex items-center gap-1">
                         <Images size={10} /> {collection.image_count}
                     </div>
                 )}
