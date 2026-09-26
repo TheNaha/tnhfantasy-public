@@ -244,6 +244,93 @@ holds it, not just the two that define it.
 
 ---
 
+## 1b. Remediation round
+
+The findings in §2 were then fixed, in three groups: the two that could stall or
+misreport the whole app, the ones that cost money or break a feature, and the
+quality-of-life batch. 13 commits.
+
+### Cost, site-wide
+
+`resolve_provider_runtime` did two blocking Docker-SDK round trips per provider
+with no timeout, from ten `async def` handlers, and `GET /api/v2/providers/` did
+it serially — so an unreachable `DOCKER_HOST` stalled the event loop for the sum
+of every connect timeout. Now one cached `ContainerManager.get_container_snapshot`
+(2s TTL, so a list page pays one probe per container per window instead of two per
+provider per request), `resolve_provider_runtime_async` offloading under a 5s
+timeout and degrading to `unavailable` rather than raising, and
+`build_provider_records` made concurrent.
+
+`move_asset` was described as converted in `6a4e4d7` and was not. It is now a thin
+async route over `_move_asset_sync`; the copy streams in 1 MiB chunks instead of
+`dst.write(src.read())` buffering a whole asset in the event-loop process, and
+`_soft_delete_assets` reuses the caller's session instead of committing a second
+one behind the first.
+
+### Money
+
+A 503 "token not configured" was returned with `retryable: true`, which the
+backend client reads and turns into a fail-over — so a permanently misconfigured
+provider re-dispatched the same job to a second provider, spending real GPU money
+on a request that cannot succeed. A 4xx is now never retryable; a 5xx is unless
+the raiser marked it.
+
+### Broken features
+
+`external_worker` was unreachable by construction: `/ws/worker/{id}`
+authenticates against `config.worker_token` and nothing could produce that key, so
+no worker could ever register. There is now a mint/revoke API, a constant-time
+compare, and `scripts/external_worker_client.py` — the missing client half.
+Verified live: a real worker connects, the provider's runtime mode flips to
+`external_worker`, and `/api/workers/connected` shows a live heartbeat.
+
+Four provider response dialects across nine engine methods, all HTTP 200, are now
+one builder in `provider_core/responses.py`, with the contract the backend actually
+reads grepped and preserved first. The Google engine no longer puts its API key in
+a URL. `direct_url.get_health` actually probes. `DELETE /delete-file` accepts the
+body the backend sends instead of 422-ing.
+
+### Performance
+
+`/api/statistics?timeRange=30d` cost 3.4s where `timeRange=all` cost 1.2s, because
+the range filter was a jsonb expression applied to every one of the ten grouped
+aggregations. `assets.job_completed_at` makes it an indexed comparison: **30d
+3.4s → 0.56s, 24h 3.0s → 0.31s**. The prompt-derived aggregates are cached on an
+exact `md5(string_agg(...))` content hash computed in Postgres, so `all` goes
+**3.2s → 1.1s** and later recomputations are hits.
+
+### Three things worth keeping in mind
+
+- **Gating `/info` nearly broke the Diagnostics tab, and the near-miss is the
+  lesson.** `/info` *does* have a consumer (`GET /providers/{id}/live-metrics`,
+  polled every 5 s). The providers all answer to their container-id hostname, and
+  `COMFY_WORKER_HOSTS` is empty, so the `tnhcomfy-` prefix heuristic matched
+  nothing and the token was never attached — the gate turned an invisible omission
+  into a visible outage. Fixed at the root: the host set is now resolved from the
+  database, so no self-discovered provider can be missed again.
+- **The first revoke implementation reported success and left the credential
+  live.** `_normalize_provider_for_storage` merges a payload *over* the existing
+  config, so a payload without `worker_token` put it straight back. Tests now pin
+  it.
+- **An exact cache key was cheaper than an approximate one.** Row count + total
+  prompt length would have been a fast signature and would have missed an in-place
+  prompt edit of identical length. `md5(string_agg(...))` costs 0.4s in Postgres,
+  never transfers the 9.1 MB, and notices every edit.
+
+### Correcting the write-up
+
+Six line references in §2 were wrong, found while fixing: `Dashboard.jsx` is at
+`src/pages/`, not `src/components/dashboard/`; `TokenMeter.jsx` is at
+`src/components/chat/`; the raw `addEventListener` the brief called a third Escape
+source has no Escape branch at all (it handles ctrl+A, s, r, Space, Delete); there
+is no `chatApi.getTokenUsage` — `TokenMeter` POSTs `estimate-tokens` for composer
+text and is not per-chat; "the backend has a default branch" is false
+(`branch_id` is never set on a normal send, so every message is its own branch row);
+and `direct_url.validate_models` raised `TypeError` → 500 rather than silently
+dropping the field.
+
+---
+
 ## 2. Found, not fixed
 
 Ordered by value. All were read and verified by the sweeps; none are speculative.
