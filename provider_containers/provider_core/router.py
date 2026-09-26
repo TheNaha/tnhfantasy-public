@@ -10,8 +10,9 @@ from .logging import get_logger
 from .models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest, DeleteFileRequest,
-    ReconcileRequest, build_status_response, build_error_response
+    ReconcileRequest, build_error_response
 )
+from .responses import config_fault_detail, retryable_for_status
 
 logger = get_logger("provider_core.router")
 
@@ -56,7 +57,13 @@ async def _require_worker_token(request: Request) -> None:
         )
         raise HTTPException(
             status_code=503,
-            detail="PROVIDER_WORKER_TOKEN is not configured on this provider container",
+            # retryable=False, explicitly: this container will answer 503 until
+            # someone edits its environment. Advertising it as retryable made
+            # the dispatcher fail the job over to a second provider and spend
+            # real GPU money on a request that cannot succeed.
+            detail=config_fault_detail(
+                "PROVIDER_WORKER_TOKEN is not configured on this provider container"
+            ),
         )
     provided = request.headers.get("X-Provider-Token", "")
     if not provided or not hmac.compare_digest(provided, expected):
@@ -72,18 +79,21 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
             message = detail.get("message") or detail.get("detail") or str(detail)
         else:
             message = str(detail)
-            
+        # A raiser that knows the fault is permanent says so in the detail (see
+        # responses.config_fault_detail); everything else 5xx is transient.
+        retryable = retryable_for_status(exc.status_code, detail)
+
         import json
         if request.url.path.rstrip("/").endswith("/inference"):
             async def stream():
-                yield json.dumps(build_error_response(message=message, retryable=exc.status_code >= 500, code=exc.status_code)) + "\n"
+                yield json.dumps(build_error_response(message=message, retryable=retryable, code=exc.status_code)) + "\n"
             return StreamingResponse(stream(), status_code=exc.status_code, media_type="application/x-ndjson")
 
         return JSONResponse(
             status_code=exc.status_code,
             content=build_error_response(
                 message=message,
-                retryable=exc.status_code >= 500,
+                retryable=retryable,
                 code=exc.status_code,
             )
         )
@@ -108,7 +118,10 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
 
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
-        logger.error(f"Unhandled exception: {type(exc).__name__}: {exc}")
+        # exc_info=True: this is the only traceback a crash inside a handler
+        # produces, and a `modal deploy` / `beam deploy` subprocess that dies
+        # here left nothing at all in any log.
+        logger.error(f"Unhandled exception: {type(exc).__name__}: {exc}", exc_info=True)
         
         import json
         if request.url.path.rstrip("/").endswith("/inference"):
@@ -127,18 +140,32 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
 
     @app.get("/health")
     async def health():
+        # MUST stay unauthenticated: the compose and Dockerfile healthchecks call
+        # it with no headers.
         return await client.get_health()
 
-    @app.get("/info")
+    @app.get("/info", dependencies=protected)
     async def info():
+        # Now gated. It returns the upstream endpoint (direct_url's comfy_url is
+        # a LAN IP, modal's is a *.modal.run URL) and the provider identity, and
+        # nothing unauthenticated on the Docker bridge should read either.
+        # NOTE: the only consumer is GET /api/v2/providers/{id}/live-metrics
+        # (api/routes/providers/lifecycle.py), which the Diagnostics tab polls
+        # every 5s. The backend attaches X-Provider-Token for tnhcomfy-*
+        # container hosts and for COMFY_WORKER_HOSTS, so a provider reached by
+        # any other hostname now answers 401 there.
         return await client.get_info()
 
     @app.get("/config", dependencies=protected)
     async def config_get():
         return client.get_config()
 
-    @app.get("/provider-stats")
+    @app.get("/provider-stats", dependencies=protected)
     async def provider_stats():
+        # Now gated: nothing in backend_v2 or frontend_v2 calls it, and on a
+        # remote_comfy provider this fans out to MODEL_DIRECTORIES x
+        # list_models — 16 authenticated round trips to the remote agent —
+        # triggered by an unauthenticated request.
         return await client.get_storage_stats()
 
     @app.post("/config", dependencies=protected)
@@ -185,8 +212,15 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
         return await client.delete_file(request.path)
 
     @app.delete("/delete-file", dependencies=protected)
-    async def delete_file_query(path: str):
-        return await client.delete_file(path)
+    async def delete_file_query(request: DeleteFileRequest | None = None, path: str | None = None):
+        # Accept the path in either the body or the query string. A DELETE with a
+        # JSON body is what the backend actually sends, and a handler that only
+        # declared `path: str` read the *query* parameter, so that request 422'd
+        # and the caller reported "not found" for a file it had just written.
+        target = (request.path if request is not None else None) or path
+        if not target:
+            raise HTTPException(status_code=400, detail="path is required")
+        return await client.delete_file(target)
 
     @app.post("/upload-file", dependencies=protected)
     async def upload_file(request: UploadFileRequest):

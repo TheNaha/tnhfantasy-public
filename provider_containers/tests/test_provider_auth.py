@@ -99,3 +99,42 @@ class TestProviderAuthRejectsBadTokens:
         client = _app()
         response = client.get("/list-models", headers={"X-Provider-Token": TOKEN})
         assert response.status_code not in (401, 503)
+
+
+class TestStateReadingRoutesAreGated:
+    """`/info` and `/provider-stats` were the last two state-reading routes
+    left without `dependencies=protected`.
+
+    `/info` returns the upstream endpoint (direct_url's `comfy_url` is a LAN IP,
+    modal's is a *.modal.run URL). `/provider-stats` is amplification: nothing
+    overrides `BaseProviderClient.get_storage_stats` on a remote_comfy provider,
+    so one unauthenticated GET fanned out to MODEL_DIRECTORIES x list_models —
+    16 authenticated round trips to the remote agent.
+
+    `/health` must stay open: the compose and Dockerfile healthchecks call it
+    with no headers.
+    """
+
+    def test_info_requires_the_token(self, token_env):
+        client = _app()
+        assert client.get("/info").status_code == 401
+        assert client.get(
+            "/info", headers={"X-Provider-Token": TOKEN}
+        ).json() == {"engine": "test"}
+
+    def test_provider_stats_requires_the_token(self, token_env):
+        client = _app()
+        assert client.get("/provider-stats").status_code == 401
+        assert client.get(
+            "/provider-stats", headers={"X-Provider-Token": TOKEN}
+        ).json() == {"total_models": 0}
+
+    def test_state_routes_fail_closed_without_a_configured_token(self, monkeypatch):
+        monkeypatch.delenv("PROVIDER_WORKER_TOKEN", raising=False)
+        client = _app()
+        assert client.get("/info").status_code == 503
+        assert client.get("/provider-stats").status_code == 503
+
+    def test_health_stays_open(self, token_env):
+        client = _app()
+        assert client.get("/health").status_code == 200
