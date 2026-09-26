@@ -1,11 +1,11 @@
 /**
- * useJobRecovery — failed-job diagnostics, retry and cancel.
+ * useJobRecovery — failed-job diagnostics, retry, cancel and acknowledgement.
  *
  * Owns the ['jobs','failed'] query (the same cache key useJobsRealtime
  * invalidates on JOB_FAILED) and the mutations that act on failed jobs:
- * retry, cancel and queue recovery. Every mutation refreshes the job, queue,
- * active and failed caches so the dashboard, queue panel and diagnostics view
- * never disagree about a job's state.
+ * retry, cancel, acknowledgement (dismiss) and queue recovery. Every mutation
+ * refreshes the job, queue, active and failed caches so the dashboard, queue
+ * panel and diagnostics view never disagree about a job's state.
  */
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -27,14 +27,22 @@ function invalidateJobViews(queryClient) {
  * @param {object} [options]
  * @param {number} [options.limit] - Failed jobs to fetch (max 100 server-side)
  * @param {string|null} [options.taskType] - 'image' | 'llm' filter
+ * @param {boolean} [options.includeAcknowledged] - Include acknowledged
+ *   failures in the page. Part of the query key, so toggling it refetches
+ *   rather than re-filtering a cached page.
  * @param {boolean} [options.enabled]
  */
-export function useJobRecovery({ limit = DEFAULT_LIMIT, taskType = null, enabled = true } = {}) {
+export function useJobRecovery({
+    limit = DEFAULT_LIMIT,
+    taskType = null,
+    includeAcknowledged = false,
+    enabled = true,
+} = {}) {
     const queryClient = useQueryClient();
 
     const query = useQuery({
-        queryKey: [...FAILED_JOBS_QUERY_KEY, { limit, taskType }],
-        queryFn: () => jobsApi.getFailed({ limit, taskType }),
+        queryKey: [...FAILED_JOBS_QUERY_KEY, { limit, taskType, includeAcknowledged }],
+        queryFn: () => jobsApi.getFailed({ limit, taskType, includeAcknowledged }),
         enabled,
         staleTime: 15_000,
         refetchOnWindowFocus: false,
@@ -44,6 +52,10 @@ export function useJobRecovery({ limit = DEFAULT_LIMIT, taskType = null, enabled
     const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
     const total = data?.total ?? jobs.length;
     const summary = data?.summary ?? null;
+    // How many failures the server is holding back as acknowledged. It is 0
+    // when acknowledged jobs were requested, so it is only a "there are more"
+    // hint while they are hidden.
+    const acknowledgedCount = data?.acknowledged_count ?? 0;
 
     const retryMutation = useMutation({
         mutationFn: (jobId) => jobsApi.retry(jobId),
@@ -60,6 +72,22 @@ export function useJobRecovery({ limit = DEFAULT_LIMIT, taskType = null, enabled
         onSuccess: invalidateJobViews(queryClient),
     });
 
+    /**
+     * Acknowledgement is dismissal, not deletion: the job keeps its history and
+     * can be restored, which is why the same mutation carries both directions.
+     */
+    const acknowledgeMutation = useMutation({
+        mutationFn: ({ jobId, acknowledged = true } = {}) =>
+            jobsApi.acknowledge(jobId, acknowledged),
+        onSuccess: invalidateJobViews(queryClient),
+    });
+
+    const acknowledgeAllMutation = useMutation({
+        mutationFn: ({ acknowledged = true, taskType = null } = {}) =>
+            jobsApi.acknowledgeAll({ acknowledged, taskType }),
+        onSuccess: invalidateJobViews(queryClient),
+    });
+
     const retryJob = useCallback((jobId) => retryMutation.mutateAsync(jobId), [retryMutation]);
     const cancelJob = useCallback(
         (jobId, reason) => cancelMutation.mutateAsync({ jobId, reason }),
@@ -69,11 +97,28 @@ export function useJobRecovery({ limit = DEFAULT_LIMIT, taskType = null, enabled
         (options) => recoverMutation.mutateAsync(options),
         [recoverMutation]
     );
+    const acknowledgeJob = useCallback(
+        (jobId) => acknowledgeMutation.mutateAsync({ jobId, acknowledged: true }),
+        [acknowledgeMutation]
+    );
+    const unacknowledgeJob = useCallback(
+        (jobId) => acknowledgeMutation.mutateAsync({ jobId, acknowledged: false }),
+        [acknowledgeMutation]
+    );
+    const acknowledgeAll = useCallback(
+        (options) => acknowledgeAllMutation.mutateAsync({ acknowledged: true, ...options }),
+        [acknowledgeAllMutation]
+    );
+    const unacknowledgeAll = useCallback(
+        () => acknowledgeAllMutation.mutateAsync({ acknowledged: false }),
+        [acknowledgeAllMutation]
+    );
 
     return {
         jobs,
         total,
         summary,
+        acknowledgedCount,
         isLoading: query.isLoading,
         isFetching: query.isFetching,
         error: query.error,
@@ -82,6 +127,10 @@ export function useJobRecovery({ limit = DEFAULT_LIMIT, taskType = null, enabled
         retryJob,
         cancelJob,
         recoverJobs,
+        acknowledgeJob,
+        unacknowledgeJob,
+        acknowledgeAll,
+        unacknowledgeAll,
 
         isRetrying: retryMutation.isPending,
         retryError: retryMutation.error,
@@ -93,6 +142,13 @@ export function useJobRecovery({ limit = DEFAULT_LIMIT, taskType = null, enabled
         isRecovering: recoverMutation.isPending,
         recoverError: recoverMutation.error,
         recoverySummary: recoverMutation.data ?? null,
+
+        isAcknowledging: acknowledgeMutation.isPending,
+        acknowledgeError: acknowledgeMutation.error,
+        acknowledgingJobId: acknowledgeMutation.variables?.jobId ?? null,
+
+        isAcknowledgingAll: acknowledgeAllMutation.isPending,
+        acknowledgeAllError: acknowledgeAllMutation.error,
     };
 }
 

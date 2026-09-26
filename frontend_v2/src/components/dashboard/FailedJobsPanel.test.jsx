@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import toast from 'react-hot-toast';
 import FailedJobsPanel from './FailedJobsPanel';
 
 const useJobRecovery = vi.fn();
@@ -9,23 +10,34 @@ vi.mock('../../hooks/useJobRecovery', () => ({
     useJobRecovery: (...args) => useJobRecovery(...args),
 }));
 
-vi.mock('react-hot-toast', () => ({
-    default: { success: vi.fn(), error: vi.fn() },
-}));
+vi.mock('react-hot-toast', () => {
+    const toast = vi.fn();
+    toast.success = vi.fn();
+    toast.error = vi.fn();
+    toast.dismiss = vi.fn();
+    return { default: toast };
+});
 
 function makeRecovery(overrides = {}) {
     return {
         jobs: [],
         total: 0,
         summary: null,
+        acknowledgedCount: 0,
         isLoading: false,
         retryJob: vi.fn().mockResolvedValue({}),
         cancelJob: vi.fn().mockResolvedValue({}),
         recoverJobs: vi.fn().mockResolvedValue({ recovered: 0, failed: 0 }),
+        acknowledgeJob: vi.fn().mockResolvedValue({}),
+        unacknowledgeJob: vi.fn().mockResolvedValue({}),
+        acknowledgeAll: vi.fn().mockResolvedValue({ acknowledged: true, updated: 1 }),
+        unacknowledgeAll: vi.fn().mockResolvedValue({ acknowledged: false, updated: 1 }),
         isRetrying: false,
         retryingJobId: null,
         isCancelling: false,
         isRecovering: false,
+        isAcknowledging: false,
+        isAcknowledgingAll: false,
         ...overrides,
     };
 }
@@ -85,6 +97,17 @@ function siblingJob(id, durationSeconds) {
             duration_seconds: durationSeconds,
         },
     };
+}
+
+/** The same job, already acknowledged by the user. */
+function acknowledgedJob(overrides = {}) {
+    return { ...FAILED_JOB, acknowledged_at: '2026-01-01T13:00:00Z', ...overrides };
+}
+
+/** Render the body of the last toast, which is where the Undo action lives. */
+function renderLastToast() {
+    const renderToast = toast.mock.calls.at(-1)[0];
+    return render(renderToast({ id: 'dismiss-toast' }));
 }
 
 describe('FailedJobsPanel', () => {
@@ -365,5 +388,242 @@ describe('FailedJobsPanel', () => {
             expect(list.className).toContain('overflow-y-auto');
             expect(list.className).toContain('max-h-[40vh]');
         });
+    });
+
+    describe('dismissal', () => {
+        it('renders one dismiss control per failure group, named for its cause', () => {
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [
+                        FAILED_JOB,
+                        siblingJob('job-2', 7),
+                        {
+                            ...FAILED_JOB,
+                            id: 'job-3',
+                            provider_id: 'llm-local',
+                            diagnostics: { ...FAILED_JOB.diagnostics, error_type: 'timeout' },
+                        },
+                    ],
+                    total: 3,
+                })
+            );
+            renderPanel();
+            expandPanel();
+
+            expect(
+                screen.getByLabelText(
+                    'Dismiss the 2 jobs that failed on p1 without retrying them'
+                )
+            ).toBeInTheDocument();
+            expect(
+                screen.getByLabelText(
+                    'Dismiss the 1 job that failed on llm-local without retrying it'
+                )
+            ).toBeInTheDocument();
+        });
+
+        it('acknowledges every job in the dismissed group and nothing else', async () => {
+            const acknowledgeJob = vi.fn().mockResolvedValue({});
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [
+                        FAILED_JOB,
+                        siblingJob('job-2', 7),
+                        {
+                            ...FAILED_JOB,
+                            id: 'job-3',
+                            provider_id: 'llm-local',
+                            diagnostics: { ...FAILED_JOB.diagnostics, error_type: 'timeout' },
+                        },
+                    ],
+                    total: 3,
+                    acknowledgeJob,
+                })
+            );
+            renderPanel();
+            expandPanel();
+
+            fireEvent.click(
+                screen.getByLabelText('Dismiss the 2 jobs that failed on p1 without retrying them')
+            );
+
+            await waitFor(() => expect(acknowledgeJob).toHaveBeenCalledTimes(2));
+            expect(acknowledgeJob.mock.calls.map((call) => call[0])).toEqual(['job-1', 'job-2']);
+        });
+
+        it('undo on the dismiss toast restores exactly the dismissed jobs', async () => {
+            const unacknowledgeJob = vi.fn().mockResolvedValue({});
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [FAILED_JOB, siblingJob('job-2', 7)],
+                    total: 2,
+                    unacknowledgeJob,
+                })
+            );
+            renderPanel();
+            expandPanel();
+
+            fireEvent.click(
+                screen.getByLabelText('Dismiss the 2 jobs that failed on p1 without retrying them')
+            );
+
+            await waitFor(() => expect(toast).toHaveBeenCalled());
+            renderLastToast();
+            expect(screen.getByText('Dismissed 2 failures')).toBeInTheDocument();
+
+            fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+
+            await waitFor(() => expect(unacknowledgeJob).toHaveBeenCalledTimes(2));
+            expect(unacknowledgeJob.mock.calls.map((call) => call[0])).toEqual(['job-1', 'job-2']);
+            expect(toast.dismiss).toHaveBeenCalledWith('dismiss-toast');
+        });
+
+        it('reports a failed dismiss instead of claiming success', async () => {
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [FAILED_JOB],
+                    total: 1,
+                    acknowledgeJob: vi.fn().mockRejectedValue(new Error('Job is not failed')),
+                })
+            );
+            renderPanel();
+            expandPanel();
+
+            fireEvent.click(
+                screen.getByLabelText('Dismiss the 1 job that failed on p1 without retrying it')
+            );
+
+            await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Job is not failed'));
+            expect(toast).not.toHaveBeenCalled();
+        });
+
+        it('dismisses everything from the header without retrying anything', async () => {
+            const acknowledgeAll = vi.fn().mockResolvedValue({ acknowledged: true, updated: 7 });
+            const retryJob = vi.fn().mockResolvedValue({});
+            useJobRecovery.mockReturnValue(
+                makeRecovery({ jobs: [FAILED_JOB], total: 7, acknowledgeAll, retryJob })
+            );
+            renderPanel();
+
+            // Reachable while collapsed, next to Recover, and not a retry.
+            fireEvent.click(
+                screen.getByLabelText('Dismiss all failures without retrying them')
+            );
+
+            await waitFor(() => expect(acknowledgeAll).toHaveBeenCalled());
+            expect(retryJob).not.toHaveBeenCalled();
+            await waitFor(() => expect(toast).toHaveBeenCalled());
+            renderLastToast();
+            expect(screen.getByText('Dismissed 7 failures')).toBeInTheDocument();
+        });
+
+        it('undo on dismiss-all restores every failure', async () => {
+            const unacknowledgeAll = vi.fn().mockResolvedValue({ acknowledged: false, updated: 7 });
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [FAILED_JOB],
+                    total: 7,
+                    acknowledgeAll: vi.fn().mockResolvedValue({ acknowledged: true, updated: 7 }),
+                    unacknowledgeAll,
+                })
+            );
+            renderPanel();
+
+            fireEvent.click(
+                screen.getByLabelText('Dismiss all failures without retrying them')
+            );
+
+            await waitFor(() => expect(toast).toHaveBeenCalled());
+            renderLastToast();
+            fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+
+            await waitFor(() => expect(unacknowledgeAll).toHaveBeenCalled());
+        });
+
+        it('renders nothing when the only failures left are acknowledged', () => {
+            useJobRecovery.mockReturnValue(makeRecovery({ jobs: [], total: 0 }));
+            const { container } = renderPanel();
+
+            // The default query hides acknowledged jobs, so an all-dismissed
+            // history leaves the panel with nothing to render.
+            expect(container).toBeEmptyDOMElement();
+            expect(useJobRecovery).toHaveBeenCalledWith({ limit: 5, includeAcknowledged: false });
+        });
+
+        it('refetches with acknowledged failures only once the toggle is on', async () => {
+            useJobRecovery.mockReturnValue(
+                makeRecovery({ jobs: [FAILED_JOB], total: 1, acknowledgedCount: 3 })
+            );
+            renderPanel();
+
+            // Quiet while there is nothing to bring back, counted when there is.
+            const toggle = screen.getByRole('button', { name: 'Show acknowledged (3)' });
+            expect(toggle).toHaveAttribute('aria-pressed', 'false');
+            fireEvent.click(toggle);
+
+            expect(useJobRecovery).toHaveBeenLastCalledWith({
+                limit: 5,
+                includeAcknowledged: true,
+            });
+        });
+
+        it('counts the acknowledged failures once they are shown', async () => {
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [FAILED_JOB, acknowledgedJob({ id: 'job-2' })],
+                    total: 2,
+                })
+            );
+            renderPanel();
+
+            fireEvent.click(screen.getByRole('button', { name: 'Show acknowledged' }));
+
+            const toggle = screen.getByRole('button', { name: 'Hide acknowledged (1)' });
+            expect(toggle).toHaveAttribute('aria-pressed', 'true');
+        });
+
+        it('marks an acknowledged group and offers to show it again', async () => {
+            const unacknowledgeJob = vi.fn().mockResolvedValue({});
+            useJobRecovery.mockReturnValue(
+                makeRecovery({
+                    jobs: [acknowledgedJob()],
+                    total: 1,
+                    unacknowledgeJob,
+                })
+            );
+            renderPanel();
+            expandPanel();
+
+            expect(screen.getByText('Acknowledged')).toBeInTheDocument();
+            fireEvent.click(
+                screen.getByLabelText('Show the dismissed 1 job from p1 again')
+            );
+
+            await waitFor(() =>
+                expect(unacknowledgeJob).toHaveBeenCalledWith('job-1')
+            );
+        });
+    });
+});
+
+describe('FailedJobsPanel — fully dismissed', () => {
+    it('keeps a way back when every failure is dismissed', () => {
+        // Rendering nothing once the last failure is dismissed removed the only
+        // re-entry point, because the "show acknowledged" toggle lives inside the
+        // panel. The 6s undo toast is not a durable way back.
+        useJobRecovery.mockReturnValue(makeRecovery({ jobs: [], acknowledgedCount: 3 }));
+
+        render(<FailedJobsPanel />);
+
+        expect(screen.getByText(/3 dismissed failures/i)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /show dismissed/i })).toBeInTheDocument();
+    });
+
+    it('renders nothing when there is nothing to show and nothing to restore', () => {
+        useJobRecovery.mockReturnValue(makeRecovery({ jobs: [], acknowledgedCount: 0 }));
+
+        const { container } = render(<FailedJobsPanel />);
+
+        expect(container).toBeEmptyDOMElement();
     });
 });

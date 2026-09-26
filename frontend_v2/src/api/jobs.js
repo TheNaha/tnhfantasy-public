@@ -52,18 +52,47 @@ export const jobsApi = {
 
     /**
      * List failed jobs (newest first) with diagnostics and a page summary.
+     * Acknowledged jobs are hidden unless explicitly asked for, so a user who
+     * has already dealt with a failure does not keep seeing it.
      * @param {object} [params]
      * @param {number} [params.limit]
      * @param {number} [params.offset]
      * @param {string} [params.taskType]
+     * @param {boolean} [params.includeAcknowledged] - Include acknowledged failures
      */
     getFailed: (params = {}) => {
         const query = {};
         if (params.limit != null) query.limit = params.limit;
         if (params.offset != null) query.offset = params.offset;
         if (params.taskType) query.task_type = params.taskType;
+        if (params.includeAcknowledged) query.include_acknowledged = true;
         return api.get('/api/jobs/failed', { params: query });
     },
+
+    /**
+     * Acknowledge a failed job — the user has read it and does not want it
+     * retried. Not a delete: the job and its history stay, but the job stops
+     * being reported as an unacknowledged failure until it is restored.
+     * Idempotent in both directions.
+     * @param {string} jobId
+     * @param {boolean} [acknowledged] - true acknowledges, false restores
+     */
+    acknowledge: (jobId, acknowledged = true) =>
+        api.post(`/api/jobs/${jobId}/acknowledge`, { acknowledged: !!acknowledged }),
+
+    /**
+     * Acknowledge or restore every failed job at once. Applies to all
+     * failures matching the filter regardless of their current acknowledged
+     * state, so it is idempotent in both directions.
+     * @param {object} [params]
+     * @param {boolean} [params.acknowledged] - true acknowledges, false restores
+     * @param {string|null} [params.taskType] - 'image' | 'llm' filter
+     */
+    acknowledgeAll: ({ acknowledged = true, taskType = null } = {}) =>
+        api.post('/api/jobs/acknowledge-all', {
+            acknowledged: !!acknowledged,
+            task_type: taskType ?? null,
+        }),
 
     /**
      * Requeue interrupted work and fail jobs wedged past the stale timeout.

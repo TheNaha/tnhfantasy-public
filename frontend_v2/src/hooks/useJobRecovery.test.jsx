@@ -10,6 +10,8 @@ vi.mock('../api', () => ({
         retry: vi.fn(),
         cancel: vi.fn(),
         recover: vi.fn(),
+        acknowledge: vi.fn(),
+        acknowledgeAll: vi.fn(),
     },
 }));
 
@@ -77,7 +79,11 @@ describe('useJobRecovery', () => {
         await waitFor(() => expect(result.current.jobs).toHaveLength(1));
         expect(result.current.total).toBe(1);
         expect(result.current.summary.by_error_type).toEqual({ providers_exhausted: 1 });
-        expect(jobsApi.getFailed).toHaveBeenCalledWith({ limit: 10, taskType: null });
+        expect(jobsApi.getFailed).toHaveBeenCalledWith({
+            limit: 10,
+            taskType: null,
+            includeAcknowledged: false,
+        });
     });
 
     it('defaults to an empty list when the payload is malformed', async () => {
@@ -89,6 +95,20 @@ describe('useJobRecovery', () => {
         await waitFor(() => expect(result.current.jobs).toEqual([]));
         expect(result.current.total).toBe(0);
         expect(result.current.summary).toBeNull();
+        expect(result.current.acknowledgedCount).toBe(0);
+    });
+
+    it('exposes how many acknowledged failures the server is holding back', async () => {
+        jobsApi.getFailed.mockResolvedValue({
+            jobs: [FAILED_JOB],
+            total: 1,
+            acknowledged_count: 4,
+        });
+        const { wrapper } = makeWrapper();
+
+        const { result } = renderHook(() => useJobRecovery(), { wrapper });
+
+        await waitFor(() => expect(result.current.acknowledgedCount).toBe(4));
     });
 
     it('passes limit and task type through to the API', async () => {
@@ -98,8 +118,35 @@ describe('useJobRecovery', () => {
         renderHook(() => useJobRecovery({ limit: 25, taskType: 'llm' }), { wrapper });
 
         await waitFor(() =>
-            expect(jobsApi.getFailed).toHaveBeenCalledWith({ limit: 25, taskType: 'llm' })
+            expect(jobsApi.getFailed).toHaveBeenCalledWith({
+                limit: 25,
+                taskType: 'llm',
+                includeAcknowledged: false,
+            })
         );
+    });
+
+    it('includes acknowledged failures in a separate query when asked', async () => {
+        jobsApi.getFailed.mockResolvedValue({ jobs: [FAILED_JOB], total: 1 });
+        const { wrapper } = makeWrapper();
+
+        const { rerender } = renderHook(
+            ({ includeAcknowledged }) => useJobRecovery({ includeAcknowledged }),
+            { wrapper, initialProps: { includeAcknowledged: false } }
+        );
+
+        await waitFor(() => expect(jobsApi.getFailed).toHaveBeenCalledTimes(1));
+
+        rerender({ includeAcknowledged: true });
+
+        // Part of the query key, so the toggle refetches instead of
+        // re-filtering a cached page that hid the acknowledged jobs.
+        await waitFor(() => expect(jobsApi.getFailed).toHaveBeenCalledTimes(2));
+        expect(jobsApi.getFailed).toHaveBeenLastCalledWith({
+            limit: 10,
+            taskType: null,
+            includeAcknowledged: true,
+        });
     });
 
     it('does not fetch when disabled', async () => {
@@ -180,5 +227,82 @@ describe('useJobRecovery', () => {
         expect(summary.recovered).toBe(2);
         expect(jobsApi.recover).toHaveBeenCalledWith({});
         await waitFor(() => expect(result.current.recoverySummary.failed_job_ids).toEqual(['job-9']));
+    });
+
+    describe('acknowledgement', () => {
+        async function renderReady(overrides = {}) {
+            jobsApi.getFailed.mockResolvedValue({ jobs: [FAILED_JOB], total: 1 });
+            jobsApi.acknowledge.mockResolvedValue({ id: 'job-1', acknowledged_at: '2026-01-01T00:00:00Z' });
+            jobsApi.acknowledgeAll.mockResolvedValue({ acknowledged: true, updated: 1 });
+            const { queryClient, wrapper } = makeWrapper();
+            const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+            const rendered = renderHook(() => useJobRecovery(overrides), { wrapper });
+            await waitFor(() => expect(rendered.result.current.jobs).toHaveLength(1));
+            invalidate.mockClear();
+            return { ...rendered, invalidate };
+        }
+
+        it('acknowledges a job and invalidates the job views', async () => {
+            const { result, invalidate } = await renderReady();
+
+            await act(async () => {
+                await result.current.acknowledgeJob('job-1');
+            });
+
+            expect(jobsApi.acknowledge).toHaveBeenCalledWith('job-1', true);
+            const invalidatedKeys = invalidate.mock.calls.map((call) => call[0].queryKey);
+            expect(invalidatedKeys).toContainEqual(['jobs']);
+            expect(invalidatedKeys).toContainEqual(['gallery']);
+        });
+
+        it('restores a job without retrying it', async () => {
+            const { result } = await renderReady();
+
+            await act(async () => {
+                await result.current.unacknowledgeJob('job-1');
+            });
+
+            expect(jobsApi.acknowledge).toHaveBeenCalledWith('job-1', false);
+        });
+
+        it('acknowledges every failed job in one call', async () => {
+            const { result, invalidate } = await renderReady();
+
+            let bulk;
+            await act(async () => {
+                bulk = await result.current.acknowledgeAll();
+            });
+
+            expect(jobsApi.acknowledgeAll).toHaveBeenCalledWith({
+                acknowledged: true,
+                taskType: null,
+            });
+            expect(bulk.updated).toBe(1);
+            const invalidatedKeys = invalidate.mock.calls.map((call) => call[0].queryKey);
+            expect(invalidatedKeys).toContainEqual(['jobs']);
+            expect(invalidatedKeys).toContainEqual(['gallery']);
+        });
+
+        it('restores every failed job in one call', async () => {
+            const { result } = await renderReady();
+
+            await act(async () => {
+                await result.current.unacknowledgeAll();
+            });
+
+            expect(jobsApi.acknowledgeAll).toHaveBeenCalledWith({
+                acknowledged: false,
+                taskType: null,
+            });
+        });
+
+        it('surfaces acknowledgement errors to the caller', async () => {
+            const { result } = await renderReady();
+            jobsApi.acknowledge.mockRejectedValue(new Error('Job is not failed'));
+
+            await expect(result.current.acknowledgeJob('job-1')).rejects.toThrow(
+                'Job is not failed'
+            );
+        });
     });
 });
