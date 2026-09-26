@@ -40,10 +40,19 @@ done
 
 echo
 echo "==> Provider env files"
-# These are gitignored and machine-specific; a clean checkout has none of them
-# and compose aborts with "env file ... not found".
-for f in .env.modal-zetsuke .env.modal-hp196 .env.modal-stepmania .env.llm-local .env.direct-url; do
-  [[ -f "$f" ]] && ok "$f" || note "$f absent — the matching provider service will fail to start"
+# These are gitignored and machine-specific, and `docker compose` aborts with
+# "env file ... not found" if one is missing — for EVERY service, with an
+# unrelated-looking error, before anything starts. This used to `note` the
+# absence, so `warn` stayed 0 and the script printed "Preflight passed" and
+# exited 0 on precisely the clean checkout it exists to catch. It is a hard
+# failure unless the service that needs it is not being started, which is why
+# the recommendation is to create the file rather than to proceed.
+#
+# The list is derived from the `env_file:` entries in docker-compose.yml so it
+# cannot fall behind a new provider.
+provider_env_files=$(grep -oE '\.env\.[a-z0-9-]+' docker-compose.yml | sort -u)
+for f in $provider_env_files; do
+  [[ -f "$f" ]] && ok "$f" || bad "$f missing — docker compose will refuse to start (create it or remove the service)"
 done
 
 echo
