@@ -121,6 +121,21 @@ export const useUpdateChat = () => {
         mutationFn: ({ chatId, ...data }) => api.patch(`/api/v2/chats/${chatId}`, data),
         onMutate: async (variables) => {
             const { chatId, ...data } = variables;
+            // The list is cached under `buildQueryKey(QUERY_KEYS.CHATS, workspace,
+            // limit, offset)` — a 5-element key. Reading and writing the bare
+            // 2-element prefix always returned `undefined`, so the optimistic
+            // rename never appeared in the sidebar and the `onError` rollback
+            // below was dead code. `get/setQueriesData` matches by prefix, so it
+            // covers every workspace/limit/offset variant at once.
+            //
+            // Two consequences of the prefix also matching the chat *detail*
+            // query: the updater must leave non-array entries alone (calling
+            // `.map` on the detail object threw and failed the whole mutation),
+            // and the snapshot has to be taken *before* the detail is patched or
+            // the rollback would restore the already-optimistic value.
+            await queryClient.cancelQueries({ queryKey: CHAT_LIST_KEY });
+            const previousChats = queryClient.getQueriesData({ queryKey: CHAT_LIST_KEY });
+
             await queryClient.cancelQueries({ queryKey: CHAT_DETAIL_KEY(chatId) });
             const previousChat = queryClient.getQueryData(CHAT_DETAIL_KEY(chatId));
 
@@ -131,11 +146,11 @@ export const useUpdateChat = () => {
                 });
             }
 
-            await queryClient.cancelQueries({ queryKey: CHAT_LIST_KEY });
-            const previousChats = queryClient.getQueryData(CHAT_LIST_KEY);
-            if (previousChats) {
-                queryClient.setQueryData(CHAT_LIST_KEY,
-                    previousChats.map(c => c.id === chatId ? { ...c, ...data } : c)
+            if (previousChats.length > 0) {
+                queryClient.setQueriesData({ queryKey: CHAT_LIST_KEY }, (cached) =>
+                    Array.isArray(cached)
+                        ? cached.map(c => c.id === chatId ? { ...c, ...data } : c)
+                        : cached
                 );
             }
 
@@ -145,14 +160,20 @@ export const useUpdateChat = () => {
             if (context?.previousChat) {
                 queryClient.setQueryData(CHAT_DETAIL_KEY(variables.chatId), context.previousChat);
             }
-            if (context?.previousChats) {
-                queryClient.setQueryData(CHAT_LIST_KEY, context.previousChats);
-            }
+            // Only the list-shaped entries; the detail entry is restored above.
+            context?.previousChats?.forEach(([key, value]) => {
+                if (Array.isArray(value)) {
+                    queryClient.setQueryData(key, value);
+                }
+            });
         },
         onSettled: (data, error, variables) => {
+            // The list prefix-matches every cached list variant; the detail key
+            // prefix-matches the detail query and its system-prompt/jobs/images
+            // sub-queries, which is intended. A second identical call with an
+            // explicit `exact: false` was a no-op duplicate.
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
             queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
-            queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId), exact: false });
         }
     });
 };
