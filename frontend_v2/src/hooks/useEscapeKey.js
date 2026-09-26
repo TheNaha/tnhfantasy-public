@@ -1,6 +1,23 @@
 import { useEffect } from 'react';
 
 /**
+ * Live registrations, newest last.
+ *
+ * Every `useEscapeKey` handler is a listener on the *same* target (`window`, in
+ * the bubble phase), so `stopPropagation()` cannot disarm the siblings — that
+ * only stops propagation to other targets, not other listeners on this one.
+ * That made one Escape press close a dialog *and* the confirmation stacked on
+ * top of it, so confirming a delete inside the Lorebook dialog also discarded
+ * the half-finished form behind it.
+ *
+ * Registration order is mount order, so the most recently mounted live dialog is
+ * the topmost one, and letting only that one act restores the expected
+ * behaviour: Escape dismisses exactly the thing on top.
+ */
+let nextRegistrationId = 0;
+const liveRegistrations = new Set();
+
+/**
  * Close-on-Escape for dialogs.
  *
  * Most of the app's overlays handled the backdrop click and the close button
@@ -16,15 +33,29 @@ import { useEffect } from 'react';
 export function useEscapeKey(onEscape, active = true) {
     useEffect(() => {
         if (!active || !onEscape) return undefined;
+
+        const registration = { id: ++nextRegistrationId };
+        liveRegistrations.add(registration);
+
         const onKey = (event) => {
             if (event.key !== 'Escape') return;
             // Let a nested handler opt out by calling preventDefault.
             if (event.defaultPrevented) return;
+
+            let topmost = null;
+            for (const candidate of liveRegistrations) {
+                if (!topmost || candidate.id > topmost.id) topmost = candidate;
+            }
+            if (topmost !== registration) return;
+
             event.stopPropagation();
             onEscape();
         };
         window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        return () => {
+            liveRegistrations.delete(registration);
+            window.removeEventListener('keydown', onKey);
+        };
     }, [active, onEscape]);
 }
 

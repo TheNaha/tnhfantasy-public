@@ -66,6 +66,48 @@ describe('useEscapeKey', () => {
         expect(onEscape).not.toHaveBeenCalled();
     });
 
+    it('only the topmost live dialog reacts to one Escape press', () => {
+        // Every handler is a listener on the same target, so stopPropagation
+        // cannot disarm the siblings. Without the topmost-wins rule, opening a
+        // ConfirmationModal on top of the LorebookModal and pressing Escape
+        // closed both — discarding the half-finished form behind the confirm.
+        const onOuter = vi.fn();
+        const onInner = vi.fn();
+        const { rerender, unmount } = render(
+            <>
+                <Probe onEscape={onOuter} />
+                <Probe onEscape={onInner} />
+            </>
+        );
+        expect(handlers.size).toBe(2);
+
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        expect(onInner).toHaveBeenCalledTimes(1);
+        expect(onOuter).not.toHaveBeenCalled();
+
+        // The inner dialog closes; the outer one is now topmost and takes over.
+        rerender(<Probe onEscape={onOuter} />);
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        expect(onOuter).toHaveBeenCalledTimes(1);
+        expect(onInner).toHaveBeenCalledTimes(1);
+
+        unmount();
+    });
+
+    it('an inactive dialog does not become topmost', () => {
+        const onOuter = vi.fn();
+        const onInner = vi.fn();
+        render(
+            <>
+                <Probe onEscape={onOuter} />
+                <Probe active={false} onEscape={onInner} />
+            </>
+        );
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        expect(onOuter).toHaveBeenCalledTimes(1);
+        expect(onInner).not.toHaveBeenCalled();
+    });
+
     it('removes the listener on unmount', () => {
         const onEscape = vi.fn();
         const { unmount } = render(<Probe active onEscape={onEscape} />);
