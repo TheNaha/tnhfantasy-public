@@ -1625,7 +1625,49 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add characters card_spec/card_spec_version/creator/character_version/group_greetings/card_metadata and embedded_lorebook_id FK for lossless SillyTavern cards",
             apply_fn=_migration_064_add_character_card_metadata,
         ),
+        MigrationStep(
+            version="065_index_jobs_metadata_chat_id",
+            description="Btree expression index on jobs ((metadata_->>'chat_id')) so chat-scoped job lookups stop sequentially scanning",
+            apply_fn=_migration_065_index_jobs_metadata_chat_id,
+        ),
     ]
+
+
+def _migration_065_index_jobs_metadata_chat_id(conn) -> bool:
+    """Index jobs by the chat_id inside metadata_.
+
+    Three hot queries filter on the chat a job belongs to (chats.py job listing,
+    chats.py recent-LLM-job lookup, agent_simulation's in-flight check). The GIN
+    index from migration 024 supports the `?` containment operator, NOT `->>`
+    equality, so those were sequential scans on the largest table in the schema.
+
+    The index expression deliberately includes the `::varchar` cast:
+    SQLAlchemy compiles `Job.metadata_["chat_id"].as_string() == chat_id` to
+    `CAST((metadata_ ->> 'chat_id') AS VARCHAR) = ?`, and a btree expression
+    index is only used when the query's expression matches it exactly. Indexing
+    the bare `(metadata_ ->> 'chat_id')` would have left every query still
+    scanning.
+
+    `->>` is Postgres-specific, so this is a no-op on SQLite.
+    """
+    if conn.dialect.name != "postgresql":
+        return False
+
+    inspector = inspect(conn)
+    if "jobs" not in inspector.get_table_names():
+        return False
+
+    existing = {idx["name"] for idx in inspector.get_indexes("jobs")}
+    if "ix_jobs_metadata_chat_id" in existing:
+        return False
+
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_jobs_metadata_chat_id "
+            "ON jobs (((metadata_->>'chat_id')::varchar))"
+        )
+    )
+    return True
 
 
 def _migration_049_seed_starter_pack(conn) -> bool:
@@ -1641,15 +1683,30 @@ def _migration_049_seed_starter_pack(conn) -> bool:
         ).scalar()
         if not exists:
             now = datetime.now(timezone.utc).isoformat()
+            # `sort_order` is added by migration 055, which runs *after* this
+            # step.  Including it here aborted startup on any database that had
+            # not yet run 055 (`column "sort_order" does not exist`); fresh
+            # databases only survived because create_all() happened to run
+            # first.  Detect it instead of assuming.
+            has_sort_order = "sort_order" in {
+                col["name"] for col in inspector.get_columns("characters")
+            }
+            columns = (
+                "id, name, description, personality, scenario, first_mes, "
+                "system_prompt, visual_tags, created_at, updated_at"
+            )
+            values = (
+                ":id, :name, :description, :personality, :scenario, :first_mes, "
+                ":system_prompt, :visual_tags, :created_at, :updated_at"
+            )
+            if has_sort_order:
+                columns = columns.replace(
+                    "visual_tags,", "visual_tags, sort_order,"
+                )
+                values = values.replace(":visual_tags,", ":visual_tags, 0,")
             conn.execute(
-                text("""
-                    INSERT INTO characters (
-                        id, name, description, personality, scenario, first_mes,
-                        system_prompt, visual_tags, sort_order, created_at, updated_at
-                    ) VALUES (
-                        :id, :name, :description, :personality, :scenario, :first_mes,
-                        :system_prompt, :visual_tags, 0, :created_at, :updated_at
-                    )
+                text(f"""
+                    INSERT INTO characters ({columns}) VALUES ({values})
                 """),
                 {
                     "id": "demo-lyra",
