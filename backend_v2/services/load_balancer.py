@@ -73,6 +73,42 @@ LLM_FAILURE_STREAK_THRESHOLD = _parse_positive_int(
     3,
 )
 
+# Bound for the Docker-socket probe in `_check_provider_health`. The underlying
+# docker-py call still has no timeout of its own, so this `asyncio.wait_for` is
+# the only thing standing between a wedged daemon and a job submission that
+# never returns. Generous enough for a cold socket, short enough that routing
+# degrades to "unhealthy" instead of hanging. The 15s health cache means this
+# only applies to the first caller to miss.
+_CONTAINER_PROBE_TIMEOUT_SECONDS = _parse_positive_float(
+    os.getenv("COMFY_LB_CONTAINER_PROBE_TIMEOUT_SECONDS"),
+    5.0,
+)
+
+# HTTP /health probe timeout. NOTE: this was 2.0s and is intentionally left at
+# 2.0s — it is a separate tuning question from the blocking-socket problem, and
+# a cold ComfyUI container can legitimately take longer than 2s to answer /health.
+# Cold candidates are selected anyway (see `get_next_provider`), so a tight value
+# here costs a wasted HTTP round trip rather than a routing failure. Raise it via
+# COMFY_LB_HTTP_PROBE_TIMEOUT_SECONDS if cold-start routing misbehaves.
+_HTTP_HEALTH_PROBE_TIMEOUT_SECONDS = _parse_positive_float(
+    os.getenv("COMFY_LB_HTTP_PROBE_TIMEOUT_SECONDS"),
+    2.0,
+)
+
+
+def _host_port_for_container(container_manager, provider_id: str, container_name: str, port: int) -> str | None:
+    """Resolve the host-published port for a provider container.
+
+    Blocking: reads `container.ports` from the Docker socket with no timeout.
+    Callers MUST run this via `asyncio.to_thread` under a bounded `wait_for`.
+    """
+    container = container_manager.client.containers.get(container_name)
+    ports = container.ports or {}
+    tcp_port_info = ports.get(f"{port}/tcp") or ports.get("8000/tcp")
+    if not tcp_port_info:
+        return None
+    return tcp_port_info[0].get("HostPort") or None
+
 
 @dataclass
 class LoadBalancerRuntimeState:
@@ -260,11 +296,21 @@ class LoadBalancer:
     
     @classmethod
     async def remove_provider_state(cls, session: Session, provider_id: str, runtime_state: LoadBalancerRuntimeState | None = None):
-        """Remove a provider's job counts and failures when the provider is deleted."""
+        """Remove a provider's job counts and failures when the provider is deleted.
+
+        The state mutation happens under the asyncio lock; the DB write happens
+        after it is released. `save_state_to_db` is a synchronous SELECT +
+        `session.commit()`, and its own docstring says it never holds locks —
+        the caller used to violate that, so every concurrent `get_next_provider`
+        awaiting the lock stalled for the length of a blocking commit. Same bug
+        `_track_job` had.
+        """
         # If runtime_state is provided explicitly, only clean that one up.
         # Otherwise, clean up all known runtime states.
         stores_to_clean = [(None, runtime_state)] if runtime_state else list(_runtime_states.items())
-        
+
+        pending_persist: list[tuple[LoadBalancerRuntimeState, int, dict[str, Any]]] = []
+
         for state_id, store in stores_to_clean:
             async with store.get_lock():
                 persist_needed = False
@@ -275,7 +321,11 @@ class LoadBalancer:
                     store.provider_failures.pop(provider_id, None)
                     persist_needed = True
                 if persist_needed and state_id is not None:
-                    cls.save_state_to_db(session, runtime_state=store, state_id=state_id)
+                    pending_persist.append((store, state_id, cls._get_state_snapshot(store)))
+
+        # Lock released: blocking commit off the critical section.
+        for store, state_id, snapshot in pending_persist:
+            cls.save_state_to_db(session, runtime_state=store, state_id=state_id, snapshot=snapshot)
     
     def __init__(self, session: Session, strategy: str = "round-robin", runtime_state: LoadBalancerRuntimeState | None = None, state_id: int = 1):
         """
@@ -321,6 +371,15 @@ class LoadBalancer:
         is_healthy = False
         
         # 1. First try container_manager container status (if containerized)
+        #
+        # `get_next_provider` awaits this for every candidate in a serial loop, and
+        # this used to call `cm.client.containers.get()` directly — a blocking
+        # docker-py round trip with NO timeout kwarg (docker-py defaults to 60s) —
+        # on the event loop. On a health-cache miss, one dead provider cost up to
+        # 60s of a wedged loop before the job was even submitted. `get_container_snapshot`
+        # is the sanctioned accessor for this (its docstring says the same thing)
+        # and adds a 2s TTL cache, so the probe goes through `to_thread` with a
+        # bounded wait.
         if provider.container_config:
             try:
                 from infrastructure.deps import get_container_manager
@@ -328,10 +387,21 @@ class LoadBalancer:
                 if cm and cm.client:
                     container_name = provider_container_name(provider.id)
                     try:
-                        container = cm.client.containers.get(container_name)
-                        if container.status != "running":
+                        snapshot = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                cm.get_container_snapshot, provider.id, container_name
+                            ),
+                            timeout=_CONTAINER_PROBE_TIMEOUT_SECONDS,
+                        )
+                        if snapshot is not None and snapshot.status != "running":
                             _provider_health_cache[cache_key] = False
                             return False
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "health_container_probe_timeout",
+                            provider_id=provider.id,
+                            timeout=_CONTAINER_PROBE_TIMEOUT_SECONDS,
+                        )
                     except Exception:
                         logger.debug("health_container_probe_failed", provider_id=provider.id)
             except Exception as exc:
@@ -342,7 +412,7 @@ class LoadBalancer:
             url = resolve_provider_health_url(provider, port)
             
             client = get_http_client()
-            response = await client.get(url, timeout=2.0)
+            response = await client.get(url, timeout=_HTTP_HEALTH_PROBE_TIMEOUT_SECONDS)
             if response.status_code == 200:
                 is_healthy = True
         except Exception:
@@ -352,16 +422,19 @@ class LoadBalancer:
                 cm = get_container_manager()
                 if cm and cm.client:
                     container_name = provider_container_name(provider.id)
-                    container = cm.client.containers.get(container_name)
-                    ports = container.ports
-                    tcp_port_info = ports.get(f"{port}/tcp") or ports.get("8000/tcp")
-                    if tcp_port_info:
-                        host_port = tcp_port_info[0].get("HostPort")
-                        if host_port:
-                            client = get_http_client()
-                            response = await client.get(f"http://localhost:{host_port}/health", timeout=2.0)
-                            if response.status_code == 200:
-                                is_healthy = True
+                    # Second blocking Docker read for the host port mapping: same
+                    # to_thread + bounded-wait treatment as step 1.
+                    host_port = await asyncio.wait_for(
+                        asyncio.to_thread(_host_port_for_container, cm, provider.id, container_name, port),
+                        timeout=_CONTAINER_PROBE_TIMEOUT_SECONDS,
+                    )
+                    if host_port:
+                        client = get_http_client()
+                        response = await client.get(f"http://localhost:{host_port}/health", timeout=_HTTP_HEALTH_PROBE_TIMEOUT_SECONDS)
+                        if response.status_code == 200:
+                            is_healthy = True
+            except asyncio.TimeoutError:
+                logger.debug("health_localhost_probe_timeout", provider_id=provider.id, cache_key=cache_key)
             except Exception:
                 logger.debug("health_localhost_probe_failed", provider_id=provider.id, cache_key=cache_key)
 
@@ -553,13 +626,24 @@ class LoadBalancer:
                     return
             except Exception:
                 try:
-                    # Localhost fallback via Docker host port mapping
+                    # Localhost fallback via Docker host port mapping.
+                    # Same blocking-socket problem as `_check_provider_health`:
+                    # `containers.get()` is off-loop here too, and this poll runs
+                    # once a second for up to 30s.
                     cm = get_container_manager()
                     if cm and cm.client:
-                        container = cm.client.containers.get(provider_container_name(provider.id))
-                        tcp_port_info = (container.ports or {}).get(f"{port}/tcp") or (container.ports or {}).get("8000/tcp")
-                        if tcp_port_info and tcp_port_info[0].get("HostPort"):
-                            res = await client.get(f"http://localhost:{tcp_port_info[0]['HostPort']}/health", timeout=1.0)
+                        host_port = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                _host_port_for_container,
+                                cm,
+                                provider.id,
+                                provider_container_name(provider.id),
+                                port,
+                            ),
+                            timeout=_CONTAINER_PROBE_TIMEOUT_SECONDS,
+                        )
+                        if host_port:
+                            res = await client.get(f"http://localhost:{host_port}/health", timeout=1.0)
                             if res.status_code == 200:
                                 _provider_health_cache[cache_key] = True
                                 logger.info("lb_cold_start_polled", provider_id=provider.id, success=True, duration=time.monotonic() - start_time)

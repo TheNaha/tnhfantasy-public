@@ -26,7 +26,7 @@ from services.provider_client import (
     JobTimeoutError,
     ProviderCallError,
 )
-from services.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime_async
 
 logger = get_logger("job_runner")
 
@@ -344,7 +344,10 @@ async def execute_job(
                     attempt=attempt,
                 )
 
-                runtime = resolve_provider_runtime(current_provider)
+                # Off the event loop: the sync resolver does a blocking,
+                # timeout-less Docker-socket read, and this is the hottest
+                # coroutine in the app — every job, every attempt.
+                runtime = await resolve_provider_runtime_async(current_provider)
                 if not runtime.connected:
                     logger.warning("provider_runtime_unavailable", job_id=job_id, provider=current_provider.id, mode=runtime.mode)
                     await load_balancer.report_failure(current_provider.id)

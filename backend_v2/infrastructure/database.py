@@ -12,6 +12,43 @@ from infrastructure.migrations import run_migrations
 logger = db_logger()
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive int from the environment, falling back to `default`."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+# Explicit pool sizing for the Postgres path.
+#
+# Left unconfigured, SQLAlchemy's non-SQLite default is
+# QueuePool(pool_size=5, max_overflow=10, pool_timeout=30) — a hard ceiling of
+# 15 connections. That ceiling is easy to hit here because this app checks out
+# connections from a thread pool as well as from request handlers: every
+# `asyncio.to_thread(_something_sync)` helper, every LoadBalancer state
+# persist, and every provider health probe opens its own session, and those run
+# concurrently with the request-scoped sessions that are still held across
+# long awaits. A gallery page firing 50 thumbnail requests plus a couple of
+# in-flight chat requests used to exhaust the pool and 500 everything else after
+# a 30s wait.
+#
+# The size is deliberately well above the concurrent-request count: the extra
+# headroom is for to_thread DB helpers, which check out of this same pool, and
+# for blocking-DB-in-async call sites. Override per deployment with
+# COMFY_DB_POOL_SIZE / COMFY_DB_MAX_OVERFLOW / COMFY_DB_POOL_TIMEOUT.
+DB_POOL_SIZE = _positive_int_env("COMFY_DB_POOL_SIZE", 30)
+DB_MAX_OVERFLOW = _positive_int_env("COMFY_DB_MAX_OVERFLOW", 30)
+DB_POOL_TIMEOUT = _positive_int_env("COMFY_DB_POOL_TIMEOUT", 30)
+# Recycle below the usual 1h/infra limit so a long-lived pool never hands out a
+# connection the far side has already dropped.
+DB_POOL_RECYCLE = _positive_int_env("COMFY_DB_POOL_RECYCLE", 1800)
+
+
 def get_database_url() -> str:
     """Get database URL, ensuring data directory exists."""
     url = settings.database_url
@@ -71,7 +108,15 @@ if database_url.startswith("sqlite"):
         cursor.close()
 
 else:
-    engine = create_engine(database_url, echo=False)
+    engine = create_engine(
+        database_url,
+        echo=False,
+        pool_size=DB_POOL_SIZE,
+        max_overflow=DB_MAX_OVERFLOW,
+        pool_timeout=DB_POOL_TIMEOUT,
+        pool_recycle=DB_POOL_RECYCLE,
+        pool_pre_ping=True,
+    )
 
 
 def _enable_pgvector_extension() -> None:

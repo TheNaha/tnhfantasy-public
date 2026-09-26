@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from config import get_config
+from infrastructure.background_tasks import start_background_task
 from infrastructure.database import database_url
 from infrastructure.logging import get_logger
 from services.job_service import STALE_JOB_TIMEOUT_SECONDS
@@ -140,10 +141,20 @@ class JobQueue:
 
     def _schedule_notify(self) -> None:
         try:
-            asyncio.create_task(self._notify_wake())
+            asyncio.get_running_loop()
         except RuntimeError:
             # No running event loop (e.g. sync callers) — best-effort only.
-            pass
+            return
+        # Tracked, not a bare `asyncio.create_task`: asyncio only holds a weak
+        # reference to a running task, and `_notify_wake` immediately awaits
+        # `asyncio.to_thread` — exactly the window in which the task is
+        # collectable, so the NOTIFY was silently dropped under GC pressure.
+        # `start_background_task` also names, logs and cancels it on shutdown.
+        start_background_task(
+            self._notify_wake(),
+            task_name="queue_notify_wake",
+            timeout=30.0,
+        )
 
     async def _notify_wake(self) -> None:
         try:
@@ -540,6 +551,11 @@ class QueueManager:
         self.llm: JobQueue = JobQueue(max_workers=1, task_type="llm")
         self._processor: Callable[[str, str | None], Awaitable[None]] | None = None
         self._notify_listener: _PgNotifyListener | None = None
+        # In-flight pool resizes. Held so `stop()` can drain them: a resize that
+        # is still pending when shutdown starts would otherwise land after the
+        # workers were cancelled and leave the pool at the wrong size (or
+        # resurrect a worker task on a closed loop).
+        self._resize_tasks: set[asyncio.Task[Any]] = set()
 
     def set_processor(self, processor: Callable[[str, str | None], Awaitable[None]]) -> None:
         """Register the same processor on both queues."""
@@ -574,9 +590,20 @@ class QueueManager:
         if self._notify_listener:
             self._notify_listener.stop()
             self._notify_listener = None
+        await self._drain_resize_tasks()
         await self.image.stop(timeout_seconds=timeout_seconds)
         await self.llm.stop(timeout_seconds=timeout_seconds)
         logger.info("queue_manager_stopped")
+
+    async def _drain_resize_tasks(self) -> None:
+        """Cancel and await any in-flight pool resizes."""
+        pending = list(self._resize_tasks)
+        if not pending:
+            return
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        self._resize_tasks.clear()
 
     def resize(self, image_workers: int, llm_workers: int) -> None:
         """Resize both queues.
@@ -585,7 +612,11 @@ class QueueManager:
         max_workers so ``start()`` spawns the right number of workers.
 
         Post-start (provider changes at runtime): spawns async resize tasks
-        that actually add/remove worker coroutines.
+        that actually add/remove worker coroutines. Those are tracked in
+        ``_resize_tasks`` (and drained by ``stop()``) rather than left to
+        ``asyncio.create_task`` — an untracked task mutates ``queue._workers``
+        and asyncio only holds a weak reference to it, so it could be collected
+        mid-flight and silently leave the pool at the old size.
         """
         self.image.max_workers = max(1, image_workers)
         self.llm.max_workers = max(1, llm_workers)
@@ -597,7 +628,13 @@ class QueueManager:
                 asyncio.get_running_loop()
             except RuntimeError:
                 continue
-            asyncio.create_task(queue.resize(count))
+            task = start_background_task(
+                queue.resize(count),
+                task_name=f"queue_resize:{queue._task_type}",
+                timeout=60.0,
+            )
+            self._resize_tasks.add(task)
+            task.add_done_callback(self._resize_tasks.discard)
 
     async def recover_pending_jobs(self, job_service) -> tuple:
         """Recover pending jobs, routing each to the correct queue by task_type."""

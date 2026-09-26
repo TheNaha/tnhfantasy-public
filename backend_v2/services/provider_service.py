@@ -4,7 +4,8 @@ import secrets
 from copy import deepcopy
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlmodel import Session
+from sqlalchemy import update
 
 from core.entities import Job, LoadBalancingConfig, Provider
 from core.events import EventType, emit_provider_event
@@ -339,6 +340,22 @@ class ProviderService:
         logger.info("provider_worker_token_revoked", provider_id=provider_id)
         return True
 
+    def _detach_provider_jobs(self, provider_id: str) -> int:
+        """Null out `jobs.provider_id` for a deleted provider, in one statement.
+
+        Returns the number of rows updated. Uses a Core UPDATE rather than an
+        ORM load-and-mutate so the row count is known without materialising the
+        job rows, and so the whole detach is one round trip regardless of how
+        many jobs the provider has run.
+        """
+        result = self.session.exec(
+            update(Job).where(Job.provider_id == provider_id).values(provider_id=None)
+        )
+        rowcount = result.rowcount or 0
+        if rowcount:
+            self.session.commit()
+        return rowcount
+
     async def delete_provider(self, provider_id: str) -> bool:
         from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
         from services.load_balancer import LoadBalancer
@@ -354,14 +371,15 @@ class ProviderService:
         # keeping, so the reference is cleared rather than cascading: the rows
         # stay and the provider column becomes NULL, which is exactly what the
         # column's `str | None` type already allows.
-        detached = self.session.exec(
-            select(Job).where(Job.provider_id == provider_id)
-        ).all()
-        for job in detached:
-            job.provider_id = None
-        if detached:
-            self.session.commit()
-            logger.info("provider_jobs_detached", provider_id=provider_id, jobs_detached=len(detached))
+        #
+        # Done as one statement-level UPDATE. Selecting the matching rows and
+        # assigning them in Python had no LIMIT and pulled every `Job` — with
+        # its multi-KB `workflow` and `metadata` JSONB — into memory, then
+        # flushed it back as one UPDATE per row, all inline on the event loop
+        # (this route awaits the service directly).
+        jobs_detached = self._detach_provider_jobs(provider_id)
+        if jobs_detached:
+            logger.info("provider_jobs_detached", provider_id=provider_id, jobs_detached=jobs_detached)
         
         success = self.repo.delete(provider_id)
         if not success:

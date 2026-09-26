@@ -10,6 +10,7 @@
 #   PUT    /api/v2/providers/load-balancing – Update LB strategy
 #   POST   /api/v2/providers/{id}/reconcile – Trigger model sync
 #   GET/POST /api/v2/providers/{id}/container/* – Container lifecycle management
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -105,38 +106,20 @@ async def get_all_container_statuses(
     
     # Get all providers
     providers = await service.list_providers()
-    
-    statuses = {}
-    for provider in providers:
-        provider_id = provider["id"]
-        container_name = provider_container_name(provider_id)
-        
-        try:
-            container = container_manager.client.containers.get(container_name)
-            container.reload()
-            
-            # Check health
-            healthy = False
-            health_status = container.attrs.get('State', {}).get('Health', {}).get('Status')
-            if health_status:
-                healthy = health_status == 'healthy'
-            
-            statuses[provider_id] = {
-                "status": container.status,
-                "running": container.status == "running",
-                "healthy": healthy,
-                "container_id": container.short_id
-            }
-            
-            # Update in-memory dict
-            if container.status == "running":
-                container_manager.running_containers[provider_id] = container
-        except Exception:
-            statuses[provider_id] = {
-                "status": "stopped",
-                "running": False,
-                "healthy": False
-            }
+
+    # The per-container probes are blocking, timeout-less Docker round trips.
+    # This route is polled by the providers page, so a cold request used to put
+    # 2 x N of them on the event loop, serially. `get_container_snapshot` is the
+    # sanctioned accessor (it also carries its own 2s TTL cache, which this
+    # route's 10s-only-on-success cache did not provide on failure paths);
+    # `asyncio.to_thread` keeps it off the loop.
+    statuses = await asyncio.gather(*(
+        asyncio.to_thread(
+            _container_status_sync, container_manager, provider["id"]
+        )
+        for provider in providers
+    ))
+    statuses = dict(zip((p["id"] for p in providers), statuses, strict=False))
     
     result = {
         "statuses": statuses,
@@ -145,6 +128,54 @@ async def get_all_container_statuses(
     }
     _container_status_cache['all_statuses'] = {**result, "cached": True}
     return result
+
+
+def _container_status_sync(container_manager, provider_id: str) -> dict:
+    """Worker-thread body: one provider's container status dict.
+
+    Status/health come from `get_container_snapshot`, which carries its own 2s
+    TTL cache and is the documented accessor for container state. `container_id`
+    is not on the snapshot, so a `containers.get` is still issued — but only
+    when the snapshot says the container is up, which is the case where the
+    `running_containers` bookkeeping below actually has work to do. A provider
+    whose container is down therefore costs no Docker round trip at all beyond
+    the (cached) snapshot probe.
+    """
+    container_name = provider_container_name(provider_id)
+
+    try:
+        snapshot = container_manager.get_container_snapshot(provider_id, container_name)
+    except Exception as exc:
+        logger.debug("container_status_snapshot_failed", provider_id=provider_id, error=str(exc))
+        return _stopped_container_status()
+
+    if snapshot is None:
+        return _stopped_container_status()
+
+    healthy = snapshot.health == "healthy" if snapshot.health else False
+    status = {
+        "status": snapshot.status,
+        "running": snapshot.status == "running",
+        "healthy": healthy,
+        "container_id": None,
+    }
+
+    if not status["running"]:
+        return status
+
+    try:
+        container = container_manager.client.containers.get(container_name)
+        status["container_id"] = container.short_id
+        # Update in-memory dict
+        container_manager.running_containers[provider_id] = container
+    except Exception as exc:
+        logger.debug("container_status_lookup_failed", provider_id=provider_id, error=str(exc))
+
+    return status
+
+
+def _stopped_container_status() -> dict:
+    return {"status": "stopped", "running": False, "healthy": False, "container_id": None}
 
 
 @router.get("/status-cards")
