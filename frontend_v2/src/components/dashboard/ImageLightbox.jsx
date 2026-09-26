@@ -24,8 +24,13 @@ export default memo(function ImageLightbox({
     const [imgIndex, setImgIndex] = useState(currentIndex);
     const touchStartRef = useRef(null);
 
-    // Use image from images array if available, otherwise use the single image prop
-    const displayImage = images.length > 0 ? images[imgIndex] : image;
+    // Use image from images array if available, otherwise use the single image prop.
+    // An out-of-range index falls back to `image` rather than yielding undefined:
+    // a null render would return early here while `useSelectedImageState` still
+    // held the body scroll lock, leaving an unscrollable page with no lightbox
+    // on it.
+    const indexedImage = images.length > 0 ? images[imgIndex] : undefined;
+    const displayImage = indexedImage || image;
     const displayPath = assetPath(displayImage);
     const hasMultiple = images.length > 1;
 

@@ -71,7 +71,7 @@ export default function DashboardOverlays({
                 <ImageLightbox
                     image={selectedImage}
                     images={lightboxImages}
-                    currentIndex={selectedImage.siblingImages?.findIndex(img => img.name === selectedImage.name) || 0}
+                    currentIndex={Math.max(0, selectedImage.siblingImages?.findIndex(img => img.name === selectedImage.name) ?? 0)}
                     onNavigate={onLightboxNavigate}
                     metadata={metadata}
                     loadingMeta={loadingMeta}
