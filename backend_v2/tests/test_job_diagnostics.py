@@ -351,7 +351,6 @@ class TestFailedJobListing:
 class TestCancelJob:
     @pytest.mark.asyncio
     async def test_cancels_pending_job(self, session):
-        from core.exceptions import ValidationError
 
         service = JobService(session)
         job = make_job(session, status=JobStatus.PENDING)

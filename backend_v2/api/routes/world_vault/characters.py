@@ -16,7 +16,6 @@ from services.reference_cleanup import scrub_entity_references
 from core.workflow_builder import DEFAULT_CHECKPOINT
 from core.character_cards import (
     CARD_SPEC_V1,
-    CARD_SPEC_V2,
     CARD_SPEC_V3,
     CardParseError,
     build_card_payload,

@@ -1056,7 +1056,6 @@ class TestCloneAndCleanup:
 
     def test_deleting_embedded_lorebook_clears_character_link(self, client, session):
         from core.entities import Character
-        from sqlmodel import select
 
         imported = _post_card(client, _png_with_chunks({"ccv3": _b64(cbor2.dumps(_v3_card()))}), "card.png")
         char_id = imported.json()["id"]

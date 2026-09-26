@@ -1,6 +1,5 @@
 from typing import Any
 
-from infrastructure.http_client import get_http_client
 
 from .direct_url_config import DirectUrlProvider
 from .provider_registry import ProviderRegistry, ProviderTypeConfig

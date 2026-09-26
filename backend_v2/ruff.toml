@@ -1,11 +1,20 @@
 target-version = "py313"
 line-length = 120
 lint.select = ["F"]
-lint.ignore = ["F401"]
+# F401 (unused import) is on. It was globally ignored, which meant no unused
+# import was reported anywhere — including a stale
+# `from core.workflow_builder import DEFAULT_CHECKPOINT` left behind when its
+# only consumer was deleted, invisible to the linter. The modules that genuinely
+# re-export are listed in per-file-ignores below.
 lint.per-file-ignores = {
   "__init__.py" = ["F401"],
   "tests/**" = ["F811"],
+  # Re-export modules: the import *is* the public surface.
+  "api/deps.py" = ["F401"],
+  "api/worker_ws.py" = ["F401"],
   "api/routes/worker_ws.py" = ["F401"],
-  "api/routes/models/crud.py" = ["F405"],
-  "api/routes/models/maintenance.py" = ["F405"],
+  "infrastructure/deps.py" = ["F401"],
+  # Star-import consumers.
+  "api/routes/models/crud.py" = ["F401", "F405"],
+  "api/routes/models/maintenance.py" = ["F401", "F405"],
 }

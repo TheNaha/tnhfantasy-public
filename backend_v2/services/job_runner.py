@@ -7,6 +7,14 @@ from core.workflow_parser import extract_models_from_workflow
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from services.job_processing import finalize_successful_job
+# Imported for its side effect of being reachable as `services.job_runner
+# .ProviderService`, which is the `monkeypatch.setattr` target the job-processing
+# tests use. Nothing in this module references the name, so F401 fires; removing
+# the import breaks every one of those tests with
+# "No module named 'services.job_runner.ProviderService'". That is exactly the
+# failure mode of blanket-ignoring F401, which is why the rule is on globally and
+# genuine re-exports are marked individually instead.
+from services.provider_service import ProviderService  # noqa: F401
 from services.job_service import (
     FAILURE_UNEXPECTED,
     JobService,
@@ -19,7 +27,6 @@ from services.provider_client import (
     ProviderCallError,
 )
 from services.provider_runtime import resolve_provider_runtime
-from services.provider_service import ProviderService
 
 logger = get_logger("job_runner")
 
@@ -309,9 +316,9 @@ async def execute_job(
                 # gating this on `retry_count > 0` left `latest_status` as a
                 # stale in-memory value and a job cancelled mid-flight on
                 # provider A was still dispatched to provider B.
+                # get_job raises NotFoundError for a missing job, so there is no
+                # None case to branch on here.
                 job = await job_service.get_job(job_id)
-                if job is None:
-                    return
                 latest_status = job.status
                 if latest_status in {JobStatus.CANCELLED, JobStatus.COMPLETED, JobStatus.FAILED}:
                     logger.info(

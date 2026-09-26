@@ -1,7 +1,7 @@
 """Tests for World Vault Hub endpoints (entities, relationships, search, graph layout)."""
 import pytest
 
-from core.entities import Character, Chat, Lorebook, Story, GraphLayout
+from core.entities import Character, Chat, Lorebook, Story
 
 
 @pytest.fixture

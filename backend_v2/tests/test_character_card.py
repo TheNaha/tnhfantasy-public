@@ -4,7 +4,6 @@ import io
 import json
 from unittest.mock import patch
 
-import pytest
 from PIL import Image, PngImagePlugin
 from sqlmodel import Session
 

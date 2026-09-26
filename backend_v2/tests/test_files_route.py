@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, mock_open, patch
+from unittest.mock import AsyncMock, mock_open, patch
 
 import pytest
 from fastapi import FastAPI, Response
@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from api.deps import get_provider_service, get_session
+from api.deps import get_session
 from api.error_handlers import register_exception_handlers
 from api.routes.files import get_safe_path, router
 
@@ -234,3 +234,4 @@ class TestFilesRoute:
         """
         response = client.get("/api/files/proxy/123/path/to/image.png")
         assert response.status_code == 404
+

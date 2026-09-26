@@ -483,7 +483,6 @@ def test_restore_chapter_revision(client, session, story_with_character):
 
 
 def test_retry_last_creates_pre_retry_snapshot(client, session, story_with_character):
-    from core.entities import StoryChapter as SC
     story, _ = story_with_character
     ch, _, narr_id = _beat_chapter(session, story)
 
@@ -496,7 +495,6 @@ def test_retry_last_creates_pre_retry_snapshot(client, session, story_with_chara
 
 
 def test_beat_delete_creates_pre_delete_snapshot(client, session, story_with_character):
-    from core.entities import StoryChapter as SC
     story, _ = story_with_character
     ch, user_id, narr_id = _beat_chapter(session, story)
 

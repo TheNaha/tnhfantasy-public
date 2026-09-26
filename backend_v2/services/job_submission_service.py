@@ -3,7 +3,6 @@ from typing import Any
 from sqlmodel import Session
 
 from core.exceptions import JobError, MissingModelsError
-from core.workflow_builder import DEFAULT_CHECKPOINT
 from core.workflow_parser import extract_models_from_workflow
 from infrastructure.logging import get_logger
 from services.job_queue import queue_manager
