@@ -1,3 +1,7 @@
+> **ARCHIVED** — historical, kept for provenance only. This document was
+> stale or superseded when archived and may contradict current code.
+> **Archived. See docs/STATUS.md and docs/archive/README.md.**
+
 > **SUPERSEDED** by `ROADMAP.md` (2026-08-22 audit). Many line items here are stale/false-positive — read `ROADMAP.md` Appendix A before acting on this file.
 
 # TNHComfy Master Plan — Remediation + 8 Major Features

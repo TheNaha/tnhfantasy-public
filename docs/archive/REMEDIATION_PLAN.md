@@ -1,3 +1,7 @@
+> **ARCHIVED** — historical, kept for provenance only. This document was
+> stale or superseded when archived and may contradict current code.
+> **Archived. See docs/STATUS.md and docs/archive/README.md.**
+
 # TNHComfy Remediation Plan — Refining the AI Fantasy Engine
 
 Investigation date: 2026-08-15. Last updated: 2026-08-16 (all fixes verified, see status column).

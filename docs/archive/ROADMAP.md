@@ -1,3 +1,7 @@
+> **ARCHIVED** — historical, kept for provenance only. This document was
+> stale or superseded when archived and may contradict current code.
+> **Archived. See docs/STATUS.md and docs/archive/README.md.**
+
 > **SUPERSEDED** by `.kilo/plans/1787583794283-tnhcomfy-hardening-plan.md` (2026-08-24 audit). This document contained many false-positive line items that have been debunked — see Appendix A. Use the new plan as the authoritative source for all remaining work.
 
 # TNHComfy Roadmap — Consolidated Plan

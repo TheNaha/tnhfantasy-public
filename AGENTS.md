@@ -136,5 +136,8 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 ## Docs
 
 - `docs/` has architecture, backend, frontend, deployment, and API reference.
-- `PLAN.md` tracks the phased refactor roadmap — read it before large-scale changes.
+- `docs/STATUS.md` is the authoritative project status and what-is-still-open list.
+  `docs/audit-2026-09-26.md` is the most recent full code audit. Read those two
+  before large-scale changes. `docs/archive/` holds superseded planning docs —
+  historical only, and they contradict each other.
 - `.github/instructions/backend.instructions.md` has backend-specific rules scoped to `backend_v2/**`.

@@ -1,3 +1,7 @@
+> **ARCHIVED** — historical, kept for provenance only. This document was
+> stale or superseded when archived and may contradict current code.
+> **Archived. See docs/STATUS.md and docs/archive/README.md.**
+
 # Implementation Plan: TNHComfy "Demo to Pro" & Future Frontiers
 
 ## Goal Description

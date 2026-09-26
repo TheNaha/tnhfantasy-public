@@ -1,3 +1,7 @@
+> **ARCHIVED** — historical, kept for provenance only. This document was
+> stale or superseded when archived and may contradict current code.
+> **Archived. See docs/STATUS.md and docs/archive/README.md.**
+
 > **SUPERSEDED** by `ROADMAP.md` (2026-08-22 audit). The "Unstaged Changes — 68 files" section is stale (tree was clean at audit) and several P0 items are false positives — see `ROADMAP.md` Appendix A.
 
 # TNHComfy Remediation & Feature-Completeness Plan
