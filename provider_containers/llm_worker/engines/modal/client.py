@@ -13,8 +13,12 @@ from provider_core.models import (
     UploadFileRequest, ValidateModelsRequest, TaskEvent,
 )
 from provider_core.responses import failed, from_upstream, ok, outcome
-
 logger = logging.getLogger("provider_core.engines.vllm_modal")
+
+# One ranged slice per RPC. Large enough that a multi-GB model is not thousands
+# of round trips, small enough that neither side holds more than this.
+_MODAL_RANGE_BYTES = 512 * 1024
+
 
 
 class VLLMModalProviderClient(BaseProviderClient):
@@ -30,6 +34,7 @@ class VLLMModalProviderClient(BaseProviderClient):
         self.modal_username = os.environ.get("MODAL_USERNAME", "")
         self._cls_cache: dict = {}
         self._func_cache: dict = {}
+        self._deploy_task: Optional[asyncio.Task] = None
 
     def _get_vllm_engine_cls(self):
         if "VLLMEngine" not in self._cls_cache:
@@ -243,15 +248,46 @@ class VLLMModalProviderClient(BaseProviderClient):
         except Exception as e:
             return failed(f"Failed to delete model: {e}", provider=self.provider_id)
 
-    async def get_file(self, path: str):
-        try:
-            from fastapi import Response
-            storage = self._get_file_storage_cls()()
-            file_contents = await storage.read_file.remote.aio(path)
-            return Response(content=file_contents, media_type="application/octet-stream")
-        except FileNotFoundError:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    async def get_file(self, path: str) -> StreamingResponse:
+        """Stream a volume file out in ranged slices.
+
+        This was `read_file.remote.aio(path)` into a buffered Response. A modal
+        method serialises its return value across the RPC boundary, so the whole
+        file existed in the storage container and then again in this worker
+        before the response was even built — a 7 GB GGUF is 7 GB twice over, and
+        there is no streaming return value to reach for.
+
+        So: ask for the size, then pull fixed-size ranges and yield each one. Peak
+        memory is one slice on each side, and the transfer costs one RPC per
+        slice, which is slow for a very large model and is the trade for not being
+        OOM-killed. A small file is one RPC and behaves exactly as before.
+        """
+        from fastapi import HTTPException
+
+        storage = self._get_file_storage_cls()()
+
+        async def _stream():
+            try:
+                total = await storage.file_size.remote.aio(path)
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+            offset = 0
+            while offset < total:
+                try:
+                    chunk = await storage.read_file_range.remote.aio(
+                        path, offset, _MODAL_RANGE_BYTES
+                    )
+                except FileNotFoundError:
+                    raise HTTPException(status_code=404, detail=f"File not found: {path}")
+                if not chunk:
+                    # A short file between calls, or a concurrent delete. Either
+                    # way there is nothing more to send, and hanging would be worse.
+                    break
+                yield chunk
+                offset += len(chunk)
+
+        return StreamingResponse(_stream(), media_type="application/octet-stream")
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
         return await self.delete_model(DeleteModelRequest(path=path))
@@ -271,7 +307,11 @@ class VLLMModalProviderClient(BaseProviderClient):
         from provider_core.deploy import start_deploy_task, get_deploy_state
 
         commands = [["modal", "deploy", "/app/llm_worker/engines/modal/modal_app.py"]]
-        start_deploy_task("Modal vLLM", commands)
+        # Retained: the coroutine shells out to `modal deploy` and streams for
+        # minutes, and a bare create_task is GC-eligible the moment this
+        # coroutine returns. image_worker/engines/modal/client.py and
+        # beam/client.py both hold the reference; see provider_core/background.py.
+        self._deploy_task = start_deploy_task("Modal vLLM", commands)
         return get_deploy_state()
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
@@ -365,8 +405,12 @@ class VLLMModalProviderClient(BaseProviderClient):
 
         async def delete_file(storage_path: str):
             storage = self._get_file_storage_cls()()
-            await storage.delete_file.remote.aio(storage_path)
-            return True
+            # Adopt, rather than assume. The callback contract is True/False and
+            # reconciliation increments `deletions_completed` on True, so
+            # returning an unconditional True reported a clean sweep for orphans
+            # that were still on the volume. `delete_file` already answers the
+            # question truthfully; the question is that we asked it.
+            return bool(await storage.delete_file.remote.aio(storage_path))
 
         HF_TOKEN = os.environ.get("HF_TOKEN", "")
         CIVITAI_TOKEN = os.environ.get("CIVITAI_TOKEN", "")

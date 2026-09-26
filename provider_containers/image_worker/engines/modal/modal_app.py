@@ -403,6 +403,15 @@ DOWNLOAD_TIMEOUT = int(os.getenv("MODAL_DOWNLOAD_TIMEOUT", "3600"))
 DOWNLOAD_MAX_CONTAINERS = int(os.getenv("MODAL_DOWNLOAD_MAX_CONTAINERS", "5"))
 DOWNLOAD_CPU = float(os.getenv("MODAL_DOWNLOAD_CPU", "2.0"))  # 2 vCPU → enough bandwidth for CivitAI downloads
 
+# Socket timeout for the download transfer, distinct from the function timeout
+# above. `requests.get` with no timeout blocks forever on a peer that accepts the
+# connection and then stops sending, which pins a Modal container (and its
+# billed runtime) for the whole 3600s function timeout before failing. The remote
+# agent has always passed its own DOWNLOAD_TIMEOUT here; this is the same
+# value, kept as its own knob because a slow CivitAI mirror can need a much
+# longer per-read budget than a Modal function should be allowed to run.
+DOWNLOAD_HTTP_TIMEOUT = float(os.getenv("MODAL_DOWNLOAD_HTTP_TIMEOUT", str(DOWNLOAD_TIMEOUT)))
+
 # Storage function settings
 STORAGE_TIMEOUT = int(os.getenv("MODAL_STORAGE_TIMEOUT", "300"))
 STORAGE_MAX_CONTAINERS = int(os.getenv("MODAL_STORAGE_MAX_CONTAINERS", "1"))
@@ -912,6 +921,9 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
             log=logger.info,
             log_prefix="Download",
             progress_callback=progress_callback,
+            # Without this, `requests.get` blocks forever on a peer that accepts
+            # the connection and then goes quiet.
+            request_timeout_seconds=DOWNLOAD_HTTP_TIMEOUT,
         )
 
         if result.get("status") == "success":

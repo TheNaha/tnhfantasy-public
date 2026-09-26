@@ -7,8 +7,8 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 
-from provider_core.utils import get_safe_path
-from provider_core.downloads import download_model_to_path
+from provider_core.utils import get_safe_path, is_model_file
+from provider_core.downloads import download_model_to_path, pending_download_paths
 from provider_core.validation import (
     MIN_MODEL_SIZE,
     VALID_FILE_HEADERS,
@@ -74,7 +74,14 @@ async def list_models_with_metadata_internal(base_path: str, directory: str, com
             for e in os.scandir(target_dir):
                 if e.is_file():
                     entry_set.add(e.name)
-                    if not e.name.endswith(('.json', '.preview.png', '.sha256')):
+                    # The shared predicate, not a local suffix tuple: the download
+                    # pipeline owns `<model>.lock` and
+                    # `<model>.<pid>.<hex>.downloading` (and parks a resume slot
+                    # beside them), and a hardcoded exclusion list missed those.
+                    # They were emitted as model files, registered as models by
+                    # reconciliation, and the lock is held for the whole transfer,
+                    # so the entry appeared mid-download.
+                    if is_model_file(e.name):
                         entries.append((e.name, e.stat().st_size))
         except Exception:
             pass
@@ -304,6 +311,10 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
             log=logger.info,
             log_prefix="Download",
             progress_callback=progress_callback,
+            # The same value as the function timeout above, used as the HTTP
+            # read timeout. `requests.get` with no timeout blocks forever on a
+            # peer that accepts the connection and then stops sending.
+            request_timeout_seconds=DOWNLOAD_TIMEOUT,
         )
 
         if result.get("status") == "success":
@@ -390,7 +401,10 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
             return result
         names = []
         for f in os.listdir(full_dir):
-            if f.endswith(('.json', '.preview.png', '.sha256')):
+            # is_model_file, for the same reason as list_models_with_metadata:
+            # a 0-byte `.lock` fails the size check and used to be reported as
+            # `partial`, which is why total_partial never reached zero.
+            if not is_model_file(f):
                 continue
             names.append(f)
         for name in names:
@@ -428,13 +442,35 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
     return validation_results
 
 
+@app.cls(
+    image=image,
+    volumes={"/mnt/data": vol},
+    timeout=300,
+    max_containers=1,
+    scaledown_window=5
+)
 class FileStorage:
     """
     File storage operations for Modal volume (LLM worker).
+
+    The `@app.cls` decorator is load-bearing, not decoration: the client resolves
+    this class by name with `modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")`
+    (llm_worker/engines/modal/client.py:39-42). A bare Python class is never
+    registered with the app, so `Cls.from_name` raised on every call and every
+    file operation on this provider 500'd — get_file, delete_file, delete_model,
+    upload_file and get_storage_stats all go through here. The image twin had the
+    decorator the whole time; the fix simply was not ported.
     """
 
     @modal.method()
     def read_file(self, path: str) -> bytes:
+        """Read file contents from the volume.
+
+        Kept for small files. `read_file_range` exists because a modal method
+        serialises its return value across the RPC boundary, so a 7 GB GGUF is
+        7 GB in the container and 7 GB in the caller before anyone can do
+        anything with it. Callers should prefer the ranged pair.
+        """
         safe_vol_reload()
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Reading file: {full_path}")
@@ -446,12 +482,43 @@ class FileStorage:
             return f.read()
 
     @modal.method()
+    def file_size(self, path: str) -> int:
+        """Size of a file in the volume, in bytes. Raises FileNotFoundError."""
+        safe_vol_reload()
+        full_path = get_safe_path("/mnt/data", path)
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"File not found: {path}")
+        return os.path.getsize(full_path)
+
+    @modal.method()
+    def read_file_range(self, path: str, offset: int, length: int) -> bytes:
+        """Read at most `length` bytes starting at `offset`.
+
+        A short read at the end of the file returns whatever is there, so callers
+        treat an empty result as end-of-file. `offset` is validated rather than
+        trusted: a negative offset would be interpreted as an absolute seek.
+        """
+        if offset < 0 or length < 0:
+            raise ValueError("offset and length must be non-negative")
+        if length == 0:
+            return b""
+
+        safe_vol_reload()
+        full_path = get_safe_path("/mnt/data", path)
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"File not found: {path}")
+
+        with open(full_path, "rb") as f:
+            f.seek(offset)
+            return f.read(length)
+
+    @modal.method()
     async def delete_file(self, path: str) -> bool:
         safe_vol_reload()
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Deleting file: {full_path}")
 
-        if not os.path.exists(full_path) and not os.path.exists(full_path + ".downloading"):
+        if not os.path.exists(full_path) and not list(pending_download_paths(full_path)):
             return False
 
         try:
@@ -462,8 +529,14 @@ class FileStorage:
                 else:
                     await asyncio.to_thread(os.remove, full_path)
 
-            if os.path.exists(full_path + ".downloading"):
-                await asyncio.to_thread(os.remove, full_path + ".downloading")
+            # pending_download_paths, not a fixed `.downloading` probe: the
+            # per-attempt temp is `<path>.<pid>.<hex>.downloading` and a parked
+            # resume slot is `<path>.resume.<identity>.downloading`, so the old
+            # probe matched nothing and a crash-interrupted download survived
+            # delete-model forever. image_worker/engines/modal/modal_app.py had
+            # the sweep; this twin did not.
+            for stale in pending_download_paths(full_path):
+                await asyncio.to_thread(os.remove, stale)
 
             if not path.endswith((".json", ".preview.png", ".sha256")):
                 base_path, _ = os.path.splitext(full_path)
@@ -494,7 +567,7 @@ class FileStorage:
         files = []
         for root, dirs, filenames in os.walk(full_path):
             for filename in filenames:
-                if filename.endswith(".sha256") or filename.endswith(".json") or filename.endswith(".preview.png"):
+                if not is_model_file(filename):
                     continue
                 filepath = os.path.join(root, filename)
                 rel_path = os.path.relpath(filepath, "/mnt/data")
