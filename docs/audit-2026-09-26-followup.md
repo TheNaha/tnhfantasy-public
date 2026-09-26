@@ -331,6 +331,84 @@ dropping the field.
 
 ---
 
+## 1c. Second remediation round
+
+The rest of §2, in 9 more commits. Four agents worked in parallel on disjoint
+trees, which is why most of this reads as a list rather than a narrative.
+
+### The big one: a 7 GB checkpoint could not be served
+
+All four engines annotated `get_file -> StreamingResponse` and all four returned
+a buffered response, so the annotation was false everywhere. `direct_url` and
+`remote_comfy` now use `client.stream`; the remote agent uses `FileResponse`, which
+also gets it off its own event loop — it is a single-process uvicorn, so a blocking
+whole-file read there stalled every other request. The backend gained
+`stream_file`, and `get_file` now *refuses* past 64 MiB with an error naming the
+alternative instead of trying.
+
+Modal is the honest exception. A modal method serialises its return value across
+the RPC boundary, so there is no streaming return to reach for. `FileStorage` now
+has `file_size` and `read_file_range`, and the client pulls 8 MiB slices. Correct,
+memory-safe, and **slower** than the other three — one RPC per slice. Fixing that
+properly means a presigned URL or a volume mount, which is a platform decision, so
+it is recorded rather than faked.
+
+The tests use a real ASGI transport, because a mock cannot tell you whether a body
+was buffered — it can only tell you what you told it to do.
+
+### Also landed
+
+- **Download resume.** 206 appends (and discards the partial rather than appending
+  blind if `Content-Range` disagrees), 200 restarts, 416 completes only when the
+  size and identity both match, three bounded retries each resuming from the
+  on-disk offset. Identity is hashed into the partial's *filename*, so a remote
+  file that changed underneath a partial is detected across invocations rather
+  than stitched together from two versions.
+- **Bounded reads.** `/branches`, `/memories` and `/memories/reindex` are paginated
+  or batched. The truncation signal went into response headers, not the body,
+  because the body must stay a bare array — `ChatTimeline` does `branches.map(...)`
+  and wrapping it would crash the chat timeline rather than degrade.
+- **One `CharacterCard`**, and `Modal` genuinely built on `ModalOverlay` so it joins
+  the topmost-wins Escape registry instead of installing a second one. 12 overlays
+  converted.
+- **`worker_ws` protocol declared once**, 12 models with `Literal` types and a
+  discriminated union. The wire format is unchanged, verified four ways — including
+  running the reference client, written before the types existed, against the live
+  backend.
+- **Four small core fixes** nobody had claimed: idle simulation silently dropped a
+  chat's Persona, the load balancer held its lock across the write its own comment
+  said it released before, `update_config` was a lock-free read-modify-write with a
+  truncating file write, and `world_hub.get_relationships` applied its pagination to
+  one of five sub-queries.
+
+### Two things worth keeping
+
+- **`external_worker` is now genuinely reachable**, and the way to check that was
+  not a test: mint a token, run `scripts/external_worker_client.py` against the live
+  backend, and watch the provider's runtime mode flip to `external_worker`.
+- **One agent declined a task and was right to.** `inference_loop` extraction was on
+  the deferred list for months; the loops it named do not exist, the shared
+  lifecycle already lives once in `job_runner.execute_job`, and a `backend_v2`
+  module would be unreachable from both engines. Dropped, with the reasoning in
+  STATUS.md.
+
+### Eleven more wrong line references in §2
+
+`Dashboard.jsx` is in `src/pages/`. `TokenMeter` is in `src/components/chat/` and
+has no `chatApi.getTokenUsage`. The raw `addEventListener` the brief called a third
+Escape source has no Escape branch. `LorebookModal` and friends did **not** use
+`ModalOverlay` — `ConfirmationModal` was the only consumer. `AvatarGallery`'s card
+had no drag-and-drop at all, so "one implementation" meant keeping the vault's.
+"the backend has a default branch" is false. `direct_url.validate_models` raised a
+500 rather than silently dropping a field. Truncating a branch response in the body
+crashes the chat timeline.
+
+**Every one of these was written by me, verified as a defect, and sent the fix
+somewhere that looked right and was not.** The audit's file:line references are the
+least trustworthy part of it.
+
+---
+
 ## 2. Found, not fixed
 
 Ordered by value. All were read and verified by the sweeps; none are speculative.
