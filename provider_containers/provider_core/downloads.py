@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+import uuid
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
@@ -17,6 +20,48 @@ logger = get_logger("provider_core.downloads")
 
 ProgressCallback = Callable[[Dict[str, Any]], None]
 LogCallback = Callable[[str], None]
+
+
+@contextlib.contextmanager
+def exclusive_path_lock(full_path: str) -> Iterator[None]:
+    """Serialise downloads of the same destination across threads and processes.
+
+    Without this, two concurrent downloads of one `full_path` shared the
+    deterministic `<path>.downloading` temp file: the second `open(..., "wb")`
+    truncated the first's partial data, both handles then wrote at their own
+    offsets into the same inode, and both passed validation — the size is the
+    full size either way, and whichever wrote offset 0 put a valid magic header
+    there. The first to finish `os.replace`d a silently interleaved file into
+    place. The second replaced it with its own interleaved version. A corrupted
+    model published with no error anywhere.
+
+    flock is used rather than an O_EXCL lock file because the kernel releases
+    it if the process dies, so a crash mid-download cannot leave a lock that
+    blocks every future attempt until someone deletes it by hand.
+    """
+    lock_path = f"{full_path}.lock"
+    os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+    handle = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+    finally:
+        os.close(handle)
+
+
+def _unique_temp_path(full_path: str) -> str:
+    """Per-attempt temp path.
+
+    Belt-and-braces with the lock: even if a lock is somehow bypassed, two
+    attempts can no longer share a file, so interleaving is impossible. The
+    previous deterministic `<path>.downloading` name was the root of the
+    corruption described in exclusive_path_lock.
+    """
+    return f"{full_path}.{os.getpid()}.{uuid.uuid4().hex[:8]}.downloading"
+
 
 
 def _append_query_param(url: str, key: str, value: str) -> str:
@@ -84,7 +129,21 @@ def _default_log(message: str) -> None:
     logger.info(message)
 
 
-def download_model_to_path(
+def download_model_to_path(**kwargs: Any) -> Dict[str, Any]:
+    """Serialise downloads of the same destination, then perform the download.
+
+    Keyword-only by design so this wrapper can forward everything without
+    repeating the long parameter list. See exclusive_path_lock for why the
+    serialisation is load-bearing rather than merely tidy.
+    """
+    full_path = kwargs.get("full_path")
+    if not full_path:
+        raise ValueError("full_path is required")
+    with exclusive_path_lock(full_path):
+        return _download_model_to_path_unlocked(**kwargs)
+
+
+def _download_model_to_path_unlocked(
     *,
     url: str,
     full_path: str,
@@ -102,10 +161,13 @@ def download_model_to_path(
     preview_timeout_seconds: float = 30.0,
     request_timeout_seconds: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Download a model file to disk with strict validation and atomic rename."""
+    """Download a model file to disk with strict validation and atomic rename.
+
+    Callers should use download_model_to_path, which holds the per-path lock.
+    """
     logger = log or _default_log
     label = path or os.path.basename(full_path)
-    temp_path = full_path + ".downloading"
+    temp_path = _unique_temp_path(full_path)
 
     if not url:
         raise ValueError("Cannot download model because download_url is missing or empty")

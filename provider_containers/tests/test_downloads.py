@@ -1,6 +1,10 @@
 import json
 import os
+import threading
+import time
 from urllib.parse import parse_qs, urlparse
+
+import pytest
 
 from provider_core import downloads
 
@@ -150,3 +154,147 @@ def test_download_model_to_path_cleans_up_temp_file_on_validation_error(tmp_path
     assert "Validation failed" in result["message"]
     assert not (tmp_path / "models" / "bad-model.ckpt").exists()
     assert not (tmp_path / "models" / "bad-model.ckpt.downloading").exists()
+
+
+# ── Concurrency safety ────────────────────────────────────────────────────────
+#
+# Two concurrent downloads of one destination used to share a deterministic
+# `<path>.downloading` temp file. The second `open(..., "wb")` truncated the
+# first's partial data and both handles then wrote at their own offsets into
+# the same inode. Both passed validation — the size is the full size either
+# way, and whichever attempt wrote offset 0 put a valid magic header there —
+# and the first to `os.replace` published a silently interleaved file.
+
+def _payload(tag: bytes, size: int = 24 * 1024) -> bytes:
+    """A file that starts with a valid safetensors/json magic header."""
+    body = tag * size
+    return body[:size]
+
+
+class _SlowResponse:
+    """Streams `content` in chunks, yielding control so threads interleave."""
+
+    def __init__(self, content: bytes, status_code: int = 200):
+        self.content = content
+        self.status_code = status_code
+        self.headers = {"content-length": str(len(content))}
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size: int):
+        for idx in range(0, len(self.content), chunk_size):
+            yield self.content[idx: idx + chunk_size]
+            time.sleep(0.001)
+
+
+def test_concurrent_downloads_of_one_path_do_not_interleave(tmp_path, monkeypatch):
+    dest = tmp_path / "model.ckpt"
+    payloads = [_payload(b"A"), _payload(b"B")]
+
+    responses = iter([_SlowResponse(p) for p in payloads])
+
+    def fake_get(url, **kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(downloads.requests, "get", fake_get)
+
+    results = []
+    lock = threading.Lock()
+
+    def worker():
+        result = downloads.download_model_to_path(
+            url="https://example.test/model.ckpt",
+            full_path=str(dest),
+        )
+        with lock:
+            results.append(result)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert all(r["status"] == "success" for r in results), results
+
+    final = dest.read_bytes()
+    # The published file must be exactly one payload, byte for byte. An
+    # interleaved write would be some other length or a mixture of both tags.
+    assert final in payloads, (
+        f"published file is an interleaved mixture, not one payload "
+        f"(len={len(final)}, expected one of {[len(p) for p in payloads]})"
+    )
+
+
+def test_each_attempt_uses_a_distinct_temp_file(tmp_path, monkeypatch):
+    """Even without the lock, two attempts must never share a temp file."""
+    dest = tmp_path / "model.ckpt"
+    seen = []
+
+    real_replace = os.replace
+
+    def spy_replace(src, dst):
+        seen.append(os.path.basename(src))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(downloads.os, "replace", spy_replace)
+    monkeypatch.setattr(
+        downloads.requests, "get", lambda url, **kw: _SlowResponse(_payload(b"C"))
+    )
+
+    for _ in range(2):
+        downloads.download_model_to_path(
+            url="https://example.test/model.ckpt", full_path=str(dest)
+        )
+
+    assert len(seen) == 2, seen
+    assert seen[0] != seen[1], f"both attempts reused temp file {seen[0]}"
+    assert all(name.endswith(".downloading") for name in seen), seen
+
+
+def test_failed_download_leaves_no_temp_residue(tmp_path, monkeypatch):
+    """The per-attempt temp file is cleaned up on failure."""
+    dest = tmp_path / "model.ckpt"
+
+    class _Boom:
+        headers = {"content-length": "999999"}
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            yield _payload(b"D")[:1024]
+            raise OSError("connection reset")
+
+    monkeypatch.setattr(downloads.requests, "get", lambda url, **kw: _Boom())
+
+    result = downloads.download_model_to_path(
+        url="https://example.test/model.ckpt", full_path=str(dest)
+    )
+
+    assert result["status"] == "error"
+    leftovers = [p.name for p in tmp_path.iterdir() if p.name.endswith(".downloading")]
+    assert leftovers == [], f"temp files leaked: {leftovers}"
+
+
+def test_lock_is_released_after_an_exception(tmp_path, monkeypatch):
+    """A crash inside the locked region must not wedge the path forever."""
+    dest = tmp_path / "model.ckpt"
+    monkeypatch.setattr(
+        downloads, "_download_model_to_path_unlocked",
+        lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    with pytest.raises(RuntimeError):
+        downloads.download_model_to_path(url="u", full_path=str(dest))
+
+    # A second call must be able to take the lock immediately.
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        downloads.requests, "get", lambda url, **kw: _SlowResponse(_payload(b"E"))
+    )
+    result = downloads.download_model_to_path(
+        url="https://example.test/model.ckpt", full_path=str(dest)
+    )
+    assert result["status"] == "success"
