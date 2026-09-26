@@ -822,9 +822,15 @@ class Character(SQLModel, table=True):
         back_populates="character",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
+    # Deliberately NOT "delete-orphan": deleting a character must orphan its
+    # chats, not destroy them.  scrub_entity_references() nulls
+    # chat.character_id so the conversation survives and the chat shows up as
+    # an unbound session.  With delete-orphan here the ORM deleted the Chat
+    # rows (and, via Chat.messages, every message) right after the scrub, which
+    # silently destroyed full chat history on every character delete.
     chats: list["Chat"] = Relationship(
         back_populates="character",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+        sa_relationship_kwargs={"cascade": "save-update, merge"}
     )
     voice_models: list["VoiceModel"] = Relationship(
         back_populates="character",

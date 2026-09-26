@@ -198,3 +198,62 @@ class TestCharacterExpressions:
 
     def test_get_expressions_missing_404(self, client):
         assert client.get("/api/v2/characters/nope/expressions").status_code == 404
+
+class TestDeleteCharacterPreservesChats:
+    """Deleting a character must ORPHAN its chats, not destroy them.
+
+    `Character.chats` used to carry `cascade="all, delete-orphan"`, so the
+    ORM deleted the Chat rows right after scrub_entity_references() nulled
+    chat.character_id — and, via `Chat.messages` cascading again, every message
+    with them. The scrub was silently defeated and a character delete wiped full
+    chat history. `Character.memories` must still cascade (see
+    TestDeleteCharacterCascadesMemories).
+    """
+
+    def test_chats_and_messages_survive(self, client, session):
+        from core.entities import Chat, Message
+
+        char = _seed_char(client, name="Chatty")
+        chat = Chat(character_id=char["id"], name="Session One")
+        session.add(chat)
+        session.commit()
+        session.refresh(chat)
+        session.add(Message(chat_id=chat.id, role="user", content="do not lose me"))
+        session.commit()
+
+        # Load the relationship before the delete, the way any request that
+        # touches character.chats would. With `delete-orphan` the collection is
+        # then live at flush time and the chats (and, via Chat.messages, every
+        # message) are deleted with the parent.
+        character = session.get(Character, char["id"])
+        assert len(character.chats) == 1, "relationship did not load; test would be vacuous"
+
+        resp = client.delete(f"/api/v2/characters/{char['id']}")
+        assert resp.status_code == 200, resp.text
+
+        assert session.get(Character, char["id"]) is None
+        session.expire_all()
+        surviving = session.get(Chat, chat.id)
+        assert surviving is not None, "chat was cascade-deleted with the character"
+        assert surviving.character_id is None
+        assert session.exec(
+            select(Message).where(Message.chat_id == chat.id)
+        ).all() != []
+
+    def test_linked_voice_model_is_detached_not_fatal(self, client, session):
+        """voice_models.character_id is an FK with no ON DELETE clause."""
+        from core.entities import VoiceModel
+
+        char = _seed_char(client, name="Voiced")
+        voice = VoiceModel(name="v1", character_id=char["id"])
+        session.add(voice)
+        session.commit()
+        voice_id = voice.id
+
+        resp = client.delete(f"/api/v2/characters/{char['id']}")
+        assert resp.status_code == 200, resp.text
+
+        session.expire_all()
+        detached = session.get(VoiceModel, voice_id)
+        assert detached is not None, "voice model was deleted with the character"
+        assert detached.character_id is None

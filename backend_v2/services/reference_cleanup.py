@@ -9,7 +9,7 @@ broken dashboard links, etc.).
 from sqlalchemy import Text, cast
 from sqlmodel import Session, select
 
-from core.entities import Campaign, Character, Chat, Message, Story
+from core.entities import Campaign, Character, Chat, Message, Story, VoiceModel
 
 
 def _without(ids, entity_id):
@@ -54,6 +54,11 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
             chat.character_id = None
         for msg in session.exec(select(Message).where(Message.character_id == entity_id)).all():
             msg.character_id = None
+        # voice_models.character_id is a NOT-NULL-blocking FK with no ON DELETE
+        # clause, so leaving it set made delete_character fail with an
+        # IntegrityError.  Detach the voice models instead of deleting them.
+        for voice in session.exec(select(VoiceModel).where(VoiceModel.character_id == entity_id)).all():
+            voice.character_id = None
     elif kind == "lorebook":
         _scrub_stories(session, "lorebook_ids", entity_id)
         _scrub_chats(session, "active_lorebook_ids", entity_id)
