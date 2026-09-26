@@ -72,7 +72,7 @@ async def _wait_for_provider_stats(session: Session, provider_id: str, expected_
 
 @pytest.fixture(autouse=True)
 def _stub_container_runtime(monkeypatch):
-    def fake_resolve_provider_runtime(provider):
+    async def fake_resolve_provider_runtime(provider):
         container_config = getattr(provider, "container_config", None) or {}
         if not container_config:
             return SimpleNamespace(
@@ -93,7 +93,9 @@ def _stub_container_runtime(monkeypatch):
             healthy=True,
         )
 
-    monkeypatch.setattr("services.job_runner.resolve_provider_runtime", fake_resolve_provider_runtime)
+    # job_runner awaits the non-blocking resolver so the blocking Docker-socket
+    # read it performs stays off the event loop.
+    monkeypatch.setattr("services.job_runner.resolve_provider_runtime_async", fake_resolve_provider_runtime)
 
 
 @pytest.mark.asyncio
@@ -109,7 +111,7 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
         assert kwargs["worker_url"] == "http://tnhcomfy-provider-2:8000"
         return {"images": []}
 
-    def fake_resolve_provider_runtime(provider):
+    async def fake_resolve_provider_runtime(provider):
         if provider.id == "provider-1":
             return SimpleNamespace(
                 provider_id=provider.id,
@@ -126,7 +128,7 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
-    monkeypatch.setattr("services.job_runner.resolve_provider_runtime", fake_resolve_provider_runtime)
+    monkeypatch.setattr("services.job_runner.resolve_provider_runtime_async", fake_resolve_provider_runtime)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job.id)
@@ -372,9 +374,13 @@ async def test_process_job_timeout_signals_external_worker_cancel(session: Sessi
     monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
     monkeypatch.setattr("infrastructure.worker_registry.dispatch_job_to_worker", fake_dispatch_job_to_worker)
     monkeypatch.setattr("infrastructure.worker_registry.request_worker_job_cancel", request_cancel)
+    async def fake_resolve_provider_runtime_external(provider):
+        del provider
+        return SimpleNamespace(mode="external_worker", connected=True, worker_url=None)
+
     monkeypatch.setattr(
-        "services.job_runner.resolve_provider_runtime",
-        lambda provider: SimpleNamespace(mode="external_worker", connected=True, worker_url=None),
+        "services.job_runner.resolve_provider_runtime_async",
+        fake_resolve_provider_runtime_external,
     )
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 

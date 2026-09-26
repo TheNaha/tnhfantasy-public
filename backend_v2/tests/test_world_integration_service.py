@@ -303,7 +303,10 @@ async def test_handle_chat_reply_stores_tool_calls_transcript(session, wired_eng
     with Session(wired_engine) as check:
         msg = check.exec(select(Message).where(Message.chat_id == chat_id)).one()
         assert msg.tool_calls == tool_calls
-        assert msg.message_metadata == {"agentic": True}
+        # `source_job_id` was added deliberately: it is the link that lets
+        # find_unpersisted_chat_replies() detect a JOB_COMPLETED event that was
+        # evicted before this consumer saw it. It is bookkeeping, not content.
+        assert msg.message_metadata == {"agentic": True, "source_job_id": "job-7"}
 
 
 @pytest.mark.asyncio
