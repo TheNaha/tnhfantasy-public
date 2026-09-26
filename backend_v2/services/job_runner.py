@@ -305,8 +305,13 @@ async def execute_job(
                     max_attempts=max_retries + 1,
                 )
 
-                if retry_count > 0:
-                    job = await job_service.get_job(job_id)
+                # Always re-read: a provider failover resets retry_count to 0, so
+                # gating this on `retry_count > 0` left `latest_status` as a
+                # stale in-memory value and a job cancelled mid-flight on
+                # provider A was still dispatched to provider B.
+                job = await job_service.get_job(job_id)
+                if job is None:
+                    return
                 latest_status = job.status
                 if latest_status in {JobStatus.CANCELLED, JobStatus.COMPLETED, JobStatus.FAILED}:
                     logger.info(
