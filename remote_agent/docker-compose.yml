@@ -7,11 +7,21 @@ services:
     env_file:
       # Only .env.agent.example is tracked. Copy it first:
       #   cp .env.agent.example .env.agent
-      # and, on the GPU rig, point DATA_DIR at the real models directory.
+      #
+      # This populates the CONTAINER environment, and only the container
+      # environment. It cannot satisfy the `${DATA_DIR:?...}` interpolation in
+      # the `volumes:` list below, because compose interpolates `${DATA_DIR}`
+      # against its own environment and the project `.env` at PARSE time, before
+      # any env_file is read. An earlier version of this file's comment told you
+      # to "point DATA_DIR at the real models directory" in `.env.agent`, which
+      # does nothing at all here — `docker compose up` then aborted with the
+      # `:?` error on a rig that had followed the instruction exactly.
+      #
+      # Pass DATA_DIR to COMPOSE, not to the container:
+      #   DATA_DIR=/home/user/ComfyUI/models docker compose up -d
       - .env.agent
     environment:
       - PORT=8001
-      # DATA_DIR is strictly bound to /app/remote_agent/data inside the container
     volumes:
       # Set DATA_DIR to the absolute path of the ComfyUI models directory on the
       # GPU rig. It is a REQUIRED variable (`:?`) on purpose: the file previously
@@ -19,8 +29,11 @@ services:
       # `docker compose up` would create that literal directory on the host and
       # mount it as the agent's storage root.
       #
+      # Note this is deliberately NOT read from .env.agent — see the env_file
+      # comment above for why it cannot be.
+      #
       #   DATA_DIR=/home/user/ComfyUI/models docker compose up -d
-      - ${DATA_DIR:?set DATA_DIR to the absolute path of the remote models directory, e.g. DATA_DIR=/home/user/ComfyUI/models}:/app/remote_agent/data:rw
+      - ${DATA_DIR:?set DATA_DIR in COMPOSE's own environment (not .env.agent), e.g. DATA_DIR=/home/user/ComfyUI/models docker compose up -d}:/app/remote_agent/data:rw
     ports:
       - "8001:8001"
     restart: unless-stopped

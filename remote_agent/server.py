@@ -9,8 +9,8 @@ from fastapi import FastAPI, HTTPException, Request, Query, Depends
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from provider_core.utils import get_safe_path
-from provider_core.downloads import download_model_to_path
+from provider_core.utils import get_safe_path, is_transient_artifact
+from provider_core.downloads import download_model_to_path, pending_download_paths
 from provider_core.reconciliation import determine_download_token
 from provider_core.validation import validate_downloaded_file
 from provider_core.models import MODEL_DIRECTORIES
@@ -26,7 +26,17 @@ HF_TOKEN = os.getenv("HF_TOKEN", "")
 CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
 DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "1800"))
 
+# Concurrent /setup seeds. Below the 8 default seed URLs, and well below the
+# default executor's worker count, so a rig where several model hosts are slow
+# cannot occupy every thread the single-process agent has.
+SEED_MAX_CONCURRENT = int(os.getenv("REMOTE_AGENT_SEED_MAX_CONCURRENT", "3"))
+
 _SIDECAR_EXTENSIONS = (".json", ".preview.png", ".sha256", ".downloading", ".lock")
+# Deliberately NOT provider_core.utils.SIDECAR_SUFFIXES. The shared tuple also
+# excludes .txt/.yaml/.yml, which are reported as models here; narrowing it would
+# silently stop listing files an operator can see in the directory. The
+# pipeline-owned suffixes are NOT duplicated in that tuple on purpose: they come
+# from is_transient_artifact, which is the single source of truth for them.
 
 
 def _ensure_data_dir() -> str:
@@ -98,11 +108,9 @@ async def health():
 @app.post("/setup", dependencies=[Depends(verify_token)])
 async def setup():
     _ensure_data_dir()
-    directories = (
-        ["output", "input", "downloads"]
-        + [f"models/{d}" if d.startswith("models/") else f"models/{d}" for d in MODEL_DIRECTORIES]
-    )
-    # MODEL_DIRECTORIES are already "models/<kind>"; normalize.
+    # The first comprehension that used to sit here was dead: line 106 overwrote
+    # it, and it would have produced "models/models/checkpoints" for any entry
+    # that already carried the prefix. MODEL_DIRECTORIES are all "models/<kind>".
     directories = ["output", "input", "downloads"] + list(MODEL_DIRECTORIES)
     # Seed default upscaler + ADetailer models (mirrors Modal/Beam setup).
     default_models = [
@@ -128,20 +136,42 @@ async def setup():
     for d in directories:
         os.makedirs(os.path.join(DATA_DIR, d), exist_ok=True)
 
+    # Bounded, and with a real HTTP timeout.
+    #
+    # This used to `asyncio.gather` all 8 seeds with no semaphore and no
+    # `request_timeout_seconds`. Both halves mattered: `asyncio.to_thread` uses
+    # the default executor, whose worker count is bounded, so 8 stalled peers
+    # pinned every thread in the process and every later `to_thread` — including
+    # /validate-models and /get-file — queued behind them, stopping a
+    # single-process agent outright. And with no HTTP timeout, one `requests.get`
+    # that connected and then went quiet blocks its thread forever.
+    seed_semaphore = asyncio.Semaphore(SEED_MAX_CONCURRENT)
+
     async def _seed(url: str, path: str):
         full_path = _data_path(path)
         if os.path.exists(full_path) and os.path.getsize(full_path) > 0:
             return
         token = determine_download_token(url, HF_TOKEN, CIVITAI_TOKEN)
-        try:
-            await asyncio.to_thread(
-                download_model_to_path,
+
+        def _do() -> None:
+            download_model_to_path(
                 url=url, full_path=full_path, path=path, token=token,
                 hf_token=HF_TOKEN, civitai_token=CIVITAI_TOKEN,
                 log=print, log_prefix="Setup",
+                # Same value /download-model passes (below). A seed that cannot
+                # finish inside it gives up instead of holding a thread open
+                # indefinitely.
+                request_timeout_seconds=DOWNLOAD_TIMEOUT,
             )
-        except Exception as e:
-            print(f"[setup] failed to seed {path}: {e}")
+
+        # The semaphore wraps the `await`, not the `to_thread` body: holding it
+        # here is what keeps the queued seeds in the coroutine rather than
+        # occupying executor threads.
+        async with seed_semaphore:
+            try:
+                await asyncio.to_thread(_do)
+            except Exception as e:
+                print(f"[setup] failed to seed {path}: {e}")
 
     await asyncio.gather(*[_seed(u, p) for u, p in zip(default_models, default_paths)])
     return {"status": "success", "message": "Setup complete", "directories": directories}
@@ -202,10 +232,19 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
         for name in filenames:
             if name.startswith("."):
                 continue
-            if name.endswith(".downloading"):
+            if is_transient_artifact(name):
+                # The shared predicate, so a new pipeline-owned suffix is picked up
+                # here without a per-engine exclusion list that can drift. Both are
+                # "partial": the per-attempt temp and the parked resume slot are a
+                # download that has not finished, and a `.lock` is a 0-byte file
+                # whose held flock is what makes the download safe.
+                #
                 # Reported, never deleted: reconciliation runs with delete_invalid
                 # true, and removing an in-flight temp file leaves the writer with
-                # a live descriptor whose os.replace then fails.
+                # a live descriptor whose os.replace then fails. The abandoned ones
+                # are swept by /delete-model and /delete-file via
+                # pending_download_paths, which is the only place that can tell an
+                # in-flight attempt from a dead one.
                 rel_path = os.path.relpath(os.path.join(root, name), DATA_DIR).replace("\\", "/")
                 size = os.path.getsize(os.path.join(root, name))
                 partial.append({"name": name, "path": rel_path, "size": size, "issue": "Incomplete download (temp file)"})
@@ -258,19 +297,39 @@ async def list_models(req: ListModelsRequest):
 @app.post("/delete-file", dependencies=[Depends(verify_token)])
 async def delete_model(req: DeleteModelRequest):
     full_path = _data_path(req.path)
-    if not os.path.exists(full_path):
+    if not os.path.exists(full_path) and not list(pending_download_paths(full_path)):
         return {"success": False, "message": "File not found"}
 
     def _do_remove(path: str):
-        if os.path.exists(path):
+        if os.path.isdir(path):
+            import shutil
+            shutil.rmtree(path)
+        elif os.path.exists(path):
             os.remove(path)
 
-    _do_remove(full_path)
-    base, _ = os.path.splitext(full_path)
-    for ext in (".json", ".preview.png", ".sha256"):
-        _do_remove(base + ext)
-    _do_remove(full_path + ".sha256")
-    _do_remove(full_path + ".downloading")
+    try:
+        _do_remove(full_path)
+        base, _ = os.path.splitext(full_path)
+        for ext in (".json", ".preview.png", ".sha256"):
+            _do_remove(base + ext)
+        _do_remove(full_path + ".sha256")
+        # pending_download_paths, not a fixed `.downloading` probe. The per-attempt
+        # temp is `<path>.<pid>.<hex>.downloading` and a parked resume slot is
+        # `<path>.resume.<identity>.downloading` (downloads.py _unique_temp_path /
+        # _resume_slot_path), so the old probe matched nothing: a crash-interrupted
+        # 7 GB download survived delete-model forever. It also never got cleaned up
+        # by /validate-*-models, which reports every `.downloading` as `partial` and
+        # deliberately does not delete one — so `total_partial` was permanently
+        # non-zero, and step 0 of reconciliation (which runs with delete_invalid)
+        # could never reach zero. Modal (modal_app.py) and Beam (beam_app.py) both
+        # used the shared helper; this file never referenced it at all.
+        for stale in pending_download_paths(full_path):
+            _do_remove(stale)
+    except OSError as exc:
+        # Was unhandled: `_do_remove` called os.remove on a directory, which
+        # raises IsADirectoryError, so a DELETE of a directory was a 500 while
+        # Modal and Beam rmtree the same request and answer 200.
+        return {"success": False, "message": f"Delete failed: {exc}"}
     return {"success": True}
 
 

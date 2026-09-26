@@ -1,6 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Subcommands: start (default), run. The README documented `./agentctl.sh start`,
+# and the script was `exec "$EXEC"` with no "$1" — so `./agentctl.sh stop` started
+# an agent, which is the worst possible response to someone trying to shut one
+# down. `stop` is rejected rather than silently ignored.
+SUBCOMMAND="${1:-start}"
+case "$SUBCOMMAND" in
+    start|run)
+        shift || true
+        ;;
+    -h|--help|help)
+        cat <<'USAGE'
+usage: agentctl.sh [start|run]
+
+  start   run the agent in the foreground (default when no argument is given)
+  run     identical to `start`
+
+There is no `stop` subcommand: this script does not daemonise and does not track a
+pidfile, so it cannot stop anything it did not start. Ctrl-C in the foreground
+stops the agent. To run it detached, start it under your own supervisor
+(systemd, tmux, `nohup ... &`).
+USAGE
+        exit 0
+        ;;
+    *)
+        printf 'error: unknown subcommand %q\n\n' "$SUBCOMMAND" >&2
+        printf 'Run `%s --help` for usage.\n' "$0" >&2
+        exit 2
+        ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # PyInstaller writes to ./dist (see build-agent-binaries.yml and the README), so
 # the binary is one directory below this script. Looking in SCRIPT_DIR meant the
