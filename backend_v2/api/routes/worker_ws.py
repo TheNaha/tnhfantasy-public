@@ -51,9 +51,30 @@ async def _worker_owns_job(job_id: str | None, provider_id: str) -> bool:
         job = session.get(Job, job_id)
     if job is None:
         return False
-    if isinstance(job, Job):
-        return job.provider_id in {None, provider_id}
-    return True
+    # A job with no provider assigned must NOT be claimable by any worker that
+    # happens to be connected: provider_id in {None, provider_id} let any worker
+    # report progress/completion for a job it was never given.
+    return job.provider_id == provider_id
+
+def _coerce_percent(value) -> int:
+    """Normalise a worker-reported progress value to a 0..100 integer.
+
+    Canonical worker events are percent 0..100, but legacy containers still
+    emit 0..1 fractions.  The result is always clamped into 0..100 because
+    migration 047 added `CHECK (progress BETWEEN 0 AND 100)` on jobs — writing
+    an out-of-range value raised IntegrityError inside the session context,
+    which propagated to the socket-level handler and dropped the worker,
+    leaving the job non-terminal.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if number != number:  # NaN
+        return 0
+    percent = number * 100 if 0 <= number <= 1 else number
+    return max(0, min(100, int(percent)))
+
 
 # Re-exported from infrastructure.worker_registry so callers (including tests)
 # that historically imported these from the API route keep working.
@@ -157,8 +178,7 @@ async def worker_websocket(
 
                     # TaskEvent-shaped payloads (canonical): {"event": "progress", "value": percent 0..100}
                     if payload.get("event") == "progress" and payload.get("value") is not None:
-                        val = payload["value"]
-                        percent = int(val * 100) if val <= 1 else int(val)  # defensive: legacy 0..1 fraction
+                        percent = _coerce_percent(payload["value"])
                         updates["progress"] = percent
                         updates["overall_progress"] = percent
                     else:
@@ -169,11 +189,11 @@ async def worker_websocket(
                             except ValueError as exc:
                                 logger.debug("unknown_job_status", status=payload.get("status"), error=str(exc))
                         if "progress" in payload:
-                            updates["progress"] = payload["progress"]
+                            updates["progress"] = _coerce_percent(payload["progress"])
                         if "overall_progress" in payload:
-                            updates["overall_progress"] = payload["overall_progress"]
+                            updates["overall_progress"] = _coerce_percent(payload["overall_progress"])
                         elif "progress" in payload:
-                            updates["overall_progress"] = payload["progress"]
+                            updates["overall_progress"] = _coerce_percent(payload["progress"])
                     if "message" in payload:
                         updates["message"] = payload["message"]
 
@@ -227,7 +247,27 @@ async def worker_websocket(
                             final_result=result,
                             process_image_background_fn=None,
                         )
-                finally:
+                except Exception as finalize_exc:
+                    # A bare `finally` here used to signal success even when
+                    # finalization failed, then let the exception reach the
+                    # socket handler — the job row stayed non-terminal while the
+                    # caller believed it had succeeded.  Mark it FAILED so the
+                    # row reaches a terminal state, and only resolve the future
+                    # with a result on the success path.
+                    logger.error("job_finalization_failed", job_id=job_id, error=str(finalize_exc))
+                    worker.current_job = None
+                    try:
+                        async with get_session_context() as session:
+                            job_service = get_job_service(session)
+                            await job_service.update_job(
+                                job_id,
+                                status=JobStatus.FAILED,
+                                error=f"FAILURE_FINALIZATION: {finalize_exc}",
+                            )
+                    except Exception as mark_exc:
+                        logger.error("job_finalization_failure_mark_failed", job_id=job_id, error=str(mark_exc))
+                    continue
+                else:
                     await resolve_job_future(job_id, result={
                         "__handled_by_external_worker": True,
                         "outputs": outputs,

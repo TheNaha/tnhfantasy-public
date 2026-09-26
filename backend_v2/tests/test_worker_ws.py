@@ -54,11 +54,24 @@ def clear_connected_workers():
     pending_job_futures.clear()
 
 
-def _fake_session_context():
+def _fake_session_context(session=None):
     @asynccontextmanager
     async def _ctx():
-        yield MagicMock()
+        yield session if session is not None else MagicMock()
     return _ctx()
+
+
+def _owned_session(provider_id="provider-a"):
+    """A session whose session.get(Job, ...) resolves to a job owned by `provider_id`.
+
+    _worker_owns_job is called before every job_* message is processed, and it
+    now requires an exact provider match.  Previously a bare MagicMock slipped
+    through an unreachable `isinstance(job, Job)` fallthrough, so tests passed
+    without ever declaring job ownership.
+    """
+    session = MagicMock()
+    session.get.return_value = SimpleNamespace(provider_id=provider_id)
+    return session
 
 
 @pytest.mark.asyncio
@@ -114,7 +127,7 @@ async def test_worker_websocket_finalization_uses_output_filenames():
     job_service = AsyncMock()
 
     finalize = AsyncMock()
-    with patch("api.routes.worker_ws.get_session_context", side_effect=_fake_session_context), \
+    with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service), \
          patch("services.job_processing.finalize_successful_job", finalize), \
@@ -143,7 +156,7 @@ async def test_worker_websocket_rejects_unpersisted_outputs():
     provider_service.get_provider.return_value = provider
     job_service = AsyncMock()
 
-    with patch("api.routes.worker_ws.get_session_context", side_effect=_fake_session_context), \
+    with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service):
         await worker_websocket(websocket, "provider-a", "token-1")
@@ -174,7 +187,7 @@ async def test_worker_websocket_normalizes_progress_updates():
     provider_service.get_provider.return_value = provider
     job_service = AsyncMock()
 
-    with patch("api.routes.worker_ws.get_session_context", side_effect=_fake_session_context), \
+    with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service):
         await worker_websocket(websocket, "provider-a", "token-1")
@@ -242,3 +255,100 @@ async def test_dispatch_rejects_stale_worker_connection():
             {"id": "job-6", "workflow": {"1": {}}, "metadata": {}},
             timeout=1.0,
         )
+
+
+class TestCoercePercent:
+    """jobs.progress is percent 0..100 with a CHECK constraint (migration 047).
+
+    An out-of-range write raised IntegrityError inside the session context,
+    which propagated to the socket-level handler and closed the whole worker
+    socket, leaving the job non-terminal. _coerce_percent makes that
+    impossible for both the canonical and the legacy payload shapes.
+    """
+
+    def test_clamps_legacy_fraction(self):
+        from api.routes.worker_ws import _coerce_percent
+        assert _coerce_percent(0.5) == 50
+        assert _coerce_percent(0) == 0
+
+    def test_passes_through_percent(self):
+        from api.routes.worker_ws import _coerce_percent
+        assert _coerce_percent(42) == 42
+        assert _coerce_percent(42.9) == 42
+        assert _coerce_percent(100) == 100
+
+    def test_clamps_out_of_range(self):
+        from api.routes.worker_ws import _coerce_percent
+        assert _coerce_percent(150) == 100
+        assert _coerce_percent(-5) == 0
+        assert _coerce_percent(1e9) == 100
+
+    def test_garbage_becomes_zero(self):
+        from api.routes.worker_ws import _coerce_percent
+        assert _coerce_percent("nonsense") == 0
+        assert _coerce_percent(None) == 0
+        assert _coerce_percent(float("nan")) == 0
+
+
+@pytest.mark.asyncio
+async def test_worker_cannot_claim_job_owned_by_another_provider():
+    """A job must only accept events from the provider it was assigned to."""
+    websocket = DummyWebSocket(
+        messages=[
+            {
+                "type": "job_progress",
+                "job_id": "job-owned-elsewhere",
+                "data": {"progress": 50, "message": "nope"},
+            }
+        ]
+    )
+    provider = SimpleNamespace(config={"worker_token": "token-1"})
+    provider_service = AsyncMock()
+    provider_service.get_provider.return_value = provider
+    job_service = AsyncMock()
+
+    with patch(
+        "api.routes.worker_ws.get_session_context",
+        side_effect=lambda *a, **k: _fake_session_context(
+            _owned_session(provider_id="provider-b")
+        ),
+    ), patch("services.provider_service.ProviderService", return_value=provider_service), \
+         patch("services.job_service.JobService", return_value=job_service):
+        await worker_websocket(websocket, "provider-a", "token-1")
+
+    job_service.update_job.assert_not_awaited()
+    assert any(
+        isinstance(sent, dict) and "not assigned" in str(sent.get("message", ""))
+        for sent in websocket.sent
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_cannot_claim_unassigned_job():
+    """provider_id IS NULL must not make a job claimable by any worker."""
+    websocket = DummyWebSocket(
+        messages=[
+            {
+                "type": "job_completed",
+                "job_id": "job-unassigned",
+                "result": {"outputs": []},
+            }
+        ]
+    )
+    provider = SimpleNamespace(config={"worker_token": "token-1"})
+    provider_service = AsyncMock()
+    provider_service.get_provider.return_value = provider
+    job_service = AsyncMock()
+
+    finalize = AsyncMock()
+    session = MagicMock()
+    session.get.return_value = SimpleNamespace(provider_id=None)
+    with patch(
+        "api.routes.worker_ws.get_session_context",
+        side_effect=lambda *a, **k: _fake_session_context(session),
+    ), patch("services.provider_service.ProviderService", return_value=provider_service), \
+         patch("services.job_service.JobService", return_value=job_service), \
+         patch("services.job_processing.finalize_successful_job", finalize):
+        await worker_websocket(websocket, "provider-a", "token-1")
+
+    finalize.assert_not_awaited()
