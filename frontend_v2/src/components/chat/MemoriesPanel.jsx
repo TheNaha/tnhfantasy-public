@@ -8,8 +8,12 @@ import {
     useDeleteMemory,
     useSearchMemories,
 } from '../../hooks/useMemories';
+import { useDebounce } from '../../hooks/useDebounce';
 import EmptyState from '../EmptyState';
 import { useConfirmation } from '../../store/confirmationStore';
+
+const SEARCH_MIN_CHARS = 2;
+const SEARCH_DEBOUNCE_MS = 300;
 
 // Importance 1-3 = red, 4-6 = yellow, 7-10 = green
 function ImportanceDot({ value }) {
@@ -60,7 +64,20 @@ function MemorySkeleton() {
     );
 }
 
+/**
+ * Every piece of state below (search, the add-form draft, and the in-progress
+ * edit, which holds a memory id) belongs to exactly one character. Without a
+ * reset on switch, chat A / character X → edit a memory → chat B / character Y
+ * shows X's memory under Y's heading, and Save PUTs X's row while invalidating
+ * Y's cache. The keyed wrapper below is what guarantees that: React discards
+ * the whole stateful subtree on a character change, at every call site
+ * (ChatContextPanel and the unkeyed one in pages/Characters.jsx).
+ */
 export default function MemoriesPanel({ characterId }) {
+    return <MemoriesPanelBody key={characterId} characterId={characterId} />;
+}
+
+function MemoriesPanelBody({ characterId }) {
     const [searchQuery, setSearchQuery] = useState('');
     const [showAddForm, setShowAddForm] = useState(false);
     const [newContent, setNewContent] = useState('');
@@ -68,7 +85,11 @@ export default function MemoriesPanel({ characterId }) {
     const [newTags, setNewTags] = useState('');
 
     const { data: memories = [], isLoading } = useCharacterMemories(characterId);
-    const { data: searchResults } = useSearchMemories(characterId, searchQuery);
+    // One request per keystroke was the old behaviour; the debounce means the
+    // search only runs once typing settles.
+    const debouncedSearchQuery = useDebounce(searchQuery, SEARCH_DEBOUNCE_MS);
+    const settledQuery = debouncedSearchQuery.trim();
+    const { data: searchResults, isFetching: isSearchFetching } = useSearchMemories(characterId, settledQuery);
     const createMutation = useCreateMemory();
     const updateMutation = useUpdateMemory();
     const deleteMutation = useDeleteMemory();
@@ -78,7 +99,13 @@ export default function MemoriesPanel({ characterId }) {
     const [editImportance, setEditImportance] = useState(5);
     const [editTags, setEditTags] = useState('');
 
-    const isSearching = searchQuery.length >= 2;
+    const isSearching = settledQuery.length >= SEARCH_MIN_CHARS;
+    // True from the first qualifying keystroke until its results have landed:
+    // during the debounce window the query has not run yet, and while it is in
+    // flight `searchResults` is undefined. Either way the list must not fall
+    // through to the "No matches found" empty state, which previously replaced
+    // the whole list on every keystroke.
+    const isAwaitingResults = searchQuery.trim().length >= SEARCH_MIN_CHARS && (!isSearching || isSearchFetching);
     const displayed = isSearching ? (searchResults ?? []) : memories;
 
     const handleAdd = async () => {
@@ -347,7 +374,7 @@ export default function MemoriesPanel({ characterId }) {
             )}
 
             {/* ── Memory list ─────────────────────────────────────── */}
-            {isLoading ? (
+            {isLoading || isAwaitingResults ? (
                 <MemorySkeleton />
             ) : displayed.length === 0 ? (
                 <div className="py-6">
@@ -368,7 +395,7 @@ export default function MemoriesPanel({ characterId }) {
                 <div className="space-y-2">
                     {isSearching && (
                         <p className="text-xs text-gray-500 px-1">
-                            {displayed.length} semantic match{displayed.length !== 1 ? 'es' : ''} for &ldquo;{searchQuery}&rdquo;
+                            {displayed.length} semantic match{displayed.length !== 1 ? 'es' : ''} for &ldquo;{settledQuery}&rdquo;
                         </p>
                     )}
                     {displayed.map((memory) => (
@@ -438,8 +465,9 @@ export default function MemoriesPanel({ characterId }) {
                 </div>
             )}
 
-            {/* Footer count */}
-            {!isSearching && memories.length > 0 && (
+            {/* Footer count — hidden as soon as a search is typed, since the
+                list above is showing search results (or the skeleton) then */}
+            {!searchQuery.trim() && memories.length > 0 && (
                 <p className="text-xs text-gray-600 text-right px-1">
                     {memories.length} memor{memories.length !== 1 ? 'ies' : 'y'}
                 </p>

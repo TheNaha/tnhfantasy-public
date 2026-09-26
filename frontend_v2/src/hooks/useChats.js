@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { useCreateResource, useDeleteResource } from './useWorldVaultResource';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { isActiveJobStatus } from '../utils/jobStatus';
 
 const CHAT_LIST_KEY = ['world_vault', 'chats'];
 const CHAT_DETAIL_KEY = (chatId) => ['world_vault', 'chats', chatId];
@@ -40,7 +41,6 @@ export const useChatSystemPrompt = (chatId) => {
 };
 
 export const useChatJobs = (chatId) => {
-    const ACTIVE_STATUSES = ['pending', 'retrying', 'sent_to_provider', 'connected', 'pre_generation', 'generating', 'post_processing'];
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.CHATS, chatId, 'jobs'),
         queryFn: () => {
@@ -50,7 +50,11 @@ export const useChatJobs = (chatId) => {
         enabled: !!chatId,
         refetchInterval: (query) => {
             const jobs = query.state.data;
-            if (Array.isArray(jobs) && jobs.some(j => ACTIVE_STATUSES.includes(j.status))) return 5000;
+            // Previously this used a local snake_case list
+            // ('sent_to_provider', 'pre_generation', 'post_processing') while
+            // the API emits the hyphenated enum values, so polling stopped the
+            // moment a worker picked the job up.
+            if (Array.isArray(jobs) && jobs.some(j => isActiveJobStatus(j.status))) return 5000;
             // Stop polling entirely when the queue is empty. The previous
             // unconditional 30000 meant every open chat issued a permanent
             // 30s request forever, on top of the jobs watchdog and the

@@ -26,6 +26,11 @@ export const useCreateMemory = () => {
 export const useUpdateMemory = () => {
     const queryClient = useQueryClient();
     return useMutation({
+        // `characterId` is deliberately stripped from the payload: the endpoint
+        // updates by memory id, so it must never be able to re-assign a memory
+        // to another character. It is kept on the variables only to target the
+        // cache invalidation — which is why the panel must never hold a memory
+        // id from a different character than the one it is editing.
         mutationFn: ({ id, characterId: _characterId, ...data }) => api.put(`/api/v2/memories/${id}`, data),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({
@@ -50,6 +55,8 @@ export const useDeleteMemory = () => {
 export const useSearchMemories = (characterId, query) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.MEMORIES, 'search', characterId, query),
+        // `query` is the debounced term (see MemoriesPanel), so a search is sent
+        // once the typing settles rather than on every keystroke.
         queryFn: () =>
             api.get('/api/v2/memories/search/semantic', {
                 params: { character_id: characterId, query, limit: 20 },

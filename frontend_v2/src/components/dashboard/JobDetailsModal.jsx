@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { useConfirmation } from '../../store/confirmationStore';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed, formatTimestamp } from '../../utils/dateTime';
+import { JOB_STATUS, isJobCancelled, isJobComplete, isJobFailed, isJobRunning } from '../../utils/jobStatus';
 
 import { memo } from 'react';
 import ModalOverlay from '../common/ModalOverlay';
@@ -16,11 +17,15 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
     const meta = job.metadata || job.metadata_ || {};
     const diagnostics = job.diagnostics || null;
     const checkpoint = typeof meta.checkpoint === 'object' ? meta.checkpoint?.name : meta.checkpoint;
-    const isProcessing = ['retrying', 'sent-to-provider', 'connected', 'pre-generation', 'generating', 'processing', 'executing', 'progress', 'running', 'post-processing'].includes(job.status);
-    const isPending = ['pending', 'queued'].includes(job.status);
-    const isCompleted = job.status === 'completed';
-    const isFailed = job.status === 'failed' || job.status === 'error';
-    const isCancelled = job.status === 'cancelled';
+    // The previous hand-written lists here carried four phantom statuses
+    // ('processing', 'executing', 'progress', 'running') plus a 'queued'
+    // pending state that `JobStatus` does not have, so an in-flight job could
+    // render with no progress bars at all. The shared predicates cannot drift.
+    const isProcessing = isJobRunning(job.status);
+    const isPending = job.status === JOB_STATUS.PENDING;
+    const isCompleted = isJobComplete(job.status);
+    const isFailed = isJobFailed(job.status);
+    const isCancelled = isJobCancelled(job.status);
 
     const handleActionClick = async (actionType) => {
         if (actionType === 'cancel') {

@@ -1,11 +1,12 @@
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
     User, Clock, MapPin, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown, NotebookPen,
 } from 'lucide-react';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 import { useLocations } from '../../hooks/useLocations';
+import { isJobComplete, isJobFailed, isJobRunning } from '../../utils/jobStatus';
 import ContextField from './ContextField';
 import ContextSlider from './ContextSlider';
 import SamplingControls from '../common/SamplingControls';
@@ -178,10 +179,15 @@ function ChatContextPanel() {
                 ) : (
                     <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
                         {chatJobs.slice(0, 10).map((job) => {
-                            const isRunning = job.status === 'generating' || job.status === 'pre_generation' || job.status === 'post_processing';
+                            // The previous checks used snake_case spellings
+                            // ('pre_generation', 'post_processing') that the API
+                            // never emits, so every real in-flight job fell
+                            // through to the grey branch and printed its raw
+                            // enum value as the label.
+                            const isRunning = isJobRunning(job.status);
                             const isImage = job.task_type === 'image' || job.type === 'image' || job.type === 'agentic_image';
-                            const isFailed = job.status === 'failed';
-                            const isComplete = job.status === 'completed';
+                            const isFailed = isJobFailed(job.status);
+                            const isComplete = isJobComplete(job.status);
                             return (
                                 <div key={job.id} className={clsx(
                                     "flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs border",
@@ -545,9 +551,12 @@ function ChatContextPanel() {
                     <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
                         <BookOpen size={12} /> Lorebooks
                     </h4>
-                    <a href="/characters" className="inline-flex items-center min-h-[24px] px-2 text-xs text-blue-400 hover:text-blue-300 font-medium rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors">
+                    <Link
+                        to="/lorebooks"
+                        className="inline-flex items-center min-h-[24px] px-2 text-xs text-blue-400 hover:text-blue-300 font-medium rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors"
+                    >
                         Manage
-                    </a>
+                    </Link>
                 </div>
                 {lorebooks.length === 0 ? (
                     <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
@@ -592,7 +601,7 @@ function ChatContextPanel() {
 
             {/* Memories */}
             {linkedCharacter && (
-                <div className="glass-panel rounded-xl border border-white/5">
+                <div key={`mem-${linkedCharacter.id}`} className="glass-panel rounded-xl border border-white/5">
                     <details className="group">
                         <summary className="flex items-center justify-between p-4 cursor-pointer list-none">
                             <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">

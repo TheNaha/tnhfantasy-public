@@ -1,33 +1,43 @@
 import { memo, useCallback, useMemo } from 'react';
-import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X, Send, Wifi, Zap, Image, Settings, RefreshCw } from 'lucide-react';
+import { Loader2, Server, Cpu, Layers, Box, Clock, X, Send, Zap, RefreshCw } from 'lucide-react';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed } from '../../utils/dateTime';
 import { useJobStatus } from '../../hooks/useJobStatus';
 import useGlobalClock from '../../hooks/useGlobalClock';
+import {
+    JOB_STATUS,
+    JOB_PHASE_ORDER,
+    isActiveJobStatus,
+    isJobCancelled,
+    isJobComplete,
+    isJobFailed,
+} from '../../utils/jobStatus';
 
+/**
+ * The six live phases, plus `pending` so the order stays in step with the
+ * backend lifecycle (it renders its own queued branch below). The three
+ * terminal states deliberately have no entry — they render their own summary.
+ *
+ * The previous map also carried six snake_case twins and four reconciliation
+ * phases ('validating', 'connecting', 'generating-blurhash',
+ * 'generating-thumbnails'). None of those are job statuses, so the map was
+ * twice the size it needed to be, and `PHASE_ORDER.indexOf(job.status)`
+ * returned a wrong index for every real status because the phantom entries
+ * shifted the timeline dots along.
+ */
 const PHASE_CONFIG = {
-    'pending': { icon: Clock, label: 'Queued', color: 'text-gray-400', bar: 'bg-gray-600' },
-    'retrying': { icon: RefreshCw, label: 'Retrying', color: 'text-orange-400', bar: 'bg-orange-500' },
-    'validating': { icon: Settings, label: 'Validating', color: 'text-blue-300', bar: 'bg-blue-500' },
-    'sent-to-provider': { icon: Send, label: 'Sending', color: 'text-blue-400', bar: 'bg-blue-500' },
-    'sent_to_provider': { icon: Send, label: 'Sending', color: 'text-blue-400', bar: 'bg-blue-500' },
-    'connecting': { icon: Wifi, label: 'Connecting', color: 'text-cyan-300', bar: 'bg-cyan-400' },
-    'connected': { icon: Server, label: 'Connected', color: 'text-cyan-400', bar: 'bg-cyan-500' },
-    'pre-generation': { icon: Zap, label: 'Preparing', color: 'text-yellow-400', bar: 'bg-yellow-500' },
-    'pre_generation': { icon: Zap, label: 'Preparing', color: 'text-yellow-400', bar: 'bg-yellow-500' },
-    'generating': { icon: Cpu, label: 'Generating', color: 'text-purple-400', bar: 'bg-purple-500' },
-    'post-processing': { icon: Layers, label: 'Processing', color: 'text-green-300', bar: 'bg-green-400' },
-    'post_processing': { icon: Layers, label: 'Processing', color: 'text-green-300', bar: 'bg-green-400' },
-    'generating-blurhash': { icon: Image, label: 'Blurhash', color: 'text-green-400', bar: 'bg-green-500' },
-    'generating_blurhash': { icon: Image, label: 'Blurhash', color: 'text-green-400', bar: 'bg-green-500' },
-    'generating-thumbnails': { icon: Image, label: 'Thumbnails', color: 'text-emerald-400', bar: 'bg-emerald-500' },
-    'generating_thumbnails': { icon: Image, label: 'Thumbnails', color: 'text-emerald-400', bar: 'bg-emerald-500' },
+    [JOB_STATUS.PENDING]: { icon: Clock, label: 'Queued', color: 'text-gray-400', bar: 'bg-gray-600' },
+    [JOB_STATUS.RETRYING]: { icon: RefreshCw, label: 'Retrying', color: 'text-orange-400', bar: 'bg-orange-500' },
+    [JOB_STATUS.SENT_TO_PROVIDER]: { icon: Send, label: 'Sending', color: 'text-blue-400', bar: 'bg-blue-500' },
+    [JOB_STATUS.CONNECTED]: { icon: Server, label: 'Connected', color: 'text-cyan-400', bar: 'bg-cyan-500' },
+    [JOB_STATUS.PRE_GENERATION]: { icon: Zap, label: 'Preparing', color: 'text-yellow-400', bar: 'bg-yellow-500' },
+    [JOB_STATUS.GENERATING]: { icon: Cpu, label: 'Generating', color: 'text-purple-400', bar: 'bg-purple-500' },
+    [JOB_STATUS.POST_PROCESSING]: { icon: Layers, label: 'Processing', color: 'text-green-300', bar: 'bg-green-400' },
 };
 
-const PHASE_ORDER = ['pending', 'validating', 'retrying', 'sent-to-provider', 'connecting', 'connected', 'pre-generation', 'generating', 'post-processing', 'generating-blurhash', 'generating-thumbnails'];
+const PHASE_ORDER = JOB_PHASE_ORDER;
 
-function getJobPhase(job) {
-    const status = job.status || 'pending';
+function getJobPhase(status) {
     return PHASE_CONFIG[status] || { icon: Clock, label: status, color: 'text-gray-400', bar: 'bg-gray-600' };
 }
 
@@ -45,14 +55,19 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const { data: realtimeJob } = useJobStatus(initialJob.id);
     const job = useMemo(() => realtimeJob ? { ...initialJob, ...realtimeJob } : initialJob, [initialJob, realtimeJob]);
 
-    const phase = useMemo(() => getJobPhase(job), [job]);
+    const status = job.status || JOB_STATUS.PENDING;
+    const phase = useMemo(() => getJobPhase(status), [status]);
     const PhaseIcon = phase.icon;
 
-    const isSuccess = job.status === 'completed';
-    const isError = job.status === 'failed' || job.status === 'error';
-    const isCancelled = job.status === 'cancelled';
-    const isProcessing = ['retrying', 'sent-to-provider', 'sent_to_provider', 'connecting', 'connected', 'pre-generation', 'pre_generation', 'generating', 'post-processing', 'post_processing', 'generating-blurhash', 'generating_blurhash', 'generating-thumbnails', 'generating_thumbnails'].includes(job.status);
-    const isPending = ['pending'].includes(job.status);
+    const isSuccess = isJobComplete(status);
+    const isError = isJobFailed(status);
+    const isCancelled = isJobCancelled(status);
+    // `pending` has its own queued branch, so it is not a processing phase.
+    const isPending = status === JOB_STATUS.PENDING;
+    const isProcessing = isActiveJobStatus(status) && !isPending;
+    // -1 for terminal/unknown states, so the timeline stays empty rather than
+    // lighting every dot up.
+    const phaseIndex = PHASE_ORDER.indexOf(status);
 
     // Extract metadata
     const meta = job.metadata || job.metadata_ || {};
@@ -86,7 +101,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
         <div
             role="button"
             tabIndex={0}
-            aria-label={`Job ${job.id || ''} - ${job.status}`}
+            aria-label={`Job ${job.id || ''} - ${status}`}
             onClick={handleClick}
             onKeyDown={handleKeyDown}
             className="aspect-square bg-gray-800 rounded-xl overflow-hidden border border-gray-700 flex flex-col relative cursor-pointer hover:border-gray-500 transition-all card-elevated focus-visible:ring-2 focus-visible:ring-blue-500 outline-none group"
@@ -105,7 +120,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                             isCancelled ? 'bg-gray-500/50 text-gray-300' :
                             'bg-blue-500/20 text-blue-400'
                         }`}>
-                        {job.status}
+                        {status}
                     </div>
                     {(isCancelled || isError) && onDelete && (
                         <button
@@ -160,8 +175,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                         {/* Phase timeline dots - Hidden on mobile */}
                         <div className="hidden sm:flex items-center justify-center gap-1 mb-2">
                             {PHASE_ORDER.map((p, i) => {
-                                const pIdx = PHASE_ORDER.indexOf(job.status);
-                                const active = i <= pIdx && pIdx >= 0;
+                                const active = i <= phaseIndex;
                                 return (
                                     <div
                                         key={p}
