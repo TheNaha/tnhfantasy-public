@@ -77,11 +77,26 @@ cd backend_v2 && ruff check .
 
 Ruff config in `ruff.toml` selects `F` (pyflakes) only — catching real bugs like
 undefined names (F821), unused imports (F401), and redefined-while-unused (F811).
-F401 is ignored for `__init__.py`, re-export modules (`deps.py`, `worker_ws.py`),
-and star-import consumers (`api/routes/models/crud.py`, `maintenance.py`).
-F811 is ignored for test files (test class redefinition is sometimes intentional).
+F401 is **on**; it was globally ignored until 2026-09-26, which hid a stale import
+whose only consumer had been deleted. Individual lines need `# noqa: F401` and a
+reason — genuine re-export modules (`deps.py`, `worker_ws.py`), star-import
+consumers (`api/routes/models/crud.py`, `maintenance.py`), and names that exist
+only as a `monkeypatch.setattr` / `patch()` string target
+(`services/job_runner.ProviderService`). F811 is ignored for test files (test
+class redefinition is sometimes intentional).
+
+Never blanket-ignore a lint rule to quiet one finding. Turning F401 on broke 8
+tests immediately, which is the real reason to document a `noqa` — not a reason to
+switch the rule off.
 
 Tests that create DB sessions must override **both** dependency sources: `api.deps.get_session` and `infrastructure.database.get_session`. See `backend_v2/tests/conftest.py`.
+
+`get_session_sync()` is redirected for **every** test by an autouse fixture in
+`conftest.py`, and the fixture rebinds the name in every already-imported module
+that holds it. A module doing `from api.deps import get_session_sync` binds the
+function at import time, so patching `api.deps` alone does not reach it — which
+is how `api/routes/files.py` ended up running against the real `data/comfy.db`
+during tests. Use the `session` fixture for ORM work; do not open your own.
 
 ## Frontend conventions
 
@@ -137,7 +152,8 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 
 - `docs/` has architecture, backend, frontend, deployment, and API reference.
 - `docs/STATUS.md` is the authoritative project status and what-is-still-open list.
-  `docs/audit-2026-09-26.md` is the most recent full code audit. Read those two
-  before large-scale changes. `docs/archive/` holds superseded planning docs —
+  `docs/audit-2026-09-26-followup.md` is the most recent code audit (a second
+  pass over the first, which is `docs/audit-2026-09-26.md`). Read STATUS.md and
+  the follow-up before large-scale changes. `docs/archive/` holds superseded planning docs —
   historical only, and they contradict each other.
 - `.github/instructions/backend.instructions.md` has backend-specific rules scoped to `backend_v2/**`.

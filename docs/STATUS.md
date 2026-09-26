@@ -3,10 +3,11 @@
 **The single authoritative status document.** Everything here was verified
 against the code on 2026-09-26, not carried over from an earlier plan.
 
-If you are about to make a decision about what to work on next, this file and
-`docs/audit-2026-09-26.md` are the only two things you need to read. The other
-planning documents that used to sit at the repo root are historical and live
-in `docs/archive/` — they are kept for provenance, not for guidance.
+If you are about to make a decision about what to work on next, this file,
+`docs/audit-2026-09-26-followup.md` and `docs/audit-2026-09-26.md` are the only
+three things you need to read. The other planning documents that used to sit at
+the repo root are historical and live in `docs/archive/` — they are kept for
+provenance, not for guidance.
 
 ## What this is
 
@@ -82,11 +83,14 @@ notable ones:
 ## What is genuinely still open
 
 Verified as real and not yet fixed. Ordered by how much they cost you.
+`docs/audit-2026-09-26-followup.md` §2 has the full list with file:line detail.
 
-1. **`/api/statistics/*` aggregates in Python, not SQL.** Each of `/` and
-   `/detailed` loads all 16k `assets` rows, so a cold request takes ~5s.
-   Warm requests are 0.04s thanks to the 5-minute cache. Fix is
-   `GROUP BY metadata_->>'checkpoint'` plus `date_trunc`.
+1. **Blocking Docker-SDK calls on the event loop.**
+   `services/provider_runtime.py:42` does `containers.get()` + `reload()` with no
+   timeout and no `to_thread`, and `GET /api/v2/providers/` runs it serially per
+   provider. A slow or dead `DOCKER_HOST` stalls every request, WebSocket and
+   worker. `move_asset` has the same problem (sync commits plus a whole-file
+   `src.read()` in RAM) despite a commit message claiming it was converted.
 2. **Model fetch materialises the whole file in RAM.** The backend proxy and
    the Beam engine both load the entire checkpoint into memory (Beam
    base64-decodes it). A 7 GB SDXL checkpoint cannot survive this. Needs a
@@ -95,23 +99,37 @@ Verified as real and not yet fixed. Ordered by how much they cost you.
    large checkpoint restarts from zero. The per-path lock and unique temp file
    landed, so concurrent downloads can no longer corrupt a model, but
    `Range`-based resume and retries are still absent.
-4. **~45 hand-rolled modal overlays.** `useEscapeKey` and `ModalOverlay` now
+4. **Provider response contract is not unified.** Four dialects across nine engine
+   methods, all with HTTP 200 (`{"success": bool}`, `{"status":"error"}`, bare
+   `{"files": [...]}`, raw third-party pass-through), so a caller cannot
+   distinguish success from failure by status code. `direct_url.validate_models`
+   additionally discards its entire result, and the Google engine leaks its API
+   key into request URLs and therefore into job records.
+5. **~45 hand-rolled modal overlays.** `useEscapeKey` and `ModalOverlay` now
    exist and cover `ConfirmationModal` plus all 9 story dialogs, so those
-   dismiss with Escape; the chat, model-manager, provider and page-level
+   dismiss with Escape — and one Escape now dismisses only the topmost dialog
+   rather than a whole stack. The chat, model-manager, provider and page-level
    overlays have not been converted. The remaining work is mechanical but
    wide, and a `components/common/Modal.jsx` still exists alongside
    `ModalOverlay.jsx` — merging them is a follow-up, not a prerequisite.
-5. **`CharacterCard` is implemented twice** (`pages/Characters.jsx`,
+6. **`CharacterCard` is implemented twice** (`pages/Characters.jsx`,
    `pages/AvatarGallery.jsx`) with divergent props, tag limits, and
    drag-and-drop.
-6. **The app has no authentication.** Deliberate — `DEMO_GAPS_PLAN.md` records
+7. **The app has no authentication.** Deliberate — `DEMO_GAPS_PLAN.md` records
    the decision as out of scope for a local single-user studio — but it means
    every destructive endpoint, including the unauthenticated published-story
    export, is reachable by anyone who can reach the port. Do not expose this
    to a network you do not control.
-7. **Deferred unification items** from the August plan, still untouched:
+8. **Deferred unification items** from the August plan, still untouched:
    `inference_loop` extraction from the providers, full `worker_ws` protocol
-   unification, e2e helper dedup.
+   unification, e2e helper dedup. Note that the `external_worker` half of
+   `worker_ws` is currently unreachable by construction — nothing in the repo
+   writes the `worker_token` its auth requires — so unifying that protocol
+   should start with deciding whether the mode is wanted at all.
+9. **`GET /branches` and `GET /memories` are unbounded reads**, and
+   `POST /memories/reindex` is an unauthenticated in-request embedding pass over
+   every memory. `world_hub.get_relationships` applies its `limit`/`offset` to
+   one of five sub-queries, so the advertised pagination is not honoured.
 
 ## Running it
 
@@ -130,8 +148,9 @@ The frontend serves on **:5174** (not 5173) and proxies `/api` and
 
 | I want to… | Look in |
 |---|---|
-| Know what's left to do | this file, then `docs/audit-2026-09-26.md` |
+| Know what's left to do | this file, then `docs/audit-2026-09-26-followup.md` §2 |
 | Understand the code | `AGENTS.md`, then the module itself |
 | Understand the product intent | `VISION.md` |
 | Understand a past decision | `docs/archive/` (historical; may be wrong) |
-| See what the last audit found | `docs/audit-2026-09-26.md` |
+| See what the last audit found | `docs/audit-2026-09-26-followup.md` |
+| See the audit before it | `docs/audit-2026-09-26.md` |
