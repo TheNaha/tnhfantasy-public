@@ -153,11 +153,18 @@ def search_lorebook_entries(
                     "lorebook_semantic_fallback", lorebook_id=lb_id, error=str(exc)
                 )
 
+        # Keyword-fallback path. Cap the rows pulled out of Postgres instead of
+        # materialising every entry in the lorebook and slicing in Python: this
+        # runs on every chat message, suggest, impersonate and story continue.
+        # The cap is what the Python scan_cap would have applied anyway, so the
+        # result set is unchanged while the transfer is bounded.
+        scan_cap = max(limit, 50)
         entries = list(
             session.exec(
                 select(LorebookEntry)
                 .where(LorebookEntry.lorebook_id == lb_id)
                 .order_by(LorebookEntry.created_at.desc())
+                .limit(scan_cap)
             ).all()
         )
         if not entries:
@@ -172,7 +179,6 @@ def search_lorebook_entries(
 
         query_lower = query.lower()
         matched: list[LorebookEntry] = []
-        scan_cap = max(limit, 50)
         for e in entries[:scan_cap]:
             if not e.keys:
                 if e.id not in seen:

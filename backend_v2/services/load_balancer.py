@@ -228,9 +228,21 @@ class LoadBalancer:
             logger.warning("lb_state_load_failed", error=str(e))
     
     @classmethod
-    def save_state_to_db(cls, session: Session, runtime_state: LoadBalancerRuntimeState | None = None, state_id: int = 1):
-        """Persist state to database (best-effort, never holds locks)."""
-        snapshot = cls._get_state_snapshot(runtime_state)
+    def save_state_to_db(
+        cls,
+        session: Session,
+        runtime_state: LoadBalancerRuntimeState | None = None,
+        state_id: int = 1,
+        snapshot: dict[str, Any] | None = None,
+    ):
+        """Persist state to database (best-effort, never holds locks).
+
+        `snapshot` lets a caller capture the counters while it still holds the
+        asyncio lock and then persist them later (or off-thread) without
+        re-reading live state.
+        """
+        if snapshot is None:
+            snapshot = cls._get_state_snapshot(runtime_state)
         try:
             state = session.exec(select(LoadBalancerState).where(LoadBalancerState.id == state_id)).first()
             if not state:
@@ -569,7 +581,28 @@ class LoadBalancer:
             # Persist state periodically (every 20 jobs)
             total_jobs = sum(self.runtime_state.provider_job_counts.values())
             if total_jobs % 20 == 0:
-                LoadBalancer.save_state_to_db(self.session, self.runtime_state, state_id=self.state_id)
+                # Snapshot under the lock, persist outside it. The write is a
+                # synchronous SELECT + COMMIT; doing it while holding the
+                # asyncio lock blocked every concurrent provider selection for
+                # its duration. The worker thread gets its OWN session via
+                # get_session_sync() because a SQLAlchemy Session is not
+                # thread-safe and self.session is shared with the event loop.
+                snapshot = self.runtime_state.snapshot()
+                state_id = self.state_id
+                await asyncio.to_thread(LoadBalancer._persist_snapshot, snapshot, state_id)
+
+    @staticmethod
+    def _persist_snapshot(snapshot: dict[str, Any], state_id: int) -> None:
+        """Worker-thread body for the periodic state write."""
+        from infrastructure.database import get_session_sync
+
+        session = get_session_sync()
+        try:
+            LoadBalancer.save_state_to_db(session, state_id=state_id, snapshot=snapshot)
+        except Exception as exc:  # pragma: no cover - save_state_to_db already swallows
+            logger.warning("lb_state_persist_failed", error=str(exc))
+        finally:
+            session.close()
     
     async def _round_robin(self, providers: list[Provider]) -> Provider:
         """Round-robin selection."""

@@ -610,8 +610,7 @@ def _soft_delete_assets(relative_or_filename: str) -> int:
         return len(rows)
 
 
-@router.get("/api/v2/assets")
-async def list_assets(
+def _list_assets_sync(
     limit: int = 24,
     cursor: str | None = None,
     workspace: str | None = None,
@@ -709,8 +708,34 @@ async def list_assets(
         return {"items": items, "has_more": has_more, "next_cursor": next_cursor}
 
 
-@router.get("/api/v2/assets/{asset_id}/file")
-async def serve_asset_file(asset_id: str):
+@router.get("/api/v2/assets")
+async def list_assets(
+    limit: int = 24,
+    cursor: str | None = None,
+    workspace: str | None = None,
+    character_id: str | None = None,
+    story_id: str | None = None,
+    search: str | None = None,
+    sort: str = "date_desc",
+):
+    """Keyset-paginated asset listing backed by the DB.
+
+    The query runs on a worker thread: it opens a synchronous Session and
+    issues a full keyset page, and doing that inline on the event loop blocked
+    every other request for the duration.
+    """
+    return await asyncio.to_thread(
+        _list_assets_sync,
+        limit=limit,
+        cursor=cursor,
+        workspace=workspace,
+        character_id=character_id,
+        story_id=story_id,
+        search=search,
+        sort=sort,
+    )
+
+def _serve_asset_file_sync(asset_id: str):
     with _sync_session() as session:
         asset = session.get(Asset, asset_id)
         if not asset or asset.deleted_at is not None:
@@ -724,8 +749,14 @@ async def serve_asset_file(asset_id: str):
         return FileResponse(path)
 
 
-@router.get("/api/v2/assets/{asset_id}/thumb")
-async def serve_asset_thumb(asset_id: str):
+@router.get("/api/v2/assets/{asset_id}/file")
+async def serve_asset_file(asset_id: str):
+    # Off the event loop: the body opens a synchronous Session and stats the
+    # filesystem. See _list_assets_sync for the same reasoning.
+    return await asyncio.to_thread(_serve_asset_file_sync, asset_id)
+
+
+def _serve_asset_thumb_sync(asset_id: str):
     with _sync_session() as session:
         asset = session.get(Asset, asset_id)
         if not asset or asset.deleted_at is not None or not asset.thumbnail_relative_path:
@@ -737,6 +768,11 @@ async def serve_asset_thumb(asset_id: str):
                 _soft_delete_assets(asset.relative_path)
             raise NotFoundError("Thumbnail missing on disk")
         return FileResponse(path)
+
+
+@router.get("/api/v2/assets/{asset_id}/thumb")
+async def serve_asset_thumb(asset_id: str):
+    return await asyncio.to_thread(_serve_asset_thumb_sync, asset_id)
 
 
 class MoveAssetRequest(BaseModel):
