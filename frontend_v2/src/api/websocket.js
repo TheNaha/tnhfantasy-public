@@ -58,31 +58,70 @@ export function connect() {
         return connectionPromise;
     }
 
-    // If socket exists but isn't connected, it's reconnecting — wait for it
-    if (socket && !isConnected) {
-        connectionPromise = new Promise((resolve, reject) => {
-            let settled = false;
-            const settle = (fn, value) => {
-                if (!settled) { settled = true; fn(value); }
-            };
-            const onConnect = () => settle(resolve, socket);
-            const onError = (err) => settle(reject, err instanceof Error ? err : new Error(err?.message || 'reconnect error'));
-            socket.once('connect', onConnect);
-            socket.once('connect_error', onError);
-            setTimeout(() => {
-                if (!settled) {
-                    settle(reject, new Error('Reconnect timeout'));
-                }
-            }, 30000);
-        });
-        return connectionPromise;
-    }
-
     if (socket && isConnected) {
         return Promise.resolve(socket);
     }
 
-    connectionPromise = new Promise((resolve, reject) => {
+    // Either we are creating the socket or socket.io is already reconnecting.
+    // Both produce a promise that is *shared* by every caller, so a rejection
+    // has to clear it — otherwise one failed attempt poisons the module for the
+    // life of the page.
+    //
+    // That is what the reconnect branch used to do wrong: it rejected after 30s
+    // and left the rejected promise assigned. socket.io would then reconnect,
+    // `isConnected` would go true, the UI would show "connected" — and from
+    // then on every connect() returned the same rejection. cancelJob() rejected
+    // for every job (Dashboard reported "Failed to cancel job" while the job ran
+    // on) and subscribe() threw, so new room subscriptions incremented their
+    // refcount but never emitted. Only a page reload recovered.
+    //
+    // The `connect_error` handler below could not cover for it either: it closes
+    // over the *first* connect()'s `settled`, which is already true once the
+    // initial connection has resolved.
+    const attempt = socket && !isConnected
+        ? _waitForReconnect(socket)
+        : _openSocket();
+
+    let wrapper;
+    wrapper = attempt.catch((error) => {
+        // Identity check: a newer attempt must not be cleared by an older one.
+        if (connectionPromise === wrapper) {
+            connectionPromise = null;
+        }
+        throw error;
+    });
+    connectionPromise = wrapper;
+    return connectionPromise;
+}
+
+/**
+ * Resolve when an existing socket finishes reconnecting, reject after 30s.
+ * @returns {Promise}
+ */
+function _waitForReconnect(existing) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const settle = (fn, value) => {
+            if (!settled) { settled = true; fn(value); }
+        };
+        const onConnect = () => settle(resolve, existing);
+        const onError = (err) => settle(reject, err instanceof Error ? err : new Error(err?.message || 'reconnect error'));
+        existing.once('connect', onConnect);
+        existing.once('connect_error', onError);
+        setTimeout(() => {
+            if (!settled) {
+                settle(reject, new Error('Reconnect timeout'));
+            }
+        }, 30000);
+    });
+}
+
+/**
+ * Create the Socket.IO connection and resolve once it connects.
+ * @returns {Promise}
+ */
+function _openSocket() {
+    return new Promise((resolve, reject) => {
         if (socket && isConnected) {
             resolve(socket);
             return;
@@ -153,7 +192,6 @@ export function connect() {
             // Reject the initial connection promise if it hasn't resolved yet.
             // Do NOT destroy the socket — let Socket.IO's built-in reconnection handle retries.
             if (!settled) {
-                connectionPromise = null;
                 rejectConnection(error instanceof Error ? error : new Error(error?.message || 'WebSocket connection error'));
             }
         });
@@ -164,8 +202,6 @@ export function connect() {
         });
 
     });
-
-    return connectionPromise;
 }
 
 /**
