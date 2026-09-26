@@ -64,7 +64,16 @@ ACTIVE_JOB_STATUSES = (
 CANCELLABLE_JOB_STATUSES = (JobStatus.PENDING, *ACTIVE_JOB_STATUSES)
 
 JOB_STATUS_TRANSITIONS = {
-    JobStatus.PENDING: {JobStatus.SENT_TO_PROVIDER, JobStatus.CANCELLED},
+    # PENDING must be able to reach FAILED. A job that is still queued when it
+    # discovers no provider is available (all disabled, none healthy) is failed
+    # by `job_runner._select_or_fail`, and that write used to be rejected here,
+    # dropped by `update_job`, and the row left PENDING. The queue worker then
+    # re-picked the same job on its very next pass and repeated forever, which
+    # is what spammed the log with no_providers / invalid_fsm_transition for
+    # one job id forever. PENDING is also the only state RETRYING is reachable
+    # from on a manual retry, so a transient failure that happens before the
+    # job is ever dispatched needs the same edge.
+    JobStatus.PENDING: {JobStatus.SENT_TO_PROVIDER, JobStatus.RETRYING, JobStatus.FAILED, JobStatus.CANCELLED},
     JobStatus.SENT_TO_PROVIDER: {JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
     JobStatus.CONNECTED: {JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
     JobStatus.PRE_GENERATION: {JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},

@@ -8,7 +8,7 @@ from sqlmodel import Session
 from core.dtos import JobQueueItem
 from core.entities import Job, JobStatus
 from core.exceptions import NotFoundError
-from services.job_service import JobService
+from services.job_service import JOB_STATUS_TRANSITIONS, JobService
 
 
 class TestJobServiceCreate:
@@ -288,11 +288,20 @@ class TestJobServiceFsm:
         assert updated.status == JobStatus.GENERATING
 
     @pytest.mark.asyncio
-    async def test_pending_cannot_fail_directly(self, session: Session, sample_workflow):
+    async def test_pending_can_fail_when_no_provider_is_available(self, session: Session, sample_workflow):
+        """PENDING -> FAILED is forward motion to a terminal state, not the
+        backwards-to-PENDING reset this FSM exists to block.
+
+        This assertion used to be `assert updated.status == JobStatus.PENDING`
+        for this exact call, which meant `job_runner._select_or_fail` could never
+        record "No available providers": `update_job` dropped the status, the row
+        stayed PENDING, and the queue worker re-picked the same job on its next
+        pass forever."""
         service = JobService(session)
         job = await service.create_job(workflow=sample_workflow, metadata={})
         updated = await service.update_job(job.id, status=JobStatus.FAILED, error="No available providers")
-        assert updated.status == JobStatus.PENDING
+        assert updated.status == JobStatus.FAILED
+        assert updated.error == "No available providers"
 
     @pytest.mark.asyncio
     async def test_completed_is_terminal(self, session: Session, sample_workflow):
@@ -544,3 +553,63 @@ class TestJobServiceSearch:
             await service.create_job(workflow=sample_workflow, metadata={"prompt": f"dragon variant {i}"})
         results = await service.search_jobs("dragon", limit=2)
         assert len(results) == 2
+
+
+class TestJobStatusFSM:
+    """The job status FSM had no direct test, so a PENDING job that discovered
+    no available provider could not be written to FAILED. `update_job` dropped
+    the write, the row stayed PENDING, and the queue worker re-picked the same
+    job forever. These tests pin both the table and the write path."""
+
+    def test_pending_can_reach_failed(self):
+        assert JobStatus.FAILED in JOB_STATUS_TRANSITIONS[JobStatus.PENDING]
+
+    def test_pending_can_reach_retrying(self):
+        assert JobStatus.RETRYING in JOB_STATUS_TRANSITIONS[JobStatus.PENDING]
+
+    def test_every_non_terminal_state_can_fail(self):
+        for state in (
+            JobStatus.PENDING,
+            JobStatus.SENT_TO_PROVIDER,
+            JobStatus.CONNECTED,
+            JobStatus.PRE_GENERATION,
+            JobStatus.GENERATING,
+            JobStatus.POST_PROCESSING,
+            JobStatus.RETRYING,
+        ):
+            assert JobStatus.FAILED in JOB_STATUS_TRANSITIONS[state], state
+
+    def test_terminal_states_are_final(self):
+        assert JOB_STATUS_TRANSITIONS[JobStatus.COMPLETED] == set()
+        assert JOB_STATUS_TRANSITIONS[JobStatus.CANCELLED] == set()
+
+    def test_cancelled_job_cannot_be_completed(self):
+        assert JobStatus.COMPLETED not in JOB_STATUS_TRANSITIONS[JobStatus.CANCELLED]
+
+    def test_failed_job_can_be_retried(self):
+        assert JobStatus.PENDING in JOB_STATUS_TRANSITIONS[JobStatus.FAILED]
+
+    @pytest.mark.asyncio
+    async def test_update_job_pending_to_failed_persists(self, session: Session, sample_workflow):
+        """The regression itself: this write used to be silently discarded."""
+        service = JobService(session)
+        job = await service.create_job(workflow=sample_workflow, metadata={"prompt": "x"})
+        assert job.status == JobStatus.PENDING
+
+        updated = await service.update_job(
+            job.id, status=JobStatus.FAILED, error="No available providers"
+        )
+        assert updated.status == JobStatus.FAILED
+        session.refresh(job)
+        assert job.status == JobStatus.FAILED
+        assert job.error == "No available providers"
+
+    @pytest.mark.asyncio
+    async def test_update_job_still_rejects_cancelled_to_completed(self, session: Session, sample_workflow):
+        """The guard must keep protecting terminal states, not be disabled."""
+        service = JobService(session)
+        job = await service.create_job(workflow=sample_workflow, metadata={"prompt": "x"})
+        await service.update_job(job.id, status=JobStatus.CANCELLED)
+
+        updated = await service.update_job(job.id, status=JobStatus.COMPLETED)
+        assert updated.status == JobStatus.CANCELLED
