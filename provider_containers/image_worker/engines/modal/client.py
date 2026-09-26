@@ -11,10 +11,12 @@ import modal
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest,
-    build_error_response, build_status_response,
     get_logger
 )
 from provider_core.base_client import BaseProviderClient
+from provider_core.responses import (
+    config_fault_detail, from_upstream, ok, outcome
+)
 from provider_core.utils import translate_task_events, TaskEvent
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -58,7 +60,14 @@ class ModalProviderClient(BaseProviderClient):
         if missing:
             raise HTTPException(
                 status_code=503,
-                detail={"status": "unhealthy", "provider_id": PROVIDER_ID, "ready": False, "missing": missing},
+                # Not retryable: an unset MODAL_APP_NAME will not fix itself.
+                detail=config_fault_detail(
+                    "provider is not configured",
+                    status="unhealthy",
+                    provider_id=PROVIDER_ID,
+                    ready=False,
+                    missing=missing,
+                ),
             )
         return {"status": "healthy", "provider_id": PROVIDER_ID, "modal_username": MODAL_USERNAME, "modal_app": MODAL_APP_NAME, "ready": True}
 
@@ -152,24 +161,29 @@ class ModalProviderClient(BaseProviderClient):
     async def setup_models(self) -> Dict[str, Any]:
         setup_func = get_modal_function("setup_models")
         await setup_func.spawn.aio()
-        return build_status_response("queued", "Setup queued", provider=PROVIDER_ID)
+        return ok("Setup queued", provider=PROVIDER_ID, status="queued")
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
         download_func = get_modal_function("download_model")
         await download_func.spawn.aio(request.url, request.path, request.token, request.preview_url, request.metadata)
-        return build_status_response("queued", f"Download queued for {request.path}", provider=PROVIDER_ID)
+        return ok(f"Download queued for {request.path}", provider=PROVIDER_ID, status="queued")
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         directory = request.directory if request else ""
         list_func = get_modal_function("list_models_with_metadata")
         files = await list_func.remote.aio(directory)
-        return build_status_response("success", f"Listed models in {directory}", provider=PROVIDER_ID, files=files)
+        return ok(f"Listed models in {directory}", provider=PROVIDER_ID, files=files)
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
         FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
         storage = FileStorage()
         success = await storage.delete_file.remote.aio(request.path)
-        return {"success": success, "message": f"Deleted {request.path}" if success else f"Failed to delete {request.path}", "provider": PROVIDER_ID}
+        return outcome(
+            bool(success),
+            f"Deleted {request.path}" if success else f"Failed to delete {request.path}",
+            provider=PROVIDER_ID,
+            code=None if success else 404,
+        )
 
     async def get_file(self, path: str) -> StreamingResponse:
         try:
@@ -184,7 +198,11 @@ class ModalProviderClient(BaseProviderClient):
         FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
         storage = FileStorage()
         success = await storage.delete_file.remote.aio(path)
-        return {"success": success, "message": f"Deleted {path}" if success else f"File not found: {path}"}
+        return outcome(
+            bool(success),
+            f"Deleted {path}" if success else f"File not found: {path}",
+            code=None if success else 404,
+        )
 
     async def upload_file(self, request: UploadFileRequest) -> Dict[str, Any]:
         content = base64.b64decode(request.content_base64)
@@ -192,23 +210,28 @@ class ModalProviderClient(BaseProviderClient):
         storage = FileStorage()
         path = f"{request.directory}/{request.filename}"
         await storage.put_file.remote.aio(path=path, content=content)
-        return {"status": "success", "path": path, "size": len(content)}
+        return ok("File uploaded", provider=PROVIDER_ID, path=path, size=len(content))
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        from provider_core.deploy import start_deploy_task
-        from provider_core.base_client import _DEPLOY_STATE
+        from provider_core.deploy import start_deploy_task, get_deploy_state
 
         commands = [["modal", "deploy", "/app/image_worker/engines/modal/modal_app.py"]]
         self._deploy_task = start_deploy_task("Modal", commands)
-        return _DEPLOY_STATE
+        return get_deploy_state()
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
         validate_fn = get_modal_function("validate_models")
-        return await validate_fn.remote.aio(request.directory, request.delete_invalid)
+        return from_upstream(
+            await validate_fn.remote.aio(request.directory, request.delete_invalid),
+            provider=PROVIDER_ID,
+        )
 
     async def validate_all_models(self) -> Dict[str, Any]:
         validate_fn = get_modal_function("validate_models")
-        return await validate_fn.remote.aio(MODEL_DIRECTORIES, False)
+        return from_upstream(
+            await validate_fn.remote.aio(MODEL_DIRECTORIES, False),
+            provider=PROVIDER_ID,
+        )
 
     async def get_object_info(self) -> Dict[str, Any]:
         ComfyUINodeExtractor = modal.Cls.from_name(MODAL_APP_NAME, "ComfyUINodeExtractor")

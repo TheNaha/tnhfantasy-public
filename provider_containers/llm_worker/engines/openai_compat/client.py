@@ -10,9 +10,9 @@ from provider_core.base_client import BaseProviderClient
 from provider_core.http_client import get_http_client
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
-    UploadFileRequest, ValidateModelsRequest,
-    build_status_response, build_error_response, TaskEvent
+    UploadFileRequest, ValidateModelsRequest, TaskEvent
 )
+from provider_core.responses import failed, files_response, ok
 
 
 class OpenAICompatProviderClient(BaseProviderClient):
@@ -191,11 +191,11 @@ class OpenAICompatProviderClient(BaseProviderClient):
 
     async def setup_models(self) -> Dict[str, Any]:
         """LLM workers don't manage weights locally; no-op."""
-        return build_status_response("success", "Setup complete", provider=self.provider_id)
+        return ok("Setup complete", provider=self.provider_id)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
         """LLM workers delegate model management to the upstream API."""
-        return build_status_response("success", "LLM workers do not manage model files directly.", provider=self.provider_id)
+        return ok("LLM workers do not manage model files directly.", provider=self.provider_id)
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         """List available models from the upstream OpenAI-compatible API."""
@@ -208,14 +208,21 @@ class OpenAICompatProviderClient(BaseProviderClient):
             response.raise_for_status()
             data = response.json()
             model_ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
-            return {"files": [{"path": m, "name": m} for m in model_ids]}
+            return files_response(
+                [{"path": m, "name": m} for m in model_ids],
+                provider=self.provider_id,
+            )
         except Exception as e:
             self.logger.warning(f"Failed to list models from upstream: {e}")
-            return {"files": []}
+            return files_response(
+                [],
+                message=f"Failed to list models from upstream: {e}",
+                provider=self.provider_id,
+            )
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
         """LLM workers do not delete upstream models."""
-        return build_error_response("LLM workers do not delete upstream models.", retryable=False, code=404)
+        return failed("LLM workers do not delete upstream models.", code=404, provider=self.provider_id)
 
     async def get_file(self, path: str):
         """Not supported for LLM workers."""
@@ -224,23 +231,23 @@ class OpenAICompatProviderClient(BaseProviderClient):
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
         """Not supported for LLM workers."""
-        return build_error_response("File deletion not supported for LLM workers.", retryable=False, code=404)
+        return failed("File deletion not supported for LLM workers.", code=404, provider=self.provider_id)
 
     async def upload_file(self, request: UploadFileRequest) -> Dict[str, Any]:
         """Not supported for LLM workers."""
-        return build_error_response("File upload not supported for LLM workers.", retryable=False, code=404)
+        return failed("File upload not supported for LLM workers.", code=404, provider=self.provider_id)
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Not applicable for openai_compat engine."""
-        return build_status_response("success", "Deployment not managed by openai_compat engine.", provider=self.provider_id)
+        return ok("Deployment not managed by openai_compat engine.", provider=self.provider_id)
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
         """Not applicable for LLM workers."""
-        return build_status_response("success", "Model validation not applicable for LLM workers.", provider=self.provider_id)
+        return ok("Model validation not applicable for LLM workers.", provider=self.provider_id)
 
     async def validate_all_models(self) -> Dict[str, Any]:
         """Not applicable for LLM workers."""
-        return build_status_response("success", "Model validation not applicable for LLM workers.", provider=self.provider_id)
+        return ok("Model validation not applicable for LLM workers.", provider=self.provider_id)
 
     async def get_object_info(self) -> Dict[str, Any]:
         """Return object/node info — not applicable for LLM workers."""
@@ -258,4 +265,4 @@ class OpenAICompatProviderClient(BaseProviderClient):
 
     async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
         """LLM workers have no file system to reconcile."""
-        return build_status_response("success", "No reconciliation needed for LLM workers.", provider=self.provider_id)
+        return ok("No reconciliation needed for LLM workers.", provider=self.provider_id)

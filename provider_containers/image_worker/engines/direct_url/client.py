@@ -9,12 +9,19 @@ from fastapi.responses import StreamingResponse, Response
 
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
-    UploadFileRequest, ValidateModelsRequest, build_status_response, build_error_response
+    UploadFileRequest, ValidateModelsRequest
 )
+from provider_core.background import BackgroundTaskLimitExceeded, spawn_background_task
 from provider_core.base_client import BaseProviderClient
+from provider_core.responses import failed, ok, outcome
 from provider_core.utils import translate_task_events, TaskEvent
 
 PROVIDER_ID = os.getenv("PROVIDER_ID", "direct-url-worker")
+
+# Ceiling on the /health upstream probe. The compose and Dockerfile healthchecks
+# give the whole request 10s, so the probe must be well under that or a dead
+# ComfyUI turns into a hung healthcheck rather than a failing one.
+HEALTH_PROBE_TIMEOUT = float(os.getenv("COMFYUI_HEALTH_PROBE_TIMEOUT", "5.0"))
 
 NODE_TO_DIRECTORY = {
     "CheckpointLoaderSimple": "checkpoints",
@@ -105,12 +112,52 @@ class DirectUrlProviderClient(BaseProviderClient):
         return sorted(set(paths))
 
     async def get_health(self) -> Dict[str, Any]:
-        # Local-only health check per VISION #4: never probe the remote
-        # engine on health checks. The worker assumes the remote URL is
-        # alive until an actual job is dispatched.
-        return {"status": "healthy", "provider_id": PROVIDER_ID, "ready": True, "engine": "direct_url", "comfy_url": self.comfy_url}
+        """Actually probe the configured ComfyUI server.
+
+        This used to return `{"status": "healthy", "ready": True}` without
+        touching the network, so both the Dockerfile HEALTHCHECK and the compose
+        healthcheck passed and `docker compose ps` reported a provider healthy
+        while its ComfyUI server was unreachable — and the backend's
+        `/health` probe (services/load_balancer.py, api/routes/providers/crud.py)
+        counted it as a usable target and dispatched paid jobs at it.
+
+        Unlike the Modal/Beam engines, which deliberately never probe their
+        serverless deployment because a probe costs money (VISION #4), this
+        engine points at a ComfyUI server the user runs themselves: a GET of
+        /system_stats is free, is always present, and returns a few hundred
+        bytes.
+
+        A dead upstream is 503 *without* a `retryable` marker, so the router
+        still classifies it as transient — unlike a configuration fault, this
+        one really can come back.
+        """
+        try:
+            response = await self._http.get("/system_stats", timeout=HEALTH_PROBE_TIMEOUT)
+            response.raise_for_status()
+        except Exception as e:
+            self.logger.warning(f"[{PROVIDER_ID}] ComfyUI health probe failed: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": f"ComfyUI server is unreachable: {type(e).__name__}: {e}",
+                    "status": "unhealthy",
+                    "provider_id": PROVIDER_ID,
+                    "ready": False,
+                    "engine": "direct_url",
+                },
+            )
+        return {
+            "status": "healthy",
+            "provider_id": PROVIDER_ID,
+            "ready": True,
+            "engine": "direct_url",
+            "comfy_reachable": True,
+        }
 
     async def get_info(self) -> Dict[str, Any]:
+        # `comfy_url` is a LAN IP on most deployments. This route is
+        # authenticated (see provider_core/router.py), so the address is only
+        # visible to the backend.
         return {"provider_id": PROVIDER_ID, "type": "direct_url", "containerized": True, "comfy_url": self.comfy_url}
 
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
@@ -156,14 +203,14 @@ class DirectUrlProviderClient(BaseProviderClient):
         return StreamingResponse(translate_task_events(stream(), job_id=job_id), media_type="application/x-ndjson")
 
     async def setup_models(self) -> Dict[str, Any]:
-        return build_status_response("success", "Setup not needed for direct_url provider", provider=PROVIDER_ID)
+        return ok("Setup not needed for direct_url provider", provider=PROVIDER_ID)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
-        return build_error_response(
+        return failed(
             "Model download is not supported for direct_url providers. "
             "Please install models directly on the ComfyUI server.",
-            retryable=False,
             code=501,
+            provider=PROVIDER_ID,
         )
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
@@ -174,16 +221,21 @@ class DirectUrlProviderClient(BaseProviderClient):
             object_info = resp.json()
         except Exception as e:
             self.logger.warning(f"Failed to fetch /object_info: {e}")
-            return build_error_response(f"Failed to query ComfyUI: {e}", retryable=True, code=502)
+            return failed(f"Failed to query ComfyUI: {e}", code=502, retryable=True, provider=PROVIDER_ID)
 
         files = [
             {"name": path.split("/", 1)[-1], "path": path, "type": "file", "size": 0}
             for path in self._iter_object_info_model_paths(object_info, directory)
         ]
-        return build_status_response("success", f"Listed {len(files)} models", provider=PROVIDER_ID, files=files)
+        return ok(f"Listed {len(files)} models", provider=PROVIDER_ID, files=files)
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
-        return {"success": False, "message": "Model deletion is not supported for direct_url providers.", "provider": PROVIDER_ID}
+        return outcome(
+            False,
+            "Model deletion is not supported for direct_url providers.",
+            provider=PROVIDER_ID,
+            code=405,
+        )
 
     async def get_file(self, path: str) -> StreamingResponse:
         try:
@@ -196,13 +248,19 @@ class DirectUrlProviderClient(BaseProviderClient):
             raise HTTPException(status_code=e.response.status_code, detail=str(e))
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
-        return {"success": False, "message": "File deletion is not supported for direct_url providers."}
+        return outcome(
+            False,
+            "File deletion is not supported for direct_url providers.",
+            code=405,
+        )
 
     async def upload_file(self, request: UploadFileRequest) -> Dict[str, Any]:
-        return {"status": "error", "message": "File upload is not supported for direct_url providers."}
+        # The backend detects this failure by `body["status"] == "error"`
+        # (api/routes/files.py), which the dialect preserves.
+        return failed("File upload is not supported for direct_url providers.", code=405)
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return {"status": "success", "message": "No deployment needed for direct_url"}
+        return ok("No deployment needed for direct_url", provider=PROVIDER_ID)
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
         try:
@@ -210,15 +268,21 @@ class DirectUrlProviderClient(BaseProviderClient):
             resp.raise_for_status()
             object_info = resp.json()
         except Exception as e:
-            return build_error_response(f"Failed to query ComfyUI: {e}", retryable=True, code=502)
+            return failed(f"Failed to query ComfyUI: {e}", code=502, retryable=True, provider=PROVIDER_ID)
 
         target_dir = request.directory if isinstance(request.directory, str) else ""
         available = self._iter_object_info_model_paths(object_info, target_dir)
 
-        return build_status_response(
-            "success",
+        # `available` used to be passed to build_status_response, which dropped
+        # it: StatusResponse declares status/message/provider/result/files and
+        # sets no model_config, so Pydantic v2's default extra='ignore'
+        # discarded the entire result of the method and `validate_all_models`
+        # (which delegates here) reported nothing at all. `result` is the
+        # declared slot, `available` is the name the caller looks for.
+        return ok(
             f"Found {len(available)} models available on ComfyUI server",
             provider=PROVIDER_ID,
+            result=available,
             available=available,
         )
 
@@ -226,12 +290,14 @@ class DirectUrlProviderClient(BaseProviderClient):
         return await self.validate_models(ValidateModelsRequest(directory=""))
 
     async def get_object_info(self) -> Dict[str, Any]:
+        # Success is a raw pass-through of ComfyUI's own document:
+        # api/routes/nodes.py returns it verbatim to the UI.
         try:
             resp = await self._http.get("/object_info")
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            return {"status": "error", "message": f"Failed to query ComfyUI: {e}"}
+            return failed(f"Failed to query ComfyUI: {e}", code=502, retryable=True, provider=PROVIDER_ID)
 
     async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
         backend_url = os.getenv("BACKEND_URL", "http://localhost:8002")
@@ -292,11 +358,25 @@ class DirectUrlProviderClient(BaseProviderClient):
             except Exception as e:
                 self.logger.error(f"Error communicating with backend: {e}")
 
-        import asyncio
-        asyncio.create_task(perform_reconciliation())
-        
-        return build_status_response(
-            "queued",
+        # Retained: a bare create_task is GC-eligible while the reconciliation
+        # (which can run for hours, holding a download semaphore) is in flight.
+        try:
+            spawn_background_task(
+                perform_reconciliation(),
+                tasks=self._background_tasks,
+                name=f"direct-url-reconcile:{PROVIDER_ID}",
+            )
+        except BackgroundTaskLimitExceeded:
+            return failed(
+                f"Reconciliation not started: {len(self._background_tasks)} background "
+                f"tasks already in flight for {PROVIDER_ID}",
+                code=429,
+                retryable=True,
+                provider=PROVIDER_ID,
+            )
+
+        return ok(
             "Reconciliation started (background task)",
-            provider=PROVIDER_ID
+            provider=PROVIDER_ID,
+            status="queued",
         )

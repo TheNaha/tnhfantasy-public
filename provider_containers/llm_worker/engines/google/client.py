@@ -10,9 +10,32 @@ from provider_core.base_client import BaseProviderClient
 from provider_core.http_client import get_http_client
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
-    UploadFileRequest, ValidateModelsRequest,
-    build_status_response, build_error_response, TaskEvent
+    UploadFileRequest, ValidateModelsRequest, TaskEvent
 )
+from provider_core.responses import failed, files_response, ok
+
+# The Gemini API accepts the key as an `x-goog-api-key` header, which is what
+# Google's own API-key guidance recommends; the `?key=` query form is the
+# fallback they document for clients that cannot set headers. The key used to be
+# in the query string, and a query string reaches proxy logs, httpx exception
+# text (`raise_for_status` embeds the URL) and — because both error paths put
+# `str(e)` into a TaskEvent(message=...) that is streamed to the backend and
+# persisted on the job — the job record. See GOOGLE_API_KEY docs.
+GOOGLE_API_KEY_HEADER = "x-goog-api-key"
+GOOGLE_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def redact_api_key(text: str, secret: str) -> str:
+    """Replace the key with a marker anywhere it appears in `text`.
+
+    Defence in depth for the paths where a key could still reach a message: a
+    reverse proxy echoing the request line back, or a deployment that predates
+    the header change. `TaskEvent(message=...)` is persisted on the job, so
+    anything that ends up in a message ends up in the database.
+    """
+    if not secret:
+        return text
+    return text.replace(secret, "***REDACTED***")
 
 
 def _parse_json(value: Any) -> Any:
@@ -173,10 +196,11 @@ class GoogleProviderClient(BaseProviderClient):
                         "parts": [{"text": system_prompt.strip()}]
                     }
 
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:streamGenerateContent?alt=sse&key={self.api_key}"
+                url = f"{GOOGLE_API_BASE}/models/{model_id}:streamGenerateContent?alt=sse"
 
                 headers = {
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    GOOGLE_API_KEY_HEADER: self.api_key,
                 }
 
                 timeout = request.timeout_seconds or 120.0
@@ -254,8 +278,9 @@ class GoogleProviderClient(BaseProviderClient):
                     outputs=[{"role": "assistant", "content": "", "cancelled": True}],
                 ).to_ndjson()
             except Exception as e:
-                self.logger.error(f"Error during inference: {str(e)}")
-                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=True).to_ndjson()
+                message = redact_api_key(str(e), self.api_key)
+                self.logger.error(f"Error during inference: {message}")
+                yield TaskEvent(event="failed", job_id=job_id, message=message, retryable=True).to_ndjson()
             finally:
                 if job_id:
                     await self.job_tracker.end_job(job_id)
@@ -263,19 +288,24 @@ class GoogleProviderClient(BaseProviderClient):
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 
     async def setup_models(self) -> Dict[str, Any]:
-        return build_status_response("success", "Setup complete", provider=self.provider_id)
+        return ok("Setup complete", provider=self.provider_id)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return ok("Not applicable", provider=self.provider_id)
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         fallback = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
         if not self.api_key:
-            return {"files": [{"path": m, "name": m} for m in fallback]}
+            return files_response(
+                [{"path": m, "name": m} for m in fallback],
+                message="GOOGLE_API_KEY not set; returning the known model list",
+                provider=self.provider_id,
+            )
         try:
             client = await get_http_client().get_client()
             resp = await client.get(
-                f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}",
+                f"{GOOGLE_API_BASE}/models",
+                headers={GOOGLE_API_KEY_HEADER: self.api_key},
                 timeout=10.0,
             )
             resp.raise_for_status()
@@ -290,31 +320,41 @@ class GoogleProviderClient(BaseProviderClient):
                     models.append(name)
             if not models:
                 models = fallback
-            return {"files": [{"path": m, "name": m} for m in sorted(models)]}
-        except Exception:
-            return {"files": [{"path": m, "name": m} for m in fallback]}
+            return files_response(
+                [{"path": m, "name": m} for m in sorted(models)],
+                provider=self.provider_id,
+            )
+        except Exception as e:
+            self.logger.warning(
+                "Failed to list models from Google: %s", redact_api_key(str(e), self.api_key)
+            )
+            return files_response(
+                [{"path": m, "name": m} for m in fallback],
+                message="Failed to list models from Google; returning the known model list",
+                provider=self.provider_id,
+            )
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
-        return build_error_response("Model deletion not applicable for LLM workers.", retryable=False, code=404)
+        return failed("Model deletion not applicable for LLM workers.", code=404, provider=self.provider_id)
 
     async def get_file(self, path: str):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Not supported")
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
-        return build_error_response("Not supported", retryable=False, code=404)
+        return failed("Not supported", code=404, provider=self.provider_id)
 
     async def upload_file(self, request: UploadFileRequest) -> Dict[str, Any]:
-        return build_error_response("Not supported", retryable=False, code=404)
+        return failed("Not supported", code=404, provider=self.provider_id)
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return ok("Not applicable", provider=self.provider_id)
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return ok("Not applicable", provider=self.provider_id)
 
     async def validate_all_models(self) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return ok("Not applicable", provider=self.provider_id)
 
     async def get_object_info(self) -> Dict[str, Any]:
         return {"object_info": {}}
@@ -330,4 +370,4 @@ class GoogleProviderClient(BaseProviderClient):
         }
 
     async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return ok("Not applicable", provider=self.provider_id)

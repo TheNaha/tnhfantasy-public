@@ -10,9 +10,9 @@ from provider_core.base_client import BaseProviderClient
 from provider_core.http_client import get_http_client
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
-    UploadFileRequest, ValidateModelsRequest,
-    build_status_response, build_error_response, TaskEvent
+    UploadFileRequest, ValidateModelsRequest, TaskEvent
 )
+from provider_core.responses import failed, files_response, ok
 
 
 def _parse_json(value: Any) -> Any:
@@ -256,10 +256,10 @@ class AnthropicProviderClient(BaseProviderClient):
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 
     async def setup_models(self) -> Dict[str, Any]:
-        return build_status_response("success", "Setup complete", provider=self.provider_id)
+        return ok("Setup complete", provider=self.provider_id)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return ok("Not applicable", provider=self.provider_id)
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         fallback = [
@@ -270,7 +270,11 @@ class AnthropicProviderClient(BaseProviderClient):
             "claude-3-opus-20240229",
         ]
         if not self.api_key:
-            return {"files": [{"path": m, "name": m} for m in fallback]}
+            return files_response(
+                [{"path": m, "name": m} for m in fallback],
+                message="ANTHROPIC_API_KEY not set; returning the known model list",
+                provider=self.provider_id,
+            )
         try:
             client = await get_http_client().get_client()
             resp = await client.get(
@@ -286,31 +290,39 @@ class AnthropicProviderClient(BaseProviderClient):
             models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
             if not models:
                 models = fallback
-            return {"files": [{"path": m, "name": m} for m in sorted(models)]}
-        except Exception:
-            return {"files": [{"path": m, "name": m} for m in fallback]}
+            return files_response(
+                [{"path": m, "name": m} for m in sorted(models)],
+                provider=self.provider_id,
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to list models from Anthropic: {e}")
+            return files_response(
+                [{"path": m, "name": m} for m in fallback],
+                message="Failed to list models from Anthropic; returning the known model list",
+                provider=self.provider_id,
+            )
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
-        return build_error_response("Model deletion not applicable for LLM workers.", retryable=False, code=404)
+        return failed("Model deletion not applicable for LLM workers.", code=404, provider=self.provider_id)
 
     async def get_file(self, path: str):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Not supported")
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
-        return build_error_response("Not supported", retryable=False, code=404)
+        return failed("Not supported", code=404, provider=self.provider_id)
 
     async def upload_file(self, request: UploadFileRequest) -> Dict[str, Any]:
-        return build_error_response("Not supported", retryable=False, code=404)
+        return failed("Not supported", code=404, provider=self.provider_id)
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return ok("Not applicable", provider=self.provider_id)
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return ok("Not applicable", provider=self.provider_id)
 
     async def validate_all_models(self) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return ok("Not applicable", provider=self.provider_id)
 
     async def get_object_info(self) -> Dict[str, Any]:
         return {"object_info": {}}
@@ -326,4 +338,4 @@ class AnthropicProviderClient(BaseProviderClient):
         }
 
     async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return ok("Not applicable", provider=self.provider_id)

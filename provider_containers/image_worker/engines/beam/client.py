@@ -11,10 +11,14 @@ import json
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest,
-    build_error_response, build_status_response,
     get_logger, get_http_client
 )
+from provider_core.background import MAX_BACKGROUND_TASKS, BackgroundTaskLimitExceeded, spawn_background_task
 from provider_core.base_client import BaseProviderClient
+from provider_core.http_client import get_file_size_cap, relay_bytes
+from provider_core.responses import (
+    config_fault_detail, failed, from_upstream, ok
+)
 from provider_core.utils import translate_task_events, TaskEvent
 from provider_core.reconciliation import determine_download_token
 
@@ -51,6 +55,20 @@ def get_beam_headers() -> Dict[str, str]:
         headers["X-Beam-Workspace-Id"] = BEAM_WORKSPACE_ID
     return headers
 
+
+def _declared_length(header_value: Optional[str]) -> Optional[int]:
+    """Parse a Content-Length, or None if absent or unparseable.
+
+    A malformed length cannot be trusted as "small", so it is treated as absent
+    and the streaming ceiling in `relay_bytes` does the work instead.
+    """
+    if header_value is None:
+        return None
+    try:
+        return int(header_value)
+    except (TypeError, ValueError):
+        return None
+
 class BeamProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
@@ -66,7 +84,16 @@ class BeamProviderClient(BaseProviderClient):
         if missing:
             raise HTTPException(
                 status_code=503,
-                detail={"status": "unhealthy", "provider_id": PROVIDER_ID, "ready": False, "missing": missing},
+                # Not retryable: an unset BEAM_API_KEY / BEAM_*_URL will not fix
+                # itself, and a 503 read as retryable fails the job over to
+                # another provider.
+                detail=config_fault_detail(
+                    "provider is not configured",
+                    status="unhealthy",
+                    provider_id=PROVIDER_ID,
+                    ready=False,
+                    missing=missing,
+                ),
             )
 
         # Local-only health check per VISION #4: never ping the remote
@@ -166,13 +193,17 @@ class BeamProviderClient(BaseProviderClient):
         client = get_http_client()
         response = await client.post(f"{BEAM_STORAGE_URL}/setup", headers=get_beam_headers(), timeout=300.0)
         if response.status_code == 200:
-            return response.json()
+            return from_upstream(
+                response.json(),
+                provider=PROVIDER_ID,
+                message="Setup complete",
+            )
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
         client = get_http_client()
         download_url = BEAM_DOWNLOAD_URL or BEAM_STORAGE_URL
-        
+
         async def _do_download():
             try:
                 response = await client.post(
@@ -188,12 +219,23 @@ class BeamProviderClient(BaseProviderClient):
                 if response.status_code != 200:
                     logger.error(f"Beam download failed with status {response.status_code}: {response.text}")
             except Exception as e:
-                logger.error(f"Beam download exception: {e}")
+                logger.error(f"Beam download exception: {e}", exc_info=True)
 
-        task = asyncio.create_task(_do_download())
-        self._download_tasks.add(task)
-        task.add_done_callback(self._download_tasks.discard)
-        return build_status_response("queued", f"Download queued for {request.path}", provider=PROVIDER_ID)
+        try:
+            spawn_background_task(
+                _do_download(),
+                tasks=self._download_tasks,
+                name=f"beam-download:{request.path}",
+            )
+        except BackgroundTaskLimitExceeded:
+            return failed(
+                f"Too many downloads already in flight for {PROVIDER_ID}; "
+                f"retry once one finishes (limit {MAX_BACKGROUND_TASKS})",
+                code=429,
+                retryable=True,
+                provider=PROVIDER_ID,
+            )
+        return ok(f"Download queued for {request.path}", provider=PROVIDER_ID, status="queued")
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         client = get_http_client()
@@ -205,7 +247,7 @@ class BeamProviderClient(BaseProviderClient):
             timeout=60.0
         )
         if response.status_code == 200:
-            return build_status_response("success", "Listed models", provider=PROVIDER_ID, files=response.json().get("files", []))
+            return ok("Listed models", provider=PROVIDER_ID, files=response.json().get("files", []))
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
@@ -217,32 +259,92 @@ class BeamProviderClient(BaseProviderClient):
             timeout=60.0
         )
         if response.status_code == 200:
-            return {"success": True, "provider": PROVIDER_ID}
+            # Adopt, rather than assume: the storage app answers HTTP 200 with
+            # `success: false` for a file it could not remove, and reporting
+            # that as a success is how a "deleted" model stays on the volume.
+            return from_upstream(response.json(), provider=PROVIDER_ID)
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def get_file(self, path: str) -> StreamingResponse:
+        """Stream the file through instead of buffering it (three times over).
+
+        The old form did `await client.post(...)` — the whole body in memory —
+        then, for the JSON variant, base64-decoded it into a *second* copy and
+        handed the `Response` a third. Files served here are model sidecars and
+        output images, so a bounded streaming pass is both cheaper and the only
+        way a 20 GB body cannot exhaust the container.
+        """
         client = get_http_client()
-        response = await client.post(f"{BEAM_STORAGE_URL}/get-file", json={"path": path}, headers=get_beam_headers(), timeout=120.0)
-        if response.status_code == 200:
-            content_type = str(response.headers.get("content-type", ""))
-            if "json" in content_type.lower() or response.content[:1] in (b"{", b"["):
+        max_bytes = get_file_size_cap()
+        http = await client.get_client()
+        request = http.build_request(
+            "POST", f"{BEAM_STORAGE_URL}/get-file", json={"path": path},
+            headers=get_beam_headers(), timeout=120.0,
+        )
+        raw = await http.send(request, stream=True)
+        try:
+            if raw.status_code != 200:
+                await raw.aread()
+                if raw.status_code == 404:
+                    raise HTTPException(status_code=404, detail="File not found")
+                if raw.status_code >= 500:
+                    raise HTTPException(status_code=502, detail=f"Upstream storage error ({raw.status_code})")
+                raise HTTPException(status_code=raw.status_code, detail=raw.text)
+
+            content_type = str(raw.headers.get("content-type", ""))
+            declared = _declared_length(raw.headers.get("content-length"))
+            if declared is not None and declared > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File exceeds the {max_bytes} byte get-file limit",
+                )
+
+            if "json" in content_type.lower():
+                # The base64 variant cannot be relayed without decoding it, so
+                # it is the one path that has to be buffered — under the cap.
+                body = await raw.aread()
+                if len(body) > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds the {max_bytes} byte get-file limit",
+                    )
                 try:
-                    payload = response.json()
-                    if isinstance(payload, dict) and payload.get("content_base64"):
-                        return Response(content=base64.b64decode(payload["content_base64"]), media_type=payload.get("media_type", "application/octet-stream"))
-                except Exception:
-                    pass
-            return Response(content=response.content, media_type=content_type or "application/octet-stream")
-        if response.status_code == 404:
-            raise HTTPException(status_code=404, detail="File not found")
-        if response.status_code >= 500:
-            raise HTTPException(status_code=502, detail=f"Upstream storage error ({response.status_code})")
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+                    payload = json.loads(body)
+                except ValueError:
+                    return Response(content=body, media_type=content_type or "application/octet-stream")
+                if isinstance(payload, dict) and payload.get("content_base64"):
+                    decoded = base64.b64decode(payload["content_base64"])
+                    if len(decoded) > max_bytes:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"File exceeds the {max_bytes} byte get-file limit",
+                        )
+                    return Response(
+                        content=decoded,
+                        media_type=payload.get("media_type", "application/octet-stream"),
+                    )
+                return Response(content=body, media_type=content_type or "application/octet-stream")
+
+            return StreamingResponse(
+                relay_bytes(raw, max_bytes),
+                status_code=200,
+                media_type=content_type or "application/octet-stream",
+            )
+        except BaseException:
+            await raw.aclose()
+            raise
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
         client = get_http_client()
         response = await client.post(f"{BEAM_STORAGE_URL}/delete-file", json={"path": path}, headers=get_beam_headers(), timeout=60.0)
-        return response.json() if response.status_code == 200 else {"success": False}
+        if response.status_code == 200:
+            return from_upstream(response.json(), provider=PROVIDER_ID)
+        return failed(
+            f"File deletion failed with status {response.status_code}",
+            code=response.status_code,
+            retryable=response.status_code >= 500,
+            provider=PROVIDER_ID,
+        )
 
     async def upload_file(self, request: UploadFileRequest) -> Dict[str, Any]:
         client = get_http_client()
@@ -253,19 +355,18 @@ class BeamProviderClient(BaseProviderClient):
             timeout=120.0
         )
         if response.status_code == 200:
-            return response.json()
+            return from_upstream(response.json(), provider=PROVIDER_ID, message="File uploaded")
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        from provider_core.deploy import start_deploy_task
-        from provider_core.base_client import _DEPLOY_STATE
-        
+        from provider_core.deploy import start_deploy_task, get_deploy_state
+
         commands = [
             ["beam", "deploy", "/app/image_worker/engines/beam/beam_app.py:comfy_gpu"],
             ["beam", "deploy", "/app/image_worker/engines/beam/beam_app.py:comfy_storage"]
         ]
         self._deploy_task = start_deploy_task("Beam", commands)
-        return _DEPLOY_STATE
+        return get_deploy_state()
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
         client = get_http_client()
@@ -278,13 +379,24 @@ class BeamProviderClient(BaseProviderClient):
                 timeout=120.0
             )
             if response.status_code != 200:
-                return {"error": f"HTTP {response.status_code}", "valid": [], "invalid": [], "partial": []}
+                return failed(
+                    f"Validation failed for {directory} with HTTP {response.status_code}",
+                    code=response.status_code,
+                    retryable=response.status_code >= 500,
+                    provider=PROVIDER_ID,
+                    valid=[], invalid=[], partial=[], by_directory={},
+                )
             payload = response.json()
             results["by_directory"][directory] = payload
             results["valid"].extend(payload.get("valid", []))
             results["invalid"].extend(payload.get("invalid", []))
             results["partial"].extend(payload.get("partial", []))
-        return results
+        return ok(
+            f"Validated {len(results['valid'])} models across {len(results['by_directory'])} directories",
+            provider=PROVIDER_ID,
+            result=results,
+            **results,
+        )
 
     async def validate_all_models(self) -> Dict[str, Any]:
         client = get_http_client()
@@ -294,7 +406,11 @@ class BeamProviderClient(BaseProviderClient):
             timeout=300.0,
         )
         response.raise_for_status()
-        return response.json()
+        return from_upstream(
+            response.json(),
+            provider=PROVIDER_ID,
+            message="Validated all models",
+        )
 
     async def get_object_info(self) -> Dict[str, Any]:
         client = get_http_client()

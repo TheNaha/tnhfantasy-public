@@ -10,9 +10,9 @@ from fastapi.responses import StreamingResponse
 from provider_core.base_client import BaseProviderClient
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
-    UploadFileRequest, ValidateModelsRequest,
-    build_status_response, build_error_response, TaskEvent,
+    UploadFileRequest, ValidateModelsRequest, TaskEvent,
 )
+from provider_core.responses import failed, from_upstream, ok, outcome
 
 logger = logging.getLogger("provider_core.engines.vllm_modal")
 
@@ -195,15 +195,16 @@ class VLLMModalProviderClient(BaseProviderClient):
         try:
             setup_func = self._get_modal_function("setup_models")
             result = await setup_func.spawn.aio()
-            if isinstance(result, dict):
-                return build_status_response(
-                    "success" if result.get("status") == "success" else "error",
-                    result.get("message", "Setup complete"),
+            if isinstance(result, dict) and result.get("status") == "error":
+                return failed(
+                    result.get("message", "Setup failed"),
                     provider=self.provider_id,
                 )
-            return build_status_response("success", "Setup complete", provider=self.provider_id)
+            if isinstance(result, dict) and result.get("status") == "success":
+                return ok(result.get("message", "Setup complete"), provider=self.provider_id)
+            return ok("Setup complete", provider=self.provider_id, status="queued")
         except Exception as e:
-            return build_error_response(f"Failed to setup: {e}")
+            return failed(f"Failed to setup: {e}", provider=self.provider_id)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
         try:
@@ -215,31 +216,32 @@ class VLLMModalProviderClient(BaseProviderClient):
                 request.preview_url,
                 request.metadata,
             )
-            return build_status_response("queued", f"Download queued for {request.path}", provider=self.provider_id)
+            return ok(f"Download queued for {request.path}", provider=self.provider_id, status="queued")
         except Exception as e:
-            return build_error_response(f"Failed to queue download: {e}")
+            return failed(f"Failed to queue download: {e}", provider=self.provider_id)
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         directory = request.directory if request else ""
         try:
             list_func = self._get_modal_function("list_models_with_metadata")
             files = await list_func.remote.aio(directory)
-            return build_status_response("success", f"Listed models in {directory}", provider=self.provider_id, files=files)
+            return ok(f"Listed models in {directory}", provider=self.provider_id, files=files)
         except Exception as e:
             self.logger.warning(f"Failed to list models: {e}")
-            return build_status_response("success", f"Listed models in {directory}", provider=self.provider_id, files=[])
+            return ok(f"Listed models in {directory}", provider=self.provider_id, files=[])
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
         try:
             storage = self._get_file_storage_cls()()
             success = await storage.delete_file.remote.aio(request.path)
-            return {
-                "success": success,
-                "message": f"Deleted {request.path}" if success else f"Failed to delete {request.path}",
-                "provider": self.provider_id,
-            }
+            return outcome(
+                bool(success),
+                f"Deleted {request.path}" if success else f"Failed to delete {request.path}",
+                provider=self.provider_id,
+                code=None if success else 404,
+            )
         except Exception as e:
-            return build_error_response(f"Failed to delete model: {e}")
+            return failed(f"Failed to delete model: {e}", provider=self.provider_id)
 
     async def get_file(self, path: str):
         try:
@@ -261,33 +263,32 @@ class VLLMModalProviderClient(BaseProviderClient):
             storage = self._get_file_storage_cls()()
             path = f"{request.directory}/{request.filename}"
             await storage.put_file.remote.aio(path=path, content=content)
-            return {"status": "success", "path": path, "size": len(content)}
+            return ok("File uploaded", provider=self.provider_id, path=path, size=len(content))
         except Exception as e:
-            return build_error_response(f"File upload failed: {e}")
+            return failed(f"File upload failed: {e}", provider=self.provider_id)
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        from provider_core.deploy import start_deploy_task
-        from provider_core.base_client import _DEPLOY_STATE
+        from provider_core.deploy import start_deploy_task, get_deploy_state
 
         commands = [["modal", "deploy", "/app/llm_worker/engines/modal/modal_app.py"]]
         start_deploy_task("Modal vLLM", commands)
-        return _DEPLOY_STATE
+        return get_deploy_state()
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
         try:
             validate_fn = self._get_modal_function("validate_models")
             result = await validate_fn.remote.aio(request.directories, request.delete_invalid)
-            return result
+            return from_upstream(result, provider=self.provider_id, message="Validated models")
         except Exception as e:
-            return build_error_response(f"Validation failed: {e}")
+            return failed(f"Validation failed: {e}", provider=self.provider_id)
 
     async def validate_all_models(self) -> Dict[str, Any]:
         try:
             validate_fn = self._get_modal_function("validate_models")
             result = await validate_fn.remote.aio(["models"], False)
-            return {"status": "success", "result": result}
+            return ok("Validated all models", provider=self.provider_id, result=result)
         except Exception as e:
-            return build_error_response(f"Validation failed: {e}")
+            return failed(f"Validation failed: {e}", provider=self.provider_id)
 
     async def get_object_info(self) -> Dict[str, Any]:
         return {"object_info": {}}

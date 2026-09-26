@@ -17,7 +17,7 @@ Deploy:
 # beam is the CLI alias for the beta9 Python package
 from beta9 import asgi, realtime, Image, Volume, QueueDepthAutoscaler, rest_api
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import FileResponse, StreamingResponse
 import os
 import json
 import logging
@@ -27,6 +27,8 @@ import time
 # source context. Deploying beam_app.py from only image_worker/engines/beam/ (without the
 # provider_containers root) can fail with ModuleNotFoundError: provider_core.
 from provider_core.downloads import pending_download_paths
+from provider_core.http_client import get_file_size_cap
+from provider_core.responses import ok, outcome
 from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
 from provider_core.logging import get_logger
 
@@ -356,8 +358,10 @@ async def list_models(request: Request):
     
     from image_worker.comfy.models_utils import list_models_with_metadata_internal
     files = await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
-    
-    return {"files": files}
+
+    # `files` is the key the worker's list_models reads, and the client re-wraps
+    # it in the same dialect; both stay true.
+    return ok(f"Listed {len(files)} models in {directory}", files=files)
 
 
 @storage_app.post("/delete-model")
@@ -389,23 +393,45 @@ async def delete_model(request: Request):
             return False, str(e)
 
     success, message = await asyncio.to_thread(_do_delete)
-    return {"success": success, "message": message}
+    return outcome(success, message)
 
 
 @storage_app.post("/get-file")
 async def get_file(request: Request):
-    """Get file contents."""
+    """Stream a file off the volume.
+
+    This used to do a blocking `open(full_path, "rb").read()` of the whole file
+    inside an `async def`, which blocks the storage deployment's event loop for
+    the length of the transfer and holds the entire file in RAM; the Beam client
+    then buffered that body again and base64-decoded a third copy for the JSON
+    variant. A `FileResponse` streams from disk off-thread, so nothing is
+    buffered at all here.
+
+    The size cap is a backstop against a wrong `path` turning into an
+    out-of-memory kill of the storage container; override with
+    `PROVIDER_GET_FILE_MAX_BYTES` if a deployment genuinely serves weights
+    through this route.
+    """
     data = await request.json()
     path = data.get("path")
     full_path = get_safe_path("/mnt/data", path)
-    
-    if not os.path.exists(full_path):
-        raise HTTPException(status_code=404, detail=f"Not found: {path}")
-    
-    with open(full_path, "rb") as f:
-        content = f.read()
 
-    return Response(content=content, media_type="application/octet-stream")
+    if not os.path.exists(full_path) or not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+
+    max_bytes = get_file_size_cap()
+    size = os.path.getsize(full_path)
+    if max_bytes >= 0 and size > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{path} is {size} bytes, over the {max_bytes} byte get-file limit",
+        )
+
+    return FileResponse(
+        full_path,
+        media_type="application/octet-stream",
+        headers={"Content-Length": str(size)},
+    )
 
 
 @storage_app.post("/delete-file")
@@ -426,7 +452,7 @@ async def delete_file(request: Request):
         return True, f"Deleted {path}"
         
     success, message = await asyncio.to_thread(_do_delete)
-    return {"success": success, "message": message}
+    return outcome(success, message)
 
 
 @storage_app.post("/upload-file")
@@ -446,7 +472,7 @@ async def upload_file(request: Request):
     with open(full_path, "wb") as f:
         f.write(content)
     
-    return {"success": True, "path": f"{directory}/{filename}", "size": len(content)}
+    return ok("File uploaded", path=f"{directory}/{filename}", size=len(content))
 
 
 @storage_app.post("/validate-models")

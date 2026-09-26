@@ -11,10 +11,11 @@ import httpx
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest,
-    build_error_response, build_status_response,
     get_logger, get_http_client
 )
+from provider_core.background import MAX_BACKGROUND_TASKS, BackgroundTaskLimitExceeded, spawn_background_task
 from provider_core.base_client import BaseProviderClient
+from provider_core.responses import failed, from_upstream, ok, outcome
 from provider_core.utils import translate_task_events, TaskEvent
 from provider_core.reconciliation import determine_download_token
 from provider_core.models import MODEL_DIRECTORIES
@@ -32,6 +33,7 @@ class RemoteComfyProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
         self.comfy_url = os.getenv("COMFYUI_URL", "http://localhost:8188")
+        self._download_tasks: set = set()
         headers = {}
         api_key = os.getenv("COMFYUI_API_KEY", "").strip()
         if api_key:
@@ -102,7 +104,7 @@ class RemoteComfyProviderClient(BaseProviderClient):
         client = get_http_client()
         response = await client.post(f"{REMOTE_AGENT_URL}/setup", headers=self.get_agent_headers(), timeout=60.0)
         if response.status_code == 200:
-            return response.json()
+            return from_upstream(response.json(), provider=PROVIDER_ID, message="Setup complete")
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
@@ -121,10 +123,25 @@ class RemoteComfyProviderClient(BaseProviderClient):
                 if response.status_code != 200:
                     logger.error(f"Remote Agent download failed: {response.text}")
             except Exception as e:
-                logger.error(f"Remote Agent download exception: {e}")
+                logger.error(f"Remote Agent download exception: {e}", exc_info=True)
 
-        asyncio.create_task(_do_download())
-        return build_status_response("queued", f"Download queued for {request.path}", provider=PROVIDER_ID)
+        # Retained: a bare create_task is GC-eligible while the multi-GB
+        # download is still in flight.
+        try:
+            spawn_background_task(
+                _do_download(),
+                tasks=self._download_tasks,
+                name=f"remote-comfy-download:{request.path}",
+            )
+        except BackgroundTaskLimitExceeded:
+            return failed(
+                f"Too many downloads already in flight for {PROVIDER_ID}; "
+                f"retry once one finishes (limit {MAX_BACKGROUND_TASKS})",
+                code=429,
+                retryable=True,
+                provider=PROVIDER_ID,
+            )
+        return ok(f"Download queued for {request.path}", provider=PROVIDER_ID, status="queued")
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         client = get_http_client()
@@ -136,7 +153,7 @@ class RemoteComfyProviderClient(BaseProviderClient):
             timeout=60.0
         )
         if response.status_code == 200:
-            return build_status_response("success", "Listed models", provider=PROVIDER_ID, files=response.json().get("files", []))
+            return ok("Listed models", provider=PROVIDER_ID, files=response.json().get("files", []))
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
@@ -148,7 +165,7 @@ class RemoteComfyProviderClient(BaseProviderClient):
             timeout=60.0
         )
         if response.status_code == 200:
-            return {"success": True, "provider": PROVIDER_ID}
+            return outcome(True, f"Deleted {request.path}", provider=PROVIDER_ID)
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def get_file(self, path: str) -> StreamingResponse:
@@ -171,7 +188,14 @@ class RemoteComfyProviderClient(BaseProviderClient):
     async def delete_file(self, path: str) -> Dict[str, Any]:
         client = get_http_client()
         response = await client.post(f"{REMOTE_AGENT_URL}/delete-file", json={"path": path}, headers=self.get_agent_headers(), timeout=60.0)
-        return response.json() if response.status_code == 200 else {"success": False}
+        if response.status_code == 200:
+            return from_upstream(response.json(), provider=PROVIDER_ID)
+        return failed(
+            f"File deletion failed with status {response.status_code}",
+            code=response.status_code,
+            retryable=response.status_code >= 500,
+            provider=PROVIDER_ID,
+        )
 
     async def upload_file(self, request: UploadFileRequest) -> Dict[str, Any]:
         client = get_http_client()
@@ -182,11 +206,11 @@ class RemoteComfyProviderClient(BaseProviderClient):
             timeout=120.0
         )
         if response.status_code == 200:
-            return response.json()
+            return from_upstream(response.json(), provider=PROVIDER_ID, message="File uploaded")
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return {"status": "success", "message": "No deployment needed for remote_comfy"}
+        return ok("No deployment needed for remote_comfy", provider=PROVIDER_ID)
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
         client = get_http_client()
@@ -199,13 +223,24 @@ class RemoteComfyProviderClient(BaseProviderClient):
                 timeout=120.0
             )
             if response.status_code != 200:
-                return {"error": f"HTTP {response.status_code}", "valid": [], "invalid": [], "partial": []}
+                return failed(
+                    f"Validation failed for {directory} with HTTP {response.status_code}",
+                    code=response.status_code,
+                    retryable=response.status_code >= 500,
+                    provider=PROVIDER_ID,
+                    valid=[], invalid=[], partial=[], by_directory={},
+                )
             payload = response.json()
             results["by_directory"][directory] = payload
             results["valid"].extend(payload.get("valid", []))
             results["invalid"].extend(payload.get("invalid", []))
             results["partial"].extend(payload.get("partial", []))
-        return results
+        return ok(
+            f"Validated {len(results['valid'])} models across {len(results['by_directory'])} directories",
+            provider=PROVIDER_ID,
+            result=results,
+            **results,
+        )
 
     async def validate_all_models(self) -> Dict[str, Any]:
         client = get_http_client()
@@ -215,15 +250,21 @@ class RemoteComfyProviderClient(BaseProviderClient):
             timeout=300.0,
         )
         response.raise_for_status()
-        return response.json()
+        return from_upstream(
+            response.json(),
+            provider=PROVIDER_ID,
+            message="Validated all models",
+        )
 
     async def get_object_info(self) -> Dict[str, Any]:
+        # Success is a raw pass-through of ComfyUI's own document:
+        # api/routes/nodes.py returns it verbatim to the UI.
         try:
             resp = await self._http.get("/object_info")
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            return {"status": "error", "message": f"Failed to query ComfyUI: {e}"}
+            return failed(f"Failed to query ComfyUI: {e}", code=502, retryable=True, provider=PROVIDER_ID)
 
     async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
         async def validate_existing(delete_invalid: bool):
