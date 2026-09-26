@@ -243,7 +243,11 @@ class ContainerManager:
             container_config = {
                 "image": image_tag,
                 "name": container_name,
-                "ports": {f"{port}/tcp": port},
+                # Bind to loopback only. The backend reaches the provider over
+                # the COMFY_DOCKER_NETWORK bridge by container name, so there is
+                # no reason to expose the provider's management API (which
+                # includes /deploy) on every host interface.
+                "ports": {f"127.0.0.1:{port}/tcp": port},
                 "environment": environment,
                 "volumes": volumes,
                 "detach": True,

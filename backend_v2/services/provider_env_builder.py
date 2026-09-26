@@ -1,4 +1,6 @@
 
+import os
+
 from core.entities import Provider
 from infrastructure.providers.provider_registry import ProviderRegistry
 from services.provider_utils import (
@@ -52,6 +54,16 @@ def build_provider_environment(provider: Provider) -> dict[str, str]:
         env_vars["HF_TOKEN"] = credentials["hf_token"]
     if "civitai_token" in credentials:
         env_vars["CIVITAI_TOKEN"] = credentials["civitai_token"]
+
+    # Shared auth tokens.  The provider container FAILS CLOSED without
+    # PROVIDER_WORKER_TOKEN (every management route answers 503), and
+    # COMFY_DISCOVERY_TOKEN is what the container presents when it
+    # self-registers.  Both were previously omitted here, so a
+    # backend-autostarted provider came up with no way to authenticate.
+    for env_name in ("PROVIDER_WORKER_TOKEN", "COMFY_DISCOVERY_TOKEN"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            env_vars[env_name] = value
 
     # ── Provider-type-specific env vars (via registry) ───────────────
     type_config = ProviderRegistry.get(provider.type)

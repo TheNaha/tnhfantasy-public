@@ -1,10 +1,22 @@
 from unittest.mock import MagicMock
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from provider_core.router import attach_provider_routes
 
-def test_router_exception_handlers():
+@pytest.fixture(autouse=True)
+def _provider_token(monkeypatch):
+    """Protected routes now fail closed without a token (503, not 422/401).
+
+    Tests that exercise the payload-validation and exception handlers have to
+    present a valid token to get past the auth gate and reach the code under
+    test. See tests/test_provider_auth.py for the gate's own coverage.
+    """
+    monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "router-test-token")
+    return "router-test-token"
+
+def test_router_exception_handlers(_provider_token):
     app = FastAPI()
     mock_client = MagicMock()
     
@@ -42,7 +54,11 @@ def test_router_exception_handlers():
     assert payload["code"] == 500
 
     # Test Validation error handler (e.g. sending invalid payload to inference)
-    response = client.post("/inference", json={"workflow": "not-a-dict"})
+    response = client.post(
+        "/inference",
+        json={"workflow": "not-a-dict"},
+        headers={"X-Provider-Token": _provider_token},
+    )
     assert response.status_code == 422
     payload = response.json()
     assert payload["status"] == "error"

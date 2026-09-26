@@ -1,3 +1,4 @@
+import hmac
 import ipaddress
 import os
 import re
@@ -37,7 +38,22 @@ async def handle_provider_discovery(
     discovered are excluded from the active provider list.
     """
     discovery_token = os.getenv("COMFY_DISCOVERY_TOKEN", "").strip()
-    if discovery_token and request.headers.get("X-Discovery-Token", "") != discovery_token:
+    if not discovery_token:
+        # Fails closed. The previous form was `if discovery_token and ...`,
+        # which meant an unset token allowed ANY container on the bridge
+        # network to register an arbitrary provider_id pointing at any
+        # RFC1918 address — an unauthenticated job-hijack and
+        # internal-network-fetch primitive.
+        logger.error(
+            "discovery_token_not_configured",
+            hint="set COMFY_DISCOVERY_TOKEN in .env; refusing unauthenticated provider registration",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="COMFY_DISCOVERY_TOKEN is not configured on the backend",
+        )
+    provided = request.headers.get("X-Discovery-Token", "")
+    if not provided or not hmac.compare_digest(provided, discovery_token):
         raise HTTPException(status_code=401, detail="invalid discovery token")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", payload.provider_id):
         raise HTTPException(status_code=422, detail="invalid provider_id")

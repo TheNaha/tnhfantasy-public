@@ -8,14 +8,40 @@ from urllib.parse import urlparse
 import httpx
 
 from infrastructure.logging import http_logger
+from infrastructure.providers.runtime import PROVIDER_CONTAINER_PREFIX
 
 logger = http_logger()
 
 # Singleton HTTP client instance
 _client: httpx.AsyncClient | None = None
 
+# Paths that a provider container protects with X-Provider-Token. Used only to
+# decide when to warn about a token that will not be attached; it does not
+# gate the request itself.
+_PROVIDER_MANAGEMENT_PATHS = (
+    "/inference", "/download-model", "/delete-model", "/get-file", "/delete-file",
+    "/upload-file", "/setup", "/list-models", "/validate-models", "/validate-all-models",
+    "/reconcile", "/reconciliation-status", "/deploy", "/deploy-status", "/cancel-job",
+    "/config", "/provider-stats", "/object-info",
+)
+
+
+def _is_provider_management_path(url: str) -> bool:
+    path = urlparse(url).path.rstrip("/")
+    return any(path.endswith(suffix) for suffix in _PROVIDER_MANAGEMENT_PATHS)
+
 
 class _ProviderTokenClient(httpx.AsyncClient):
+    """Attaches the provider auth header to provider management calls.
+
+    Provider containers fail CLOSED when PROVIDER_WORKER_TOKEN is unset, so a
+    missing header surfaces as a 401 that looks identical to an outage. This
+    client attaches the token to Docker-network providers (matched by the
+    `tnhcomfy-<provider_id>` container-name convention) and to any host listed
+    in COMFY_WORKER_HOSTS, and logs loudly when it is about to omit it so the
+    cause is diagnosable instead of mysterious.
+    """
+
     async def request(self, method, url, **kwargs):
         token = os.getenv("PROVIDER_WORKER_TOKEN", "").strip()
         if token:
@@ -25,10 +51,26 @@ class _ProviderTokenClient(httpx.AsyncClient):
                 for host in os.getenv("COMFY_WORKER_HOSTS", "").split(",")
                 if host.strip()
             }
-            if hostname.startswith("tnhcomfy-") or hostname in allowed_hosts:
+            if hostname.startswith(PROVIDER_CONTAINER_PREFIX) or hostname in allowed_hosts:
                 headers = dict(kwargs.pop("headers", {}) or {})
                 headers.setdefault("X-Provider-Token", token)
                 kwargs["headers"] = headers
+            elif _is_provider_management_path(str(url)):
+                logger.warning(
+                    "provider_token_not_attached",
+                    url=str(url),
+                    hostname=hostname,
+                    hint=(
+                        f"host does not match the {PROVIDER_CONTAINER_PREFIX!r} prefix and is "
+                        "not listed in COMFY_WORKER_HOSTS; the provider will answer 401"
+                    ),
+                )
+        elif _is_provider_management_path(str(url)):
+            logger.error(
+                "provider_token_unset",
+                url=str(url),
+                hint="PROVIDER_WORKER_TOKEN is empty; provider containers fail closed with 503",
+            )
         return await super().request(method, url, **kwargs)
 
 

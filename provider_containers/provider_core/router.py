@@ -1,3 +1,4 @@
+import hmac
 import os
 from typing import Protocol, Any, Dict, Optional
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -38,8 +39,27 @@ class ProviderClient(Protocol):
     async def get_object_info(self) -> Dict[str, Any]: ...
 
 async def _require_worker_token(request: Request) -> None:
+    """Auth gate for every state-touching provider endpoint.
+
+    Fails CLOSED. The previous form was `if expected and header != expected`,
+    which meant an unset PROVIDER_WORKER_TOKEN disabled authentication
+    entirely — and empty is what .env.example ships, so /inference,
+    /download-model, /delete-model, /delete-file, /get-file, /upload-file,
+    /config and (worst of all) /deploy were all open by default. /deploy shells
+    out to `modal deploy` / `beam deploy`.
+    """
     expected = os.getenv("PROVIDER_WORKER_TOKEN", "").strip()
-    if expected and request.headers.get("X-Provider-Token", "") != expected:
+    if not expected:
+        logger.error(
+            "provider_token_not_configured: set PROVIDER_WORKER_TOKEN in .env; "
+            "refusing to serve an unauthenticated management API"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="PROVIDER_WORKER_TOKEN is not configured on this provider container",
+        )
+    provided = request.headers.get("X-Provider-Token", "")
+    if not provided or not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="invalid provider worker token")
 
 
