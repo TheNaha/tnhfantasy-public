@@ -1630,6 +1630,16 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Btree expression index on jobs ((metadata_->>'chat_id')) so chat-scoped job lookups stop sequentially scanning",
             apply_fn=_migration_065_index_jobs_metadata_chat_id,
         ),
+        MigrationStep(
+            version="066_add_asset_duration_seconds",
+            description="Add assets.duration_seconds and backfill it from metadata_, so statistics can SUM a real numeric column instead of casting jsonb text",
+            apply_fn=_migration_066_add_asset_duration_seconds,
+        ),
+        MigrationStep(
+            version="067_add_asset_stat_columns",
+            description="Add the assets statistics rollup columns (checkpoint/sampler/scheduler/vae/steps/cfg/seed/metadata_version) and backfill them from metadata_",
+            apply_fn=_migration_067_add_asset_stat_columns,
+        ),
     ]
 
 
@@ -2562,3 +2572,115 @@ def _migration_064_add_character_card_metadata(conn) -> bool:
 
     return changed
 
+
+
+def _migration_066_add_asset_duration_seconds(conn) -> bool:
+    """Add `assets.duration_seconds` and backfill it from the embedded job metadata.
+
+    Generation duration used to live only inside
+    `metadata_["job"]["duration_seconds"]`, so the statistics aggregations had
+    to `CAST(metadata_->'job'->>'duration_seconds' AS NUMERIC)`. On Postgres a
+    cast of non-numeric text raises, which would fail the whole statistics
+    request rather than skip one row. As a real nullable numeric column it is
+    also indexable and needs no jsonb parse at all.
+
+    The backfill is Postgres-only (`->>` and `~`); SQLite is a test-only
+    dialect where `create_all()` already produces the column, and SQLite's
+    `CAST('abc' AS NUMERIC)` silently yields 0 rather than raising.
+    """
+    inspector = inspect(conn)
+    if "assets" not in inspector.get_table_names():
+        return False
+
+    changed = False
+    if "duration_seconds" not in {col["name"] for col in inspector.get_columns("assets")}:
+        conn.execute(text("ALTER TABLE assets ADD COLUMN duration_seconds FLOAT"))
+        logger.info("migration_column_added", table="assets", column="duration_seconds")
+        changed = True
+
+    if conn.dialect.name != "postgresql":
+        return changed
+
+    # Only numeric-looking values are cast. `duration_seconds` is written by
+    # our own code as a float, but PNG metadata is user-influenced and a single
+    # junk row must not be able to abort startup.
+    conn.execute(
+        text(
+            "UPDATE assets SET duration_seconds = "
+            "(metadata_->'job'->>'duration_seconds')::double precision "
+            "WHERE duration_seconds IS NULL "
+            "AND metadata_->'job'->>'duration_seconds' ~ '^[0-9]+(\\.[0-9]+)?$' "
+            "AND (metadata_->'job'->>'duration_seconds')::double precision > 0"
+        )
+    )
+    return changed
+
+
+_ASSET_STAT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("checkpoint_name", "VARCHAR"),
+    ("sampler", "VARCHAR"),
+    ("scheduler", "VARCHAR"),
+    ("vae", "VARCHAR"),
+    ("steps", "INTEGER"),
+    ("cfg", "FLOAT"),
+    ("seed", "BIGINT"),
+    ("metadata_version", "VARCHAR"),
+)
+
+
+def _migration_067_add_asset_stat_columns(conn) -> bool:
+    """Add the `assets` statistics rollup columns and backfill them from `metadata_`.
+
+    `/api/statistics/*` used to `GROUP BY metadata_->>'…'`. Every `->>`
+    re-reads and re-parses the entire jsonb document — about 70 MB across this
+    deployment — so each distribution cost a full decompression, and the endpoint
+    needed roughly eight of them. These columns make the same aggregations
+    columnar scans.
+
+    The backfill is Postgres-only (`->>`); SQLite is a test-only dialect where
+    `create_all()` already produces the columns from the model. The derived
+    text columns are extracted only when they are the JSON type the writer would
+    have stored, and the numeric ones are regex-guarded so one junk value cannot
+    abort startup.
+    """
+    inspector = inspect(conn)
+    if "assets" not in inspector.get_table_names():
+        return False
+
+    existing = {col["name"] for col in inspector.get_columns("assets")}
+    changed = False
+    for column, sql_type in _ASSET_STAT_COLUMNS:
+        if column in existing:
+            continue
+        conn.execute(text(f"ALTER TABLE assets ADD COLUMN {column} {sql_type}"))
+        logger.info("migration_column_added", table="assets", column=column)
+        changed = True
+
+    if conn.dialect.name != "postgresql":
+        return changed
+
+    # checkpoint is an object with a name; legacy rows stored a bare string.
+    conn.execute(
+        text(
+            "UPDATE assets SET checkpoint_name = "
+            "COALESCE(metadata_->'checkpoint'->>'name', metadata_->>'checkpoint') "
+            "WHERE checkpoint_name IS NULL AND jsonb_typeof(metadata_->'checkpoint') IN ('object', 'string')"
+        )
+    )
+    for column in ("sampler", "scheduler", "vae", "metadata_version"):
+        conn.execute(
+            text(
+                f"UPDATE assets SET {column} = metadata_->>'{column}' "
+                f"WHERE {column} IS NULL AND jsonb_typeof(metadata_->'{column}') = 'string'"
+            )
+        )
+    for column in ("steps", "cfg", "seed"):
+        conn.execute(
+            text(
+                f"UPDATE assets SET {column} = (metadata_->>'{column}')::numeric "
+                f"WHERE {column} IS NULL "
+                f"AND jsonb_typeof(metadata_->'{column}') = 'number'"
+            )
+        )
+    logger.info("migration_asset_stat_columns_backfilled")
+    return changed

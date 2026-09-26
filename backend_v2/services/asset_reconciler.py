@@ -35,6 +35,10 @@ logger = get_logger("asset_reconciler")
 
 DEFAULT_USER_ID = "default_user"
 
+# Schema version stamped onto every asset row's `metadata_` by
+# `_compact_metadata`. Bump when the compacted shape changes incompatibly.
+METADATA_VERSION = "2.0"
+
 
 def _compact_checkpoint_metadata(value: Any) -> Any:
     """Reduce checkpoint metadata to UI/statistics-relevant fields."""
@@ -83,11 +87,17 @@ def _compact_metadata(metadata: Any) -> dict[str, Any]:
 
     Mirrors the legacy GalleryIndexer._compact_metadata so statistics and
     gallery UI keep consuming the same metadata shape from the DB-backed index.
+
+    `metadata_version` is stamped here rather than at the call site because this
+    is the single funnel every asset row passes through. Nothing else in the
+    codebase wrote it, so the statistics endpoints reported every real asset as
+    "legacy" (15867 of 16058 on this deployment) and the enriched/legacy split
+    could never be anything but all-legacy.
     """
     if not isinstance(metadata, dict):
         return {}
 
-    compact: dict[str, Any] = {}
+    compact: dict[str, Any] = {"metadata_version": METADATA_VERSION}
     passthrough_dict_keys = {"job", "dimensions", "thumbnails"}
     passthrough_list_keys = {"embeddings", "tags"}
 
@@ -114,6 +124,77 @@ def _compact_metadata(metadata: Any) -> dict[str, Any]:
             continue
 
     return compact
+
+
+def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if not isinstance(value, (int, float, str)):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, (float, str)):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _checkpoint_name(value: Any) -> str | None:
+    """Checkpoint name from either the object or the legacy bare-string form."""
+    if isinstance(value, dict):
+        name = value.get("name") or value.get("filename")
+        return str(name) if name else None
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def derive_stat_columns(metadata: dict | None) -> dict[str, Any]:
+    """The `Asset` rollup columns implied by a `metadata_` document.
+
+    This is the single place that derives them. `upsert_asset` is the only
+    supported way to write an `Asset` row, so a column can never disagree with
+    the document it summarises.
+
+    Nothing here raises: a metadata value of an unexpected shape leaves its
+    column NULL rather than failing the write of an otherwise-valid asset.
+    """
+    metadata = metadata if isinstance(metadata, dict) else {}
+    job = metadata.get("job")
+    duration = job.get("duration_seconds") if isinstance(job, dict) else None
+    duration_seconds = _coerce_float(duration)
+    if duration_seconds is not None and duration_seconds <= 0:
+        duration_seconds = None
+
+    return {
+        "duration_seconds": duration_seconds,
+        "checkpoint_name": _checkpoint_name(metadata.get("checkpoint")),
+        "sampler": _as_optional_str(metadata.get("sampler")),
+        "scheduler": _as_optional_str(metadata.get("scheduler")),
+        "vae": _as_optional_str(metadata.get("vae")),
+        "steps": _coerce_int(metadata.get("steps")),
+        "cfg": _coerce_float(metadata.get("cfg")),
+        "seed": _coerce_int(metadata.get("seed")),
+        "metadata_version": _as_optional_str(metadata.get("metadata_version")),
+    }
+
+
+def _as_optional_str(value: Any) -> str | None:
+    if value is None or isinstance(value, (dict, list, bool)):
+        return None
+    text = value if isinstance(value, str) else str(value)
+    return text or None
 
 
 def _parse_generated_at(png_meta: dict, full_path: str) -> datetime | None:
@@ -207,9 +288,15 @@ def upsert_asset(
     generated_at: datetime | None = None,
     metadata: dict | None = None,
 ) -> None:
-    """Idempotent UPSERT of a single asset row (keyed by relative_path)."""
+    """Idempotent UPSERT of a single asset row (keyed by relative_path).
+
+    The only supported way to write an `Asset`. The statistics rollup columns
+    are derived here from `metadata` rather than accepted as arguments, so they
+    cannot be set inconsistently by a caller.
+    """
     dialect_name = session.get_bind().dialect.name
     dialect_insert = pg_insert if dialect_name == "postgresql" else sqlite_insert if dialect_name == "sqlite" else insert
+    stat_columns = derive_stat_columns(metadata)
     stmt = dialect_insert(Asset).values(
         relative_path=relative_path,
         filename=filename,
@@ -225,6 +312,7 @@ def upsert_asset(
         generated_at=generated_at,
         metadata_=metadata,
         created_at=datetime.now(timezone.utc),
+        **stat_columns,
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=["relative_path"],
@@ -240,6 +328,7 @@ def upsert_asset(
             "generated_at": stmt.excluded.generated_at,
             "metadata_": stmt.excluded.metadata_,
             "deleted_at": None,
+            **{name: stmt.excluded[name] for name in stat_columns},
         },
     )
     session.execute(stmt)

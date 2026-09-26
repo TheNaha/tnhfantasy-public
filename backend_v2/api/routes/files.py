@@ -25,7 +25,7 @@ import json
 import os
 import tempfile
 
-from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -60,7 +60,6 @@ from core.upload_validation import (
     require_extension,
     sanitize_filename,
 )
-from services.provider_service import ProviderService
 
 
 def _sync_session():
@@ -812,11 +811,16 @@ async def move_asset(asset_id: str, body: MoveAssetRequest, session: Session = D
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         with open(source_path, "rb") as src, open(target_path, "wb") as dst:
             dst.write(src.read())
-        new_asset = Asset(
-            user_id=asset.user_id,
-            filename=asset.filename,
+        # Routed through `upsert_asset` so the copied row gets the same
+        # statistics rollup columns as any other write. Constructing `Asset`
+        # directly here used to silently drop them.
+        from services.asset_reconciler import upsert_asset
+
+        upsert_asset(
+            session,
             relative_path=target_rel,
-            kind=asset.kind,
+            filename=asset.filename,
+            user_id=asset.user_id,
             workspace=target_workspace,
             character_id=target_character_id,
             story_id=target_story_id,
@@ -825,13 +829,13 @@ async def move_asset(asset_id: str, body: MoveAssetRequest, session: Session = D
             height=asset.height,
             blurhash=asset.blurhash,
             thumbnail_relative_path=asset.thumbnail_relative_path,
-            metadata_=asset.metadata_,
             generated_at=asset.generated_at,
+            metadata=asset.metadata_,
         )
-        session.add(new_asset)
-        session.commit()
-        session.refresh(new_asset)
-        return {"id": new_asset.id, "relative_path": new_asset.relative_path}
+        copied = session.exec(
+            select(Asset).where(Asset.relative_path == target_rel)
+        ).one()
+        return {"id": copied.id, "relative_path": copied.relative_path}
 
     if target_path != source_path:
         os.makedirs(os.path.dirname(target_path), exist_ok=True)

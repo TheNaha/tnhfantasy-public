@@ -261,6 +261,31 @@ class Asset(SQLModel, table=True):
     height: int | None = Field(default=None)
     blurhash: str | None = Field(default=None)
     thumbnail_relative_path: str | None = Field(default=None)
+    # Wall-clock seconds the generating job took. Promoted out of
+    # `metadata_["job"]["duration_seconds"]` so the statistics aggregations can
+    # SUM it as a real numeric column. Casting that JSON text to NUMERIC in
+    # Postgres raises on any non-numeric value, which would take down the whole
+    # statistics endpoint rather than one row.
+    duration_seconds: float | None = Field(default=None)
+    # Generation settings promoted out of `metadata_` for the same reason, and
+    # one step further: these are the columns the statistics endpoints GROUP BY.
+    # Every `->>` against `metadata_` re-reads and re-parses the whole jsonb
+    # document (~70 MB across this deployment), so grouping on the document cost
+    # one full decompression per distribution. As columns the same aggregations
+    # are columnar scans.
+    #
+    # These are a rollup of `metadata_`, never an independent source of truth:
+    # `services/asset_reconciler.derive_stat_columns` is the only thing that
+    # writes them, and `tests/test_statistics_aggregation.py` asserts they agree
+    # with the document they came from.
+    checkpoint_name: str | None = Field(default=None)
+    sampler: str | None = Field(default=None)
+    scheduler: str | None = Field(default=None)
+    vae: str | None = Field(default=None)
+    steps: int | None = Field(default=None)
+    cfg: float | None = Field(default=None)
+    seed: int | None = Field(default=None)
+    metadata_version: str | None = Field(default=None)
     metadata_: dict | None = Field(default=None, sa_column=Column(JSONColumn))
     generated_at: datetime | None = Field(default=None, index=True)  # image creation time (from PNG meta or mtime)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
