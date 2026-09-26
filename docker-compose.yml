@@ -290,6 +290,16 @@ services:
       # self-registered against a backend that fails closed without one).
       # The engine has no default baked into the image, so state it here.
       - ENGINE=direct_url
+      # These three were absent, so the worker fell back to
+      # PROVIDER_ID="direct_url-worker" and BACKEND_URL="http://localhost:8002":
+      # it posted discovery to its own loopback every 60 s forever, and the
+      # backend built http://tnhcomfy-direct_url-worker:8000, a DNS name that
+      # does not exist (the container is tnhcomfy-direct-url). A permanently
+      # invisible provider that still reported healthy, because the healthcheck
+      # does not probe anything.
+      - PROVIDER_ID=direct_url
+      - PORT=8000
+      - BACKEND_URL=http://backend_v2:8002
       - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
       - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
     user: "1000:1000"
