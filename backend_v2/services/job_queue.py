@@ -4,6 +4,7 @@ import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from config import get_config
 from infrastructure.database import database_url
 from infrastructure.logging import get_logger
 from services.job_service import STALE_JOB_TIMEOUT_SECONDS
@@ -158,11 +159,38 @@ class JobQueue:
         with engine.begin() as conn:
             conn.execute(text(f"NOTIFY {_NOTIFY_CHANNEL}"))
 
+    def _max_concurrent(self) -> int:
+        """In-flight ceiling for this pool, from `jobs.max_concurrent`.
+
+        The setting was previously exposed and persisted but read by nothing,
+        so throttling spend by lowering it silently did nothing. Returns a
+        positive int; a missing or nonsensical value falls back to a bound that
+        never throttles, so a bad config can never wedge the queue.
+        """
+        try:
+            raw = (get_config() or {}).get("jobs", {}).get("max_concurrent")
+            value = int(raw) if raw is not None else 0
+        except (TypeError, ValueError):
+            value = 0
+        return value if value >= 1 else 10**6
+
     def _claim_next_job_sync(self) -> tuple[str, str | None] | None:
         """Claim the oldest PENDING job for this task_type (Postgres only).
 
         FOR UPDATE SKIP LOCKED makes concurrent workers/processes safe: each
         PENDING row is claimed exactly once. Runs in a worker thread.
+
+        The in-flight count and the claim are one statement, so the ceiling is
+        evaluated atomically with the claim rather than in a separate query
+        that another worker could slip between. The candidate uses
+        ix_jobs_claim and the count uses idx_job_provider_status.
+
+        Scope is per task_type, not global. The worker pool is already sized
+        from the enabled provider count, so a global cap could let image
+        saturation starve a chat reply's LLM job — the count would be consumed
+        by whichever pool claimed first. Per-type means `max_concurrent` reads
+        as "at most N in-flight of each kind", and setting it above the
+        provider count is correctly a no-op.
         """
         from sqlalchemy import text
 
@@ -170,10 +198,18 @@ class JobQueue:
 
         claim_sql = text(
             """
-            UPDATE jobs
-            SET claimed_at = now()
-            WHERE id = (
-                SELECT id FROM jobs
+            WITH in_flight AS (
+                SELECT count(*) AS n
+                FROM jobs
+                WHERE task_type = :task_type
+                  AND status IN (
+                    'SENT_TO_PROVIDER', 'CONNECTED', 'PRE_GENERATION',
+                    'GENERATING', 'POST_PROCESSING', 'RETRYING'
+                  )
+            ),
+            candidate AS (
+                SELECT id
+                FROM jobs
                 WHERE task_type = :task_type
                   AND status = 'PENDING'
                   AND claimed_at IS NULL
@@ -181,11 +217,18 @@ class JobQueue:
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
             )
+            UPDATE jobs
+            SET claimed_at = now()
+            WHERE (SELECT n FROM in_flight) < :max_concurrent
+              AND id = (SELECT id FROM candidate)
             RETURNING id, provider_id
             """
         )
         with engine.begin() as conn:
-            row = conn.execute(claim_sql, {"task_type": self._task_type}).first()
+            row = conn.execute(
+                claim_sql,
+                {"task_type": self._task_type, "max_concurrent": self._max_concurrent()},
+            ).first()
         if row is None:
             return None
         return row[0], row[1]

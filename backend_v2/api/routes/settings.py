@@ -105,7 +105,14 @@ async def get_settings_schema() -> dict[str, Any]:
                 },
                 "max_concurrent": {
                     "type": "integer",
-                    "description": "Maximum concurrent jobs to process",
+                    "description": (
+                        "In-flight job ceiling, applied per task type (image and LLM "
+                        "are counted separately, so LLM work is never starved behind a "
+                        "saturated image queue). Effective concurrency is also bounded "
+                        "by the number of enabled providers, because the worker pool is "
+                        "sized from it — so a value above the provider count has no "
+                        "effect. Lower it to throttle dispatch rate on paid providers."
+                    ),
                     "min": 1,
                     "max": 10,
                     "default": 5

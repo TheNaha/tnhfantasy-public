@@ -178,3 +178,50 @@ class TestJobQueueSize:
         await q.enqueue("job-1")
         await q.enqueue("job-2")
         assert q._queue.qsize() == 2
+
+
+class TestMaxConcurrentThrottle:
+    """`jobs.max_concurrent` must actually gate dispatch.
+
+    The setting was exposed through PUT /api/settings, persisted to
+    config.json and echoed back by GET /api/settings, but nothing read it:
+    the claim query had no ceiling and the pool was bounded only by provider
+    count. A user lowering it to throttle spend on Modal/Beam saw the value
+    persist and change nothing.
+
+    These exercise the config-read side, which is the part that was dead.
+    The claim SQL itself is Postgres-only (SQLite uses the in-process queue)
+    and is covered end-to-end by the live EXPLAIN.
+    """
+
+    def test_reads_jobs_max_concurrent(self):
+        q = JobQueue(max_workers=1, task_type="image")
+        with patch("services.job_queue.get_config", return_value={"jobs": {"max_concurrent": 2}}):
+            assert q._max_concurrent() == 2
+
+    def test_missing_key_never_throttles(self):
+        """A bad config must not wedge the queue — it must fail open."""
+        q = JobQueue(max_workers=1, task_type="image")
+        for cfg in ({}, {"jobs": {}}, {"jobs": {"max_concurrent": None}}, None):
+            with patch("services.job_queue.get_config", return_value=cfg):
+                assert q._max_concurrent() == 10**6, f"throttled on {cfg!r}"
+
+    def test_nonsense_values_fail_open(self):
+        q = JobQueue(max_workers=1, task_type="image")
+        for bad in (0, -3, "abc", "", [], {}):
+            with patch("services.job_queue.get_config", return_value={"jobs": {"max_concurrent": bad}}):
+                value = q._max_concurrent()
+                assert value == 10**6 or value >= 1, f"bad value {bad!r} produced {value}"
+
+    def test_cap_is_per_task_type(self):
+        """Image saturation must not starve a chat reply's LLM job.
+
+        The claim counts only rows of its own task_type, so the two pools
+        cannot consume each other's budget.
+        """
+        image = JobQueue(max_workers=1, task_type="image")
+        llm = JobQueue(max_workers=1, task_type="llm")
+        with patch("services.job_queue.get_config", return_value={"jobs": {"max_concurrent": 1}}):
+            assert image._max_concurrent() == 1
+            assert llm._max_concurrent() == 1
+        assert image._task_type != llm._task_type
