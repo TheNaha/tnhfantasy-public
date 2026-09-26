@@ -372,6 +372,7 @@ def test_derive_stat_columns_reads_the_document():
     derived = derive_stat_columns(ENRICHED)
     assert derived == {
         "duration_seconds": 12.5,
+        "job_completed_at": None,
         "checkpoint_name": "nova_xl.safetensors",
         "sampler": "euler",
         "scheduler": "normal",
@@ -447,3 +448,67 @@ def test_endpoints_respond(client, session: Session):
     summary = client.get("/api/statistics/summary")
     assert summary.status_code == 200
     assert summary.json()["total_images"] == 1
+
+
+# ── prompt cache ─────────────────────────────────────────────────────────────
+
+
+def test_prompt_cache_returns_identical_output_on_a_second_call(populated: Session):
+    """The prompt-derived aggregates are a pure function of the prompt strings,
+    so a cache hit must be indistinguishable from a miss."""
+    first = statistics_service.get_detailed_statistics("all")["prompts"]
+    second = statistics_service.get_detailed_statistics("all")["prompts"]
+    assert first == second
+
+
+def test_prompt_cache_is_invalidated_when_a_prompt_changes(session: Session):
+    """The cache key is an exact content hash, so an edit to an existing prompt
+    must be seen even though the row count and id are unchanged."""
+    make_asset(session, "a", {"prompt": "alpha beta gamma"})
+    baseline = statistics_service.get_detailed_statistics("all")["prompts"]
+    assert baseline["keywords"].get("alpha") == 1
+
+    asset = session.exec(Asset.__table__.select()).one()
+    # Same length as before, so a signature built from total length would miss it.
+    session.exec(
+        Asset.__table__.update()
+        .where(Asset.relative_path == asset.relative_path)
+        .values(metadata_={"prompt": "alpha beta delta"})
+    )
+    session.commit()
+
+    updated = statistics_service.get_detailed_statistics("all")["prompts"]
+    assert "gamma" not in updated["keywords"]
+    assert updated["keywords"].get("delta") == 1
+
+
+def test_prompt_cache_is_scoped_per_time_range(session: Session):
+    """Two ranges in flight must not share a cache entry."""
+    make_asset(session, "old", {"prompt": "ancient keywords here"}, age_hours=48 * 30)
+    make_asset(session, "new", {"prompt": "recent keywords here"}, age_hours=0)
+
+    everything = statistics_service.get_detailed_statistics("all")["prompts"]
+    recent = statistics_service.get_detailed_statistics("24h")["prompts"]
+
+    assert "ancient" in everything["keywords"]
+    assert "ancient" not in recent["keywords"]
+    assert "recent" in recent["keywords"]
+
+
+def test_derive_stat_columns_resolves_the_job_completion_time():
+    """Both encodings the writer has ever produced: an ISO string on enriched
+    rows, an epoch float on legacy ones."""
+    iso = derive_stat_columns({"job": {"completed_at": "2026-09-20T10:00:00.000Z"}})
+    assert iso["job_completed_at"] == datetime(2026, 9, 20, 10, 0, tzinfo=timezone.utc)
+
+    epoch = derive_stat_columns({"job": {"completed_at": 1789898400.0}})
+    assert epoch["job_completed_at"] == datetime(2026, 9, 20, 10, 0, tzinfo=timezone.utc)
+
+    # A timestamp with no offset is read as UTC, matching the container clock.
+    naive = derive_stat_columns({"job": {"completed_at": "2026-09-20T10:00:00"}})
+    assert naive["job_completed_at"] == datetime(2026, 9, 20, 10, 0, tzinfo=timezone.utc)
+
+
+def test_derive_stat_columns_ignores_an_unparseable_completion_time():
+    for junk in ({"job": {"completed_at": "not a date"}}, {"job": {"completed_at": ""}}, {"job": {}}, {}):
+        assert derive_stat_columns(junk)["job_completed_at"] is None

@@ -41,6 +41,19 @@ def engine_fixture():
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
+        # SQLite has no md5/sha by default, Postgres does. Registering the two
+        # digests the application uses means a query can be written once and run
+        # unchanged on both, instead of branching on dialect — which is what
+        # `services/statistics_service._prompt_signature` does, keying the prompt
+        # cache on an exact content hash. Without this the test dialect rejects
+        # the very statement production executes.
+        import hashlib
+
+        for name, constructor in (("md5", hashlib.md5), ("sha256", hashlib.sha256)):
+            dbapi_connection.create_function(
+                name, 1, lambda value, c=constructor: c(value.encode("utf-8")).hexdigest()
+            )
+
     SQLModel.metadata.create_all(engine)
     return engine
 

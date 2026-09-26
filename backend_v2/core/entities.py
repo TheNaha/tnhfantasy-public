@@ -267,6 +267,13 @@ class Asset(SQLModel, table=True):
     # Postgres raises on any non-numeric value, which would take down the whole
     # statistics endpoint rather than one row.
     duration_seconds: float | None = Field(default=None)
+    # The instant the asset counts towards for time-windowed analytics: the job's
+    # own completion time when it recorded one, else the row's generated_at /
+    # created_at. Resolving this in SQL meant every grouped query had to evaluate
+    # a jsonb extraction just to filter, which re-parsed the whole document — so
+    # a filtered range cost 3.4s where the unfiltered one cost 1.2s. As a column
+    # the filter is an indexed timestamp comparison.
+    job_completed_at: datetime | None = Field(default=None, index=True)
     # Generation settings promoted out of `metadata_` for the same reason, and
     # one step further: these are the columns the statistics endpoints GROUP BY.
     # Every `->>` against `metadata_` re-reads and re-parses the whole jsonb

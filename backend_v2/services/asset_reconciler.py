@@ -179,6 +179,7 @@ def derive_stat_columns(metadata: dict | None) -> dict[str, Any]:
 
     return {
         "duration_seconds": duration_seconds,
+        "job_completed_at": _resolve_job_completed_at(metadata),
         "checkpoint_name": _checkpoint_name(metadata.get("checkpoint")),
         "sampler": _as_optional_str(metadata.get("sampler")),
         "scheduler": _as_optional_str(metadata.get("scheduler")),
@@ -188,6 +189,37 @@ def derive_stat_columns(metadata: dict | None) -> dict[str, Any]:
         "seed": _coerce_int(metadata.get("seed")),
         "metadata_version": _as_optional_str(metadata.get("metadata_version")),
     }
+
+
+def _resolve_job_completed_at(metadata: dict[str, Any]) -> datetime | None:
+    """The job's recorded completion time, as an aware datetime.
+
+    Only the job's own value: the generated_at / created_at fallback is applied by
+    the reader (`coalesce`) rather than stored, so a row re-upserted with new
+    metadata still falls back correctly. Mirrors the resolution order the
+    statistics service used, including the legacy epoch-float form.
+    """
+    job = metadata.get("job")
+    if not isinstance(job, dict):
+        return None
+    value = job.get("completed_at")
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _as_optional_str(value: Any) -> str | None:

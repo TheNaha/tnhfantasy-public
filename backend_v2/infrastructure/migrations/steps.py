@@ -1640,6 +1640,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add the assets statistics rollup columns (checkpoint/sampler/scheduler/vae/steps/cfg/seed/metadata_version) and backfill them from metadata_",
             apply_fn=_migration_067_add_asset_stat_columns,
         ),
+        MigrationStep(
+            version="068_add_asset_job_completed_at",
+            description="Add assets.job_completed_at so a time-windowed statistics query filters on an indexed timestamp instead of re-parsing jsonb",
+            apply_fn=_migration_068_add_asset_job_completed_at,
+        ),
     ]
 
 
@@ -2683,4 +2688,52 @@ def _migration_067_add_asset_stat_columns(conn) -> bool:
             )
         )
     logger.info("migration_asset_stat_columns_backfilled")
+    return changed
+
+
+def _migration_068_add_asset_job_completed_at(conn) -> bool:
+    """Add `assets.job_completed_at` and backfill it from the embedded job metadata.
+
+    The statistics endpoints filter by a resolved completion time that prefers
+    `metadata_['job']['completed_at']` and falls back to the row's own
+    timestamps. Resolving that in SQL meant every grouped query evaluated a jsonb
+    extraction purely to filter, which re-parses the whole document — so
+    `?timeRange=30d` measured 3.4s where `?timeRange=all` measured 1.2s, on the
+    same data. As a column the filter is an indexed comparison.
+
+    Stored as the job's value only; the reader applies the generated_at /
+    created_at fallback, so the backfill is a plain copy of the jsonb field and
+    the column is NULL wherever the job recorded no completion time.
+    """
+    inspector = inspect(conn)
+    if "assets" not in inspector.get_table_names():
+        return False
+
+    existing = {col["name"] for col in inspector.get_columns("assets")}
+    changed = False
+    if "job_completed_at" not in existing:
+        conn.execute(text("ALTER TABLE assets ADD COLUMN job_completed_at TIMESTAMP"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_assets_job_completed_at ON assets (job_completed_at)"))
+        logger.info("migration_column_added", table="assets", column="job_completed_at")
+        changed = True
+
+    if conn.dialect.name != "postgresql":
+        return changed
+
+    # Two encodings exist: an ISO string on enriched rows and an epoch float on
+    # legacy ones. Anything else is left NULL rather than guessed at, and a
+    # malformed value cannot abort startup.
+    conn.execute(
+        text(
+            "UPDATE assets SET job_completed_at = "
+            "CASE WHEN (metadata_->'job'->>'completed_at') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' "
+            "THEN (metadata_->'job'->>'completed_at')::timestamptz AT TIME ZONE 'UTC' "
+            "WHEN (metadata_->'job'->>'completed_at') ~ '^[0-9]+(\\.[0-9]+)?$' "
+            "THEN to_timestamp((metadata_->'job'->>'completed_at')::double precision) "
+            "ELSE NULL END "
+            "WHERE job_completed_at IS NULL AND metadata_->'job' ? 'completed_at' "
+            "AND jsonb_typeof(metadata_->'job'->'completed_at') <> 'null'"
+        )
+    )
+    logger.info("migration_asset_job_completed_at_backfilled")
     return changed
