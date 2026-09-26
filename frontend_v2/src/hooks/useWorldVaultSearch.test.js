@@ -49,6 +49,22 @@ describe('useWorldVaultSearch', () => {
         expect(apiMock.get).not.toHaveBeenCalled();
     });
 
+    it('stays disabled below the backend minimum query length', async () => {
+        const { wrapper } = createWrapper();
+        // The backend declares `q: str = Query(..., min_length=2)`, so a
+        // single-character query is a guaranteed 422, not an empty search.
+        const { result } = renderHook(() => useWorldVaultSearch('a'), { wrapper });
+        await waitFor(() => expect(result.current.fetchStatus).toBe('idle'));
+        expect(apiMock.get).not.toHaveBeenCalled();
+
+        cleanup();
+        apiMock.get.mockResolvedValue({});
+        const { result: ok } = renderHook(() => useWorldVaultSearch(' aria '), { wrapper: createWrapper().wrapper });
+        await waitFor(() => expect(ok.current.isSuccess).toBe(true));
+        // Surrounding whitespace is trimmed, so " aria " is a valid search.
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/search?q=aria');
+    });
+
     it('omits the type param when falsy', async () => {
         apiMock.get.mockResolvedValue({});
         const { wrapper } = createWrapper();

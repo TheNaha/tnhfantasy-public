@@ -15,10 +15,15 @@ vi.mock('react-router-dom', async (importOriginal) => {
 
 const mockSearch = vi.hoisted(() => vi.fn());
 const mockDashboard = vi.hoisted(() => vi.fn());
+const mockEntity = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useWorldVaultSearch', () => ({
     useWorldVaultSearch: (...args) => mockSearch(...args),
     useWorldVaultDashboard: (...args) => mockDashboard(...args),
+    useWorldVaultEntity: (...args) => mockEntity(...args),
+    // Mirrors the real module so the page under test reads the same bounds.
+    WORLD_VAULT_SEARCH_MIN_LENGTH: 2,
+    WORLD_VAULT_MENTION_TYPES: ['character', 'lorebook', 'location'],
 }));
 
 vi.mock('../hooks/useDebounce', () => ({
@@ -49,10 +54,10 @@ const dashboardData = {
     counts: { characters: 3, chats: 5, stories: 2 },
 };
 
-function renderWithProviders(ui) {
+function renderWithProviders(ui, initialEntries = ['/']) {
     return render(
         <QueryClientProvider client={queryClient}>
-            <MemoryRouter>{ui}</MemoryRouter>
+            <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
         </QueryClientProvider>
     );
 }
@@ -62,6 +67,7 @@ describe('WorldVaultHub page', () => {
         vi.clearAllMocks();
         mockDashboard.mockReturnValue({ data: dashboardData, isLoading: false });
         mockSearch.mockReturnValue({ data: [], isLoading: false });
+        mockEntity.mockReturnValue({ data: undefined, isLoading: false, isError: false });
     });
 
     it('renders the main heading, description, search input, and type filter', () => {
@@ -148,5 +154,67 @@ describe('WorldVaultHub page', () => {
         });
         fireEvent.change(screen.getByRole('combobox'), { target: { value: 'character' } });
         expect(mockSearch).toHaveBeenLastCalledWith('aria', 'character');
+    });
+
+    it('offers a location filter, which the search endpoint can return', () => {
+        renderWithProviders(<WorldVaultHub />);
+        expect(screen.getByRole('option', { name: 'Location' })).toBeInTheDocument();
+    });
+
+    it('does not search on a single character and says why', () => {
+        renderWithProviders(<WorldVaultHub />);
+        fireEvent.change(screen.getByPlaceholderText('Search across all entities...'), {
+            target: { value: 'a' },
+        });
+        expect(screen.getByText(/type at least 2 characters to search/i)).toBeInTheDocument();
+        // The hub keeps the recents visible instead of showing an empty result.
+        expect(screen.getByText('Aria the Mage')).toBeInTheDocument();
+    });
+
+    it('resolves a story @mention deep link and opens the entity it names', () => {
+        mockEntity.mockReturnValue({
+            data: { id: 'char-9', name: 'Lyra Vale', description: 'A silver-tongued smuggler' },
+            isLoading: false,
+            isError: false,
+        });
+        renderWithProviders(<WorldVaultHub />, ['/world-vault?character=char-9']);
+
+        expect(mockEntity).toHaveBeenCalledWith('character', 'char-9');
+        expect(screen.getByRole('heading', { name: 'Linked from your story' })).toBeInTheDocument();
+        expect(screen.getByText('Lyra Vale')).toBeInTheDocument();
+        // The type filter follows the mention so follow-up searches stay scoped.
+        expect(screen.getByRole('combobox')).toHaveValue('character');
+
+        fireEvent.click(screen.getByText('Lyra Vale'));
+        expect(mockNavigate).toHaveBeenCalledWith('/characters#char-char-9');
+    });
+
+    it('falls back to the entity library when a mention id cannot be loaded', () => {
+        mockEntity.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+        renderWithProviders(<WorldVaultHub />, ['/world-vault?lorebook=book-3']);
+
+        expect(mockEntity).toHaveBeenCalledWith('lorebook', 'book-3');
+        fireEvent.click(screen.getByText(/opening its library instead/i));
+        expect(mockNavigate).toHaveBeenCalledWith('/lorebooks');
+    });
+
+    it('has no mention section when the URL carries no mention parameter', () => {
+        renderWithProviders(<WorldVaultHub />);
+        expect(mockEntity).not.toHaveBeenCalled();
+        expect(screen.queryByRole('heading', { name: 'Linked from your story' })).not.toBeInTheDocument();
+    });
+
+    it('does not self-navigate when a result type has no page', () => {
+        mockDashboard.mockReturnValue({ data: { recent: {}, counts: {} }, isLoading: false });
+        mockSearch.mockReturnValue({
+            data: { query: 'mystery', results: [{ id: 'x-1', type: 'branch', title: 'Unroutable' }] },
+            isLoading: false,
+        });
+        renderWithProviders(<WorldVaultHub />);
+        fireEvent.change(screen.getByPlaceholderText('Search across all entities...'), {
+            target: { value: 'mystery' },
+        });
+        fireEvent.click(screen.getByText('Unroutable'));
+        expect(mockNavigate).not.toHaveBeenCalledWith('/world-vault');
     });
 });

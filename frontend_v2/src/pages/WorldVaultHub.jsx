@@ -1,8 +1,15 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Filter, Users, MessageSquare, BookOpen, Music, Shield, Tag, Globe } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { useWorldVaultSearch, useWorldVaultDashboard } from '../hooks/useWorldVaultSearch';
+import { Search, Filter, Users, MessageSquare, BookOpen, Music, Shield, Tag, Globe, MapPin } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+    useWorldVaultSearch,
+    useWorldVaultDashboard,
+    useWorldVaultEntity,
+    WORLD_VAULT_MENTION_TYPES,
+    WORLD_VAULT_SEARCH_MIN_LENGTH,
+} from '../hooks/useWorldVaultSearch';
 import { useDebounce } from '../hooks/useDebounce';
 import RoleplayPageShell from '../components/RoleplayPageShell';
 
@@ -14,7 +21,7 @@ const ENTITY_ICONS = {
     lorebook: Shield,
     scenario: Tag,
     memory: Tag,
-    branch: Tag,
+    location: MapPin,
 };
 
 const ENTITY_COLORS = {
@@ -25,21 +32,72 @@ const ENTITY_COLORS = {
     lorebook: 'text-emerald-400 bg-emerald-500/20',
     scenario: 'text-cyan-400 bg-cyan-500/20',
     memory: 'text-indigo-400 bg-indigo-500/20',
-    branch: 'text-yellow-400 bg-yellow-500/20',
+    location: 'text-amber-400 bg-amber-500/20',
 };
 
+// Where each entity type the unified search can emit actually lives. The list
+// is exactly the set of `_add(...)` calls in
+// backend_v2/api/routes/world_vault/world_hub.py: character, story, chat,
+// lorebook, location, scenario, voice, memory (handled separately, below).
+// The previous switch also carried `persona`, `branch` and `campaign` branches
+// that the backend never emits.
+const ENTITY_ROUTES = {
+    character: (id) => `/characters#char-${id}`,
+    chat: (id) => `/chat/${id}`,
+    story: (id) => `/story/${id}`,
+    // These list pages have no per-entity anchor, so they land on the list.
+    lorebook: () => '/lorebooks',
+    location: () => '/locations',
+    scenario: () => '/scenarios',
+    voice: () => '/voices',
+};
+
+const ENTITY_TYPE_FILTERS = ['all', 'character', 'chat', 'story', 'voice', 'lorebook', 'location', 'scenario', 'memory'];
+
+// `/world-vault?character=<id>` and its lorebook/location siblings are what
+// StoryEditor writes into chapter prose for every @mention. The parameters used
+// to be ignored entirely, so each mention link dropped the user on an unfiltered
+// hub. Not memoised: it reads three keys off an object that is already stable,
+// and the React Compiler memoises it for us.
+function readMention(searchParams) {
+    for (const type of WORLD_VAULT_MENTION_TYPES) {
+        const id = searchParams.get(type);
+        if (id) return { type, id };
+    }
+    return null;
+}
+
 export default function WorldVaultHub() {
+    const [searchParams] = useSearchParams();
+    const mention = readMention(searchParams);
+
     const [searchQuery, setSearchQuery] = useState('');
-    const [selectedType, setSelectedType] = useState('all');
+    const [selectedType, setSelectedType] = useState(() => mention?.type || 'all');
+    const [mentionTypeAtLastSync, setMentionTypeAtLastSync] = useState(mention?.type);
     const debouncedQuery = useDebounce(searchQuery, 300);
     const navigate = useNavigate();
 
+    // A mention link also narrows the type filter, so a search typed after
+    // landing stays scoped to what the story was pointing at. `/world-vault` does
+    // not remount on a query-string change, so the filter has to be adjusted when
+    // the URL does — during render, which is what React asks for instead of an
+    // effect (an effect here would cascade a render on every mention change).
+    if (mention && mention.type !== mentionTypeAtLastSync) {
+        setMentionTypeAtLastSync(mention.type);
+        setSelectedType(mention.type);
+    }
+
     const { data: entities, isLoading: entitiesLoading } = useWorldVaultDashboard();
-    const { data: searchResults, isLoading: searchLoading } = useWorldVaultSearch(debouncedQuery, selectedType !== 'all' ? selectedType : null);
+    const trimmedQuery = debouncedQuery.trim();
+    // One character is below the backend's `min_length=2` and would 422; the
+    // search hook stays disabled, so the hub must not present it as an
+    // empty-result search either.
+    const isSearchActive = trimmedQuery.length >= WORLD_VAULT_SEARCH_MIN_LENGTH;
+    const { data: searchResults, isLoading: searchLoading } = useWorldVaultSearch(trimmedQuery, selectedType !== 'all' ? selectedType : null);
 
     const isLoading = entitiesLoading || searchLoading;
     const RECENT_TYPE_KEYS = { characters: 'character', chats: 'chat', stories: 'story' };
-    const displayResults = debouncedQuery
+    const displayResults = isSearchActive
         ? (searchResults?.results || [])
         : Object.entries(entities?.recent || {}).flatMap(([key, items]) =>
               items.map((item) => ({ ...item, type: RECENT_TYPE_KEYS[key] || key }))
@@ -47,44 +105,21 @@ export default function WorldVaultHub() {
 
     const openEntity = (entity) => {
         const id = entity.id ?? entity.entity_id;
-        switch (entity.type) {
-            case 'chat':
-                navigate(`/chat/${id}`);
-                break;
-            case 'story':
-                navigate(`/story/${id}`);
-                break;
-            case 'character':
-                navigate(`/characters#char-${id}`);
-                break;
-            case 'memory':
-                // Deep-link to the character if the search result includes character_id
-                if (entity.character_id) {
-                    navigate(`/characters#char-${entity.character_id}`);
-                } else {
-                    navigate(`/characters`);
-                }
-                break;
-            case 'location':
-            case 'campaign':
-            case 'lorebook':
-            case 'scenario':
-            case 'persona':
-            case 'voice':
-                // Navigate to the entity list page (deep-link support pending on target page)
-                navigate(`/${entity.type}s`);
-                break;
-            case 'branch':
-                navigate(`/chat/${entity.chat_id || id}`);
-                break;
-            default:
-                navigate('/world-vault');
+        if (entity.type === 'memory') {
+            // Memories are content, not pages: send the user to the character
+            // that remembers it, falling back to the character list.
+            navigate(entity.character_id ? `/characters#char-${entity.character_id}` : '/characters');
+            return;
         }
+        const route = ENTITY_ROUTES[entity.type];
+        if (!route) {
+            // Never fall back to /world-vault: that is the page you are already
+            // on, so the row would look broken rather than unroutable.
+            toast.error(`There is no page for ${entity.type || 'this kind of'} entity yet.`);
+            return;
+        }
+        navigate(route(id));
     };
-
-    const entityTypes = [
-        'all', 'character', 'chat', 'story', 'voice', 'lorebook', 'scenario', 'memory',
-    ];
 
     return (
         <RoleplayPageShell
@@ -109,13 +144,24 @@ export default function WorldVaultHub() {
                     onChange={(e) => setSelectedType(e.target.value)}
                     className="px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                    {entityTypes.map((type) => (
+                    {ENTITY_TYPE_FILTERS.map((type) => (
                         <option key={type} value={type}>
                             {type.charAt(0).toUpperCase() + type.slice(1)}
                         </option>
                     ))}
                 </select>
             </div>
+
+            {/* Below the backend's `min_length=2` the search hook stays idle, so
+                say so rather than letting a one-character query look like an
+                empty result set. */}
+            {!isSearchActive && Boolean(trimmedQuery) && (
+                <p className="-mt-3 mb-6 text-sm text-gray-500">
+                    Type at least {WORLD_VAULT_SEARCH_MIN_LENGTH} characters to search.
+                </p>
+            )}
+
+            {mention && <MentionTarget mention={mention} onOpen={openEntity} />}
 
             {entities && (
                 <div className="mb-6">
@@ -144,7 +190,7 @@ export default function WorldVaultHub() {
 
             {!isLoading && displayResults.length === 0 && (
                 <div className="text-center py-12 text-gray-500">
-                    {debouncedQuery ? 'No results found' : 'No entities yet'}
+                    {isSearchActive ? 'No results found' : 'No entities yet'}
                 </div>
             )}
 
@@ -187,5 +233,51 @@ export default function WorldVaultHub() {
                 </div>
             )}
         </RoleplayPageShell>
+    );
+}
+
+/**
+ * The entity a story @mention points at. Search matches on names, so the id in
+ * the URL cannot be resolved through the search endpoint — it is fetched
+ * directly and shown above the results, which is what makes a mention link in
+ * chapter prose land on the thing it names instead of an unfiltered hub.
+ */
+function MentionTarget({ mention, onOpen }) {
+    const { data: entity, isLoading, isError } = useWorldVaultEntity(mention.type, mention.id);
+    const Icon = ENTITY_ICONS[mention.type] || Tag;
+    const colorClass = ENTITY_COLORS[mention.type] || 'text-gray-400 bg-gray-700';
+    const name = entity?.name || entity?.title;
+
+    return (
+        <section aria-labelledby="vault-mention-heading" className="mb-6">
+            <h2 id="vault-mention-heading" className="text-lg font-semibold text-gray-300 mb-3">
+                Linked from your story
+            </h2>
+            <button
+                type="button"
+                onClick={() => onOpen({ id: mention.id, type: mention.type })}
+                className="w-full bg-gray-900 border border-blue-500/40 rounded-xl p-4 flex items-center gap-4 text-left hover:border-blue-400 transition-colors"
+            >
+                <div className={`p-2 rounded-lg ${colorClass}`}>
+                    <Icon size={20} />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <h3 className="font-medium text-white truncate">
+                        {isLoading
+                            ? `Loading ${mention.type}…`
+                            : name || `${mention.type} ${String(mention.id).slice(0, 8)}…`}
+                    </h3>
+                    <span className="text-xs text-gray-500 capitalize">{mention.type}</span>
+                    {entity?.description && (
+                        <p className="text-sm text-gray-400 mt-1 line-clamp-2">{entity.description}</p>
+                    )}
+                    {isError && (
+                        <p className="text-sm text-amber-400/80 mt-1">
+                            This one could not be loaded — opening its library instead.
+                        </p>
+                    )}
+                </div>
+            </button>
+        </section>
     );
 }
