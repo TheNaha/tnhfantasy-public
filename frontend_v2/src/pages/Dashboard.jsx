@@ -13,6 +13,7 @@ import * as ws from '../api/websocket';
 // Hooks
 import { useGallery } from '../hooks/useGallery';
 import { useDashboardItems } from '../hooks/useDashboardItems';
+import { useLightboxNavigation } from '../hooks/useLightboxNavigation';
 import { useFavorites } from '../hooks/useFavorites';
 import { useSelectedImageState } from '../hooks/useSelectedImageState';
 import { useActiveJobs } from '../hooks/useActiveJobs';
@@ -193,30 +194,6 @@ export default function Dashboard() {
         closeSelectedImage,
     } = useSelectedImageState();
 
-    const handleLightboxNavigate = useCallback((newIndex) => {
-        if (selectedImage?.siblingImages?.[newIndex]) {
-            selectImage({
-                ...selectedImage.siblingImages[newIndex],
-                siblingImages: selectedImage.siblingImages,
-                associatedJob: selectedImage.associatedJob
-            });
-        }
-    }, [selectImage, selectedImage]);
-
-    const lightboxImages = useMemo(() => {
-        if (!selectedImage) return [];
-        return selectedImage.siblingImages || [selectedImage];
-    }, [selectedImage]);
-
-    const handleToggleFavorite = useCallback((filename) => {
-        const wasFavorite = fastIsFavorite(filename);
-        toggleFavorite(filename);
-        toast.success(
-            wasFavorite ? "Removed from favorites" : "Added to favorites",
-            { icon: '⭐' }
-        );
-    }, [toggleFavorite, fastIsFavorite]);
-
     const handleImageClick = useCallback((image) => {
         selectImage(image);
     }, [selectImage]);
@@ -230,6 +207,15 @@ export default function Dashboard() {
         isLoading,
         refetch
     } = useGallery(filters);
+
+    const handleToggleFavorite = useCallback((filename) => {
+        const wasFavorite = fastIsFavorite(filename);
+        toggleFavorite(filename);
+        toast.success(
+            wasFavorite ? "Removed from favorites" : "Added to favorites",
+            { icon: '⭐' }
+        );
+    }, [toggleFavorite, fastIsFavorite]);
 
     const sentinelRef = useInfiniteScroll({
         hasMore: hasNextPage,
@@ -270,6 +256,23 @@ export default function Dashboard() {
         favorites,
         sort: filters.sort || 'date_desc',
     });
+
+    // The lightbox navigates the list the user is actually looking at, not one
+    // job's batch. It was only ever handed `siblingImages`, so every ordinary
+    // single-image click got a one-item "carousel" and the arrows, swipe and
+    // counter were all inert.
+    const lightboxNav = useLightboxNavigation({
+        sortedGroupedEntries,
+        selectedImage,
+        hasMore: hasNextPage,
+        onLoadMore: fetchNextPage,
+        isLoadingMore: isFetchingNextPage,
+    });
+
+    const handleLightboxNavigate = useCallback((newIndex) => {
+        const target = lightboxNav.resolveTarget(newIndex);
+        if (target) selectImage(target);
+    }, [lightboxNav, selectImage]);
 
     const handleDelete = useCallback(async (filename) => {
         const accepted = await confirm({
@@ -555,7 +558,7 @@ export default function Dashboard() {
 
             <DashboardOverlays
                 selectedImage={selectedImage}
-                lightboxImages={lightboxImages}
+                lightboxNav={lightboxNav}
                 onLightboxNavigate={handleLightboxNavigate}
                 metadata={metadata}
                 loadingMeta={loadingMeta}

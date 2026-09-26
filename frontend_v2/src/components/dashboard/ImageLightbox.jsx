@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash } from 'lucide-react';
+import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash, Maximize2, Minimize2, Expand, Shrink } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { assetUrl, assetPath } from '../../utils/assetUrl';
@@ -8,6 +8,11 @@ import { memo } from 'react';
 import ModalOverlay from '../common/ModalOverlay';
 
 // ⚡ Bolt: Wrap ImageLightbox in React.memo to prevent unnecessary re-renders when parent Dashboard updates
+// A dot per image is fine for a 4-image job batch and absurd for a 16k-image
+// gallery, so past this many the dots are replaced by the "12 / 340" counter
+// alone.
+const MAX_DOT_INDICATORS = 10;
+
 export default memo(function ImageLightbox({
     image,
     images = [], // Array of images for carousel navigation
@@ -20,9 +25,70 @@ export default memo(function ImageLightbox({
     onDelete,
     onReuseParameters,
     reuseInProgress = false,
+    // The gallery is infinitely scrolled, so `images` is only the loaded prefix.
+    // At the end of it, next fetches another page instead of wrapping, then
+    // stops for good once the real end is reached.
+    hasMore = false,
+    onLoadMore = null,
+    isLoadingMore = false,
 }) {
     const [imgIndex, setImgIndex] = useState(currentIndex);
+    // "Focus" mode is in-app: it drops the details sidebar so the image gets
+    // the whole window. It needs no browser API, so it works on iPhone Safari,
+    // in an iframe, and in the installed PWA — where requestFullscreen does not.
+    const [isFocusMode, setIsFocusMode] = useState(false);
+    // True browser fullscreen, tracked from the document rather than assumed,
+    // because the user (or Escape, or F11, or another tab) can leave it without
+    // going through our button.
+    const [isNativeFullscreen, setIsNativeFullscreen] = useState(false);
+    const dialogRef = useRef(null);
     const touchStartRef = useRef(null);
+    // Set when next walks off the end of the loaded prefix; the effect below
+    // consumes it once the appended page arrives.
+    const pendingAdvanceRef = useRef(false);
+
+    // The Fullscreen API is absent on iPhone Safari and can be denied, so every
+    // call is optional-chained and the UI simply does not light up without it.
+    const supportsNativeFullscreen =
+        typeof document !== 'undefined' && typeof document.documentElement?.requestFullscreen === 'function';
+
+    useEffect(() => {
+        if (!supportsNativeFullscreen) return undefined;
+        const sync = () => setIsNativeFullscreen(document.fullscreenElement === dialogRef.current);
+        document.addEventListener('fullscreenchange', sync);
+        return () => document.removeEventListener('fullscreenchange', sync);
+    }, [supportsNativeFullscreen]);
+
+    // Closing the viewer (or navigating it away) must not strand the document
+    // in fullscreen with no element filling the screen.
+    useEffect(() => {
+        return () => {
+            if (document.fullscreenElement && typeof document.exitFullscreen === 'function') {
+                document.exitFullscreen().catch(() => {});
+            }
+        };
+    }, []);
+
+    const toggleFocusMode = useCallback(() => setIsFocusMode((v) => !v), []);
+
+    const toggleNativeFullscreen = useCallback(() => {
+        if (document.fullscreenElement) {
+            document.exitFullscreen?.().catch(() => {});
+            return;
+        }
+        dialogRef.current?.requestFullscreen?.().catch(() => {});
+    }, []);
+
+    // ModalOverlay owns Escape and calls this for both Escape and a backdrop
+    // click. While the browser owns the screen it also owns Escape, so the
+    // keypress never reaches the page and the browser leaves fullscreen on its
+    // own — a second Escape then closes the viewer. This guard only matters for
+    // the browsers that do deliver the key, and it deliberately does not
+    // affect the close button, which calls `onClose` directly.
+    const handleOverlayDismiss = useCallback(() => {
+        if (isNativeFullscreen) return;
+        onClose?.();
+    }, [isNativeFullscreen, onClose]);
 
     // Use image from images array if available, otherwise use the single image prop.
     // An out-of-range index falls back to `image` rather than yielding undefined:
@@ -32,27 +98,54 @@ export default memo(function ImageLightbox({
     const indexedImage = images.length > 0 ? images[imgIndex] : undefined;
     const displayImage = indexedImage || image;
     const displayPath = assetPath(displayImage);
-    const hasMultiple = images.length > 1;
+    // A single loaded image is still navigable when more pages exist.
+    const hasMultiple = images.length > 1 || hasMore;
+    const isFirst = imgIndex <= 0;
+    const isLastLoaded = imgIndex >= images.length - 1;
+    const canLoadMore = hasMore && !isLoadingMore && !!onLoadMore;
+    const canGoNext = !isLastLoaded || canLoadMore;
 
     // Sync internal index with external currentIndex prop
     useEffect(() => {
         setImgIndex(currentIndex);
     }, [currentIndex]);
 
-    // Navigation handlers
-    const goToPrev = useCallback((e) => {
-        e?.stopPropagation();
-        const newIndex = imgIndex > 0 ? imgIndex - 1 : images.length - 1;
+    // Consume a "next past the end" request once more images have arrived.
+    useEffect(() => {
+        if (!pendingAdvanceRef.current) return;
+        if (imgIndex >= images.length - 1) return; // list has not grown yet
+        pendingAdvanceRef.current = false;
+        const newIndex = imgIndex + 1;
         setImgIndex(newIndex);
         onNavigate?.(newIndex);
-    }, [imgIndex, images.length, onNavigate]);
+    }, [images.length, imgIndex, onNavigate]);
+
+    // Navigation handlers. Neither wraps: wrapping on a large gallery throws
+    // the user far from where they were, and it is indistinguishable from a
+    // bug when the list is a loaded prefix of something much longer.
+    const goToPrev = useCallback((e) => {
+        e?.stopPropagation();
+        if (imgIndex <= 0) return;
+        const newIndex = imgIndex - 1;
+        setImgIndex(newIndex);
+        onNavigate?.(newIndex);
+    }, [imgIndex, onNavigate]);
 
     const goToNext = useCallback((e) => {
         e?.stopPropagation();
-        const newIndex = imgIndex < images.length - 1 ? imgIndex + 1 : 0;
-        setImgIndex(newIndex);
-        onNavigate?.(newIndex);
-    }, [imgIndex, images.length, onNavigate]);
+        if (imgIndex < images.length - 1) {
+            const newIndex = imgIndex + 1;
+            setImgIndex(newIndex);
+            onNavigate?.(newIndex);
+            return;
+        }
+        if (canLoadMore) {
+            // The effect above advances once the page lands, so the viewer
+            // keeps the cursor on the image the user is looking at meanwhile.
+            pendingAdvanceRef.current = true;
+            onLoadMore();
+        }
+    }, [imgIndex, images.length, canLoadMore, onLoadMore, onNavigate]);
 
     const handleTouchStart = useCallback((event) => {
         const touch = event.touches?.[0];
@@ -107,20 +200,51 @@ export default memo(function ImageLightbox({
     return (
         // The backdrop never dismissed the lightbox (only the close button and
         // the arrow keys did), so closeOnBackdrop stays false.
-        <ModalOverlay onClose={onClose} closeOnBackdrop={false} className="z-50 bg-black/95">
-            <button
-                onClick={onClose}
-                className="absolute top-4 right-4 z-10 p-2 bg-gray-800/50 rounded-full text-white hover:bg-gray-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                aria-label="Close lightbox"
-            >
-                <X size={24} aria-hidden="true" />
-            </button>
+        <ModalOverlay onClose={handleOverlayDismiss} closeOnBackdrop={false} className="z-50 bg-black/95">
+            <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+                <button
+                    onClick={toggleFocusMode}
+                    aria-pressed={isFocusMode}
+                    title={isFocusMode ? 'Show image details' : 'Full screen (hide details)'}
+                    className={`p-2 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                        isFocusMode ? 'bg-blue-600/70 text-white hover:bg-blue-500' : 'bg-gray-800/50 text-white hover:bg-gray-700'
+                    }`}
+                    aria-label="Toggle focus mode"
+                >
+                    {isFocusMode ? <Minimize2 size={20} aria-hidden="true" /> : <Maximize2 size={20} aria-hidden="true" />}
+                </button>
+
+                {supportsNativeFullscreen && (
+                    <button
+                        onClick={toggleNativeFullscreen}
+                        aria-pressed={isNativeFullscreen}
+                        title={isNativeFullscreen ? 'Exit browser fullscreen' : 'Browser fullscreen'}
+                        className={`p-2 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                            isNativeFullscreen ? 'bg-blue-600/70 text-white hover:bg-blue-500' : 'bg-gray-800/50 text-white hover:bg-gray-700'
+                        }`}
+                        aria-label="Toggle browser fullscreen"
+                    >
+                        {isNativeFullscreen ? <Shrink size={20} aria-hidden="true" /> : <Expand size={20} aria-hidden="true" />}
+                    </button>
+                )}
+
+                <button
+                    onClick={onClose}
+                    className="p-2 bg-gray-800/50 rounded-full text-white hover:bg-gray-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    aria-label="Close lightbox"
+                >
+                    <X size={24} aria-hidden="true" />
+                </button>
+            </div>
 
             <div
+                ref={dialogRef}
                 role="dialog"
                 aria-modal="true"
                 aria-label="Image lightbox"
-                className="flex flex-col lg:flex-row w-full h-full gap-4 max-w-7xl overflow-hidden"
+                className={`flex flex-col lg:flex-row w-full h-full overflow-hidden bg-black ${
+                    isFocusMode ? '' : 'gap-4 max-w-7xl'
+                }`}
             >
                 {/* Image Container with carousel navigation */}
                 <div
@@ -134,7 +258,12 @@ export default memo(function ImageLightbox({
                     {hasMultiple && (
                         <button
                             onClick={goToPrev}
-                            className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 bg-gray-800/70 hover:bg-gray-700 rounded-full text-white transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                            disabled={isFirst}
+                            className={`absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full text-white transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                                isFirst
+                                    ? 'bg-gray-800/30 cursor-default text-gray-600'
+                                    : 'bg-gray-800/70 hover:bg-gray-700'
+                            }`}
                             aria-label="Previous image"
                         >
                             <ChevronLeft size={28} aria-hidden="true" />
@@ -145,7 +274,12 @@ export default memo(function ImageLightbox({
                     {hasMultiple && (
                         <button
                             onClick={goToNext}
-                            className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 bg-gray-800/70 hover:bg-gray-700 rounded-full text-white transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                            disabled={!canGoNext}
+                            className={`absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full text-white transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                                !canGoNext
+                                    ? 'bg-gray-800/30 cursor-default text-gray-600'
+                                    : 'bg-gray-800/70 hover:bg-gray-700'
+                            }`}
                             aria-label="Next image"
                         >
                             <ChevronRight size={28} aria-hidden="true" />
@@ -165,7 +299,7 @@ export default memo(function ImageLightbox({
                     {/* Carousel Indicators */}
                     {hasMultiple && (
                         <div className="flex items-center gap-2 mt-4">
-                            {images.map((_, idx) => (
+                            {images.length <= MAX_DOT_INDICATORS && images.map((_, idx) => (
                                 <button
                                     key={idx}
                                     onClick={() => {
@@ -178,12 +312,19 @@ export default memo(function ImageLightbox({
                                     aria-pressed={idx === imgIndex}
                                 />
                             ))}
-                            <span className="ml-2 text-xs text-gray-400">{imgIndex + 1} / {images.length}</span>
+                            {/* "+" because the gallery is a loaded prefix: the
+                                total is not known until the pages run out. */}
+                            <span className="ml-2 text-xs text-gray-400">
+                                {imgIndex + 1} / {hasMore ? `${images.length}+` : images.length}
+                            </span>
                         </div>
                     )}
                 </div>
 
-                {/* Sidebar */}
+                {/* Sidebar. Hidden in focus mode — that is the whole point of
+                    focus mode, and the image container above keeps its own
+                    navigation, so nothing becomes unreachable. */}
+                {!isFocusMode && (
                 <div className="w-full lg:w-80 h-1/3 lg:h-full bg-gray-900 border-t lg:border-t-0 lg:border-l border-gray-800 p-6 overflow-y-auto flex-shrink-0">
                     <div className="space-y-4 md:space-y-6">
                         <div>
@@ -331,8 +472,9 @@ export default memo(function ImageLightbox({
                         ) : (
                             <div className="text-center py-8 text-gray-500 text-sm">No metadata available</div>
                         )}
-                    </div>
-                </div>
+                     </div>
+                 </div>
+                )}
             </div>
         </ModalOverlay>
     );

@@ -7,7 +7,7 @@ import SelectCollectionModal from '../collections/SelectCollectionModal';
  * DashboardOverlays Component
  * @param {object} props
  * @param {object} props.selectedImage - The currently selected image for lightbox
- * @param {array} props.lightboxImages - Sibling images to navigate in the lightbox
+ * @param {object} props.lightboxNav - Navigation state from useLightboxNavigation
  * @param {(index: number) => void} props.onLightboxNavigate - Callback to navigate inside lightbox
  * @param {object} props.metadata - Image metadata
  * @param {boolean} props.loadingMeta - Whether metadata is loading
@@ -38,7 +38,7 @@ import SelectCollectionModal from '../collections/SelectCollectionModal';
  */
 export default function DashboardOverlays({
     selectedImage,
-    lightboxImages,
+    lightboxNav,
     onLightboxNavigate,
     metadata,
     loadingMeta,
@@ -70,9 +70,12 @@ export default function DashboardOverlays({
             {selectedImage && (
                 <ImageLightbox
                     image={selectedImage}
-                    images={lightboxImages}
-                    currentIndex={Math.max(0, selectedImage.siblingImages?.findIndex(img => img.name === selectedImage.name) ?? 0)}
+                    images={lightboxNav.images}
+                    currentIndex={lightboxNav.currentIndex}
                     onNavigate={onLightboxNavigate}
+                    hasMore={lightboxNav.hasMore}
+                    onLoadMore={lightboxNav.onLoadMore}
+                    isLoadingMore={lightboxNav.isLoadingMore}
                     metadata={metadata}
                     loadingMeta={loadingMeta}
                     job={selectedImage.associatedJob}
