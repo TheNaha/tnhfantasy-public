@@ -13,7 +13,10 @@ from pydantic import BaseModel, Field
 # the generator" bugs happen. The configured override still lives in
 # config.json under generator.default_checkpoint; this is only the final
 # fallback when nothing is installed.
-DEFAULT_CHECKPOINT = "sd_xl_base_1.0.safetensors"
+# Re-exported from config, which is the lowest-level module: infrastructure
+# imports config, so config cannot import from core without a cycle. Keeping the
+# literal in two places is how they drifted.
+from config import DEFAULT_CHECKPOINT  # noqa: E402,F401
 
 
 class LoraOption(BaseModel):

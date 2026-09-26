@@ -36,6 +36,8 @@ _cfg_logger = structlog.get_logger().bind(logger_name="config")
 # ============================================================================
 # DEFAULT CONFIGURATION - Fallback if config.json doesn't exist
 # ============================================================================
+DEFAULT_CHECKPOINT = "sd_xl_base_1.0.safetensors"
+
 DEFAULT_CONFIG = {
     "worker": {
         "poll_interval": 0.3,
@@ -106,7 +108,11 @@ DEFAULT_CONFIG = {
         "blurhash_resize_max": 64
     },
     "generator": {
-        "default_checkpoint": "sd_xl_base_1.0.safetensors"
+        # The single definition lives here, not in core.workflow_builder:
+        # config.py is the lowest-level module (infrastructure.database imports
+        # it), so importing anything from `core` at module scope is circular.
+        # core.workflow_builder imports this constant instead.
+        "default_checkpoint": DEFAULT_CHECKPOINT
     },
     "ai": {
         "maxContextTokens": 4096,
