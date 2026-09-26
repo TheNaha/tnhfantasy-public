@@ -13,6 +13,7 @@ from api.deps import get_session, get_character_repo
 from infrastructure.logging import get_logger
 from infrastructure.repositories.character_repo import CharacterRepository
 from services.reference_cleanup import scrub_entity_references
+from core.workflow_builder import DEFAULT_CHECKPOINT
 from core.character_cards import (
     CARD_SPEC_V1,
     CARD_SPEC_V2,
@@ -504,7 +505,7 @@ async def generate_animated_avatar(
     workflow, metadata = build_video_job_workflow(
         prompt=prompt,
         negative=request.negative_prompt or "worst quality, low quality, bad anatomy, bad hands, missing fingers, extra limbs, text, watermark",
-        checkpoint=request.checkpoint or "sd_xl_base_1.0.safetensors",
+        checkpoint=request.checkpoint or DEFAULT_CHECKPOINT,
         width=512,
         height=512,
         frames=16,

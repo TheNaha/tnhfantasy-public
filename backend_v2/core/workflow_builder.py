@@ -4,6 +4,18 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+# Single source of truth for the last-resort checkpoint filename.
+#
+# This literal was previously re-spelled in seven places
+# (workflow_builder x3, animatediff_builder, job_processing, image_submission,
+# model_availability_service, job_submission_service, world_vault/characters),
+# which is how "why does character illustration use a different checkpoint than
+# the generator" bugs happen. The configured override still lives in
+# config.json under generator.default_checkpoint; this is only the final
+# fallback when nothing is installed.
+DEFAULT_CHECKPOINT = "sd_xl_base_1.0.safetensors"
+
+
 class LoraOption(BaseModel):
     name: str
     strength: float = 1.0
@@ -488,7 +500,7 @@ DEFAULT_FILENAME_PREFIX = "ComfyUI"
 def build_image_workflow(
     prompt: str,
     negative: str = DEFAULT_NEGATIVE_PROMPT,
-    checkpoint: str = "sd_xl_base_1.0.safetensors",
+    checkpoint: str = DEFAULT_CHECKPOINT,
     lora: Optional[str] = None,
     filename_prefix: str = DEFAULT_FILENAME_PREFIX,
     width: int = 1024,
@@ -521,7 +533,7 @@ def build_image_workflow(
 def build_image_job_workflow(
     prompt: str,
     negative: str = DEFAULT_NEGATIVE_PROMPT,
-    checkpoint: str = "sd_xl_base_1.0.safetensors",
+    checkpoint: str = DEFAULT_CHECKPOINT,
     lora: Optional[str] = None,
     filename_prefix: str = DEFAULT_FILENAME_PREFIX,
     width: int = 1024,
@@ -592,7 +604,7 @@ def build_image_job_workflow(
 def build_video_job_workflow(
     prompt: str,
     negative: str = DEFAULT_NEGATIVE_PROMPT,
-    checkpoint: str = "sd_xl_base_1.0.safetensors",
+    checkpoint: str = DEFAULT_CHECKPOINT,
     motion_model: str = "mm_sdxl_v10_beta.ckpt",
     filename_prefix: str = DEFAULT_FILENAME_PREFIX,
     width: int = 512,

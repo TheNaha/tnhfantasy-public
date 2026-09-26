@@ -331,7 +331,7 @@ class ModelAvailabilityService:
         1. If *preferred* is provided and available on a provider, use it.
         2. Otherwise, use any installed checkpoint (get_available_checkpoint).
         3. Fall back to the configured default checkpoint (config.json).
-        4. Hard fallback: ``sd_xl_base_1.0.safetensors``.
+        4. Hard fallback: ``core.workflow_builder.DEFAULT_CHECKPOINT``.
 
         This consolidates what was previously duplicated across
         ``chats.py`` (generate_scene + illustrate_chat), ``stories.py``
@@ -348,4 +348,6 @@ class ModelAvailabilityService:
                 return cfg_default
         except Exception as exc:
             logger.debug("model_availability_resolve_failed", error=str(exc))
-        return "sd_xl_base_1.0.safetensors"
+        from core.workflow_builder import DEFAULT_CHECKPOINT
+
+        return DEFAULT_CHECKPOINT

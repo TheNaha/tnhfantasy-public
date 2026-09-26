@@ -53,11 +53,6 @@ def estimate_tokens(text: str) -> int:
         return max(int(char_estimate), word_count)
 
 
-@lru_cache(maxsize=2048)
-def _cached_estimate_tokens(text: str) -> int:
-    return estimate_tokens(text)
-
-
 def _estimate_cached(text: str) -> int:
     """Token estimate with a 5-minute TTL cache (cachetools TTLCache).
 

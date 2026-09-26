@@ -1,9 +1,10 @@
 from typing import Any
+from core.workflow_builder import DEFAULT_CHECKPOINT
 
 def build_animatediff_workflow(
     prompt: str,
     negative: str = "worst quality, low quality, bad anatomy, bad hands, missing fingers, extra limbs, extra digit, text, signature, watermark, username",
-    checkpoint: str = "sd_xl_base_1.0.safetensors",
+    checkpoint: str = DEFAULT_CHECKPOINT,
     motion_model: str = "mm_sdxl_v10_beta.ckpt",
     filename_prefix: str = "ComfyUI_Video",
     width: int = 512,

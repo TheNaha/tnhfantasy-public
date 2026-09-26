@@ -3,6 +3,7 @@ from typing import Any
 from sqlmodel import Session
 
 from core.exceptions import JobError, MissingModelsError
+from core.workflow_builder import DEFAULT_CHECKPOINT
 from core.workflow_parser import extract_models_from_workflow
 from infrastructure.logging import get_logger
 from services.job_queue import queue_manager
@@ -112,42 +113,3 @@ class JobSubmissionService:
 
         logger.info("job_enqueued", job_id=job.id)
         return job
-
-    async def build_image_job(
-        self,
-        prompt: str,
-        *,
-        negative_prompt: str | None = None,
-        checkpoint: str | None = None,
-        filename_prefix: str = "ComfyUI",
-        workspace: str = "main",
-        character_id: str | None = None,
-        story_id: str | None = None,
-        source: str | None = None,
-        extra_metadata: dict[str, Any] | None = None,
-        preferred_provider_id: str | None = None,
-    ) -> Any:
-        """Build an image workflow, validate models, create and enqueue the job.
-
-        Returns the created Job.
-        """
-        from core.workflow_builder import DEFAULT_NEGATIVE_PROMPT, build_image_job_workflow
-
-        workflow, metadata = build_image_job_workflow(
-            prompt=prompt,
-            negative=negative_prompt or DEFAULT_NEGATIVE_PROMPT,
-            checkpoint=checkpoint or "sd_xl_base_1.0.safetensors",
-            filename_prefix=filename_prefix,
-            source=source,
-            workspace=workspace,
-            character_id=character_id,
-            story_id=story_id,
-            extra_metadata=extra_metadata,
-        )
-
-        return await self.create_and_enqueue_job(
-            workflow,
-            metadata=metadata,
-            task_type="image",
-            preferred_provider_id=preferred_provider_id,
-        )

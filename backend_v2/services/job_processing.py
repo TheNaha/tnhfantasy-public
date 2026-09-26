@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from infrastructure.deps import get_session_context
+from core.workflow_builder import DEFAULT_CHECKPOINT
 from config import settings
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
@@ -21,7 +22,7 @@ def get_default_checkpoint() -> str:
     """Read the configured default checkpoint from settings, falling back to the
     well-known SDXL base name when no override is present."""
     from config import get_config
-    return get_config().get("generator", {}).get("default_checkpoint", "sd_xl_base_1.0.safetensors")
+    return get_config().get("generator", {}).get("default_checkpoint", DEFAULT_CHECKPOINT)
 
 
 _finalizing_jobs: set[str] = set()
