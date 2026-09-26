@@ -3,6 +3,7 @@
 
 from contextlib import asynccontextmanager
 import os
+import time
 from urllib.parse import urlparse
 
 import httpx
@@ -15,20 +16,91 @@ logger = http_logger()
 # Singleton HTTP client instance
 _client: httpx.AsyncClient | None = None
 
-# Paths that a provider container protects with X-Provider-Token. Used only to
-# decide when to warn about a token that will not be attached; it does not
-# gate the request itself.
+# Paths that a provider container protects with X-Provider-Token. Used to decide
+# when to warn about a token that will not be attached; it does not gate the
+# request itself.
+#
+# `/info` and `/provider-stats` are here because the containers now require the
+# token for them too.
 _PROVIDER_MANAGEMENT_PATHS = (
     "/inference", "/download-model", "/delete-model", "/get-file", "/delete-file",
     "/upload-file", "/setup", "/list-models", "/validate-models", "/validate-all-models",
     "/reconcile", "/reconciliation-status", "/deploy", "/deploy-status", "/cancel-job",
-    "/config", "/provider-stats", "/object-info",
+    "/config", "/provider-stats", "/object-info", "/info",
 )
+
+# How long a resolved set of known provider hosts stays usable. Short, because a
+# provider's address changes when it is redeployed under a new container id.
+_PROVIDER_HOST_CACHE_SECONDS = 30.0
+
+_known_provider_hosts: set[str] = set()
+_known_provider_hosts_at: float = 0.0
 
 
 def _is_provider_management_path(url: str) -> bool:
     path = urlparse(url).path.rstrip("/")
     return any(path.endswith(suffix) for suffix in _PROVIDER_MANAGEMENT_PATHS)
+
+
+def _refresh_known_provider_hosts() -> set[str]:
+    """Hostnames of every provider the backend knows about.
+
+    The `tnhcomfy-` prefix convention only matches containers this project
+    started under that name. A self-discovered provider registers
+    `discovery_url` built from `socket.gethostname()`, which on a default Compose
+    network is the 12-character container id — so *no* discovered provider matched
+    the convention, and every management call to one silently omitted the token.
+    With `/info` and `/provider-stats` now gated, that turned into the Diagnostics
+    tab reporting every provider as offline.
+
+    So: ask the database which hosts are providers, rather than guessing from the
+    name. Both the container name and the discovery URL are registered, since
+    either can be the address the backend actually dials.
+    """
+    global _known_provider_hosts, _known_provider_hosts_at
+
+    now = time.monotonic()
+    if now - _known_provider_hosts_at < _PROVIDER_HOST_CACHE_SECONDS:
+        return _known_provider_hosts
+
+    hosts: set[str] = set()
+    try:
+        from infrastructure.database import get_session_sync
+        from infrastructure.repositories import ProviderRepository
+
+        session = get_session_sync()
+        try:
+            for provider in ProviderRepository(session).get_all():
+                config = provider.config or {}
+                container_config = provider.container_config or {}
+                for candidate in (
+                    container_config.get("container_name"),
+                    f"{PROVIDER_CONTAINER_PREFIX}{provider.id}",
+                    config.get("discovery_url"),
+                ):
+                    if not candidate:
+                        continue
+                    host = (urlparse(str(candidate)).hostname or "").lower()
+                    if host:
+                        hosts.add(host)
+        finally:
+            session.close()
+    except Exception as exc:
+        # A transient DB failure must not take the inference path down; fall back
+        # to whatever the last successful refresh found.
+        logger.warning("provider_host_refresh_failed", error=str(exc))
+        return _known_provider_hosts
+
+    _known_provider_hosts = hosts
+    _known_provider_hosts_at = now
+    return hosts
+
+
+def _is_known_provider_host(hostname: str) -> bool:
+    host = hostname.lower()
+    if host.startswith(PROVIDER_CONTAINER_PREFIX):
+        return True
+    return host in _refresh_known_provider_hosts()
 
 
 class _ProviderTokenClient(httpx.AsyncClient):
@@ -51,7 +123,7 @@ class _ProviderTokenClient(httpx.AsyncClient):
                 for host in os.getenv("COMFY_WORKER_HOSTS", "").split(",")
                 if host.strip()
             }
-            if hostname.startswith(PROVIDER_CONTAINER_PREFIX) or hostname in allowed_hosts:
+            if _is_known_provider_host(hostname) or hostname in allowed_hosts:
                 headers = dict(kwargs.pop("headers", {}) or {})
                 headers.setdefault("X-Provider-Token", token)
                 kwargs["headers"] = headers
