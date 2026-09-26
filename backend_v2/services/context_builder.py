@@ -807,6 +807,24 @@ async def build_system_prompt_sections_async(
     return await asyncio.to_thread(_run)
 
 
+def _chat_story_character_ids(chat) -> list[str] | None:
+    """Every character id a chat involves: the primary one plus any extras.
+
+    Returns None when the chat has no character at all, which is what
+    `build_chat_context` treats as "no story character block".
+    """
+    if chat is None:
+        return None
+    ids: list[str] = []
+    primary = getattr(chat, "character_id", None)
+    if primary:
+        ids.append(primary)
+    for extra in getattr(chat, "additional_character_ids", None) or []:
+        if extra and extra not in ids:
+            ids.append(extra)
+    return ids or None
+
+
 def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> dict[str, Any]:
     """Build common kwargs for build_chat_context_async / build_system_prompt_sections_async
     from a Chat entity.
@@ -837,7 +855,11 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
     kwargs: dict[str, Any] = {
         "characters": characters,
         "character_id": overrides.get("character_id", getattr(chat, "character_id", None)),
-        "story_character_ids": getattr(chat, "character_ids", None),
+        # Chat has `character_id` (singular) and `additional_character_ids` —
+        # there is no `character_ids`. The old `getattr(chat, "character_ids",
+        # None)` therefore always returned None (the getattr default hid it) and
+        # the per-character story block was never emitted for chats.
+        "story_character_ids": _chat_story_character_ids(chat),
         "location_ids": getattr(chat, "location_ids", None),
         "lorebook_ids": lorebook_ids,
         "persona_name": persona_name,
