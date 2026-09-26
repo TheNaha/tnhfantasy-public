@@ -184,7 +184,11 @@ export function ChatWorkspaceProvider({ children }) {
 
     const listItems = useMemo(
         () => [
-            ...messages.map(msg => ({ _key: msg.id || `msg-${messages.indexOf(msg)}`, item: msg })),
+            // Index from the map callback, not messages.indexOf(msg): the
+            // latter is a linear scan per element, so building this list was
+            // O(n^2) — ~125k comparisons at the 500-message cap — and it is
+            // recomputed on every streamed token.
+            ...messages.map((msg, i) => ({ _key: msg.id || `msg-${i}`, item: msg })),
             ...activeStreams,
         ],
         [messages, activeStreams]

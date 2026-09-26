@@ -51,7 +51,12 @@ export const useChatJobs = (chatId) => {
         refetchInterval: (query) => {
             const jobs = query.state.data;
             if (Array.isArray(jobs) && jobs.some(j => ACTIVE_STATUSES.includes(j.status))) return 5000;
-            return 30000;
+            // Stop polling entirely when the queue is empty. The previous
+            // unconditional 30000 meant every open chat issued a permanent
+            // 30s request forever, on top of the jobs watchdog and the
+            // per-job 2s poll. QueueVisualization.jsx already returned false
+            // when idle.
+            return false;
         },
         refetchIntervalInBackground: false
     });

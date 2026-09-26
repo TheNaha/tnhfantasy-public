@@ -92,7 +92,7 @@ describe('useChats', () => {
         expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1/system-prompt');
     });
 
-    it('useChatJobs polls fast while a job is active and slow otherwise', async () => {
+    it('useChatJobs polls fast while a job is active and stops when idle', async () => {
         apiMock.get.mockResolvedValue([{ id: 'j1', status: 'generating' }]);
         const { wrapper, queryClient } = createWrapper();
         const { result } = renderHook(() => useChatJobs('c1'), { wrapper });
@@ -101,8 +101,11 @@ describe('useChats', () => {
         const intervalFn = query.options.refetchInterval;
         expect(typeof intervalFn).toBe('function');
         expect(intervalFn({ state: { data: [{ id: 'j1', status: 'generating' }] } })).toBe(5000);
-        expect(intervalFn({ state: { data: [{ id: 'j1', status: 'completed' }] } })).toBe(30000);
-        expect(intervalFn({ state: { data: [] } })).toBe(30000);
+        // Idle means no request at all, not a slow one. The previous
+        // unconditional 30000 meant every open chat polled forever on top of
+        // the jobs watchdog and the per-job 2s poll.
+        expect(intervalFn({ state: { data: [{ id: 'j1', status: 'completed' }] } })).toBe(false);
+        expect(intervalFn({ state: { data: [] } })).toBe(false);
     });
 
     it('useRenameChat patches and invalidates list + detail', async () => {

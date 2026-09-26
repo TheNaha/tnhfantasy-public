@@ -31,17 +31,23 @@ export default function MessageTimeline() {
     const pendingSpeaker =
         (targetCharacterId && characterById.get(targetCharacterId)) || linkedCharacter;
 
+    // The only thing the index was needed for was "is this the last message".
+    // Computing it once here removes a findIndex() over the full message list
+    // that previously ran for every virtualised row on every render.
+    const lastMessageKey = messages.length
+        ? (messages[messages.length - 1].id || messages[messages.length - 1]._idx)
+        : null;
+
     const renderRow = (item) => {
         if (item.item) {
             const msg = item.item;
-            const idx = messages.findIndex(m => (m.id || m._idx) === (msg.id || msg._idx));
             const speaker = resolveSpeaker(msg);
             return (
                 <MessageItem
                     msg={msg}
                     linkedCharacter={speaker}
                     activeChat={activeChat}
-                    canRegenerate={idx === messages.length - 1}
+                    canRegenerate={(msg.id || msg._idx) === lastMessageKey}
                     onEdit={handleEditMessage}
                     onDelete={handleDeleteMessage}
                     onRegenerate={handleRegenerate}

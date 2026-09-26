@@ -6,7 +6,7 @@
  * Supports uploading from file or selecting from gallery.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, X, Image as ImageIcon, Folder, Loader2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
@@ -92,6 +92,33 @@ export default function ImageUploader({
         }
         onClear?.();
     };
+
+    // Revoke the previous preview on change and on unmount. Each upload creates
+    // a new blob URL that pins the whole file in memory; only handleClear used
+    // to revoke, so dropping a second image (or unmounting with one loaded)
+    // leaked the earlier blob for the lifetime of the page. Same pattern as
+    // Characters.jsx (previewUrlRef).
+    const previewUrlRef = useRef(null);
+    useEffect(() => {
+        const url = image?.previewUrl;
+        if (url && url.startsWith('blob:')) {
+            previewUrlRef.current = url;
+        }
+        return () => {
+            const tracked = previewUrlRef.current;
+            if (tracked && tracked !== url) {
+                URL.revokeObjectURL(tracked);
+                previewUrlRef.current = null;
+            }
+        };
+    }, [image?.previewUrl]);
+
+    useEffect(() => () => {
+        if (previewUrlRef.current) {
+            URL.revokeObjectURL(previewUrlRef.current);
+            previewUrlRef.current = null;
+        }
+    }, []);
 
     // If we have an image, show it with a clear button
     if (image) {

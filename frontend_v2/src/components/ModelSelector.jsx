@@ -4,10 +4,23 @@ import { createPortal } from "react-dom";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { filesApi } from "../api";
-import { stableRandomKey } from "../utils/seededRandom";
+import { createStableSorter } from "../utils/seededRandom";
 import TriggerBox from "./selector/TriggerBox";
 import ModelFilterBar from "./selector/ModelFilterBar";
 import ModelGridCard from "./selector/ModelGridCard";
+
+// One sorter per seed, kept at module scope so its key cache survives
+// re-renders. createStableSorter memoises the hash per item identity, which is
+// the whole point: without this the cache died with the render.
+const _seededSorters = new Map();
+function getSeededSorter(seed) {
+  let sorter = _seededSorters.get(seed);
+  if (!sorter) {
+    sorter = createStableSorter(seed);
+    _seededSorters.set(seed, sorter);
+  }
+  return sorter;
+}
 
 const ModelSelector = memo(function ModelSelector({
   label,
@@ -178,12 +191,18 @@ const ModelSelector = memo(function ModelSelector({
         return true;
       });
     }
+    if (sortBy?.startsWith("random")) {
+      // Route through createStableSorter instead of hashing inside the
+      // comparator: Array.prototype.sort calls the comparator O(n log n) times
+      // and stableRandomKey() re-runs an FNV-1a pass over the model name every
+      // time, so a 500-model list paid ~4500 string hashes per re-sort. The
+      // sorter computes each key once and memoises it, and the sorter itself is
+      // memoised per seed so the cache survives re-renders.
+      const seed = sortBy.split(":")[1] || "stable_random_seed";
+      return getSeededSorter(seed)(result, (m) => m.name);
+    }
     result.sort((a, b) => {
       const getVal = (v) => v || 0;
-      if (sortBy?.startsWith("random")) {
-        const seed = sortBy.split(":")[1] || "stable_random_seed";
-        return stableRandomKey(a, seed) - stableRandomKey(b, seed);
-      }
       switch (sortBy) {
         case "name": return (a.name || "").localeCompare(b.name || "");
         case "date": return getVal(b.modified_time) - getVal(a.modified_time);
@@ -195,9 +214,13 @@ const ModelSelector = memo(function ModelSelector({
     return result;
   }, [models, directory, search, sortBy, filterBaseModel, filterType, showNSFW]);
 
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetching) fetchNextPage();
+  }, [hasNextPage, isFetching, fetchNextPage]);
+
   const sentinelRef = useInfiniteScroll({
     hasMore: hasNextPage && !isFetching,
-    onLoadMore: () => fetchNextPage(),
+    onLoadMore: loadMore,
     loading: isFetchingNextPage,
     rootMargin: "300px",
   });

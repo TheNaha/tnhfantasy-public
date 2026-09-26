@@ -37,9 +37,16 @@ export function useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQue
     const { data: chatJobs = [] } = useChatJobs(activeChatId);
 
     const activeStreamEntries = useActiveChatStreams(activeChatId);
-    const activeStreams = activeStreamEntries
-        .filter(item => item.jobData?.status === 'running')
-        .map(item => ({ _key: `stream-${item.jobId}`, jobId: item.jobId, jobData: item.jobData }));
+    // Memoised: this array is a dependency of BOTH the listItems memo and the
+    // ~210-dependency contextValue memo in ChatWorkspaceContext. Rebuilt on
+    // every render it invalidated both, so all ~20 useChatWorkspace()
+    // consumers re-rendered on every streamed token.
+    const activeStreams = useMemo(
+        () => activeStreamEntries
+            .filter(item => item.jobData?.status === 'running')
+            .map(item => ({ _key: `stream-${item.jobId}`, jobId: item.jobId, jobData: item.jobData })),
+        [activeStreamEntries]
+    );
 
     return useMemo(() => ({
         CHAT_PAGE_SIZE,

@@ -19,7 +19,11 @@ export function useBranding() {
             };
         },
         staleTime: 5 * 60 * 1000,
-        refetchInterval: 30000,
+        // No refetchInterval. Branding only changes when a user saves it, and
+        // useSaveBranding already updates the cache optimistically. Polling
+        // every 30s from a Layout-mounted hook meant a permanent request per
+        // page load for data that is effectively static.
+        refetchInterval: false,
     });
 }
 
