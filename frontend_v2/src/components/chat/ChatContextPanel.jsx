@@ -332,8 +332,8 @@ function ChatContextPanel() {
                 {/* Context window size */}
                 <div>
                     <div className="flex items-center justify-between mb-1.5">
-                        <p className="text-xs text-gray-300 font-medium">Context Window</p>
-                        <span className="text-xs text-gray-500 font-mono">
+                        <p className="text-xs text-gray-300 font-medium whitespace-nowrap shrink-0">Context Window</p>
+                        <span className="text-xs text-gray-500 font-mono min-w-0 truncate text-right">
                             {activeChat?.max_context_tokens
                                 ? `${(activeChat.max_context_tokens / 1024).toFixed(0)}k tokens`
                                 : 'Global default'}
@@ -358,8 +358,8 @@ function ChatContextPanel() {
                 <SamplingControls values={activeChat || {}} onChange={onChatUpdate} />
                 <div>
                     <div className="flex items-center justify-between mb-1.5">
-                        <p className="text-xs text-gray-300 font-medium">Agentic Loop Depth</p>
-                        <span className="text-xs text-gray-500 font-mono">
+                        <p className="text-xs text-gray-300 font-medium whitespace-nowrap shrink-0">Agentic Loop Depth</p>
+                        <span className="text-xs text-gray-500 font-mono min-w-0 truncate text-right">
                             {activeChat?.max_agentic_depth
                                 ? `${activeChat.max_agentic_depth} steps`
                                 : 'Global default (5)'}
