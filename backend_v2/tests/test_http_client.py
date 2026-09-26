@@ -115,3 +115,97 @@ class TestConvenienceFunctions:
         with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock, return_value=mock_response):
             response = await post_json("https://example.com", {"data": 42})
             assert response.status_code == 200
+
+
+_PROVIDER_HOST = "tnhcomfy-modal-zetsuke"
+
+
+class TestProviderTokenOnStreamingRequests:
+    """Regression: the token must be attached on the *streaming* path too.
+
+    `httpx.AsyncClient.stream()` is `build_request()` + `send(stream=True)` and
+    never calls `request()`. Inference is an NDJSON stream, so attaching the
+    token in `request()` left every `/inference` unauthenticated while a plain
+    `post()` to the same URL worked. The provider answered 401 "invalid provider
+    worker token" and every job failed as "all providers failed" against a
+    healthy, correctly configured provider.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stream_attaches_the_token(self, monkeypatch):
+        import httpx
+
+        from infrastructure import http_client
+
+        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
+        monkeypatch.setenv("COMFY_WORKER_HOSTS", "")
+
+        seen: dict[str, str | None] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["stream"] = request.headers.get("X-Provider-Token")
+            return httpx.Response(200, json={"status": "success"})
+
+        transport = httpx.MockTransport(handler)
+        async with http_client.get_streaming_client(timeout=5) as client:
+            # Force the streaming client onto our mock transport.
+            client._transport = transport
+            client._mounts = {}
+            async with client.stream(
+                "POST",
+                f"http://{_PROVIDER_HOST}/inference",
+                json={"workflow": {}},
+            ) as response:
+                assert response.status_code == 200
+
+        assert seen["stream"] == "secret-token", "stream() bypassed the token attachment"
+
+    @pytest.mark.asyncio
+    async def test_post_still_attaches_the_token(self, monkeypatch):
+        import httpx
+
+        from infrastructure import http_client
+
+        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
+        monkeypatch.setenv("COMFY_WORKER_HOSTS", "")
+
+        seen: dict[str, str | None] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["post"] = request.headers.get("X-Provider-Token")
+            return httpx.Response(200, json={"status": "success"})
+
+        transport = httpx.MockTransport(handler)
+        async with http_client.get_streaming_client(timeout=5) as client:
+            client._transport = transport
+            client._mounts = {}
+            response = await client.post(
+                f"http://{_PROVIDER_HOST}/inference", json={"workflow": {}}
+            )
+            assert response.status_code == 200
+
+        assert seen["post"] == "secret-token"
+
+    def test_unknown_host_lookup_failure_attaches_the_token_anyway(self, monkeypatch):
+        """Fails closed. An empty host set used to mean "not a provider", so a
+        transient DB failure silently sent unauthenticated requests."""
+        from infrastructure import http_client
+
+        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
+        monkeypatch.setattr(http_client, "_refresh_known_provider_hosts", lambda: None)
+
+        headers = http_client._provider_token_headers(
+            f"http://{_PROVIDER_HOST}/inference", {}
+        )
+        assert headers["X-Provider-Token"] == "secret-token"
+
+    def test_explicit_external_host_is_never_given_the_token(self, monkeypatch):
+        from infrastructure import http_client
+
+        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
+        monkeypatch.setattr(http_client, "_refresh_known_provider_hosts", lambda: set())
+
+        headers = http_client._provider_token_headers(
+            "https://api.example.com/inference", {},  # not a provider
+        )
+        assert "X-Provider-Token" not in headers

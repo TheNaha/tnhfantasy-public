@@ -73,8 +73,13 @@ def _refresh_known_provider_hosts() -> set[str]:
             for provider in ProviderRepository(session).get_all():
                 config = provider.config or {}
                 container_config = provider.container_config or {}
+                # A discovered provider keeps its container name under
+                # `runtime_config`; `container_config` is the legacy key. Read
+                # both so a provider is recognised whichever shape it stored.
+                runtime_config = config.get("runtime_config") or {}
                 for candidate in (
                     container_config.get("container_name"),
+                    runtime_config.get("container_name") if isinstance(runtime_config, dict) else None,
                     f"{PROVIDER_CONTAINER_PREFIX}{provider.id}",
                     config.get("discovery_url"),
                 ):
@@ -86,64 +91,110 @@ def _refresh_known_provider_hosts() -> set[str]:
         finally:
             session.close()
     except Exception as exc:
-        # A transient DB failure must not take the inference path down; fall back
-        # to whatever the last successful refresh found.
+        # Previously this returned the last-known set, which on a cold process is
+        # empty — and an empty set means "not a provider", so management calls
+        # went out with no token and came back 401 "invalid provider worker
+        # token". The inference path stayed up, so it was silent. `None` means
+        # "could not tell", and the caller then fails closed.
         logger.warning("provider_host_refresh_failed", error=str(exc))
-        return _known_provider_hosts
+        return None
 
     _known_provider_hosts = hosts
     _known_provider_hosts_at = now
     return hosts
 
 
-def _is_known_provider_host(hostname: str) -> bool:
+def _is_known_provider_host(
+    hostname: str, allowed_hosts: "frozenset[str] | set[str]" = frozenset()
+) -> bool:
+    """Is this host one of our provider workers?
+
+    Fails *closed* when the host list cannot be resolved and the host is not in
+    the explicit external allow-list. The token is a shared internal secret, the
+    backend constructs every provider URL itself, and guessing wrong costs a 401
+    that surfaces on a job the user is paying for. Over-attaching stays bounded
+    by COMFY_WORKER_HOSTS for genuinely external hosts.
+    """
     host = hostname.lower()
     if host.startswith(PROVIDER_CONTAINER_PREFIX):
         return True
-    return host in _refresh_known_provider_hosts()
+    if host in allowed_hosts:
+        return False
+
+    hosts = _refresh_known_provider_hosts()
+    if hosts is None:
+        logger.error("provider_host_lookup_unavailable_attaching_token_anyway", host=host)
+        return True
+    return host in hosts
+
+
+def _provider_token_headers(url: str, headers: dict[str, str] | None) -> dict[str, str]:
+    """`headers` plus `X-Provider-Token` when `url` points at one of our providers.
+
+    Provider containers fail CLOSED when the token is unset, so a missing header
+    surfaces as a 401 that looks exactly like an outage. Hosts are resolved from
+    the database rather than the `tnhcomfy-` naming convention, because a
+    self-discovered provider registers its container id as its hostname.
+
+    Shared by the pooled and streaming paths — see the note on the class for why
+    this cannot live in `request()`.
+    """
+    token = os.getenv("PROVIDER_WORKER_TOKEN", "").strip()
+    merged = dict(headers or {})
+    is_management = _is_provider_management_path(str(url))
+
+    if not token:
+        if is_management:
+            logger.error(
+                "provider_token_unset",
+                url=str(url),
+                hint="PROVIDER_WORKER_TOKEN is empty; the provider will answer 401",
+            )
+        return merged
+
+    hostname = (urlparse(str(url)).hostname or "").lower()
+    allowed_hosts = {
+        host.strip().lower()
+        for host in os.getenv("COMFY_WORKER_HOSTS", "").split(",")
+        if host.strip()
+    }
+    if _is_known_provider_host(hostname, allowed_hosts):
+        merged.setdefault("X-Provider-Token", token)
+    elif is_management:
+        logger.warning(
+            "provider_token_not_attached",
+            url=str(url),
+            hostname=hostname,
+            hint=(
+                f"host does not match the {PROVIDER_CONTAINER_PREFIX!r} prefix and is "
+                "not listed in COMFY_WORKER_HOSTS; the provider will answer 401"
+            ),
+        )
+    return merged
 
 
 class _ProviderTokenClient(httpx.AsyncClient):
     """Attaches the provider auth header to provider management calls.
 
-    Provider containers fail CLOSED when PROVIDER_WORKER_TOKEN is unset, so a
-    missing header surfaces as a 401 that looks identical to an outage. This
-    client attaches the token to Docker-network providers (matched by the
-    `tnhcomfy-<provider_id>` container-name convention) and to any host listed
-    in COMFY_WORKER_HOSTS, and logs loudly when it is about to omit it so the
-    cause is diagnosable instead of mysterious.
+    The header is added in `build_request()`, NOT in `request()`.
+
+    `httpx.AsyncClient.stream()` is implemented as `build_request()` followed by
+    `send(request, stream=True)` and never calls `request()`. Inference is an
+    NDJSON stream, so *every* generation call goes through `stream()` — attaching
+    the token in `request()` left every `/inference` unauthenticated. A plain
+    `post()` to the same URL authenticated fine and returned 422 for an invalid
+    body while `stream()` returned 401 "invalid provider worker token", so the
+    provider looked misconfigured and every job failed as "all providers failed"
+    against a provider that was healthy and correctly set up.
     """
 
-    async def request(self, method, url, **kwargs):
-        token = os.getenv("PROVIDER_WORKER_TOKEN", "").strip()
-        if token:
-            hostname = (urlparse(str(url)).hostname or "").lower()
-            allowed_hosts = {
-                host.strip().lower()
-                for host in os.getenv("COMFY_WORKER_HOSTS", "").split(",")
-                if host.strip()
-            }
-            if _is_known_provider_host(hostname) or hostname in allowed_hosts:
-                headers = dict(kwargs.pop("headers", {}) or {})
-                headers.setdefault("X-Provider-Token", token)
-                kwargs["headers"] = headers
-            elif _is_provider_management_path(str(url)):
-                logger.warning(
-                    "provider_token_not_attached",
-                    url=str(url),
-                    hostname=hostname,
-                    hint=(
-                        f"host does not match the {PROVIDER_CONTAINER_PREFIX!r} prefix and is "
-                        "not listed in COMFY_WORKER_HOSTS; the provider will answer 401"
-                    ),
-                )
-        elif _is_provider_management_path(str(url)):
-            logger.error(
-                "provider_token_unset",
-                url=str(url),
-                hint="PROVIDER_WORKER_TOKEN is empty; provider containers fail closed with 503",
-            )
-        return await super().request(method, url, **kwargs)
+    def build_request(self, method, url, **kwargs) -> httpx.Request:
+        headers = kwargs.pop("headers", None)
+        request = super().build_request(method, url, headers=headers, **kwargs)
+        resolved = _provider_token_headers(str(request.url), dict(request.headers))
+        if "X-Provider-Token" in resolved:
+            request.headers["X-Provider-Token"] = resolved["X-Provider-Token"]
+        return request
 
 
 def get_http_client() -> httpx.AsyncClient:
