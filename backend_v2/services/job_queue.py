@@ -1,5 +1,6 @@
 # Job Queue - Async job processing with worker pool
 import asyncio
+import hashlib
 import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -159,6 +160,16 @@ class JobQueue:
         with engine.begin() as conn:
             conn.execute(text(f"NOTIFY {_NOTIFY_CHANNEL}"))
 
+    def _advisory_key(self) -> int:
+        """Stable `pg_advisory_xact_lock` key for this pool's claim section.
+
+        Derived from the task type so the image and llm pools serialise
+        independently, and folded into 63 bits because the function takes a
+        signed bigint.
+        """
+        digest = hashlib.blake2b(self._task_type.encode("utf-8"), digest_size=8).digest()
+        return int.from_bytes(digest, "big") & ((1 << 63) - 1)
+
     def _max_concurrent(self) -> int:
         """In-flight ceiling for this pool, from `jobs.max_concurrent`.
 
@@ -180,10 +191,22 @@ class JobQueue:
         FOR UPDATE SKIP LOCKED makes concurrent workers/processes safe: each
         PENDING row is claimed exactly once. Runs in a worker thread.
 
-        The in-flight count and the claim are one statement, so the ceiling is
-        evaluated atomically with the claim rather than in a separate query
-        that another worker could slip between. The candidate uses
-        ix_jobs_claim and the count uses idx_job_provider_status.
+        The ceiling needs two things, and originally had neither:
+
+        * A claimed job keeps `status = 'PENDING'` (the worker transitions it
+          when it actually starts), and PENDING was not in the in-flight status
+          list, so a just-claimed row was invisible to the count.
+        * The in-flight CTE and the UPDATE share one snapshot, so rows claimed
+          concurrently by another worker are excluded from the count by
+          construction. N workers polling in the same tick all computed
+          `in_flight = 0` and all claimed, making the effective bound
+          `max_concurrent + max_workers` — with `max_concurrent = 1` and three
+          enabled image providers, three jobs reached paid providers.
+
+        So claimed-but-still-PENDING rows are counted, and a transaction-scoped
+        advisory lock serialises the count against the claim. The lock is what
+        makes the ceiling exact; without it the count can only ever be a snapshot.
+        It is Postgres-only, which this whole statement already is.
 
         Scope is per task_type, not global. The worker pool is already sized
         from the enabled provider count, so a global cap could let image
@@ -198,13 +221,25 @@ class JobQueue:
 
         claim_sql = text(
             """
+            SELECT pg_advisory_xact_lock(:advisory_key)
+            """
+            if engine.dialect.name == "postgresql"
+            else "SELECT 1"
+        )
+        claim_job_sql = text(
+            """
             WITH in_flight AS (
                 SELECT count(*) AS n
                 FROM jobs
                 WHERE task_type = :task_type
-                  AND status IN (
-                    'SENT_TO_PROVIDER', 'CONNECTED', 'PRE_GENERATION',
-                    'GENERATING', 'POST_PROCESSING', 'RETRYING'
+                  AND (
+                    status IN (
+                      'SENT_TO_PROVIDER', 'CONNECTED', 'PRE_GENERATION',
+                      'GENERATING', 'POST_PROCESSING', 'RETRYING'
+                    )
+                    -- A claim sets claimed_at but not status; without this the
+                    -- row the previous claimer took is not yet counted.
+                    OR (status = 'PENDING' AND claimed_at IS NOT NULL)
                   )
             ),
             candidate AS (
@@ -225,8 +260,11 @@ class JobQueue:
             """
         )
         with engine.begin() as conn:
+            conn.execute(
+                claim_sql, {"advisory_key": self._advisory_key()}
+            ).first()
             row = conn.execute(
-                claim_sql,
+                claim_job_sql,
                 {"task_type": self._task_type, "max_concurrent": self._max_concurrent()},
             ).first()
         if row is None:
