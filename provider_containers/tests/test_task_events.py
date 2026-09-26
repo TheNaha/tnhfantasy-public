@@ -473,3 +473,24 @@ def _async_iter(items):
         for item in items:
             yield item
     return gen()
+
+
+def test_cached_nodes_is_a_recognised_canonical_event():
+    """`cached_nodes` is a valid TaskEvent.event but was missing from
+    _TASK_EVENT_KINDS, so a canonical cached_nodes line was re-emitted as a
+    contentless `progress` with value=None — reporting a progress step for an
+    event that carries no progress. Only the legacy -> canonical direction was
+    covered before this.
+    """
+    from provider_core.models import TaskEvent
+    from provider_core.utils import _TASK_EVENT_KINDS
+
+    event = TaskEvent(event="cached_nodes", job_id="j1", nodes=["1", "2"])
+    assert event.event in _TASK_EVENT_KINDS, (
+        "TaskEvent.event and _TASK_EVENT_KINDS have drifted"
+    )
+    # Every literal the model accepts must be recognised.
+    accepted = set(TaskEvent.model_fields["event"].annotation.__args__)
+    assert accepted == set(_TASK_EVENT_KINDS), (
+        f"drift: only on one side: {accepted ^ set(_TASK_EVENT_KINDS)}"
+    )

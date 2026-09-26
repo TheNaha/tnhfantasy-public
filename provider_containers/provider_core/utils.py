@@ -4,8 +4,14 @@ from typing import Any, AsyncIterator, Dict, Iterable, Optional
 
 from provider_core.models import TaskEvent
 
+# Must stay in sync with the `event` Literal on TaskEvent in models.py.
+# "cached_nodes" was missing here while being a valid TaskEvent.event value, so
+# a canonical cached_nodes line from a ComfyUI worker was not recognised and was
+# re-emitted as a contentless `progress` with value=None — reporting a progress
+# step for an event that carries no progress.
 _TASK_EVENT_KINDS = {
-    "started", "progress", "delta", "node", "artifact", "completed", "failed", "cancelled",
+    "started", "progress", "delta", "node", "cached_nodes", "artifact", "completed",
+    "failed", "cancelled",
 }
 
 
