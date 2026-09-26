@@ -49,8 +49,13 @@ echo "==> Provider env files"
 # the recommendation is to create the file rather than to proceed.
 #
 # The list is derived from the `env_file:` entries in docker-compose.yml so it
-# cannot fall behind a new provider.
-provider_env_files=$(grep -oE '\.env\.[a-z0-9-]+' docker-compose.yml | sort -u)
+# cannot fall behind a new provider — but comments are stripped FIRST. grep does
+# not know about YAML comments, and docker-compose.yml keeps the
+# `provider-remote-comfy` block (and its `env_file: - .env.remote-comfy`) present
+# but commented out, so the raw extraction demanded an env file for a service
+# compose will not start. A shipped script that refuses to pass on a valid
+# checkout is worse than the note it replaced.
+provider_env_files=$(sed -e 's/#.*//' docker-compose.yml | grep -oE '\.env\.[a-z0-9-]+' | sort -u)
 for f in $provider_env_files; do
   [[ -f "$f" ]] && ok "$f" || bad "$f missing — docker compose will refuse to start (create it or remove the service)"
 done

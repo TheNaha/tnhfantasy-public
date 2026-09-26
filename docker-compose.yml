@@ -152,7 +152,12 @@ services:
           memory: 8G
           cpus: "4"
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      # /live, not /health: the container healthcheck reports whether the worker
+      # process is serving. /health additionally probes the upstream and is the
+      # dispatcher-facing signal; a provider whose upstream is down should be
+      # excluded from dispatch, not restart-looped by its own healthcheck.
+      # $PORT, not a literal 8000: PORT is set per service below.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://localhost:%s/live' % os.environ.get('PORT', '8000'))\""]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -190,7 +195,12 @@ services:
           memory: 8G
           cpus: "4"
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      # /live, not /health: the container healthcheck reports whether the worker
+      # process is serving. /health additionally probes the upstream and is the
+      # dispatcher-facing signal; a provider whose upstream is down should be
+      # excluded from dispatch, not restart-looped by its own healthcheck.
+      # $PORT, not a literal 8000: PORT is set per service below.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://localhost:%s/live' % os.environ.get('PORT', '8000'))\""]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -228,7 +238,12 @@ services:
           memory: 8G
           cpus: "4"
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      # /live, not /health: the container healthcheck reports whether the worker
+      # process is serving. /health additionally probes the upstream and is the
+      # dispatcher-facing signal; a provider whose upstream is down should be
+      # excluded from dispatch, not restart-looped by its own healthcheck.
+      # $PORT, not a literal 8000: PORT is set per service below.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://localhost:%s/live' % os.environ.get('PORT', '8000'))\""]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -265,7 +280,12 @@ services:
           memory: 2G
           cpus: "2"
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      # /live, not /health: the container healthcheck reports whether the worker
+      # process is serving. /health additionally probes the upstream and is the
+      # dispatcher-facing signal; a provider whose upstream is down should be
+      # excluded from dispatch, not restart-looped by its own healthcheck.
+      # $PORT, not a literal 8000: PORT is set per service below.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://localhost:%s/live' % os.environ.get('PORT', '8000'))\""]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -275,7 +295,26 @@ services:
     build:
       context: ./provider_containers
       dockerfile: image_worker/Dockerfile
-    container_name: tnhcomfy-direct-url
+    # container_name is derived from PROVIDER_ID, not hand-picked: the backend
+    # builds the name it looks for with
+    # `provider_container_name(provider.id)` (infrastructure/providers/runtime.py),
+    # i.e. `tnhcomfy-{PROVIDER_ID}` verbatim. This pair previously read
+    # `container_name: tnhcomfy-direct-url` against `PROVIDER_ID=direct_url`, so
+    # the backend asked for `tnhcomfy-direct_url` — a container that does not
+    # exist. `containers.get(...)` then raised and the panel reported a running
+    # provider as stopped, and the ping built
+    # `http://tnhcomfy-direct_url:8000/health` and got a DNS failure. Job dispatch
+    # kept working because it goes through `config["discovery_url"]` instead, so
+    # the mismatch only ever showed up in the UI an operator reads to decide
+    # whether the provider is up.
+    #
+    # The underscore is valid in a container name and the provider id is already
+    # `direct_url` in the database, so the name moves to match the id rather than
+    # the other way round. Renaming the id to `direct-url` instead would need a
+    # data migration (provider rows, provider file statuses, job rows) for no
+    # gain. Underscore-to-hyphen is NOT applied here: `provider_container_name`
+    # does not normalise, so any normalisation has to live in one place.
+    container_name: tnhcomfy-direct_url
     depends_on:
       backend_v2:
         condition: service_healthy
@@ -314,7 +353,12 @@ services:
           memory: 2G
           cpus: "2"
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      # /live, not /health: the container healthcheck reports whether the worker
+      # process is serving. /health additionally probes the upstream and is the
+      # dispatcher-facing signal; a provider whose upstream is down should be
+      # excluded from dispatch, not restart-looped by its own healthcheck.
+      # $PORT, not a literal 8000: PORT is set per service below.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://localhost:%s/live' % os.environ.get('PORT', '8000'))\""]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -337,6 +381,14 @@ services:
   #     - PORT=8000
   #     - BACKEND_URL=http://backend_v2:8002
   #     - ENGINE=remote_comfy
+  #     # These two were missing here while all five live blocks had them
+  #     # (:139-140, :177-178, :215-216, :253-254, :303-304). Uncommenting this
+  #     # block exactly as .env.example.remote-comfy:70-77 documents ("Injected by
+  #     # compose from the root .env") produced a provider that answered 503 on
+  #     # every protected route and could not self-register: env_file cannot
+  #     # supply a variable the backend and the worker must agree on.
+  #     - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
+  #     - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
   #   user: "1000:1000"
   #   volumes:
   #     - ./data:/data
@@ -349,11 +401,12 @@ services:
   #         memory: 2G
   #         cpus: "2"
   #   healthcheck:
-  #     test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+  #     test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://localhost:%s/live' % os.environ.get('PORT', '8000'))\""]
   #     interval: 15s
   #     timeout: 10s
   #     retries: 5
   #     start_period: 30s
+
 
   # Remote Agent lives on the MACHINE HOSTING ComfyUI (not in this orchestrator
   # stack for production). Uncomment + point DATA_DIR at your ComfyUI models dir
@@ -367,7 +420,20 @@ services:
   #   environment:
   #     - DATA_DIR=/models
   #     - PORT=8001
-  #     - REMOTE_AGENT_TOKEN=${REMOTE_AGENT_TOKEN}
+  #     # Braced, and defaulted. Unbraced `${REMOTE_AGENT_TOKEN}` is interpolated
+  #     # at PARSE time from the ROOT project .env, where the variable does not
+  #     # exist, so compose silently substituted an empty string — and
+  #     # remote_agent/server.py:23-24 raises at IMPORT when the token is empty
+  #     # and REMOTE_AGENT_ALLOW_INSECURE is unset, so the agent crash-looped.
+  #     # env_file cannot help here either: it populates the container
+  #     # environment, not compose's own interpolation. On this rig, either set
+  #     # REMOTE_AGENT_TOKEN in the root .env or export it in the shell that
+  #     # runs compose.
+  #     - REMOTE_AGENT_TOKEN=${REMOTE_AGENT_TOKEN:-}
+  #     # An empty token above is a 401 loop, not an open agent. Uncomment this to
+  #     # start it with no authentication at all — only on a machine with no
+  #     # other network path in, and never on a routable address.
+  #     - REMOTE_AGENT_ALLOW_INSECURE=${REMOTE_AGENT_ALLOW_INSECURE:-}
   #   volumes:
   #     - /opt/comfy/ComfyUI/models:/models:ro
   #     - ./data/remote-agent/downloads:/models/downloads
