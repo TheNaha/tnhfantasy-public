@@ -293,7 +293,37 @@ async def get_settings_schema() -> dict[str, Any]:
     
     return {
         "status": "success",
-        "schema": schema
+        "schema": _annotate_writability(schema),
+    }
+
+
+# Sections PUT /api/settings will accept, derived from the request model itself
+# so the two can never drift again. Computed lazily: `SettingsUpdate` is defined
+# further down this module.
+def _writable_sections() -> frozenset[str]:
+    return frozenset(SettingsUpdate.model_fields)
+
+
+def _annotate_writability(schema: dict[str, Any]) -> dict[str, Any]:
+    """Tag every documented section with whether it can actually be written.
+
+    The schema advertised nine sections while `SettingsUpdate` accepted five,
+    and one of the nine (`websocket`) was not a key of config.json at all. A UI
+    built from this endpoint therefore offered controls that failed with
+    "Unknown configuration section" on save, while the two sections that *are*
+    writable and present (`generator`, `ai`) were not documented here at all.
+
+    Rather than maintaining a third list, the writable set is read off
+    `SettingsUpdate.model_fields`.
+    """
+    writable = _writable_sections()
+    return {
+        section: {
+            "writable": section in writable,
+            "described": True,
+            **body,
+        }
+        for section, body in schema.items()
     }
 
 
