@@ -1,6 +1,7 @@
 import asyncio
 import os
 import json
+import time
 from typing import Any, AsyncIterator, Dict, Optional
 
 import httpx
@@ -21,10 +22,32 @@ from provider_core.utils import translate_task_events, TaskEvent
 
 PROVIDER_ID = os.getenv("PROVIDER_ID", "direct-url-worker")
 
-# Ceiling on the /health upstream probe. The compose and Dockerfile healthchecks
-# give the whole request 10s, so the probe must be well under that or a dead
-# ComfyUI turns into a hung healthcheck rather than a failing one.
-HEALTH_PROBE_TIMEOUT = float(os.getenv("COMFYUI_HEALTH_PROBE_TIMEOUT", "5.0"))
+# Ceiling on the /health upstream probe.
+#
+# This has to fit inside the *dispatcher's* budget, not the healthcheck's: the
+# compose and Dockerfile healthchecks no longer probe the upstream at all (they
+# call /live), but backend_v2/services/load_balancer.py:345 and
+# api/routes/providers/crud.py:167 both probe /health with
+# `_HTTP_HEALTH_PROBE_TIMEOUT_SECONDS = 2.0` and require HTTP 200. A probe that
+# takes longer than that reads as "no answer", so a slow-but-healthy ComfyUI is
+# indistinguishable from an unreachable one and the provider is excluded from
+# dispatch. 1.5s leaves room for the handler, so the provider returns a definite
+# 503 with a real diagnosis instead of leaving the caller to time out.
+#
+# GET /system_stats is a few hundred bytes and answers in single-digit
+# milliseconds on a warm ComfyUI; 1.5s is a long time for it. A cold ComfyUI
+# still loading a checkpoint can exceed it, and that is a real condition — it
+# genuinely cannot take a job quickly — but raise it if your ComfyUI is on a
+# slow link and you would rather see a timeout than an unhealthy.
+HEALTH_PROBE_TIMEOUT = float(os.getenv("COMFYUI_HEALTH_PROBE_TIMEOUT", "1.5"))
+
+# Ceiling on the cached /object_info document, in seconds.
+#
+# `get_storage_stats` (provider_core/base_client.py) calls `list_models` once per
+# MODEL_DIRECTORIES entry — 16 — and ComfyUI's /object_info is multi-megabyte on a
+# production install, so one /provider-stats click used to be 16 full downloads
+# and 16 full JSON parses. OBJECT_INFO_TTL bounds how stale a listing may be.
+OBJECT_INFO_CACHE_TTL = float(os.getenv("COMFYUI_OBJECT_INFO_CACHE_TTL", "30.0"))
 
 NODE_TO_DIRECTORY = {
     "CheckpointLoaderSimple": "checkpoints",
@@ -70,9 +93,56 @@ class DirectUrlProviderClient(BaseProviderClient):
             timeout=30.0,
             headers=self._http_headers,
         )
+        self._object_info_cache: tuple[float, Dict[str, Any]] | None = None
+        # Single-flight. A plain dict cache is not enough: 16 concurrent
+        # `get_storage_stats` callers all miss a cold cache at the same instant and
+        # all fetch, which is the thing the cache was supposed to prevent. The lock
+        # is re-checked inside, so the winner populates the cache and the other 15
+        # get the same document without waiting on a second request.
+        self._object_info_lock = asyncio.Lock()
 
     async def close(self):
         await self._http.aclose()
+
+    async def _fetch_object_info(self) -> Dict[str, Any]:
+        """The cached /object_info document.
+
+        A failure is NOT cached: a ComfyUI that is restarting should be retried on
+        the next call rather than pinned as an error for the whole TTL. The caller
+        (`get_object_info`, which is a verbatim pass-through) still answers a
+        `failed()` envelope, so the 502 is visible to the caller that asked.
+        """
+        now = time.monotonic()
+        cached = self._object_info_cache
+        if cached is not None and now - cached[0] < OBJECT_INFO_CACHE_TTL:
+            return cached[1]
+
+        async with self._object_info_lock:
+            # Re-check: another caller may have fetched while we waited.
+            cached = self._object_info_cache
+            now = time.monotonic()
+            if cached is not None and now - cached[0] < OBJECT_INFO_CACHE_TTL:
+                return cached[1]
+            response = await self._http.get("/object_info")
+            response.raise_for_status()
+            document = response.json()
+            self._object_info_cache = (time.monotonic(), document)
+            return document
+
+    async def _object_info_or_error(self) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """Fetch the cached /object_info, as `(document, error_message)`.
+
+        One of the two is always None. The callers each build their own envelope
+        from the message, because `get_object_info` is a verbatim pass-through of
+        ComfyUI's own document (api/routes/nodes.py returns it to the UI) and must
+        not be wrapped, while `list_models` / `validate_models` answer in the
+        dialect.
+        """
+        try:
+            return await self._fetch_object_info(), None
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch /object_info: {e}")
+            return None, str(e)
 
     def _iter_object_info_model_paths(self, object_info: Dict[str, Any], directory: str = "") -> list[str]:
         """Walk /object_info and yield model file paths for the given directory.
@@ -218,13 +288,9 @@ class DirectUrlProviderClient(BaseProviderClient):
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         directory = request.directory if request else ""
-        try:
-            resp = await self._http.get("/object_info")
-            resp.raise_for_status()
-            object_info = resp.json()
-        except Exception as e:
-            self.logger.warning(f"Failed to fetch /object_info: {e}")
-            return failed(f"Failed to query ComfyUI: {e}", code=502, retryable=True, provider=PROVIDER_ID)
+        object_info, error = await self._object_info_or_error()
+        if error is not None:
+            return failed(f"Failed to query ComfyUI: {error}", code=502, retryable=True, provider=PROVIDER_ID)
 
         files = [
             {"name": path.split("/", 1)[-1], "path": path, "type": "file", "size": 0}
@@ -286,12 +352,9 @@ class DirectUrlProviderClient(BaseProviderClient):
         return ok("No deployment needed for direct_url", provider=PROVIDER_ID)
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
-        try:
-            resp = await self._http.get("/object_info")
-            resp.raise_for_status()
-            object_info = resp.json()
-        except Exception as e:
-            return failed(f"Failed to query ComfyUI: {e}", code=502, retryable=True, provider=PROVIDER_ID)
+        object_info, error = await self._object_info_or_error()
+        if error is not None:
+            return failed(f"Failed to query ComfyUI: {error}", code=502, retryable=True, provider=PROVIDER_ID)
 
         target_dir = request.directory if isinstance(request.directory, str) else ""
         available = self._iter_object_info_model_paths(object_info, target_dir)
@@ -315,23 +378,18 @@ class DirectUrlProviderClient(BaseProviderClient):
     async def get_object_info(self) -> Dict[str, Any]:
         # Success is a raw pass-through of ComfyUI's own document:
         # api/routes/nodes.py returns it verbatim to the UI.
-        try:
-            resp = await self._http.get("/object_info")
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            return failed(f"Failed to query ComfyUI: {e}", code=502, retryable=True, provider=PROVIDER_ID)
+        object_info, error = await self._object_info_or_error()
+        if error is not None:
+            return failed(f"Failed to query ComfyUI: {error}", code=502, retryable=True, provider=PROVIDER_ID)
+        return object_info
 
     async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
         backend_url = os.getenv("BACKEND_URL", "http://localhost:8002")
         
         async def perform_reconciliation():
-            try:
-                resp = await self._http.get("/object_info")
-                resp.raise_for_status()
-                object_info = resp.json()
-            except Exception as e:
-                self.logger.error(f"Failed to query ComfyUI: {e}")
+            object_info, error = await self._object_info_or_error()
+            if error is not None:
+                self.logger.error(f"Failed to query ComfyUI: {error}")
                 from provider_core.http_client import get_http_client
                 from provider_core.reconciliation import push_reconciliation_event
                 client = get_http_client()
@@ -340,7 +398,7 @@ class DirectUrlProviderClient(BaseProviderClient):
                     provider_id=PROVIDER_ID,
                     status="failed",
                     phase="failed",
-                    message=f"Failed to query ComfyUI: {e}",
+                    message=f"Failed to query ComfyUI: {error}",
                     http_client=client,
                 )
                 return

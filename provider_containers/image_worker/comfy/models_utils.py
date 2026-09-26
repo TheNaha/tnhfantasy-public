@@ -14,13 +14,23 @@ logger = logging.getLogger(__name__)
 async def list_models_with_metadata_internal(base_path: str, directory: str, compute_hashes: bool = False) -> List[Dict[str, Any]]:
     """
     List models in a directory and attach metadata and preview URLs if they exist.
+
+    An empty `directory` means the storage root, not an error: `get_safe_path`
+    rejects an empty path outright ("path cannot be empty"), so this used to
+    return [] with a "Path traversal blocked" warning for a perfectly ordinary
+    request. That is the same "" -> base-path resolution
+    llm_worker/engines/modal/modal_app.py uses for its own listing, and it is why
+    Beam's /list-models 400'd on the same request that direct_url answered in full.
     """
-    try:
-        target_dir = get_safe_path(base_path, directory)
-    except Exception:
-        logger.warning(f"[ListModels] Path traversal blocked: {directory}")
-        return []
-    
+    if directory:
+        try:
+            target_dir = get_safe_path(base_path, directory)
+        except Exception:
+            logger.warning(f"[ListModels] Path traversal blocked: {directory}")
+            return []
+    else:
+        target_dir = os.path.realpath(base_path)
+
     if not os.path.exists(target_dir):
         return []
         

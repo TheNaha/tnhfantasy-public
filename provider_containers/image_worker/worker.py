@@ -20,7 +20,12 @@ from provider_core import (
 )
 from provider_core.http_client import get_http_client, close_http_client
 
-ENGINE = os.getenv("ENGINE", "modal").lower()
+# `.strip()` because a bare `ENGINE=` in an env file yields "", and "" matches
+# none of the branches below — so it used to reach `raise ValueError` at IMPORT,
+# before uvicorn bound, and the container crash-looped with a message that did
+# not name the valid values. An unset or whitespace-only value is the same
+# request as "not configured", so it takes the default.
+ENGINE = (os.getenv("ENGINE") or "modal").strip().lower() or "modal"
 PROVIDER_ID = os.getenv("PROVIDER_ID", f"{ENGINE}-worker")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8002")
 
@@ -106,7 +111,10 @@ elif ENGINE == "remote_comfy":
     from image_worker.engines.remote_comfy.client import RemoteComfyProviderClient
     client = RemoteComfyProviderClient(runtime_config=runtime_config)
 else:
-    raise ValueError(f"Unknown ENGINE: {ENGINE}")
+    raise ValueError(
+        f"Unknown ENGINE: {ENGINE!r}. "
+        f"Valid values: modal, beam, direct_url, remote_comfy."
+    )
 
 attach_provider_routes(app, client)
 

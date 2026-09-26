@@ -88,11 +88,24 @@ class TestHealthProbesTheUpstream:
         assert exc.value.status_code == 503
 
     @pytest.mark.asyncio
-    async def test_the_timeout_is_short(self, monkeypatch):
-        """The compose healthcheck allows 10s for the whole request."""
+    async def test_the_timeout_fits_the_dispatcher_budget(self, monkeypatch):
+        """The budget that matters is the DISPATCHER's, not the healthcheck's.
+
+        The compose and Dockerfile healthchecks now call `/live`, which does not
+        touch the upstream, so their 10s window is not this number's problem. What
+        constrains it is `backend_v2/services/load_balancer.py:345` and
+        `api/routes/providers/crud.py:167`, which probe `/health` with
+        `_HTTP_HEALTH_PROBE_TIMEOUT_SECONDS = 2.0` and require HTTP 200 — a probe
+        slower than that reads as "no answer" and the provider is excluded from
+        dispatch.
+
+        The previous assertion was `< 8`, justified by the old 10s healthcheck
+        budget. That justification is gone, and the assertion is tightened to the
+        budget that actually applies.
+        """
         client = _client(monkeypatch)
         try:
-            assert 0 < HEALTH_PROBE_TIMEOUT < 8
+            assert 0 < HEALTH_PROBE_TIMEOUT < 2.0
         finally:
             await client.close()
 

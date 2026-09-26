@@ -16,13 +16,14 @@ Deploy:
 """
 # beam is the CLI alias for the beta9 Python package
 from beta9 import asgi, realtime, Image, Volume, QueueDepthAutoscaler, rest_api
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 import os
 import json
 import logging
 import subprocess
 import time
+import asyncio
 # IMPORTANT: provider_core is a sibling package and must be present in the deploy
 # source context. Deploying beam_app.py from only image_worker/engines/beam/ (without the
 # provider_containers root) can fail with ModuleNotFoundError: provider_core.
@@ -44,6 +45,7 @@ from image_worker.comfy.workflow_executor import (
 )
 from typing import Dict, Any
 import base64
+import hmac
 
 
 # =============================================================================
@@ -73,6 +75,12 @@ STORAGE_MAX_CONTAINERS = int(os.getenv("BEAM_STORAGE_MAX_CONTAINERS", "1"))
 DOWNLOAD_CPU = int(os.getenv("BEAM_DOWNLOAD_CPU", "2"))
 DOWNLOAD_MEMORY = os.getenv("BEAM_DOWNLOAD_MEMORY", "4Gi")
 DOWNLOAD_TIMEOUT = int(os.getenv("BEAM_DOWNLOAD_TIMEOUT", "1800"))
+# Socket timeout for the download transfer, distinct from the function timeout
+# above. `requests.get` with no timeout blocks forever on a peer that accepts the
+# connection and then stops sending; on the storage/download deployments that
+# wedges a container that also serves /list-models. Same value as the function
+# timeout by default, kept separate because the two answer different questions.
+DOWNLOAD_HTTP_TIMEOUT = float(os.getenv("BEAM_DOWNLOAD_HTTP_TIMEOUT", str(DOWNLOAD_TIMEOUT)))
 DOWNLOAD_KEEP_WARM = int(os.getenv("BEAM_DOWNLOAD_KEEP_WARM", "5"))
 DOWNLOAD_CONCURRENT = int(os.getenv("BEAM_DOWNLOAD_CONCURRENT", "5"))
 DOWNLOAD_MAX_CONTAINERS = int(os.getenv("BEAM_DOWNLOAD_MAX_CONTAINERS", "3"))
@@ -236,7 +244,48 @@ async def storage_health():
     return {"status": "healthy", "type": "storage"}
 
 
-@storage_app.post("/setup")
+async def verify_beam_token(request: Request):
+    """Token gate for the storage and download apps.
+
+    Fail CLOSED, and compare with `hmac.compare_digest` rather than `!=`: a plain
+    string compare short-circuits on the first differing byte, which leaks the
+    length of the shared prefix of a guessed token.
+
+    This is the same rule `provider_core/router.py:_require_worker_token` applies
+    to the worker, mirrored for the two serverless apps. `BEAM_API_KEY` is
+    already in the environment of the worker that calls these routes and is the
+    only shared secret between the two, so it is the one to gate on. An unset key
+    refuses every call rather than opening the deployment: a storage app that
+    answers /download-model, /upload-file and /delete-file to anyone who can reach
+    the URL can write arbitrary bytes into a volume that holds multi-GB
+    checkpoints, and this app was reachable with no gate at all.
+    """
+    expected = os.environ.get("BEAM_API_KEY", "").strip()
+    if not expected:
+        logger.error(
+            "beam_token_not_configured: BEAM_API_KEY is not set in this "
+            "deployment's environment; refusing to serve an unauthenticated "
+            "storage API. Set it on both `beam deploy` invocations and on the worker."
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "BEAM_API_KEY is not configured on this storage deployment",
+                "retryable": False,
+            },
+        )
+
+    provided = request.headers.get("Authorization", "")
+    if not provided.startswith("Bearer "):
+        provided = ""
+    else:
+        provided = provided[len("Bearer "):]
+    if not provided or not hmac.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return True
+
+
+@storage_app.post("/setup", dependencies=[Depends(verify_beam_token)])
 async def setup():
     """Initialize volume directories."""
     from provider_core.models import MODEL_DIRECTORIES
@@ -329,6 +378,12 @@ async def shared_download_model(data: dict):
             log_prefix="Download",
             progress_callback=progress_callback,
             validation_unknown_header_log_prefix="Validate",
+            # Without this, `requests.get` blocks forever on a peer that accepts
+            # the connection and then goes quiet. On the storage deployment that
+            # is worse than a stuck download: the same container also serves
+            # /list-models and /validate-all-models, so a wedged transfer takes
+            # the whole provider's read API with it.
+            request_timeout_seconds=DOWNLOAD_HTTP_TIMEOUT,
         )
         
         if res.get("status") == "success":
@@ -342,29 +397,36 @@ async def shared_download_model(data: dict):
             except Exception:
                 pass
 
-@storage_app.post("/download-model")
+@storage_app.post("/download-model", dependencies=[Depends(verify_beam_token)])
 async def download_model(request: Request):
     """Download a model to the volume with shared validation pipeline."""
     return await shared_download_model(await request.json())
 
 
-@storage_app.post("/list-models")
+@storage_app.post("/list-models", dependencies=[Depends(verify_beam_token)])
 async def list_models(request: Request):
-    """List models in a directory."""
+    """List models in a directory.
+
+    An empty `directory` means "everything under /mnt/data", matching
+    image_worker/engines/direct_url/client.py (which iterates all 16
+    MODEL_DIRECTORIES for `directory in ("", None)`) and
+    image_worker/engines/modal/modal_app.py (which maps "" to /mnt/data). This
+    used to 400 on an empty directory, so a bare `GET /list-models` (no body ->
+    ListModelsRequest(directory="")) answered 400 here, a full listing from
+    direct_url, and a /mnt/data listing from Modal.
+    """
     data = await request.json()
-    directory = data.get("directory")
-    if not directory:
-        raise HTTPException(status_code=400, detail="directory is required")
-    
+    directory = data.get("directory") or ""
+
     from image_worker.comfy.models_utils import list_models_with_metadata_internal
     files = await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
 
     # `files` is the key the worker's list_models reads, and the client re-wraps
     # it in the same dialect; both stay true.
-    return ok(f"Listed {len(files)} models in {directory}", files=files)
+    return ok(f"Listed {len(files)} models in {directory or '/'}", files=files)
 
 
-@storage_app.post("/delete-model")
+@storage_app.post("/delete-model", dependencies=[Depends(verify_beam_token)])
 async def delete_model(request: Request):
     import asyncio
     import shutil
@@ -396,7 +458,7 @@ async def delete_model(request: Request):
     return outcome(success, message)
 
 
-@storage_app.post("/get-file")
+@storage_app.post("/get-file", dependencies=[Depends(verify_beam_token)])
 async def get_file(request: Request):
     """Stream a file off the volume.
 
@@ -434,7 +496,7 @@ async def get_file(request: Request):
     )
 
 
-@storage_app.post("/delete-file")
+@storage_app.post("/delete-file", dependencies=[Depends(verify_beam_token)])
 async def delete_file(request: Request):
     import asyncio
     import shutil
@@ -443,19 +505,32 @@ async def delete_file(request: Request):
     full_path = get_safe_path("/mnt/data", path)
 
     def _do_delete():
-        if not os.path.exists(full_path):
+        # Same sweep as /delete-model, and for the same reason. This route removed
+        # only the resolved path, while /delete-model called
+        # `pending_download_paths(path)` — so the same app stranded a parked
+        # partial (and the per-path `.lock`) on one route and not the other, and a
+        # delete that succeeded could still leave a multi-GB `.downloading` behind
+        # with no way to reclaim it. `pending_download_paths` is the single helper
+        # that names both the per-attempt temp and the resume slot.
+        if not os.path.exists(full_path) and not list(pending_download_paths(full_path)):
             return False, f"Not found: {path}"
-        if os.path.isdir(full_path):
-            shutil.rmtree(full_path)
-        else:
-            os.remove(full_path)
+        try:
+            if os.path.exists(full_path):
+                if os.path.isdir(full_path):
+                    shutil.rmtree(full_path)
+                else:
+                    os.remove(full_path)
+            for stale in pending_download_paths(full_path):
+                os.remove(stale)
+        except Exception as e:
+            return False, str(e)
         return True, f"Deleted {path}"
         
     success, message = await asyncio.to_thread(_do_delete)
     return outcome(success, message)
 
 
-@storage_app.post("/upload-file")
+@storage_app.post("/upload-file", dependencies=[Depends(verify_beam_token)])
 async def upload_file(request: Request):
     """Upload file."""
     data = await request.json()
@@ -475,7 +550,7 @@ async def upload_file(request: Request):
     return ok("File uploaded", path=f"{directory}/{filename}", size=len(content))
 
 
-@storage_app.post("/validate-models")
+@storage_app.post("/validate-models", dependencies=[Depends(verify_beam_token)])
 async def validate_models(request: Request):
     from provider_core.utils import get_safe_path
     from provider_core.validation import validate_downloaded_file
@@ -548,7 +623,7 @@ async def validate_models(request: Request):
         "deleted": delete_invalid
     }
 
-@storage_app.post("/validate-all-models")
+@storage_app.post("/validate-all-models", dependencies=[Depends(verify_beam_token)])
 async def validate_all_models(request: Request):
     """Validate all model directories in one batch call to avoid O(N) HTTP requests."""
     try:
@@ -556,7 +631,7 @@ async def validate_all_models(request: Request):
     except Exception:
         data = {}
     delete_invalid = data.get("delete_invalid", False)
-    
+
     # We create a dummy request for the child function
     class DummyRequest:
         def __init__(self, data):
@@ -566,11 +641,22 @@ async def validate_all_models(request: Request):
 
     from provider_core.models import MODEL_DIRECTORIES
     results = {"total_valid": 0, "total_invalid": 0, "total_partial": 0, "by_directory": {}}
-    
-    for directory in MODEL_DIRECTORIES:
-        req = DummyRequest({"directory": directory, "delete_invalid": delete_invalid})
-        res = await validate_models(req)
-        
+
+    # Concurrent, not a serial loop. `validate_models` does its per-directory scan
+    # in an `asyncio.to_thread` (see `_validate_dir`), so the work is designed to
+    # be parallel and this function simply never awaited them together. Serially,
+    # 16 directories had to fit in the caller's budget: reconciliation
+    # (provider_core/reconciliation.py) caps the call at 120s and
+    # image_worker/engines/beam/client.py at 300s. A volume with a few hundred
+    # files blew that, and step 0 of reconciliation then proceeded with
+    # `total_invalid=0` — orphan detection silently degraded to "nothing is
+    # invalid", which is the worst possible failure direction for it.
+    payloads = await asyncio.gather(*[
+        validate_models(DummyRequest({"directory": directory, "delete_invalid": delete_invalid}))
+        for directory in MODEL_DIRECTORIES
+    ])
+
+    for directory, res in zip(MODEL_DIRECTORIES, payloads):
         dir_key = directory.replace("models/", "")
         results["by_directory"][dir_key] = {
             "valid": res.get("valid_count", 0),
@@ -580,7 +666,7 @@ async def validate_all_models(request: Request):
         results["total_valid"] += res.get("valid_count", 0)
         results["total_invalid"] += res.get("invalid_count", 0)
         results["total_partial"] += res.get("partial_count", 0)
-        
+
     return results
 
 
@@ -667,7 +753,7 @@ async def download_health():
     return {"status": "healthy", "type": "download"}
 
 
-@download_app.post("/download-model")
+@download_app.post("/download-model", dependencies=[Depends(verify_beam_token)])
 async def download_model_endpoint(request: Request):
     """Download a model - delegated from main storage app for separate scaling."""
     data = await request.json()
@@ -700,7 +786,7 @@ def comfy_download():
 
 extractor_app = FastAPI(title="ComfyUI Extractor Server")
 
-@extractor_app.get("/object_info")
+@extractor_app.get("/object_info", dependencies=[Depends(verify_beam_token)])
 async def get_object_info():
     import requests
     import subprocess

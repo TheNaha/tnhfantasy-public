@@ -11,7 +11,14 @@ logger = get_logger("provider_core.llm_worker")
 # Read environment configuration
 PROVIDER_ID = os.environ.get("PROVIDER_ID", "local-dev")
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8002")
-ENGINE = os.environ.get("ENGINE", "openai_compat").lower()
+# `.strip()` for the same reason as image_worker/worker.py: a bare `ENGINE=` in an
+# env file yields "", which matched no branch below and raised at IMPORT, before
+# uvicorn bound. Unset or whitespace-only takes the default.
+ENGINE = (os.environ.get("ENGINE") or "openai_compat").strip().lower() or "openai_compat"
+
+# Same names and defaults as image_worker/worker.py, read from the same env knobs.
+RECONCILIATION_INTERVAL_SECONDS = int(os.environ.get("RECONCILIATION_INTERVAL_SECONDS", "7200"))
+RECONCILIATION_STARTUP_DELAY_SECONDS = int(os.environ.get("RECONCILIATION_STARTUP_DELAY_SECONDS", "130"))
 
 # Runtime config dict (the image_worker pattern)
 runtime_config = {
@@ -34,7 +41,10 @@ elif ENGINE == "modal":
     from llm_worker.engines.modal.client import VLLMModalProviderClient
     client = VLLMModalProviderClient(provider_id=PROVIDER_ID, runtime_config=runtime_config)
 else:
-    raise ValueError(f"Unknown ENGINE: {ENGINE}")
+    raise ValueError(
+        f"Unknown ENGINE: {ENGINE!r}. "
+        f"Valid values: openai_compat, anthropic, google, modal."
+    )
 
 
 _background_tasks: list = []
@@ -42,7 +52,7 @@ _background_tasks: list = []
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Setup
-    from provider_core.background import auto_discovery_loop
+    from provider_core.background import auto_discovery_loop, reconciliation_loop
     from provider_core.http_client import get_http_client, close_http_client
     import asyncio
 
@@ -58,6 +68,26 @@ async def lifespan(app: FastAPI):
                     backend_url=BACKEND_URL,
                     interval_seconds=60,
                     worker_type="llm",
+                    http_client=get_http_client(),
+                )
+            )
+        )
+
+        # Reconciliation, which this worker was missing. image_worker/worker.py
+        # starts one in its lifespan; the LLM twin only ever started
+        # auto_discovery_loop, so a `modal` LLM provider — the only engine with
+        # storage, and the only one whose client implements
+        # run_reconciliation with download/list/validate/delete callbacks — was
+        # never asked to reconcile at all. Its volume drifted out of the database
+        # silently, with no error anywhere: the loop is the only thing that
+        # triggers it, and nothing triggered it.
+        _background_tasks.append(
+            asyncio.create_task(
+                reconciliation_loop(
+                    PROVIDER_ID,
+                    BACKEND_URL,
+                    interval_seconds=RECONCILIATION_INTERVAL_SECONDS,
+                    startup_delay_seconds=RECONCILIATION_STARTUP_DELAY_SECONDS,
                     http_client=get_http_client(),
                 )
             )

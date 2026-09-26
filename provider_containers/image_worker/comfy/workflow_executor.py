@@ -8,7 +8,7 @@ import httpx
 import base64
 import uuid
 import urllib.parse
-from typing import Any, AsyncGenerator, Dict, List
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from provider_core.http_client import get_http_client
 from provider_core.utils import get_safe_path
@@ -197,44 +197,62 @@ async def _collect_images_via_view_api(
     view_timeout_seconds: float,
     logger: logging.Logger | None,
 ) -> List[Dict[str, Any]]:
-    images_output: List[Dict[str, Any]] = []
-
     if not server_address.startswith("http://") and not server_address.startswith("https://"):
         server_address = f"http://{server_address}"
     client = get_http_client()
+
+    # Collect the descriptors first, then fetch them concurrently.
+    #
+    # This was `await client.get(url)` per image inside the loop, so an SDXL batch
+    # of 4 was 4 sequential round trips against a shared 10-connection pool — the
+    # pool had the headroom and the loop did not use it. Each fetch is independent
+    # and its failure is already isolated (logged, image skipped), so `gather` with
+    # per-future handling preserves both properties. Order is preserved because the
+    # results are gathered into a list positionally, which is what the downstream
+    # artifact order and the existing tests depend on.
+    requested: List[Dict[str, Any]] = []
     for node_output in history_data.get("outputs", {}).values():
         for image in node_output.get("images", []):
             filename = image.get("filename")
             if not filename:
                 continue
-
             subfolder = image.get("subfolder") or ""
-            folder_type = image.get("type", "output")
+            requested.append({
+                "filename": filename,
+                "subfolder": subfolder,
+                "type": image.get("type", "output"),
+            })
 
-            url = f"{server_address}/view?filename={urllib.parse.quote(filename)}&subfolder={urllib.parse.quote(subfolder)}&type={urllib.parse.quote(folder_type)}"
+    if not requested:
+        return []
 
-            try:
-                response = await client.get(
-                    url,
-                    headers=_comfy_auth_headers(),
-                    timeout=view_timeout_seconds,
-                )
-                response.raise_for_status()
-                data = response.content
-                b64_data = base64.b64encode(data).decode('utf-8')
-                images_output.append(
-                    {
-                        "filename": filename,
-                        "data": b64_data,
-                        "_base64_encoded": True,
-                        "type": folder_type,
-                        "subfolder": subfolder,
-                    }
-                )
-            except Exception as error:
-                _log(logger, logging.ERROR, f"Failed to fetch image via /view ({filename}): {error}")
+    async def _fetch(descriptor: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        filename = descriptor["filename"]
+        subfolder = descriptor["subfolder"]
+        folder_type = descriptor["type"]
+        url = f"{server_address}/view?filename={urllib.parse.quote(filename)}&subfolder={urllib.parse.quote(subfolder)}&type={urllib.parse.quote(folder_type)}"
+        try:
+            response = await client.get(
+                url,
+                headers=_comfy_auth_headers(),
+                timeout=view_timeout_seconds,
+            )
+            response.raise_for_status()
+            data = response.content
+            b64_data = base64.b64encode(data).decode('utf-8')
+            return {
+                "filename": filename,
+                "data": b64_data,
+                "_base64_encoded": True,
+                "type": folder_type,
+                "subfolder": subfolder,
+            }
+        except Exception as error:
+            _log(logger, logging.ERROR, f"Failed to fetch image via /view ({filename}): {error}")
+            return None
 
-    return images_output
+    fetched = await asyncio.gather(*[_fetch(descriptor) for descriptor in requested])
+    return [entry for entry in fetched if entry is not None]
 
 
 async def execute_comfy_workflow(
