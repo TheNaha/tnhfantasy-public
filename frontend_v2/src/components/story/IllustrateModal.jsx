@@ -1,8 +1,12 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ImageIcon } from 'lucide-react';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export default React.memo(function IllustrateModal({ open, prompt, onPromptChange, onConfirm, onClose }) {
+    // Escape dismisses, matching every other dialog expectation.
+    useEscapeKey(onClose, true);
+
     return (
         <AnimatePresence>
             {open && (

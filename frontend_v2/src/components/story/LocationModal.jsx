@@ -4,8 +4,12 @@ import { X, Save, Tag } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCreateLocation, useUpdateLocation } from '../../hooks/useLocations';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export function LocationModal({ isOpen, onClose, location }) {
+    // Escape dismisses, matching every other dialog expectation.
+    useEscapeKey(onClose, !!isOpen);
+
     const [form, setForm] = useState({ name: '', description: '', atmosphere: '', tags: [] });
     const [saving, setSaving] = useState(false);
     const queryClient = useQueryClient();

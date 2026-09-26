@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { X, Sparkles, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export default function ParseStoryModal({ isOpen, onClose, onComplete }) {
+    useEscapeKey(onClose, !!isOpen);
+
     const [text, setText] = useState('');
     const [isParsing, setIsParsing] = useState(false);
 

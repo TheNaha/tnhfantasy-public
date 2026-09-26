@@ -42,8 +42,8 @@ All three suites green as of 2026-09-26:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | 1927 passed, 7 skipped | `cd backend_v2 && .venv/bin/pytest` |
-| Frontend | 751 passed across 91 files | `cd frontend_v2 && npm test` |
+| Backend | 1931 passed, 7 skipped | `cd backend_v2 && .venv/bin/pytest` |
+| Frontend | 764 passed across 93 files | `cd frontend_v2 && npm test` |
 | Providers | 105 passed | `cd provider_containers && venv/bin/python -m pytest` |
 
 Lint: `ruff check .` clean in the backend, `npm run lint` reports 0 errors
@@ -95,10 +95,12 @@ Verified as real and not yet fixed. Ordered by how much they cost you.
    large checkpoint restarts from zero. The per-path lock and unique temp file
    landed, so concurrent downloads can no longer corrupt a model, but
    `Range`-based resume and retries are still absent.
-4. **~47 hand-rolled modal overlays; 18 files handle Escape at all; 2 use the
-   existing `components/common/Modal.jsx`.** So most dialogs cannot be closed
-   with Escape. Consolidation is worthwhile mainly because it deletes a lot of
-   code and fixes a UX bug.
+4. **~45 hand-rolled modal overlays.** `useEscapeKey` and `ModalOverlay` now
+   exist and cover `ConfirmationModal` plus all 9 story dialogs, so those
+   dismiss with Escape; the chat, model-manager, provider and page-level
+   overlays have not been converted. The remaining work is mechanical but
+   wide, and a `components/common/Modal.jsx` still exists alongside
+   `ModalOverlay.jsx` — merging them is a follow-up, not a prerequisite.
 5. **`CharacterCard` is implemented twice** (`pages/Characters.jsx`,
    `pages/AvatarGallery.jsx`) with divergent props, tag limits, and
    drag-and-drop.

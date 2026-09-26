@@ -1,6 +1,10 @@
 import React from 'react';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export default React.memo(function CreateStoryModal({ title, onTitleChange, onConfirm, onClose }) {
+    // Escape dismisses, matching every other dialog expectation.
+    useEscapeKey(onClose, true);
+
     return (
         <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"

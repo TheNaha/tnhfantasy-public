@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, PenLine, Expand, ScrollText, Check, X } from 'lucide-react';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 const ACTION_META = {
     rewrite: { label: 'Rewrite Selection', icon: PenLine, hint: 'Rewrites the selected passage. The result replaces your selection when applied.', accent: 'text-indigo-400', button: 'bg-indigo-600 hover:bg-indigo-500' },
@@ -20,6 +21,9 @@ export default function StoryActionModal({
     onApply,
     onClose,
 }) {
+    // Escape dismisses, matching every other dialog expectation.
+    useEscapeKey(onClose, true);
+
     const meta = ACTION_META[action] || ACTION_META.rewrite;
     const Icon = meta.icon;
 

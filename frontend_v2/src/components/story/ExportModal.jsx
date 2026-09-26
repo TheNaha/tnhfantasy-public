@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, FileText, FileDown, BookOpen, Image as ImageIcon, LayoutTemplate, Globe } from 'lucide-react';
 import { useExportStoryFormatted, useExportPublishedStory, usePublishStory, useUnpublishStory } from '../../hooks/useWorldVault';
 import toast from 'react-hot-toast';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 /**
  * ExportModal — Modal for exporting/publishing a story in multiple formats.
@@ -10,6 +11,8 @@ import toast from 'react-hot-toast';
  * Publish + Unpublish.
  */
 export default function ExportModal({ story, storyId, token, isOpen, onClose }) {
+    useEscapeKey(onClose, !!isOpen);
+
     const exportMutation = useExportStoryFormatted();
     const exportPublishedMutation = useExportPublishedStory();
     const publishMutation = usePublishStory();

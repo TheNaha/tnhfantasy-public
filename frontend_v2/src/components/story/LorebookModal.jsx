@@ -5,8 +5,12 @@ import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCreateLorebook, useUpdateLorebook, useDeleteLorebook } from '../../hooks/useLorebooks';
 import { useConfirmation } from '../../store/confirmationStore';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export function LorebookModal({ isOpen, onClose, lorebook }) {
+    // Escape dismisses, matching every other dialog expectation.
+    useEscapeKey(onClose, !!isOpen);
+
     const [form, setForm] = useState({ name: '', description: '' });
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState(false);

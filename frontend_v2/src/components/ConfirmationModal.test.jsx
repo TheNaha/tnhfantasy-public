@@ -105,4 +105,46 @@ describe('ConfirmationModal', () => {
 
         expect(screen.getByLabelText('Close')).toBeInTheDocument();
     });
+    it('dismisses on Escape', () => {
+        // This is the most-used modal in the app — every destructive action
+        // routes through it. It handled the backdrop click and the close
+        // button but not the keyboard, so Escape did nothing on exactly the
+        // dialog a user is most likely to open and then want to back out of.
+        const onClose = vi.fn();
+        const onCancel = vi.fn();
+        render(
+            <ConfirmationModal
+                isOpen={true}
+                title="Delete Chapter"
+                message="This cannot be undone."
+                onConfirm={() => {}}
+                onClose={onClose}
+                onCancel={onCancel}
+            />
+        );
+
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('still honours the close button and backdrop after the rewiring', () => {
+        const onClose = vi.fn();
+        const onConfirm = vi.fn();
+        render(
+            <ConfirmationModal
+                isOpen={true}
+                title="Delete Chapter"
+                message="This cannot be undone."
+                onConfirm={onConfirm}
+                onClose={onClose}
+            />
+        );
+
+        fireEvent.click(screen.getByLabelText('Close'));
+        expect(onClose).toHaveBeenCalledTimes(1);
+
+        // Clicking the panel must not dismiss it.
+        fireEvent.click(screen.getByRole('dialog'));
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
 });

@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { createPortal } from 'react-dom';
+import ModalOverlay from './common/ModalOverlay';
 
 export default function ConfirmationModal({
     isOpen,
@@ -27,13 +27,18 @@ export default function ConfirmationModal({
         handleCancel(); // Close after confirming
     };
 
-    return createPortal(
+    // Escape now dismisses, matching every other dialog expectation. This is
+    // the most-used modal in the app (every destructive action routes through
+    // it) and it was the one most likely to be open when the user reaches for
+    // the keyboard.
+    return (
         <AnimatePresence>
             {isOpen && (
-                <div
+                <ModalOverlay
                     key="confirmation-modal-overlay"
-                    className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-                    onClick={handleCancel}
+                    isOpen={isOpen}
+                    onClose={handleCancel}
+                    className="z-[100] bg-black/80 backdrop-blur-sm"
                 >
                     <Motion.div
                         key="confirmation-modal-content"
@@ -85,9 +90,8 @@ export default function ConfirmationModal({
                             </div>
                         </div>
                     </Motion.div>
-                </div>
+                </ModalOverlay>
             )}
-        </AnimatePresence>,
-        document.body
+        </AnimatePresence>
     );
 }

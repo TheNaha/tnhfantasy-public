@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { History, Loader2, RotateCcw, X, Camera } from 'lucide-react';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 const SOURCE_META = {
     manual: { label: 'Manual save', className: 'bg-sky-500/15 text-sky-300 border-sky-500/30' },
@@ -29,6 +30,9 @@ export default function ChapterRevisionsModal({
     onSnapshot,
     onClose,
 }) {
+    // Escape dismisses, matching every other dialog expectation.
+    useEscapeKey(onClose, true);
+
     return (
         <AnimatePresence>
             {open && (

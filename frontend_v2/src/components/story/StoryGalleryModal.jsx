@@ -2,8 +2,12 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ImageIcon, X } from 'lucide-react';
 import SceneGallery from '../SceneGallery';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export default React.memo(function StoryGalleryModal({ open, storyTitle, images, collectionsList, onSaveToCollection, onClose }) {
+    // Escape dismisses, matching every other dialog expectation.
+    useEscapeKey(onClose, true);
+
     return (
         <AnimatePresence>
             {open && (
