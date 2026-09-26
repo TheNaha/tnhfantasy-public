@@ -17,11 +17,26 @@ class DefaultProviderResponse(BaseModel):
     provider_id: str
     model_id: str
 
-@router.get("/default-provider", response_model=DefaultProviderResponse)
+
+@router.get("/default-provider", response_model=DefaultProviderResponse | None)
 def get_default_provider(session: Session = Depends(get_session)):
+    """Return the resolved default LLM provider/model, or `null` if there is none.
+
+    "No LLM provider is configured yet" is a normal state, not a missing
+    resource, so it answers 200 with a null body. This used to raise
+    `NotFoundError("LLM provider", "default")` — "default" is a placeholder, not
+    a provider id, so the response was the nonsense message
+    `LLM provider 'default' not found`. On a fresh install with no LLM provider
+    enabled that 404 fired on every page load of /chat, /story and /roleplay,
+    and the frontend had to special-case it
+    (frontend_v2/src/hooks/useLLMProviderStatus.js:29-33).
+
+    200 + `null` satisfies that hook without the special case: it reads the
+    JSON and treats a falsy value as "no default".
+    """
     resolved = resolve_default_provider(session)
     if not resolved:
-        raise NotFoundError("LLM provider", "default")
+        return None
     return DefaultProviderResponse(provider_id=resolved[0], model_id=resolved[1])
 
 class UpdateProviderRequest(BaseModel):
@@ -41,12 +56,11 @@ async def get_available_models(session: Session = Depends(get_session)):
     upstream model list per engine (OpenAI-compat `/models`, Anthropic, Gemini)
     with engine-specific fallbacks.
     """
-    try:
-        default = get_default_provider(session)
-    except NotFoundError:
+    resolved = resolve_default_provider(session)
+    if not resolved:
         return []
 
-    provider = session.get(Provider, default.provider_id)
+    provider = session.get(Provider, resolved[0])
     if not provider:
         return []
 

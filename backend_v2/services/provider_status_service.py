@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from config import get_worker_backend_url
-from core.entities import ModelFile, ModelV2, ModelVersion
+from core.entities import ModelFile, ModelV2, ModelVersion, ProviderVersionStatus
+from core.events import redact_secrets
 from infrastructure.logging import get_logger
 from services.model_service import ModelServiceV2
 from services.provider_runtime import resolve_provider_runtime_async
@@ -15,6 +16,21 @@ logger = get_logger("provider_status_service")
 
 from infrastructure.cache import get_provider_stats_cache, invalidate_cache
 import asyncio
+
+# The per-provider model counters the providers page and the sidebar read.
+# Every one of them is derived from ProviderVersionStatus rows belonging to THIS
+# provider; nothing here is a global catalog count any more. See
+# get_provider_sync_stats for what the old shape was doing.
+_EMPTY_SYNC_STATS: dict[str, int] = {
+    "installed": 0,
+    "pending": 0,
+    "downloading": 0,
+    "failed": 0,
+}
+
+
+def _empty_sync_stats() -> dict[str, int]:
+    return dict(_EMPTY_SYNC_STATS)
 
 
 def invalidate_provider_status_caches(provider_id: str | None = None) -> None:
@@ -38,8 +54,18 @@ class ProviderStatusService:
 
     @staticmethod
     def normalize_reconciliation_for_card(state: dict[str, Any] | None) -> dict[str, Any]:
-        """Normalize reconciliation state for provider card display."""
-        normalized = dict(state or {})
+        """Normalize reconciliation state for provider card display.
+
+        Redaction happens HERE, on the whole state, not on the individual
+        fields the card happens to surface. The leak was a CivitAI download
+        token in the state that `provider_core/downloads.py` produced by putting
+        it in the URL (`?token=`), lost through a transport exception's message
+        text, persisted as a reconciliation error, and served straight back by
+        `/api/v2/providers/status-cards`. Scrubbing the state on the way out
+        covers rows that already contain the secret as well as future ones, and
+        survives the error moving to a new key.
+        """
+        normalized = redact_secrets(dict(state or {}))
         status = ProviderService.normalize_reconciliation_status(normalized.get("status"))
         normalized["status"] = status
         if status in {"completed", "failed"} and not normalized.get("phase"):
@@ -56,7 +82,7 @@ class ProviderStatusService:
             "by_directory": {},
         }
         if error:
-            payload["error"] = error
+            payload["error"] = redact_secrets(error)
         return payload
 
     @staticmethod
@@ -100,14 +126,27 @@ class ProviderStatusService:
         }
 
     async def get_provider_sync_status(self, provider_id: str) -> dict[str, Any]:
-        """Return V2-backed sync counts for a provider."""
+        """Return V2-backed sync counts for a provider.
+
+        Per-provider like :meth:`get_provider_sync_stats`: only model files this
+        provider has a ``ProviderVersionStatus`` row for are listed, and a file
+        with no row for this provider is *not* reported as ``pending`` on it.
+        The old version listed the whole enabled catalog and defaulted every
+        untracked file to ``pending``, which is how a provider that had never
+        been asked to install anything was reported as holding the entire
+        library in a queue.
+        """
         service = ModelServiceV2(self.session)
-        stmt = select(ModelFile, ModelVersion, ModelV2).join(
-            ModelVersion, ModelFile.version_id == ModelVersion.id
-        ).join(
-            ModelV2, ModelVersion.model_id == ModelV2.id
-        ).where(
-            ModelVersion.is_enabled == True
+        stmt = (
+            select(ModelFile, ModelVersion, ModelV2)
+            .join(ModelVersion, ModelFile.version_id == ModelVersion.id)
+            .join(ModelV2, ModelVersion.model_id == ModelV2.id)
+            .join(ProviderVersionStatus, ProviderVersionStatus.file_id == ModelFile.id)
+            .where(
+                ModelVersion.is_enabled == True,  # noqa: E712
+                ProviderVersionStatus.provider_id == provider_id,
+            )
+            .order_by(ModelFile.storage_filename)
         )
 
         rows = self.session.exec(stmt).all()
@@ -116,19 +155,15 @@ class ProviderStatusService:
             provider_id,
         )
 
-        stats = {
-            "installed": 0,
-            "pending": 0,
-            "downloading": 0,
-            "failed": 0,
-        }
+        stats = _empty_sync_stats()
         models = []
 
         for file, _version, model in rows:
             provider_status = status_map.get(file.id)
             status = provider_status.status if provider_status else "pending"
             normalized_status = "installed" if status == "ready" else status
-            stats[normalized_status] = stats.get(normalized_status, 0) + 1
+            if normalized_status in stats:
+                stats[normalized_status] += 1
             models.append({
                 "file_id": file.id,
                 "model_id": model.id,
@@ -138,7 +173,7 @@ class ProviderStatusService:
                     "status": normalized_status,
                     "storage_path": provider_status.storage_path if provider_status else None,
                     "size_bytes": provider_status.size_bytes if provider_status else None,
-                    "error_message": provider_status.error_message if provider_status else None,
+                    "error_message": redact_secrets(provider_status.error_message) if provider_status else None,
                 },
                 "size": (file.size_kb or 0) * 1024,
             })
@@ -150,52 +185,101 @@ class ProviderStatusService:
             "models": models,
         }
 
-    async def get_provider_sync_stats(self, provider_id: str) -> dict[str, Any]:
-        """Fast aggregated provider sync counts using SQL GROUP BY."""
-        from sqlmodel import func, select
+    async def get_provider_sync_stats(
+        self,
+        provider_id: str,
+        provider: Any | None = None,
+    ) -> dict[str, Any]:
+        """Aggregated per-provider model sync counts using SQL GROUP BY.
 
-        from core.entities import ProviderVersionStatus
-        
-        total_stmt = select(func.count(ModelFile.id)).join(
-            ModelVersion, ModelFile.version_id == ModelVersion.id
-        ).where(ModelVersion.is_enabled == True)
-        
-        total_models = self.session.exec(total_stmt).one()
-        
-        stats_stmt = select(
-            ProviderVersionStatus.status, 
-            func.count(ProviderVersionStatus.id)
-        ).join(
-            ModelFile, ProviderVersionStatus.file_id == ModelFile.id
-        ).join(
-            ModelVersion, ModelFile.version_id == ModelVersion.id
-        ).where(
-            ModelVersion.is_enabled == True
-        ).where(
-            ProviderVersionStatus.provider_id == provider_id
-        ).group_by(ProviderVersionStatus.status)
-        
+        Corrected semantics — every number below is scoped to ``provider_id``:
+
+        ``total_models``
+            Number of model files this provider has an install record for
+            (``ProviderVersionStatus`` rows). It is NOT the size of the model
+            catalog. It used to be: the query had no provider filter, so all
+            five providers reported the same global total (521 on the live
+            instance), including ``llm-local``, an LLM worker with no image
+            models at all.
+        ``stats``
+            Counts of this provider's rows by status. ``pending`` used to be
+            computed as ``global_total - this_provider's rows``, so a provider
+            with zero rows claimed the entire catalog was queued on it. It is
+            now just the number of this provider's own rows in ``pending`` —
+            0 when nothing has been assigned to it.
+        ``catalog_models``
+            The global count of enabled model files, under a name that says so.
+        ``has_install_intent``
+            Whether this provider has any install record at all. A provider with
+            ``False`` should be rendered as "not managing models", not as
+            "N queued".
+
+        An LLM provider reports all zeros: it never installs image models, so any
+        number here would be fiction.
+        """
+        if provider is None:
+            provider = await self.provider_service.get_provider(provider_id)
+
+        if getattr(provider, "worker_type", None) == "llm":
+            # LLM workers do not install image models. Reported as an explicit
+            # zero rather than a real query so the card never shows a count.
+            return {
+                "provider_id": provider_id,
+                "total_models": 0,
+                "stats": _empty_sync_stats(),
+                "catalog_models": None,
+                "has_install_intent": False,
+                "is_image_provider": False,
+            }
+
+        stats_stmt = (
+            select(
+                ProviderVersionStatus.status,
+                func.count(ProviderVersionStatus.id),
+            )
+            .join(ModelFile, ProviderVersionStatus.file_id == ModelFile.id)
+            .join(ModelVersion, ModelFile.version_id == ModelVersion.id)
+            .where(
+                ModelVersion.is_enabled == True,  # noqa: E712
+                ProviderVersionStatus.provider_id == provider_id,
+            )
+            .group_by(ProviderVersionStatus.status)
+        )
+
         status_counts = self.session.exec(stats_stmt).all()
-        
-        stats = {
-            "installed": 0,
-            "pending": 0,
-            "downloading": 0,
-            "failed": 0,
-        }
-        
+
+        stats = _empty_sync_stats()
         tracked_count = 0
         for status, count in status_counts:
             normalized = "installed" if status == "ready" else status
-            stats[normalized] = stats.get(normalized, 0) + count
+            if normalized in stats:
+                stats[normalized] += count
             tracked_count += count
-            
-        stats["pending"] += total_models - tracked_count
-        
+
         return {
-            "total_models": total_models,
-            "stats": stats
+            "provider_id": provider_id,
+            "total_models": tracked_count,
+            "stats": stats,
+            "catalog_models": self._catalog_model_count(),
+            "has_install_intent": tracked_count > 0,
+            "is_image_provider": True,
         }
+
+    def _catalog_model_count(self) -> int:
+        """Global count of enabled model files (labelled `catalog_models`).
+
+        Cheap and provider-independent, so it is computed once per status-card
+        build rather than once per provider.
+        """
+        from sqlmodel import func as _func, select as _select
+
+        return int(
+            self.session.exec(
+                _select(_func.count(ModelFile.id))
+                .join(ModelVersion, ModelFile.version_id == ModelVersion.id)
+                .where(ModelVersion.is_enabled == True)  # noqa: E712
+            ).one()
+        )
 
     async def get_provider_storage_stats(
         self,
@@ -224,10 +308,6 @@ class ProviderStatusService:
             return _modal_stats_cache[cache_key]
 
         # Fall back to querying the database directly
-        from sqlmodel import func, select
-
-        from core.entities import ProviderVersionStatus
-        
         try:
             count = self.session.exec(
                 select(func.count(ProviderVersionStatus.id))
@@ -285,6 +365,15 @@ class ProviderStatusService:
         warnings: list[str] = []
         errors: list[str] = []
 
+        # Provider-supplied text. Redacted HERE as well as in the caller, because
+        # this is a public static method and a caller that reaches it directly
+        # would otherwise be the one path that skips the scrub. Redaction is
+        # idempotent, so the double application costs nothing.
+        # See normalize_reconciliation_for_card for the leak this closes.
+        storage_stats = redact_secrets(storage_stats)
+        reconciliation_state = redact_secrets(reconciliation_state)
+        deploy_state = redact_secrets(deploy_state)
+
         if storage_stats.get("error"):
             warnings.append(f"Storage stats unavailable: {storage_stats['error']}")
         if reconciliation_state.get("warning"):
@@ -333,11 +422,18 @@ class ProviderStatusService:
         provider_info = provider_payload or self.provider_service._provider_to_dict(provider)
         runtime = await resolve_provider_runtime_async(provider)
 
-        sync_status = await self.get_provider_sync_stats(provider_id)
+        sync_status = await self.get_provider_sync_stats(provider_id, provider=provider)
         model_sync = {
             "provider_id": provider_id,
             "total_models": sync_status.get("total_models", 0),
             "stats": sync_status.get("stats") or {},
+            # Global catalog size, and whether this provider is managing models
+            # at all. Consumers must use `total_models` for "how many models
+            # does this provider track" and `catalog_models` (or nothing) for the
+            # library size — the two used to be the same global number.
+            "catalog_models": sync_status.get("catalog_models"),
+            "has_install_intent": bool(sync_status.get("has_install_intent")),
+            "is_image_provider": bool(sync_status.get("is_image_provider", True)),
             "updated_at": ProviderService._utcnow_iso(),
         }
         reconciliation_state = await self.get_live_reconciliation_state(provider_id, provider)
@@ -352,8 +448,8 @@ class ProviderStatusService:
             provider_info=provider_info,
             runtime=runtime,
             storage_stats=storage_stats,
-            reconciliation_state=reconciliation_state,
-            deploy_state=deploy_state,
+            reconciliation_state=redact_secrets(reconciliation_state),
+            deploy_state=redact_secrets(deploy_state),
             model_sync=model_sync,
         )
 
@@ -368,9 +464,9 @@ class ProviderStatusService:
                 "capabilities": provider_info.get("capabilities") or {},
             },
             "model_sync": model_sync,
-            "storage": storage_stats,
-            "reconciliation": reconciliation_state,
-            "deploy": deploy_state,
+            "storage": redact_secrets(storage_stats),
+            "reconciliation": redact_secrets(reconciliation_state),
+            "deploy": redact_secrets(deploy_state),
             "diagnostics": diagnostics,
         }
 
@@ -383,16 +479,24 @@ class ProviderStatusService:
         """Return a stable fallback status card when live assembly fails."""
         provider_id = provider_info.get("id")
         runtime_state = provider_info.get("runtime_state") or {}
+        error = redact_secrets(error)
         return {
             "provider_id": provider_id,
             "provider_type": provider_info.get("type"),
             "runtime": runtime_state,
-            "model_sync": {"provider_id": provider_id, "total_models": 0, "stats": {}},
+            "model_sync": {
+                "provider_id": provider_id,
+                "total_models": 0,
+                "stats": _empty_sync_stats(),
+                "catalog_models": None,
+                "has_install_intent": False,
+                "is_image_provider": True,
+            },
             "storage": self.empty_storage_payload(provider_id, error),
             "reconciliation": self.normalize_reconciliation_for_card(
                 provider_info.get("reconciliation_state") or {}
             ),
-            "deploy": provider_info.get("deploy_state") or {"status": "idle"},
+            "deploy": redact_secrets(provider_info.get("deploy_state") or {"status": "idle"}),
             "diagnostics": {
                 "provider_id": provider_id,
                 "warnings": [error],

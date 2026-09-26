@@ -31,6 +31,21 @@ _provider_stats_cache = TTLCache(maxsize=10, ttl=30)
 # Generic LRU cache for computed values (no TTL)
 _lru_cache = LRUCache(maxsize=200)
 
+# Single source of truth for the decorator names. This map used to be built
+# twice — once in `cached()` and once in `invalidate_cache()` — so a cache added
+# to one and not the other would invalidate into nothing (or decorate into a
+# different cache than the one that was later cleared).
+_CACHE_REGISTRY: dict[str, object] = {
+    "stats": _stats_cache,
+    "model": _model_cache,
+    "search": _search_cache,
+    "lru": _lru_cache,
+    "provider_stats": _provider_stats_cache,
+}
+
+# Names `cached()` accepts, documented so a typo is obvious at the call site.
+KNOWN_CACHE_NAMES = frozenset(_CACHE_REGISTRY)
+
 
 # ============================================================================
 # CACHE DECORATOR
@@ -39,11 +54,20 @@ _lru_cache = LRUCache(maxsize=200)
 def cached(cache_name: str = "stats", ttl: int | None = None):
     """
     Decorator for caching function results.
-    
+
     Args:
-        cache_name: Which cache to use ('stats', 'model', 'search', 'lru')
+        cache_name: Which cache to use. One of KNOWN_CACHE_NAMES:
+            'stats', 'model', 'search', 'lru', 'provider_stats'.
+            An unknown name raises ValueError.
         ttl: Optional TTL override (only used when creating a new cache instance)
-        
+
+    An unknown `cache_name` used to fall back to the statistics cache with a
+    `.get(name, _stats_cache)`. A typo in `@cached("model_lsts")` therefore
+    wrote model lookups into the stats cache, where nothing would ever evict
+    them, and the matching `invalidate_cache("model_lsts")` was a silent
+    no-op. Failing loudly is the whole point: the typo is a one-line fix the
+    first time it is seen, and unbounded staleness is not.
+
     Usage:
         @cached("stats")
         async def get_statistics():
@@ -54,14 +78,12 @@ def cached(cache_name: str = "stats", ttl: int | None = None):
         # Create a custom TTLCache if ttl is specified
         target_cache = TTLCache(maxsize=100, ttl=ttl)
     else:
-        cache_map = {
-            "stats": _stats_cache,
-            "model": _model_cache,
-            "search": _search_cache,
-            "lru": _lru_cache,
-            "provider_stats": _provider_stats_cache,
-        }
-        target_cache = cache_map.get(cache_name, _stats_cache)
+        target_cache = _CACHE_REGISTRY.get(cache_name)
+        if target_cache is None:
+            raise ValueError(
+                f"unknown cache name {cache_name!r}; "
+                f"expected one of {sorted(_CACHE_REGISTRY)}"
+            )
     
     def decorator(func: Callable):
         @wraps(func)
@@ -126,27 +148,20 @@ def _make_key(func_name: str, args: tuple, kwargs: dict) -> str:
 def invalidate_cache(cache_name: str = "stats", key: str | None = None):
     """
     Invalidate cache entries.
-    
+
     Args:
-        cache_name: Which cache to invalidate ('stats', 'model', 'search', 'lru', 'all')
+        cache_name: Which cache to invalidate. One of KNOWN_CACHE_NAMES, or
+            'all'. An unknown name logs a warning and does nothing.
         key: Optional specific key to invalidate (if None, clears entire cache)
     """
-    cache_map = {
-        "stats": _stats_cache,
-        "model": _model_cache,
-        "search": _search_cache,
-        "lru": _lru_cache,
-        "provider_stats": _provider_stats_cache,
-    }
-    
     if cache_name == "all":
-        for cn, cache in cache_map.items():
+        for cn, cache in _CACHE_REGISTRY.items():
             cache.clear()
             metrics.set_cache_size(cn, 0)
         logger.info("cache_invalidated", cache_name="all")
         return
-    
-    cache = cache_map.get(cache_name)
+
+    cache = _CACHE_REGISTRY.get(cache_name)
     if cache is None:
         logger.warning("cache_invalidate_unknown", cache_name=cache_name)
         return

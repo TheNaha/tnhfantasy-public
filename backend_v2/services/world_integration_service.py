@@ -31,6 +31,18 @@ logger = get_logger("world_integration")
 from services.chat_utils import extract_first_text as _first_text
 from services.chat_utils import resolve_context_tokens as _resolve_context_tokens
 
+# Queue depth for the single world-integration consumer. Sized for a large
+# burst (60-image batch + the LLM replies it triggers) with margin, because the
+# consumer is the only writer of chat replies and an evicted JOB_COMPLETED is a
+# paid generation that nothing downstream can reconstruct. See
+# start_world_integration_service for the failure mode this avoids.
+WORLD_INTEGRATION_QUEUE_SIZE = 10_000
+
+# Marks a Message as the persisted output of a specific completed job, so a lost
+# JOB_COMPLETED event becomes detectable instead of permanent. Set by
+# _handle_chat_reply on both the append and the swipe-alternate path.
+SOURCE_JOB_ID_METADATA_KEY = "source_job_id"
+
 
 async def _handle_impersonation(job_data: dict[str, Any]):
     imp_chat_id = job_data.get("metadata", {}).get("chat_id")
@@ -216,10 +228,16 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
 
     async with get_session_context() as session:
         try:
+            job_id = job_data.get("id")
             metadata = job_data.get("metadata", {}) or {}
             msg_metadata = {"agentic": bool(tool_calls)}
             if "orchestrator_depth" in metadata:
                 msg_metadata["orchestrator_depth"] = metadata["orchestrator_depth"]
+            if job_id:
+                # The link that makes a dropped JOB_COMPLETED recoverable:
+                # find_unpersisted_chat_replies() looks for COMPLETED chat_reply
+                # jobs with no message carrying this stamp.
+                msg_metadata[SOURCE_JOB_ID_METADATA_KEY] = job_id
 
             if metadata.get("is_swipe") and metadata.get("target_message_id"):
                 # Append as alternate to existing message
@@ -229,10 +247,10 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
                     alternates = target_meta.get("alternates", [target_msg.content])
                     if target_msg.content not in alternates:
                         alternates.insert(0, target_msg.content)
-                    
+
                     alternates.append(content)
                     active_index = len(alternates) - 1
-                    
+
                     target_msg.content = content
                     target_msg.tool_calls = tool_calls
                     target_meta.update(msg_metadata)
@@ -472,8 +490,6 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                     personality=char_data.get("personality"),
                 )
                 session.add(character)
-                session.commit()
-                session.refresh(character)
                 new_character_ids.append(character.id)
 
             new_lorebook_ids: list[str] = []
@@ -489,8 +505,6 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                     tags=loc_data.get("tags", []),
                 )
                 session.add(location)
-                session.commit()
-                session.refresh(location)
                 new_location_ids.append(location.id)
                 # Also create a Lorebook entry so the location's description
                 # is available in chat/story context via the lorebook pipeline.
@@ -499,8 +513,6 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                     description=loc_data.get("description"),
                 )
                 session.add(lorebook)
-                session.commit()
-                session.refresh(lorebook)
                 entry = LorebookEntry(
                     lorebook_id=lorebook.id,
                     content=loc_data.get("description", ""),
@@ -508,7 +520,6 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                 )
                 session.add(entry)
                 new_lorebook_ids.append(lorebook.id)
-
 
             for lore_data in (parsed.get("lorebooks") or []):
                 if not lore_data.get("name"):
@@ -518,8 +529,6 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                     description=lore_data.get("description"),
                 )
                 session.add(lorebook)
-                session.commit()
-                session.refresh(lorebook)
                 entry = LorebookEntry(
                     lorebook_id=lorebook.id,
                     content=lore_data.get("description", ""),
@@ -528,6 +537,16 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                 session.add(entry)
                 new_lorebook_ids.append(lorebook.id)
 
+            # One flush for every entity, then ONE commit.
+            #
+            # This used to commit (and refresh) once per created entity. Every
+            # one of those is a blocking round trip on the event loop, inside
+            # the single consumer that is the only writer of chat replies — so a
+            # story_parse with 20 locations (each creating a Lorebook + entry
+            # too) head-of-line-blocked every other handler for the duration. A
+            # batch is also the correct unit of work: either the whole parse
+            # lands or none of it does, rather than a half-linked story.
+            session.flush()
 
             # Link created entities to the story
             if new_character_ids or new_lorebook_ids or new_location_ids:
@@ -538,7 +557,8 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                 story.lorebook_ids = list(existing_lore | set(new_lorebook_ids))
                 story.location_ids = list(existing_locations | set(new_location_ids))
                 session.add(story)
-                session.commit()
+
+            session.commit()
 
             logger.info(
                 "story_parse_entities_created",
@@ -546,6 +566,7 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                 story_id=story_id,
                 characters=new_character_ids,
                 lorebooks=new_lorebook_ids,
+                locations=new_location_ids,
             )
         except Exception as e:
             session.rollback()
@@ -581,9 +602,26 @@ async def _handle_voice_preview(job_data: dict[str, Any]):
 async def start_world_integration_service():
     """Start listening to EventBus for world vault events."""
     logger.info("starting_world_integration_service")
-    # publish() fans out on the short topic ("job", not "job.completed"),
-    # so subscribe to the short topic and filter for terminal events.
-    async for event in event_bus.subscribe(EventType.JOB_COMPLETED.value.split(".")[0]):
+
+    # This consumer is the ONLY thing that turns a paid LLM response into a
+    # `messages` row, so its queue must never be the weak link. It used to
+    # subscribe at the EventBus default of 100; every handler does synchronous
+    # session.exec/commit inline on the event loop, and `_handle_story_parse`
+    # used to commit once per created entity, so a burst — a 60-image batch is
+    # 60 JOB_COMPLETED events — could push the consumer past 100 behind. On
+    # overflow the bus keeps the newest terminal event by EVICTING the oldest,
+    # and if that was a chat_reply the generated text was paid for, marked
+    # COMPLETED in the DB, and never written anywhere.
+    #
+    # 10_000 is roughly a 60-image batch with a large margin, at ~200 bytes per
+    # queued Event, i.e. ~2 MB for this one consumer. Buffering cannot fix a
+    # permanently stuck consumer, so the eviction is also logged at ERROR with
+    # the job id (see EventBus._record_drop) and
+    # find_unpersisted_chat_replies() can re-drive what was lost.
+    async for event in event_bus.subscribe(
+        EventType.JOB_COMPLETED.value.split(".")[0],
+        max_queue_size=WORLD_INTEGRATION_QUEUE_SIZE,
+    ):
         if event.type != EventType.JOB_COMPLETED:
             continue
         try:
@@ -668,3 +706,157 @@ async def _handle_avatar_animate(job_data: dict[str, Any]):
         character.avatar_path = new_avatar_path
         session.add(character)
         session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Lost-reply reconciliation
+# ---------------------------------------------------------------------------
+#
+# The single consumer above is the only writer of chat replies, and its input is
+# a lossy queue. When a JOB_COMPLETED is evicted under backpressure the text is
+# gone: the job is COMPLETED in the DB, the user paid for it, and the chat never
+# advances. Buffering (WORLD_INTEGRATION_QUEUE_SIZE) and the ERROR log on drop
+# make that rare and visible; these two functions make it recoverable.
+#
+# Detection works because _handle_chat_reply stamps
+# `message_metadata["source_job_id"]` on the message it writes. A COMPLETED
+# chat_reply job with no message carrying that stamp is a lost reply.
+
+# Job types whose completed output becomes a Message row.
+_RECONCILABLE_WORKFLOW_TYPES = ("chat_reply",)
+
+# How far back the reconciler looks. Chats are read newest-first and only the
+# tail can still be showing a hole, so a bounded window is both cheaper and less
+# likely to re-drive a reply the user has since deleted on purpose.
+RECONCILE_LOOKBACK_LIMIT = 500
+
+
+def find_unpersisted_chat_replies(
+    session,
+    *,
+    limit: int = RECONCILE_LOOKBACK_LIMIT,
+) -> list[dict[str, Any]]:
+    """Find COMPLETED chat_reply jobs whose reply was never written to `messages`.
+
+    Returns job payloads shaped like a JOB_COMPLETED event's ``job`` dict, so
+    the caller can hand them straight back to :func:`_handle_chat_reply`. An
+    empty list means nothing is missing.
+
+    Only the newest ``limit`` chat_reply jobs are examined — a hole older than
+    the current conversation window is not worth risking a duplicate insert for.
+    """
+    from core.entities import Job, JobStatus
+
+    jobs = session.exec(
+        select(Job)
+        .where(
+            Job.status == JobStatus.COMPLETED,
+            Job.task_type == "llm",
+        )
+        .order_by(Job.created_at.desc())
+        .limit(max(1, limit) * 4)  # over-fetch: most of these are not chat replies
+    ).all()
+
+    candidates: list[tuple[Any, dict[str, Any]]] = []
+    for job in jobs:
+        metadata = job.metadata_ if isinstance(job.metadata_, dict) else {}
+        workflow = job.workflow if isinstance(job.workflow, dict) else {}
+        if (metadata.get("type") or workflow.get("type")) not in _RECONCILABLE_WORKFLOW_TYPES:
+            continue
+        if not (metadata.get("chat_id") or workflow.get("chat_id")):
+            continue
+        candidates.append((job, metadata))
+        if len(candidates) >= max(1, limit):
+            break
+
+    if not candidates:
+        return []
+
+    job_ids = [job.id for job, _ in candidates]
+    stamped: set[str] = set()
+    rows = session.exec(
+        select(Message).where(
+            Message.chat_id.in_(
+                {
+                    (metadata.get("chat_id") or (job.workflow or {}).get("chat_id"))
+                    for job, metadata in candidates
+                }
+            )
+        )
+    ).all()
+    for msg in rows:
+        msg_meta = msg.message_metadata if isinstance(msg.message_metadata, dict) else {}
+        for value in (msg_meta.get(SOURCE_JOB_ID_METADATA_KEY), *_alternate_source_job_ids(msg_meta)):
+            if value in job_ids:
+                stamped.add(value)
+
+    return [
+        {
+            "id": job.id,
+            "outputs": job.outputs or [],
+            "metadata": metadata,
+            "workflow": job.workflow or {},
+            "type": "chat_reply",
+        }
+        for job, metadata in candidates
+        if job.id not in stamped
+    ]
+
+
+def _alternate_source_job_ids(msg_metadata: dict) -> list[str]:
+    """Source job ids stamped onto a swipe's alternates.
+
+    A swipe writes its text into an existing message's ``alternates`` list, and
+    that message may already carry another job's stamp. Every stamped id counts
+    as persisted, otherwise a re-driven swipe would duplicate an alternate.
+    """
+    out: list[str] = []
+    for entry in msg_metadata.get("alternates") or []:
+        if isinstance(entry, dict):
+            value = entry.get(SOURCE_JOB_ID_METADATA_KEY)
+            if value:
+                out.append(value)
+    return out
+
+
+async def reconcile_unpersisted_chat_replies(session=None, *, limit: int = RECONCILE_LOOKBACK_LIMIT) -> dict[str, Any]:
+    """Re-drive chat replies that were generated but never persisted.
+
+    Detection and repair in one call: every lost reply found is replayed through
+    the normal :func:`_handle_chat_reply` path, so the write is identical to the
+    one the event handler would have made (including the swipe-alternate branch).
+    Idempotent: a reply that is already persisted is not found, so a second call
+    does nothing.
+
+    ``session`` is accepted so tests and callers can pass their own; the handler
+    opens its own session for the write, because a session shared with the
+    detection read would be committing from two places.
+    """
+    if session is None:
+        from infrastructure.deps import get_session_context
+
+        async with get_session_context() as detect_session:
+            found = find_unpersisted_chat_replies(detect_session, limit=limit)
+    else:
+        found = find_unpersisted_chat_replies(session, limit=limit)
+
+    repaired: list[str] = []
+    failed: list[str] = []
+    for job_data in found:
+        try:
+            await _handle_chat_reply(job_data)
+            repaired.append(job_data["id"])
+        except Exception as exc:  # pragma: no cover - handler swallows its own errors
+            logger.error(
+                "chat_reply_reconcile_failed", job_id=job_data.get("id"), error=str(exc)
+            )
+            failed.append(job_data["id"])
+
+    if found:
+        logger.warning(
+            "chat_reply_reconcile_complete",
+            found=len(found),
+            repaired=len(repaired),
+            failed=len(failed),
+        )
+    return {"found": len(found), "repaired": repaired, "failed": failed}

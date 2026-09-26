@@ -6,6 +6,7 @@
 # - Events are typed and include structured data payloads
 # - Event replay: Last 100 events buffered for debugging
 import asyncio
+import re
 import time
 from collections import deque
 from collections.abc import AsyncGenerator
@@ -17,6 +18,89 @@ from typing import Any
 from infrastructure.logging import get_logger
 
 logger = get_logger("events")
+
+
+# ---------------------------------------------------------------------------
+# Secret redaction
+# ---------------------------------------------------------------------------
+#
+# Backend-side counterpart of `redact_api_key` in the provider layer
+# (llm_worker/engines/google/client.py). That one knows the concrete secret and
+# does a literal replace; this one is secret-agnostic and works on text the
+# backend never had the key for — an httpx/requests exception that embedded a
+# URL, a provider-reported error string, a log line.
+#
+# The concrete leak it exists for: provider_core/downloads.py:712 appends the
+# CivitAI token to the download URL as `?token=<secret>`, the transport error
+# text carries that whole URL, and the error is persisted as a reconciliation
+# `error` and served by /api/v2/providers/status-cards. Redacting at the point
+# where the message is stored/returned covers rows that already contain the
+# secret as well as future ones.
+
+REDACTED = "***REDACTED***"
+
+# Query/header parameter names whose value is a credential. Matched
+# case-insensitively so `?Token=`, `&API_KEY=` and `Authorization:` all hit.
+SECRET_PARAM_NAMES = frozenset({
+    "access_token",
+    "api_key",
+    "apikey",
+    "auth",
+    "authorization",
+    "civitai_token",
+    "hf_token",
+    "key",
+    "password",
+    "proxy-authorization",
+    "secret",
+    "sig",
+    "signature",
+    "token",
+    "x-amz-credential",
+    "x-amz-signature",
+    "x-api-key",
+})
+
+# Auth schemes that are followed by the actual credential rather than being it.
+_AUTH_SCHEMES = r"(?:bearer|token|basic|digest)"
+
+# `?token=abc&x=1` / `"api_key": "abc"` / `Authorization: Bearer hf_x` in free
+# text. The separator and any quotes are preserved so the surrounding message
+# (and its JSON) stays readable; the value stops at the usual URL/JSON/Python
+# delimiters so the rest of the message survives intact.
+_SECRET_PARAM_RE = re.compile(
+    r"(?i)(?<![\w-])("
+    + "|".join(sorted(re.escape(name) for name in SECRET_PARAM_NAMES))
+    + r")(\"?\s*[=:]\s*\"?)((?:" + _AUTH_SCHEMES + r")\s+)?([^\s&\"'<>,;)\]}]+)"
+)
+
+# `Bearer hf_xxx` on its own, with no parameter name in front of it.
+_SECRET_VALUE_RE = re.compile(
+    r"(?i)\b(" + _AUTH_SCHEMES + r"\s+)([^\s,;\"'}]+)"
+)
+
+
+def redact_secrets(value: Any) -> Any:
+    """Strip credential-bearing parameters from a string, or any nested payload.
+
+    Non-strings pass through unchanged, so this is safe to call on a
+    reconciliation state dict or a diagnostics list. Applied at the boundary
+    where a provider-supplied message is stored or returned, which is what makes
+    it cover messages that were persisted before this helper existed.
+    """
+    if isinstance(value, str):
+        redacted = _SECRET_PARAM_RE.sub(
+            lambda m: f"{m.group(1)}{m.group(2) or ''}{m.group(3) or ''}{REDACTED}",
+            value,
+        )
+        return _SECRET_VALUE_RE.sub(lambda m: f"{m.group(1)}{REDACTED}", redacted)
+    if isinstance(value, dict):
+        return {key: redact_secrets(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_secrets(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_secrets(item) for item in value)
+    return value
 
 
 class EventType(str, Enum):
@@ -77,6 +161,15 @@ TERMINAL_EVENT_TYPES = {
     EventType.PROVIDER_DEPLOY_FAILED,
 }
 
+# Terminal events whose payload IS the result. `EventBus._preserve_terminal_event`
+# keeps a terminal event by evicting the OLDEST queued event to make room, so a
+# burst of JOB_COMPLETED does not lose itself — it loses whatever was queued
+# before it. When the evicted one is itself a JOB_COMPLETED, the evicted payload
+# is a paid LLM response that services/world_integration_service.py is the only
+# thing that will ever turn into a `messages` row. Nothing downstream can
+# reconstruct it, so these are dropped loudly instead of as a counter tick.
+CONTENT_BEARING_EVENT_TYPES = {EventType.JOB_COMPLETED}
+
 
 @dataclass
 class Event:
@@ -130,6 +223,7 @@ class EventBus:
         subscriber_count: int,
         queue: asyncio.Queue,
         reason: str,
+        event: "Event | None" = None,
     ) -> None:
         self._dropped_events += 1
         self._dropped_events_by_topic[topic] = self._dropped_events_by_topic.get(topic, 0) + 1
@@ -147,6 +241,24 @@ class EventBus:
         elif reason == "evicted_for_terminal":
             self._evicted_events_for_terminal += 1
 
+        if self._is_content_bearing(event_type):
+            # ERROR, not WARNING: this is a paid generation whose output is being
+            # thrown away, and the only durable trace of it is this line. The job
+            # id is the one that names the reply an operator has to re-drive
+            # (see world_integration_service.find_unpersisted_chat_replies).
+            logger.error(
+                "content_bearing_event_dropped",
+                topic=topic,
+                event_type=event_type,
+                reason=reason,
+                job_id=self._event_job_id(event),
+                dropped_events=self._dropped_events,
+                subscriber_count=subscriber_count,
+                queue_size=queue.qsize(),
+                queue_maxsize=queue.maxsize,
+            )
+            return
+
         if self._dropped_events == 1 or self._dropped_events % 50 == 0:
             logger.warning(
                 "event_dropped",
@@ -156,6 +268,32 @@ class EventBus:
                 subscriber_count=subscriber_count,
                 reason=reason,
             )
+
+    @staticmethod
+    def _is_content_bearing(event_type: str) -> bool:
+        try:
+            return EventType(event_type) in CONTENT_BEARING_EVENT_TYPES
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _event_job_id(event: "Event | None") -> str | None:
+        """Job id carried by a dropped event, for the ERROR log.
+
+        The event is passed through rather than read off the replay buffer: at
+        eviction time the newest queued event is the one being ADMITTED, so
+        reading the buffer tail would name the wrong job — exactly the one the
+        operator does not need to chase.
+        """
+        try:
+            if event is None or not isinstance(event.data, dict):
+                return None
+            job = event.data.get("job")
+            if isinstance(job, dict):
+                return job.get("id")
+        except Exception:  # pragma: no cover - diagnostics must never raise
+            return None
+        return None
     
     async def publish(self, event: Event) -> None:
         """
@@ -195,6 +333,7 @@ class EventBus:
                         subscriber_count=len(queues),
                         queue=queue,
                         reason="queue_full",
+                        event=event,
                     )
 
     def _preserve_terminal_event(
@@ -226,6 +365,7 @@ class EventBus:
                         subscriber_count=subscriber_count,
                         queue=queue,
                         reason="evicted_for_terminal",
+                        event=evicted_event,
                     )
                 except asyncio.QueueEmpty:
                     # Consumer may have drained queue after QueueFull check; retry put.
@@ -237,6 +377,7 @@ class EventBus:
             subscriber_count=subscriber_count,
             queue=queue,
             reason="terminal_event_dropped",
+            event=event,
         )
         return False
     
@@ -401,10 +542,36 @@ async def emit_model_status_update(provider_id: str, file_id: int, status: str, 
     await event_bus.publish(Event(type=EventType.MODEL_STATUS_UPDATE, data=data))
 
 
+def _read_job_terminal_state_sync(job_id: str) -> tuple[str, dict | None] | None:
+    """Read one job row synchronously and return its terminal state, if any.
+
+    Returns ``(status_value, first_output)`` when the job is COMPLETED / FAILED /
+    CANCELLED, and ``None`` for every other case — the row is missing, or it is
+    still active. Callers treat both identically (keep waiting), so the
+    distinction is deliberately not surfaced.
+
+    This is a BLOCKING read (SQLModel ``Session`` + ``session.refresh``), which
+    is why it is only ever called through ``asyncio.to_thread``.
+    """
+    from core.entities import Job, JobStatus
+    from infrastructure.database import get_session as _db_gs
+
+    with _db_gs() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            return None
+        if job.status not in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+            return None
+        return (job.status.value, job.outputs[0] if job.outputs else None)
+
+
 async def wait_for_job_completion(
     job_id: str,
     timeout: float = 120.0,
     poll_interval: float = 2.0,
+    *,
+    poll_interval_max: float = 15.0,
+    poll_backoff: float = 1.5,
 ) -> tuple[str, dict | None]:
     """
     Wait for a job to reach a terminal state via the EventBus.
@@ -413,14 +580,20 @@ async def wait_for_job_completion(
         (status_str, output_dict_or_None)
 
     Subscribes to the "job" topic and listens for JOB_COMPLETED / JOB_FAILED /
-    JOB_CANCELLED events matching *job_id*.  Falls back to DB polling every
-    *poll_interval* seconds for race-condition safety (event may fire before
-    we subscribe).
+    JOB_CANCELLED events matching *job_id*.  Falls back to DB polling for
+    race-condition safety (the event may fire before we subscribe, and this
+    hand-rolled queue can be squeezed by other "job" subscribers).
+
+    The DB poll runs in a worker thread, never on the event loop. It used to be
+    a bare `with get_session()` on the loop: this is called from inside the LLM
+    job's own worker coroutine with a 330s timeout (orchestrator_service.py), so
+    it was two blocking round trips every 2 seconds for over five minutes —
+    stalling every other request and the WebSocket broadcast pump, from inside
+    the code that is generating the reply it is waiting on. The interval also
+    backs off (2s -> 15s) because the event almost always arrives long before
+    the poll does; the poll exists for the missed-event race, not as the
+    primary path.
     """
-    import asyncio
-
-    from core.entities import JobStatus
-
     terminal = {EventType.JOB_COMPLETED, EventType.JOB_FAILED, EventType.JOB_CANCELLED}
     result: dict | None = None
     final_status: str = "failed"
@@ -430,47 +603,43 @@ async def wait_for_job_completion(
     async with event_bus._lock:
         event_bus._subscribers.setdefault("job", []).append(queue)
 
+    async def _poll() -> tuple[str, dict | None] | None:
+        try:
+            return await asyncio.to_thread(_read_job_terminal_state_sync, job_id)
+        except Exception as exc:
+            logger.warning(
+                "wait_for_job_completion_poll_failed", job_id=job_id, error=str(exc)
+            )
+            return None
+
     try:
         # Race-condition guard: check if the job already finished
-        try:
-            from infrastructure.database import get_session as _db_gs
-            with _db_gs() as session:
-                from services.job_service import JobService
-                svc = JobService(session)
-                job = await svc.get_job(job_id)
-                if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
-                    final_status = job.status.value
-                    result = job.outputs[0] if job.outputs else None
-                    return final_status, result
-        except Exception as _db_exc:
-            logger.warning("wait_for_job_completion_initial_poll_failed", job_id=job_id, error=str(_db_exc))
+        state = await _poll()
+        if state is not None:
+            return state
 
         deadline = time.monotonic() + timeout
+        interval = max(0.1, poll_interval)
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
                 break
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=min(remaining, poll_interval))
+                event = await asyncio.wait_for(queue.get(), timeout=min(remaining, interval))
             except asyncio.TimeoutError:
-                # No event — re-check DB
-                try:
-                    from infrastructure.database import get_session as _gs2
-                    with _gs2() as session:
-                        from services.job_service import JobService as _JS
-                        svc2 = _JS(session)
-                        job2 = await svc2.get_job(job_id)
-                        if job2.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
-                            final_status = job2.status.value
-                            result = job2.outputs[0] if job2.outputs else None
-                            return final_status, result
-                except Exception as _db_exc2:
-                    logger.warning("wait_for_job_completion_poll_failed", job_id=job_id, error=str(_db_exc2))
+                # No event — re-check DB, then widen the gap before the next one.
+                state = await _poll()
+                if state is not None:
+                    return state
+                interval = min(interval * poll_backoff, max(poll_interval, poll_interval_max))
                 continue
 
             job_data = event.data.get("job", {})
             if job_data.get("id") != job_id:
+                # Some other job's event. Reset the backoff: the bus is live, so a
+                # short poll is worth it again.
+                interval = max(0.1, poll_interval)
                 continue
 
             if event.type in terminal:
