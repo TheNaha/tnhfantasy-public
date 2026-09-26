@@ -43,6 +43,11 @@ logger = api_logger()
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
+# Upper bound on GET /api/jobs page size. list payloads omit the bulky parts of
+# job.metadata (see JobService._job_to_dict), so a large page is cheap, but an
+# unbounded one still forces a full-table scan.
+MAX_JOBS_PAGE_SIZE = 200
+
 MAX_FAILED_PAGE_SIZE = 100
 
 
@@ -160,6 +165,13 @@ async def list_jobs(
     cursor: str | None = None,
     service: JobService = Depends(get_job_service)
 ):
+    if limit < 1:
+        raise ValidationError("limit must be at least 1")
+    # Cap the page size. This endpoint had no ceiling, so `?limit=1000000`
+    # forced a full-table load. Sibling endpoints already cap (search_jobs at
+    # 100, chats at 1000); list_jobs is the one users hit most.
+    if limit > MAX_JOBS_PAGE_SIZE:
+        limit = MAX_JOBS_PAGE_SIZE
     """List jobs with pagination. Uses deduplication to prevent duplicate work."""
     
     # Keyset pagination: cursor is "ISO8601_created_at|job_id" of the last row

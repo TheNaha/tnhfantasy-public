@@ -250,7 +250,7 @@ class JobService:
         
         jobs_data = []
         for job, pos in results:
-            job_dict = self._job_to_dict(job)
+            job_dict = self._job_to_dict(job, include_full_metadata=False)
             if job.status == JobStatus.PENDING and pos is not None:
                 job_dict["queue_position"] = pos
             jobs_data.append(job_dict)
@@ -693,8 +693,27 @@ class JobService:
             'period_days': days
         }
     
-    def _job_to_dict(self, job: Job) -> dict[str, Any]:
-        """Convert job to dictionary for API responses."""
+    #: Keys dropped from `metadata` in LIST payloads. `original_messages` holds
+    #: the entire agentic conversation, and each chained hop stores the previous
+    #: hop's context plus the new turns, so a single deep job's metadata can be
+    #: tens of kilobytes. Serialising that for every row of a page dominated the
+    #: response. The full metadata is still returned by GET /api/jobs/{id}.
+    LIST_METADATA_OMIT = ("original_messages", "messages")
+
+    def _job_to_dict(self, job: Job, *, include_full_metadata: bool = True) -> dict[str, Any]:
+        """Convert job to dictionary for API responses.
+
+        `include_full_metadata=False` is for list endpoints: it strips the
+        heavyweight conversation blobs from `metadata` while keeping the small
+        keys the UI filters on (chat_id, story_id, provider, agentic depth...).
+        """
+        metadata = job.metadata_
+        if not include_full_metadata and isinstance(metadata, dict):
+            metadata = {
+                key: value
+                for key, value in metadata.items()
+                if key not in self.LIST_METADATA_OMIT
+            }
         return {
             "id": job.id,
             "task_type": job.task_type,
@@ -704,7 +723,7 @@ class JobService:
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
             "workflow": job.workflow,
-            "metadata": job.metadata_,
+            "metadata": metadata,
             "outputs": job.outputs,
             "progress": job.progress,
             "overall_progress": job.overall_progress,
