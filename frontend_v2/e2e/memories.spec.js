@@ -2,23 +2,17 @@
 
 import { test, expect } from '@playwright/test';
 import {
-  cleanupEntities,
   seedCharacter,
+  trackEntity,
   uniqueName,
 } from './fixtures.js';
 
 test.describe('Character Memories (Module H)', () => {
   test.setTimeout(60000);
 
-  let created = [];
-
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
-
   test('creates and lists a memory for a character', async ({ page }) => {
     const char = await seedCharacter(page, { name: uniqueName('e2e-mem-char') });
-    created.push({ kind: 'character', id: char.id });
+    trackEntity(page, 'character', char.id);
 
     const content = uniqueName('e2e-memory-text');
 
@@ -45,7 +39,7 @@ test.describe('Character Memories (Module H)', () => {
 
   test('deletes a memory after confirmation', async ({ page }) => {
     const char = await seedCharacter(page, { name: uniqueName('e2e-del-char') });
-    created.push({ kind: 'character', id: char.id });
+    trackEntity(page, 'character', char.id);
 
     // Wait for the character to be persisted in the database
     await page.waitForTimeout(2000);
@@ -88,7 +82,7 @@ test.describe('Character Memories (Module H)', () => {
 
   test('cancels memory creation when Cancel is clicked', async ({ page }) => {
     const char = await seedCharacter(page, { name: uniqueName('e2e-cancel-char') });
-    created.push({ kind: 'character', id: char.id });
+    trackEntity(page, 'character', char.id);
 
     await page.goto(`/characters#char-${char.id}`);
     await expect(page.getByRole('heading', { name: 'Edit Character' })).toBeVisible({ timeout: 30000 });

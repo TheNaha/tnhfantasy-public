@@ -6,19 +6,13 @@
 import { test, expect } from '@playwright/test';
 import {
   apiGet,
-  cleanupEntities,
   seedChat,
   seedChatMessage,
   seedStory,
   seedStoryChapter,
+  trackEntity,
   uniqueName,
 } from './fixtures.js';
-
-const created = [];
-
-test.afterEach(async ({ page }) => {
-  await cleanupEntities(page, created.splice(0));
-});
 
 test.describe('World Timeline', () => {
   test('page renders heading, subtitle and filter controls', async ({ page }) => {
@@ -35,7 +29,7 @@ test.describe('World Timeline', () => {
 
   test('filter panel toggles open and drives the events query', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto('/world-timeline');
     const filtersBtn = page.getByRole('button', { name: 'Filters', exact: true });
@@ -64,13 +58,13 @@ test.describe('World Timeline', () => {
     const chapterTitle = uniqueName('e2e-chapter');
 
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
     await seedChatMessage(page, chat.id, { content: messageContent });
 
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     const chapter = await seedStoryChapter(page, story.id, { title: chapterTitle });
-    created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
+    trackEntity(page, 'chapter', `${story.id}:${chapter.id}`);
 
     await page.goto('/world-timeline');
 

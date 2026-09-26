@@ -1,31 +1,26 @@
 import { test, expect } from '@playwright/test';
 import {
-  seedLorebook,
-  seedLorebookEntry,
+  apiGet,
+  cleanupEntities,
+  expectToast,
   seedCharacter,
   seedChat,
+  seedLorebook,
+  seedLorebookEntry,
   seedStory,
-  cleanupEntities,
+  trackEntity,
   uniqueName,
-  expectToast,
-  apiGet,
 } from './fixtures.js';
 
 test.describe('World Vault & Lorebooks (Module D)', () => {
   test.setTimeout(120000);
 
-  let created = [];
-
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
-
   test('Lorebook toggle appears in Chat context panel', async ({ page }) => {
     const lorebook = await seedLorebook(page, { name: uniqueName('e2e-lorebook'), description: 'E2E lore for chat context.' });
-    created.push({ kind: 'lorebook', id: lorebook.id });
+    trackEntity(page, 'lorebook', lorebook.id);
 
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     await expect(page.getByRole('heading', { name: 'Context & Settings' })).toBeVisible({ timeout: 10000 });
@@ -36,10 +31,10 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
 
   test('Lorebook appears in New Chat modal and can be attached', async ({ page }) => {
     const lorebook = await seedLorebook(page, { name: uniqueName('e2e-lorebook'), description: 'E2E lore for new chat modal.' });
-    created.push({ kind: 'lorebook', id: lorebook.id });
+    trackEntity(page, 'lorebook', lorebook.id);
 
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     await page.getByTitle('New chat').click();
@@ -56,7 +51,7 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
     await modal.getByRole('button', { name: 'Create', exact: true }).click();
 
     const createdChat = await (await createResp).json();
-    created.push({ kind: 'chat', id: createdChat.id });
+    trackEntity(page, 'chat', createdChat.id);
 
     await expectToast(page, /New chat created/);
     expect(createdChat.active_lorebook_ids).toContain(lorebook.id);
@@ -64,7 +59,7 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
 
   test('Lorebook entry can be created and deleted via API', async ({ page }) => {
     const lorebook = await seedLorebook(page, { name: uniqueName('e2e-lorebook') });
-    created.push({ kind: 'lorebook', id: lorebook.id });
+    trackEntity(page, 'lorebook', lorebook.id);
 
     const entry = await seedLorebookEntry(page, lorebook.id, {
       keys: ['Crystal Sword'],
@@ -77,7 +72,6 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
     expect(fromApi).toBeTruthy();
 
     await cleanupEntities(page, [{ kind: 'lorebook', id: lorebook.id }]);
-    created.length = 0;
 
     const after = await apiGet(page, '/lorebooks');
     expect(after.find((l) => l.id === lorebook.id)).toBeFalsy();
@@ -85,7 +79,7 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
 
   test('Character CRUD via API and UI list', async ({ page }) => {
     const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     await page.goto('/characters');
     await expect(page.getByRole('heading', { name: character.name })).toBeVisible({ timeout: 10000 });
@@ -109,10 +103,10 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
       description: 'A test character for cross-pillar gallery.',
       visual_tags: ['1girl', 'fantasy'],
     });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     const chat = await seedChat(page, { name: uniqueName('e2e-chat'), character_id: character.id });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const agenticBtn = page.getByRole('button', { name: /agentic/i });
@@ -137,12 +131,6 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('World Vault Hub', () => {
-  let hubCreated = [];
-
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, hubCreated.splice(0));
-  });
-
   // Count card: `div.text-xs` holds the capitalized label (lowercase in the
   // DOM — `capitalize` is pure CSS), the count sits in the preceding sibling.
   function entityCount(page, type) {
@@ -177,9 +165,9 @@ test.describe('World Vault Hub', () => {
   test('seeded entities bump the dashboard count cards', async ({ page }) => {
     const before = await apiGet(page, '/world-vault/entities');
     const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
-    hubCreated.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    hubCreated.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
 
     await page.goto('/world-vault');
 
@@ -197,7 +185,7 @@ test.describe('World Vault Hub', () => {
 
   test('search box fires a debounced backend search and type filter adds the type param', async ({ page }) => {
     const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
-    hubCreated.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     await page.goto('/world-vault');
     const search = page.getByPlaceholder('Search across all entities...');

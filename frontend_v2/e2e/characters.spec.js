@@ -1,23 +1,17 @@
 import { test, expect } from '@playwright/test';
 import {
-  seedCharacter,
-  cleanupEntities,
-  uniqueName,
   expectToast,
+  seedCharacter,
+  trackEntity,
+  uniqueName,
 } from './fixtures.js';
 
 test.describe('Character Vault (Module D)', () => {
   test.setTimeout(120000);
 
-  let created = [];
-
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
-
   test('Create Character from Scratch', async ({ page }) => {
     const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     await page.goto('/characters');
     await expect(page.getByRole('heading', { name: character.name }).first()).toBeVisible({ timeout: 10000 });
@@ -25,7 +19,7 @@ test.describe('Character Vault (Module D)', () => {
 
   test('Edit Character', async ({ page }) => {
     const character = await seedCharacter(page, { name: 'Editable Character' });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     await page.goto('/characters');
     await expect(page.getByRole('heading', { name: 'Editable Character' })).toBeVisible({ timeout: 10000 });
@@ -44,7 +38,7 @@ test.describe('Character Vault (Module D)', () => {
 
   test('Search Characters', async ({ page }) => {
     const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     await page.goto('/characters');
 
@@ -58,7 +52,7 @@ test.describe('Character Vault (Module D)', () => {
 
   test('Auto-Fill Character Field', async ({ page }) => {
     const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     await page.goto('/characters');
     await expect(page.getByRole('heading', { name: character.name }).first()).toBeVisible({ timeout: 10000 });
@@ -76,7 +70,7 @@ test.describe('Character Vault (Module D)', () => {
   test('Delete Character', async ({ page }) => {
     const name = uniqueName('to-be-deleted');
     const character = await seedCharacter(page, { name });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     await page.goto('/characters');
     await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 10000 });

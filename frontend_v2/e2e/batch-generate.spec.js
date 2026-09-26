@@ -7,18 +7,9 @@
 // slow); tests assert the created-job UI state and clean the jobs up.
 
 import { test, expect } from '@playwright/test';
-import { cleanupEntities, expectToast, apiGet } from './fixtures.js';
-
-const created = [];
-
-test.afterEach(async ({ page }) => {
-  await cleanupEntities(page, created.splice(0));
-});
+import { apiGet, clickableCard, expectToast, trackEntity } from './fixtures.js';
 
 test.describe('Batch Generate Studio', () => {
-  const presetCard = (page, name) =>
-    page.getByRole('button', { name: new RegExp(name) }).first();
-
   test('form renders presets, seed modes and generated prompt rows', async ({ page }) => {
     await page.goto('/batch-generate');
 
@@ -26,7 +17,7 @@ test.describe('Batch Generate Studio', () => {
     await expect(page.getByText('Generate character sheets, scene variations, and concept grids')).toBeVisible();
 
     for (const name of ['Character Sheet', 'Scene Variations', 'Concept Grid']) {
-      await expect(presetCard(page, name)).toBeVisible();
+      await expect(clickableCard(page, name)).toBeVisible();
     }
 
     for (const mode of ['random', 'fixed', 'increment']) {
@@ -43,7 +34,7 @@ test.describe('Batch Generate Studio', () => {
   test('character sheet preset resolves the character name into every prompt', async ({ page }) => {
     await page.goto('/batch-generate');
 
-    await presetCard(page, 'Character Sheet').click();
+    await clickableCard(page, 'Character Sheet').click();
     const nameInput = page.getByPlaceholder('e.g. Elara Moonwhisper');
     await expect(nameInput).toBeVisible();
     await nameInput.fill('Elara Moonwhisper');
@@ -53,7 +44,7 @@ test.describe('Batch Generate Studio', () => {
     await expect(rows.nth(1)).toContainText('portrait of Elara Moonwhisper, side profile, neutral expression');
     await expect(rows.nth(3)).toContainText('portrait of Elara Moonwhisper, close-up, detailed face');
 
-    await presetCard(page, 'Scene Variations').click();
+    await clickableCard(page, 'Scene Variations').click();
     await expect(page.getByPlaceholder('e.g. Enchanted Forest')).toBeVisible();
     await expect(page.getByPlaceholder('e.g. Elara Moonwhisper')).toHaveCount(0);
   });
@@ -78,7 +69,7 @@ test.describe('Batch Generate Studio', () => {
   test('concept grid preset builds prompts from the base prompt', async ({ page }) => {
     await page.goto('/batch-generate');
 
-    await presetCard(page, 'Concept Grid').click();
+    await clickableCard(page, 'Concept Grid').click();
     const textarea = page.getByPlaceholder('e.g. a futuristic cityscape at sunset');
     await expect(textarea).toBeVisible();
     await textarea.fill('a neon cyberpunk market');
@@ -94,7 +85,7 @@ test.describe('Batch Generate Studio', () => {
     test.setTimeout(120000);
     await page.goto('/batch-generate');
 
-    await presetCard(page, 'Concept Grid').click();
+    await clickableCard(page, 'Concept Grid').click();
     await page.getByPlaceholder('e.g. a futuristic cityscape at sunset').fill('a small e2e test scene');
 
     const responsePromise = page.waitForResponse(
@@ -107,7 +98,7 @@ test.describe('Batch Generate Studio', () => {
     const { jobs, count } = await response.json();
     expect(count).toBe(4);
     expect(jobs).toHaveLength(4);
-    for (const job of jobs) created.push({ kind: 'job', id: job.id });
+    for (const job of jobs) trackEntity(page, 'job', job.id);
 
     await expectToast(page, /Created 4 generation jobs/);
 

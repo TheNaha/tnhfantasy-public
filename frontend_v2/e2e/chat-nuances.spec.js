@@ -2,11 +2,11 @@ import { test, expect } from '@playwright/test';
 import {
   apiGet,
   apiPost,
-  uniqueName,
   expectToast,
   seedCharacter,
   seedChat,
-  cleanupEntities,
+  trackEntity,
+  uniqueName,
 } from './fixtures.js';
 
 // ---------------------------------------------------------------------------
@@ -28,14 +28,9 @@ async function openSeededChat(page, chatName) {
 test.describe('Chat Workspace Nuances (Module H)', () => {
   test.setTimeout(240000);
 
-  const created = [];
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
-
   test('Context switches persist via the API', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-switch') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await openSeededChat(page, chat.name);
 
@@ -66,7 +61,7 @@ test.describe('Chat Workspace Nuances (Module H)', () => {
 
   test('System prompt override saves, shows Clear override, and resets', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-override') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await openSeededChat(page, chat.name);
 
@@ -91,7 +86,7 @@ test.describe('Chat Workspace Nuances (Module H)', () => {
 
   test('Auto-title renames the chat through the LLM', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-title') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await openSeededChat(page, chat.name);
 
@@ -110,7 +105,7 @@ test.describe('Chat Workspace Nuances (Module H)', () => {
     // Creating a character auto-creates "{name}'s Gallery" — clean that up too
     const collections = await apiGet(page, '/collections');
     const gallery = collections.collections.find((c) => c.character_id === character.id);
-    if (gallery) created.push({ kind: 'collection', id: gallery.id });
+    if (gallery) trackEntity(page, 'collection', gallery.id);
 
     const chat = await seedChat(page, {
       name: uniqueName('e2e-scene-chat'),
@@ -118,8 +113,8 @@ test.describe('Chat Workspace Nuances (Module H)', () => {
     });
 
     // Delete chat + collection BEFORE the character (FK constraints)
-    created.push({ kind: 'chat', id: chat.id });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'chat', chat.id);
+    trackEntity(page, 'character', character.id);
 
     await openSeededChat(page, chat.name);
 
@@ -137,7 +132,7 @@ test.describe('Chat Workspace Nuances (Module H)', () => {
 
   test('Export chat as Markdown is available once the chat has a message', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-export') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     // Seed one user message without triggering an LLM reply
     await apiPost(page, `/chats/${chat.id}/messages`, {

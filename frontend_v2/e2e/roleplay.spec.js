@@ -1,24 +1,18 @@
 import { test, expect } from '@playwright/test';
 import {
-  seedChat,
-  seedCharacter,
-  cleanupEntities,
-  uniqueName,
   expectToast,
+  seedCharacter,
+  seedChat,
+  trackEntity,
+  uniqueName,
 } from './fixtures.js';
 
 test.describe('Roleplay Workspace (Module B)', () => {
   test.setTimeout(240000);
 
-  let created = [];
-
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
-
   test('Create New Chat and Send Message', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -33,7 +27,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Chat Statefulness: Reload Preserves Messages', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -53,7 +47,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Edit Own Message', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -77,7 +71,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Regenerate Last AI Reply', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -96,7 +90,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Slash Commands: /me and /time', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -115,7 +109,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Export Chat as Markdown', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -134,7 +128,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Chat Rename and Persistence', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -153,7 +147,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Delete Chat', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -171,7 +165,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Agentic Mode Toggle and Illustrate', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -194,10 +188,10 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Chat with Character from Vault', async ({ page }) => {
     const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -211,7 +205,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Swipe to alternate AI response', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -234,7 +228,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Image attachment in Chat', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -259,7 +253,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Suggest Reply functionality', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -273,7 +267,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
   test('Narrate Mode Toggle', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -293,7 +287,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
   test('@fullstack Real LLM reply completes end-to-end', async ({ page }) => {
     test.setTimeout(300000);
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -313,10 +307,10 @@ test.describe('Roleplay Workspace (Module B)', () => {
       personality: 'Creative and visual.',
       scenario: 'An artist studio.',
     });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     const chat = await seedChat(page, { name: uniqueName('e2e-chat'), character_id: character.id });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const agenticBtn = page.getByRole('button', { name: /agentic/i });
@@ -340,10 +334,10 @@ test.describe('Roleplay Workspace (Module B)', () => {
       visual_tags: ['1boy', 'male focus', 'glowing eyes'],
       lora_triggers: ['test_lora'],
     });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     const chat = await seedChat(page, { name: uniqueName('e2e-chat'), character_id: character.id });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const agenticBtn = page.getByRole('button', { name: /agentic/i });

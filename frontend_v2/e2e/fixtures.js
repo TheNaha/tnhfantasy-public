@@ -21,20 +21,24 @@ const ENTITY_KINDS = {
 function trackCreatedEntity(page, path, data) {
   const match = path.split('?')[0].match(/^\/(characters|chats|stories|locations|lorebooks|campaigns|collections|prompts|scenarios|voices|models|providers)$/);
   if (match) {
-    const entityId = data?.id;
-    if (entityId) {
-      const tracked = TRACKED_ENTITIES.get(page) || [];
-      tracked.push({ kind: ENTITY_KINDS[match[1]], id: entityId });
-      TRACKED_ENTITIES.set(page, tracked);
-    }
+    trackEntity(page, ENTITY_KINDS[match[1]], data?.id);
     return;
   }
   const chapterMatch = path.split('?')[0].match(/^\/stories\/([^/]+)\/chapters$/);
-  if (chapterMatch && data?.id) {
-    const tracked = TRACKED_ENTITIES.get(page) || [];
-    tracked.push({ kind: 'chapter', id: `${chapterMatch[1]}:${data.id}` });
-    TRACKED_ENTITIES.set(page, tracked);
-  }
+  if (chapterMatch) trackEntity(page, 'chapter', data?.id ? `${chapterMatch[1]}:${data.id}` : undefined);
+}
+
+// The single cleanup registry for the whole suite. `apiPost` records what it
+// creates, so an API-seeded entity is cleaned up with no help from the spec;
+// `trackEntity` is for the entities a test creates some *other* way (through the
+// UI, or as a side effect of an action the test triggers) and therefore has to
+// be registered by hand. One registry, one afterEach, no per-spec `created`
+// array to keep in sync with it.
+function trackEntity(page, kind, id) {
+  if (!kind || !id) return;
+  const tracked = TRACKED_ENTITIES.get(page) || [];
+  tracked.push({ kind, id });
+  TRACKED_ENTITIES.set(page, tracked);
 }
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
@@ -433,6 +437,23 @@ async function closeModal(page) {
   }
 }
 
+// A list card whose root is the flex "justify-between" row (voice models,
+// scenarios, and anything else sharing that row layout). Actions are
+// title-attributed icon buttons inside the row.
+function rowCard(page, name) {
+  return page
+    .getByText(name, { exact: true })
+    .locator('xpath=ancestor::div[contains(@class,"justify-between")][1]');
+}
+
+// The inline create/edit form of those same pages: a motion.div, not a
+// role="dialog".
+function inlineForm(page, heading) {
+  return page
+    .getByRole('heading', { name: heading, exact: true })
+    .locator('xpath=ancestor::div[contains(@class,"bg-gray-900")][1]');
+}
+
 // Draw a mask on the Inpaint canvas via mouse events.
 // The canvas is a native <canvas>; brush radius is ~15px at default zoom.
 async function drawMaskOnCanvas(canvas, { from, to, steps = 10 }) {
@@ -450,6 +471,10 @@ async function drawMaskOnCanvas(canvas, { from, to, steps = 10 }) {
   await canvas.page().mouse.up();
 }
 
+// rowCard / inlineForm below are the locators that voices.spec.js and
+// scenarios.spec.js each carried a byte-identical copy of; clickableCard is
+// the clickable-card locator providers.spec.js and batch-generate.spec.js
+// each had their own name for.
 export {
   API_BASE,
   apiDelete,
@@ -458,6 +483,7 @@ export {
   apiPut,
   apiPatch,
   apiUpload,
+  trackEntity,
   uniqueName,
   expectToast,
   waitForToast,
@@ -483,6 +509,8 @@ export {
   dismissOnboarding,
   closeModal,
   drawMaskOnCanvas,
+  rowCard,
+  inlineForm,
 };
 
 // --- Shared e2e helpers (migrated from spec-local copies) -------------------
@@ -502,11 +530,14 @@ export async function sortNewestFirst(page) {
   await page.locator('select').first().selectOption('date');
 }
 
-// ProviderListItem renders the whole card as a clickable role=button whose
-// accessible name is its full text content (including the id).
-export function providerCard(page, id) {
-  return page.getByRole('button', { name: new RegExp(id) }).first();
+// A card that is itself the clickable element: the accessible name of a
+// role=button card is its full text content (including the id / preset name).
+export function clickableCard(page, name) {
+  return page.getByRole('button', { name: new RegExp(name) }).first();
 }
+
+// Backwards-compatible alias: the provider list is a list of these.
+export const providerCard = clickableCard;
 
 export async function seedProvider(page, id, { enabled = false, priority = 1 } = {}) {
   return apiPost(page, '/providers', {

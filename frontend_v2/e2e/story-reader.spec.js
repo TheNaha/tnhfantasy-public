@@ -11,19 +11,13 @@
 import { test, expect } from '@playwright/test';
 import {
   apiPost,
+  expectToast,
+  seedCharacter,
   seedStory,
   seedStoryChapter,
-  seedCharacter,
-  cleanupEntities,
+  trackEntity,
   uniqueName,
-  expectToast,
 } from './fixtures.js';
-
-const created = [];
-
-test.afterEach(async ({ page }) => {
-  await cleanupEntities(page, created.splice(0));
-});
 
 // Publish a seeded story and return its public read URL.
 async function publishStory(page, storyId) {
@@ -41,7 +35,7 @@ test.describe('Story Reader (public published stories)', () => {
       description: 'A tale published by the e2e suite.',
       memory,
     });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     const ch1 = await seedStoryChapter(page, story.id, {
       title: 'The Arrival',
       content: 'Chapter One content: the wanderer reached the City of Gates.',
@@ -50,8 +44,8 @@ test.describe('Story Reader (public published stories)', () => {
       title: 'The Descent',
       content: 'Chapter Two content: the gates opened beneath the market square.',
     });
-    created.push({ kind: 'chapter', id: `${story.id}:${ch2.id}` });
-    created.push({ kind: 'chapter', id: `${story.id}:${ch1.id}` });
+    trackEntity(page, 'chapter', `${story.id}:${ch2.id}`);
+    trackEntity(page, 'chapter', `${story.id}:${ch1.id}`);
 
     const readUrl = await publishStory(page, story.id);
     await page.goto(readUrl);
@@ -72,13 +66,13 @@ test.describe('Story Reader (public published stories)', () => {
 
   test('lists characters attached to the published story', async ({ page }) => {
     const character = await seedCharacter(page, { name: uniqueName('e2e-pub-char') });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     const story = await seedStory(page, {
       title: uniqueName('e2e-pub-story'),
       character_ids: [character.id],
     });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
     const readUrl = await publishStory(page, story.id);
@@ -100,12 +94,12 @@ test.describe('Story Reader (public published stories)', () => {
       title: uniqueName('e2e-pub-story'),
       description: 'Markdown export target.',
     });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     const ch = await seedStoryChapter(page, story.id, {
       title: 'Chapter 1',
       content: '# Not a heading\n\nJust exportable prose.',
     });
-    created.push({ kind: 'chapter', id: `${story.id}:${ch.id}` });
+    trackEntity(page, 'chapter', `${story.id}:${ch.id}`);
 
     const readUrl = await publishStory(page, story.id);
     await page.goto(readUrl);
@@ -122,7 +116,7 @@ test.describe('Story Reader (public published stories)', () => {
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
 
     const story = await seedStory(page, { title: uniqueName('e2e-pub-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
     const readUrl = await publishStory(page, story.id);

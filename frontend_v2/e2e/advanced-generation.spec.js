@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
 import {
-  uniqueName,
   expectToast,
+  trackEntity,
+  uniqueName,
   waitForJob,
-  cleanupEntities,
 } from './fixtures.js';
 import {
   listModels,
@@ -33,11 +33,6 @@ async function expandEnhancements(page) {
 
 test.describe('Advanced Generation Settings (Module G)', () => {
   test.setTimeout(240000);
-
-  const created = [];
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
 
   test('Simple: auto-randomize toggle flips, seed input refreshes', async ({ page }) => {
     await page.goto('/generate');
@@ -184,7 +179,7 @@ test.describe('Advanced Generation Settings (Module G)', () => {
     await visibleGenerate(page).click();
 
     const job = await (await jobResponse).json();
-    created.push({ kind: 'job', id: job.id });
+    trackEntity(page, 'job', job.id);
 
     await expectToast(page, /Image generated!/, JOB_TIMEOUT);
     const done = await waitForJob(page, job.id, { timeout: JOB_TIMEOUT });

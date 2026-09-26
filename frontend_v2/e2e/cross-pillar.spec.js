@@ -1,22 +1,16 @@
 import { test, expect } from '@playwright/test';
 import {
-  seedChat,
+  expectToast,
   seedCharacter,
+  seedChat,
   seedStory,
   seedStoryChapter,
-  cleanupEntities,
+  trackEntity,
   uniqueName,
-  expectToast,
 } from './fixtures.js';
 
 test.describe('Cross-Pillar Flows (Module E)', () => {
   test.setTimeout(300000);
-
-  let created = [];
-
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
 
   test('@fullstack Chat illustration appears in chat gallery and story gallery', async ({ page }) => {
     const character = await seedCharacter(page, {
@@ -24,15 +18,15 @@ test.describe('Cross-Pillar Flows (Module E)', () => {
       description: 'Cross-pillar test character.',
       visual_tags: ['1girl'],
     });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     const chat = await seedChat(page, { name: uniqueName('e2e-chat'), character_id: character.id });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     const chapter = await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
-    created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
+    trackEntity(page, 'chapter', `${story.id}:${chapter.id}`);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -61,15 +55,15 @@ test.describe('Cross-Pillar Flows (Module E)', () => {
       description: 'A wise wizard with a glowing staff.',
       visual_tags: ['1boy', 'wizard', 'glowing staff'],
     });
-    created.push({ kind: 'character', id: character.id });
+    trackEntity(page, 'character', character.id);
 
     const story = await seedStory(page, {
       title: uniqueName('e2e-story'),
       character_ids: [character.id],
     });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     const chapter = await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
-    created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
+    trackEntity(page, 'chapter', `${story.id}:${chapter.id}`);
 
     await page.goto(`/story/${story.id}/chapter/${chapter.id}`);
     const editor = page.getByPlaceholder(/begin your story/i).first();
@@ -92,7 +86,7 @@ test.describe('Cross-Pillar Flows (Module E)', () => {
 
   test('Error path: empty prompt blocks generation', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const chatInput = page.getByPlaceholder(/type a message/i);
@@ -122,7 +116,7 @@ test.describe('Cross-Pillar Flows (Module E)', () => {
   test('Error path: agentic depth limit prevents infinite loop', async ({ page }) => {
     test.skip();
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto(`/chat/${chat.id}`);
     const agenticBtn = page.getByRole('button', { name: /agentic/i });

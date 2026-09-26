@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
 import {
   apiGet,
-  uniqueName,
   expectToast,
-  cleanupEntities,
+  trackEntity,
+  uniqueName,
 } from './fixtures.js';
 
 // ---------------------------------------------------------------------------
@@ -12,11 +12,6 @@ import {
 
 test.describe('Gallery Collections & Favorites (Module I)', () => {
   test.setTimeout(240000);
-
-  const created = [];
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
 
   test('Collections panel: create, rename, and delete a collection via the UI', async ({ page }) => {
     const collName = uniqueName('e2e-coll');
@@ -37,7 +32,7 @@ test.describe('Gallery Collections & Favorites (Module I)', () => {
     const collections = await apiGet(page, '/collections');
     const createdColl = collections.collections.find((c) => c.name === collName);
     expect(createdColl, `created collection '${collName}' should exist via API`).toBeTruthy();
-    created.push({ kind: 'collection', id: createdColl.id });
+    trackEntity(page, 'collection', createdColl.id);
 
     // Rename — note: once editing starts the row's name div is replaced by
     // the input, so re-locate the input by its initial value instead.
@@ -56,10 +51,6 @@ test.describe('Gallery Collections & Favorites (Module I)', () => {
     await expect(page.getByText('Delete Collection?')).toBeVisible();
     await page.getByRole('button', { name: 'Delete Collection', exact: true }).click();
     await expect(page.getByText(newName, { exact: true })).toBeHidden({ timeout: 15000 });
-
-    // Already deleted through the UI — don't let cleanup 404 on it
-    const idx = created.findIndex((e) => e.kind === 'collection' && e.id === createdColl.id);
-    if (idx >= 0) created.splice(idx, 1);
   });
 
   test('Favorites filter shows only favorited images', async ({ page }) => {

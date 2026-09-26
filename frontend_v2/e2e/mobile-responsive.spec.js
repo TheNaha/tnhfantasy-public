@@ -1,11 +1,10 @@
 import { test, expect } from '@playwright/test';
 import {
-  uniqueName,
+  dismissOnboarding,
   seedChat,
   seedStory,
   seedStoryChapter,
-  cleanupEntities,
-  dismissOnboarding,
+  uniqueName,
 } from './fixtures.js';
 
 // ---------------------------------------------------------------------------
@@ -95,15 +94,8 @@ test.describe.serial('mobile chrome', () => {
 });
 
 test.describe.serial('chat workspace on mobile', () => {
-  let chatId;
-
-  test.afterEach(async ({ page }) => {
-    if (chatId) await cleanupEntities(page, [{ kind: 'chat', id: chatId }]);
-  });
-
   test('bottom tabs switch chats/roleplay/context panels', async ({ page }) => {
     const chat = await seedChat(page, { name: uniqueName('mobile-chat') });
-    chatId = chat.id;
 
     // The workspace auto-selects the newest chat, so the roleplay panel opens
     // with it active.
@@ -138,21 +130,11 @@ test.describe.serial('chat workspace on mobile', () => {
 });
 
 test.describe.serial('story sandbox on mobile', () => {
-  let storyId;
-  let chapterId;
-
-  test.afterEach(async ({ page }) => {
-    if (chapterId) await cleanupEntities(page, [{ kind: 'chapter', id: chapterId }]);
-    if (storyId) await cleanupEntities(page, [{ kind: 'story', id: storyId }]);
-  });
-
   test('bottom tabs switch stories/write/context panels', async ({ page }) => {
     const story = await seedStory(page, { title: uniqueName('mobile-story') });
-    storyId = story.id;
-    const chapter = await seedStoryChapter(page, storyId, {
+    const chapter = await seedStoryChapter(page, story.id, {
       title: uniqueName('mobile-chapter'),
     });
-    chapterId = `${storyId}:${chapter.id}`;
 
     await page.goto('/story');
     const tabs = page.getByRole('navigation', { name: 'Story sandbox navigation' });
@@ -184,7 +166,7 @@ test.describe.serial('story sandbox on mobile', () => {
 
     // The chapter editor only renders once a chapter is selected — open the
     // seeded chapter directly to prove the write panel renders it on mobile.
-    await page.goto(`/story/${storyId}/chapter/${chapter.id}`);
+    await page.goto(`/story/${story.id}/chapter/${chapter.id}`);
     await expect(writeTab).toHaveAttribute('aria-pressed', 'true');
     await expect(page.locator('textarea').first()).toBeVisible();
 

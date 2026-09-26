@@ -13,21 +13,15 @@
 
 import { test, expect } from '@playwright/test';
 import {
-    apiGet,
-    uniqueName,
-    expectToast,
-    cleanupEntities,
-    seedModel,
-    sortSelect,
-    readPersisted,
-    sortNewestFirst,
+  apiGet,
+  expectToast,
+  readPersisted,
+  seedModel,
+  sortNewestFirst,
+  sortSelect,
+  trackEntity,
+  uniqueName,
 } from './fixtures.js';
-
-const created = [];
-
-test.afterEach(async ({ page }) => {
-  await cleanupEntities(page, created.splice(0));
-});
 
 test.describe('Model manager — Discover', () => {
   test('discover page loads with search, source select and URL import', async ({ page }) => {
@@ -103,7 +97,7 @@ test.describe('Model manager — Installed', () => {
 
   test('seeded model appears under LoRAs and search narrows the list', async ({ page }) => {
     const seed = await seedModel(page);
-    created.push({ kind: 'model', id: seed.id });
+    trackEntity(page, 'model', seed.id);
     const name = seed.name;
 
     await page.goto('/models/installed');
@@ -121,7 +115,7 @@ test.describe('Model manager — Installed', () => {
 
   test('card details modal shows auto-discovered banner and closes', async ({ page }) => {
     const seed = await seedModel(page);
-    created.push({ kind: 'model', id: seed.id });
+    trackEntity(page, 'model', seed.id);
 
     await page.goto('/models/installed');
     await page.getByRole('button', { name: 'LoRAs', exact: true }).click();
@@ -138,7 +132,7 @@ test.describe('Model manager — Installed', () => {
 
   test('check dependencies action fires for a non-UNET model', async ({ page }) => {
     const seed = await seedModel(page);
-    created.push({ kind: 'model', id: seed.id });
+    trackEntity(page, 'model', seed.id);
 
     await page.goto('/models/installed');
     await page.getByRole('button', { name: 'LoRAs', exact: true }).click();
@@ -152,7 +146,7 @@ test.describe('Model manager — Installed', () => {
 
   test('delete model via card action with confirmation', async ({ page }) => {
     const seed = await seedModel(page);
-    created.push({ kind: 'model', id: seed.id });
+    trackEntity(page, 'model', seed.id);
 
     await page.goto('/models/installed');
     await page.getByRole('button', { name: 'LoRAs', exact: true }).click();
@@ -169,8 +163,6 @@ test.describe('Model manager — Installed', () => {
 
     const all = await apiGet(page, '/models/all');
     expect(all.some((m) => m.name === seed.name), 'model should be gone via API').toBe(false);
-
-    created.splice(created.findIndex((e) => e.id === seed.id), 1);
   });
 
   test('batch autopopulate modal opens and closes', async ({ page }) => {

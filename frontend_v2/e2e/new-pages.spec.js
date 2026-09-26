@@ -1,18 +1,12 @@
 import { test, expect } from '@playwright/test';
-import { seedCharacter, seedChat, cleanupEntities, uniqueName } from './fixtures.js';
+import { seedCharacter, seedChat, trackEntity, uniqueName } from './fixtures.js';
 
 test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
-  let created = [];
-
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
-
    test('Relationship Graph renders nodes and filters', async ({ page }) => {
     const char = await seedCharacter(page, { name: uniqueName('graph-char') });
-    created.push({ kind: 'character', id: char.id });
+    trackEntity(page, 'character', char.id);
     const chat = await seedChat(page, { character_id: char.id });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto('/world-graph');
 
@@ -46,7 +40,7 @@ test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
 
   test('Relationship Graph legend shows all node types with icons', async ({ page }) => {
     const char = await seedCharacter(page, { name: uniqueName('graph-legend-char') });
-    created.push({ kind: 'character', id: char.id });
+    trackEntity(page, 'character', char.id);
 
     await page.goto('/world-graph');
 
@@ -62,9 +56,9 @@ test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
 
    test('Relationship Graph refresh button triggers refetch', async ({ page }) => {
     const char = await seedCharacter(page, { name: uniqueName('graph-refresh-char') });
-    created.push({ kind: 'character', id: char.id });
+    trackEntity(page, 'character', char.id);
     const chat = await seedChat(page, { character_id: char.id });
-    created.push({ kind: 'chat', id: chat.id });
+    trackEntity(page, 'chat', chat.id);
 
     await page.goto('/world-graph');
 
@@ -79,7 +73,7 @@ test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
 
   test('Avatar Gallery renders and handles character selection', async ({ page }) => {
     const char = await seedCharacter(page, { name: uniqueName('avatar-char') });
-    created.push({ kind: 'character', id: char.id });
+    trackEntity(page, 'character', char.id);
 
     await page.goto('/avatar-gallery');
 
@@ -95,9 +89,9 @@ test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
 
   test('Avatar Gallery filters characters by search query', async ({ page }) => {
     const char1 = await seedCharacter(page, { name: uniqueName('avatar-search-a') });
-    created.push({ kind: 'character', id: char1.id });
+    trackEntity(page, 'character', char1.id);
     const char2 = await seedCharacter(page, { name: uniqueName('avatar-search-b') });
-    created.push({ kind: 'character', id: char2.id });
+    trackEntity(page, 'character', char2.id);
 
     await page.goto('/avatar-gallery');
 
@@ -116,7 +110,7 @@ test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
 
   test('Avatar Gallery shows scene counts on character cards', async ({ page }) => {
     const char = await seedCharacter(page, { name: uniqueName('avatar-scene-char') });
-    created.push({ kind: 'character', id: char.id });
+    trackEntity(page, 'character', char.id);
 
     await page.goto('/avatar-gallery');
 

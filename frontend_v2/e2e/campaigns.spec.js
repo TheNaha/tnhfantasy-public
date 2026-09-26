@@ -1,14 +1,14 @@
 import { test, expect } from '@playwright/test';
 import {
   apiGet,
+  expectToast,
+  seedCampaign,
   seedCharacter,
   seedChat,
-  seedStory,
   seedLocation,
-  seedCampaign,
-  cleanupEntities,
+  seedStory,
+  trackEntity,
   uniqueName,
-  expectToast,
 } from './fixtures.js';
 
 // CampaignCard is a motion.div with class "group" (action buttons are
@@ -45,15 +45,9 @@ function pickEntity(form, label) {
 test.describe('Campaigns (World Vault)', () => {
   test.setTimeout(90000);
 
-  let created = [];
-
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
-
   test('renders list cards for API-seeded campaigns', async ({ page }) => {
     const campaign = await seedCampaign(page, { name: uniqueName('e2e-campaign') });
-    created.push({ kind: 'campaign', id: campaign.id });
+    trackEntity(page, 'campaign', campaign.id);
 
     await page.goto('/campaigns');
     await expect(page.getByRole('heading', { level: 1, name: 'Campaigns' })).toBeVisible();
@@ -68,12 +62,10 @@ test.describe('Campaigns (World Vault)', () => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
     const location = await seedLocation(page, { name: uniqueName('e2e-location') });
-    created.push(
-      { kind: 'character', id: character.id },
-      { kind: 'story', id: story.id },
-      { kind: 'chat', id: chat.id },
-      { kind: 'location', id: location.id }
-    );
+    trackEntity(page, 'character', character.id);
+    trackEntity(page, 'story', story.id);
+    trackEntity(page, 'chat', chat.id);
+    trackEntity(page, 'location', location.id);
 
     const campaign = await seedCampaign(page, {
       name: uniqueName('e2e-campaign'),
@@ -82,7 +74,7 @@ test.describe('Campaigns (World Vault)', () => {
       chat_ids: [chat.id],
       location_ids: [location.id],
     });
-    created.push({ kind: 'campaign', id: campaign.id });
+    trackEntity(page, 'campaign', campaign.id);
 
     await page.goto('/campaigns');
     const card = await openCardActions(page, campaign.name);
@@ -111,12 +103,10 @@ test.describe('Campaigns (World Vault)', () => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
     const location = await seedLocation(page, { name: uniqueName('e2e-location') });
-    created.push(
-      { kind: 'character', id: character.id },
-      { kind: 'story', id: story.id },
-      { kind: 'chat', id: chat.id },
-      { kind: 'location', id: location.id }
-    );
+    trackEntity(page, 'character', character.id);
+    trackEntity(page, 'story', story.id);
+    trackEntity(page, 'chat', chat.id);
+    trackEntity(page, 'location', location.id);
 
     const name = uniqueName('e2e-campaign');
     const description = 'A chronicle forged in the e2e furnace.';
@@ -149,7 +139,7 @@ test.describe('Campaigns (World Vault)', () => {
     expect(saved.story_ids).toContain(story.id);
     expect(saved.chat_ids).toContain(chat.id);
     expect(saved.location_ids).toContain(location.id);
-    created.push({ kind: 'campaign', id: saved.id });
+    trackEntity(page, 'campaign', saved.id);
 
     // Card round-trips: name, description and one count badge per entity type.
     const card = campaignCard(page, name);
@@ -169,7 +159,7 @@ test.describe('Campaigns (World Vault)', () => {
 
   test('edit campaign persists changes', async ({ page }) => {
     const campaign = await seedCampaign(page, { name: uniqueName('e2e-campaign') });
-    created.push({ kind: 'campaign', id: campaign.id });
+    trackEntity(page, 'campaign', campaign.id);
 
     const newName = uniqueName('e2e-campaign-renamed');
     await page.goto('/campaigns');
@@ -196,7 +186,7 @@ test.describe('Campaigns (World Vault)', () => {
 
   test('delete campaign via card action with confirmation', async ({ page }) => {
     const campaign = await seedCampaign(page, { name: uniqueName('e2e-campaign') });
-    created.push({ kind: 'campaign', id: campaign.id });
+    trackEntity(page, 'campaign', campaign.id);
 
     await page.goto('/campaigns');
     const card = await openCardActions(page, campaign.name);

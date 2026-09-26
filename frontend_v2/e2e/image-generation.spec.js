@@ -1,14 +1,14 @@
 import { test, expect } from '@playwright/test';
 import {
-  uniqueName,
-  waitForJob,
-  makeTestImage,
-  seedPrompt,
-  seedCollection,
-  cleanupEntities,
+  apiGet,
   drawMaskOnCanvas,
   expectToast,
-  apiGet,
+  makeTestImage,
+  seedCollection,
+  seedPrompt,
+  trackEntity,
+  uniqueName,
+  waitForJob,
 } from './fixtures.js';
 import {
   listModels,
@@ -36,11 +36,6 @@ const JOB_TIMEOUT = 360000;
 
 test.describe('Image Generation & Asset Management (Module A)', () => {
   test.setTimeout(240000);
-
-  const created = [];
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
 
   test('Simple: Generate disabled without a prompt, enabled when filled', async ({ page }) => {
     await page.goto('/generate');
@@ -89,7 +84,7 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
       name: uniqueName('e2e-lib'),
       prompt: 'A misty harbor at dawn, watercolor style',
     });
-    created.push({ kind: 'prompt', id: promptEntity.id });
+    trackEntity(page, 'prompt', promptEntity.id);
 
     await page.goto('/generate');
     await page.getByLabel('Open prompt library').click();
@@ -206,7 +201,7 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
     await visibleGenerate(page).click();
 
     const job = await (await jobResponse).json();
-    created.push({ kind: 'job', id: job.id });
+    trackEntity(page, 'job', job.id);
 
     await expectToast(page, /Image generated!/, JOB_TIMEOUT);
     const done = await waitForJob(page, job.id, { timeout: JOB_TIMEOUT });
@@ -237,7 +232,7 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
       .poll(async () => jobs.length, { timeout: 45000 })
       .toBe(2);
     const jobIds = (await Promise.all(jobs)).map((j) => j.id);
-    created.push(...jobIds.map((id) => ({ kind: 'job', id })));
+    for (const id of jobIds) trackEntity(page, 'job', id);
 
     for (const id of jobIds) {
       const done = await waitForJob(page, id, { timeout: JOB_TIMEOUT });
@@ -277,7 +272,7 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
     await page.getByRole('button', { name: 'Generate Img2Img' }).click();
 
     const job = await (await jobResponse).json();
-    created.push({ kind: 'job', id: job.id });
+    trackEntity(page, 'job', job.id);
 
     await expectToast(page, /Image generated!/, JOB_TIMEOUT);
     const done = await waitForJob(page, job.id, { timeout: JOB_TIMEOUT });
@@ -341,7 +336,7 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
     await page.getByRole('button', { name: 'Generate Inpaint' }).click();
 
     const job = await (await jobResponse).json();
-    created.push({ kind: 'job', id: job.id });
+    trackEntity(page, 'job', job.id);
 
     await expectToast(page, /Image generated!/, JOB_TIMEOUT);
     const done = await waitForJob(page, job.id, { timeout: JOB_TIMEOUT });
@@ -403,7 +398,7 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
 
   test('Gallery: selection mode adds images to a collection', async ({ page }) => {
     const collection = await seedCollection(page, { name: uniqueName('e2e-col'), workspace: 'main' });
-    created.push({ kind: 'collection', id: collection.id });
+    trackEntity(page, 'collection', collection.id);
 
     await page.goto('/gallery');
     const firstCard = page.locator('[role="img"]').first();

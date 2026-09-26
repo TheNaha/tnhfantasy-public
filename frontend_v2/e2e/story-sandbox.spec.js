@@ -1,21 +1,15 @@
 import { test, expect } from '@playwright/test';
 import {
+  expectToast,
+  seedLorebook,
   seedStory,
   seedStoryChapter,
-  seedLorebook,
-  cleanupEntities,
+  trackEntity,
   uniqueName,
-  expectToast,
 } from './fixtures.js';
 
 test.describe('Story Sandbox Workspace (Module C)', () => {
   test.setTimeout(180000);
-
-  let created = [];
-
-  test.afterEach(async ({ page }) => {
-    await cleanupEntities(page, created.splice(0));
-  });
 
   test('Create Story and Chapter', async ({ page }) => {
     await page.goto('/story');
@@ -44,13 +38,13 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
     expect(chapterMatch).toBeTruthy();
     const chapterId = chapterMatch[1];
 
-    created.push({ kind: 'chapter', id: `${storyId}:${chapterId}` });
-    created.push({ kind: 'story', id: storyId });
+    trackEntity(page, 'chapter', `${storyId}:${chapterId}`);
+    trackEntity(page, 'story', storyId);
   });
 
   test('Continue AI Generation', async ({ page }) => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
     await page.goto(`/story/${story.id}`);
@@ -72,7 +66,7 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
 
   test('Branch from Beat', async ({ page }) => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
     await page.goto(`/story/${story.id}`);
@@ -104,7 +98,7 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
 
   test('Add Manual Beat', async ({ page }) => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
     await page.goto(`/story/${story.id}`);
@@ -118,7 +112,7 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
 
   test('Auto-Generate Title', async ({ page }) => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
     await page.goto(`/story/${story.id}`);
@@ -135,9 +129,9 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
 
   test('Story Editor Auto-Save', async ({ page }) => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     const chapter = await seedStoryChapter(page, story.id, { title: 'Chapter 1', content: 'Seeded pre-content.' });
-    created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
+    trackEntity(page, 'chapter', `${story.id}:${chapter.id}`);
 
     await page.goto(`/story/${story.id}`);
     const editor = page.getByPlaceholder(/begin your story/i).first();
@@ -157,10 +151,10 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
 
   test('Context Panel: Attach Lorebook', async ({ page }) => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
     const lorebook = await seedLorebook(page, { name: uniqueName('e2e-lorebook') });
-    created.push({ kind: 'lorebook', id: lorebook.id });
+    trackEntity(page, 'lorebook', lorebook.id);
 
     await page.goto(`/story/${story.id}`);
     const lorebookRow = page.getByRole('button', { name: new RegExp(lorebook.name) }).first();
@@ -183,7 +177,7 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
 
   test('Delete Story', async ({ page }) => {
     const story = await seedStory(page, { title: 'To Be Deleted Story' });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
 
     await page.goto('/story');
     const deleteBtn = page.getByTitle('Delete story').first();
@@ -198,11 +192,11 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
 
   test('Switch Chapters and Verify Content', async ({ page }) => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     const chapter1 = await seedStoryChapter(page, story.id, { title: 'Chapter 1', content: 'Chapter 1 seeded content.' });
     const chapter2 = await seedStoryChapter(page, story.id, { title: 'Chapter 2', content: 'Chapter 2 seeded content.' });
-    created.push({ kind: 'chapter', id: `${story.id}:${chapter2.id}` });
-    created.push({ kind: 'chapter', id: `${story.id}:${chapter1.id}` });
+    trackEntity(page, 'chapter', `${story.id}:${chapter2.id}`);
+    trackEntity(page, 'chapter', `${story.id}:${chapter1.id}`);
 
     await page.goto(`/story/${story.id}/chapter/${chapter1.id}`);
     const editor = page.getByPlaceholder(/begin your story/i).first();
@@ -224,7 +218,7 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
 
   test('Edit and Reorder Beats', async ({ page }) => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
     await page.goto(`/story/${story.id}`);
@@ -245,7 +239,7 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
 
   test('Story Illustration', async ({ page }) => {
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
     await page.goto(`/story/${story.id}`);
@@ -269,9 +263,9 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
   test('@fullstack Continue AI generation completes end-to-end', async ({ page }) => {
     test.setTimeout(300000);
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     const chapter = await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
-    created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
+    trackEntity(page, 'chapter', `${story.id}:${chapter.id}`);
 
     await page.goto(`/story/${story.id}/chapter/${chapter.id}`);
     const editor = page.getByPlaceholder(/begin your story/i).first();
@@ -293,9 +287,9 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
   test('@fullstack Illustrate generates prompt and image job', async ({ page }) => {
     test.setTimeout(300000);
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     const chapter = await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
-    created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
+    trackEntity(page, 'chapter', `${story.id}:${chapter.id}`);
 
     await page.goto(`/story/${story.id}/chapter/${chapter.id}`);
     const editor = page.getByPlaceholder(/begin your story/i).first();
@@ -319,9 +313,9 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
   test('@fullstack Branch from beat and continue new path', async ({ page }) => {
     test.setTimeout(300000);
     const story = await seedStory(page, { title: uniqueName('e2e-story') });
-    created.push({ kind: 'story', id: story.id });
+    trackEntity(page, 'story', story.id);
     const chapter = await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
-    created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
+    trackEntity(page, 'chapter', `${story.id}:${chapter.id}`);
 
     await page.goto(`/story/${story.id}/chapter/${chapter.id}`);
     const editor = page.getByPlaceholder(/begin your story/i).first();

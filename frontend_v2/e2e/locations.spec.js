@@ -8,17 +8,11 @@
 import { test, expect } from '@playwright/test';
 import {
   apiGet,
-  cleanupEntities,
   expectToast,
   seedLocation,
+  trackEntity,
   uniqueName,
 } from './fixtures.js';
-
-const created = [];
-
-test.afterEach(async ({ page }) => {
-  await cleanupEntities(page, created.splice(0));
-});
 
 // The card for `name` (h3) → its nearest rounded-xl ancestor is the card div.
 function locationCard(page, name) {
@@ -63,7 +57,7 @@ test.describe('Locations', () => {
     const loc = locations.find((l) => l.name === name);
     expect(loc, 'created location must exist via API').toBeTruthy();
     expect(loc.tags).toContain(tag);
-    created.push({ kind: 'location', id: loc.id });
+    trackEntity(page, 'location', loc.id);
   });
 
   test('required name validation blocks save', async ({ page }) => {
@@ -80,7 +74,7 @@ test.describe('Locations', () => {
       name: uniqueName('e2e-location'),
       description: 'Original description from the seed.',
     });
-    created.push({ kind: 'location', id: seed.id });
+    trackEntity(page, 'location', seed.id);
     const newDescription = uniqueName('e2e-updated-desc');
 
     await page.goto('/locations');
@@ -104,7 +98,7 @@ test.describe('Locations', () => {
 
   test('delete removes the card after confirmation', async ({ page }) => {
     const seed = await seedLocation(page, { name: uniqueName('e2e-location') });
-    created.push({ kind: 'location', id: seed.id });
+    trackEntity(page, 'location', seed.id);
 
     await page.goto('/locations');
     const card = locationCard(page, seed.name);
@@ -120,14 +114,13 @@ test.describe('Locations', () => {
 
     await expectToast(page, /Location deleted/);
     await expect.poll(() => page.getByRole('heading', { name: seed.name }).count()).toBe(0);
-
-    created.splice(created.findIndex((e) => e.id === seed.id), 1);
   });
 
   test('search narrows the grid and empty results show the empty state', async ({ page }) => {
     const alpha = await seedLocation(page, { name: uniqueName('e2e-loc-alpha'), description: 'The amber gate.' });
     const beta = await seedLocation(page, { name: uniqueName('e2e-loc-beta'), description: 'The silver gate.' });
-    created.push({ kind: 'location', id: alpha.id }, { kind: 'location', id: beta.id });
+    trackEntity(page, 'location', alpha.id);
+    trackEntity(page, 'location', beta.id);
 
     await page.goto('/locations');
 
