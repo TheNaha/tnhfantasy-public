@@ -101,16 +101,15 @@ export default function ImageUploader({
     const previewUrlRef = useRef(null);
     useEffect(() => {
         const url = image?.previewUrl;
-        if (url && url.startsWith('blob:')) {
-            previewUrlRef.current = url;
+        const previous = previewUrlRef.current;
+        previewUrlRef.current = url && url.startsWith('blob:') ? url : null;
+        // Revoke the URL this effect was replacing, not the one currently held.
+        // The previous version compared `previous !== url`, and on every
+        // transition both sides were the same value, so it revoked nothing and
+        // each replaced image leaked its blob for the page's lifetime.
+        if (previous && previous !== url) {
+            URL.revokeObjectURL(previous);
         }
-        return () => {
-            const tracked = previewUrlRef.current;
-            if (tracked && tracked !== url) {
-                URL.revokeObjectURL(tracked);
-                previewUrlRef.current = null;
-            }
-        };
     }, [image?.previewUrl]);
 
     useEffect(() => () => {

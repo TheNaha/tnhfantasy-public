@@ -97,6 +97,9 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
         if (previewUrlRef.current) {
             URL.revokeObjectURL(previewUrlRef.current);
         }
+        // Keep the ref in step with the state, including when clearing it: the
+        // old code assigned `null` without revoking, so the unmount cleanup saw
+        // `null` and the blob stayed live for the page's lifetime.
         previewUrlRef.current = url;
         setPreviewUrl(url);
     };
