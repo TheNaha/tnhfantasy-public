@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import fcntl
+import hashlib
 import json
 import os
 import time
 import uuid
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
@@ -21,6 +23,42 @@ logger = get_logger("provider_core.downloads")
 
 ProgressCallback = Callable[[Dict[str, Any]], None]
 LogCallback = Callable[[str], None]
+
+# Marker inside the name of a resume slot. A resume slot is a single,
+# deterministic sibling of the model holding the bytes of an *abandoned*
+# attempt so that the next invocation of download_model_to_path continues it
+# instead of re-fetching gigabytes that are already on disk.
+#
+# The name deliberately ends in DOWNLOADING_SUFFIX. `is_transient_artifact`,
+# `is_model_file` and `pending_download_paths` already treat that suffix as
+# pipeline-owned, so reconciliation can neither publish a partial as a model nor
+# leave it behind, and `FileStorage.delete_file` already sweeps it. A new suffix
+# would have to be added to TRANSIENT_SUFFIXES in utils.py, which a multi-GB
+# partial must not depend on being noticed there.
+RESUME_SLOT_MARKER = ".resume."
+
+DEFAULT_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_BASE_SECONDS = 2.0
+RETRY_BACKOFF_MAX_SECONDS = 30.0
+
+# HTTP statuses worth another attempt. Everything else in the 4xx range (401,
+# 403, 404, 410, 422 ...) will fail identically on a retry and is reported at
+# once so the operator sees the real cause instead of a backoff countdown.
+TRANSIENT_STATUSES = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+
+# Disk failures that will never succeed on a retry. A connection reset must be
+# retried (that is the whole point of resume); ENOSPC must not be.
+PERMANENT_ERRNOS = frozenset(
+    {errno.ENOSPC, errno.EDQUOT, errno.EACCES, errno.EROFS, errno.EISDIR, errno.EPERM}
+)
+
+
+class _DownloadAttemptError(Exception):
+    """A single attempt failed. `transient` decides retry vs. give up."""
+
+    def __init__(self, message: str, *, transient: bool = True) -> None:
+        super().__init__(message)
+        self.transient = transient
 
 
 @contextlib.contextmanager
@@ -63,6 +101,573 @@ def _unique_temp_path(full_path: str) -> str:
     """
     return f"{full_path}.{os.getpid()}.{uuid.uuid4().hex[:8]}.downloading"
 
+
+# ── Resume ────────────────────────────────────────────────────────────────────
+#
+# A dropped connection 6 GB into a 7 GB checkpoint used to throw all of it away.
+# Resume is only safe if two things hold: the partial must be the *same* file we
+# are now being offered (same URL, same ETag/Last-Modified, same total size), and
+# the server must actually agree to send the remainder. A blind append to a file
+# whose remote counterpart changed produces a plausible-looking, silently corrupt
+# model, which is strictly worse than re-downloading.
+
+def _sleep(seconds: float) -> None:
+    """Indirection so tests can run the backoff without waiting for it."""
+    if seconds > 0:
+        time.sleep(seconds)
+
+
+def _backoff_delay(failed_attempt: int, base: float, cap: float) -> float:
+    if base <= 0:
+        return 0.0
+    return min(base * (2 ** (max(failed_attempt, 1) - 1)), cap)
+
+
+def _format_size(num_bytes: float) -> str:
+    size_gb = num_bytes / (1024 ** 3)
+    if size_gb >= 1:
+        return f"{size_gb:.2f} GB"
+    return f"{num_bytes / (1024 ** 2):.1f} MB"
+
+
+def _int_header(value: Any) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
+def _normalise_etag(value: Optional[str]) -> str:
+    etag = (value or "").strip()
+    if etag.startswith("W/"):
+        etag = etag[2:]
+    return etag
+
+
+def _resume_slot_path(full_path: str, identity: str) -> str:
+    return f"{full_path}{RESUME_SLOT_MARKER}{identity}{DOWNLOADING_SUFFIX}"
+
+
+def _resume_slots(full_path: str) -> List[Tuple[str, str]]:
+    """Return `(identity, path)` for every resume slot of `full_path`, oldest first.
+
+    The identity lives in the file name, so a partial carries the record of what
+    it is a partial *of* without a second sidecar file that reconciliation would
+    have to learn about.
+    """
+    directory = os.path.dirname(full_path) or "."
+    prefix = os.path.basename(full_path) + RESUME_SLOT_MARKER
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return []
+
+    found: List[Tuple[float, str, str]] = []
+    for entry in entries:
+        if not entry.startswith(prefix) or not entry.endswith(DOWNLOADING_SUFFIX):
+            continue
+        identity = entry[len(prefix): -len(DOWNLOADING_SUFFIX)]
+        if not identity:
+            continue
+        path = os.path.join(directory, entry)
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        found.append((mtime, identity, path))
+
+    found.sort()
+    return [(identity, path) for _mtime, identity, path in found]
+
+
+def _remote_identity(url: str, headers: Any, total_size: int) -> str:
+    """Short digest of everything that makes a remote body *the same* body.
+
+    Size is part of the identity because a checkpoint that was re-uploaded with
+    different content can keep its name and path but not its length. With no
+    ETag, no Last-Modified and no known length the identity degrades to a digest
+    of the URL alone: resume still works, it just cannot detect a changed remote.
+    """
+    etag = _normalise_etag(_header_get(headers, "etag"))
+    last_modified = (_header_get(headers, "last-modified") or "").strip()
+    payload = "\x00".join((url, etag, last_modified, str(int(total_size or 0))))
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()[:12]
+
+
+def _header_get(headers: Any, name: str) -> Optional[str]:
+    if headers is None:
+        return None
+    try:
+        return headers.get(name)
+    except AttributeError:
+        return None
+
+
+def _parse_content_range(value: Optional[str]) -> Optional[Tuple[Optional[int], Optional[int], Optional[int]]]:
+    """Parse a `Content-Range` header into `(start, end, total)`.
+
+    `bytes 100-199/1234` -> (100, 199, 1234); `bytes */1234` -> (None, None, 1234);
+    `bytes 100-199/*` -> (100, 199, None). Returns None for anything unparseable,
+    which callers must treat as "cannot trust this response".
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text.lower().startswith("bytes"):
+        return None
+    spec = text[5:].strip()
+
+    range_part, _, total_part = spec.partition("/")
+    total: Optional[int] = None
+    if total_part.strip() and total_part.strip() != "*":
+        total = _int_header(total_part) or None
+
+    if range_part.strip() == "*":
+        return (None, None, total)
+
+    start_text, _, end_text = range_part.partition("-")
+    start_text = start_text.strip()
+    if not start_text.isdigit():
+        return None
+    start = int(start_text)
+    end: Optional[int] = None
+    if end_text.strip() and end_text.strip() != "*":
+        end = _int_header(end_text)
+        if end < start:
+            return None
+    return (start, end, total)
+
+
+def _claim_resume_slot(full_path: str, temp_path: str) -> Tuple[Optional[str], int]:
+    """Move the newest resume slot into this attempt's unique temp file.
+
+    Only ever called with the per-path lock held, so any slot still on disk was
+    abandoned by a dead or finished attempt and nobody holds a descriptor on it.
+    The rename is what keeps the per-attempt temp file unique — this attempt ends
+    up writing to a path no other attempt can name — while still letting a later
+    invocation find the bytes.
+
+    Returns `(identity recorded in the slot name, bytes recovered)`.
+    """
+    slots = _resume_slots(full_path)
+    if not slots:
+        return None, 0
+
+    identity, newest = slots[-1]
+    for _stale_identity, stale in slots[:-1]:
+        _remove_quietly(stale)
+
+    try:
+        recovered = os.path.getsize(newest)
+        os.replace(newest, temp_path)
+    except OSError:
+        return None, 0
+    return identity, recovered
+
+
+def _persist_partial(full_path: str, temp_path: str, identity: Optional[str]) -> int:
+    """Park this attempt's partial in the resume slot for the next invocation.
+
+    Returns the number of bytes kept. Without an identity there is nothing to
+    prove the partial matches, so it is dropped rather than resumed blindly.
+    """
+    if not identity or not os.path.exists(temp_path):
+        _remove_quietly(temp_path)
+        return 0
+
+    size = os.path.getsize(temp_path)
+    if size <= 0:
+        _remove_quietly(temp_path)
+        return 0
+
+    try:
+        os.replace(temp_path, _resume_slot_path(full_path, identity))
+    except OSError as exc:
+        # Keep the bytes where they are; the name still ends in .downloading so
+        # delete_file and reconciliation can sweep it.
+        logger.warning(f"Could not park partial download: {exc} ({temp_path})")
+        return 0
+    return size
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _close_response(response: Any) -> None:
+    close = getattr(response, "close", None)
+    if close is not None:
+        with contextlib.suppress(Exception):
+            close()
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    if isinstance(exc, _DownloadAttemptError):
+        return exc.transient
+    if isinstance(exc, (KeyboardInterrupt, SystemExit, MemoryError)):
+        return False
+    if isinstance(exc, OSError) and exc.errno in PERMANENT_ERRNOS:
+        return False
+    return True
+
+
+def _stream_to_file(
+    response: Any,
+    temp_path: str,
+    *,
+    append: bool,
+    start_offset: int,
+    total_size: int,
+    chunk_size: int,
+    attempt_state: Dict[str, Any],
+    log: LogCallback,
+    log_prefix: str,
+    progress_callback: Optional[ProgressCallback],
+) -> int:
+    """Copy the response body into `temp_path`, returning bytes written.
+
+    `append` selects `ab` over `wb`, i.e. keep the partial and add the remainder
+    rather than truncate. Progress is reported against the whole file
+    (`start_offset + written`), so a resumed download does not show 0-100% for
+    the tail only.
+
+    The running total is kept in `attempt_state` because a connection that dies
+    mid-body throws away this function's return value, and the bytes it did write
+    still have to be counted.
+    """
+    mode = "ab" if append else "wb"
+    written = 0
+    last_log_percent = 0
+    attempt_start = time.time()
+
+    with open(temp_path, mode) as file_handle:
+        for chunk in response.iter_content(chunk_size=chunk_size):
+            if not chunk:
+                continue
+
+            file_handle.write(chunk)
+            written += len(chunk)
+            attempt_state["written"] = attempt_state.get("written", 0) + len(chunk)
+            on_disk = start_offset + written
+
+            elapsed = max(time.time() - attempt_start, 1e-6)
+            speed_bytes_per_second = written / elapsed
+            percent = int((on_disk / total_size) * 100) if total_size > 0 else 0
+            eta_seconds = (
+                (total_size - on_disk) / speed_bytes_per_second
+                if total_size > 0 and speed_bytes_per_second > 0
+                else 0
+            )
+
+            _safe_progress_emit(
+                progress_callback,
+                {
+                    "status": "downloading",
+                    "percent": percent,
+                    "speed_mbps": speed_bytes_per_second / (1024 ** 2),
+                    "downloaded_bytes": on_disk,
+                    "total_bytes": total_size,
+                    "eta_seconds": eta_seconds,
+                },
+            )
+
+            if total_size > 0 and percent >= last_log_percent + 10:
+                eta_str = (
+                    f"{int(eta_seconds / 60)}m {int(eta_seconds % 60)}s"
+                    if eta_seconds > 60
+                    else f"{int(eta_seconds)}s"
+                )
+                log(
+                    f"[{log_prefix}] {percent}% - "
+                    f"{speed_bytes_per_second / (1024 ** 2):.1f} MB/s - ETA: {eta_str}"
+                )
+                last_log_percent = percent
+
+    return written
+
+
+def _attempt_download(
+    *,
+    resolved_url: str,
+    temp_path: str,
+    base_headers: Dict[str, str],
+    offset: int,
+    etag: Optional[str],
+    claimed_identity: Optional[str],
+    observed: Dict[str, Any],
+    chunk_size: int,
+    request_timeout_seconds: Optional[float],
+    log: LogCallback,
+    log_prefix: str,
+    progress_callback: Optional[ProgressCallback],
+) -> Dict[str, Any]:
+    """Make one request and copy as much of the body as the server allows.
+
+    Returns the transfer description on success. Raises `_DownloadAttemptError`
+    for a retryable failure, and `transient=False` for one that cannot be fixed
+    by asking again.
+
+    `observed` is written as soon as the response headers identify the remote
+    body. A connection that drops mid-stream is exactly the case where the caller
+    needs that identity to park the partial for the next invocation, and it never
+    reaches the return statement.
+    """
+    request_headers = dict(base_headers)
+    if offset > 0:
+        request_headers["Range"] = f"bytes={offset}-"
+        # If-Range asks the server to ignore our offset and send the whole file
+        # if the body changed. It is a second line of defence behind the identity
+        # check below; the identity check is the one that actually decides.
+        if etag and not etag.startswith("W/"):
+            request_headers["If-Range"] = etag
+
+    request_kwargs: Dict[str, Any] = {"stream": True, "headers": request_headers}
+    if request_timeout_seconds is not None:
+        request_kwargs["timeout"] = request_timeout_seconds
+
+    response = requests.get(resolved_url, **request_kwargs)
+    try:
+        status = _int_header(getattr(response, "status_code", 0)) or 200
+        headers = getattr(response, "headers", None)
+        content_length = _int_header(_header_get(headers, "content-length"))
+        content_range = _parse_content_range(_header_get(headers, "content-range"))
+
+        def record(total_size: int) -> str:
+            identity = _remote_identity(resolved_url, headers, total_size)
+            observed["identity"] = identity
+            observed["etag"] = _normalise_etag(_header_get(headers, "etag"))
+            return identity
+
+        if status == 200:
+            if offset:
+                log(
+                    f"[{log_prefix}] Server ignored Range at offset {offset}; "
+                    f"restarting from byte 0"
+                )
+            total_size = content_length
+            identity = record(total_size)
+            if claimed_identity is not None and claimed_identity != identity:
+                log(
+                    f"[{log_prefix}] Remote file changed since the partial was written "
+                    f"({claimed_identity} -> {identity}); restarting from byte 0"
+                )
+            append = False
+            start_offset = 0
+        elif status == 206:
+            if content_range is None or content_range[0] is None:
+                raise _DownloadAttemptError(
+                    "server answered 206 without a usable Content-Range; restarting clean",
+                )
+            range_start, _range_end, range_total = content_range
+            if range_start != offset:
+                _remove_quietly(temp_path)
+                raise _DownloadAttemptError(
+                    f"server resumed at byte {range_start} but byte {offset} was requested; "
+                    f"discarding the partial and restarting clean",
+                )
+            total_size = range_total if range_total is not None else 0
+            if not total_size and content_length:
+                total_size = content_length + range_start
+            identity = record(total_size)
+            if claimed_identity is not None and claimed_identity != identity:
+                # The 206 body starts at our offset but describes a *different*
+                # file, so it cannot be appended to anything. Drop the partial and
+                # let the next attempt request the whole file.
+                _remove_quietly(temp_path)
+                raise _DownloadAttemptError(
+                    f"remote file changed since the partial was written "
+                    f"({claimed_identity} -> {identity}); discarding the partial",
+                )
+            append = offset > 0
+            start_offset = offset
+        elif status == 416:
+            remote_total = content_range[2] if content_range is not None else None
+            local_size = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+            if remote_total is None or local_size != remote_total:
+                _remove_quietly(temp_path)
+                raise _DownloadAttemptError(
+                    f"server rejected the resume (416) and did not confirm a complete "
+                    f"local file (local={local_size}, remote={remote_total}); "
+                    f"restarting clean",
+                )
+            identity = record(remote_total)
+            if claimed_identity is not None and claimed_identity != identity:
+                _remove_quietly(temp_path)
+                raise _DownloadAttemptError(
+                    f"remote file changed since the partial was written "
+                    f"({claimed_identity} -> {identity}); discarding the partial",
+                )
+            log(
+                f"[{log_prefix}] Server reports the local file already complete "
+                f"({local_size} bytes); validating instead of re-downloading"
+            )
+            return {
+                "total_size": remote_total,
+                "identity": identity,
+                "etag": observed["etag"],
+                "fetched_bytes": 0,
+                "resumed_bytes": local_size,
+                "appended": True,
+                "already_complete": True,
+            }
+        elif status in TRANSIENT_STATUSES or status >= 500:
+            raise _DownloadAttemptError(f"HTTP {status} from the model host", transient=True)
+        else:
+            raise _DownloadAttemptError(f"HTTP {status} from the model host", transient=False)
+
+        if total_size:
+            log(f"[{log_prefix}] Size: {_format_size(total_size)}")
+        else:
+            log(f"[{log_prefix}] Size: Unknown")
+        if append:
+            log(f"[{log_prefix}] Resuming at byte {start_offset}")
+
+        written = _stream_to_file(
+            response,
+            temp_path,
+            append=append,
+            start_offset=start_offset,
+            total_size=total_size,
+            chunk_size=chunk_size,
+            attempt_state=observed,
+            log=log,
+            log_prefix=log_prefix,
+            progress_callback=progress_callback,
+        )
+    finally:
+        _close_response(response)
+
+    on_disk = os.path.getsize(temp_path)
+    if total_size and on_disk != total_size:
+        if on_disk > total_size:
+            _remove_quietly(temp_path)
+            raise _DownloadAttemptError(
+                f"received {on_disk} bytes for a {total_size} byte file; discarding the partial",
+            )
+        raise _DownloadAttemptError(
+            f"connection ended early: {on_disk} of {total_size} bytes on disk",
+        )
+
+    return {
+        "total_size": total_size,
+        "identity": identity,
+        "etag": observed["etag"],
+        "fetched_bytes": written,
+        "resumed_bytes": start_offset,
+        "appended": append,
+        "already_complete": False,
+    }
+
+
+def _transfer_with_resume(
+    *,
+    resolved_url: str,
+    full_path: str,
+    temp_path: str,
+    base_headers: Dict[str, str],
+    claimed_identity: Optional[str],
+    chunk_size: int,
+    request_timeout_seconds: Optional[float],
+    max_attempts: int,
+    retry_backoff_base_seconds: float,
+    retry_backoff_max_seconds: float,
+    log: LogCallback,
+    log_prefix: str,
+    progress_callback: Optional[ProgressCallback],
+) -> Dict[str, Any]:
+    """Fetch the body into `temp_path`, resuming a partial and retrying.
+
+    The caller holds the per-path lock for the whole of this, so a resume is not
+    a window in which a second downloader can start. On giving up the partial is
+    parked in the resume slot, which is what lets the *next* invocation of
+    download_model_to_path continue rather than start over.
+    """
+    attempts_allowed = max(1, int(max_attempts))
+    observed: Dict[str, Any] = {}
+    etag: Optional[str] = None
+    total_written = 0
+    first_offset = 0
+    identity = claimed_identity
+    last_error = "no attempt was made"
+    attempt = 0
+
+    while attempt < attempts_allowed:
+        attempt += 1
+        offset = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+        if attempt == 1:
+            # What this call found on disk. A resume that happens on attempt 2 or
+            # 3 after a fresh 200 reused nothing and must not report as resumed.
+            first_offset = offset
+        if attempt > 1:
+            delay = _backoff_delay(attempt - 1, retry_backoff_base_seconds, retry_backoff_max_seconds)
+            log(
+                f"[{log_prefix}] Attempt {attempt}/{attempts_allowed} in {delay:.1f}s "
+                f"from byte {offset}: {last_error}"
+            )
+            _sleep(delay)
+
+        observed.clear()
+        try:
+            outcome = _attempt_download(
+                resolved_url=resolved_url,
+                temp_path=temp_path,
+                base_headers=base_headers,
+                offset=offset,
+                etag=etag,
+                claimed_identity=identity,
+                observed=observed,
+                chunk_size=chunk_size,
+                request_timeout_seconds=request_timeout_seconds,
+                log=log,
+                log_prefix=log_prefix,
+                progress_callback=progress_callback,
+            )
+        except Exception as exc:  # transport, HTTP status, protocol violation
+            # Headers may already have named the remote body even though the body
+            # never arrived. That identity is what makes the partial resumable,
+            # and the ETag lets the retry carry If-Range.
+            identity = observed.get("identity", identity)
+            etag = observed.get("etag") or etag
+            total_written += observed.get("written", 0)
+            if not _is_transient_error(exc):
+                kept = _persist_partial(full_path, temp_path, identity)
+                raise _DownloadAttemptError(
+                    f"{exc}" + (f" ({kept} bytes kept at offset {kept})" if kept else ""),
+                    transient=False,
+                ) from exc
+            last_error = str(exc)
+            log(f"[{log_prefix}] Attempt {attempt}/{attempts_allowed} failed: {last_error}")
+            continue
+
+        # The response that told us the offset is also the one that carries the
+        # ETag, so it is only known after the first attempt that got headers.
+        etag = outcome.get("etag") or etag
+        identity = outcome["identity"]
+        total_written += outcome["fetched_bytes"]
+
+        # A transfer that restarted from byte 0 threw away whatever the earlier
+        # attempts wrote, so nothing was resumed and only the last attempt counts.
+        if outcome.get("appended"):
+            outcome["fetched_bytes"] = total_written
+            outcome["resumed_bytes"] = first_offset
+        else:
+            outcome["fetched_bytes"] = outcome["fetched_bytes"]
+            outcome["resumed_bytes"] = 0
+
+        outcome["attempts"] = attempt
+        return outcome
+
+    kept = _persist_partial(full_path, temp_path, identity)
+    if kept:
+        detail = f"rerun the download to resume from byte {kept}"
+    else:
+        detail = "no bytes were saved to resume from"
+    raise _DownloadAttemptError(
+        f"{last_error} — gave up after {attempts_allowed} attempt(s); {detail}"
+    )
 
 
 def _append_query_param(url: str, key: str, value: str) -> str:
@@ -161,10 +766,14 @@ def _download_model_to_path_unlocked(
     chunk_size: int = 8 * 1024 * 1024,  # 8 MB — reduces Python iteration overhead for large files
     preview_timeout_seconds: float = 30.0,
     request_timeout_seconds: Optional[float] = None,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    retry_backoff_base_seconds: float = RETRY_BACKOFF_BASE_SECONDS,
+    retry_backoff_max_seconds: float = RETRY_BACKOFF_MAX_SECONDS,
 ) -> Dict[str, Any]:
     """Download a model file to disk with strict validation and atomic rename.
 
-    Callers should use download_model_to_path, which holds the per-path lock.
+    Callers should use download_model_to_path, which holds the per-path lock for
+    the whole transfer, retries included.
     """
     logger = log or _default_log
     label = path or os.path.basename(full_path)
@@ -190,74 +799,54 @@ def _download_model_to_path_unlocked(
     if auth_info["used_civitai_token"]:
         logger(f"[{log_prefix}] Using CivitAI token")
 
-    _safe_progress_emit(progress_callback, {"status": "starting", "percent": 0})
+    # Claimed under the per-path lock, so this is the only attempt in flight for
+    # this destination and any slot on disk was abandoned by an earlier one.
+    claimed_identity, claimed_bytes = _claim_resume_slot(full_path, temp_path)
+    if claimed_bytes:
+        logger(
+            f"[{log_prefix}] Found a partial download of {_format_size(claimed_bytes)}; "
+            f"resuming from byte {claimed_bytes}"
+        )
+
+    _safe_progress_emit(
+        progress_callback,
+        {"status": "starting", "percent": 0, "resumed_bytes": claimed_bytes},
+    )
 
     try:
-        request_kwargs: Dict[str, Any] = {"stream": True, "headers": headers}
-        if request_timeout_seconds is not None:
-            request_kwargs["timeout"] = request_timeout_seconds
+        transfer_started = time.time()
+        transfer = _transfer_with_resume(
+            resolved_url=resolved_url,
+            full_path=full_path,
+            temp_path=temp_path,
+            base_headers=headers,
+            claimed_identity=claimed_identity,
+            chunk_size=chunk_size,
+            request_timeout_seconds=request_timeout_seconds,
+            max_attempts=max_attempts,
+            retry_backoff_base_seconds=retry_backoff_base_seconds,
+            retry_backoff_max_seconds=retry_backoff_max_seconds,
+            log=logger,
+            log_prefix=log_prefix,
+            progress_callback=progress_callback,
+        )
 
-        response = requests.get(resolved_url, **request_kwargs)
-        response.raise_for_status()
+        total_size = int(transfer.get("total_size") or 0)
+        fetched = int(transfer.get("fetched_bytes") or 0)
+        resumed = int(transfer.get("resumed_bytes") or 0)
+        on_disk = os.path.getsize(temp_path)
 
-        total_size = int(response.headers.get("content-length", 0) or 0)
-
-        if total_size > 0:
-            size_gb = total_size / (1024 ** 3)
-            size_str = f"{size_gb:.2f} GB" if size_gb >= 1 else f"{total_size / (1024 ** 2):.1f} MB"
-            logger(f"[{log_prefix}] Size: {size_str}")
-        else:
-            logger(f"[{log_prefix}] Size: Unknown")
-
-        downloaded = 0
-        last_log_percent = 0
-        start_time = time.time()
-
-        with open(temp_path, "wb") as file_handle:
-            for chunk in response.iter_content(chunk_size):
-                if not chunk:
-                    continue
-
-                file_handle.write(chunk)
-                downloaded += len(chunk)
-
-                elapsed = max(time.time() - start_time, 1e-6)
-                speed_bytes_per_second = downloaded / elapsed
-                percent = int((downloaded / total_size) * 100) if total_size > 0 else 0
-                eta_seconds = (
-                    (total_size - downloaded) / speed_bytes_per_second
-                    if total_size > 0 and speed_bytes_per_second > 0
-                    else 0
-                )
-
-                _safe_progress_emit(
-                    progress_callback,
-                    {
-                        "status": "downloading",
-                        "percent": percent,
-                        "speed_mbps": speed_bytes_per_second / (1024 ** 2),
-                        "downloaded_bytes": downloaded,
-                        "total_bytes": total_size,
-                        "eta_seconds": eta_seconds,
-                    },
-                )
-
-                if total_size > 0 and percent >= last_log_percent + 10:
-                    eta_str = f"{int(eta_seconds / 60)}m {int(eta_seconds % 60)}s" if eta_seconds > 60 else f"{int(eta_seconds)}s"
-                    logger(
-                        f"[{log_prefix}] {percent}% - "
-                        f"{speed_bytes_per_second / (1024 ** 2):.1f} MB/s - ETA: {eta_str}"
-                    )
-                    last_log_percent = percent
-
-        elapsed = max(time.time() - start_time, 1e-6)
-        speed_mbps = (downloaded / (1024 ** 2)) / elapsed
+        elapsed = max(time.time() - transfer_started, 1e-6)
+        speed_mbps = (fetched / (1024 ** 2)) / elapsed
         logger(f"[{log_prefix}] Download complete (temp file)")
         logger(
-            f"[{log_prefix}] Size: {downloaded / (1024 ** 2):.1f} MB "
+            f"[{log_prefix}] Size: {on_disk / (1024 ** 2):.1f} MB "
             f"in {elapsed:.1f}s ({speed_mbps:.1f} MB/s)"
         )
 
+        # Validation is given the whole file and the whole expected length, never
+        # the appended chunk: a partial safetensors header read is not a check
+        # that the model is intact.
         validation = validate_downloaded_file(
             temp_path,
             total_size,
@@ -267,16 +856,25 @@ def _download_model_to_path_unlocked(
         if not validation.get("valid"):
             for err in validation.get("errors", [validation.get("error", "Validation failed")]):
                 logger(f"[{log_prefix}] Validation error: {err}")
+            # The bytes are all there and all wrong, so there is nothing worth
+            # resuming: a rerun must start from byte 0.
+            _remove_quietly(temp_path)
+            for _identity, slot in _resume_slots(full_path):
+                _remove_quietly(slot)
             raise ValueError(f"Validation failed: {validation.get('error', 'unknown validation error')}")
 
         detected_format = validation.get("format", "unknown")
-        actual_size = int(validation.get("size", downloaded))
+        actual_size = int(validation.get("size", on_disk))
         logger(f"[{log_prefix}] Validation passed: {detected_format}")
 
         if os.path.exists(full_path):
             os.remove(full_path)
         os.replace(temp_path, full_path)
         logger(f"[{log_prefix}] Moved to final path: {label}")
+
+        # Nothing is left to resume now that the model is published.
+        for _identity, slot in _resume_slots(full_path):
+            _remove_quietly(slot)
 
         metadata_saved = False
         if metadata:
@@ -305,8 +903,12 @@ def _download_model_to_path_unlocked(
             "speed_mbps": round(speed_mbps, 1),
             "format": detected_format,
             "validated": True,
-            "downloaded_bytes": downloaded,
+            "downloaded_bytes": on_disk,
             "total_size_bytes": total_size,
+            "resumed": resumed > 0,
+            "resumed_bytes": resumed,
+            "fetched_bytes": fetched,
+            "attempts": int(transfer.get("attempts") or 1),
             "metadata_saved": metadata_saved,
             "preview_saved": preview_saved,
         }
@@ -317,7 +919,7 @@ def _download_model_to_path_unlocked(
                 "status": "success",
                 "percent": 100,
                 "speed_mbps": round(speed_mbps, 1),
-                "downloaded_bytes": downloaded,
+                "downloaded_bytes": on_disk,
                 "total_bytes": total_size,
             },
         )
@@ -325,11 +927,10 @@ def _download_model_to_path_unlocked(
         return success_payload
 
     except Exception as exc:
-        if os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
+        # A partial that _transfer_with_resume could resume from has already been
+        # moved into the resume slot; this only sweeps the attempt temp file, which
+        # is a no-op in that case.
+        _remove_quietly(temp_path)
 
         error_message = str(exc)
         logger(f"[{log_prefix}] Error: {error_message}")
@@ -351,6 +952,10 @@ def pending_download_paths(full_path: str) -> Iterator[str]:
     single fixed `.downloading` name no longer identifies "the" partial file.
     Deleting a model used to probe the old deterministic name and therefore
     never removed a partial download, leaving multi-GB files on the volume.
+
+    Resume slots (`<path>.resume.<identity>.downloading`) match this pattern too,
+    which is what makes `FileStorage.delete_file` remove a parked partial along
+    with the model it belongs to instead of stranding it on the volume.
     """
     directory = os.path.dirname(full_path) or "."
     prefix = os.path.basename(full_path) + "."

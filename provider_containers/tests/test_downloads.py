@@ -252,9 +252,13 @@ def test_each_attempt_uses_a_distinct_temp_file(tmp_path, monkeypatch):
     assert seen[0] != seen[1], f"both attempts reused temp file {seen[0]}"
     assert all(name.endswith(".downloading") for name in seen), seen
 
+def test_failed_download_leaves_one_resumable_partial_and_no_temp_residue(tmp_path, monkeypatch):
+    """A failure parks the partial, but exactly once and in a pipeline-owned name.
 
-def test_failed_download_leaves_no_temp_residue(tmp_path, monkeypatch):
-    """The per-attempt temp file is cleaned up on failure."""
+    The bytes are kept deliberately: the next invocation of download_model_to_path
+    is expected to continue from them, which is the point of resume. What must not
+    happen is unbounded accumulation of per-attempt temp files.
+    """
     dest = tmp_path / "model.ckpt"
 
     class _Boom:
@@ -271,12 +275,18 @@ def test_failed_download_leaves_no_temp_residue(tmp_path, monkeypatch):
     monkeypatch.setattr(downloads.requests, "get", lambda url, **kw: _Boom())
 
     result = downloads.download_model_to_path(
-        url="https://example.test/model.ckpt", full_path=str(dest)
+        url="https://example.test/model.ckpt",
+        full_path=str(dest),
+        max_attempts=1,
     )
 
     assert result["status"] == "error"
-    leftovers = [p.name for p in tmp_path.iterdir() if p.name.endswith(".downloading")]
-    assert leftovers == [], f"temp files leaked: {leftovers}"
+    leftovers = sorted(p.name for p in tmp_path.iterdir() if p.name.endswith(".downloading"))
+    assert len(leftovers) == 1, f"expected a single resumable partial, got {leftovers}"
+    assert downloads.RESUME_SLOT_MARKER in leftovers[0]
+    assert not list(downloads.pending_download_paths(str(dest))) or all(
+        path.endswith(leftovers[0]) for path in downloads.pending_download_paths(str(dest))
+    )
 
 
 def test_lock_is_released_after_an_exception(tmp_path, monkeypatch):
