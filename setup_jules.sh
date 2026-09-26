@@ -30,7 +30,17 @@ fi
 
 UVICORN_ARGS=(--host 0.0.0.0 --port 8002)
 if [ "${COMFY_UVICORN_RELOAD:-1}" = "1" ]; then
-    UVICORN_ARGS+=(--reload)
+    # Keep the reload watcher off the test suite and the one-off scripts. The
+    # watcher follows the whole backend_v2 tree, so touching a test otherwise
+    # restarts the API — dropping WebSockets and stopping the job queue and
+    # scheduler for a change that cannot affect the running app. Keep in sync
+    # with the excludes in backend_v2/Dockerfile.
+    UVICORN_ARGS+=(
+        --reload
+        --reload-exclude '**/tests/**'
+        --reload-exclude '**/scripts/**'
+        --reload-exclude '**/memory_snapshot_helper/**'
+    )
 fi
 (
     cd "$BACKEND_DIR"
