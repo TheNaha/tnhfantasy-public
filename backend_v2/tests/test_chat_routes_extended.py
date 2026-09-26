@@ -220,6 +220,39 @@ class TestRollbackChat:
         resp = client.post(f"/api/v2/chats/{chat.id}/rollback", json={"message_id": "nonexistent"})
         assert resp.status_code == 404
 
+    def test_rollback_does_not_delete_other_branches(self, client, session):
+        """Branch copies share chat_id AND created_at, so a rollback anchored on
+        the original thread used to delete every branch's messages too."""
+        chat = _seed_chat(session)
+        t0 = datetime.now(timezone.utc)
+        m1 = Message(role=MessageRole.USER, content="Hello", chat_id=chat.id, created_at=t0)
+        session.add(m1)
+        session.commit()
+        session.refresh(m1)
+
+        # An alternate branch forked from m1, with its own reply.
+        b1 = Message(
+            role=MessageRole.USER, content="Hello", chat_id=chat.id,
+            branch_id="branch-alt", branch_name="alt", created_at=t0,
+        )
+        b2 = Message(
+            role=MessageRole.CHAR, content="Different reply", chat_id=chat.id,
+            branch_id="branch-alt", branch_name="alt", created_at=t0 + timedelta(minutes=1),
+        )
+        session.add(b1)
+        session.add(b2)
+        session.commit()
+        session.refresh(b1)
+        session.refresh(b2)
+
+        resp = client.post(f"/api/v2/chats/{chat.id}/rollback", json={"message_id": m1.id})
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 1  # only m1
+        assert session.get(Message, m1.id) is None
+        # The unrelated branch survives.
+        assert session.get(Message, b1.id) is not None
+        assert session.get(Message, b2.id) is not None
+
     def test_rollback_chat_404(self, client, session):
         resp = client.post("/api/v2/chats/nonexistent/rollback", json={"message_id": "x"})
         assert resp.status_code == 404

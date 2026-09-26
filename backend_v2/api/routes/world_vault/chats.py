@@ -45,6 +45,21 @@ MAX_CHAT_IMPORT_BYTES = MAX_CARD_SIZE_MB * 1024 * 1024
 router = APIRouter()
 
 
+def _branch_scope(anchor: Message) -> tuple:
+    """Restrict a query to the branch the anchor message belongs to.
+
+    Branch copies are written with the *same* `chat_id` and the *same*
+    `created_at` as the messages they were copied from (see branches.py), so a
+    predicate on `chat_id` + `created_at` alone matches every branch. Rollback
+    and regenerate would then delete an unrelated branch the user spent real
+    tokens building. `branch_id IS NULL` is the original thread, so the
+    `is_(None)` arm is what keeps branch-free chats behaving exactly as before.
+    """
+    if anchor.branch_id is None:
+        return (Message.branch_id.is_(None),)
+    return (Message.branch_id == anchor.branch_id,)
+
+
 def _load_characters_ordered(session: Session, primary_id: str | None, additional_ids: list[str]) -> list[Character]:
     ids: list[str] = []
     if primary_id:
@@ -1058,6 +1073,7 @@ def rollback_chat(
         delete(Message).where(
             Message.chat_id == chat_id,
             Message.created_at >= anchor.created_at,
+            *_branch_scope(anchor),
         )
     )
     deleted = result.rowcount
@@ -1107,6 +1123,7 @@ async def regenerate_reply(
         delete(Message).where(
             Message.chat_id == chat_id,
             Message.created_at > anchor.created_at,
+            *_branch_scope(anchor),
         )
     )
     deleted = delete_result.rowcount
@@ -1132,7 +1149,11 @@ async def regenerate_reply(
     # Load only the recent context window (context builder caps to MAX_CONTEXT_MESSAGES).
     recent = session.exec(
         select(Message)
-        .where(Message.chat_id == chat_id, Message.created_at <= anchor.created_at)
+        .where(
+            Message.chat_id == chat_id,
+            Message.created_at <= anchor.created_at,
+            *_branch_scope(anchor),
+        )
         .order_by(Message.created_at.desc())
         .limit(CHAT_HISTORY_HARD_CAP)
     ).all()
