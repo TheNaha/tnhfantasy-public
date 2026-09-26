@@ -26,6 +26,8 @@ from infrastructure.logging import get_logger
 
 logger = get_logger("settings_route")
 
+from config import DEFAULT_CHECKPOINT
+
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
@@ -293,6 +295,40 @@ async def get_settings_schema() -> dict[str, Any]:
                     "min": 0,
                     "max": 10000,
                     "default": 1000
+                }
+            }
+        },
+        # These two are writable and present in config.json, and `SettingsUpdate`
+        # accepts them — but they were not documented here at all, so a UI built
+        # from this endpoint could not discover or render the only two sections
+        # that accept writes. The previous fix identified the drift and left the
+        # documentation unchanged; `_annotate_writability` marks them writable,
+        # but a section nobody can see is not discoverable.
+        "generator": {
+            "description": "Image generation defaults",
+            "fields": {
+                "default_checkpoint": {
+                    "type": "string",
+                    "description": "Checkpoint used when nothing else is selected",
+                    "default": DEFAULT_CHECKPOINT
+                }
+            }
+        },
+        "ai": {
+            "description": "LLM / assistant behaviour",
+            "fields": {
+                "maxContextTokens": {
+                    "type": "integer",
+                    "description": "Context window budget for chat replies",
+                    "min": 1024,
+                    "default": 4096
+                },
+                "temperature": {
+                    "type": "number",
+                    "description": "Sampling temperature for LLM replies",
+                    "min": 0,
+                    "max": 2,
+                    "default": 0.8
                 }
             }
         }
