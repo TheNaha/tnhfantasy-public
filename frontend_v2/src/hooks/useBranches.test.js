@@ -47,6 +47,40 @@ describe('useBranches', () => {
         expect(apiMock.get).not.toHaveBeenCalled();
     });
 
+    it('resolves activeBranchId from the second argument', async () => {
+        apiMock.get.mockResolvedValue([
+            { branch_id: 'b-root', messages: [] },
+            { branch_id: 'b-two', messages: [] },
+        ]);
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useBranches('c1', 'b-two'), { wrapper });
+        await waitFor(() => expect(result.current.data).toHaveLength(2));
+        expect(result.current.activeBranchId).toBe('b-two');
+    });
+
+    it('falls back to the first (original) branch when no active branch is given', async () => {
+        // ChatTimeline passes `activeBranch` straight through, and it is
+        // undefined on a normal `/chat/:id` entry, so the hook has to resolve
+        // the default itself instead of comparing every row against undefined.
+        apiMock.get.mockResolvedValue([
+            { branch_id: 'b-root', messages: [] },
+            { branch_id: 'b-two', messages: [] },
+        ]);
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useBranches('c1'), { wrapper });
+        await waitFor(() => expect(result.current.data).toHaveLength(2));
+        expect(result.current.activeBranchId).toBe('b-root');
+    });
+
+    it('reports a null activeBranchId before data and with no branches', async () => {
+        apiMock.get.mockResolvedValue([]);
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useBranches('c1'), { wrapper });
+        expect(result.current.activeBranchId).toBeNull();
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(result.current.activeBranchId).toBeNull();
+    });
+
     it('useCreateBranch posts and invalidates branches + chat detail', async () => {
         apiMock.post.mockResolvedValue({ id: 'b2' });
         const { wrapper, queryClient } = createWrapper();
