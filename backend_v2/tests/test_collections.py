@@ -348,6 +348,21 @@ class TestCollectionsMove:
 class TestCollectionsByCharacterBatch:
     """GET /by-characters — one round-trip for N character cards."""
 
+    @pytest.fixture(autouse=True)
+    def _seed_characters(self, session):
+        """Collection.character_id is a real FK.
+
+        The engine now enforces foreign keys, so these ids must exist. Note
+        "missing" is deliberately NOT created — the route is expected to
+        report it under the `missing` key.
+        """
+        from core.entities import Character
+        for cid in ("ch1", "ch2", "ch9", "chd"):
+            if session.get(Character, cid) is None:
+                session.add(Character(id=cid, name=f"Char {cid}"))
+        session.commit()
+
+
     def test_batch_returns_collections_keyed_by_character(self, client):
         client.post("/api/v2/collections", json={
             "name": "Elara Art", "character_id": "ch1", "workspace": "chat",

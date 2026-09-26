@@ -17,6 +17,19 @@ from services import rag_pipeline
 from services.context_builder import build_system_prompt_sections, chat_context_kwargs
 
 
+@pytest.fixture(autouse=True)
+def _seed_char_1(session):
+    """These route tests post character_id="char-1" without creating the row.
+
+    The engine now enforces foreign keys, so SQLite behaves like Postgres and
+    the parent Character must exist.
+    """
+    from core.entities import Character as _Character
+    if session.get(_Character, "char-1") is None:
+        session.add(_Character(id="char-1", name="Aria"))
+        session.commit()
+
+
 # ── chat_context_kwargs: chat lorebooks must survive a None override ─────────
 
 

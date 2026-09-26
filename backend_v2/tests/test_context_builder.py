@@ -19,6 +19,7 @@ from services.context_builder import (
     parse_mes_example,
     prune_context,
 )
+import pytest
 from sqlmodel import Session
 
 
@@ -284,6 +285,20 @@ def test_sections_story_pov(session):
 
 
 # ── build_chat_context (DB) ─────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _chat_x_parent(session):
+    """Every build_chat_context test seeds Message(chat_id="chat-x").
+
+    The test engine now runs with PRAGMA foreign_keys=ON, so the parent Chat
+    has to exist. Previously these rows were silently accepted by SQLite and
+    the equivalent inserts would have been rejected by Postgres.
+    """
+    from core.entities import Chat as _Chat
+    if session.get(_Chat, "chat-x") is None:
+        session.add(_Chat(id="chat-x", name="Context Chat"))
+        session.commit()
+
 
 def test_build_chat_context_assembles_and_maps_messages(session):
     char = _seed_character(session)

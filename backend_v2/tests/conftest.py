@@ -4,6 +4,7 @@ import os
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
@@ -19,12 +20,26 @@ os.environ.setdefault("COMFY_LB_HEALTH_CHECKS_ENABLED", "0")
 
 @pytest.fixture(name="engine")
 def engine_fixture():
-    """Create in-memory SQLite engine for testing."""
+    """Create in-memory SQLite engine for testing.
+
+    Foreign-key enforcement is switched ON. SQLite ignores FKs by default, so
+    without this the whole suite was blind to exactly the class of bug Postgres
+    rejects at runtime — e.g. delete_character raising IntegrityError because
+    voice_models.character_id still pointed at the deleted row. Enabling it here
+    means a schema/reference mistake fails in CI instead of in production.
+    """
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     SQLModel.metadata.create_all(engine)
     return engine
 
