@@ -24,7 +24,7 @@ const NavItem = ({ to, icon: Icon, label, onNavigate }) => {
             onClick={onNavigate}
             aria-current={isActive ? 'page' : undefined}
             className={clsx(
-                "group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
+                "group flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
                 isActive
                     ? "nav-active text-white font-medium shadow-[0_0_15px_rgba(59,130,246,0.15)]"
                     : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
@@ -62,14 +62,60 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
     }), [providerStatsMap, providers]);
 
     const runningProviderCount = providerEntries.filter((entry) => entry.summary.isOnline).length;
+    // Collapsed by default: this is diagnostics, not navigation, and at ~200px it
+    // was permanently eating the nav column on a 900px-tall viewport.
+    const [expanded, setExpanded] = useState(false);
+    // `summarizeProviderStatus` exposes `errorCount`, not a boolean `hasError`.
+    const hasFailure = providerEntries.some(
+        (entry) => entry.summary.isDisabled || entry.summary.errorCount > 0
+    );
 
     return (
-        <div className="p-3 border-t border-white/5">
-            <div className="glass-panel rounded-xl p-3 border border-white/10">
-                <div className="flex items-center justify-between mb-2">
-                    <span className="text-[9px] font-semibold uppercase tracking-widest text-gray-400">System Status</span>
-                    <span className={`inline-block h-1.5 w-1.5 rounded-full shadow-[0_0_6px_currentColor] ${runningProviderCount > 0 ? 'text-green-400 bg-green-400' : 'text-gray-500 bg-gray-500'}`} />
-                </div>
+        // `shrink-0` is load-bearing. Without it this panel is a flex child with
+        // the default shrink:1, so in a constrained column it was compressed
+        // below its own content height — and since nothing clips it, the content
+        // painted straight over the navigation scrolling above it. Five nav items
+        // were unreadable behind it.
+        <div className="shrink-0 p-3 border-t border-white/5">
+            <div className="glass-panel rounded-xl border border-white/10 overflow-hidden">
+                <button
+                    type="button"
+                    onClick={() => setExpanded((open) => !open)}
+                    aria-expanded={expanded}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/5 transition-colors"
+                >
+                    <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full shadow-[0_0_6px_currentColor] ${hasFailure ? 'text-red-400 bg-red-400' : runningProviderCount > 0 ? 'text-green-400 bg-green-400' : 'text-gray-500 bg-gray-500'}`} />
+                    <span className="text-xs font-medium text-gray-300 whitespace-nowrap">
+                        {runningProviderCount}/{providerEntries.length} online
+                    </span>
+                    {hasFailure && (
+                        <span
+                            className="text-[11px] font-medium text-red-400 truncate"
+                            title="At least one provider is disabled or reporting errors"
+                        >
+                            needs attention
+                        </span>
+                    )}
+                    <ChevronDown
+                        size={14}
+                        aria-hidden="true"
+                        className={`ml-auto text-gray-500 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                    />
+                </button>
+                {!expanded && (
+                    <p className="px-3 pb-2 text-xs text-gray-500">
+                        Details are on the{' '}
+                        <Link to="/providers" className="text-blue-400 hover:text-blue-300 underline underline-offset-2">
+                            Providers
+                        </Link>{' '}
+                        page.
+                    </p>
+                )}
+                {expanded && (
+                    <div className="px-3 pb-3 border-t border-white/5 pt-2">
+                        <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">System Status</span>
+                        </div>
                 {providerEntries.length > 0 ? (
                     <div className="space-y-1 max-h-52 overflow-y-auto custom-scrollbar pr-1">
                         {providerEntries.map(({ provider, summary }) => {
@@ -87,26 +133,28 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
                                     title={subtitle}
                                 >
                                     <span className={`provider-dot shadow-[0_0_4px_currentColor] ${providerDotToneClass(summary.dotTone)}`} />
-                                    <span className={`text-[10px] truncate font-medium ${providerTextToneClass(summary.stage)}`}>
+                                    <span className={`text-xs truncate font-medium ${providerTextToneClass(summary.stage)}`}>
                                         {provider.id}
                                     </span>
-                                    <span className={`inline-flex items-center rounded border px-1 py-0.5 text-[8px] font-bold uppercase tracking-wider bg-white/5 ${providerBadgeToneClass(summary.stage)}`}>
+                                    <span className={`inline-flex items-center rounded border px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide bg-white/5 ${providerBadgeToneClass(summary.stage)}`}>
                                         {summary.label}
                                     </span>
                                     {summary.isDisabled && (
-                                        <span className="text-[8px] text-gray-500 ml-auto font-medium">off</span>
+                                        <span className="text-[11px] text-gray-500 ml-auto font-medium">off</span>
                                     )}
                                 </div>
                             );
                         })}
                     </div>
                 ) : (
-                    <p className="text-[11px] text-gray-500">No providers connected</p>
+                    <p className="text-xs text-gray-500">No providers connected</p>
                 )}
-                <div className="mt-2 pt-2 border-t border-white/5 text-[9px] font-medium text-gray-500 flex justify-between">
-                    <span>Active</span>
-                    <span className="text-gray-300">{runningProviderCount}/{providers.length}</span>
-                </div>
+                        <div className="mt-2 pt-2 border-t border-white/5 text-xs font-medium text-gray-500 flex justify-between">
+                            <span>Active</span>
+                            <span className="text-gray-300">{runningProviderCount}/{providers.length}</span>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -218,8 +266,16 @@ export default function Layout({ children }) {
                     </button>
                 </div>
 
-                <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">
-                    <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-3 px-4">Menu</div>
+                {/* `flex-1 min-h-0` is what makes this actually scroll: without
+                    `min-h-0` a flex child refuses to shrink below its content, so
+                    the column overflowed the viewport instead of scrolling.
+                    The mask fades the final row so a scrollable nav reads as
+                    scrollable — at 900px tall there are more items below. */}
+                <nav
+                    className="flex-1 min-h-0 p-4 space-y-1 overflow-y-auto custom-scrollbar"
+                    style={{ maskImage: 'linear-gradient(to bottom, black calc(100% - 24px), transparent)', WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 24px), transparent)' }}
+                >
+                    <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-3 px-4">Menu</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/" icon={Home} label="Home" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/gallery" icon={Images} label="Gallery" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/generate" icon={Wand2} label="Simple Generate" />
@@ -229,7 +285,7 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/inpaint" icon={Paintbrush} label="Inpaint" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/advanced" icon={Settings} label="Advanced" />
                     
-                     <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Roleplay</div>
+                     <div className="mt-5 mb-2 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Roleplay</div>
                      <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/roleplay" icon={Compass} label="Roleplay Home" />
                      <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Play" />
                      <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Stories" />
@@ -259,11 +315,11 @@ export default function Layout({ children }) {
                      )}
 
                     
-                    <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Resources</div>
+                    <div className="mt-5 mb-2 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Resources</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/discover" icon={Globe} label="Discover Models" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/providers" icon={Server} label="Providers" />
-                    <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">System</div>
+                    <div className="mt-5 mb-2 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">System</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/statistics" icon={BarChart3} label="Statistics" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/settings" icon={Settings2} label="Settings" />
                 </nav>
