@@ -1,11 +1,11 @@
 import asyncio
 import os
 import json
-from typing import Any, Dict, Optional
+from typing import Any, AsyncIterator, Dict, Optional
 
 import httpx
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse
 
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
@@ -13,6 +13,9 @@ from provider_core import (
 )
 from provider_core.background import BackgroundTaskLimitExceeded, spawn_background_task
 from provider_core.base_client import BaseProviderClient
+
+# Forward the body in chunks so peak memory is one chunk rather than one file.
+_STREAM_CHUNK_BYTES = 1024 * 1024
 from provider_core.responses import failed, ok, outcome
 from provider_core.utils import translate_task_events, TaskEvent
 
@@ -238,14 +241,34 @@ class DirectUrlProviderClient(BaseProviderClient):
         )
 
     async def get_file(self, path: str) -> StreamingResponse:
-        try:
-            resp = await self._http.get(f"/view", params={"filename": path})
-            resp.raise_for_status()
-            return Response(content=resp.content, media_type="application/octet-stream")
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                raise HTTPException(status_code=404, detail=f"File not found: {path}")
-            raise HTTPException(status_code=e.response.status_code, detail=str(e))
+        """Stream the file straight through from ComfyUI.
+
+        This was `Response(content=resp.content)`, which holds the entire file in
+        the worker's memory and then in the response — two copies. A 7 GB SDXL
+        checkpoint cannot survive that, and this engine fronts a ComfyUI server the
+        user runs on their own hardware, which is exactly where they have a 7 GB
+        checkpoint.
+
+        `client.stream` leaves the body on the wire: ComfyUI reads from disk in
+        chunks and we forward them, so peak memory is one chunk. The response is
+        opened inside the generator's own context so the status is checked before
+        the first byte of body is sent — after the 200 has gone out we can no
+        longer turn the request into a 4xx.
+        """
+
+        async def _stream() -> AsyncIterator[bytes]:
+            async with self._http.stream("GET", "/view", params={"filename": path}) as resp:
+                if resp.status_code == 404:
+                    raise HTTPException(status_code=404, detail=f"File not found: {path}")
+                if resp.status_code >= 400:
+                    raise HTTPException(
+                        status_code=resp.status_code,
+                        detail=f"ComfyUI returned {resp.status_code} for {path}",
+                    )
+                async for chunk in resp.aiter_bytes(_STREAM_CHUNK_BYTES):
+                    yield chunk
+
+        return StreamingResponse(_stream(), media_type="application/octet-stream")
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
         return outcome(

@@ -2,10 +2,10 @@ import asyncio
 import os
 import base64
 import json
-from typing import Dict, Any, Optional
+from typing import Any, AsyncIterator, Dict, Optional
 
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse
 import modal
 
 from provider_core import (
@@ -32,6 +32,10 @@ logger = get_logger("image_worker.modal.client")
 from provider_core.models import MODEL_DIRECTORIES
 
 MODAL_APP_NAME = os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
+
+# Slice size for ranged volume reads. 8 MiB keeps the RPC payload small
+# enough to stream a 7 GB checkpoint without a second full-size buffer.
+_MODAL_RANGE_BYTES = 8 * 1024 * 1024
 MODAL_USERNAME = os.getenv("MODAL_USERNAME", "")
 PROVIDER_ID = os.getenv("PROVIDER_ID", "modal-worker")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8002")
@@ -186,13 +190,43 @@ class ModalProviderClient(BaseProviderClient):
         )
 
     async def get_file(self, path: str) -> StreamingResponse:
-        try:
-            FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
-            storage = FileStorage()
-            file_contents = await storage.read_file.remote.aio(path)
-            return Response(content=file_contents, media_type="application/octet-stream")
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"File not found: {path}")
+        """Stream a volume file out in ranged slices.
+
+        A modal method serialises its return value across the RPC boundary, so the
+        old `read_file.remote.aio(path)` put the whole file in the container and
+        then in this worker before the response was built — a 7 GB checkpoint is 7
+        GB twice over, and there is no streaming return value to reach for.
+
+        So: ask for the size, then pull fixed-size ranges and yield each one. Peak
+        memory is one slice on each side, and the transfer costs one RPC per slice,
+        which is slow for a very large checkpoint and is the trade for not being
+        OOM-killed. A small file is one RPC and behaves exactly as before.
+        """
+        FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
+        storage = FileStorage()
+
+        async def _stream() -> AsyncIterator[bytes]:
+            try:
+                total = await storage.file_size.remote.aio(path)
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+            offset = 0
+            while offset < total:
+                try:
+                    chunk = await storage.read_file_range.remote.aio(
+                        path, offset, _MODAL_RANGE_BYTES
+                    )
+                except FileNotFoundError:
+                    raise HTTPException(status_code=404, detail=f"File not found: {path}")
+                if not chunk:
+                    # A short file between calls, or a concurrent delete. Either
+                    # way there is nothing more to send, and hanging would be worse.
+                    break
+                yield chunk
+                offset += len(chunk)
+
+        return StreamingResponse(_stream(), media_type="application/octet-stream")
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
         FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")

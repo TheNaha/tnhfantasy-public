@@ -2,10 +2,10 @@ import asyncio
 import os
 import json
 import base64
-from typing import Dict, Any, Optional
+from typing import Any, AsyncIterator, Dict, Optional
 
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse
 import httpx
 
 from provider_core import (
@@ -18,6 +18,12 @@ from provider_core.base_client import BaseProviderClient
 from provider_core.responses import failed, from_upstream, ok, outcome
 from provider_core.utils import translate_task_events, TaskEvent
 from provider_core.reconciliation import determine_download_token
+
+# Forward the body in chunks so peak memory is one chunk rather than one file.
+_STREAM_CHUNK_BYTES = 1024 * 1024
+# Long enough for a multi-GB checkpoint to arrive, short enough that a
+# dead agent does not hold the worker.
+_GET_FILE_TIMEOUT_SECONDS = 600.0
 from provider_core.models import MODEL_DIRECTORIES
 
 logger = get_logger("image_worker.remote_comfy.client")
@@ -169,21 +175,38 @@ class RemoteComfyProviderClient(BaseProviderClient):
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def get_file(self, path: str) -> StreamingResponse:
-        # The agent owns storage, so read files from DATA_DIR via /get-file rather
-        # than ComfyUI's /view (which only serves output/ images and 404s for
-        # model-dir metadata/preview sidecars). This mirrors how the Modal/Beam
-        # engines back get_file with their own FileStorage.read_file.
+        """Stream the file straight through from the remote agent.
+
+        The agent owns storage, so this reads from DATA_DIR via /get-file rather
+        than ComfyUI's /view (which only serves output/ images and 404s for
+        model-dir metadata/preview sidecars). This mirrors how the Modal/Beam
+        engines back get_file with their own FileStorage.read_file.
+
+        It was `Response(content=response.content)` — the agent's whole file, held
+        once in the agent, then again in this worker, then again in the response.
+        Three copies of a 7 GB checkpoint. `client.stream` keeps the body in flight
+        instead, so peak memory here is one chunk on each side.
+        """
         client = get_http_client()
-        response = await client.get(
-            f"{REMOTE_AGENT_URL}/get-file/{path}",
-            headers=self.get_agent_headers(),
-            timeout=60.0,
-        )
-        if response.status_code == 404:
-            raise HTTPException(status_code=404, detail=f"File not found: {path}")
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=response.text)
-        return Response(content=response.content, media_type="application/octet-stream")
+
+        async def _stream() -> AsyncIterator[bytes]:
+            async with client.stream(
+                "GET",
+                f"{REMOTE_AGENT_URL}/get-file/{path}",
+                headers=self.get_agent_headers(),
+                timeout=_GET_FILE_TIMEOUT_SECONDS,
+            ) as response:
+                if response.status_code == 404:
+                    raise HTTPException(status_code=404, detail=f"File not found: {path}")
+                if response.status_code >= 400:
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Remote agent returned {response.status_code} for {path}",
+                    )
+                async for chunk in response.aiter_bytes(_STREAM_CHUNK_BYTES):
+                    yield chunk
+
+        return StreamingResponse(_stream(), media_type="application/octet-stream")
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
         client = get_http_client()

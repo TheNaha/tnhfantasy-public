@@ -1148,6 +1148,11 @@ class FileStorage:
     def read_file(self, path: str) -> bytes:
         """
         Read file contents from the volume.
+
+        Kept for small files. `read_file_range` exists because a modal method
+        serialises its return value across the RPC boundary, so a 7 GB checkpoint
+        is 7 GB in the container and 7 GB in the caller before anyone can do
+        anything with it. Callers should prefer the ranged pair.
         """
         import os
         
@@ -1160,6 +1165,41 @@ class FileStorage:
         
         with open(full_path, "rb") as f:
             return f.read()
+
+    @modal.method()
+    def file_size(self, path: str) -> int:
+        """Size of a file in the volume, in bytes. Raises FileNotFoundError."""
+        import os
+
+        safe_vol_reload()
+        full_path = get_safe_path("/mnt/data", path)
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"File not found: {path}")
+        return os.path.getsize(full_path)
+
+    @modal.method()
+    def read_file_range(self, path: str, offset: int, length: int) -> bytes:
+        """Read at most `length` bytes starting at `offset`.
+
+        A short read at the end of the file returns whatever is there, so callers
+        treat an empty result as end-of-file. `offset` is validated rather than
+        trusted: a negative offset would be interpreted as an absolute seek.
+        """
+        import os
+
+        if offset < 0 or length < 0:
+            raise ValueError("offset and length must be non-negative")
+        if length == 0:
+            return b""
+
+        safe_vol_reload()
+        full_path = get_safe_path("/mnt/data", path)
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"File not found: {path}")
+
+        with open(full_path, "rb") as f:
+            f.seek(offset)
+            return f.read(length)
     
     @modal.method()
     async def delete_file(self, path: str) -> bool:

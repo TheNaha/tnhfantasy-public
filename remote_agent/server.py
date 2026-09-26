@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Query, Depends
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from provider_core.utils import get_safe_path
@@ -276,12 +276,22 @@ async def delete_model(req: DeleteModelRequest):
 
 @app.get("/get-file/{path:path}", dependencies=[Depends(verify_token)])
 async def get_file(path: str, type: str = Query(default="output"), subfolder: str = Query(default="")):
+    """Stream a file from DATA_DIR.
+
+    This read the whole file with `f.read()` inside an `async def` and returned it
+    in a single Response. On a single-process `uvicorn.run` that blocks every other
+    request on the agent for the duration, and a 7 GB checkpoint is three copies
+    of RAM between here and whoever asked for it.
+
+    `FileResponse` reads in chunks on Starlette's own threadpool, so the event loop
+    stays free and peak memory is one chunk. The `type` parameter is accepted and
+    ignored: it was never used here, and `_data_path` already confines the result
+    to DATA_DIR.
+    """
     full_path = _data_path(os.path.join(subfolder, path) if subfolder else path)
-    if not os.path.exists(full_path):
+    if not os.path.exists(full_path) or not os.path.isfile(full_path):
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    with open(full_path, "rb") as f:
-        content = f.read()
-    return Response(content=content, media_type="application/octet-stream")
+    return FileResponse(full_path, media_type="application/octet-stream", filename=os.path.basename(full_path))
 
 
 @app.post("/upload-file", dependencies=[Depends(verify_token)])
