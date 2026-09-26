@@ -30,6 +30,12 @@ vi.mock('../components/providers/AddModelToProviderModal', () => ({
     default: () => null,
 }));
 
+const mockConfirm = vi.hoisted(() => vi.fn(async () => true));
+
+vi.mock('../store/confirmationStore', () => ({
+    useConfirmation: () => ({ confirm: mockConfirm }),
+}));
+
 vi.mock('../components/ConfirmationModal', () => ({
     default: () => null,
 }));
@@ -129,7 +135,19 @@ describe('Providers page', () => {
 
         fireEvent.click(screen.getByLabelText('Delete Provider'));
         await waitFor(() => {
+            expect(mockConfirm).toHaveBeenCalled();
             expect(mutationsState.deleteProvider).toHaveBeenCalledWith('modal-primary');
         });
+    });
+
+    it('does not delete a provider when the confirmation is declined', async () => {
+        mockConfirm.mockResolvedValueOnce(false);
+        render(<Providers />);
+
+        fireEvent.click(screen.getByLabelText('Delete Provider'));
+        await waitFor(() => {
+            expect(mockConfirm).toHaveBeenCalled();
+        });
+        expect(mutationsState.deleteProvider).not.toHaveBeenCalled();
     });
 });

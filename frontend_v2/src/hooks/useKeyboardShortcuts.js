@@ -44,8 +44,11 @@ export const useKeyboardShortcuts = ({ onEscape, onShowHelp } = {}) => {
                     }
                     break;
                 case 'd':
-                    if (location.pathname !== '/') {
-                        navigate('/');
+                    // Dashboard is /gallery. '/' is the FantasyHub landing page,
+                    // so this used to navigate somewhere other than what the
+                    // shortcut's own docstring and the shortcuts modal promise.
+                    if (location.pathname !== '/gallery') {
+                        navigate('/gallery');
                     }
                     break;
                 case 'm':

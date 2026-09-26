@@ -145,6 +145,16 @@ export default function Providers() {
         } catch (error) { toast.error(`Setup failed: ${error.message}`); }
     };
     const handleDelete = async (providerId) => {
+        // Destructive and immediate — no confirmation was wired up, so a stray
+        // click on the delete icon removed the provider and its model status
+        // records outright.
+        const ok = await confirm({
+            title: 'Delete Provider',
+            message: `Delete "${providerId}" and its model status records? Jobs already queued for it will fail.`,
+            confirmText: 'Delete',
+            isDangerous: true,
+        });
+        if (!ok) return;
         try {
             await deleteProvider(providerId);
             if (selectedProviderId === providerId) setSelectedProviderId(null);

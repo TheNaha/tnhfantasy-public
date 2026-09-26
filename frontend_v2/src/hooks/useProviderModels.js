@@ -108,9 +108,15 @@ export function useAddModelToProviders() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['providers-page', 'providers'] });
-            queryClient.invalidateQueries({ queryKey: ['models', 'installed'] });
-            queryClient.invalidateQueries({ queryKey: ['model-directories'] });
-            queryClient.invalidateQueries({ queryKey: ['provider-models'] });
+            // These three keys did not exist, so nothing was ever refetched and
+            // the generator's model dropdowns kept showing a stale list after a
+            // model was added to a provider. Real keys are
+            // ['installed-models', ...] (InstalledTab.jsx) and
+            // ['model-directory', directory] (useModelDirectories.js);
+            // both are invalidated by prefix. There is no ['provider-models']
+            // query.
+            queryClient.invalidateQueries({ queryKey: ['installed-models'] });
+            queryClient.invalidateQueries({ queryKey: ['model-directory'] });
         },
     });
 }

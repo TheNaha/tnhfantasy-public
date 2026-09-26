@@ -106,4 +106,54 @@ describe('useGenerationPreflight', () => {
             missingModelCount: 0,
         });
     });
+    it('shares the missing-models dialog state across separate hook instances', async () => {
+        // Regression: isChecking/isMissingModelsOpen used to be local useState,
+        // and useGeneratorCore() is called independently in five places. The
+        // instance whose runWithPreflight() decided to open the dialog was never
+        // the instance whose isMissingModelsOpen the modal rendered from, so the
+        // "missing models" dialog could never appear. Two hooks here mirror the
+        // real pair: useWorkflowBuilder (sets) and UnifiedGeneratorLayout (reads).
+        jobsApi.validate.mockResolvedValue({
+            valid: false,
+            global_missing: { checkpoints: ['missing-model.safetensors'] },
+            eligible_providers: [],
+        });
+
+        const setter = renderWithClient(() => useGenerationPreflight());
+        const reader = renderWithClient(() => useGenerationPreflight());
+
+        await act(async () => {
+            await setter.result.current.runWithPreflight({ workflow: 'test' }, {});
+        });
+
+        expect(setter.result.current.isMissingModelsOpen).toBe(true);
+        expect(reader.result.current.isMissingModelsOpen).toBe(true);
+    });
+
+    it('shares the in-flight checking flag across separate hook instances', async () => {
+        let resolveValidate;
+        jobsApi.validate.mockReturnValue(new Promise((resolve) => {
+            resolveValidate = resolve;
+        }));
+
+        const setter = renderWithClient(() => useGenerationPreflight());
+        const reader = renderWithClient(() => useGenerationPreflight());
+
+        let pending;
+        act(() => {
+            pending = setter.result.current.validateWorkflow({ workflow: 'test' });
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(setter.result.current.isChecking).toBe(true);
+        expect(reader.result.current.isChecking).toBe(true);
+
+        await act(async () => {
+            resolveValidate({ valid: true, global_missing: {}, eligible_providers: [] });
+            await pending;
+        });
+
+        expect(setter.result.current.isChecking).toBe(false);
+        expect(reader.result.current.isChecking).toBe(false);
+    });
 });

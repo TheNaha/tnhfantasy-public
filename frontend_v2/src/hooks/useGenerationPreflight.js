@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { jobsApi } from '../api';
 import { useGeneratorStore } from '../store/generatorStore';
@@ -13,9 +13,15 @@ function countModelEntries(modelGroups = {}) {
 
 export function useGenerationPreflight() {
     const queryClient = useQueryClient();
-    const [isChecking, setIsChecking] = useState(false);
-    const [isMissingModelsOpen, setIsMissingModelsOpen] = useState(false);
+    // Shared, not per-instance. useGeneratorCore() is called independently in
+    // five places; with local useState the component that rendered the
+    // "missing models" dialog and the one whose runWithPreflight() decided to
+    // open it were different hook instances, so the dialog never appeared.
     const preflightTick = useGeneratorStore(state => state.preflightTick);
+    const isChecking = useGeneratorStore(state => state.preflightChecking);
+    const isMissingModelsOpen = useGeneratorStore(state => state.isMissingModelsOpen);
+    const setPreflightChecking = useGeneratorStore(state => state.setPreflightChecking);
+    const setIsMissingModelsOpen = useGeneratorStore(state => state.setIsMissingModelsOpen);
 
     const { data: validationResult = null } = useQuery({
         queryKey: PREFLIGHT_KEY,
@@ -30,7 +36,7 @@ export function useGenerationPreflight() {
     }, [queryClient, preflightTick]);
 
     const validateWorkflow = useCallback(async (workflow, preferredProviderId = null) => {
-        setIsChecking(true);
+        setPreflightChecking(true);
         try {
             const result = await jobsApi.validate(workflow, preferredProviderId);
             queryClient.setQueryData(PREFLIGHT_KEY, result);
@@ -39,9 +45,9 @@ export function useGenerationPreflight() {
             }
             return result;
         } finally {
-            setIsChecking(false);
+            setPreflightChecking(false);
         }
-    }, [queryClient]);
+    }, [queryClient, setPreflightChecking, setIsMissingModelsOpen]);
 
     const runWithPreflight = useCallback(async (
         workflow,
@@ -60,7 +66,7 @@ export function useGenerationPreflight() {
         setIsMissingModelsOpen(false);
         const submissionResult = await onValid?.(result);
         return { ok: true, result, submissionResult };
-    }, [validateWorkflow]);
+    }, [validateWorkflow, setIsMissingModelsOpen]);
 
     const summary = useMemo(() => {
         if (!validationResult) {

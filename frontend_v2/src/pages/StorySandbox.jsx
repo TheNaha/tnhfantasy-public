@@ -294,6 +294,7 @@ export default function StorySandbox() {
     // don't hammer the API. Skipped while streaming (the server pushes the
     // updated content via WebSocket and refetches).
     const autoSaveTimerRef = useRef(null);
+    const updateChapterMutateAsync = updateChapter.mutateAsync;
     useEffect(() => {
         if (!activeChapterId || isStreaming) return;
         if (editorContent === (activeChapter?.content || '') && !isDirtyRef.current) return;
@@ -307,7 +308,7 @@ export default function StorySandbox() {
                 !isStreamingRef.current
             ) {
                 try {
-                    await updateChapter.mutateAsync({
+                    await updateChapterMutateAsync({
                         storyId: activeStoryId,
                         chapterId: activeChapterId,
                         content: currentContent,
@@ -320,8 +321,12 @@ export default function StorySandbox() {
         }, 2000);
 
         return () => clearTimeout(autoSaveTimerRef.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [editorContent, activeChapterId, isStreaming, activeStoryId, updateChapter, activeChapter?.content]);
+    // Depend on the stable mutateAsync reference, not the mutation result
+    // object: react-query v5 returns a new object literal from useMutation on
+    // every render, so including it cleared the timer and restarted the 2s
+    // window on every background re-render (queue poll, WS isIllustrating,
+    // revisions refetch) and the save could never fire.
+    }, [editorContent, activeChapterId, isStreaming, activeStoryId, updateChapterMutateAsync, activeChapter?.content]);
 
     const handleContinue = useCallback(async () => {
         if (!activeStoryId || !activeChapterId || isStreaming) return;
@@ -744,6 +749,13 @@ export default function StorySandbox() {
 
     const handleDeleteChapter = async (chapterId) => {
         if (!activeStoryId) return;
+        const ok = await confirm({
+            title: 'Delete Chapter',
+            message: 'This permanently removes the chapter and its content. This cannot be undone.',
+            confirmText: 'Delete',
+            isDangerous: true,
+        });
+        if (!ok) return;
         try {
             await deleteChapter.mutateAsync({ storyId: activeStoryId, chapterId });
             if (activeChapterId === chapterId) {
@@ -932,15 +944,6 @@ export default function StorySandbox() {
                             onClose={() => setShowParseModal(false)}
                             onComplete={handleParseStoryComplete}
                         />
-
-                        {editingCharacter && (
-                            <CharacterModal
-                                isOpen={true}
-                                onClose={() => setEditingCharacter(null)}
-                                character={editingCharacter}
-                                onSave={handleSaveCharacter}
-                            />
-                        )}
                     </>
                 ) : (
                     <>
@@ -1071,6 +1074,19 @@ export default function StorySandbox() {
                 onClose={() => { setEditingLorebook(null); setShowLorebookModal(false); }}
                 lorebook={editingLorebook}
             />
+
+            {/* Must live OUTSIDE the `!activeStoryId` branch: setEditingCharacter
+                is only ever called from StoryContextPanel, which renders only
+                when a story is active. Inside the branch "Edit Character" from
+                the context panel did nothing at all. */}
+            {editingCharacter && (
+                <CharacterModal
+                    isOpen={true}
+                    onClose={() => setEditingCharacter(null)}
+                    character={editingCharacter}
+                    onSave={handleSaveCharacter}
+                />
+            )}
 
             <LocationModal
                 isOpen={showLocationModal}

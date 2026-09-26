@@ -165,8 +165,6 @@ export const useSendMessage = () => {
             const keyPrefix = ['world_vault', 'messages', chatId];
             await queryClient.cancelQueries({ queryKey: keyPrefix });
             const previous = queryClient.getQueriesData({ queryKey: keyPrefix });
-            const baseKey = ['world_vault', 'messages', chatId];
-            const basePrevious = queryClient.getQueryData(baseKey);
             const optimisticMessage = {
                 id: `temp-${crypto.randomUUID()}`,
                 role: message.role,
@@ -175,20 +173,21 @@ export const useSendMessage = () => {
                 created_at: new Date().toISOString(),
                 optimistic: true,
             };
+            // Prefix update is what actually reaches the components: every page
+            // of messages lives under a longer key
+            // ([...,'messages',chatId,limit,offset,branch,search,tail]).
+            // A parallel exact-key write here was dead — getQueryData on the
+            // 3-element prefix never matched a real cache entry, so it created
+            // an orphan entry and the onError rollback branch that read it back
+            // could never run.
             queryClient.setQueriesData({ queryKey: keyPrefix }, (old) => [
                 ...(old || []),
                 optimisticMessage,
             ]);
-            queryClient.setQueryData(baseKey, [...(basePrevious || []), optimisticMessage]);
-            return { previous, basePrevious };
+            return { previous };
         },
         onError: (_, { chatId }, context) => {
             context?.previous?.forEach(([key, data]) => queryClient.setQueryData(key, data));
-            if (context?.basePrevious !== undefined) {
-                queryClient.setQueryData(['world_vault', 'messages', chatId], context.basePrevious);
-            } else {
-                queryClient.removeQueries({ queryKey: ['world_vault', 'messages', chatId], exact: true });
-            }
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', chatId] });
         },
         onSuccess: (_, variables) => {

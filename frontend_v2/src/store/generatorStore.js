@@ -133,6 +133,15 @@ export const useGeneratorStore = create(
             controlnets: [],
             ipAdapters: [],
             preflightTick: 0,
+            // Preflight dialog state lives here, not in useState inside
+            // useGenerationPreflight. useGeneratorCore() is called
+            // independently in five places and each call used to get its own
+            // private copy, so the instance whose runWithPreflight() set
+            // "missing models" was never the instance whose
+            // isMissingModelsOpen the modal read — the dialog could never open.
+            // isChecking must also be shared, for the same reason.
+            preflightChecking: false,
+            isMissingModelsOpen: false,
 
             // Models
             selectedCheckpoint: null,
@@ -247,6 +256,8 @@ export const useGeneratorStore = create(
             setControlnets: (controlnets) => set((state) => ({ controlnets, preflightTick: state.preflightTick + 1 })),
 
             setHiresFix: (hiresFix) => set({ hiresFix }),
+            setPreflightChecking: (preflightChecking) => set({ preflightChecking }),
+            setIsMissingModelsOpen: (isMissingModelsOpen) => set({ isMissingModelsOpen }),
             setHiresUpscaler: (hiresUpscaler) => set({ hiresUpscaler }),
             setHiresDenoise: (hiresDenoise) => set({ hiresDenoise }),
             setHiresUpscale: (hiresUpscale) => set({ hiresUpscale }),
@@ -357,7 +368,7 @@ export const useGeneratorStore = create(
         {
             name: 'generator-storage', // name of the item in the storage (must be unique)
             partialize: (state) => {
-                const { sourceImage, maskImage, preflightTick, ...rest } = state;
+                const { sourceImage, maskImage, preflightTick, preflightChecking, isMissingModelsOpen, ...rest } = state;
                 return rest;
             }
         }

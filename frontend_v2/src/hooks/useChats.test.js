@@ -203,16 +203,28 @@ describe('useChats mutations', () => {
         expect(messages[0].content).toBe('a');
     });
 
-    it('useSendMessage rolls forward optimistic entry into real messages on success', async () => {
+    it('useSendMessage appends the optimistic entry to the real message pages', async () => {
         apiMock.post.mockResolvedValue({ id: 'm-new' });
         const { wrapper, queryClient } = createWrapper();
-        const { result } = renderHook(() => useSendMessage(), { wrapper });
 
+        // This is the key shape useMessages actually uses
+        // ([...,'messages',chatId,limit,offset,branch,search,tail]). The
+        // optimistic update is a PREFIX update, so it must land here.
+        const realKey = ['world_vault', 'messages', 'c1', 100, 0, 'active', '', 'asc'];
+        queryClient.setQueryData(realKey, [{ id: 'm1', content: 'earlier' }]);
+
+        const { result } = renderHook(() => useSendMessage(), { wrapper });
         await act(async () => result.current.mutateAsync({ chatId: 'c1', message: { role: 'user', content: 'hi' } }));
-        const messages = queryClient.getQueryData(['world_vault', 'messages', 'c1']);
-        expect(messages).toHaveLength(1);
-        expect(messages[0].content).toBe('hi');
-        expect(messages[0].optimistic).toBe(true);
+
+        const messages = queryClient.getQueryData(realKey);
+        expect(messages).toHaveLength(2);
+        expect(messages[1].content).toBe('hi');
+        expect(messages[1].optimistic).toBe(true);
+
+        // The 3-element prefix must NOT hold a private copy: nothing renders
+        // from it, and on error the rollback branch that read it back could
+        // never run.
+        expect(queryClient.getQueryData(['world_vault', 'messages', 'c1'])).toBeUndefined();
     });
 
     it('useIllustrateChat posts with an empty image_prompt fallback', async () => {

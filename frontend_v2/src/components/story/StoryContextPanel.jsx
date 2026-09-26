@@ -87,7 +87,7 @@ export default React.memo(function StoryContextPanel({
                                 const isActive = (activeStory?.character_ids || []).includes(char.id);
                                 return (
                                     <div key={char.id} className={clsx(
-                                        "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors",
+                                        "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors group",
                                         isActive ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
                                     )}>
                                         <button

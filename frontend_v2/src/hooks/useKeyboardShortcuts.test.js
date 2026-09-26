@@ -50,11 +50,14 @@ describe('useKeyboardShortcuts', () => {
         expect(mockNavigate).toHaveBeenCalledWith('/generate');
     });
 
-    it('navigates to / when "d" is pressed', () => {
+    it('navigates to /gallery when "d" is pressed', () => {
+        // The Dashboard route is /gallery; '/' is the FantasyHub landing page.
+        // The shortcut previously went to '/', contradicting both its own
+        // docstring and the shortcuts modal, which both say "Go to Dashboard".
         mockLocation = { pathname: '/generate' };
         renderHook(() => useKeyboardShortcuts());
         triggerKeyDown('d');
-        expect(mockNavigate).toHaveBeenCalledWith('/');
+        expect(mockNavigate).toHaveBeenCalledWith('/gallery');
     });
 
     it('navigates to /models when "m" is pressed', () => {
