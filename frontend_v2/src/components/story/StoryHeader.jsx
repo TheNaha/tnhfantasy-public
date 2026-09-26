@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import { BookOpen, Sparkles, Loader2, Save, Edit3, Book, Layers, ImageIcon, Download, FileText } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -20,6 +20,32 @@ export default React.memo(function StoryHeader({
     onTitleChange,
     onExport,
 }) {
+    const serverTitle = activeStory?.title || '';
+    // The title box holds a local draft rather than `defaultValue`, so what is
+    // on screen is what the field believes, and clearing it is a value the
+    // field can actually hold and commit. Uncontrolled, an emptied box stayed
+    // empty forever while the row kept the old title in the database — and the
+    // field was keyed on the story id, so switching stories was the only way to
+    // resynchronise it.
+    const [draftTitle, setDraftTitle] = useState(serverTitle);
+    const [syncedTitle, setSyncedTitle] = useState(serverTitle);
+
+    // Re-sync on a story switch or an out-of-band rename (auto-generate title,
+    // a rollback). Adjusted during render, the ContextSlider pattern, so no
+    // effect can land after the user has started typing.
+    if (serverTitle !== syncedTitle) {
+        setSyncedTitle(serverTitle);
+        setDraftTitle(serverTitle);
+    }
+
+    // `onTitleChange` reads `event.target.value`, so Enter reuses the same
+    // commit path as blur instead of duplicating the payload shape here.
+    const handleTitleKeyDown = useCallback((e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        e.currentTarget.blur();
+    }, []);
+
     return (
         <div className="h-16 border-b border-white/5 flex items-center justify-between px-2 sm:px-6 bg-gray-900/60 backdrop-blur-md z-10 shrink-0 gap-2">
             <div className="flex items-center gap-1 sm:gap-3 min-w-0 flex-1">
@@ -32,11 +58,13 @@ export default React.memo(function StoryHeader({
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 min-w-0">
       <input
-        key={`story-title-${activeStory?.id || 'none'}`}
         type="text"
-
-                            defaultValue={activeStory?.title || ''}
+        value={draftTitle}
+        onChange={(e) => setDraftTitle(e.target.value)}
                             onBlur={onTitleChange}
+                            onKeyDown={handleTitleKeyDown}
+                            placeholder="Untitled story"
+                            aria-label="Story title"
                             className="bg-transparent font-semibold text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 rounded px-1 transition-all w-full truncate text-sm sm:text-base"
                         />
                     </div>

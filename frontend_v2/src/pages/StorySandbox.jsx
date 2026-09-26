@@ -888,9 +888,15 @@ export default function StorySandbox() {
 
     const handleStoryTitleUpdate = async (e) => {
         const newTitle = e.target.value;
-        if (!activeStoryId || !newTitle.trim()) return;
+        // The early return on `!newTitle.trim()` meant clearing the field and
+        // blurring did nothing server-side, while the input kept displaying
+        // empty — so the UI and the database silently diverged. The backend
+        // accepts an empty title (there is no min-length on it), so the only
+        // question is whether the story exists.
+        if (!activeStoryId) return;
+        if (newTitle === (activeStory?.title ?? '')) return;
         try {
-            await updateStory.mutateAsync({ id: activeStoryId, title: newTitle });
+            await updateStory.mutateAsync({ id: activeStoryId, title: newTitle.trim() });
         } catch {
             toast.error('Failed to save story title');
         }

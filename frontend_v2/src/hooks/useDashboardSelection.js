@@ -74,7 +74,7 @@ export function useDashboardSelection({
         setShowSelectCollection(true);
     }, [setShowSelectCollection]);
 
-    const handleRemoveSelectionFromCollection = useCallback(() => {
+    const handleRemoveSelectionFromCollection = useCallback(async () => {
         if (selectedFiles.size === 0) {
             return;
         }
@@ -82,11 +82,20 @@ export function useDashboardSelection({
             toast.error('No collection selected to remove from');
             return;
         }
-        selectedFiles.forEach(filename => {
-            removeFromCollection(activeCollection, filename);
-        });
-        toast.success(`Removed ${selectedFiles.size} image${selectedFiles.size !== 1 ? 's' : ''} from collection`);
-        setSelectedFiles(new Set());
+        const count = selectedFiles.size;
+        // Awaited, and the selection only cleared on success. These calls were
+        // fired and forgotten with an unconditional success toast, so a rejected
+        // PATCH reported a removal that never happened and left the selection
+        // looking done.
+        try {
+            await Promise.all(
+                Array.from(selectedFiles).map(filename => removeFromCollection(activeCollection, filename))
+            );
+            toast.success(`Removed ${count} image${count !== 1 ? 's' : ''} from collection`);
+            setSelectedFiles(new Set());
+        } catch {
+            toast.error('Failed to remove images from collection');
+        }
     }, [activeCollection, removeFromCollection, selectedFiles]);
 
     const handleBatchDelete = useCallback(async () => {

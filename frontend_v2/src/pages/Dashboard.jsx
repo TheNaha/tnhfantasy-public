@@ -371,7 +371,7 @@ export default function Dashboard() {
         refetch();
     }, [confirm, queryClient, refetch]);
 
-    const handleSelectCollection = useCallback((collectionId) => {
+    const handleSelectCollection = useCallback(async (collectionId) => {
         if (moveSelectionMode) {
             setMoveSelectionMode(false);
             const images = Array.from(selectedFiles);
@@ -391,10 +391,18 @@ export default function Dashboard() {
             setSelectionMode(false);
             return;
         }
-        addToCollection(collectionId, Array.from(selectedFiles));
-        toast.success(`Added ${selectedFiles.size} images to collection`, { icon: '📁' });
-        setSelectedFiles(new Set());
-        setSelectionMode(false);
+        // Awaited, and the success toast only on success. `addToCollection` awaits
+        // `mutateAsync` internally, so not awaiting it made a rejected PATCH
+        // produce an unhandled rejection *and* a toast telling the user their
+        // images were saved.
+        try {
+            await addToCollection(collectionId, Array.from(selectedFiles));
+            toast.success(`Added ${selectedFiles.size} images to collection`, { icon: '📁' });
+            setSelectedFiles(new Set());
+            setSelectionMode(false);
+        } catch {
+            toast.error('Failed to add images to collection');
+        }
     }, [moveSelectionMode, moveImagesMutation, activeCollection, addToCollection, selectedFiles, setSelectedFiles, setSelectionMode]);
 
     const handleMoveSelectionToCollection = useCallback(() => {
@@ -445,9 +453,15 @@ export default function Dashboard() {
                 e.preventDefault();
                 refetch();
             } else if (key === ' ' || key === 'spacebar') {
+                // The shortcuts modal documents Space as "Open/close image", but
+                // only the close path existed. Opening is a card activation, so it
+                // reuses handleImageClick rather than reaching into the lightbox.
                 if (selectedImage) {
                     e.preventDefault();
                     closeSelectedImage();
+                } else if (!selectionMode && displayedItems.length > 0) {
+                    e.preventDefault();
+                    handleImageClick(displayedItems[0]);
                 }
             } else if (e.key === 'Delete' || e.key === 'Backspace') {
                 if (selectionMode && selectedFiles.size > 0) {
@@ -465,7 +479,7 @@ export default function Dashboard() {
     }, [
         location.pathname, selectionMode, handleSetSelectionMode, refetch,
         selectedFiles, displayedItems, setSelectedFiles, handleBatchDelete,
-        selectedImage, closeSelectedImage, handleDelete
+        selectedImage, closeSelectedImage, handleDelete, handleImageClick
     ]);
 
     return (
