@@ -1,6 +1,7 @@
 # Pytest configuration and fixtures
 
 import os
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +9,7 @@ from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from api.deps import get_session, get_session_sync
+from api.deps import get_session
 from api.main import app
 import infrastructure.database as _infra_db
 
@@ -51,6 +52,56 @@ def session_fixture(engine):
         yield session
 
 
+@pytest.fixture(autouse=True)
+def _redirect_sync_sessions(engine):
+    """Point every `get_session_sync()` caller at the test database.
+
+    Service code opens its own session through `get_session_sync()` —
+    statistics aggregation, reconciliation, the load balancer, file cleanup.
+    Two things made that hard to contain:
+
+    * the redirection used to live inside `client_fixture`, so a test that
+      exercised such a service *without* requesting `client` ran against the
+      developer's real `data/comfy.db` — it saw production rows, and a service
+      that writes would have written them.
+    * modules that do `from api.deps import get_session_sync` bind the function
+      into their own namespace at import time, so rebinding the attribute on
+      `api.deps` (or `infrastructure.database`) afterwards never reached them.
+      `api/routes/files.py` is the case that surfaced it: its `_sync_session()`
+      quietly used the on-disk database.
+
+    So this rebinds the name in every already-imported module, not just on the
+    two modules that define it.
+    """
+    def get_session_sync_override():
+        return Session(engine)
+
+    import api.deps as _api_deps
+
+    original_infra = _infra_db.get_session_sync
+    original_deps = _api_deps.get_session_sync
+    known_originals = {id(original_infra), id(original_deps)}
+
+    rebound: list[tuple[object, str, object]] = []
+    for module in list(sys.modules.values()):
+        if module is None:
+            continue
+        current = getattr(module, "get_session_sync", None)
+        if current is not None and id(current) in known_originals:
+            setattr(module, "get_session_sync", get_session_sync_override)
+            rebound.append((module, current))
+
+    _infra_db.get_session_sync = get_session_sync_override
+    _api_deps.get_session_sync = get_session_sync_override
+    try:
+        yield
+    finally:
+        _infra_db.get_session_sync = original_infra
+        _api_deps.get_session_sync = original_deps
+        for module, original in rebound:
+            module.get_session_sync = original
+
+
 @pytest.fixture(name="client")
 def client_fixture(session: Session, engine):
     """Create test client with overridden database session."""
@@ -61,19 +112,9 @@ def client_fixture(session: Session, engine):
         return Session(engine)
 
     app.dependency_overrides[get_session] = get_session_override
-    original_get_session = _infra_db.get_session
-    _infra_db.get_session = get_session_override
-    original_get_session_sync = _infra_db.get_session_sync
-    _infra_db.get_session_sync = get_session_sync_override
-    original_api_get_session_sync = get_session_sync
-    import api.deps as _api_deps
-    _api_deps.get_session_sync = get_session_sync_override
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
-    _infra_db.get_session = original_get_session
-    _infra_db.get_session_sync = original_get_session_sync
-    _api_deps.get_session_sync = original_api_get_session_sync
 
 
 @pytest.fixture
