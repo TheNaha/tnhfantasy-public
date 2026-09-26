@@ -25,7 +25,7 @@ HF_TOKEN = os.getenv("HF_TOKEN", "")
 CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
 DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "1800"))
 
-_SIDECAR_EXTENSIONS = (".json", ".preview.png", ".sha256", ".downloading")
+_SIDECAR_EXTENSIONS = (".json", ".preview.png", ".sha256", ".downloading", ".lock")
 
 
 def _ensure_data_dir() -> str:
@@ -193,14 +193,12 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
             if name.startswith("."):
                 continue
             if name.endswith(".downloading"):
+                # Reported, never deleted: reconciliation runs with delete_invalid
+                # true, and removing an in-flight temp file leaves the writer with
+                # a live descriptor whose os.replace then fails.
                 rel_path = os.path.relpath(os.path.join(root, name), DATA_DIR).replace("\\", "/")
                 size = os.path.getsize(os.path.join(root, name))
                 partial.append({"name": name, "path": rel_path, "size": size, "issue": "Incomplete download (temp file)"})
-                if delete_invalid:
-                    try:
-                        os.remove(os.path.join(root, name))
-                    except Exception:
-                        pass
                 continue
             if _is_sidecar(name):
                 continue

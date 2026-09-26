@@ -26,7 +26,8 @@ import time
 # IMPORTANT: provider_core is a sibling package and must be present in the deploy
 # source context. Deploying beam_app.py from only image_worker/engines/beam/ (without the
 # provider_containers root) can fail with ModuleNotFoundError: provider_core.
-from provider_core.utils import get_safe_path
+from provider_core.downloads import pending_download_paths
+from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
 from provider_core.logging import get_logger
 
 logger = get_logger("image_worker.beam.beam_app")
@@ -368,7 +369,7 @@ async def delete_model(request: Request):
     full_path = get_safe_path("/mnt/data", path)
 
     def _do_delete():
-        if not os.path.exists(full_path) and not os.path.exists(full_path + ".downloading"):
+        if not os.path.exists(full_path) and not list(pending_download_paths(full_path)):
             return False, f"Not found: {path}"
         try:
             if os.path.exists(full_path):
@@ -376,8 +377,8 @@ async def delete_model(request: Request):
                     shutil.rmtree(full_path)
                 else:
                     os.remove(full_path)
-            if os.path.exists(full_path + ".downloading"):
-                os.remove(full_path + ".downloading")
+            for stale in pending_download_paths(full_path):
+                os.remove(stale)
             if not path.endswith((".json", ".preview.png", ".sha256")):
                 base_path, _ = os.path.splitext(full_path)
                 for side_file in [base_path + ".json", base_path + ".preview.png", full_path + ".sha256"]:
@@ -475,19 +476,16 @@ async def validate_models(request: Request):
         with os.scandir(target_dir) as entries:
             for entry in entries:
                 name = entry.name
-                if name.endswith(('.json', '.preview.png', '.txt', '.yaml', '.yml')):
+                if not is_model_file(name):
                     continue
                 if not entry.is_file():
                     continue
                 full_path = entry.path
-                if name.endswith('.downloading'):
-                    partial_downloads.append({
-                        "name": name,
-                        "size": entry.stat().st_size,
-                        "issue": "Incomplete download (temp file)"
-                    })
-                    if delete_invalid:
-                        os.remove(full_path)
+                if is_transient_artifact(name):
+                    # A lock or an in-flight download is not a broken model.
+                    # Deleting it here also deleted the model's .json and
+                    # .preview.png sidecars (splitext("x.safetensors.lock") is
+                    # "x.safetensors") and unlinked a held flock.
                     continue
                 file_size = entry.stat().st_size
                 validation = validate_downloaded_file(full_path)

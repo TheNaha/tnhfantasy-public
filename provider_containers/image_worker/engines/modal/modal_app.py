@@ -14,7 +14,8 @@ from pathlib import Path
 # IMPORTANT: provider_core is a sibling package. Modal cloud functions can fail
 # to import this module unless provider_core is explicitly packaged into the
 # image (see image_base.add_local_dir below).
-from provider_core.utils import get_safe_path
+from provider_core.downloads import pending_download_paths
+from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
 from provider_core.downloads import download_model_to_path
 from provider_core.http_client import get_http_client
 from provider_core.validation import (
@@ -330,7 +331,7 @@ async def list_models_with_metadata_internal(base_path: str, directory: str, com
             for e in os.scandir(target_dir):
                 if e.is_file():
                     entry_set.add(e.name)
-                    if not e.name.endswith(('.json', '.preview.png', '.sha256')): entries.append((e.name, e.stat().st_size))
+                    if is_model_file(e.name): entries.append((e.name, e.stat().st_size))
         except: pass
         return entries, entry_set
         
@@ -983,7 +984,14 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         except Exception:
             return None
 
-        if name.endswith(('.json', '.preview.png', '.txt', '.yaml', '.yml')):
+        if not is_model_file(name):
+            return None
+        # Never delete a file the download pipeline is using. Reconciliation runs
+        # with delete_invalid=True, and a 0-byte lock or an in-flight temp file
+        # fails validation — removing it would also remove the model's metadata
+        # and preview (splitext("x.safetensors.lock") is "x.safetensors") and
+        # would unlink the flock a concurrent downloader holds.
+        if is_transient_artifact(name):
             return None
             
         full_path = os.path.join(target_dir, name)
@@ -1165,7 +1173,7 @@ class FileStorage:
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Deleting file: {full_path}")
         
-        if not os.path.exists(full_path) and not os.path.exists(full_path + ".downloading"):
+        if not os.path.exists(full_path) and not list(pending_download_paths(full_path)):
             return False
         
         try:
@@ -1176,8 +1184,8 @@ class FileStorage:
                 else:
                     await asyncio.to_thread(os.remove, full_path)
                 
-            if os.path.exists(full_path + ".downloading"):
-                await asyncio.to_thread(os.remove, full_path + ".downloading")
+            for stale in pending_download_paths(full_path):
+                await asyncio.to_thread(os.remove, stale)
                 
             if not path.endswith((".json", ".preview.png", ".sha256")):
                 base_path, _ = os.path.splitext(full_path)

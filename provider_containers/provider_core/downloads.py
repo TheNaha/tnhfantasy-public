@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 
+from .utils import DOWNLOADING_SUFFIX
 from .validation import validate_downloaded_file
 from .logging import get_logger
 
@@ -341,3 +342,22 @@ def _download_model_to_path_unlocked(
             },
         )
         return {"status": "error", "message": error_message, }
+
+
+def pending_download_paths(full_path: str) -> Iterator[str]:
+    """Yield the temp files of every in-flight or abandoned attempt at `full_path`.
+
+    `_unique_temp_path` names each attempt `<path>.<pid>.<hex>.downloading`, so a
+    single fixed `.downloading` name no longer identifies "the" partial file.
+    Deleting a model used to probe the old deterministic name and therefore
+    never removed a partial download, leaving multi-GB files on the volume.
+    """
+    directory = os.path.dirname(full_path) or "."
+    prefix = os.path.basename(full_path) + "."
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return
+    for entry in entries:
+        if entry.startswith(prefix) and entry.endswith(DOWNLOADING_SUFFIX):
+            yield os.path.join(directory, entry)

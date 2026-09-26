@@ -4,7 +4,7 @@ import logging
 import hashlib
 from typing import List, Dict, Any
 
-from provider_core.utils import get_safe_path
+from provider_core.utils import get_safe_path, is_model_file
 
 import asyncio
 import aiofiles
@@ -32,7 +32,7 @@ async def list_models_with_metadata_internal(base_path: str, directory: str, com
                 for entry in it:
                     if entry.is_file():
                         entry_set.add(entry.name)
-                        if not (entry.name.endswith('.json') or entry.name.endswith('.preview.png') or entry.name.endswith('.sha256')):
+                        if is_model_file(entry.name):
                             file_entries.append((entry.name, entry.stat().st_size))
         except Exception as e:
             logger.warning(f"Failed to scandir {target_dir}: {e}")
