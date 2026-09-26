@@ -190,21 +190,32 @@ export default function StorySandbox() {
      
     }, [chapters, activeStoryId, activeChapterId, navigate]);
 
-    // Load chapter content into editor
+    // Load chapter content into editor, and keep a clean editor in sync with the
+    // server.
     useEffect(() => {
         // Guard: don't overwrite editor content while actively streaming
         if (isStreamingRef.current) return;
-        
-        if (activeChapter && loadedChapterIdRef.current !== activeChapterId) {
+
+        const serverContent = activeChapter?.content || '';
+        const chapterChanged = loadedChapterIdRef.current !== activeChapterId;
+
+        if (chapterChanged) {
             loadedChapterIdRef.current = activeChapterId;
             isDirtyRef.current = false;
-            // Wait for next tick to avoid synchronous cascading renders
-            const timer = setTimeout(() => {
-                setEditorContent(activeChapter.content || '');
-                streamingBaseRef.current = activeChapter.content || '';
-            }, 0);
-            return () => clearTimeout(timer);
+        } else if (isDirtyRef.current) {
+            // The user has unsaved work in the buffer. Never clobber it.
+            return;
         }
+
+        // Reordering or deleting a beat rewrites the chapter prose server-side.
+        // Adopt it, otherwise the editor keeps showing text the server no longer
+        // has — the mirror image of the auto-save bug above.
+        // Wait for next tick to avoid synchronous cascading renders
+        const timer = setTimeout(() => {
+            setEditorContent(serverContent);
+            streamingBaseRef.current = serverContent;
+        }, 0);
+        return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeChapterId, activeChapter]);
 
@@ -297,7 +308,13 @@ export default function StorySandbox() {
     const updateChapterMutateAsync = updateChapter.mutateAsync;
     useEffect(() => {
         if (!activeChapterId || isStreaming) return;
-        if (editorContent === (activeChapter?.content || '') && !isDirtyRef.current) return;
+        // Only a *user* edit may be auto-saved. A buffer that differs from the
+        // server is not necessarily stale local state: reordering or deleting a
+        // beat rewrites the chapter prose server-side, and this effect used to
+        // PUT the pre-reorder buffer back over that rewrite — silently reverting
+        // the surgery, with no user action and no error. `isDirtyRef` is set
+        // only by `onEditorChange`, so it distinguishes the two cases exactly.
+        if (!isDirtyRef.current) return;
         if (activeChapterId !== loadedChapterIdRef.current) return;
 
         const currentContent = editorContent;
@@ -326,7 +343,12 @@ export default function StorySandbox() {
     // every render, so including it cleared the timer and restarted the 2s
     // window on every background re-render (queue poll, WS isIllustrating,
     // revisions refetch) and the save could never fire.
-    }, [editorContent, activeChapterId, isStreaming, activeStoryId, updateChapterMutateAsync, activeChapter?.content]);
+    //
+    // `activeChapter?.content` is deliberately NOT a dependency. This effect
+    // must react to local edits only; re-running it because the server changed
+    // the chapter is what turned every server-side prose rewrite into a
+    // destructive write-back.
+    }, [editorContent, activeChapterId, isStreaming, activeStoryId, updateChapterMutateAsync]);
 
     const handleContinue = useCallback(async () => {
         if (!activeStoryId || !activeChapterId || isStreaming) return;
@@ -939,11 +961,6 @@ export default function StorySandbox() {
                                 onClose={() => { setShowCreateModal(false); setNewStoryTitle(''); }}
                             />
                         )}
-                        <ParseStoryModal
-                            isOpen={showParseModal}
-                            onClose={() => setShowParseModal(false)}
-                            onComplete={handleParseStoryComplete}
-                        />
                     </>
                 ) : (
                     <>
@@ -1164,6 +1181,18 @@ export default function StorySandbox() {
 @keyframes tnh-stream-pulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
 .story-stream-pulse { animation: tnh-stream-pulse 1.5s ease-in-out infinite; }
 `}</style>
+        {/* Rendered outside the activeStoryId ternary, not inside the empty-state
+            branch. The sidebar's "Import & Parse Story" button is rendered
+            unconditionally and always dispatches open-parse-story, but the only
+            copy of this modal used to live in the `!activeStoryId` branch — and a
+            story is auto-selected as soon as one exists, so the button set
+            showParseModal(true) with nothing mounted to react to it. Import was
+            reachable only from the state where you have no use for it. */}
+        <ParseStoryModal
+            isOpen={showParseModal}
+            onClose={() => setShowParseModal(false)}
+            onComplete={handleParseStoryComplete}
+        />
         </motion.div>
     );
 }
