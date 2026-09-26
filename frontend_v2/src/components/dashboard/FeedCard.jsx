@@ -32,6 +32,13 @@ import {
 import FeedCardDetails from "./feed-card/FeedCardDetails";
 import FeedCardActions from "./feed-card/FeedCardActions";
 
+/**
+ * Ceiling for the intrinsic-size probe. A blob that decodes normally settles in
+ * single-digit milliseconds; without a ceiling a blob the browser refuses to
+ * decode leaves the promise pending and the menu item permanently inert.
+ */
+const DIMENSION_PROBE_TIMEOUT_MS = 10000;
+
 const FeedCard = memo(function FeedCard({
   item,
   selected,
@@ -85,6 +92,45 @@ const FeedCard = memo(function FeedCard({
       clearTimeout(timer);
     }
   }, [imageEndpoint]);
+
+  /**
+   * Read the intrinsic size off a freshly fetched blob.
+   *
+   * Both call sites used to be `new Promise(resolve => { img.onload = resolve })`
+   * with no `onerror` and no timeout, so a blob the browser could not decode —
+   * a truncated file, a 200 response that is not an image, a decode that never
+   * settles — left the promise pending forever: the `catch` in
+   * `openSourceImage` was never reached, `dimensionUrl` was never revoked, and
+   * the menu item was inert with no way back. Every exit path now settles.
+   */
+  const readImageDimensions = useCallback(async (blob) => {
+    const dimensionUrl = URL.createObjectURL(blob);
+    try {
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        let timer = null;
+        const settle = (fn, value) => {
+          if (timer !== null) clearTimeout(timer);
+          timer = null;
+          img.onload = null;
+          img.onerror = null;
+          fn(value);
+        };
+        timer = setTimeout(
+          () => settle(reject, new Error("Timed out reading image dimensions")),
+          DIMENSION_PROBE_TIMEOUT_MS
+        );
+        img.onload = () => settle(resolve, {
+          width: img.naturalWidth || img.width,
+          height: img.naturalHeight || img.height,
+        });
+        img.onerror = () => settle(reject, new Error("Image could not be decoded"));
+        img.src = dimensionUrl;
+      });
+    } finally {
+      URL.revokeObjectURL(dimensionUrl);
+    }
+  }, []);
 
   const handleReuse = async () => {
     if (reuseLockRef.current) {
@@ -186,67 +232,47 @@ const FeedCard = memo(function FeedCard({
     }
   };
 
-  // Navigate to Img2Img with this image as source
-  const handleImg2Img = useCallback(async () => {
+  // Navigate to Img2Img / Inpaint with this image as source.
+  //
+  // The preview handed to the route is `imageEndpoint`, the same URL the card
+  // already renders, and not a second `URL.createObjectURL(blob)`. The blob
+  // round-trip bought nothing: the target pages fall back to their own asset
+  // URL when `previewUrl` is absent, `ImageUploader` only revokes `blob:`
+  // URLs, and the object URL was never revoked here — it was handed to
+  // `navigate()` and forgotten, and `generatorStore.partialize` drops
+  // `sourceImage`, so nothing on a reload could reclaim it either. The blob is
+  // now scoped to the dimension probe, which revokes it on every path.
+  const openSourceImage = useCallback(async (route, successToast, icon) => {
     try {
       const blob = await loadImageBlob();
+      const { width, height } = await readImageDimensions(blob);
 
-      const dimensionUrl = URL.createObjectURL(blob);
-      const img = new Image();
-      img.src = dimensionUrl;
-      await new Promise((resolve) => {
-        img.onload = resolve;
-      });
-      URL.revokeObjectURL(dimensionUrl);
-
-      const previewUrl = URL.createObjectURL(blob);
-      navigate("/img2img", {
+      navigate(route, {
         state: {
           sourceImage: {
             filename: itemPath,
-            previewUrl,
-            width: img.width,
-            height: img.height,
+            previewUrl: imageEndpoint,
+            width,
+            height,
             needsSync: true,
           },
         },
       });
-      toast.success("Image loaded for Img2Img", { icon: "🖼️" });
+      toast.success(successToast, { icon });
     } catch {
       toast.error("Failed to load image");
     }
-  }, [itemPath, loadImageBlob, navigate]);
+  }, [imageEndpoint, itemPath, loadImageBlob, navigate, readImageDimensions]);
 
-  // Navigate to Inpaint with this image as source
-  const handleInpaint = useCallback(async () => {
-    try {
-      const blob = await loadImageBlob();
+  const handleImg2Img = useCallback(
+    () => openSourceImage("/img2img", "Image loaded for Img2Img", "🖼️"),
+    [openSourceImage]
+  );
 
-      const dimensionUrl = URL.createObjectURL(blob);
-      const img = new Image();
-      img.src = dimensionUrl;
-      await new Promise((resolve) => {
-        img.onload = resolve;
-      });
-      URL.revokeObjectURL(dimensionUrl);
-
-      const previewUrl = URL.createObjectURL(blob);
-      navigate("/inpaint", {
-        state: {
-          sourceImage: {
-            filename: itemPath,
-            previewUrl,
-            width: img.width,
-            height: img.height,
-            needsSync: true,
-          },
-        },
-      });
-      toast.success("Image loaded for Inpainting", { icon: "🎨" });
-    } catch {
-      toast.error("Failed to load image");
-    }
-  }, [itemPath, loadImageBlob, navigate]);
+  const handleInpaint = useCallback(
+    () => openSourceImage("/inpaint", "Image loaded for Inpainting", "🎨"),
+    [openSourceImage]
+  );
 
   const handleShowDetails = async () => {
     if (!showDetails && !metadata) {

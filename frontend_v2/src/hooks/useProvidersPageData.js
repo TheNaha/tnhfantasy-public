@@ -236,6 +236,17 @@ async function ensureProvidersRealtime(queryClient) {
             ws.unsubscribe(PROVIDER_REALTIME_TOPICS);
             realtimeState.cleanup = null;
         };
+
+        // The refcount can drop to zero *while* the awaits above are in flight.
+        // The unmounting consumer's cleanup runs `realtimeState.cleanup?.()`,
+        // which is still null at that point, so nothing is unsubscribed — and by
+        // the time this line runs the listeners are installed with zero
+        // consumers and `cleanup` is set with nobody left to call it. The state
+        // is a WeakMap keyed by queryClient, so the leak outlives every
+        // navigation for the life of the tab.
+        if (realtimeState.consumers === 0) {
+            realtimeState.cleanup();
+        }
     })().finally(() => {
         realtimeState.initPromise = null;
     });

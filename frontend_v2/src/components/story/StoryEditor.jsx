@@ -1,9 +1,26 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { Sparkles } from 'lucide-react';
 import MDEditor from '@uiw/react-md-editor';
 import MentionPicker from './MentionPicker';
 
 export default React.memo(function StoryEditor({ isPreviewMode, editorContent, onEditorChange, textareaRef, isStreaming, activeChapterId, wordCount, readingTimeMinutes, wordCountGoal }) {
+    // Restoring the caret after a mention insert has to wait a macrotask: the
+    // controlled <textarea> has not re-rendered with the new value yet. That
+    // deferral used to be null-checked only when the timeout was *scheduled*,
+    // so a submit, a chapter switch or a navigation landing inside the same
+    // macrotask left the callback dereferencing `textareaRef.current` from a
+    // timer — a TypeError from outside any error boundary, after the component
+    // was already gone. The pending restore is tracked so it can be cancelled,
+    // and the ref is re-checked inside the callback.
+    const restoreTimerRef = useRef(null);
+
+    useEffect(() => () => {
+        if (restoreTimerRef.current !== null) {
+            clearTimeout(restoreTimerRef.current);
+            restoreTimerRef.current = null;
+        }
+    }, []);
+
     const handleSelectEntity = useCallback((item, startIndex, endIndex) => {
         const textBefore = editorContent.slice(0, startIndex);
         const textAfter = editorContent.slice(endIndex);
@@ -13,12 +30,14 @@ export default React.memo(function StoryEditor({ isPreviewMode, editorContent, o
         onEditorChange(textBefore + link + textAfter);
         
         // Restore focus
-        if (textareaRef.current) {
-            setTimeout(() => {
-                textareaRef.current.focus();
-                textareaRef.current.selectionStart = textareaRef.current.selectionEnd = startIndex + link.length;
-            }, 0);
-        }
+        if (restoreTimerRef.current !== null) clearTimeout(restoreTimerRef.current);
+        restoreTimerRef.current = setTimeout(() => {
+            restoreTimerRef.current = null;
+            const textarea = textareaRef.current;
+            if (!textarea) return;
+            textarea.focus();
+            textarea.selectionStart = textarea.selectionEnd = startIndex + link.length;
+        }, 0);
     }, [editorContent, onEditorChange, textareaRef]);
 
     return (
