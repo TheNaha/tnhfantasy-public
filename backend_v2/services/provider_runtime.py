@@ -7,6 +7,11 @@ from infrastructure.providers.runtime import provider_container_name
 
 logger = get_logger("provider_runtime")
 
+# Generous enough for a cold Docker socket, short enough that a wedged daemon
+# cannot hold a request open. The snapshot cache means this only applies to the
+# first provider to miss it.
+_RUNTIME_RESOLVE_TIMEOUT_SECONDS = 5.0
+
 
 @dataclass(frozen=True)
 class ProviderRuntimeTarget:
@@ -45,23 +50,16 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
             container_manager = get_container_manager()
             if container_manager and getattr(container_manager, "client", None) is not None:
                 docker_available = True
-                container = container_manager.running_containers.get(provider_id)
-                if container is None:
-                    try:
-                        container = container_manager.client.containers.get(container_name)
-                    except Exception:
-                        container = None
-
-                if container is not None:
+                # One cached accessor rather than a containers.get() plus a
+                # reload() here. Both are blocking round trips to the Docker
+                # socket, and this function is called twice per provider on the
+                # providers list route, serially, from async handlers.
+                snapshot = container_manager.get_container_snapshot(provider_id, container_name)
+                if snapshot is not None:
                     found = True
-                    try:
-                        container.reload()
-                    except Exception as exc:
-                        logger.debug("container_reload_failed", error=str(exc))
-                    status = getattr(container, "status", "unknown") or "unknown"
-                    health_status = getattr(container, "attrs", {}).get("State", {}).get("Health", {}).get("Status")
-                    healthy = health_status == "healthy" if health_status else None
-                    connected = status == "running" and healthy is not False
+                    status = snapshot.status
+                    healthy = snapshot.healthy
+                    connected = snapshot.running and healthy is not False
         except Exception as exc:
             logger.debug("provider_runtime_status_probe_failed", provider_id=provider_id, error=str(exc))
 
@@ -116,6 +114,54 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
         status="unavailable",
         healthy=False,
     )
+
+
+async def resolve_provider_runtime_async(provider) -> ProviderRuntimeTarget:
+    """`resolve_provider_runtime` without blocking the event loop.
+
+    Resolving a provider's runtime target can talk to the Docker socket, which is a
+    blocking HTTP round trip with no timeout. Called directly from `async def`
+    handlers — and the providers list route does it twice per provider in a serial
+    loop — that stalled the entire event loop for the sum of every connect timeout
+    when `DOCKER_HOST` pointed at an unreachable endpoint. No other request,
+    WebSocket or job-queue worker could progress meanwhile.
+
+    On timeout or failure this degrades rather than raising: the probe falls
+    through to the external-worker and discovery_url branches below, which is what
+    the old `except Exception` did, so an unreachable Docker socket yields an
+    `unavailable` target instead of a 500.
+    """
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(resolve_provider_runtime, provider),
+            timeout=_RUNTIME_RESOLVE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "provider_runtime_resolve_timeout",
+            provider_id=getattr(provider, "id", None),
+            timeout=_RUNTIME_RESOLVE_TIMEOUT_SECONDS,
+        )
+        return ProviderRuntimeTarget(
+            provider_id=getattr(provider, "id", "") or "",
+            mode="unavailable",
+            connected=False,
+            status="probe_timeout",
+            healthy=None,
+        )
+    except Exception as exc:
+        logger.warning(
+            "provider_runtime_resolve_failed",
+            provider_id=getattr(provider, "id", None),
+            error=str(exc),
+        )
+        return ProviderRuntimeTarget(
+            provider_id=getattr(provider, "id", "") or "",
+            mode="unavailable",
+            connected=False,
+            status="probe_failed",
+            healthy=None,
+        )
 
 
 async def monitor_provider_changes():

@@ -11,7 +11,7 @@ from core.events import EventType, emit_provider_event
 from core.exceptions import ProviderError
 from infrastructure.http_client import get_http_client
 from infrastructure.providers.runtime import provider_container_name
-from services.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime_async
 from services.provider_service import ProviderService
 from services.provider_status_service import ProviderStatusService
 
@@ -151,7 +151,7 @@ class ProviderLifecycleService:
 
     async def setup_provider(self, provider_id: str) -> dict[str, Any]:
         provider = await self.provider_service.get_provider(provider_id)
-        runtime = resolve_provider_runtime(provider)
+        runtime = await resolve_provider_runtime_async(provider)
         if not runtime.supports_setup or runtime.mode not in ("container_http", "discovery"):
             raise ProviderError(
                 provider_id,
@@ -197,7 +197,7 @@ class ProviderLifecycleService:
 
     async def trigger_reconciliation(self, provider_id: str, force: bool = False, quick_sync: bool = False) -> dict[str, Any]:
         provider = await self.provider_service.get_provider(provider_id)
-        runtime = resolve_provider_runtime(provider)
+        runtime = await resolve_provider_runtime_async(provider)
         if not runtime.supports_reconciliation or runtime.mode not in ("container_http", "discovery"):
             raise ProviderError(
                 provider_id,
@@ -282,7 +282,7 @@ class ProviderLifecycleService:
     async def get_reconciliation_status(self, provider_id: str) -> dict[str, Any]:
         provider = await self.provider_service.get_provider(provider_id)
         persisted_state = await self.provider_service.get_provider_reconciliation_state(provider_id)
-        runtime = resolve_provider_runtime(provider)
+        runtime = await resolve_provider_runtime_async(provider)
 
         if runtime.mode not in ("container_http", "discovery"):
             if persisted_state.get("status") and persisted_state.get("status") != "idle":

@@ -180,10 +180,10 @@ async def get_provider_live_metrics(
     import time
 
     from infrastructure.http_client import get_http_client
-    from services.provider_runtime import resolve_provider_runtime
+    from services.provider_runtime import resolve_provider_runtime_async
     
     provider = await service.get_provider(provider_id)
-    runtime = resolve_provider_runtime(provider)
+    runtime = await resolve_provider_runtime_async(provider)
     
     if not runtime.worker_url:
         return {"status": "offline", "latency_ms": 0, "error": "No worker URL configured"}
@@ -388,8 +388,8 @@ async def get_provider_deploy_status(
 ):
     """Get persisted backend deploy state for a provider or proxy from worker."""
     provider = await service.get_provider(provider_id)
-    from services.provider_runtime import resolve_provider_runtime
-    runtime = resolve_provider_runtime(provider)
+    from services.provider_runtime import resolve_provider_runtime_async
+    runtime = await resolve_provider_runtime_async(provider)
     
     if runtime.mode == "discovery":
         http_client = get_http_client()

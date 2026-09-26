@@ -8,12 +8,13 @@ from config import get_worker_backend_url
 from core.entities import ModelFile, ModelV2, ModelVersion
 from infrastructure.logging import get_logger
 from services.model_service import ModelServiceV2
-from services.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime_async
 from services.provider_service import ProviderService
 
 logger = get_logger("provider_status_service")
 
 from infrastructure.cache import get_provider_stats_cache, invalidate_cache
+import asyncio
 
 
 def invalidate_provider_status_caches(provider_id: str | None = None) -> None:
@@ -330,7 +331,7 @@ class ProviderStatusService:
         """Build the canonical provider status payload used by provider cards."""
         provider = provider or await self.provider_service.get_provider(provider_id)
         provider_info = provider_payload or self.provider_service._provider_to_dict(provider)
-        runtime = resolve_provider_runtime(provider)
+        runtime = await resolve_provider_runtime_async(provider)
 
         sync_status = await self.get_provider_sync_stats(provider_id)
         model_sync = {
@@ -440,6 +441,10 @@ class ProviderStatusService:
             "storage": status_card.get("storage", {}),
             "capabilities": base_payload.get("capabilities", {}),
             "capability_reasons": base_payload.get("capability_reasons", {}),
+            # Whether a worker token exists, never the token itself. Lets the UI
+            # show "external worker configured" and offer rotate/revoke without
+            # ever reading the credential back.
+            "has_worker_token": base_payload.get("has_worker_token", False),
             "diagnostics": status_card.get("diagnostics", {}),
             "credential_summary": base_payload.get("credential_summary", {}),
         }
@@ -448,24 +453,38 @@ class ProviderStatusService:
         self,
         providers: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        """Build canonical provider records for a list response."""
+        """Build canonical provider records for a list response.
+
+        Concurrent, and order-preserving. This was a serial `for` loop, so
+        `GET /api/v2/providers/` paid the sum of every provider's latency rather
+        than the slowest one — and each record resolves a runtime target, which
+        probes the Docker socket. With the snapshot cache the probes are cheap, but
+        the per-provider model/sync/reconciliation calls are network round trips to
+        the provider itself and were strictly serialised for no reason.
+
+        `asyncio.gather` is used rather than a TaskGroup because each record is
+        independently guarded: one provider failing must not cancel the others,
+        and the per-provider `except` below already decides that. Order is restored
+        explicitly because gather preserves input order only for homogeneous
+        awaitables, and the mixed record/fallback results are appended in
+        completion order otherwise.
+        """
         providers = providers if providers is not None else await self.provider_service.list_providers()
-        records = []
-        for provider in providers:
-            provider_id = provider.get("id")
-            if not provider_id:
-                continue
+
+        async def _build(provider: dict[str, Any], provider_id: str) -> dict[str, Any]:
             try:
-                records.append(
-                    await self.build_provider_record(
-                        provider_id,
-                        provider_payload=provider,
-                    )
+                return await self.build_provider_record(
+                    provider_id,
+                    provider_payload=provider,
                 )
             except Exception as exc:
                 logger.warning("provider_record_failed", provider_id=provider_id, error=str(exc))
-                records.append(self.build_provider_status_card_fallback(provider, error=str(exc)))
-        return records
+                return self.build_provider_status_card_fallback(provider, error=str(exc))
+
+        buildable = [(p, p["id"]) for p in providers if p.get("id")]
+        if not buildable:
+            return []
+        return list(await asyncio.gather(*(_build(p, pid) for p, pid in buildable)))
 
     async def build_provider_status_cards(
         self,

@@ -71,7 +71,7 @@ async def test_trigger_reconciliation_short_circuits_when_already_running():
     )
 
     with patch(
-        "services.provider_lifecycle_service.resolve_provider_runtime",
+        "services.provider_lifecycle_service.resolve_provider_runtime_async",
         return_value=SimpleNamespace(supports_reconciliation=True, mode="container_http", worker_url="http://worker"),
     ):
         result = await service.trigger_reconciliation("provider-1")
@@ -98,7 +98,7 @@ async def test_get_reconciliation_status_returns_warning_when_worker_unreachable
     )
 
     with patch(
-        "services.provider_lifecycle_service.resolve_provider_runtime",
+        "services.provider_lifecycle_service.resolve_provider_runtime_async",
         return_value=SimpleNamespace(mode="container_http", worker_url="http://worker"),
     ), patch("services.provider_lifecycle_service.get_http_client", return_value=http_client):
         result = await service.get_reconciliation_status("provider-1")
@@ -131,7 +131,7 @@ async def test_setup_provider_returns_accepted_for_queued_worker_response():
     )
 
     with patch(
-        "services.provider_lifecycle_service.resolve_provider_runtime",
+        "services.provider_lifecycle_service.resolve_provider_runtime_async",
         return_value=SimpleNamespace(supports_setup=True, mode="container_http", worker_url="http://worker"),
     ), patch("services.provider_lifecycle_service.get_http_client", return_value=http_client):
         result = await service.setup_provider("provider-1")
@@ -159,7 +159,7 @@ async def test_setup_provider_wraps_timeout_with_provider_error():
     )
 
     with patch(
-        "services.provider_lifecycle_service.resolve_provider_runtime",
+        "services.provider_lifecycle_service.resolve_provider_runtime_async",
         return_value=SimpleNamespace(supports_setup=True, mode="container_http", worker_url="http://worker"),
     ), patch("services.provider_lifecycle_service.get_http_client", return_value=http_client):
         with pytest.raises(ProviderError, match="Setup request to worker timed out"):

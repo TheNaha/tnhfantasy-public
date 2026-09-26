@@ -4,8 +4,10 @@ Manages Docker containers for provider workers with isolated credentials.
 """
 import asyncio
 import os
+import threading
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 import docker
@@ -22,6 +24,37 @@ try:
     DEFAULT_HEALTH_TIMEOUT_SECONDS = max(10, int(os.getenv("COMFY_CONTAINER_HEALTH_TIMEOUT_SECONDS", "180")))
 except ValueError:
     DEFAULT_HEALTH_TIMEOUT_SECONDS = 180
+
+
+@dataclass(frozen=True)
+class ContainerSnapshot:
+    """A container's state at a point in time.
+
+    Deliberately small and immutable: it is cached and handed to callers on other
+    threads, and nothing should be able to reach through it to a live Docker
+    object.
+    """
+
+    name: str
+    status: str
+    health: str | None = None
+
+    @property
+    def running(self) -> bool:
+        return self.status == "running"
+
+    @property
+    def healthy(self) -> bool | None:
+        """True/False from the image HEALTHCHECK, or None when it declares none."""
+        if self.health is None:
+            return None
+        return self.health == "healthy"
+
+
+# Short enough that the providers dashboard does not hammer the Docker socket,
+# long enough that one page load (which resolves every provider) pays for a
+# single probe per container.
+_SNAPSHOT_TTL_SECONDS = 2.0
 
 
 class ContainerManager:
@@ -50,6 +83,11 @@ class ContainerManager:
         self.client = self._get_container_client()
         self.runtime = self._detect_runtime()
         self.running_containers: dict[str, docker.models.containers.Container] = {}
+        # container name -> (monotonic deadline, snapshot). `running_containers`
+        # cannot serve this: it is only populated for containers this process
+        # started, and a status read must not depend on that.
+        self._snapshot_cache: dict[str, tuple[float, ContainerSnapshot | None]] = {}
+        self._snapshot_lock = threading.Lock()
         
         logger.info("container_runtime_detected", runtime=self.runtime)
     
@@ -356,6 +394,69 @@ class ContainerManager:
         logger.warning("container_health_timeout", container=container.name, status=container.status, error=last_error)
         raise TimeoutError(timeout_message)
     
+    def get_container_snapshot(self, provider_id: str, container_name: str | None = None) -> ContainerSnapshot | None:
+        """Status/health of a provider container, or None if it does not exist.
+
+        This is the one place container state is read from. `containers.get()` and
+        `container.reload()` are blocking round trips to the Docker socket with no
+        timeout, and several callers were doing them directly from `async def`
+        handlers — `GET /api/v2/providers/` does it twice per provider, serially, so
+        a `DOCKER_HOST` pointing at an unreachable endpoint stalled the whole event
+        loop for the sum of every connect timeout.
+
+        The TTL cache is what makes a list page affordable: one probe per container
+        per window, not two per provider per request. It is not used as a source of
+        truth for control flow — `stop_container` and the deploy paths still talk
+        to Docker directly.
+
+        Blocking. Call it from `asyncio.to_thread`, or use
+        `services.provider_runtime.resolve_provider_runtime_async`, which does.
+        """
+        name = container_name or provider_container_name(provider_id)
+        now = time.monotonic()
+        with self._snapshot_lock:
+            cached = self._snapshot_cache.get(name)
+            if cached is not None and cached[0] > now:
+                return cached[1]
+
+        snapshot = self._probe_container(name)
+        with self._snapshot_lock:
+            self._snapshot_cache[name] = (now + _SNAPSHOT_TTL_SECONDS, snapshot)
+        return snapshot
+
+    def invalidate_container_snapshot(self, container_name: str | None = None, provider_id: str | None = None) -> None:
+        """Drop a cached snapshot after an action that changes container state."""
+        name = container_name or (provider_container_name(provider_id) if provider_id else None)
+        with self._snapshot_lock:
+            if name is None:
+                self._snapshot_cache.clear()
+            else:
+                self._snapshot_cache.pop(name, None)
+
+    def _probe_container(self, name: str) -> ContainerSnapshot | None:
+        client = self.client
+        if client is None:
+            return None
+        try:
+            container = client.containers.get(name)
+        except docker.errors.NotFound:
+            return None
+        except Exception as exc:
+            logger.debug("container_probe_failed", container=name, error=str(exc))
+            return None
+        try:
+            container.reload()
+        except Exception as exc:
+            # A container that exists but will not reload (removed mid-read) is
+            # still worth reporting: `get` succeeded, so it was there a moment ago.
+            logger.debug("container_reload_failed", container=name, error=str(exc))
+        health = (getattr(container, "attrs", {}) or {}).get("State", {}).get("Health", {}).get("Status")
+        return ContainerSnapshot(
+            name=name,
+            status=getattr(container, "status", None) or "unknown",
+            health=health,
+        )
+
     def stop_container(self, provider_id: str):
         """Stop a provider worker container."""
         container = self.running_containers.get(provider_id)

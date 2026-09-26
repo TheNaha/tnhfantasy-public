@@ -12,7 +12,7 @@ from core.exceptions import (
     ValidationError,
 )
 from infrastructure.http_client import get_http_client
-from services.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime_async
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
@@ -27,7 +27,7 @@ async def get_object_info(provider_id: str, session: Session = Depends(get_sessi
     if not provider:
         raise NotFoundError("Provider", provider_id)
         
-    runtime = resolve_provider_runtime(provider)
+    runtime = await resolve_provider_runtime_async(provider)
     if not runtime.worker_url:
         raise ValidationError("Provider does not have a valid worker URL for extraction")
         

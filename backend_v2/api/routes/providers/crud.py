@@ -27,7 +27,7 @@ from core.entities import Provider
 from infrastructure.background_tasks import start_background_task
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import api_logger
-from services.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime_async
 from services.provider_service import ProviderService
 from services.provider_status_service import invalidate_provider_status_caches
 
@@ -284,7 +284,7 @@ async def ping_provider(provider_id: str, session: Session = Depends(get_session
         }
 
     base_url = None
-    runtime = resolve_provider_runtime(provider)
+    runtime = await resolve_provider_runtime_async(provider)
     if runtime.worker_url:
         base_url = runtime.worker_url.rstrip("/")
     elif provider.container_config:
@@ -373,6 +373,31 @@ async def patch_provider(
 ):
     """Update a provider (PATCH alias)."""
     return await update_provider(provider_id, request, session)
+
+
+@router.post("/{provider_id}/worker-token")
+async def mint_provider_worker_token(provider_id: str, session: Session = Depends(get_session)):
+    """Mint (or rotate) the external-worker token for a provider.
+
+    The `/ws/worker/{provider_id}` WebSocket authenticates against
+    `config.worker_token`, and nothing could produce that key — so the check could
+    only ever fail, no worker could register, and the `external_worker` runtime
+    mode was unreachable. This is the missing producer.
+
+    The token is returned in this response and is not readable again: minting
+    again rotates it, which is also how a leaked token is invalidated.
+    """
+    service = get_provider_service(session)
+    token = await service.mint_worker_token(provider_id)
+    return {"provider_id": provider_id, "worker_token": token}
+
+
+@router.delete("/{provider_id}/worker-token")
+async def revoke_provider_worker_token(provider_id: str, session: Session = Depends(get_session)):
+    """Revoke the external-worker token, disabling the mode for this provider."""
+    service = get_provider_service(session)
+    revoked = await service.revoke_worker_token(provider_id)
+    return {"provider_id": provider_id, "revoked": revoked}
 
 
 @router.delete("/{provider_id}")

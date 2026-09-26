@@ -294,7 +294,7 @@ async def backfill_provider_statuses(
     """
     from infrastructure.http_client import get_http_client
     from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
-    from services.provider_runtime import resolve_provider_runtime
+    from services.provider_runtime import resolve_provider_runtime_async
 
     service = get_model_service_v2(session)
 
@@ -357,7 +357,7 @@ async def backfill_provider_statuses(
             return []
     
     for provider in providers:
-        runtime = resolve_provider_runtime(provider)
+        runtime = await resolve_provider_runtime_async(provider)
         if runtime.mode not in ("container_http", "discovery"):
             continue
 

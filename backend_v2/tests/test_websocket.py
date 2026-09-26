@@ -137,7 +137,7 @@ async def test_cancel_job_pending(mock_get_session, mock_job_service_cls, mock_q
 @patch("api.routes.websocket.get_job_service")
 @patch("api.routes.websocket.get_provider_service")
 @patch("api.routes.websocket.get_http_client")
-@patch("api.routes.websocket.resolve_provider_runtime")
+@patch("api.routes.websocket.resolve_provider_runtime_async")
 @patch("infrastructure.database.get_session_context")
 async def test_cancel_job_active(mock_get_session, mock_resolve_provider_runtime, mock_get_http, mock_get_provider_service, mock_get_job_service, mock_queue_manager, mock_sio):
     sid = "test_sid"

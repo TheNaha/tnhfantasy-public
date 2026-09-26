@@ -27,7 +27,7 @@ from api.deps import (
 from core.entities import JobStatus
 from infrastructure.http_client import get_http_client
 from services.job_queue import queue_manager
-from services.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime_async
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +213,7 @@ async def cancel_job(sid, data):
                 if job.provider_id:
                     provider_service = get_provider_service(session)
                     provider = await provider_service.get_provider(job.provider_id)
-                    runtime = resolve_provider_runtime(provider)
+                    runtime = await resolve_provider_runtime_async(provider)
 
                     if runtime.mode in ("container_http", "discovery"):
                         try:

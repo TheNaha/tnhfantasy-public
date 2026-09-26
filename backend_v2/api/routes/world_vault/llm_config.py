@@ -8,7 +8,7 @@ from core.exceptions import NotFoundError
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from services.llm_config import resolve_default_provider, set_default_provider
-from services.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime_async
 
 logger = get_logger("llm_config_route")
 router = APIRouter()
@@ -50,7 +50,7 @@ async def get_available_models(session: Session = Depends(get_session)):
     if not provider:
         return []
 
-    runtime = resolve_provider_runtime(provider)
+    runtime = await resolve_provider_runtime_async(provider)
     if not runtime.worker_url:
         return []
 
@@ -122,7 +122,7 @@ async def test_llm_provider(provider_id: str, session: Session = Depends(get_ses
     if not provider or provider.worker_type != "llm":
         raise NotFoundError("LLM provider", provider_id)
 
-    runtime = resolve_provider_runtime(provider)
+    runtime = await resolve_provider_runtime_async(provider)
     if not runtime.worker_url:
         return {"healthy": False, "models": [], "error": "No worker URL configured for this provider"}
 
