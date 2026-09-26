@@ -283,6 +283,15 @@ services:
       - providers
     env_file:
       - .env.direct-url
+    environment:
+      # This block used to be missing entirely, so this provider received
+      # neither PROVIDER_WORKER_TOKEN (it answers 503 on every protected
+      # route when that is empty) nor COMFY_DISCOVERY_TOKEN (it then
+      # self-registered against a backend that fails closed without one).
+      # The engine has no default baked into the image, so state it here.
+      - ENGINE=direct_url
+      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
+      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
     user: "1000:1000"
     volumes:
       - ./data:/data

@@ -2,7 +2,32 @@
 !.env.example*
 data/
 output/
+input/
 **/__pycache__/
 **/*.pyc
 .git/
 .gitignore
+
+# Dependency trees. `remote_agent/docker-compose.yml` builds with `context: ..`,
+# so without these the whole repo — including multi-GB venvs and node_modules —
+# is shipped to the daemon on every remote-agent build, while the Dockerfile only
+# needs remote_agent/ and provider_containers/provider_core/.
+node_modules/
+**/node_modules/
+.venv/
+**/.venv/
+venv/
+**/venv/
+
+# Build/test artifacts
+dist/
+**/dist/
+test-results/
+**/test-results/
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+coverage/
+**/coverage/
+*.log

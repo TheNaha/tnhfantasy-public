@@ -58,6 +58,9 @@ provider_fixes.patch
 .env.beam-*
 .env.direct-url
 .env.llm-*
+# .env.remote-comfy matched no rule and is the provider env file a user is
+# expected to fill with a REMOTE_AGENT_TOKEN / CIVITAI_TOKEN / HF_TOKEN.
+.env.remote-comfy
 models/models/ultralytics/bbox/face_yolov8n.pt
 models/models/ultralytics/bbox/face_yolov8s.pt
 models/models/ultralytics/bbox/hand_yolov8n.pt

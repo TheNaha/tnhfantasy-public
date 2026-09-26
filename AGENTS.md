@@ -16,6 +16,11 @@ All of these share the **World Vault** data layer (Characters, Chats, Lorebooks,
 bash setup_jules.sh
 
 # Full stack (Docker, with providers + dev overrides)
+# Run scripts/preflight.sh first on a new host: it creates the `metrics` and
+# `proxy` networks that compose declares external (without them `up` fails at
+# network creation, for every service, with an unrelated-looking error) and
+# reports the config that silently disables features.
+bash scripts/preflight.sh
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
 
 # Backend only (from backend_v2/)
