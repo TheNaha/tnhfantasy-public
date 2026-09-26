@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images, MapPin, User, Sparkles, Calendar, Swords, GitBranch, HelpCircle, Command, Mic, FileText, BookMarked, Compass, ChevronDown, Layers3 } from 'lucide-react';
+import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images, MapPin, User, Sparkles, Calendar, Swords, GitBranch, HelpCircle, Command, Mic, FileText, BookMarked, ChevronDown, Layers3 } from 'lucide-react';
 import { useMemo, useState, memo, useEffect } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -24,7 +24,7 @@ const NavItem = ({ to, icon: Icon, label, onNavigate }) => {
             onClick={onNavigate}
             aria-current={isActive ? 'page' : undefined}
             className={clsx(
-                "group flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
+                "group flex items-center gap-3 px-4 py-2 rounded-xl transition-all duration-300 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
                 isActive
                     ? "nav-active text-white font-medium shadow-[0_0_15px_rgba(59,130,246,0.15)]"
                     : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
@@ -272,11 +272,21 @@ export default function Layout({ children }) {
                     The mask fades the final row so a scrollable nav reads as
                     scrollable — at 900px tall there are more items below. */}
                 <nav
-                    className="flex-1 min-h-0 p-4 space-y-1 overflow-y-auto custom-scrollbar"
-                    style={{ maskImage: 'linear-gradient(to bottom, black calc(100% - 24px), transparent)', WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 24px), transparent)' }}
+                    className="flex-1 min-h-0 px-4 pt-4 pb-1 space-y-1 overflow-y-auto custom-scrollbar"
+                    // A 16px fade left the last item looking greyed-out — people read
+                    // it as "disabled" rather than "scroll". 40px plus a short hold
+                    // reads unmistakably as content continuing past the edge.
+                    style={{
+                        maskImage: 'linear-gradient(to bottom, black calc(100% - 44px), transparent 100%)',
+                        WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 44px), transparent 100%)',
+                    }}
                 >
-                    <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-3 px-4">Menu</div>
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/" icon={Home} label="Home" />
+                    <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">Menu</div>
+                    {/* Points at the roleplay front door. This used to be `/`, which
+                        was the workspace picker, so "Home" and "Roleplay Home" were
+                        two names for two different landing pages. Now there is one
+                        front door and one nav item for it. */}
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/roleplay" icon={Home} label="Home" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/gallery" icon={Images} label="Gallery" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/generate" icon={Wand2} label="Simple Generate" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/batch-generate" icon={Sparkles} label="Batch Generate" />
@@ -285,8 +295,7 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/inpaint" icon={Paintbrush} label="Inpaint" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/advanced" icon={Settings} label="Advanced" />
                     
-                     <div className="mt-5 mb-2 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Roleplay</div>
-                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/roleplay" icon={Compass} label="Roleplay Home" />
+                     <div className="mt-4 mb-1.5 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Roleplay</div>
                      <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Play" />
                      <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Stories" />
                      <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-vault" icon={Globe} label="World" />
@@ -315,11 +324,11 @@ export default function Layout({ children }) {
                      )}
 
                     
-                    <div className="mt-5 mb-2 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Resources</div>
+                    <div className="mt-4 mb-1.5 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Resources</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/discover" icon={Globe} label="Discover Models" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/providers" icon={Server} label="Providers" />
-                    <div className="mt-5 mb-2 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">System</div>
+                    <div className="mt-4 mb-1.5 px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">System</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/statistics" icon={BarChart3} label="Statistics" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/settings" icon={Settings2} label="Settings" />
                 </nav>

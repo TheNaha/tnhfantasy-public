@@ -139,18 +139,24 @@ export default function FantasyHub() {
             </motion.div>
 
             <motion.div
-                className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-5xl mb-8"
+                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full max-w-5xl mb-8"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.5 }}
             >
-                {QUICK_ACTIONS.map(({ to, icon: Icon, title, description, gradient, iconColor }) => (
+                {QUICK_ACTIONS.map(({ to, icon: Icon, title, description, gradient, iconColor, borderColor }) => (
                     <button
                         key={to}
                         onClick={() => navigate(to)}
                         className={clsx(
-                            "group flex items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-br p-4 text-left transition-all duration-300 hover:scale-[1.02] hover:shadow-xl focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
-                            gradient
+                            // Same shape language as the cards below: rounded-2xl,
+                            // gradient, the same hover scale, and the same
+                            // border highlight. The quick actions were a visibly
+                            // different component sitting directly above the real
+                            // destinations.
+                            "group flex items-start gap-3 rounded-2xl border border-white/10 bg-gradient-to-br p-5 text-left transition-all duration-300 hover:scale-[1.02] hover:shadow-xl focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
+                            gradient,
+                            borderColor
                         )}
                     >
                         <div className={clsx("w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-white/5 border border-white/10", iconColor)}>
@@ -158,7 +164,10 @@ export default function FantasyHub() {
                         </div>
                         <div className="min-w-0">
                             <p className="text-sm font-bold text-white group-hover:text-blue-300 transition-colors">{title}</p>
-                            <p className="text-xs text-gray-500 group-hover:text-gray-400 transition-colors truncate">{description}</p>
+                            {/* `truncate` cut these mid-word — "Start simply, then
+                                build your world as you…". A two-line clamp shows the
+                                whole sentence at this card size. */}
+                            <p className="text-xs text-gray-500 group-hover:text-gray-400 transition-colors line-clamp-2">{description}</p>
                         </div>
                     </button>
                 ))}

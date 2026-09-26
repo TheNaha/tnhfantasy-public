@@ -93,7 +93,14 @@ function AnimatedRoutes() {
     return (
         <AnimatePresence mode="wait">
             <Routes location={location} key={routeKey}>
-                <Route path="/" element={<Boundary routeKey={routeKey}><FantasyHub /></Boundary>} />
+                {/* One front door. `/` used to be the Fantasy Hub workspace picker,
+                    which made a workspace index the landing page for an app whose
+                    whole premise is roleplay-first — and left two competing landing
+                    pages with different design languages. The picker is not
+                    deleted: it is at /hub, still linked from Roleplay Home and the
+                    command palette. */}
+                <Route path="/" element={<Navigate to="/roleplay" replace />} />
+                <Route path="/hub" element={<Boundary routeKey={routeKey}><FantasyHub /></Boundary>} />
                 <Route path="/roleplay" element={<Boundary routeKey={routeKey}><RoleplayWorkspace /></Boundary>} />
                 <Route path="/gallery" element={<Boundary routeKey={routeKey}><Dashboard /></Boundary>} />
                 <Route path="/generate" element={<Boundary routeKey={routeKey}><SimpleGenerator /></Boundary>} />
