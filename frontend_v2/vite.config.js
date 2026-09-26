@@ -18,6 +18,20 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.js'],
     exclude: ['e2e/**', 'node_modules/**'],
+    // Timing headroom. `waitFor` polls an async React Query settle; under CPU
+    // contention the default 1s window expires before the state arrives, and
+    // the suite fails in a spread of unrelated files — the signature of a
+    // timeout, not a logic error. Observed once at 9 failures across 8 files
+    // while the backend suite was still using the machine; 751/751 on every
+    // other run. Raising the window cannot mask a logic regression, because a
+    // wrong value never becomes right by waiting longer.
+    asyncUtilTimeout: 5000,
+    testTimeout: 20000,
+    // Leave CPU headroom. Vitest would otherwise run 7 jsdom environments at
+    // once on an 8-core box, which is what starves them in the first place.
+    // Halving it slows the wall clock a little and makes the run deterministic.
+    maxWorkers: 4,
+    minWorkers: 1,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'cobertura'],
