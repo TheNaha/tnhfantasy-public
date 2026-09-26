@@ -170,10 +170,15 @@ def get_relationships(
                 })
 
     # Character → VoiceModels
+    #
+    # Ordered for the same reason as `char_chat_links` above: an unordered join
+    # with `.offset()` can repeat or skip rows across pages, because Postgres is
+    # free to return a different row order for each execution.
     voice_links = [
         tuple(row) for row in session.exec(
             select(VoiceModel.id, VoiceModel.name, Character.id, Character.name)
             .join(Character, Character.id == VoiceModel.character_id)
+            .order_by(VoiceModel.created_at.desc(), VoiceModel.id)
             .limit(min(limit, 500))
             .offset(offset)
         ).all()
@@ -217,6 +222,7 @@ def get_relationships(
         tuple(row) for row in session.exec(
             select(Chat.id, Chat.name, Location.id, Location.name)
             .join(Location, Location.id == Chat.location_id)
+            .order_by(Chat.created_at.desc(), Chat.id)
             .limit(min(limit, 100))
             .offset(offset)
         ).all()

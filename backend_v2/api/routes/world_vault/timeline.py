@@ -32,15 +32,38 @@ def get_timeline(
     fetch_limit = limit + offset
 
     # Messages
+    #
+    # Two separate defects in this one loop:
+    #
+    # 1. N+1. It read `msg.chat.character_id`, and Message.chat is a plain
+    #    lazy="select" relationship. The query was `select(Message)` with at
+    #    most a bare `.join(Chat)` and never `contains_eager`, so every one of
+    #    the up-to-(limit+offset) rows fired its own SELECT — 600 extra round
+    #    trips on a `?limit=500&offset=100` request. The chat is now selected
+    #    explicitly in the same statement, so one round trip covers the page.
+    #
+    # 2. Wrong attribution. It reported the CHAT's primary character for every
+    #    message, so a `?character_id=X` timeline labelled every message in that
+    #    chat as X — including narrator turns and the other members of a group
+    #    chat. `Message.character_id` is the SPEAKING character (indexed, added
+    #    by migration 060) and is what should be reported, with the chat's
+    #    primary character only as the fallback for messages that have none.
     msg_count_query = select(func.count(Message.id))
-    msg_query = select(Message).order_by(Message.created_at.desc()).limit(fetch_limit)
+    msg_query = (
+        select(Message, Chat)
+        .outerjoin(Chat, Chat.id == Message.chat_id)
+        .order_by(Message.created_at.desc())
+        .limit(fetch_limit)
+    )
     if chat_id:
         msg_count_query = msg_count_query.where(Message.chat_id == chat_id)
         msg_query = msg_query.where(Message.chat_id == chat_id)
     if character_id or location:
-        # Single join; both filters apply to the same chats table.
+        # The filters below are on Chat. The main query already joins Chat, but
+        # the count query does not select it, so it needs its own join —
+        # without it the WHERE references an unrelated FROM element and
+        # SQLAlchemy warns about (and Postgres executes) a cartesian product.
         msg_count_query = msg_count_query.join(Chat)
-        msg_query = msg_query.join(Chat)
         if character_id:
             msg_count_query = msg_count_query.where(Chat.character_id == character_id)
             msg_query = msg_query.where(Chat.character_id == character_id)
@@ -48,15 +71,19 @@ def get_timeline(
             msg_count_query = msg_count_query.where(Chat.story_location == location)
             msg_query = msg_query.where(Chat.story_location == location)
     total_messages = session.exec(msg_count_query).one()
-    messages = session.exec(msg_query).all()
-    for msg in messages:
+    message_rows = session.exec(msg_query).all()
+    for msg, chat in message_rows:
+        chat_character_id = chat.character_id if chat else None
         events.append({
             "type": "message",
             "id": msg.id,
             "timestamp": msg.created_at.isoformat() if msg.created_at else None,
             "title": f"Message in {msg.chat_id[:8]}...",
             "description": (msg.content or "")[:200],
-            "character_id": msg.chat.character_id if msg.chat else None,
+            # The speaker, not the chat's primary character. Falls back to the
+            # chat's primary character for narrator/user/system turns, which is
+            # what the old (wrong) value always was.
+            "character_id": msg.character_id or chat_character_id,
             "chat_id": msg.chat_id,
             "kind": msg.kind.value if msg.kind else None,
         })

@@ -4,6 +4,7 @@ Service to check if required models are available on providers.
 Used for pre-flight job validation and model-aware load balancing.
 """
 from dataclasses import dataclass, field
+import time
 
 from sqlalchemy import and_, or_
 from sqlmodel import Session, select
@@ -13,6 +14,37 @@ from infrastructure.logging import model_logger
 from infrastructure.repositories import ProviderRepository
 
 logger = model_logger()
+
+# TTL cache for get_available_models(). Deliberately not infrastructure/cache.py's
+# @cached: that is key-by-argument (which would stringify a Session), this is
+# keyed by directory and has to be clearable from the model/provider lifecycle
+# paths that change the answer.
+AVAILABLE_MODELS_TTL_SECONDS = 30
+
+_available_models_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+def clear_available_models_cache(directory: str | None = None) -> None:
+    """Drop cached model-availability results (all directories, or just one)."""
+    if directory is None:
+        _available_models_cache.clear()
+    else:
+        _available_models_cache.pop(directory, None)
+
+
+def _cached_available_models(directory: str) -> list[str] | None:
+    entry = _available_models_cache.get(directory)
+    if not entry:
+        return None
+    stored_at, result = entry
+    if (time.monotonic() - stored_at) > AVAILABLE_MODELS_TTL_SECONDS:
+        _available_models_cache.pop(directory, None)
+        return None
+    return result
+
+
+def _store_available_models(directory: str, result: list[str]) -> None:
+    _available_models_cache[directory] = (time.monotonic(), list(result))
 
 
 @dataclass
@@ -251,14 +283,29 @@ class ModelAvailabilityService:
     def get_available_models(self, directory: str) -> list[str]:
         """
         List filenames of ready (downloaded) model files in *directory*
-        across all enabled providers.
+        across all enabled providers, in a stable order.
 
         Example:
             >>> service.get_available_models("checkpoints")
             ['animagine_xl_v31_v31_403131.safetensors', ...]
 
+        Cached for :data:`AVAILABLE_MODELS_TTL_SECONDS`. This runs on EVERY
+        image submission (get_available_checkpoint -> resolve_checkpoint) and is
+        a four-table join with DISTINCT, so an uncached version put a full join
+        on the request path of every generation. The TTL matches the
+        provider-stats cache in infrastructure/cache.py; a model becoming ready
+        or a provider being disabled is picked up within that window, and
+        ``get_available_models.cache_clear()`` is called by the callers that
+        know they changed the answer (model install/removal, provider
+        enable/disable).
+
         Returns an empty list when no models are ready or the query fails.
         """
+        if directory in _available_models_cache:
+            cached = _cached_available_models(directory)
+            if cached is not None:
+                return list(cached)
+
         try:
             rows = self.session.exec(
                 select(ModelFile.storage_filename)
@@ -275,25 +322,48 @@ class ModelAvailabilityService:
                     Provider.enabled == True,  # noqa: E712
                     ProviderVersionStatus.status == "ready",
                 )
+                # A `SELECT DISTINCT` with no ORDER BY has no ordering guarantee
+                # at all — Postgres is free to satisfy it with a hash aggregate,
+                # so the same query can return a different first row after a
+                # plan flip. Since get_available_checkpoint() falls back to
+                # element [0], the model silently substituted for an
+                # uninstalled default was a function of the query plan.
+                .order_by(ModelFile.storage_filename)
                 .distinct()
             ).all()
-            return [r for r in rows if r]
+            result = [r for r in rows if r]
         except Exception as e:
             logger.warning("available_models_query_failed", directory=directory, error=str(e))
             return []
+
+        _store_available_models(directory, result)
+        return list(result)
 
     def get_available_checkpoint(self, preferred: str | None = None) -> str | None:
         """Pick a checkpoint that is actually installed on an enabled provider.
 
         Returns *preferred* if it is present, otherwise the first ready
-        checkpoint.  Returns ``None`` when no checkpoints are installed.
+        checkpoint **by filename order** — deterministic, and explainable to a
+        user ("no configured checkpoint installed, using the first one
+        alphabetically"). Returns ``None`` when no checkpoints are installed.
+
+        The order comes from :meth:`get_available_models`; this method does not
+        re-sort, so the two can never disagree about what "first" means.
         """
         ready = self.get_available_models("checkpoints")
         if not ready:
             return None
         if preferred and preferred in ready:
             return preferred
-        return ready[0]
+        fallback = ready[0]
+        if preferred:
+            logger.warning(
+                "checkpoint_fallback_substituted",
+                preferred=preferred,
+                using=fallback,
+                available=len(ready),
+            )
+        return fallback
 
     def get_available_lora(self, preferred: str | None = None) -> str | None:
         """Pick a LoRA that is actually installed on an enabled provider.

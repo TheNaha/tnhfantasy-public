@@ -203,29 +203,105 @@ def search_lorebook_entries(
     return results[:global_limit]
 
 
-def backfill_lorebook_embeddings(session: Session, lorebook_id: str | None = None) -> int:
+# Lorebook reindex bounding. Same shape as the memories backfill
+# (api/routes/world_vault/memories.py:34-36): one call embeds at most `limit`
+# rows and commits every `batch_size` rows, so no single request can run
+# unbounded local inference. The lorebook reindex is the one the UI actually
+# calls (POST /api/v2/lorebooks/{id}/reindex) and it had neither bound nor
+# batching, so a lorebook imported from SillyTavern with a few thousand entries
+# held the request open while running one model call per entry, serially.
+LOREBOOK_REINDEX_DEFAULT_LIMIT = 200
+LOREBOOK_REINDEX_MAX_LIMIT = 1000
+LOREBOOK_REINDEX_BATCH_SIZE = 32
+
+
+def backfill_lorebook_embeddings(
+    session: Session,
+    lorebook_id: str | None = None,
+    *,
+    limit: int = LOREBOOK_REINDEX_DEFAULT_LIMIT,
+    batch_size: int = LOREBOOK_REINDEX_BATCH_SIZE,
+) -> int:
     """Generate embeddings for lorebook entries that lack them.
 
-    Returns the number of entries newly embedded.
+    Bounded and batched: at most `limit` rows are selected, the model's batch
+    encode is used per `batch_size` chunk, and each chunk is committed on its
+    own so a failure part-way through does not throw away the work already done.
+    A row whose embedding fails is left NULL, so the next call retries it —
+    same contract as the memories backfill.
+
+    Returns the number of entries newly embedded. Entries beyond `limit` are
+    left for a subsequent call.
     """
     from services.embedding_service import get_embedding_service
 
-    stmt = select(LorebookEntry).where(LorebookEntry.embedding.is_(None))
+    limit = max(1, min(limit, LOREBOOK_REINDEX_MAX_LIMIT))
+    batch_size = max(1, batch_size)
+
+    stmt = (
+        select(LorebookEntry)
+        .where(LorebookEntry.embedding.is_(None))
+        .order_by(LorebookEntry.created_at)
+        .limit(limit)
+    )
     if lorebook_id is not None:
         stmt = stmt.where(LorebookEntry.lorebook_id == lorebook_id)
     entries = list(session.exec(stmt).all())
+    if not entries:
+        return 0
 
     emb_svc = get_embedding_service()
     updated = 0
-    for entry in entries:
+    for start in range(0, len(entries), batch_size):
+        chunk = entries[start:start + batch_size]
+        texts = [
+            f"{' '.join(entry.keys or [])} {entry.content or ''}".strip()
+            for entry in chunk
+        ]
+        vectors: list[list[float]] | None = None
         try:
-            keys_text = " ".join(entry.keys or [])
-            text_to_embed = f"{keys_text} {entry.content or ''}".strip()
-            entry.embedding = emb_svc.generate_embedding(text_to_embed)
-            session.add(entry)
-            updated += 1
+            candidates = emb_svc.generate_embeddings(texts)
+            if candidates is not None and len(candidates) == len(chunk):
+                vectors = candidates
         except Exception as exc:
-            logger.warning("lorebook_entry_embedding_failed", entry_id=entry.id, error=str(exc))
-    if updated:
-        session.commit()
+            logger.warning(
+                "lorebook_reindex_batch_failed", batch_size=len(chunk), error=str(exc)
+            )
+            vectors = None
+
+        if vectors is None:
+            # Batch encode failed (model unloaded, OOM). Fall back per row so one
+            # unreadable entry cannot discard the rest of the chunk — and so a
+            # batch-level failure is not indistinguishable from 32 row failures.
+            for entry, text in zip(chunk, texts, strict=True):
+                try:
+                    entry.embedding = emb_svc.generate_embedding(text)
+                    session.add(entry)
+                    updated += 1
+                except Exception as exc:
+                    logger.warning(
+                        "lorebook_entry_embedding_failed", entry_id=entry.id, error=str(exc)
+                    )
+        else:
+            for entry, vector in zip(chunk, vectors, strict=True):
+                entry.embedding = vector
+                session.add(entry)
+                updated += 1
+
+        try:
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            logger.warning(
+                "lorebook_reindex_commit_failed", batch_size=len(chunk), error=str(exc)
+            )
+            continue
+
+    if len(entries) >= limit:
+        logger.info(
+            "lorebook_reindex_limit_reached",
+            lorebook_id=lorebook_id,
+            embedded=updated,
+            limit=limit,
+        )
     return updated

@@ -14,6 +14,11 @@ from infrastructure.logging import get_logger
 
 logger = get_logger("memory_extraction")
 
+# Marks a row that was written without a vector because the embedding model was
+# unavailable, so the memory is findable (`tags @> '["embedding-pending"]'`) and
+# not mistaken for a deliberate NULL. See create_memories_from_extraction.
+EMBEDDING_PENDING_TAG = "embedding-pending"
+
 EXTRACTION_PROMPT = """You are a memory extraction assistant. Given a conversation between a user and a character, extract durable, factual memories that the character should remember for future interactions.
 
 Rules:
@@ -107,7 +112,23 @@ def parse_extraction_result(text: str) -> list[str]:
 
 
 def create_memories_from_extraction(session: Session, character_id: str, memories: list[str]) -> int:
-    """Persist extracted memories as CharacterMemory rows with embeddings."""
+    """Persist extracted memories as CharacterMemory rows with embeddings.
+
+    An embedding failure is recorded, not swallowed. It used to be a bare
+    `except Exception: pass`, which committed the row with `embedding = NULL`
+    and no trace: `POST /api/v2/memories/search/semantic` runs a pgvector cosine
+    search that can never match NULL, so a memory written while the embedding
+    model was unloaded or OOM-ing was invisible to semantic recall for the rest
+    of its life with nothing anywhere saying why.
+
+    On failure the row is still written — the memory itself is the valuable part
+    and it stays visible in the keyword/list paths — and it is tagged
+    ``embedding-pending`` so the gap is greppable
+    (``tags @> '["embedding-pending"]'``) and re-drivable by a reindex, which
+    selects on ``embedding IS NULL``. A dedicated ``embedding_error`` column
+    would be better than a tag; that needs an entity column plus a migration and
+    is outside this module's scope.
+    """
     if not memories:
         return 0
 
@@ -115,22 +136,36 @@ def create_memories_from_extraction(session: Session, character_id: str, memorie
     emb_svc = get_embedding_service()
 
     created = 0
+    embedding_failures = 0
     for content in memories:
+        now = datetime.now(timezone.utc)
         mem = CharacterMemory(
             character_id=character_id,
             content=content,
             tags=["auto-extracted"],
             importance=5,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=now,
+            updated_at=now,
         )
         try:
             mem.embedding = emb_svc.generate_embedding(content)
-        except Exception:
-            pass
+        except Exception as exc:
+            embedding_failures += 1
+            mem.tags = [*mem.tags, EMBEDDING_PENDING_TAG]
+            logger.warning(
+                "memory_extraction_embedding_failed",
+                character_id=character_id,
+                content_preview=content[:60],
+                error=str(exc),
+            )
         session.add(mem)
         created += 1
 
     session.commit()
-    logger.info("memories_auto_created", character_id=character_id, count=created)
+    logger.info(
+        "memories_auto_created",
+        character_id=character_id,
+        count=created,
+        embedding_failures=embedding_failures,
+    )
     return created
