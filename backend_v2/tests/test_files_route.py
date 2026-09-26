@@ -223,27 +223,14 @@ class TestFilesRoute:
             assert response.status_code == 200
             assert response.json()["results"]["output/test.png"]["success"] is True
 
-    def test_proxy_file(self, client):
-        mock_service = AsyncMock()
-        mock_provider = MagicMock()
-        mock_provider.type = "modal"
-        mock_provider.credentials = {}
-        mock_provider.config = {}
-        mock_provider.container_config = {}
-        mock_service.get_provider.return_value = mock_provider
+    def test_provider_file_proxy_removed(self, client):
+        """The provider file proxy was an unvalidated path traversal.
 
-        client.app.dependency_overrides[get_provider_service] = lambda: mock_service
-
-        with patch("infrastructure.providers.create_provider_client") as mock_create_provider:
-            mock_instance = MagicMock()
-            mock_proxy = MagicMock()
-            mock_proxy.get_file = AsyncMock(return_value=b"content")
-            mock_instance.get_file_proxy.return_value = mock_proxy
-            mock_create_provider.return_value = mock_instance
-
-            response = client.get("/api/files/proxy/123/path/to/image.png")
-            assert response.status_code == 200
-            assert response.content == b"content"
-        
-        # Cleanup override
-        del client.app.dependency_overrides[get_provider_service]
+        `path` went straight from the URL into HttpFileProxy.get_file, which only
+        `quote(path, safe="/")`s it — `.` is a unreserved URI character, so `../`
+        survived verbatim. Every other file endpoint in this module routes
+        through get_safe_path(). It also had no frontend consumer, so it was both
+        dead and unsafe; the endpoint is gone rather than patched.
+        """
+        response = client.get("/api/files/proxy/123/path/to/image.png")
+        assert response.status_code == 404

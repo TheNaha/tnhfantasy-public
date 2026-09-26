@@ -1656,46 +1656,6 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
         raise ComfyError(str(e))
 
 
-# Proxy endpoints for provider storage
-@router.get("/api/files/proxy/{provider_id}/{path:path}")
-async def proxy_file(
-    provider_id: str,
-    path: str,
-    service: ProviderService = Depends(get_provider_service)
-):
-    """Proxy file from provider storage."""
-    from infrastructure.providers import create_provider_client
-    
-    provider_data = await service.get_provider(provider_id)
-    
-    provider = create_provider_client(provider_id, {
-        "type": provider_data.type,
-        "credentials": provider_data.credentials,
-        "config": provider_data.config,
-        "container_config": provider_data.container_config or {}
-    })
-    
-    try:
-        file_proxy = provider.get_file_proxy()
-        content = await file_proxy.get_file(path)
-        
-        path_lower = path.lower()
-        if path_lower.endswith(('.png', '.jpg', '.jpeg', '.webp')):
-            if path_lower.endswith('.png'):
-                media_type = "image/png"
-            elif path_lower.endswith('.webp'):
-                media_type = "image/webp"
-            else:
-                media_type = "image/jpeg"
-        else:
-            media_type = "application/octet-stream"
-        
-        return Response(content=content, media_type=media_type)
-    
-    except Exception as e:
-        raise NotFoundError("Resource", str(e))
-
-
 class BatchMetadataRequest(BaseModel):
     """Request model for batch metadata fetching."""
     paths: list[str]
