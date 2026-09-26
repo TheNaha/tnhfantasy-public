@@ -85,51 +85,29 @@ notable ones:
 Verified as real and not yet fixed. Ordered by how much they cost you.
 `docs/audit-2026-09-26-followup.md` §2 has the full list with file:line detail.
 
-1. **Blocking Docker-SDK calls on the event loop.**
-   `services/provider_runtime.py:42` does `containers.get()` + `reload()` with no
-   timeout and no `to_thread`, and `GET /api/v2/providers/` runs it serially per
-   provider. A slow or dead `DOCKER_HOST` stalls every request, WebSocket and
-   worker. `move_asset` has the same problem (sync commits plus a whole-file
-   `src.read()` in RAM) despite a commit message claiming it was converted.
-2. **Model fetch materialises the whole file in RAM.** The backend proxy and
-   the Beam engine both load the entire checkpoint into memory (Beam
-   base64-decodes it). A 7 GB SDXL checkpoint cannot survive this. Needs a
-   ranged/streaming transport across four engines and the proxy.
-3. **Provider model downloads have no resume.** A dropped connection 6 GB into a
-   large checkpoint restarts from zero. The per-path lock and unique temp file
-   landed, so concurrent downloads can no longer corrupt a model, but
-   `Range`-based resume and retries are still absent.
-4. **Provider response contract is not unified.** Four dialects across nine engine
-   methods, all with HTTP 200 (`{"success": bool}`, `{"status":"error"}`, bare
-   `{"files": [...]}`, raw third-party pass-through), so a caller cannot
-   distinguish success from failure by status code. `direct_url.validate_models`
-   additionally discards its entire result, and the Google engine leaks its API
-   key into request URLs and therefore into job records.
-5. **~45 hand-rolled modal overlays.** `useEscapeKey` and `ModalOverlay` now
-   exist and cover `ConfirmationModal` plus all 9 story dialogs, so those
-   dismiss with Escape — and one Escape now dismisses only the topmost dialog
-   rather than a whole stack. The chat, model-manager, provider and page-level
-   overlays have not been converted. The remaining work is mechanical but
-   wide, and a `components/common/Modal.jsx` still exists alongside
-   `ModalOverlay.jsx` — merging them is a follow-up, not a prerequisite.
-6. **`CharacterCard` is implemented twice** (`pages/Characters.jsx`,
-   `pages/AvatarGallery.jsx`) with divergent props, tag limits, and
-   drag-and-drop.
-7. **The app has no authentication.** Deliberate — `DEMO_GAPS_PLAN.md` records
+Items 1-6 of the previous list were fixed — see §1b of the follow-up. What remains:
+
+1. **The app has no authentication.** Deliberate — `DEMO_GAPS_PLAN.md` records
    the decision as out of scope for a local single-user studio — but it means
    every destructive endpoint, including the unauthenticated published-story
    export, is reachable by anyone who can reach the port. Do not expose this
    to a network you do not control.
-8. **Deferred unification items** from the August plan, still untouched:
-   `inference_loop` extraction from the providers, full `worker_ws` protocol
-   unification, e2e helper dedup. Note that the `external_worker` half of
-   `worker_ws` is currently unreachable by construction — nothing in the repo
-   writes the `worker_token` its auth requires — so unifying that protocol
-   should start with deciding whether the mode is wanted at all.
-9. **`GET /branches` and `GET /memories` are unbounded reads**, and
-   `POST /memories/reindex` is an unauthenticated in-request embedding pass over
-   every memory. `world_hub.get_relationships` applies its `limit`/`offset` to
-   one of five sub-queries, so the advertised pagination is not honoured.
+2. **A 7 GB checkpoint is now servable, but slowly on Modal.** All four engines
+   stream instead of buffering, and the backend has a `stream_file` path. Modal is
+   the exception: a modal method serialises its return value across RPC, so the
+   client pulls fixed 8 MiB ranges — one RPC per slice. Correct, memory-safe, and
+   slower than the others. Streaming that engine properly means a presigned URL or
+   a volume mount rather than RPC, which is a platform decision.
+3. **Provider model downloads still have no resume.** The per-path lock and unique
+   temp file landed, so concurrent downloads cannot corrupt a model, and
+   `Range`-based resume is in progress.
+4. **`world_hub.get_relationships` applies its `limit`/`offset` to one of five
+   sub-queries**, so the advertised pagination is not honoured. Everything is
+   bounded, so it is a wrong-answer bug rather than a cliff.
+5. **Remaining hand-rolled overlays.** The highest-value conversions are done and
+   `Modal` is built on `ModalOverlay`; the rest is mechanical and wide.
+6. **The embedding model still loads inside the reindex request** — seconds on
+   first call. Moving it to startup needs `services/embedding_service.py`.
 
 ## Running it
 
