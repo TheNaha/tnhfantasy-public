@@ -1,6 +1,7 @@
 import os
 import asyncio
 import base64
+import hmac
 import json
 from typing import Any, Dict, List, Optional
 
@@ -36,7 +37,12 @@ def _ensure_data_dir() -> str:
 async def verify_token(request: Request):
     if TOKEN:
         auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer ") or auth_header.split(" ", 1)[1] != TOKEN:
+        provided = auth_header.split(" ", 1)[1] if auth_header and auth_header.startswith("Bearer ") else ""
+        # compare_digest, not `!=`: a plain string compare short-circuits on the
+        # first differing byte, which leaks the length of the shared prefix of a
+        # guessed token. Every other gate in this repo (provider_core/router.py)
+        # uses hmac.compare_digest.
+        if not provided or not hmac.compare_digest(provided, TOKEN):
             raise HTTPException(status_code=401, detail="Unauthorized")
     return True
 
@@ -66,6 +72,10 @@ class UploadFileRequest(BaseModel):
 
 class ValidateModelsRequest(BaseModel):
     directory: str | List[str]
+    delete_invalid: bool = False
+
+
+class ValidateAllModelsRequest(BaseModel):
     delete_invalid: bool = False
 
 
@@ -213,8 +223,9 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
                 if delete_invalid:
                     try: os.remove(full_path)
                     except Exception: pass
-                else:
-                    continue
+                # Was `else: continue` as the last statement of the loop body, so
+                # it was unreachable and `valid.append` below was the only thing
+                # that ran when the file *was* valid.
             else:
                 valid.append(model_info)
 
@@ -302,8 +313,12 @@ async def validate_models(req: ValidateModelsRequest):
 
 
 @app.post("/validate-all-models", dependencies=[Depends(verify_token)])
-async def validate_all_models(req: Dict = {}):
-    return await validate_models(ValidateModelsRequest(directory=list(MODEL_DIRECTORIES), delete_invalid=req.get("delete_invalid", False)))
+async def validate_all_models(req: Optional[ValidateAllModelsRequest] = None):
+    # Was `req: Dict = {}`: a mutable default as a FastAPI body parameter, so
+    # every request without a body shared (and could mutate) one dict. The body
+    # stays optional so `POST` with no payload still works.
+    delete_invalid = req.delete_invalid if req is not None else False
+    return await validate_models(ValidateModelsRequest(directory=list(MODEL_DIRECTORIES), delete_invalid=delete_invalid))
 
 
 if __name__ == "__main__":
