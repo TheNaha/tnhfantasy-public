@@ -2,9 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Search, Command } from 'lucide-react';
+import { EXPERT_TOOLS } from '../constants/navigation';
 
+// Flat, searchable destinations. The expert rows are derived from
+// EXPERT_TOOLS so this list cannot drift from the sidebar again; the remaining
+// rows keep their own labels because those are search aliases for pages whose
+// own titles differ (e.g. "Advanced Generator" for the "Advanced" page).
+// There is deliberately no `{ label: 'Home', to: '/' }` row: `/` redirects to
+// `/roleplay`, so it would be a second name for the row below.
 const NAV_ITEMS = [
-    { label: 'Home', to: '/' },
     { label: 'Gallery', to: '/gallery' },
     { label: 'Simple Generate', to: '/generate' },
     { label: 'Img2Img', to: '/img2img' },
@@ -14,18 +20,9 @@ const NAV_ITEMS = [
     { label: 'Roleplay Home', to: '/roleplay' },
     { label: 'Play', to: '/chat' },
     { label: 'Stories', to: '/story' },
-    { label: 'Characters', to: '/characters' },
-    { label: 'Avatar Gallery', to: '/avatar-gallery' },
-    { label: 'World Timeline', to: '/world-timeline' },
-    { label: 'Campaigns', to: '/campaigns' },
-    { label: 'World Graph', to: '/world-graph' },
     { label: 'World', to: '/world-vault' },
-    { label: 'Locations', to: '/locations' },
-    { label: 'Lorebooks', to: '/lorebooks' },
+    ...EXPERT_TOOLS.map(({ label, to }) => ({ label, to })),
     { label: 'Prompt Library', to: '/prompts' },
-    { label: 'Scenarios', to: '/scenarios' },
-    { label: 'Personas', to: '/personas' },
-    { label: 'Voices', to: '/voices' },
     { label: 'Installed Models', to: '/models/installed' },
     { label: 'Discover Models', to: '/models/discover' },
     { label: 'Providers', to: '/providers' },

@@ -1,10 +1,11 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images, MapPin, User, Sparkles, Calendar, Swords, GitBranch, HelpCircle, Command, Mic, FileText, BookMarked, ChevronDown, Layers3 } from 'lucide-react';
+import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, BookOpen, Images, Sparkles, ChevronDown, Layers3, Command, HelpCircle, FileText, ImagePlus, Paintbrush } from 'lucide-react';
 import { useMemo, useState, memo, useEffect } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
 import GlobalCommandPalette from './GlobalCommandPalette';
+import { EXPERT_TOOLS } from '../constants/navigation';
 import { useBranding } from '../hooks/useBranding';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import {
@@ -281,12 +282,47 @@ export default function Layout({ children }) {
                         WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 44px), transparent 100%)',
                     }}
                 >
-                    <div className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">Menu</div>
+                    {/* Grouped by how the app is meant to be used, most
+                        prominent first: the roleplay front door, then image
+                        generation, then resources and system admin. Previously
+                        this was one flat "Menu" list with 8 image-generation
+                        entries above the roleplay ones, so 4 of 17 items
+                        signalled what the product actually is. Every
+                        destination is still here — only the reading order and
+                        the section headers changed. The "Menu" header went away
+                        with the reorder: Home is the roleplay front door, so it
+                        belongs under "Roleplay" rather than in a group of one. */}
+                    <div className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">Roleplay</div>
                     {/* Points at the roleplay front door. This used to be `/`, which
                         was the workspace picker, so "Home" and "Roleplay Home" were
                         two names for two different landing pages. Now there is one
                         front door and one nav item for it. */}
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/roleplay" icon={Home} label="Home" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Play" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Stories" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-vault" icon={Globe} label="World" />
+                    <button
+                        type="button"
+                        onClick={() => setShowRoleplayTools((open) => !open)}
+                        aria-expanded={showRoleplayTools}
+                        className="mt-2 flex w-[calc(100%_-_2rem)] items-center gap-3 rounded-xl px-4 py-2.5 text-left text-xs font-medium text-gray-500 transition hover:bg-white/5 hover:text-gray-200"
+                    >
+                        <Layers3 size={17} aria-hidden="true" />
+                        <span className="flex-1">Expert tools</span>
+                        <ChevronDown size={14} className={showRoleplayTools ? 'rotate-180 transition-transform' : 'transition-transform'} aria-hidden="true" />
+                    </button>
+                    {showRoleplayTools && (
+                        <div className="mt-1 space-y-1 border-l border-white/10 pl-3 ml-4">
+                            {/* Rendered from the same definition the Roleplay
+                                front door and the command palette use, so the
+                                two "Expert tools" lists cannot drift again. */}
+                            {EXPERT_TOOLS.map(({ to, icon: Icon, label }) => (
+                                <NavItem key={to} onNavigate={() => setIsMobileMenuOpen(false)} to={to} icon={Icon} label={label} />
+                            ))}
+                        </div>
+                    )}
+
+                    <div className="mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider">Image generation</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/gallery" icon={Images} label="Gallery" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/generate" icon={Wand2} label="Simple Generate" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/batch-generate" icon={Sparkles} label="Batch Generate" />
@@ -294,36 +330,7 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/img2img" icon={ImagePlus} label="Img2Img" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/inpaint" icon={Paintbrush} label="Inpaint" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/advanced" icon={Settings} label="Advanced" />
-                    
-                     <div className="mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider">Roleplay</div>
-                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Play" />
-                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Stories" />
-                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-vault" icon={Globe} label="World" />
-                     <button
-                         type="button"
-                         onClick={() => setShowRoleplayTools((open) => !open)}
-                         aria-expanded={showRoleplayTools}
-                         className="mt-2 flex w-[calc(100%_-_2rem)] items-center gap-3 rounded-xl px-4 py-2.5 text-left text-xs font-medium text-gray-500 transition hover:bg-white/5 hover:text-gray-200"
-                     >
-                         <Layers3 size={17} aria-hidden="true" />
-                         <span className="flex-1">Expert tools</span>
-                         <ChevronDown size={14} className={showRoleplayTools ? 'rotate-180 transition-transform' : 'transition-transform'} aria-hidden="true" />
-                     </button>
-                     {showRoleplayTools && (
-                         <div className="mt-1 space-y-1 border-l border-white/10 pl-3 ml-4">
-                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/characters" icon={Users} label="Characters" />
-                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/avatar-gallery" icon={User} label="Avatar Gallery" />
-                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-timeline" icon={Calendar} label="World Timeline" />
-                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/campaigns" icon={Swords} label="Campaigns" />
-                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-graph" icon={GitBranch} label="World Graph" />
-                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/locations" icon={MapPin} label="Locations" />
-                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/scenarios" icon={Sparkles} label="Scenarios" />
-                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/voices" icon={Mic} label="Voices" />
-                             <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/lorebooks" icon={BookMarked} label="Lorebooks" />
-                         </div>
-                     )}
 
-                    
                     <div className="mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider">Resources</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/discover" icon={Globe} label="Discover Models" />

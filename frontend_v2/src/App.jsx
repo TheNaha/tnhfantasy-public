@@ -96,9 +96,14 @@ function AnimatedRoutes() {
                 {/* One front door. `/` used to be the Fantasy Hub workspace picker,
                     which made a workspace index the landing page for an app whose
                     whole premise is roleplay-first — and left two competing landing
-                    pages with different design languages. The picker is not
-                    deleted: it is at /hub, still linked from Roleplay Home and the
-                    command palette. */}
+                    pages with different design languages.
+
+                    The picker is not deleted: it is at /hub. It has no nav entry and
+                    no link pointing at it — the earlier comment here claimed
+                    otherwise, which is how a "still linked" page ends up orphaned.
+                    Its one unique job, the first-run onboarding wizard, is now
+                    mounted on /roleplay, so nothing about first-run setup depends on
+                    /hub being reachable. */}
                 <Route path="/" element={<Navigate to="/roleplay" replace />} />
                 <Route path="/hub" element={<Boundary routeKey={routeKey}><FantasyHub /></Boundary>} />
                 <Route path="/roleplay" element={<Boundary routeKey={routeKey}><RoleplayWorkspace /></Boundary>} />

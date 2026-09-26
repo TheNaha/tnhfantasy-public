@@ -3,9 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
     ArrowRight,
     BookOpen,
-    CalendarClock,
     Compass,
-    GitBranch,
     MapPin,
     MessageSquare,
     PenLine,
@@ -13,13 +11,15 @@ import {
     Sparkles,
     Swords,
     Users,
-    WandSparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useChats } from '../hooks/useChats';
 import { useStories } from '../hooks/useStories';
 import { useCampaigns } from '../hooks/useCampaigns';
 import { useWorldVaultDashboard } from '../hooks/useWorldVaultSearch';
+import OnboardingWizard from '../components/onboarding/OnboardingWizard';
+import { EXPERT_TOOLS } from '../constants/navigation';
+import { isSetupComplete } from '../utils/setupComplete';
 
 const asList = (value) => Array.isArray(value) ? value : (value?.chats || value?.stories || value?.campaigns || []);
 
@@ -30,19 +30,15 @@ const formatUpdated = (value) => {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
-const ENTITY_LINKS = [
-    { to: '/characters', label: 'Characters', description: 'Personas, appearances, and voices', icon: Users, color: 'text-purple-300' },
-    { to: '/lorebooks', label: 'Lorebook', description: 'World facts activated in context', icon: ScrollText, color: 'text-emerald-300' },
-    { to: '/locations', label: 'Locations', description: 'Places, imagery, and atmosphere', icon: MapPin, color: 'text-amber-300' },
-    { to: '/scenarios', label: 'Scenarios', description: 'Reusable starting situations', icon: WandSparkles, color: 'text-cyan-300' },
-    { to: '/voices', label: 'Voices', description: 'Narration and TTS voices', icon: Sparkles, color: 'text-pink-300' },
-    { to: '/world-timeline', label: 'Timeline', description: 'See how a world changes over time', icon: CalendarClock, color: 'text-rose-300' },
-    { to: '/world-graph', label: 'World graph', description: 'Explore relationships and connections', icon: GitBranch, color: 'text-indigo-300' },
-];
-
 export default function RoleplayWorkspace() {
     const navigate = useNavigate();
     const [showExpertTools, setShowExpertTools] = useState(false);
+    // The first-run wizard is hosted here, not on /hub. This page is the only
+    // front door (`/` redirects here) and /hub had no link pointing at it from
+    // anywhere, so a new user was guaranteed to never see onboarding. The
+    // wizard's own X and Skip both call markSetupComplete() before onClose(),
+    // so dismissing it persists and it does not reappear on the next visit.
+    const [showOnboarding, setShowOnboarding] = useState(() => !isSetupComplete());
     const { data: chatData, isLoading: chatsLoading } = useChats({ limit: 8 });
     const { data: storyData, isLoading: storiesLoading } = useStories();
     const { data: campaignData } = useCampaigns();
@@ -234,7 +230,7 @@ export default function RoleplayWorkspace() {
                 </button>
                 {showExpertTools && (
                     <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        {ENTITY_LINKS.map(({ to, label, description, icon: Icon, color }) => (
+                        {EXPERT_TOOLS.map(({ to, label, description, icon: Icon, color }) => (
                             <button
                                 key={to}
                                 type="button"
@@ -252,6 +248,7 @@ export default function RoleplayWorkspace() {
                     </div>
                 )}
             </section>
+            {showOnboarding && <OnboardingWizard onClose={() => setShowOnboarding(false)} />}
         </div>
     );
 }

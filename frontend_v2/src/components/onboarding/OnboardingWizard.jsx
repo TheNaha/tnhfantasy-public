@@ -184,9 +184,8 @@ export default function OnboardingWizard({ onClose }) {
                     {step.id === 'ready' && (
                         <div className="space-y-3 text-gray-400 text-sm leading-relaxed">
                             <p>
-                                The Fantasy Hub is your launchpad. Generate images, chat with
-                                characters, write stories, or manage your world vault at any
-                                time.
+                                Roleplay is your launchpad. Start a chat, write a story, or manage your
+                                world vault at any time.
                             </p>
                             <p>
                                 Tip: the seeded demo character <span className="text-white font-semibold">Lyra Vale</span> and

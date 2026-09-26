@@ -4,9 +4,11 @@ import { useEscapeKey } from './useEscapeKey';
 
 const NAVIGATION_TARGETS = {
     g: '/generate',
-    // Dashboard is /gallery. '/' is the FantasyHub landing page, so this used to
-    // navigate somewhere other than what this hook's own docstring and the
-    // shortcuts modal promise.
+    // Dashboard is /gallery. '/' used to be the FantasyHub landing page, so this
+    // used to navigate somewhere other than what this hook's own docstring and
+    // the shortcuts modal promise. `/` now redirects to /roleplay, the roleplay
+    // front door; /hub is the leftover FantasyHub picker and is not a landing
+    // page any more.
     d: '/gallery',
     m: '/models',
     a: '/advanced',
