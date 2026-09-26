@@ -5,15 +5,22 @@ services:
       dockerfile: remote_agent/Dockerfile
     container_name: tnhcomfy-remote-agent
     env_file:
+      # Only .env.agent.example is tracked. Copy it first:
+      #   cp .env.agent.example .env.agent
+      # and, on the GPU rig, point DATA_DIR at the real models directory.
       - .env.agent
     environment:
       - PORT=8001
       # DATA_DIR is strictly bound to /app/remote_agent/data inside the container
     volumes:
-      # IMPORTANT: Replace the path on the left with the absolute path to your
-      # ComfyUI models directory on your GPU rig.
-      # Example: /home/user/ComfyUI/models:/app/remote_agent/data:rw
-      - /path/to/your/ComfyUI/models:/app/remote_agent/data:rw
+      # Set DATA_DIR to the absolute path of the ComfyUI models directory on the
+      # GPU rig. It is a REQUIRED variable (`:?`) on purpose: the file previously
+      # shipped the unedited placeholder `/path/to/your/ComfyUI/models`, and
+      # `docker compose up` would create that literal directory on the host and
+      # mount it as the agent's storage root.
+      #
+      #   DATA_DIR=/home/user/ComfyUI/models docker compose up -d
+      - ${DATA_DIR:?set DATA_DIR to the absolute path of the remote models directory, e.g. DATA_DIR=/home/user/ComfyUI/models}:/app/remote_agent/data:rw
     ports:
       - "8001:8001"
     restart: unless-stopped
