@@ -39,6 +39,26 @@ describe('design tokens', () => {
         expect(CSS).toMatch(/--text-2xs:\s*0\.6875rem/);
     });
 
+    it('names no colour after a Tailwind font-size step', () => {
+        // Tailwind generates `text-<name>` from every `--color-<name>`, and
+        // `text-xs`/`text-sm`/`text-base`/`text-lg` are *also* font sizes. A
+        // theme colour named after one of them makes the utility resolve to a
+        // colour instead, shadowing the size utility of the same name across
+        // the whole app. `--color-base` did exactly that: 23 `text-base`
+        // elements silently lost their size and inherited the page background
+        // as their text colour, and nothing failed.
+        const SIZE_NAMES = ['xs', 'sm', 'base', 'lg', 'xl', '2xl', '3xl', '4xl', '5xl',
+                            '6xl', '7xl', '8xl', '9xl'];
+        const theme = CSS.slice(CSS.indexOf('@theme'), CSS.indexOf('@theme') + 4000);
+        const collisions = [...theme.matchAll(/--color-([a-z0-9-]+):/g)]
+            .map((m) => m[1])
+            .filter((name) => SIZE_NAMES.includes(name));
+        expect(
+            collisions,
+            `these theme colours shadow the font-size utility text-<name>: ${collisions.join(', ')}`
+        ).toEqual([]);
+    });
+
     it('enforces the floor in a rule that can actually win the cascade', () => {
         // Unlayered on purpose. Tailwind v4 emits utilities inside
         // `@layer theme, base, components, utilities`, so a rule in `@layer base`

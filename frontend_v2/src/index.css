@@ -23,9 +23,16 @@
      `text-secondary`, `bg-secondary`, `border-secondary`. An earlier draft used
      `--color-text-secondary`, which generates `text-text-secondary`. */
 
-  /* Surfaces, darkest to lightest. A dark UI throughout: `base` is the page,
-     `raised` the sidebar and panels, `overlay` a popover, `hover` a row wash. */
-  --color-base: #0b0e14;
+  /* Surfaces, darkest to lightest. A dark UI throughout: `surface` is the page,
+     `raised` the sidebar and panels, `overlay` a popover, `hover` a row wash.
+
+     Named `surface`, not `base`: Tailwind generates `text-<name>` from every
+     `--color-<name>`, and `base` is also a font-size step. `--color-base` made
+     `text-base` resolve to a *colour*, shadowing the font-size utility of the
+     same name — 23 elements silently lost their size and took the page
+     background as their text colour. `designTokens.test.js` now fails if any
+     theme colour is named after a size step. */
+  --color-surface: #0b0e14;
   --color-sunken: #08080c;
   --color-raised: #0f172a;
   --color-overlay: #1e293b;
