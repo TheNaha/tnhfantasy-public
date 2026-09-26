@@ -76,6 +76,44 @@
   --text-5xl: 3rem;        /* 48px */
 }
 
+/* The dark theme's default text colour.
+
+   Nothing set one, so the browser default (black) was inherited by every
+   element that did not name a colour itself. That is invisible almost
+   everywhere because the app styles text explicitly, but it bites hard on
+   anything portalled to <body> — `ModalOverlay` renders through
+   `createPortal`, so a dialog that omits a colour on a heading or a button
+   gets black-on-black. The image viewer's "Details", "Download" and
+   "Reuse Parameters" were all unreadable for exactly this reason.
+
+   Setting it here fixes every present and future portal rather than patching
+   the three elements that happened to be reported. */
+@layer base {
+  body {
+    color: var(--color-primary);
+  }
+}
+
+/* `.glass-panel` — used by 30 components and previously defined NOWHERE.
+
+   It was a silent no-op, so the panels it names had no background at all. The
+   mobile header is the visible symptom: it is a `fixed top-0` bar whose only
+   background came from this class, so the page scrolled through the "TNH-Comfy"
+   wordmark and the menu button. Statistics, Settings, Characters and
+   DiscoverModels all lost their surfaces the same way.
+
+   In `@layer components` on purpose, not unlayered: three call sites pair this
+   with a tint (`bg-blue-500/5`, `bg-[#0B0E14]/80`) that must still win, and the
+   utilities layer sorts after components. The border is left to the call sites,
+   which all add their own `border-white/5`. */
+@layer components {
+  .glass-panel {
+    background-color: color-mix(in oklab, var(--color-surface) 80%, transparent);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+}
+
 /* The legible-type floor, enforced rather than suggested.
 
    Unlayered on purpose. Tailwind v4 emits its utilities inside
