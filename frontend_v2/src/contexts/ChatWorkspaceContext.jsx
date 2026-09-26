@@ -19,6 +19,39 @@ import { COMMANDS } from '../components/chat/chatCommands';
 
 const ChatWorkspaceContext = createContext(null);
 
+/**
+ * Keep a stable identity for a react-query mutation result.
+ *
+ * react-query v5's `useMutation` returns `{ ...result, mutate, mutateAsync }` — a
+ * fresh object literal on every render, even when the mutation's state has not
+ * changed. These objects are the dependency list of the context `useMemo`
+ * below, so they defeated it: the memo recomputed on every render, a new
+ * context object was published, and *every* consumer of `useChatWorkspace()`
+ * re-rendered — including `MessageTimeline` and its 600-line `MessageItem`, on
+ * every streamed token.
+ *
+ * The dependency list is every field `MutationObserver` can change, so the
+ * identity moves exactly when the mutation's observable state does. The
+ * consumer API is unchanged: `sendMessageMutation.isPending` still works.
+ */
+function useStableObject(mutation) {
+    // `useMemo` is called unconditionally (an early return for a missing
+    // mutation would break the rules of hooks) and the dependencies are read
+    // defensively: some of these mutation hooks are mocked out in tests and a
+    // few are conditionally composed, and the previous plain destructuring
+    // tolerated an undefined entry by putting it straight into the context.
+    return useMemo(
+        () => mutation,
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [
+            mutation?.data, mutation?.error, mutation?.status, mutation?.variables,
+            mutation?.submittedAt, mutation?.context, mutation?.failureCount, mutation?.failureReason,
+            mutation?.isIdle, mutation?.isPending, mutation?.isSuccess, mutation?.isError,
+            mutation?.isPaused, mutation?.mutate, mutation?.mutateAsync, mutation?.reset,
+        ]
+    );
+}
+
 export function ChatWorkspaceProvider({ children }) {
 
     const [mobileTab, setMobileTab] = useState('chat'); // 'chats', 'chat', 'context', 'timeline'
@@ -154,12 +187,50 @@ export function ChatWorkspaceProvider({ children }) {
     } = cwData;
     const cwMutations = useChatWorkspaceMutations();
     const {
-        sendMessageMutation, createChatMutation, exportJsonlMutation, importChatMutation,
-        deleteChatMutation, renameChatMutation, updateChatMutation, editMessageMutation,
-        rollbackMutation, regenerateMutation, patchCharacterMutation, deleteMessageMutation,
-        impersonateMutation, pinMessageMutation, swipeMessageMutation, generateSwipeMutation,
-        narrateMutation, illustrateMutation, generateSceneMutation, suggestReplyMutation,
+        sendMessageMutation: rawSendMessageMutation, createChatMutation: rawCreateChatMutation,
+        exportJsonlMutation: rawExportJsonlMutation, importChatMutation: rawImportChatMutation,
+        deleteChatMutation: rawDeleteChatMutation, renameChatMutation: rawRenameChatMutation,
+        updateChatMutation: rawUpdateChatMutation, editMessageMutation: rawEditMessageMutation,
+        rollbackMutation: rawRollbackMutation, regenerateMutation: rawRegenerateMutation,
+        patchCharacterMutation: rawPatchCharacterMutation, deleteMessageMutation: rawDeleteMessageMutation,
+        impersonateMutation: rawImpersonateMutation, pinMessageMutation: rawPinMessageMutation,
+        swipeMessageMutation: rawSwipeMessageMutation, generateSwipeMutation: rawGenerateSwipeMutation,
+        narrateMutation: rawNarrateMutation, illustrateMutation: rawIllustrateMutation,
+        generateSceneMutation: rawGenerateSceneMutation, suggestReplyMutation: rawSuggestReplyMutation,
     } = cwMutations;
+
+    // react-query v5's `useMutation` returns `{ ...result, mutate, mutateAsync }` —
+    // a fresh object literal on every render, even when the mutation's state has
+    // not changed. These objects are the dependency list of the context
+    // `useMemo` below, so they defeated it: the memo recomputed on every render,
+    // a new context object was published, and *every* consumer of
+    // `useChatWorkspace()` re-rendered — including `MessageTimeline` and its
+    // 600-line `MessageItem`, on every streamed token.
+    //
+    // `useStableObject` keeps the previous identity while the contents are
+    // shallow-equal, so the context only changes when a mutation genuinely
+    // changes state (isPending, error, data). The consumer API is unchanged:
+    // `sendMessageMutation.isPending` still works.
+    const sendMessageMutation = useStableObject(rawSendMessageMutation);
+    const createChatMutation = useStableObject(rawCreateChatMutation);
+    const exportJsonlMutation = useStableObject(rawExportJsonlMutation);
+    const importChatMutation = useStableObject(rawImportChatMutation);
+    const deleteChatMutation = useStableObject(rawDeleteChatMutation);
+    const renameChatMutation = useStableObject(rawRenameChatMutation);
+    const updateChatMutation = useStableObject(rawUpdateChatMutation);
+    const editMessageMutation = useStableObject(rawEditMessageMutation);
+    const rollbackMutation = useStableObject(rawRollbackMutation);
+    const regenerateMutation = useStableObject(rawRegenerateMutation);
+    const patchCharacterMutation = useStableObject(rawPatchCharacterMutation);
+    const deleteMessageMutation = useStableObject(rawDeleteMessageMutation);
+    const impersonateMutation = useStableObject(rawImpersonateMutation);
+    const pinMessageMutation = useStableObject(rawPinMessageMutation);
+    const swipeMessageMutation = useStableObject(rawSwipeMessageMutation);
+    const generateSwipeMutation = useStableObject(rawGenerateSwipeMutation);
+    const narrateMutation = useStableObject(rawNarrateMutation);
+    const illustrateMutation = useStableObject(rawIllustrateMutation);
+    const generateSceneMutation = useStableObject(rawGenerateSceneMutation);
+    const suggestReplyMutation = useStableObject(rawSuggestReplyMutation);
 
     const activeChatList = useMemo(
         () => chatSearchQuery.trim() ? (searchResults || []) : chats,
