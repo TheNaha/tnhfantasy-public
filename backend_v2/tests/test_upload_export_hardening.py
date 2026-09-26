@@ -691,6 +691,128 @@ class TestBatchRequestBudgets:
 
 
 # ---------------------------------------------------------------------------
+# Endpoints whose blocking bodies moved to a worker thread
+#
+# These assert the *payload* is unchanged by the `asyncio.to_thread`
+# conversion. The blocking part — the synchronous session, the recursive globs
+# of output/thumb, the DEFLATE pass — now runs off the event loop, but the
+# responses must be byte-for-byte what they were inline.
+# ---------------------------------------------------------------------------
+
+class TestThumbnailRouteOffLoop:
+    def _seed_indexed_thumb(self, sandbox_dirs, session):
+        """An asset row plus its on-disk WebP thumbnail."""
+        from datetime import datetime, timezone
+
+        from core.entities import Asset
+
+        (sandbox_dirs["output"] / "shot.png").write_bytes(PNG_BYTES)
+        thumb_rel = "thumb/shot.webp"
+        thumb = sandbox_dirs["output"] / thumb_rel
+        thumb.parent.mkdir(parents=True, exist_ok=True)
+        thumb.write_bytes(PNG_BYTES)
+
+        asset = Asset(
+            relative_path="shot.png",
+            filename="shot.png",
+            thumbnail_relative_path=thumb_rel,
+            workspace="default",
+            generated_at=datetime.now(timezone.utc),
+        )
+        session.add(asset)
+        session.commit()
+        return asset
+
+    def test_indexed_thumbnail_is_served(self, client: TestClient, sandbox_dirs, session):
+        self._seed_indexed_thumb(sandbox_dirs, session)
+
+        resp = client.get("/api/thumbnail/medium/shot.png")
+        assert resp.status_code == 200
+        assert resp.content == PNG_BYTES
+        assert resp.headers["cache-control"] == "public, max-age=31536000, immutable"
+        assert resp.headers["etag"]
+
+    def test_mirrored_legacy_thumb_is_served(self, client: TestClient, sandbox_dirs):
+        (sandbox_dirs["output"] / "orig.png").write_bytes(PNG_BYTES)
+        mirrored = sandbox_dirs["output"] / "thumb" / "orig.webp"
+        mirrored.parent.mkdir(parents=True, exist_ok=True)
+        mirrored.write_bytes(PNG_BYTES)
+
+        resp = client.get("/api/thumbnail/medium/orig.png")
+        assert resp.status_code == 200
+        assert resp.content == PNG_BYTES
+
+    def test_falls_back_to_the_full_image(self, client: TestClient, sandbox_dirs):
+        (sandbox_dirs["output"] / "solo.png").write_bytes(PNG_BYTES)
+
+        resp = client.get("/api/thumbnail/medium/solo.png")
+        assert resp.status_code == 200
+        assert resp.content == PNG_BYTES
+        assert resp.headers["cache-control"] == "public, max-age=3600"
+
+    def test_invalid_size_is_still_a_400(self, client: TestClient, sandbox_dirs):
+        resp = client.get("/api/thumbnail/huge/whatever.png")
+        assert resp.status_code == 400
+
+    def test_missing_file_is_a_404(self, client: TestClient, sandbox_dirs):
+        resp = client.get("/api/thumbnail/medium/nothing-here.png")
+        assert resp.status_code == 404
+
+
+class TestBatchDeleteOffLoop:
+    def test_removes_files_and_their_thumbnails(self, client: TestClient, sandbox_dirs):
+        for name in ("a.png", "b.png"):
+            (sandbox_dirs["output"] / name).write_bytes(PNG_BYTES)
+            thumb = sandbox_dirs["output"] / "thumb" / name.replace(".png", ".webp")
+            thumb.parent.mkdir(parents=True, exist_ok=True)
+            thumb.write_bytes(PNG_BYTES)
+
+        resp = client.post(
+            "/api/batch/delete", json={"directory": "output", "files": ["a.png", "b.png"]}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "success", "deleted": 2, "total": 2}
+
+        assert not (sandbox_dirs["output"] / "a.png").exists()
+        assert not (sandbox_dirs["output"] / "b.png").exists()
+        assert not (sandbox_dirs["output"] / "thumb" / "a.webp").exists()
+        assert not (sandbox_dirs["output"] / "thumb" / "b.webp").exists()
+
+    def test_counts_a_name_that_does_not_exist(self, client: TestClient, sandbox_dirs):
+        resp = client.post(
+            "/api/batch/delete", json={"directory": "output", "files": ["ghost.png"]}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "success", "deleted": 1, "total": 1}
+
+    def test_traversal_entries_are_skipped_not_deleted(self, client: TestClient, tmp_path):
+        secret = tmp_path / "secret.png"
+        secret.write_bytes(PNG_BYTES)
+
+        resp = client.post(
+            "/api/batch/delete", json={"directory": "output", "files": ["../secret.png"]}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 0
+        assert secret.exists()
+
+    def test_model_directory_delete_still_works(self, client: TestClient, tmp_path, monkeypatch):
+        cache_dir = tmp_path / "cache"
+        (cache_dir / "models" / "checkpoints").mkdir(parents=True)
+        target = cache_dir / "models" / "checkpoints" / "m.safetensors"
+        target.write_bytes(b"weights")
+        monkeypatch.setattr(files_module, "CACHE_DIR", str(cache_dir))
+
+        resp = client.post(
+            "/api/batch/delete",
+            json={"directory": "models/checkpoints", "files": ["m.safetensors"]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 1
+        assert not target.exists()
+
+
+# ---------------------------------------------------------------------------
 # world_vault upload endpoints (same helpers, same error shape)
 # ---------------------------------------------------------------------------
 

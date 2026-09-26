@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from api.deps import get_job_submission_service
 from core.exceptions import ValidationError
+from core.upload_validation import require_batch_size
 from infrastructure.logging import api_logger
 from infrastructure.request_dedup import deduplicated, make_key
 from services.job_submission_service import JobSubmissionService
@@ -30,6 +31,14 @@ from services.job_submission_service import JobSubmissionService
 logger = api_logger()
 
 router = APIRouter(prefix="/api", tags=["generation"])
+
+# Ceiling on `POST /generate/batch`. The frontend UI stops at 60, but the
+# endpoint is directly reachable, and every entry below runs `validate_workflow`
+# (two 4-table joins) plus a committed `create_job` inline in the request
+# coroutine — so a 5000-entry body created 5000 paid GPU jobs and blocked the
+# event loop for minutes. Sized well above the UI cap so scripted batch callers
+# are unaffected.
+MAX_GENERATE_BATCH = 60
 
 
 class GenerateRequest(BaseModel):
@@ -147,6 +156,12 @@ async def generate_batch(
 
         if not workflows:
             raise ValidationError("workflows array is required", field="workflows")
+
+        # Bound the batch before any job is created or enqueued. `require_batch_size`
+        # gives the same 400-with-code error shape as the other batch endpoints
+        # (files.py), with the cap passed explicitly so this endpoint's limit is
+        # its own rather than the shared MAX_BATCH_ITEMS.
+        require_batch_size(workflows, MAX_GENERATE_BATCH, field="workflows")
 
         async def _create_batch_jobs():
             created_jobs = []

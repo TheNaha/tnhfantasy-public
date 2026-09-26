@@ -261,9 +261,13 @@ async def batch_download(req: BatchDownloadRequest):
     resolve are reported through `X-Missing-Count` / `X-Missing-Files`; if none
     of them resolve the request fails outright rather than returning a broken
     empty archive.
-    """
-    import zipfile
 
+    The whole build runs on a worker thread. It used to run inline on the event
+    loop, and between them the per-file `_resolve_asset_path` (up to 500 files,
+    each opening its own synchronous session) and the DEFLATE pass over up to
+    1 GiB stalled every other request, WebSocket frame and job dispatch for the
+    duration of the compression.
+    """
     if not req.files:
         raise UploadValidationError(
             "No files requested for download",
@@ -280,56 +284,82 @@ async def batch_download(req: BatchDownloadRequest):
             details={"received": len(req.files), "max_files": MAX_EXPORT_FILES},
         )
 
+    temp_path, headers = await asyncio.to_thread(_build_export_zip_sync, req.files)
+
+    return FileResponse(
+        temp_path,
+        media_type="application/zip",
+        headers=headers,
+        background=BackgroundTask(os.remove, temp_path)
+    )
+
+
+def _build_export_zip_sync(filenames: list[str]) -> tuple[str, dict[str, str]]:
+    """Resolve, measure and compress an export ZIP on a worker thread.
+
+    Returns `(temp_path, headers)`. The archive is streamed into a temp file
+    rather than a `BytesIO` + `getvalue()`, so a full second copy of a 1 GiB
+    archive never exists in memory; `FileResponse` streams the file and
+    `BackgroundTask` unlinks it afterwards.
+
+    Raises `UploadValidationError` / `ComfyError` on failure, having removed the
+    temp file in that case.
+    """
+    import zipfile
+
     # Resolve + measure first: cheaper than writing a ZIP we would discard.
     resolved: list[tuple[str, str]] = []  # (source_path, arcname)
     missing: list[str] = []
     total_bytes = 0
     taken: set[str] = set()
 
-    for filename in req.files:
-        source_path = _resolve_asset_path(filename)
-        if not source_path:
+    # One session for the whole export: at MAX_EXPORT_FILES that is one pooled
+    # connection instead of 500, each previously held across two SELECTs.
+    with _sync_session() as session:
+        for filename in filenames:
+            source_path = _resolve_asset_path(filename, session)
+            if not source_path:
+                try:
+                    candidate = get_safe_path(OUTPUT_DIR, filename)
+                    if os.path.exists(candidate):
+                        source_path = candidate
+                except ValidationError:
+                    source_path = None
+
+            if not source_path or not os.path.isfile(source_path):
+                missing.append(filename)
+                continue
+
             try:
-                candidate = get_safe_path(OUTPUT_DIR, filename)
-                if os.path.exists(candidate):
-                    source_path = candidate
-            except ValidationError:
-                source_path = None
+                size = os.path.getsize(source_path)
+            except OSError as exc:
+                logger.warning("batch_download_stat_failed", filename=filename, error=str(exc))
+                missing.append(filename)
+                continue
 
-        if not source_path or not os.path.isfile(source_path):
-            missing.append(filename)
-            continue
+            if size > MAX_EXPORT_FILE_BYTES:
+                raise UploadValidationError(
+                    f"'{os.path.basename(filename)}' is {human_size(size)}, above the "
+                    f"{human_size(MAX_EXPORT_FILE_BYTES)} per-file export limit",
+                    code="EXPORT_TOO_LARGE",
+                    field="files",
+                    max_bytes=MAX_EXPORT_FILE_BYTES,
+                    received_bytes=size,
+                    details={"filename": os.path.basename(filename)},
+                )
 
-        try:
-            size = os.path.getsize(source_path)
-        except OSError as exc:
-            logger.warning("batch_download_stat_failed", filename=filename, error=str(exc))
-            missing.append(filename)
-            continue
+            total_bytes += size
+            if total_bytes > MAX_EXPORT_TOTAL_BYTES:
+                raise UploadValidationError(
+                    f"Export would total more than the {human_size(MAX_EXPORT_TOTAL_BYTES)} "
+                    "limit. Download fewer files at a time.",
+                    code="EXPORT_TOO_LARGE",
+                    field="files",
+                    max_bytes=MAX_EXPORT_TOTAL_BYTES,
+                    received_bytes=total_bytes,
+                )
 
-        if size > MAX_EXPORT_FILE_BYTES:
-            raise UploadValidationError(
-                f"'{os.path.basename(filename)}' is {human_size(size)}, above the "
-                f"{human_size(MAX_EXPORT_FILE_BYTES)} per-file export limit",
-                code="EXPORT_TOO_LARGE",
-                field="files",
-                max_bytes=MAX_EXPORT_FILE_BYTES,
-                received_bytes=size,
-                details={"filename": os.path.basename(filename)},
-            )
-
-        total_bytes += size
-        if total_bytes > MAX_EXPORT_TOTAL_BYTES:
-            raise UploadValidationError(
-                f"Export would total more than the {human_size(MAX_EXPORT_TOTAL_BYTES)} "
-                "limit. Download fewer files at a time.",
-                code="EXPORT_TOO_LARGE",
-                field="files",
-                max_bytes=MAX_EXPORT_TOTAL_BYTES,
-                received_bytes=total_bytes,
-            )
-
-        resolved.append((source_path, _unique_arcname(os.path.basename(filename), taken)))
+            resolved.append((source_path, _unique_arcname(os.path.basename(filename), taken)))
 
     if not resolved:
         preview = ", ".join(os.path.basename(name) or name for name in missing[:5])
@@ -342,7 +372,7 @@ async def batch_download(req: BatchDownloadRequest):
         )
 
     if missing:
-        logger.warning("batch_download_missing_files", missing=len(missing), requested=len(req.files))
+        logger.warning("batch_download_missing_files", missing=len(missing), requested=len(filenames))
 
     fd, temp_path = tempfile.mkstemp(suffix=".zip")
     os.close(fd)
@@ -351,28 +381,21 @@ async def batch_download(req: BatchDownloadRequest):
         with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             for source_path, arcname in resolved:
                 zipf.write(source_path, arcname=arcname)
-
-        headers = {"Content-Disposition": "attachment; filename=batch_download.zip"}
-        if missing:
-            headers["X-Missing-Count"] = str(len(missing))
-            headers["X-Missing-Files"] = ",".join(
-                os.path.basename(name) for name in missing[:20]
-            )[:1000]
-
-        return FileResponse(
-            temp_path,
-            media_type="application/zip",
-            headers=headers,
-            background=BackgroundTask(os.remove, temp_path)
-        )
-    except UploadValidationError:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        raise
     except Exception as e:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+        if isinstance(e, (UploadValidationError, ComfyError)):
+            raise
         raise ComfyError(f"Failed to create batch download: {e!s}")
+
+    headers = {"Content-Disposition": "attachment; filename=batch_download.zip"}
+    if missing:
+        headers["X-Missing-Count"] = str(len(missing))
+        headers["X-Missing-Files"] = ",".join(
+            os.path.basename(name) for name in missing[:20]
+        )[:1000]
+
+    return temp_path, headers
 
 
 def get_safe_path(base_dir: str, requested_path: str) -> str:
@@ -500,11 +523,15 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
         return {"files": [], "total": 0}
 
 
-def _resolve_asset_path(rel_or_filename: str) -> str | None:
+def _resolve_asset_path(rel_or_filename: str, session: Session | None = None) -> str | None:
     """Resolve an image request (relative_path or filename) to an on-disk path.
 
     Uses the DB-backed assets index first, falling back to a direct join under
     OUTPUT_DIR so requests still work during/after the partition migration.
+
+    Pass `session` to reuse a caller's open session — same contract as
+    `_soft_delete_assets`. Without it, a batch that resolves N names checks out
+    N pooled connections in sequence, each held for two SELECTs.
     """
     rel = rel_or_filename.lstrip("/\\")
     try:
@@ -514,8 +541,13 @@ def _resolve_asset_path(rel_or_filename: str) -> str | None:
     if os.path.exists(direct):
         return direct
     asset = None
-    try:
-        with _sync_session() as session:
+    from contextlib import ExitStack
+
+    with ExitStack() as stack:
+        owned = session is None
+        if owned:
+            session = stack.enter_context(_sync_session())
+        try:
             asset = session.exec(
                 select(Asset).where(Asset.relative_path == rel).where(Asset.deleted_at.is_(None))
             ).first()
@@ -523,8 +555,8 @@ def _resolve_asset_path(rel_or_filename: str) -> str | None:
                 asset = session.exec(
                     select(Asset).where(Asset.filename == rel).where(Asset.deleted_at.is_(None))
                 ).first()
-    except Exception:
-        asset = None
+        except Exception:
+            asset = None
     if asset:
             cand = get_safe_path(OUTPUT_DIR, asset.relative_path)
             if os.path.exists(cand):
@@ -819,7 +851,7 @@ def _move_asset_sync(asset_id: str, body: MoveAssetRequest) -> dict:
         if not os.path.exists(source_path):
             # Same session, so the row is marked deleted atomically with the 404
             # rather than through a second uncommitted session.
-            _soft_delete_assets(session, asset.relative_path)
+            _soft_delete_assets(asset.relative_path, session)
             raise NotFoundError("Asset file missing on disk")
 
         target_workspace = body.workspace or asset.workspace
@@ -1105,6 +1137,13 @@ async def list_files_endpoint(
 @router.get("/api/view/{path:path}")
 async def view_file_endpoint(path: str):
     """Serve files from local output or cached previews."""
+    # Everything below stats the filesystem, globs the output tree and — via
+    # `_resolve_asset_path` — opens a synchronous DB session. Run off the loop.
+    return await asyncio.to_thread(_view_file_sync, path)
+
+
+def _view_file_sync(path: str) -> FileResponse:
+    """Worker-thread body for `view_file_endpoint`."""
     import glob
 
     # Try local output first (supports both legacy flat and new partitioned paths)
@@ -1134,7 +1173,7 @@ async def view_file_endpoint(path: str):
         # Search in date-based subdirectories only for explicit relative paths.
         if "/" in filename:
             pattern = os.path.join(OUTPUT_DIR, "**", filename)
-            matches = await asyncio.to_thread(glob.glob, pattern, recursive=True)
+            matches = glob.glob(pattern, recursive=True)
             matches = [m for m in matches if "/thumb/" not in m]
 
             if matches:
@@ -1181,13 +1220,33 @@ async def view_file_endpoint(path: str):
 async def serve_thumbnail(size: str, filename: str):
     """
     Serve pre-generated thumbnails for faster gallery loading.
-    
+
+    Runs entirely on a worker thread: the whole body opens a synchronous
+    Session, issues SELECTs, and does recursive `glob` walks of the thumbnail
+    tree. This is the URL the entire UI uses for images
+    (`frontend_v2/src/utils/assetUrl.js` -> `/api/thumbnail/medium/{path}`), so a
+    dashboard with 50 visible thumbnails is 50 concurrent pool checkouts; done
+    inline on the event loop each one blocked every other request, WebSocket
+    frame and job dispatch. Same pattern as `_list_assets_sync` /
+    `_serve_asset_thumb_sync`.
+
     Args:
         size: Thumbnail size - 'medium' (512px)
         filename: Original image filename
-        
+
     Returns:
         Thumbnail image if exists, otherwise falls back to full image
+    """
+    return await asyncio.to_thread(_serve_thumbnail_sync, size, filename)
+
+
+def _serve_thumbnail_sync(size: str, filename: str):
+    """Worker-thread body for `serve_thumbnail`.
+
+    Opens its own synchronous Session (see `_sync_session`) for the asset-index
+    lookups and `_soft_delete_assets`, so the pool connection is held only for
+    the duration of this one thumbnail request rather than for the whole
+    gallery fan-out.
     """
     import glob
     import hashlib
@@ -1283,7 +1342,7 @@ async def serve_thumbnail(size: str, filename: str):
     # Note: If optimization above worked, we wouldn't be here.
     if "/" in filename:
         webp_pattern = os.path.join(thumb_dir, "**", f"{name_only}.webp")
-        webp_matches = await asyncio.to_thread(glob.glob, webp_pattern, recursive=True)
+        webp_matches = glob.glob(webp_pattern, recursive=True)
         
         if webp_matches:
             thumbnail_path = webp_matches[0]
@@ -1343,7 +1402,7 @@ async def serve_thumbnail(size: str, filename: str):
 
     if "/" in filename:
         original_pattern = os.path.join(OUTPUT_DIR, "**", filename)
-        original_matches = await asyncio.to_thread(glob.glob, original_pattern, recursive=True)
+        original_matches = glob.glob(original_pattern, recursive=True)
         original_matches = [m for m in original_matches if "/thumb/" not in m]
         
         if original_matches:
@@ -1620,93 +1679,116 @@ async def delete_single_file(filename: str):
 @router.post("/api/batch/delete")
 async def batch_delete_endpoint(req: BatchDeleteRequest):
     """Batch delete files."""
-    import glob
-    
+    # Validate directory
+    allowed_dirs = [
+        "output",
+        "models/checkpoints",
+        "models/loras",
+        "models/vae",
+        "models/controlnet",
+        "models/unet",
+        "models/clip",
+        "models/embeddings",
+        "models/upscale_models",
+        "models/hypernetworks",
+        "models/aesthetics",
+        "models/poses",
+        "models/wildcards",
+        "models/ultralytics/bbox",
+        "models/motion_modules",
+    ]
+    if req.directory not in allowed_dirs:
+        raise ValidationError("Invalid directory")
+
+    # Bound the batch before touching the filesystem: a 100k-entry delete
+    # list would otherwise fan out into 100k stat/glob/unlink calls.
+    require_batch_size(req.files, MAX_BATCH_ITEMS, field="files")
+
     try:
-        # Validate directory
-        allowed_dirs = [
-            "output",
-            "models/checkpoints",
-            "models/loras",
-            "models/vae",
-            "models/controlnet",
-            "models/unet",
-            "models/clip",
-            "models/embeddings",
-            "models/upscale_models",
-            "models/hypernetworks",
-            "models/aesthetics",
-            "models/poses",
-            "models/wildcards",
-            "models/ultralytics/bbox",
-            "models/motion_modules",
-        ]
-        if req.directory not in allowed_dirs:
-            raise ValidationError("Invalid directory")
+        return await asyncio.to_thread(_batch_delete_sync, req.directory, req.files)
+    except ComfyError:
+        # Validation/upload errors keep their own status and code (400) instead
+        # of being flattened into a generic 500.
+        raise
+    except Exception as e:
+        raise ComfyError(str(e))
 
-        # Bound the batch before touching the filesystem: a 100k-entry delete
-        # list would otherwise fan out into 100k stat/glob/unlink calls.
-        require_batch_size(req.files, MAX_BATCH_ITEMS, field="files")
 
-        success_count = 0
-        for filename in req.files:
+def _batch_delete_sync(directory: str, filenames: list[str]) -> dict:
+    """Worker-thread body for `POST /api/batch/delete`.
+
+    The per-item loop used to be inline in the `async def` route, so at
+    MAX_BATCH_ITEMS it ran ~2000 recursive globs of the whole `output/thumb`
+    tree plus one synchronous session (and commit) per item on the event loop.
+    The delete-by-asset-id route already wrapped the same glob in
+    `to_thread`; this variant was missed.
+
+    One session is opened for the whole batch and threaded through
+    `_soft_delete_assets`, so a 1000-item delete checks out one pooled
+    connection for the duration instead of 1000.
+    """
+    import glob
+
+    success_count = 0
+    with _sync_session() as session:
+        for filename in filenames:
             filename = filename.lstrip("/\\")
 
             # Handle output directory (supports hierarchical date-based folders)
-            if req.directory == "output":
+            if directory == "output":
                 # First try direct path
                 try:
                     local_path = get_safe_path(OUTPUT_DIR, filename)
                 except ValidationError:
                     logger.warning("delete_path_traversal_blocked", filename=filename, directory="output")
                     continue
-                
+
                 if not os.path.exists(local_path):
-                    indexed_path = _resolve_asset_path(filename)
+                    indexed_path = _resolve_asset_path(filename, session)
                     if indexed_path and os.path.exists(indexed_path):
                         local_path = indexed_path
                     elif "/" in filename:
                         pattern = os.path.join(OUTPUT_DIR, "**", filename)
-                        matches = await asyncio.to_thread(glob.glob, pattern, recursive=True)
+                        matches = glob.glob(pattern, recursive=True)
                         matches = [m for m in matches if "/thumb/" not in m]
                         if matches:
                             local_path = matches[0]
                         else:
                             logger.info("delete_file_not_found", filename=filename)
-                            _soft_delete_assets(filename)
+                            _soft_delete_assets(filename, session)
                             success_count += 1
                             continue
                     else:
                         logger.info("delete_file_not_found", filename=filename)
-                        _soft_delete_assets(filename)
+                        _soft_delete_assets(filename, session)
                         success_count += 1
                         continue
-                
+
                 if os.path.exists(local_path):
                     if os.path.isdir(local_path):
                         logger.warning("delete_is_directory", filename=filename, path=local_path)
-                        _soft_delete_assets(filename)
+                        _soft_delete_assets(filename, session)
                         success_count += 1
                         continue
                     try:
                         os.remove(local_path)
                         logger.info("delete_file_removed", path=local_path)
-                        
+
                         # Also remove metadata sidecar if exists
                         meta_path = f"{local_path}.json"
                         if os.path.exists(meta_path):
                             os.remove(meta_path)
-                        
+
                         _delete_thumbnails(local_path)
-                        _soft_delete_assets(filename)
-                        
+                        _soft_delete_assets(filename, session)
+
                         success_count += 1
                     except Exception as e:
                         logger.warning("delete_file_failed", filename=filename, error=str(e))
             else:
                 # Handle model files
                 try:
-                    target_dir = os.path.join(CACHE_DIR, req.directory)
+                    target_dir = os.path.join(CACHE_DIR, directory)
                     model_path = get_safe_path(target_dir, filename)
                 except ValidationError:
                     logger.warning("delete_path_traversal_blocked", filename=filename, directory="models")
@@ -1718,15 +1800,8 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                         success_count += 1
                     except Exception as e:
                         logger.warning("delete_file_failed", filename=filename, error=str(e))
-        
-        return {"status": "success", "deleted": success_count, "total": len(req.files)}
 
-    except ComfyError:
-        # Validation/upload errors keep their own status and code (400) instead
-        # of being flattened into a generic 500.
-        raise
-    except Exception as e:
-        raise ComfyError(str(e))
+    return {"status": "success", "deleted": success_count, "total": len(filenames)}
 
 
 class BatchMetadataRequest(BaseModel):
