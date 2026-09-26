@@ -2,7 +2,8 @@ import asyncio
 import os
 import json
 import base64
-from typing import Any, AsyncIterator, Dict, Optional
+import time
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -15,7 +16,7 @@ from provider_core import (
 )
 from provider_core.background import MAX_BACKGROUND_TASKS, BackgroundTaskLimitExceeded, spawn_background_task
 from provider_core.base_client import BaseProviderClient
-from provider_core.responses import failed, from_upstream, ok, outcome
+from provider_core.responses import failed, from_upstream, ok
 from provider_core.utils import translate_task_events, TaskEvent
 from provider_core.reconciliation import determine_download_token
 
@@ -24,6 +25,23 @@ _STREAM_CHUNK_BYTES = 1024 * 1024
 # Long enough for a multi-GB checkpoint to arrive, short enough that a
 # dead agent does not hold the worker.
 _GET_FILE_TIMEOUT_SECONDS = 600.0
+
+# Ceiling on EACH of the two /health upstream probes, which run concurrently.
+# It has to fit inside the *dispatcher's* budget rather than the healthcheck's:
+# the compose and Dockerfile healthchecks no longer probe the upstream at all
+# (they call /live), but backend_v2/services/load_balancer.py:345 and
+# api/routes/providers/crud.py:167 probe /health with
+# `_HTTP_HEALTH_PROBE_TIMEOUT_SECONDS = 2.0` and require HTTP 200, so anything
+# slower reads as "no answer" and the provider is excluded from dispatch.
+# Kept in step with direct_url's COMFYUI_HEALTH_PROBE_TIMEOUT for the same reason.
+HEALTH_PROBE_TIMEOUT = float(os.getenv("REMOTE_HEALTH_PROBE_TIMEOUT", "1.5"))
+
+# Ceiling on the cached /object_info document, in seconds. Same reasoning as
+# direct_url's COMFYUI_OBJECT_INFO_CACHE_TTL: `get_storage_stats` calls
+# `list_models` once per MODEL_DIRECTORIES entry (16), and ComfyUI's /object_info
+# is multi-megabyte on a production install.
+OBJECT_INFO_CACHE_TTL = float(os.getenv("COMFYUI_OBJECT_INFO_CACHE_TTL", "30.0"))
+
 from provider_core.models import MODEL_DIRECTORIES
 
 logger = get_logger("image_worker.remote_comfy.client")
@@ -45,9 +63,32 @@ class RemoteComfyProviderClient(BaseProviderClient):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         self._http = httpx.AsyncClient(base_url=self.comfy_url, timeout=30.0, headers=headers)
+        self._object_info_cache: tuple[float, Dict[str, Any]] | None = None
+        # Single-flight: 16 concurrent get_storage_stats callers must cause ONE
+        # fetch, not 16. Re-checked inside the lock, so the winner populates the
+        # cache and the rest get the same document without a second request.
+        self._object_info_lock = asyncio.Lock()
 
     async def close(self):
         await self._http.aclose()
+
+    async def _fetch_object_info(self) -> Dict[str, Any]:
+        """The cached /object_info document. A failure is not cached."""
+        now = time.monotonic()
+        cached = self._object_info_cache
+        if cached is not None and now - cached[0] < OBJECT_INFO_CACHE_TTL:
+            return cached[1]
+
+        async with self._object_info_lock:
+            cached = self._object_info_cache
+            now = time.monotonic()
+            if cached is not None and now - cached[0] < OBJECT_INFO_CACHE_TTL:
+                return cached[1]
+            resp = await self._http.get("/object_info")
+            resp.raise_for_status()
+            document = resp.json()
+            self._object_info_cache = (time.monotonic(), document)
+            return document
 
     def get_agent_headers(self) -> Dict[str, str]:
         agent_token = os.getenv("REMOTE_AGENT_TOKEN", "")
@@ -57,7 +98,86 @@ class RemoteComfyProviderClient(BaseProviderClient):
         return headers
 
     async def get_health(self) -> Dict[str, Any]:
-        return {"status": "healthy", "provider_id": PROVIDER_ID, "ready": True, "engine": "remote_comfy"}
+        """Probe the remote ComfyUI and the remote agent.
+
+        This returned a hardcoded `{"status": "healthy", "ready": True}` without
+        touching the network. The backend's `_check_provider_health`
+        (services/load_balancer.py) requires HTTP 200, so it counted this
+        provider as a usable target and dispatched paid jobs at it; the first job
+        then failed at `/prompt`, and because every httpx error in this file is
+        marked `retryable=True` (provider_core/responses.py) the balancer retried
+        across every other provider — spending money on requests that cannot
+        succeed.
+
+        `direct_url` is the same shape of bug and was already fixed
+        (direct_url/client.py), by doing a real `GET /system_stats`; that is the
+        fix, applied to the sibling that shares the code path. Unlike the
+        Modal/Beam engines, which deliberately never probe their serverless
+        deployment because a probe costs money (VISION #4), this engine fronts a
+        ComfyUI the user runs themselves and an agent on the same rig, so a GET of
+        /system_stats and a GET of the agent's /health are free.
+
+        A dead upstream is 503 *without* a `retryable` marker, so the router keeps
+        classifying it as transient — unlike a configuration fault, this one really
+        can come back.
+        """
+        details: Dict[str, Any] = {}
+        failures: List[str] = []
+
+        async def _probe_comfy() -> Optional[str]:
+            try:
+                response = await self._http.get("/system_stats", timeout=HEALTH_PROBE_TIMEOUT)
+                response.raise_for_status()
+                return None
+            except Exception as e:
+                return f"ComfyUI server is unreachable: {type(e).__name__}: {e}"
+
+        async def _probe_agent() -> Optional[str]:
+            try:
+                agent_response = await get_http_client().get(
+                    f"{REMOTE_AGENT_URL}/health",
+                    headers=self.get_agent_headers(),
+                    timeout=HEALTH_PROBE_TIMEOUT,
+                )
+                agent_response.raise_for_status()
+                return None
+            except Exception as e:
+                return f"Remote agent is unreachable: {type(e).__name__}: {e}"
+
+        # Concurrently, because the dispatcher probes /health with
+        # `_HTTP_HEALTH_PROBE_TIMEOUT_SECONDS = 2.0`
+        # (backend_v2/services/load_balancer.py:345) and requires HTTP 200. Two
+        # sequential 1.5s probes would take 3s on a fully dead rig and the
+        # dispatcher would time out rather than read the 503.
+        comfy_error, agent_error = await asyncio.gather(_probe_comfy(), _probe_agent())
+
+        details["comfy_reachable"] = comfy_error is None
+        details["agent_reachable"] = agent_error is None
+        for error in (comfy_error, agent_error):
+            if error:
+                self.logger.warning(f"[{PROVIDER_ID}] health probe failed: {error}")
+                failures.append(error)
+
+        if failures:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": "; ".join(failures),
+                    "status": "unhealthy",
+                    "provider_id": PROVIDER_ID,
+                    "ready": False,
+                    "engine": "remote_comfy",
+                    **details,
+                },
+            )
+
+        return {
+            "status": "healthy",
+            "provider_id": PROVIDER_ID,
+            "ready": True,
+            "engine": "remote_comfy",
+            **details,
+        }
 
     async def get_info(self) -> Dict[str, Any]:
         return {
@@ -171,7 +291,12 @@ class RemoteComfyProviderClient(BaseProviderClient):
             timeout=60.0
         )
         if response.status_code == 200:
-            return outcome(True, f"Deleted {request.path}", provider=PROVIDER_ID)
+            # Adopt, rather than assume: the agent answers HTTP 200 with
+            # `{"success": false, "message": "File not found"}` (server.py:262-263),
+            # and `outcome(True, ...)` turned that into a success here — so the
+            # backend dropped the provider-file row while the bytes stayed on the
+            # rig. Same reasoning as Beam's delete_model (beam/client.py).
+            return from_upstream(response.json(), provider=PROVIDER_ID)
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def get_file(self, path: str) -> StreamingResponse:
@@ -272,7 +397,19 @@ class RemoteComfyProviderClient(BaseProviderClient):
             headers=self.get_agent_headers(),
             timeout=300.0,
         )
-        response.raise_for_status()
+        # Adopt, not raise. `raise_for_status()` produced an
+        # `httpx.HTTPStatusError` that provider_core/router.py's catch-all
+        # flattened to "Internal server error" (code 500), discarding the agent's
+        # status, message and body — a 401 from a misconfigured
+        # REMOTE_AGENT_TOKEN became indistinguishable from a worker bug. The rest
+        # of this file already answers 4xx/5xx with `failed(code=..., retryable=...)`.
+        if response.status_code != 200:
+            return failed(
+                f"Validation failed with status {response.status_code}",
+                code=response.status_code,
+                retryable=response.status_code >= 500,
+                provider=PROVIDER_ID,
+            )
         return from_upstream(
             response.json(),
             provider=PROVIDER_ID,
@@ -283,9 +420,7 @@ class RemoteComfyProviderClient(BaseProviderClient):
         # Success is a raw pass-through of ComfyUI's own document:
         # api/routes/nodes.py returns it verbatim to the UI.
         try:
-            resp = await self._http.get("/object_info")
-            resp.raise_for_status()
-            return resp.json()
+            return await self._fetch_object_info()
         except Exception as e:
             return failed(f"Failed to query ComfyUI: {e}", code=502, retryable=True, provider=PROVIDER_ID)
 
@@ -298,12 +433,20 @@ class RemoteComfyProviderClient(BaseProviderClient):
         async def list_existing_files():
             paths = {}
             client = get_http_client()
-            
+
             async def _fetch_dir(directory: str):
                 response = await client.post(f"{REMOTE_AGENT_URL}/list-models", json={"directory": directory}, headers=self.get_agent_headers(), timeout=3600.0)
-                response.raise_for_status()
+                # Not `raise_for_status()`: the router's catch-all turns that into
+                # a 500 "Internal server error", so a 401 (agent token mismatch)
+                # and a 404 (agent not deployed) both read as a worker bug. The
+                # status and the agent's own message are the diagnosis.
+                if response.status_code != 200:
+                    raise RuntimeError(
+                        f"Remote agent /list-models returned {response.status_code} "
+                        f"for {directory}: {response.text}"
+                    )
                 return directory, response.json().get("files", [])
-                
+
             results = await asyncio.gather(*[_fetch_dir(d) for d in MODEL_DIRECTORIES])
             for directory, files in results:
                 for f in files:
@@ -322,7 +465,15 @@ class RemoteComfyProviderClient(BaseProviderClient):
                 headers=self.get_agent_headers(),
                 timeout=1800.0
             )
-            response.raise_for_status()
+            # Still a raise — the reconciliation download loop records a raise as a
+            # failed download — but with the agent's own status and body in the
+            # message, so the failure lands in `reconciliation_state.errors` with a
+            # diagnosis instead of an httpx repr.
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Remote agent /download-model returned {response.status_code} for "
+                    f"{storage_path}: {response.text}"
+                )
             result = response.json()
             if isinstance(result, dict) and result.get("status") == "error":
                 raise RuntimeError(result.get("message", "Download failed"))
@@ -330,8 +481,19 @@ class RemoteComfyProviderClient(BaseProviderClient):
         async def delete_file(storage_path: str):
             client = get_http_client()
             response = await client.post(f"{REMOTE_AGENT_URL}/delete-model", json={"path": storage_path}, headers=self.get_agent_headers(), timeout=60.0)
-            response.raise_for_status()
-            return True
+            # Adopt, rather than assume. The callback contract is True/False and
+            # reconciliation increments `deletions_completed` on True, so an
+            # unconditional True reported a clean sweep for orphans that were
+            # still on the rig. The agent answers HTTP 200 with
+            # `{"success": false, "message": "File not found"}`
+            # (remote_agent/server.py:262-263), so the flag is in the body, not
+            # the status.
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Remote agent /delete-model returned {response.status_code}: {response.text}"
+                )
+            payload = response.json()
+            return bool(isinstance(payload, dict) and payload.get("success") is not False)
 
         return await self._start_reconciliation_task(
             backend_url=BACKEND_URL,

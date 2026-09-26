@@ -144,6 +144,29 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
         # it with no headers.
         return await client.get_health()
 
+    @app.get("/live")
+    async def live():
+        """Process liveness. The container healthcheck's endpoint.
+
+        Separate from `/health` on purpose. `/health` is the *operator and
+        dispatcher* signal and is allowed to depend on an upstream: `direct_url`
+        and `remote_comfy` probe their ComfyUI, because the backend decides
+        whether to spend a paid job on the answer and needs the upstream's state.
+
+        A container healthcheck needs neither. It answers "is this process
+        serving HTTP", and nothing else. Pointing it at `/health` made a
+        provider's container UNHEALTHY whenever a third-party ComfyUI the
+        compose file neither manages nor gates was slow or down — five
+        consecutive failures, a red `docker compose ps`, and a cascade out of
+        anything that depends_on the provider, for a worker that was serving
+        perfectly well. The upstream signal stays on `/health`, where the
+        dispatcher reads it.
+
+        MUST stay unauthenticated, same as `/health`: the healthcheck sends no
+        headers.
+        """
+        return {"status": "alive", "provider_id": getattr(client, "provider_id", None)}
+
     @app.get("/info", dependencies=protected)
     async def info():
         # Now gated. It returns the upstream endpoint (direct_url's comfy_url is

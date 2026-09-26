@@ -69,6 +69,23 @@ def _declared_length(header_value: Optional[str]) -> Optional[int]:
     except (TypeError, ValueError):
         return None
 
+def _files_from(response_json: Any) -> list:
+    """Pull the file list out of a /list-models body.
+
+    Was `response.json().get("files", [])`, which raises AttributeError -> 500 the
+    moment the storage app answers with a bare JSON array. The storage app
+    returns a dialect dict today, but a 401/404/error body from a proxy in front of
+    it, or a future shape change, turns one odd response into a 500 instead of the
+    empty listing it effectively is.
+    """
+    if isinstance(response_json, dict):
+        files = response_json.get("files")
+        return files if isinstance(files, list) else []
+    if isinstance(response_json, list):
+        return response_json
+    return []
+
+
 class BeamProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
@@ -247,7 +264,7 @@ class BeamProviderClient(BaseProviderClient):
             timeout=60.0
         )
         if response.status_code == 200:
-            return ok("Listed models", provider=PROVIDER_ID, files=response.json().get("files", []))
+            return ok("Listed models", provider=PROVIDER_ID, files=_files_from(response.json()))
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
@@ -405,7 +422,19 @@ class BeamProviderClient(BaseProviderClient):
             headers=get_beam_headers(),
             timeout=300.0,
         )
-        response.raise_for_status()
+        # Adopt, not raise. `raise_for_status()` produced an
+        # `httpx.HTTPStatusError` that provider_core/router.py's catch-all
+        # flattened to "Internal server error" (code 500), discarding the storage
+        # app's status and message. The storage app answers
+        # `failed(..., code=404)` / `failed(..., code=500, retryable=True)`
+        # precisely so the worker can relay them.
+        if response.status_code != 200:
+            return failed(
+                f"Validation failed with status {response.status_code}",
+                code=response.status_code,
+                retryable=response.status_code >= 500,
+                provider=PROVIDER_ID,
+            )
         return from_upstream(
             response.json(),
             provider=PROVIDER_ID,
@@ -420,7 +449,11 @@ class BeamProviderClient(BaseProviderClient):
             headers=get_beam_headers(),
             timeout=120.0,
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Beam extractor returned {response.status_code}: {response.text}",
+            )
         return response.json()
 
     async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
@@ -435,8 +468,15 @@ class BeamProviderClient(BaseProviderClient):
             
             async def _fetch_dir(directory: str):
                 response = await client.post(f"{BEAM_STORAGE_URL}/list-models", json={"directory": directory}, headers=get_beam_headers(), timeout=3600.0)
-                response.raise_for_status()
-                return directory, response.json().get("files", [])
+                # Not `raise_for_status()`: the router's catch-all turns that into
+                # a 500 "Internal server error", so a 401 (Beam API key rejected)
+                # and a 404 (storage deployment missing) both read as a worker bug.
+                if response.status_code != 200:
+                    raise RuntimeError(
+                        f"Beam storage /list-models returned {response.status_code} "
+                        f"for {directory}: {response.text}"
+                    )
+                return directory, _files_from(response.json())
                 
             results = await asyncio.gather(*[_fetch_dir(d) for d in MODEL_DIRECTORIES])
             for directory, files in results:
@@ -457,7 +497,15 @@ class BeamProviderClient(BaseProviderClient):
                 headers=get_beam_headers(),
                 timeout=1800.0
             )
-            response.raise_for_status()
+            # Still a raise — the reconciliation download loop records a raise as a
+            # failed download — but with the upstream's own status and body in the
+            # message, so the failure lands in `reconciliation_state.errors` with
+            # a diagnosis instead of an httpx repr.
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Beam /download-model returned {response.status_code} for "
+                    f"{storage_path}: {response.text}"
+                )
             result = response.json()
             if isinstance(result, dict) and result.get("status") == "error":
                 raise RuntimeError(result.get("message", "Download failed"))
@@ -465,8 +513,18 @@ class BeamProviderClient(BaseProviderClient):
         async def delete_file(storage_path: str):
             client = get_http_client()
             response = await client.post(f"{BEAM_STORAGE_URL}/delete-model", json={"path": storage_path}, headers=get_beam_headers(), timeout=60.0)
-            response.raise_for_status()
-            return True
+            # Adopt, rather than assume. The callback contract is True/False and
+            # reconciliation increments `deletions_completed` on True, so an
+            # unconditional True reported a clean sweep for orphans that were
+            # still on the volume. The storage app answers HTTP 200 with
+            # `success: false` (beam_app.py `outcome(False, ...)`) for a file it
+            # could not remove, so the flag is in the body, not the status.
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Beam storage /delete-model returned {response.status_code}: {response.text}"
+                )
+            payload = response.json()
+            return bool(isinstance(payload, dict) and payload.get("success") is not False)
 
         return await self._start_reconciliation_task(
             backend_url=BACKEND_URL,

@@ -169,7 +169,17 @@ def comfy_status_to_task_event(update: Dict[str, Any], job_id: Optional[str] = N
         return TaskEvent(event="node", job_id=job_id, node=update.get("node"))
 
     # progress event with a None value (which would stall the backend reducer).
-    if status in ("execution_interrupted", "execution_start"):
+    #
+    # `queued` is in this list because workflow_executor.execute_comfy_workflow
+    # yields `{"status": "queued", "prompt_id": ...}` unconditionally, so it is
+    # the FIRST NDJSON line of every ComfyUI-backed job. It carries no `value`,
+    # so it fell through every branch below and became
+    # `TaskEvent(event="progress", value=None)` — a progress event with nothing
+    # to progress. The HTTP-stream reducer coerces that to 0 and writes it to the
+    # DB (backend_v2/services/provider_client.py:180-189), and the WS path
+    # explicitly guards the same shape (infrastructure/worker_ws.py:158-160), so
+    # both ends had a special case for a line the worker should never have sent.
+    if status in ("execution_interrupted", "execution_start", "queued"):
         return None
     
     if status == "execution_cached":

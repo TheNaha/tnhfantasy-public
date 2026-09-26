@@ -19,6 +19,11 @@ EVENT_PUSH_MAX_ATTEMPTS = 3
 EVENT_PUSH_INITIAL_BACKOFF_SECONDS = 0.5
 EVENT_PUSH_TIMEOUT_SECONDS = 5.0
 
+# Concurrent 500-row batch-status-update requests. Below the shared HTTP
+# client's connection pool and low enough not to flood the backend: this is a
+# bookkeeping endpoint, not the reason the reconciliation is running.
+BATCH_UPDATE_MAX_CONCURRENCY = 4
+
 
 def _chunked(items: List[Dict], chunk_size: int):
     """Yield item batches for large reconciliation updates."""
@@ -77,49 +82,63 @@ async def batch_update_file_status_v2(
 ):
     """
     Batch update multiple file statuses using V2 API.
-    
+
     Args:
         backend_url: Backend API base URL
         provider_id: Provider identifier
-        updates: List of update dicts with file_id/storage_path and status
+        updates: List of file statuses to update
         http_client: Optional shared HTTP client
     """
     if not updates:
         return
-    
+
     url = f"{backend_url}/api/v2/models/providers/batch-status-update"
     chunk_size = 500
     total_updated = 0
     total_failed = 0
-    
-    for batch in _chunked(updates, chunk_size):
+
+    # Concurrent, bounded. The chunks were awaited in a loop with no semaphore, so
+    # a provider with tens of thousands of drifted files paid the round-trip time
+    # of every 500-row batch back to back before the reconciliation could move on
+    # — and reconciliation already runs a bounded download fan-out, so this was the
+    # one stage that did not. `return_exceptions=True` keeps one failed batch from
+    # cancelling the others; each is already counted individually, and the counts
+    # are only for the log line.
+    semaphore = asyncio.Semaphore(BATCH_UPDATE_MAX_CONCURRENCY)
+
+    async def _send(batch: List[Dict]) -> tuple[int, int]:
         payload = {
             "provider_name": provider_id,
             "updates": batch,
         }
-        
-        try:
-            client = http_client or get_http_client()
-            response = await client.post(url, json=payload, timeout=30.0)
-            
-            if response.status_code == 200:
-                result = response.json()
-                updated = result.get("updated", 0)
-                failed = result.get("failed", 0)
-                total_updated += updated
-                total_failed += failed
-                logger.info(f"[V2 Reconciliation] Batch update: {updated} updated, {failed} failed")
-            else:
-                total_failed += len(batch)
+        async with semaphore:
+            try:
+                client = http_client or get_http_client()
+                response = await client.post(url, json=payload, timeout=30.0)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    updated = int(result.get("updated", 0))
+                    failed = int(result.get("failed", 0))
+                    logger.info(f"[V2 Reconciliation] Batch update: {updated} updated, {failed} failed")
+                    return updated, failed
                 logger.warning(f"[V2 Reconciliation] Warning: Batch update failed: {response.status_code}")
-        except Exception as e:
-            total_failed += len(batch)
-            logger.warning(f"[V2 Reconciliation] Warning: Batch update error: {e}")
-    
+                return 0, len(batch)
+            except Exception as e:
+                logger.warning(f"[V2 Reconciliation] Warning: Batch update error: {e}")
+                return 0, len(batch)
+
+    batches = list(_chunked(updates, chunk_size))
+    results = await asyncio.gather(*[_send(batch) for batch in batches])
+    for updated, failed in results:
+        total_updated += updated
+        total_failed += failed
+
     if len(updates) > chunk_size:
         logger.info(
             f"[V2 Reconciliation] Batch update complete: {total_updated} updated, {total_failed} failed across {len(updates)} updates"
         )
+
 
 
 async def push_reconciliation_event(
