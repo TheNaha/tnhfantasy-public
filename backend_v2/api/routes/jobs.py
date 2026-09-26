@@ -10,7 +10,8 @@
 #   POST   /api/jobs/{id}/retry – Re-submit a failed job with the same workflow
 #   POST   /api/jobs/{id}/cancel– Cancel a queued or in-flight job
 #   GET    /api/jobs/failed     – Failed jobs with diagnostics + summary
-#   POST   /api/jobs/recover    – Requeue interrupted work / fail wedged jobs
+#   POST   /api/jobs/recover    – Fail wedged jobs, optionally re-queue active ones
+#   POST   /api/jobs/reconcile-chat-replies – Re-drive paid chat replies lost by a queue drop
 #   POST   /api/jobs/validate   – Pre-flight model-availability check
 #
 # Optional idempotency:
@@ -49,6 +50,15 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 MAX_JOBS_PAGE_SIZE = 200
 
 MAX_FAILED_PAGE_SIZE = 100
+
+# A job takes minutes, not seconds, and the caller picks this value. The old
+# floor was 30s, which meant `?timeout_seconds=30` failed essentially every live
+# image job: the request was a one-liner that looked harmless and silently
+# marked paying work FAILED. The floor is now the same value the backend uses for
+# its own startup recovery (JobService.STALE_JOB_TIMEOUT_SECONDS), so a manual
+# recover can never be more aggressive than an automatic one.
+MIN_RECOVER_TIMEOUT_SECONDS = 300
+MAX_RECOVER_TIMEOUT_SECONDS = 3600
 
 
 class CreateJobRequest(BaseModel):
@@ -355,28 +365,154 @@ async def list_failed_jobs(
 
 @router.post("/recover")
 async def recover_jobs(
-    timeout_seconds: int = 300,
+    timeout_seconds: int = MIN_RECOVER_TIMEOUT_SECONDS,
+    requeue_running: bool = False,
     service: JobService = Depends(get_job_service),
 ):
     """
-    Requeue interrupted work and fail jobs wedged past the stale timeout.
+    Recover interrupted work: fail jobs wedged past the stale timeout, and
+    optionally re-queue active ones.
 
-    Same recovery the backend runs at startup: jobs left in an active state by a
-    dead worker are re-queued, and jobs stuck beyond `timeout_seconds` are failed
-    with a `stale_recovery` failure kind so they show up in the diagnostics view
-    instead of blocking the queue forever.
+    The same recovery the backend runs at startup, exposed so an operator can run
+    it on a live instance when a worker died. It is destructive, so this
+    endpoint guards what it can from here:
+
+    * `timeout_seconds` is floored at MIN_RECOVER_TIMEOUT_SECONDS (300s, the same
+      constant startup recovery uses). It used to floor at 30s, shorter than a
+      normal image generation, so the caller's default wrote FAILED to every live
+      job.
+
+    * By default it performs only the safe half. `JobQueue.recover` fails stale
+      jobs (safe: it only writes FAILED for jobs older than the timeout) and then
+      `_reset_claims_and_requeue_sync` sets EVERY active job back to PENDING.
+      `execute_job` requires PENDING, so that is not a re-mark — it re-dispatches.
+      A running LLM job is then charged twice: the original worker finishes,
+      downloads its image and creates its Asset, then calls update_job(COMPLETED)
+      on a row that is no longer in an active state. Startup recovery can do
+      this because it runs immediately after boot, when every claim in the DB is
+      stale by definition. A live HTTP endpoint cannot make that assumption, so
+      with active jobs present it fails the stale ones and requeues nothing.
+
+    * `requeue_running=true` opts into the old, fully destructive behaviour. It
+      is off by default precisely because the guard against orphaning an in-flight
+      attempt belongs in `JobQueue._reset_claims_and_requeue_sync`
+      (services/job_queue.py:658) — a per-job, claim-checked reset — and that is
+      outside this file.
+
+    There is no frontend consumer (the `useJobRecovery` hook has none), so
+    nothing depends on the old semantics.
     """
     from services.job_queue import queue_manager
 
-    timeout_seconds = max(30, min(timeout_seconds, 3600))
+    timeout_seconds = max(
+        MIN_RECOVER_TIMEOUT_SECONDS, min(timeout_seconds, MAX_RECOVER_TIMEOUT_SECONDS)
+    )
+
+    active_ids = _active_job_ids(service)
+
+    if active_ids and not requeue_running:
+        # Safe half only: fail what is genuinely wedged, requeue nothing.
+        stale = await service.fail_stale_running_jobs(timeout_seconds=timeout_seconds)
+        stale_ids = {job.id for job in stale}
+        summary = {
+            "mode": "stale_only",
+            "recovered": 0,
+            "failed": len(stale),
+            "failed_job_ids": sorted(stale_ids),
+            "pending": len(list(service.get_pending_jobs())),
+            "running": len(active_ids),
+            "requeued": False,
+            "skipped_running": sorted(active_ids - stale_ids),
+        }
+        logger.info(
+            "job_recovery_stale_only",
+            failed=summary["failed"],
+            active=len(active_ids),
+            timeout_seconds=timeout_seconds,
+        )
+        return {"status": "success", **summary}
+
+    if active_ids:
+        logger.warning(
+            "job_recovery_requeued_running_jobs",
+            active=len(active_ids),
+            sample=sorted(active_ids)[:5],
+        )
+
     summary = await queue_manager.recover(service, timeout_seconds=timeout_seconds)
     logger.info(
         "job_recovery_requested",
         recovered=summary["recovered"],
         failed=summary["failed"],
+        requeued_running=bool(active_ids and requeue_running),
         timeout_seconds=timeout_seconds,
     )
     return {"status": "success", **summary}
+
+
+def _active_job_ids(service: JobService) -> set[str]:
+    """Ids of jobs sitting in an active state that has already started.
+
+    PENDING-with-no-claim is excluded: those are already queued, and
+    `JobQueue.recover` re-enqueues them without duplicating work. A job with no
+    `started_at` is excluded too — it never left the queue, so there is no
+    in-flight attempt to orphan.
+
+    This is a "is anything in flight" test, not a liveness proof; there is no
+    heartbeat to check. It exists so the destructive path costs an explicit
+    `requeue_running=true` instead of happening on a one-line HTTP call.
+    """
+    try:
+        return {job.id for job in service.get_running_jobs() if job.started_at}
+    except Exception as exc:  # pragma: no cover - a DB failure must not block recovery
+        logger.warning("job_recovery_active_check_failed", error=str(exc))
+        return set()
+
+
+@router.post("/reconcile-chat-replies")
+async def reconcile_chat_replies(
+    limit: int = 200,
+    dry_run: bool = False,
+    service: JobService = Depends(get_job_service),
+):
+    """Re-drive chat replies that were generated but never written to `messages`.
+
+    The world-integration consumer is the only writer of AI chat replies and it
+    reads from a queue. If a JOB_COMPLETED event is evicted under backpressure
+    the text is gone: the job is COMPLETED, the user paid for it, and the chat
+    silently never advances. This finds those jobs — COMPLETED `chat_reply` LLM
+    jobs with no message stamped with their id — and replays them through the
+    normal handler. Idempotent: a reply that was persisted is never found, so
+    repeat calls do nothing.
+
+    `dry_run=true` reports what would be re-driven without writing.
+    """
+    from services.world_integration_service import (
+        find_unpersisted_chat_replies,
+        reconcile_unpersisted_chat_replies,
+    )
+
+    limit = max(1, min(limit, 500))
+
+    if dry_run:
+        found = find_unpersisted_chat_replies(service.session, limit=limit)
+        return {
+            "found": len(found),
+            "job_ids": [job["id"] for job in found],
+            "chat_ids": sorted(
+                {
+                    (job["metadata"] or {}).get("chat_id")
+                    or (job["workflow"] or {}).get("chat_id")
+                    for job in found
+                }
+                - {None}
+            ),
+            "repaired": [],
+            "failed": [],
+            "dry_run": True,
+        }
+
+    return {"dry_run": False, **await reconcile_unpersisted_chat_replies(limit=limit)}
 
 
 @router.get("/breakdown")
