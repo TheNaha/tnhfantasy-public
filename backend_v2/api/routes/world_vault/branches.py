@@ -1,33 +1,84 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Response
+from sqlalchemy import Select, func
 from sqlmodel import Session, select
 
 from api.deps import get_session, get_chat_repo
 from infrastructure.repositories.chat_repo import ChatRepository
 from core.entities import Message
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, ValidationError
 
 router = APIRouter()
+
+# Row caps for the branch endpoints. Both used to operate on the whole chat:
+# the read handed the client every message with its full `content` and
+# `alternates` array, and the write copied all of them in one transaction. A
+# long roleplay chat reaches thousands of messages, so both are bounded now.
+#
+# The numbers are sized for what the UI renders — a branch tree for a single
+# conversation. 500 rows is a few hundred KB worst case and covers almost every
+# chat (chat history itself is hard-capped at 5000 by CHAT_HISTORY_HARD_CAP in
+# services/chats.py), and 2000 is the ceiling a client can explicitly ask for.
+BRANCH_PAGE_DEFAULT_LIMIT = 500
+BRANCH_PAGE_MAX_LIMIT = 2000
+# Same ceiling as the read: create_branch refuses rather than silently copying
+# a prefix, so its worst case is one 2000-row insert in a single transaction.
+BRANCH_COPY_MAX_MESSAGES = 2000
+
+
+def _set_pagination_headers(response: Response, *, total: int, limit: int, offset: int) -> None:
+    """Advertise truncation on a list response.
+
+    The body stays a bare JSON array because that is the shape
+    `frontend_v2/src/components/chat/ChatTimeline.jsx` iterates
+    (`branches.map(...)`) and `useBranches.js` reads
+    (`Array.isArray(query.data)`); wrapping it in an object crashes that
+    component. Headers carry the pagination contract instead, so a client can
+    always tell a truncated page from a complete one.
+    """
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Limit"] = str(limit)
+    response.headers["X-Offset"] = str(offset)
+    response.headers["X-Has-More"] = "true" if offset + limit < total else "false"
 
 
 @router.get("/{chat_id}/branches")
 def list_branches(
     chat_id: str,
+    response: Response,
+    limit: int = Query(default=BRANCH_PAGE_DEFAULT_LIMIT, ge=1, le=BRANCH_PAGE_MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), ):
-    """Return all branch roots and their alternates for a chat.
+    """Return branch roots and their alternates for a chat, newest page first.
 
     A "branch root" is a message that has children (alternates or replies in
     a different branch). The response groups messages by branch_id.
+
+    Pagination is message-level, so a branch can straddle a page boundary and
+    appear in more than one page. `limit` defaults to
+    BRANCH_PAGE_DEFAULT_LIMIT and is capped at BRANCH_PAGE_MAX_LIMIT; the
+    response headers X-Total-Count / X-Has-More / X-Limit / X-Offset say
+    whether the page is the whole chat.
     """
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
+    total = session.exec(
+        select(func.count()).select_from(Message).where(Message.chat_id == chat_id)
+    ).one()
+
     messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+        select(Message)
+        .where(Message.chat_id == chat_id)
+        .order_by(Message.created_at, Message.id)  # id tie-breaks equal timestamps so pages do not overlap
+        .offset(offset)
+        .limit(limit)
     ).all()
+
+    _set_pagination_headers(response, total=total, limit=limit, offset=offset)
 
     branches: dict[str, list] = {}
     branch_order = []
@@ -60,6 +111,52 @@ class CreateBranchRequest(BaseModel):
     branch_name: str | None = None
 
 
+def _copy_candidates(
+    session: Session, chat_id: str, anchor: Message, anchor_branch: str
+) -> tuple[list[Message], Select[tuple[int]]]:
+    """Messages create_branch would copy, at most BRANCH_COPY_MAX_MESSAGES + 1.
+
+    The +1 is the overflow probe: fetching one row past the cap is what lets the
+    caller refuse an over-long branch without first materialising all of it.
+    The second element is the matching COUNT, used only to report the real
+    number when the cap is exceeded.
+    """
+    count = (
+        select(func.count())
+        .select_from(Message)
+        .where(Message.chat_id == chat_id)
+        .where(Message.branch_id == anchor_branch)  # type: ignore
+        .where(Message.created_at <= anchor.created_at)
+    )
+    rows = session.exec(
+        select(Message)
+        .where(Message.chat_id == chat_id)
+        .where(Message.branch_id == anchor_branch)  # type: ignore
+        .where(Message.created_at <= anchor.created_at)
+        .order_by(Message.created_at, Message.id)
+        .limit(BRANCH_COPY_MAX_MESSAGES + 1)
+    ).all()
+    if rows:
+        return list(rows), count
+
+    # The original thread carries no branch_id on its rows, so fall back to
+    # "everything in the chat up to the anchor".
+    count = (
+        select(func.count())
+        .select_from(Message)
+        .where(Message.chat_id == chat_id)
+        .where(Message.created_at <= anchor.created_at)
+    )
+    fallback = session.exec(
+        select(Message)
+        .where(Message.chat_id == chat_id)
+        .where(Message.created_at <= anchor.created_at)
+        .order_by(Message.created_at, Message.id)
+        .limit(BRANCH_COPY_MAX_MESSAGES + 1)
+    ).all()
+    return list(fallback), count
+
+
 @router.post("/{chat_id}/branches")
 def create_branch(
     chat_id: str,
@@ -70,6 +167,11 @@ def create_branch(
     The new branch starts as a copy of the conversation up to `message_id`,
     allowing the user to continue from that point with different responses.
     Returns the new branch_id and the first message in the new branch.
+
+    Bounded by BRANCH_COPY_MAX_MESSAGES, the same ceiling as the branch read.
+    Exceeding it is a 400 with the real copy count, not a silent truncation —
+    a branch cut off mid-conversation is a corrupt branch, and a half-built
+    one is worse than a refusal.
     """
     chat = chat_repo.get(chat_id)
     if not chat:
@@ -83,29 +185,25 @@ def create_branch(
     new_branch_id = str(uuid4())
     branch_name = data.branch_name or f"Branch {datetime.now(timezone.utc).strftime('%H:%M')}"
 
-    # Copy all messages from the anchor's branch up to and including the anchor
+    # Copy the messages from the anchor's branch up to and including the anchor
     # into the new branch, keeping the same content but new IDs.
     old_to_new: dict[str, str] = {}
     anchor_branch = anchor.branch_id or anchor.id
 
-    branch_msgs = session.exec(
-        select(Message)
-        .where(Message.chat_id == chat_id)
-        .where(Message.branch_id == anchor_branch)  # type: ignore
-        .order_by(Message.created_at)
-    ).all()
+    branch_msgs, copy_count = _copy_candidates(session, chat_id, anchor, anchor_branch)
 
-    if not branch_msgs:
-        branch_msgs = session.exec(
-            select(Message)
-            .where(Message.chat_id == chat_id)
-            .where(Message.created_at <= anchor.created_at)
-            .order_by(Message.created_at)
-        ).all()
+    if len(branch_msgs) > BRANCH_COPY_MAX_MESSAGES:
+        total = session.exec(copy_count).one()
+        raise ValidationError(
+            message=(
+                f"Branching from this message would copy {total} messages, over the "
+                f"{BRANCH_COPY_MAX_MESSAGES}-message limit. Branch from a later message, "
+                "or start a new chat."
+            ),
+            field="message_id",
+        )
 
     for msg in branch_msgs:
-        if msg.id != anchor.id and msg.created_at > anchor.created_at:
-            break  # Stop at the anchor; ignore descendants past it
         new_id = str(uuid4())
         old_to_new[msg.id] = new_id
         new_msg = Message(
