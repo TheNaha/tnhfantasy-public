@@ -1304,7 +1304,10 @@ def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, ses
     new_content = "".join(content_parts).strip()
 
     max_chapter = session.exec(
-        select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number.desc())
+        select(StoryChapter)
+        .where(StoryChapter.story_id == story_id)
+        .order_by(StoryChapter.chapter_number.desc())
+        .limit(1)
     ).first()
 
     now = datetime.now(timezone.utc)

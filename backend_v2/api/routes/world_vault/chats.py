@@ -1527,6 +1527,11 @@ async def illustrate_chat(
                 Message.content.is_not(None),
             )
             .order_by(Message.created_at.desc())
+            # .first() applies no LIMIT: psycopg2 buffers the whole result set
+            # into the process, so this used to transfer and ORM-instantiate
+            # every message in the chat, `content` TEXT included, and discard all
+            # but the first.
+            .limit(1)
         ).first()
         if last_char and last_char.content.strip():
             image_prompt = last_char.content.strip()
