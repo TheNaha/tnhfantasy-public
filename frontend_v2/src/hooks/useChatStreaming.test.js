@@ -154,8 +154,12 @@ describe('useChatStreaming', () => {
         expect(qc.getQueryData(['streaming', 'job-img'])).toBeUndefined();
         expect(qc.getQueryData(['streaming', 'active', 'chat-1'])).toEqual([]);
         expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'messages', 'chat-1'] });
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'chat-1'] });
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'chat-1', 'images'] });
+        // exact: the chat *detail* is what a completed job changes. Prefix
+        // matching also dragged the system-prompt, jobs, images and branches
+        // sub-queries on every job event, and the system-prompt refetch is the
+        // expensive one (character + lorebook + world state assembly).
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'chat-1'], exact: true });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'chat-1', 'images'], exact: true });
         expect(toast.success).toHaveBeenCalledWith('Image generated!', { icon: '🖼️' });
     });
 

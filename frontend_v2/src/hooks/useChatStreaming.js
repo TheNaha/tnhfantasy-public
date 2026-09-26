@@ -149,9 +149,20 @@ export function useChatStreaming({
 
             if (eventChatId) {
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', eventChatId] });
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId] });
+                // `exact: true` is load-bearing. The 3-element chat key is a
+                // *prefix* of the sub-queries
+                // (['world_vault','chats',id,'system-prompt' | 'jobs' |
+                // 'images' | 'branches']), so a plain invalidation refetched
+                // the full system-prompt assembly — character + lorebook +
+                // world state, plus the last MAX_CONTEXT_MESSAGES messages —
+                // after every completed chat job, for a payload the completion
+                // event cannot change. The jobs and images lists are named
+                // explicitly below because they are the sub-queries that do
+                // move when a job finishes.
+                queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId], exact: true });
+                queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId, 'jobs'], exact: true });
                 if (job.task_type === 'image') {
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId, 'images'] });
+                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId, 'images'], exact: true });
                 }
             }
 

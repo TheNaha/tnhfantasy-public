@@ -63,7 +63,11 @@ export const useDeleteMessage = () => {
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+            // `exact: true`: the 3-element chat key prefix-matches the
+            // system-prompt / jobs / images / branches sub-queries, so a plain
+            // invalidation here refetched the whole system-prompt assembly for a
+            // delete that only changes the message list.
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId], exact: true });
         }
     });
 };
@@ -76,7 +80,9 @@ export const useRollbackChat = () => {
             api.post(`/api/v2/chats/${chatId}/rollback`, { message_id: messageId }),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+            // See useDeleteMessage: exact, so the rollback does not drag the
+            // system-prompt assembly along with it.
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId], exact: true });
         }
     });
 };

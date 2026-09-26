@@ -120,7 +120,9 @@ describe('useMessages', () => {
         await act(async () => result.current.mutateAsync({ chatId: 'c1', messageId: 'm5' }));
         expect(apiMock.post).toHaveBeenCalledWith('/api/v2/chats/c1/rollback', { message_id: 'm5' });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'messages', 'c1'] });
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'c1'] });
+        // exact: see useChatStreaming.test.js — the detail query is the only one a
+        // rollback changes.
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'c1'], exact: true });
     });
 
     it('useRegenerateReply posts with message_id only when provided', async () => {
