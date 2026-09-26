@@ -108,6 +108,27 @@ Items 1-6 of the previous list were fixed — see §1b of the follow-up. What re
    `Modal` is built on `ModalOverlay`; the rest is mechanical and wide.
 6. **The embedding model still loads inside the reindex request** — seconds on
    first call. Moving it to startup needs `services/embedding_service.py`.
+7. **The two `worker.py` bootstraps share ~35 lines** — the `if ENGINE ==` client
+   selection and the lifespan teardown. That is the real residual duplication
+   between the image and LLM workers, and it belongs in `provider_core`.
+
+### Dropped after investigation, not overlooked
+
+`inference_loop` extraction was on the deferred list for months. It was
+investigated and is not worth doing as described:
+
+- The named loops do not exist. `image_worker/worker.py` and
+  `llm_worker/worker.py` are app entrypoints with only `reconciliation_loop` and
+  `auto_discovery_loop` — model *discovery*, not job dispatch.
+- The shared lifecycle already exists, once, in the backend. Claim is
+  `job_queue._worker`; dispatch, retry, failover, completion and cancellation are
+  `job_runner.execute_job`, a single function that already serves both task types
+  and switches only at the point where the engine-specific call is injected.
+  Cancellation is one `JobCancellationTracker` singleton. Extracting this would be
+  a rename.
+- A module at `backend_v2/services/inference_loop.py` is unreachable from both
+  engines anyway: neither Dockerfile copies `backend_v2`, so the shared code would
+  have to live in `provider_core`.
 
 ## Running it
 
