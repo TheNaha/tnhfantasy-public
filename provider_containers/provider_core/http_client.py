@@ -4,9 +4,60 @@ Uses httpx with optional tenacity for retries.
 """
 
 import asyncio
-from typing import Optional, Dict, Any
+import os
+from typing import AsyncIterator, Optional
 from dataclasses import dataclass
 import httpx
+
+# Bytes per chunk when relaying a streamed response body.
+FILE_TRANSFER_CHUNK_BYTES = 1 << 20
+
+# Default ceiling on a single /get-file transfer. Files served by the storage
+# apps are model sidecars, previews and output images; a checkpoint weights file
+# is not fetched through this path.
+DEFAULT_GET_FILE_SIZE_CAP = 512 * 1024 * 1024
+
+
+def get_file_size_cap() -> int:
+    """Max bytes a provider will relay for one /get-file call.
+
+    Override with ``PROVIDER_GET_FILE_MAX_BYTES``. Zero or negative disables the
+    cap (only for a deployment that genuinely streams model weights).
+    """
+    raw = os.getenv("PROVIDER_GET_FILE_MAX_BYTES", "").strip()
+    if not raw:
+        return DEFAULT_GET_FILE_SIZE_CAP
+    try:
+        return int(raw)
+    except ValueError:
+        return DEFAULT_GET_FILE_SIZE_CAP
+
+
+async def relay_bytes(
+    response: httpx.Response,
+    max_bytes: Optional[int] = None,
+    *,
+    chunk_bytes: int = FILE_TRANSFER_CHUNK_BYTES,
+) -> AsyncIterator[bytes]:
+    """Stream a response body through in chunks, enforcing a byte ceiling.
+
+    Replaces `return Response(content=response.content, ...)` on a large fetch,
+    which held the whole body in memory and, on the base64 variant, then made a
+    second copy while decoding. Raises ``httpx.RequestError`` if the body turns
+    out to exceed ``max_bytes`` — a declared Content-Length is checked by the
+    caller first, but it can lie or be absent.
+    """
+    sent = 0
+    try:
+        async for chunk in response.aiter_bytes(chunk_bytes):
+            sent += len(chunk)
+            if max_bytes is not None and max_bytes >= 0 and sent > max_bytes:
+                raise httpx.RequestError(
+                    f"response body exceeded the {max_bytes} byte limit"
+                )
+            yield chunk
+    finally:
+        await response.aclose()
 
 try:
     from tenacity import (

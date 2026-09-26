@@ -7,10 +7,71 @@ import asyncio
 import os
 import socket
 import traceback
-from typing import Callable, Awaitable, Optional
+from typing import Any, Callable, Coroutine, Optional, Set
 from .logging import get_logger
 
 logger = get_logger("provider_core.background")
+
+# Upper bound on concurrently retained fire-and-forget tasks per worker.
+#
+# `asyncio.create_task` alone keeps NO reference: the task stays alive only
+# because the event loop holds a weak reference to it, so the loop is free to
+# collect a multi-GB download mid-flight and its only outcome is a logger.error
+# in `done`. Retaining the task fixes the collection; the bound keeps the
+# retaining set from becoming its own leak if a caller queues work faster than
+# it drains.
+try:
+    MAX_BACKGROUND_TASKS = max(1, int(os.getenv("PROVIDER_MAX_BACKGROUND_TASKS", "16")))
+except ValueError:
+    MAX_BACKGROUND_TASKS = 16
+
+
+class BackgroundTaskLimitExceeded(RuntimeError):
+    """Raised instead of spawning when too many background tasks are in flight."""
+
+
+def spawn_background_task(
+    coro: Coroutine[Any, Any, Any],
+    *,
+    tasks: Set[asyncio.Task],
+    name: str,
+    max_pending: int = MAX_BACKGROUND_TASKS,
+    on_done: Optional[Callable[[asyncio.Task], None]] = None,
+) -> asyncio.Task:
+    """Create a task, retain it in ``tasks``, and release it when it finishes.
+
+    The one correct fire-and-forget shape in this repo; every caller should use
+    it rather than a bare ``create_task``. ``tasks`` is the owning set — pass a
+    long-lived one (a client instance) so the reference outlives the request.
+
+    Raises :class:`BackgroundTaskLimitExceeded` (without scheduling ``coro``,
+    which the caller must then close) when ``tasks`` is already at
+    ``max_pending``.
+    """
+    if len(tasks) >= max_pending:
+        coro.close()
+        raise BackgroundTaskLimitExceeded(
+            f"refusing to start background task {name!r}: {len(tasks)} already in flight "
+            f"(max_pending={max_pending})"
+        )
+
+    task = asyncio.create_task(coro, name=name)
+    tasks.add(task)
+
+    def _release(finished: asyncio.Task) -> None:
+        tasks.discard(finished)
+        if on_done is not None:
+            on_done(finished)
+        if finished.cancelled():
+            logger.warning(f"Background task cancelled: {name}")
+            return
+        exc = finished.exception()
+        if exc is not None:
+            logger.error(f"Background task failed: {name}: {exc}", exc_info=exc)
+
+    task.add_done_callback(_release)
+    return task
+
 
 
 async def auto_discovery_loop(

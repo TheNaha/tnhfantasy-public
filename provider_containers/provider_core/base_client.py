@@ -1,7 +1,6 @@
 import abc
-from typing import Any, Dict, List, Optional, Callable, Awaitable
+from typing import Any, Dict, Optional, Callable, Awaitable
 import asyncio
-from datetime import datetime
 
 _DEPLOY_STATE: Dict[str, Any] = {}
 
@@ -21,6 +20,10 @@ class BaseProviderClient(abc.ABC):
         self.job_tracker = get_job_tracker()
         self.reconciliation_state = get_reconciliation_state(provider_id)
         self.logger = logger
+        # Owning set for fire-and-forget tasks spawned on this client's behalf.
+        # A bare `asyncio.create_task` is GC-eligible while it runs, so a
+        # reconciliation can vanish mid-run with nothing but a logger.error.
+        self._background_tasks: set = set()
 
     def get_config(self) -> Dict[str, Any]:
         return {"config": self.runtime_config}
@@ -96,7 +99,9 @@ class BaseProviderClient(abc.ABC):
         quick_sync: bool = False,
     ) -> Dict[str, Any]:
         from provider_core.reconciliation import run_reconciliation_v2
-        import asyncio
+        from provider_core.background import (
+            BackgroundTaskLimitExceeded, MAX_BACKGROUND_TASKS, spawn_background_task,
+        )
         if self.reconciliation_state.status == "reconciling":
             return {"status": "already_running", "message": "Reconciliation already in progress"}
 
@@ -120,7 +125,22 @@ class BaseProviderClient(abc.ABC):
                 logger.exception(f"[{self.provider_id}] Fatal error in reconciliation task: {e}")
                 self.reconciliation_state.status = "error"
 
-        asyncio.create_task(perform_reconciliation())
+        try:
+            spawn_background_task(
+                perform_reconciliation(),
+                tasks=self._background_tasks,
+                name=f"reconcile:{self.provider_id}",
+                max_pending=MAX_BACKGROUND_TASKS,
+            )
+        except BackgroundTaskLimitExceeded:
+            return {
+                "status": "error",
+                "message": (
+                    f"Reconciliation not started: {len(self._background_tasks)} background "
+                    f"tasks already in flight for {self.provider_id}"
+                ),
+                "retryable": True,
+            }
         return {"status": "started", "message": "Reconciliation started"}
 
     @abc.abstractmethod
@@ -173,7 +193,10 @@ class BaseProviderClient(abc.ABC):
         return {}
 
     async def get_deploy_status(self) -> Dict[str, Any]:
-        return _DEPLOY_STATE or {"status": "unknown"}
+        # Imported here: provider_core.deploy imports _DEPLOY_STATE from this
+        # module at import time, so a top-level import would be circular.
+        from provider_core.deploy import get_deploy_state
+        return get_deploy_state() or {"status": "unknown"}
 
     @abc.abstractmethod
     async def validate_models(self, request: Any) -> Dict[str, Any]:
