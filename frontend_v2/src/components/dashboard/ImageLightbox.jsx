@@ -1,11 +1,11 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { assetUrl, assetPath } from '../../utils/assetUrl';
 
 import { memo } from 'react';
+import ModalOverlay from '../common/ModalOverlay';
 
 // ⚡ Bolt: Wrap ImageLightbox in React.memo to prevent unnecessary re-renders when parent Dashboard updates
 export default memo(function ImageLightbox({
@@ -76,11 +76,13 @@ export default memo(function ImageLightbox({
         }
     }, [goToNext, goToPrev, hasMultiple]);
 
+    // Escape is deliberately NOT handled here: <ModalOverlay> owns it, so the
+    // lightbox dismisses through the topmost-wins registry instead of closing
+    // itself out from under a dialog stacked on top of it.
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.key === 'ArrowLeft' && hasMultiple) goToPrev();
             else if (e.key === 'ArrowRight' && hasMultiple) goToNext();
-            else if (e.key === 'Escape') onClose();
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
@@ -102,8 +104,10 @@ export default memo(function ImageLightbox({
         return `${minutes}m ${remainingSeconds}s`;
     };
 
-    return createPortal(
-        <div className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4">
+    return (
+        // The backdrop never dismissed the lightbox (only the close button and
+        // the arrow keys did), so closeOnBackdrop stays false.
+        <ModalOverlay onClose={onClose} closeOnBackdrop={false} className="z-50 bg-black/95">
             <button
                 onClick={onClose}
                 className="absolute top-4 right-4 z-10 p-2 bg-gray-800/50 rounded-full text-white hover:bg-gray-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
@@ -112,7 +116,12 @@ export default memo(function ImageLightbox({
                 <X size={24} aria-hidden="true" />
             </button>
 
-            <div className="flex flex-col lg:flex-row w-full h-full gap-4 max-w-7xl overflow-hidden">
+            <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Image lightbox"
+                className="flex flex-col lg:flex-row w-full h-full gap-4 max-w-7xl overflow-hidden"
+            >
                 {/* Image Container with carousel navigation */}
                 <div
                     data-testid="lightbox-swipe-area"
@@ -325,7 +334,6 @@ export default memo(function ImageLightbox({
                     </div>
                 </div>
             </div>
-        </div>,
-        document.body
+        </ModalOverlay>
     );
 });

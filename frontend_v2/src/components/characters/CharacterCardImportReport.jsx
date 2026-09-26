@@ -1,4 +1,5 @@
 import { AlertTriangle, CheckCircle2, FileWarning, Info, X } from 'lucide-react';
+import ModalOverlay from '../common/ModalOverlay';
 
 function formatBadge(format, spec, specVersion) {
     const parts = [];
@@ -57,15 +58,15 @@ export default function CharacterCardImportReport({
     const lossy = lost.length > 0 || warnings.length > 0;
 
     return (
-        <div
-            className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-            data-testid="card-import-report-overlay"
-            onClick={onClose}
+        <ModalOverlay
+            onClose={onClose}
+            className="z-[95] bg-black/80 backdrop-blur-sm"
         >
             <div
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="card-import-report-title"
+                data-testid="card-import-report"
                 className="w-full max-w-xl bg-gray-900 rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
                 onClick={(e) => e.stopPropagation()}
             >
@@ -188,6 +189,6 @@ export default function CharacterCardImportReport({
                     </button>
                 </div>
             </div>
-        </div>
+        </ModalOverlay>
     );
 }

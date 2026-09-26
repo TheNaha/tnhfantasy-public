@@ -1,11 +1,17 @@
 import { motion } from 'framer-motion';
 import { X, User } from 'lucide-react';
+import ModalOverlay from '../common/ModalOverlay';
 
 function CharacterDetailsModal({ character, onClose }) {
     if (!character) return null;
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+        // The backdrop never closed this read-only panel, so keep
+        // closeOnBackdrop={false}; Escape now does.
+        <ModalOverlay onClose={onClose} closeOnBackdrop={false} className="z-50 bg-black/70 backdrop-blur-sm">
             <motion.div
+                role="dialog"
+                aria-modal="true"
+                aria-label={character.name}
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
@@ -51,7 +57,7 @@ function CharacterDetailsModal({ character, onClose }) {
                     )}
                 </div>
             </motion.div>
-        </div>
+        </ModalOverlay>
     );
 }
 

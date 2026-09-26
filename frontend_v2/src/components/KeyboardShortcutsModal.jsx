@@ -1,5 +1,6 @@
 import { X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ModalOverlay from './common/ModalOverlay';
 
 const KeyboardShortcutsModal = ({ isOpen, onClose }) => {
     const shortcuts = {
@@ -29,21 +30,28 @@ const KeyboardShortcutsModal = ({ isOpen, onClose }) => {
     };
 
     return (
-        <>
-            {isOpen && (
-            <AnimatePresence>
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80"
-                    onClick={onClose}
+        // Mounted unconditionally by Layout with an `isOpen` prop, so the open
+        // state is passed through: a closed dialog must not keep a live Escape
+        // listener, and gating the tree on `isOpen &&` outside AnimatePresence
+        // would defeat its exit animation anyway.
+        <AnimatePresence>
+            <ModalOverlay
+                key="keyboard-shortcuts-overlay"
+                isOpen={!!isOpen}
+                onClose={onClose}
+                className="z-50 bg-black/80"
+            >
+                <motion.div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Keyboard Shortcuts"
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    transition={{ duration: 0.2 }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="glass rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col"
                 >
-                    <motion.div
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
-                        transition={{ duration: 0.2 }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="glass rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col"
-                    >
                         {/* Header */}
                         <div className="p-6 border-b border-gray-700/50">
                             <div className="flex items-center justify-between">
@@ -109,10 +117,8 @@ const KeyboardShortcutsModal = ({ isOpen, onClose }) => {
                             </p>
                         </div>
                     </motion.div>
-                </div>
-            </AnimatePresence>
-            )}
-        </>
+            </ModalOverlay>
+        </AnimatePresence>
     );
 };
 

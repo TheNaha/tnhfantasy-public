@@ -3,8 +3,8 @@ import { X, AlertCircle, ExternalLink, Wand2, RefreshCw } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
-import { createPortal } from 'react-dom';
 import { api } from '../../api';
+import ModalOverlay from '../common/ModalOverlay';
 import CivitaiSearchModal from './CivitaiSearchModal';
 import AutopopulateSelector from './AutopopulateSelector';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -137,9 +137,13 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
     // Check if we have any meaningful data
     const hasData = displayName || civitaiId || baseModel !== "Unknown";
 
-    return createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
-            <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-4xl max-h-[90vh] overflow-y-auto flex flex-col md:flex-row" onClick={e => e.stopPropagation()}>
+    return (
+        <ModalOverlay onClose={onClose} className="z-50 bg-black/80 backdrop-blur-sm">
+            <div
+                role="dialog"
+                aria-modal="true"
+                aria-label={displayName}
+                className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-4xl max-h-[90vh] overflow-y-auto flex flex-col md:flex-row" onClick={e => e.stopPropagation()}>
 
                 {/* Left: Images */}
                 <div className="w-full md:w-1/3 bg-black/50 p-4 space-y-4 overflow-y-auto border-r border-gray-800">
@@ -445,7 +449,6 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                     onSelect={(selectedModel) => handleAutopopulate(selectedModel.id)}
                 />
             )}
-        </div>,
-        document.body
+        </ModalOverlay>
     );
 }

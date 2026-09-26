@@ -124,7 +124,10 @@ describe('AvatarGallery page', () => {
 
     it('shows scene counts from character collections', () => {
         renderPage();
-        expect(screen.getAllByText('Scenes (2)')).toHaveLength(2);
+        // The gallery renders the shared CharacterCard, which labels the scene
+        // strip with <SceneCount> ("2 scenes") rather than its own
+        // "Scenes (2)" heading.
+        expect(screen.getAllByText('2 scenes')).toHaveLength(2);
     });
 
     it('fetches collections in one batched request instead of per-card', () => {
@@ -168,7 +171,7 @@ describe('AvatarGallery page', () => {
         expect(screen.getAllByText('Chat')).toHaveLength(2);
         fireEvent.click(screen.getByTitle('Grid view'));
         expect(screen.queryAllByText('Chat')).toHaveLength(0);
-        expect(screen.queryByText('Scenes (2)')).not.toBeInTheDocument();
+        expect(screen.queryByText('2 scenes')).not.toBeInTheDocument();
         expect(screen.getAllByText('2')).toHaveLength(2);
         fireEvent.click(screen.getByTitle('Card view'));
         expect(screen.getAllByText('Chat')).toHaveLength(2);

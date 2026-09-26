@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, User, Images, MessageSquare, ExternalLink, Grid, LayoutGrid, Filter } from 'lucide-react';
+import { Search, User, Images, ExternalLink, Grid, LayoutGrid } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useCharacters, useCharacterCollection, useCharacterCollections, getAvatarUrl } from '../hooks/useWorldVault';
-import SceneGallery from '../components/SceneGallery';
+import CharacterCard from '../components/characters/CharacterCard';
 import EmptyState from '../components/EmptyState';
 import RoleplayPageShell from '../components/RoleplayPageShell';
 
@@ -33,15 +33,15 @@ export default function AvatarGallery() {
         );
     }, [characters, searchQuery]);
 
-    const handleChat = (characterId) => {
+    const handleChat = (character) => {
         // ChatWorkspaceContext auto-creates (or reuses) a chat for this
         // character when /chat is entered with location.state.characterId.
         setActiveChatId(null);
-        navigate('/chat', { state: { characterId } });
+        navigate('/chat', { state: { characterId: character.id } });
     };
 
-    const handleCharacterClick = (characterId) => {
-        navigate(`/characters#char-${characterId}`);
+    const handleCharacterClick = (character) => {
+        navigate(`/characters#char-${character.id}`);
     };
 
     return (
@@ -96,9 +96,9 @@ export default function AvatarGallery() {
                         <CharacterCard
                             key={character.id}
                             character={character}
-                            collections={characterCollections}
+                            collection={characterCollections?.[character.id]}
                             onChat={handleChat}
-                            onNavigateToCharacter={handleCharacterClick}
+                            onOpen={handleCharacterClick}
                         />
                     ))}
                 </div>
@@ -109,7 +109,6 @@ export default function AvatarGallery() {
                             key={character.id}
                             character={character}
                             collections={characterCollections}
-                            onChat={handleChat}
                             onNavigateToCharacter={handleCharacterClick}
                         />
                     ))}
@@ -128,77 +127,6 @@ export default function AvatarGallery() {
     );
 }
 
-function CharacterCard({ character, collections, onChat, onNavigateToCharacter }) {
-    const collection = collections?.[character.id];
-    const imageCount = collection?.image_count || 0;
-
-    return (
-        <motion.div
-            layout
-            className="glass-panel rounded-xl border border-white/5 p-5 hover:border-blue-500/30 transition-all group"
-        >
-            <div className="flex items-start gap-4">
-                <div
-                    className="w-16 h-16 rounded-xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden cursor-pointer"
-                    onClick={() => onNavigateToCharacter(character.id)}
-                >
-                    {character.has_avatar ? (
-                        <img src={getAvatarUrl(character.id)} alt={character.name} className="w-full h-full object-cover" />
-                    ) : (
-                        <User size={28} className="text-gray-500" />
-                    )}
-                </div>
-                <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-white truncate">{character.name}</h3>
-                    {character.description && (
-                        <p className="text-xs text-gray-400 mt-1 line-clamp-2">{character.description}</p>
-                    )}
-                    {character.personality && (
-                        <p className="text-xs text-gray-500 mt-1.5 line-clamp-1 italic">"{character.personality}"</p>
-                    )}
-                </div>
-            </div>
-
-            {character.visual_tags?.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-3">
-                    {character.visual_tags.slice(0, 4).map((tag, idx) => (
-                        <span key={idx} className="px-1.5 py-0.5 text-[10px] bg-purple-500/10 text-purple-400 rounded border border-purple-500/20">{tag}</span>
-                    ))}
-                    {character.visual_tags.length > 4 && (
-                        <span className="px-1.5 py-0.5 text-[10px] text-gray-500">+{character.visual_tags.length - 4}</span>
-                    )}
-                </div>
-            )}
-
-            {imageCount > 0 && (
-                <div className="mt-4">
-                    <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-gray-400 font-medium">Scenes ({imageCount})</span>
-                    </div>
-                    <div className="max-h-32 overflow-hidden rounded-lg">
-                        <SceneGallery images={collection?.images?.slice(0, 8) || []} compact />
-                    </div>
-                </div>
-            )}
-
-            <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/5">
-                    <button
-                        onClick={() => onChat(character.id)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors"
-                    >
-                    <MessageSquare size={14} /> Chat
-                </button>
-                <button
-                    onClick={() => onNavigateToCharacter(character.id)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors ml-auto"
-                >
-                    <ExternalLink size={14} /> View
-                </button>
-            </div>
-        </motion.div>
-    );
-}
-
 function CharacterGridItem({ character, collections, onNavigateToCharacter }) {
     const collection = collections?.[character.id];
 
@@ -206,7 +134,7 @@ function CharacterGridItem({ character, collections, onNavigateToCharacter }) {
         <motion.div
             layout
             className="glass-panel rounded-xl border border-white/5 overflow-hidden hover:border-blue-500/30 transition-all group cursor-pointer"
-            onClick={() => onNavigateToCharacter(character.id)}
+            onClick={() => onNavigateToCharacter(character)}
         >
             <div className="aspect-square bg-gray-800/50 relative">
                 {character.has_avatar ? (

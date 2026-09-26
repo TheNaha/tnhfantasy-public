@@ -18,11 +18,16 @@ import { useEscapeKey } from '../../hooks/useEscapeKey';
  *
  * A dialog that only needs Escape, and keeps its own animation structure, can
  * call useEscapeKey directly instead of restructuring its markup.
+ *
+ * `centered={false}` drops the flex/centering/padding defaults for the rare
+ * dialog that scrolls its own full-bleed layout (e.g. the model metadata
+ * sheet); the backdrop click and Escape still come from this component.
  */
 export function ModalOverlay({
     isOpen = true,
     onClose,
     closeOnBackdrop = true,
+    centered = true,
     className = '',
     children,
 }) {
@@ -30,9 +35,11 @@ export function ModalOverlay({
 
     if (!isOpen) return null;
 
+    const layout = centered ? 'flex items-center justify-center p-4' : '';
+
     return createPortal(
         <div
-            className={`fixed inset-0 flex items-center justify-center p-4 ${className}`.trim()}
+            className={`fixed inset-0 ${layout} ${className}`.trim()}
             data-modal-overlay=""
             onClick={closeOnBackdrop ? onClose : undefined}
         >

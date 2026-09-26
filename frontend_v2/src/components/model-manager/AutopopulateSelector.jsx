@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { X, Loader2, Search, Wand2, Star, Download, AlertCircle, Image as ImageIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { createPortal } from 'react-dom';
 import { api } from '../../api';
+import ModalOverlay from '../common/ModalOverlay';
 import { useAutopopulateCandidates } from '../../hooks/useCivitaiSearch';
 
 function matchTone(score) {
@@ -67,9 +67,13 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
         }
     };
 
-    return createPortal(
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
-            <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-5xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+    return (
+        <ModalOverlay onClose={onClose} className="z-[60] bg-black/80 backdrop-blur-sm">
+            <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Match with CivitAI"
+                className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-5xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
 
                 {/* Header */}
                 <div className="p-6 border-b border-gray-800 flex items-center justify-between">
@@ -327,7 +331,6 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
                     </div>
                 </div>
             </div>
-        </div>,
-        document.body
+        </ModalOverlay>
     );
 }

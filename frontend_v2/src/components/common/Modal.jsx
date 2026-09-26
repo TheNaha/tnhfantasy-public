@@ -1,7 +1,7 @@
-import React, { useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import React from 'react';
 import { motion } from 'framer-motion';
 import { X } from 'lucide-react';
+import ModalOverlay from './ModalOverlay';
 
 const SIZE_CLASSES = {
     sm: 'max-w-sm',
@@ -12,6 +12,20 @@ const SIZE_CLASSES = {
     full: 'max-w-4xl',
 };
 
+/**
+ * ModalOverlay + title/close-button/footer chrome.
+ *
+ * The direction of the relationship: <ModalOverlay> owns the backdrop layer
+ * (portal, topmost-wins Escape, backdrop click) and <Modal> is the opinionated
+ * wrapper on top of it for the dialogs that want a title bar, a close button
+ * and a footer. A dialog with its own header/footer structure should use
+ * <ModalOverlay> directly rather than pretending to be a <Modal>.
+ *
+ * This used to carry its own `useEffect` keydown listener and its own
+ * createPortal, which meant it was not part of the Escape registry: with a
+ * <Modal> stacked over another dialog, one Escape closed both. Building it on
+ * <ModalOverlay> puts it in the registry like everything else.
+ */
 export function Modal({
     isOpen,
     onClose,
@@ -23,23 +37,16 @@ export function Modal({
     showClose = true,
     className = '',
 }) {
-    useEffect(() => {
-        if (!isOpen) return undefined;
-        const onKey = (e) => {
-            if (e.key === 'Escape') onClose?.();
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [isOpen, onClose]);
-
     if (!isOpen) return null;
 
     const panelSize = SIZE_CLASSES[size] || SIZE_CLASSES.md;
 
-    return createPortal(
-        <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80"
-            onClick={closeOnBackdrop ? onClose : undefined}
+    return (
+        <ModalOverlay
+            isOpen={isOpen}
+            onClose={onClose}
+            closeOnBackdrop={closeOnBackdrop}
+            className="z-50 bg-black/80"
         >
             <motion.div
                 role="dialog"
@@ -70,8 +77,7 @@ export function Modal({
                 {children}
                 {footer && <div className="p-4 border-t border-gray-700/50">{footer}</div>}
             </motion.div>
-        </div>,
-        document.body
+        </ModalOverlay>
     );
 }
 

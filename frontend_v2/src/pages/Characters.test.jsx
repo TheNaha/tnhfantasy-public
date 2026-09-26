@@ -191,7 +191,7 @@ describe('Characters page', () => {
         const file = new File(['{}'], 'sable.json', { type: 'application/json' });
         fireEvent.change(input, { target: { files: [file] } });
 
-        await waitFor(() => expect(screen.getByTestId('card-import-report-overlay')).toBeInTheDocument());
+        await waitFor(() => expect(screen.getByTestId('card-import-report')).toBeInTheDocument());
         expect(mutateAsync).toHaveBeenCalledWith(file);
         expect(screen.getByText('Sable')).toBeInTheDocument();
         expect(screen.getByTestId('card-import-status')).toHaveTextContent(/Imported with warnings/i);
@@ -201,7 +201,7 @@ describe('Characters page', () => {
         expect(screen.getByTestId('card-import-lorebook')).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-        expect(screen.queryByTestId('card-import-report-overlay')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('card-import-report')).not.toBeInTheDocument();
     });
 
     it('surfaces import failures without opening the report', async () => {
@@ -216,7 +216,7 @@ describe('Characters page', () => {
             target: { files: [new File(['{}'], 'card.json', { type: 'application/json' })] },
         });
 
-        await waitFor(() => expect(screen.queryByTestId('card-import-report-overlay')).not.toBeInTheDocument());
+        await waitFor(() => expect(screen.queryByTestId('card-import-report')).not.toBeInTheDocument());
     });
 
     it('exports a character card in the chosen format', async () => {
@@ -270,5 +270,28 @@ describe('Characters page', () => {
         expect(screen.getByTitle('Start chat with this character')).toBeInTheDocument();
         expect(screen.getByTitle('Edit character')).toBeInTheDocument();
         expect(screen.getByTitle('Clone character')).toBeInTheDocument();
+    });
+
+    it('closes the character editor on Escape', async () => {
+        render(<Characters />, { wrapper: MemoryRouter });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Create Character' }));
+        await waitFor(() =>
+            expect(screen.getByRole('dialog', { name: 'Create Character' })).toBeInTheDocument()
+        );
+
+        fireEvent.keyDown(window, { key: 'Escape' });
+        await waitFor(() =>
+            expect(screen.queryByRole('dialog', { name: 'Create Character' })).not.toBeInTheDocument()
+        );
+    });
+
+    it('ignores Escape while the character editor is closed', () => {
+        render(<Characters />, { wrapper: MemoryRouter });
+
+        // The editor is mounted unconditionally with an `isOpen` prop, so a
+        // closed one must not be listening: this used to be a live listener.
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 });

@@ -11,22 +11,19 @@ import {
 import {
     SortableContext,
     rectSortingStrategy,
-    useSortable,
     sortableKeyboardCoordinates,
     arrayMove,
 } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import { Users, Plus, Upload, Copy, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Brain, GripVertical } from 'lucide-react';
+import { Users, Plus, Upload, Search, X, Loader2, User, Images, Sparkles, Brain } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, useExportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter } from '../hooks/useWorldVault';
 import { CARD_ACCEPT, cardExportFormatLabel } from '../api/characterCards';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
-import SceneGallery, { SceneCount } from '../components/SceneGallery';
-import CharacterCardExportMenu from '../components/characters/CharacterCardExportMenu';
+import { SortableCharacterCard } from '../components/characters/CharacterCard';
+import ModalOverlay from '../components/common/ModalOverlay';
 import CharacterCardImportReport from '../components/characters/CharacterCardImportReport';
-import CharacterCardSpecBadge from '../components/characters/CharacterCardSpecBadge';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import useSettingsStore from '../store/settingsStore';
 import EmptyState from '../components/EmptyState';
@@ -345,12 +342,22 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
         }
     };
 
-    if (!isOpen) return null;
-
+    // Mounted unconditionally by the page with an `isOpen` prop, so the open
+    // state goes to the overlay: a closed editor must not keep a live Escape
+    // listener, and the early `return null` this replaces made the
+    // AnimatePresence wrapper inert.
     return (
         <AnimatePresence>
-            <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
+            <ModalOverlay
+                key="character-editor-overlay"
+                isOpen={!!isOpen}
+                onClose={onClose}
+                className="z-[90] bg-black/80 backdrop-blur-sm"
+            >
                 <motion.div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={isEditing ? 'Edit Character' : 'Create Character'}
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
@@ -649,110 +656,8 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                         )}
                     </AnimatePresence>
                 </motion.div>
-            </div>
+            </ModalOverlay>
         </AnimatePresence>
-    );
-}
-
-function CharacterCard({ character, collections, onEdit, onDelete, onChat, onExport, onClone, isCloning }) {
-    const collection = collections?.[character.id];
-    const imageCount = collection?.image_count || 0;
-
-    const {
-        attributes,
-        listeners,
-        setNodeRef,
-        transform,
-        transition,
-        isDragging,
-    } = useSortable({ id: character.id });
-
-    const style = {
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.5 : 1,
-        zIndex: isDragging ? 50 : undefined,
-    };
-
-    return (
-        <motion.div
-            ref={setNodeRef}
-            style={style}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className={`glass-panel rounded-xl border p-4 transition-all group relative ${isDragging ? 'border-blue-500/60 shadow-lg shadow-blue-500/10' : 'border-white/5 hover:border-blue-500/30'}`}
-        >
-            <button
-                type="button"
-                className="absolute -top-1.5 -right-1.5 z-10 p-1 rounded-full bg-gray-800 border border-white/10 text-gray-500 opacity-0 group-hover:opacity-100 hover:text-white hover:bg-gray-700 transition-all cursor-grab active:cursor-grabbing"
-                aria-label={`Reorder ${character.name}`}
-                {...attributes}
-                {...listeners}
-            >
-                <GripVertical size={13} />
-            </button>
-            <div className="flex items-start gap-3">
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden">
-                    {character.has_avatar ? (
-                        <img src={getAvatarUrl(character.id)} alt={character.name} className="w-full h-full object-cover" />
-                    ) : (
-                        <User size={22} className="text-gray-500" />
-                    )}
-                </div>
-                <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-gray-100 truncate">{character.name}</h3>
-                    {character.description && (
-                        <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{character.description}</p>
-                    )}
-                </div>
-            </div>
-
-            {character.personality && (
-                <p className="text-xs text-gray-500 mt-3 line-clamp-2 italic">"{character.personality}"</p>
-            )}
-
-            {(character.card_spec || character.card_metadata) && (
-                <div className="mt-3">
-                    <CharacterCardSpecBadge character={character} />
-                </div>
-            )}
-
-            {character.visual_tags?.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-3">
-                    {character.visual_tags.slice(0, 5).map((tag, idx) => (
-                        <span key={idx} className="px-1.5 py-0.5 text-[10px] bg-purple-500/10 text-purple-400 rounded border border-purple-500/20">{tag}</span>
-                    ))}
-                    {character.visual_tags.length > 5 && (
-                        <span className="px-1.5 py-0.5 text-[10px] text-gray-500">+{character.visual_tags.length - 5}</span>
-                    )}
-                </div>
-            )}
-
-            {imageCount > 0 && (
-                <div className="mt-3">
-                    <SceneCount count={imageCount} />
-                    <div className="max-h-28 overflow-y-auto custom-scrollbar rounded-lg">
-                        <SceneGallery images={collection?.images || []} compact />
-                    </div>
-                </div>
-            )}
-
-            <div className="flex items-center gap-2 mt-4 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                <button onClick={() => onChat(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors" title="Start chat with this character">
-                    <MessageSquare size={14} /> Chat
-                </button>
-                <button onClick={() => onEdit(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors" title="Edit character">
-                    <Edit3 size={14} /> Edit
-                </button>
-                <CharacterCardExportMenu character={character} onExport={onExport} />
-                <button onClick={() => onClone(character)} disabled={isCloning} className="flex items-center px-2 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors disabled:opacity-50" title="Clone character">
-                    {isCloning ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
-                </button>
-                <button onClick={() => onDelete(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition-colors ml-auto" title="Delete character">
-                    <Trash2 size={14} />
-                </button>
-            </div>
-        </motion.div>
     );
 }
 
@@ -987,16 +892,18 @@ export default function Characters() {
                         >
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                                 {filteredCharacters.map(character => (
-                                    <CharacterCard
+                                    <SortableCharacterCard
                                         key={character.id}
                                         character={character}
-                                        collections={characterCollections}
-                                        onEdit={openEdit}
-                                        onDelete={handleDelete}
+                                        collection={characterCollections?.[character.id]}
                                         onChat={handleStartChat}
-                                        onExport={handleExportCard}
-                                        onClone={handleCloneCharacter}
-                                        isCloning={cloningId === character.id}
+                                        actions={{
+                                            onEdit: openEdit,
+                                            onDelete: handleDelete,
+                                            onExport: handleExportCard,
+                                            onClone: handleCloneCharacter,
+                                            isCloning: cloningId === character.id,
+                                        }}
                                     />
                                 ))}
                             </div>

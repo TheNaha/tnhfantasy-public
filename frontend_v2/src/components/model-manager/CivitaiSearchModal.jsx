@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { X, Search, Loader2, Star, Download } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { createPortal } from 'react-dom';
 import { api } from '../../api';
+import ModalOverlay from '../common/ModalOverlay';
 import ProgressiveImage from '../ProgressiveImage';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
 
@@ -39,9 +39,13 @@ export default function CivitaiSearchModal({ initialQuery, onClose, onSelect }) 
         setQuery(searchInput);
     };
 
-    return createPortal(
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
-            <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-5xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+    return (
+        <ModalOverlay onClose={onClose} className="z-[60] bg-black/80 backdrop-blur-sm">
+            <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Search CivitAI"
+                className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-5xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
                 
                 {/* Header & Search */}
                 <div className="p-6 border-b border-gray-800 space-y-4">
@@ -176,7 +180,6 @@ export default function CivitaiSearchModal({ initialQuery, onClose, onSelect }) 
                     )}
                 </div>
             </div>
-        </div>,
-        document.body
+        </ModalOverlay>
     );
 }

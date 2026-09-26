@@ -1,6 +1,5 @@
 import { X, Copy, Check, ExternalLink, AlertCircle, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
-import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import { api } from '../api';
@@ -8,6 +7,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { getProviderDisplayName } from '../utils/providerUtils';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import CivitaiSearchModal from './model-manager/CivitaiSearchModal';
+import ModalOverlay from './common/ModalOverlay';
 import {
     ONLINE_RUNTIME_STATES,
     AVAILABLE_MODEL_STATES,
@@ -208,10 +208,17 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
         }
     };
 
-    return createPortal(
-        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm overflow-y-auto" onClick={onClose}>
+    return (
+        // Full-bleed scrolling sheet: the panel wrapper below does its own
+        // centring, so the overlay contributes only the backdrop, the
+        // backdrop click and the Escape registry entry.
+        <ModalOverlay onClose={onClose} centered={false} className="z-[60] bg-black/80 backdrop-blur-sm overflow-y-auto">
             <div className="min-h-full md:min-h-0 flex items-center justify-center p-0 md:p-4">
-                <div className="bg-gray-900 w-full max-w-5xl md:max-h-[calc(90*var(--vh,1vh))] rounded-none md:rounded-2xl border-x-0 md:border md:border-gray-700 flex flex-col md:flex-row shadow-2xl overflow-visible md:overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={`${displayName} metadata`}
+                    className="bg-gray-900 w-full max-w-5xl md:max-h-[calc(90*var(--vh,1vh))] rounded-none md:rounded-2xl border-x-0 md:border md:border-gray-700 flex flex-col md:flex-row shadow-2xl overflow-visible md:overflow-hidden" onClick={e => e.stopPropagation()}>
 
                      {/* Mobile Header - Sticky on mobile */}
                      <ModelMetadataHeader
@@ -449,7 +456,6 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                 />
             )}
         </div>
-    </div>,
-    document.body
+    </ModalOverlay>
     );
 }

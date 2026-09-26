@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { X, Check } from 'lucide-react';
+import ModalOverlay from '../common/ModalOverlay';
 
 function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose }) {
     const [selectedCharacter, setSelectedCharacter] = useState(null);
@@ -69,8 +70,14 @@ function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose 
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="new-chat-title">
+        // The backdrop never closed the wizard, so keep
+        // closeOnBackdrop={false} — dismissing a half-filled chat by a stray
+        // click was never possible. Escape now does.
+        <ModalOverlay onClose={onClose} closeOnBackdrop={false} className="z-50 bg-black/70 backdrop-blur-sm">
             <motion.div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="new-chat-title"
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
@@ -139,7 +146,7 @@ function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose 
                     {step < 2 ? <button type="button" onClick={() => setStep((value) => value + 1)} className="px-5 py-2 text-sm font-medium bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-xl transition-all shadow-lg">Continue</button> : <button type="button" onClick={handleCreate} disabled={isCreating} className="px-5 py-2 text-sm font-medium bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-xl transition-all shadow-lg disabled:opacity-50">{isCreating ? 'Creating…' : 'Create chat'}</button>}
                 </div>
             </motion.div>
-        </div>
+        </ModalOverlay>
     );
 }
 

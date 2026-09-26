@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
 import { X, ChevronRight } from 'lucide-react';
+import ModalOverlay from '../common/ModalOverlay';
 
 function GreetingPickerModal({ character, onSelect, onClose }) {
     const greetings = [
@@ -10,8 +11,13 @@ function GreetingPickerModal({ character, onSelect, onClose }) {
     if (greetings.length <= 1) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+        // The backdrop never closed the picker, so keep
+        // closeOnBackdrop={false}; Escape now does.
+        <ModalOverlay onClose={onClose} closeOnBackdrop={false} className="z-50 items-end sm:items-center bg-black/70 backdrop-blur-sm">
             <motion.div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Choose opening"
                 initial={{ y: '100%', opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 exit={{ y: '100%', opacity: 0 }}
@@ -46,7 +52,7 @@ function GreetingPickerModal({ character, onSelect, onClose }) {
                     ))}
                 </div>
             </motion.div>
-        </div>
+        </ModalOverlay>
     );
 }
 
