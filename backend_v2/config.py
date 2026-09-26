@@ -29,6 +29,8 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 import structlog
+import tempfile
+import threading
 
 _cfg_logger = structlog.get_logger().bind(logger_name="config")
 
@@ -224,6 +226,8 @@ settings = get_settings()
 
 # Global configuration instance
 _config: dict[str, Any] = None
+_config_lock = threading.Lock()
+
 _config_path = os.path.join(os.path.dirname(__file__), "config.json")
 
 
@@ -304,14 +308,41 @@ def update_config(updates: dict[str, Any], persist: bool = True) -> dict[str, An
     # Validate updates before applying
     _validate_config(updates)
     
-    # Deep merge updates into current config
-    _config = _deep_merge(_config, updates)
-    
-    # Persist to file if requested
-    if persist:
+    # Deep merge updates into current config.
+    #
+    # This is a read-modify-write of a module global, and `settings.py` calls it
+    # through `asyncio.to_thread` from two routes — so two concurrent PUTs for
+    # different sections could interleave and silently drop one. The lock makes
+    # the merge and the write atomic with respect to each other; it is not
+    # reentrant, so nothing inside may re-enter.
+    with _config_lock:
+        _config = _deep_merge(_config, updates)
+
+        # Persist to file if requested
+        if not persist:
+            return _config
         try:
-            with open(_config_path, 'w') as f:
-                json.dump(_config, f, indent=2)
+            # Write to a temp file and rename. A plain `open(..., 'w')` truncates
+            # first, so a reader — or a crash — could see a half-written
+            # config.json. `llm_config.py` already did mkstemp + os.replace +
+            # fsync; this brings config.json to the same durability rather than
+            # leaving the two config writers on different mechanisms.
+            directory = os.path.dirname(_config_path) or "."
+            fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".config-", suffix=".json")
+            try:
+                with os.fdopen(fd, "w") as handle:
+                    json.dump(_config, handle, indent=2)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp_path, _config_path)
+            except BaseException:
+                # Never leave a stray temp file behind for reconciliation or a
+                # later read to trip over.
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
             _cfg_logger.info("config_saved", path=_config_path)
         except Exception as e:
             _cfg_logger.error("config_save_failed", error=str(e))

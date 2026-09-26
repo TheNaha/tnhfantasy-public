@@ -121,7 +121,13 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
 
             from services.context_builder import chat_context_kwargs
 
-            ctx_kwargs = chat_context_kwargs(chat, characters=characters)
+            # `session` is not optional in practice: it is what resolves
+            # chat.persona_id into a persona name and description. Without it a
+            # chat linked to a Persona row got its persona in every user-facing
+            # path (all three chats.py call sites pass it) and silently lost it
+            # here — a divergence visible only as the idle simulation replying
+            # out of character.
+            ctx_kwargs = chat_context_kwargs(chat, characters=characters, session=session)
             if chat.max_context_tokens:
                 ctx_kwargs["max_context_tokens"] = chat.max_context_tokens
 

@@ -167,3 +167,61 @@ def test_graph_layout_custom_name(client, session):
     assert data["name"] == "custom"
     assert len(data["nodes"]) == 1
 
+
+
+class TestRelationshipsPagination:
+    """`limit`/`offset` used to be applied to `character_chats` only.
+
+    The other sub-queries were hard-capped at 200/500/200/100, so `?limit=5` did
+    not bound the response and `?offset=500` returned an empty `character_chats`
+    alongside a full `character_voices` list. Every section is now windowed.
+    """
+
+    @pytest.fixture
+    def linked(self, session):
+        """Three characters, each with a chat, a voice model and a story."""
+        from core.entities import VoiceModel
+
+        for index in range(3):
+            char = Character(name=f"PagChar{index}", description="d", personality="p")
+            session.add(char)
+            session.commit()
+            session.refresh(char)
+
+            chat = Chat(title=f"PagChat{index}", character_id=char.id)
+            session.add(chat)
+            session.add(VoiceModel(name=f"PagVoice{index}", character_id=char.id))
+            story = Story(
+                title=f"PagStory{index}",
+                character_ids=[char.id],
+                lorebook_ids=[],
+                location_ids=[],
+            )
+            session.add(story)
+            session.commit()
+        return session
+
+    def test_limit_bounds_every_section(self, client, linked):
+        body = client.get("/api/v2/world-vault/relationships", params={"limit": 1}).json()
+
+        assert body["character_chats"], "expected the fixture to produce a link"
+        assert len(body["character_chats"]) == 1
+        # These were the sections that ignored `limit` entirely.
+        assert len(body["character_voices"]) == 1
+        assert len(body["character_stories"]) == 1
+
+    def test_offset_windows_every_section_without_emptying_one_early(self, client, linked):
+        """`?offset=2` must not return an empty list beside a full one."""
+        body = client.get("/api/v2/world-vault/relationships", params={"limit": 5, "offset": 2}).json()
+
+        assert len(body["character_chats"]) == 1
+        assert len(body["character_voices"]) == 1
+
+    def test_pages_do_not_overlap(self, client, linked):
+        first = client.get("/api/v2/world-vault/relationships", params={"limit": 2}).json()
+        second = client.get("/api/v2/world-vault/relationships", params={"limit": 2, "offset": 2}).json()
+
+        first_ids = {row[0] for row in first["character_chats"]}
+        second_ids = {row[0] for row in second["character_chats"]}
+        assert first_ids and second_ids
+        assert not (first_ids & second_ids)

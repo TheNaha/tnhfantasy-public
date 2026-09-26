@@ -67,12 +67,26 @@ def get_relationships(
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ):
-    """Return entity relationship graph data."""
+    """Return entity relationship graph data.
+
+    `limit`/`offset` used to be applied to `character_chats` only, while the other
+    sub-queries were hard-capped at 200/500/200/100. So `?limit=5` did not bound
+    the response, and `?offset=500` silently returned an empty `character_chats`
+    alongside a full `character_voices` list — a pagination contract that quietly
+    lied about what it was doing.
+
+    Every sub-query is now windowed with the same limit/offset, and each keeps its
+    own ceiling as a separate upper bound, so a page asking for `limit=1000` still
+    cannot pull more than a section's cap.
+    """
     # Character → Chats
     char_chat_links = [
         tuple(row) for row in session.exec(
             select(Character.id, Character.name, Chat.id, Chat.name)
             .join(Chat, Chat.character_id == Character.id)
+            # Ordered so the window is deterministic; the join alone has no
+            # ORDER BY, which means an offset page can overlap the previous one.
+            .order_by(Character.created_at.desc(), Chat.id)
             .limit(limit)
             .offset(offset)
         ).all()
@@ -84,7 +98,8 @@ def get_relationships(
     stories = session.exec(
         select(Story.id, Story.title, Story.character_ids, Story.lorebook_ids, Story.location_ids)
         .order_by(Story.created_at.desc())
-        .limit(200)
+        .limit(min(limit, 200))
+        .offset(offset)
     ).all()
     char_ids = {
         char_id
@@ -159,7 +174,8 @@ def get_relationships(
         tuple(row) for row in session.exec(
             select(VoiceModel.id, VoiceModel.name, Character.id, Character.name)
             .join(Character, Character.id == VoiceModel.character_id)
-            .limit(500)
+            .limit(min(limit, 500))
+            .offset(offset)
         ).all()
     ]
 
@@ -201,7 +217,8 @@ def get_relationships(
         tuple(row) for row in session.exec(
             select(Chat.id, Chat.name, Location.id, Location.name)
             .join(Location, Location.id == Chat.location_id)
-            .limit(100)
+            .limit(min(limit, 100))
+            .offset(offset)
         ).all()
     ]
 

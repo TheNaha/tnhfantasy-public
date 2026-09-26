@@ -573,23 +573,28 @@ class LoadBalancer:
     
     async def _track_job(self, provider_id: str):
         """Track that a job was assigned to a provider."""
+        # Snapshot the work to do *inside* the lock, then do it outside. The
+        # comment here used to claim the persist happened outside the lock while
+        # the `await` sat inside the `async with` — so every twentieth job blocked
+        # _round_robin, _select_provider, record_success and report_failure for the
+        # duration of a thread hop plus a DB commit.
+        #
+        # The worker thread gets its OWN session via get_session_sync() because a
+        # SQLAlchemy Session is not thread-safe and self.session is shared with the
+        # event loop.
         async with self.runtime_state.get_lock():
             if provider_id not in self.runtime_state.provider_job_counts:
                 self.runtime_state.provider_job_counts[provider_id] = 0
             self.runtime_state.provider_job_counts[provider_id] += 1
-                
-            # Persist state periodically (every 20 jobs)
+
             total_jobs = sum(self.runtime_state.provider_job_counts.values())
-            if total_jobs % 20 == 0:
-                # Snapshot under the lock, persist outside it. The write is a
-                # synchronous SELECT + COMMIT; doing it while holding the
-                # asyncio lock blocked every concurrent provider selection for
-                # its duration. The worker thread gets its OWN session via
-                # get_session_sync() because a SQLAlchemy Session is not
-                # thread-safe and self.session is shared with the event loop.
+            due_for_persist = total_jobs % 20 == 0
+            if due_for_persist:
                 snapshot = self.runtime_state.snapshot()
                 state_id = self.state_id
-                await asyncio.to_thread(LoadBalancer._persist_snapshot, snapshot, state_id)
+
+        if due_for_persist:
+            await asyncio.to_thread(LoadBalancer._persist_snapshot, snapshot, state_id)
 
     @staticmethod
     def _persist_snapshot(snapshot: dict[str, Any], state_id: int) -> None:
