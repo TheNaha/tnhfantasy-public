@@ -293,6 +293,10 @@ def _calculate_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
     
     # For tracking lora weights
     lora_data = {}  # {lora_name: [weights]}
+
+    # Lookup index for the steps/cfg correlation so aggregation is O(1) per
+    # asset instead of a linear scan of the accumulated list.
+    steps_cfg_index: dict[str, dict] = {}  # {"<steps>|<cfg>": entry}
     
     # Performance tracking
     all_durations = []
@@ -507,19 +511,24 @@ def _calculate_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
                         detailed_stats["model_sampler_matrix"][model_name].get(sampler, 0) + 1
 
             # Steps-CFG correlation
+            #
+            # Keyed in a dict, not a linear scan over a list. Two problems with
+            # the list form: the appended entries used the RAW meta values
+            # (int steps) while the comparison read item["steps"], which the
+            # `settings` block above had already normalised to str — so the
+            # equality never held, every image got its own entry with count 1,
+            # and the scan was O(n) per image (O(n^2) per request; this repo
+            # documents 13k+ assets).
             if "steps" in meta and "cfg" in meta:
-                found = False
-                for item in detailed_stats["correlations"]["steps_cfg"]:
-                    if item["steps"] == meta["steps"] and item["cfg"] == meta["cfg"]:
-                        item["count"] += 1
-                        found = True
-                        break
-                if not found:
-                    detailed_stats["correlations"]["steps_cfg"].append({
-                        "steps": meta["steps"],
-                        "cfg": meta["cfg"],
-                        "count": 1
-                    })
+                steps_key = str(meta["steps"])
+                cfg_key = str(meta["cfg"])
+                pair_key = f"{steps_key}|{cfg_key}"
+                pair = steps_cfg_index.get(pair_key)
+                if pair is None:
+                    pair = {"steps": meta["steps"], "cfg": meta["cfg"], "count": 0}
+                    steps_cfg_index[pair_key] = pair
+                    detailed_stats["correlations"]["steps_cfg"].append(pair)
+                pair["count"] += 1
                 
     except Exception as e:
         logger.error("statistics_calculation_failed", error=str(e))
