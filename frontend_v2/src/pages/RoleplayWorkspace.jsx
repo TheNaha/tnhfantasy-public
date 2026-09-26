@@ -114,7 +114,7 @@ export default function RoleplayWorkspace() {
                     <button
                         type="button"
                         onClick={() => navigate('/scenarios')}
-                        className="hidden items-center gap-1 text-sm text-cyan-300 hover:text-cyan-200 sm:flex"
+                        className="hidden items-center gap-1 py-1 text-sm text-cyan-300 hover:text-cyan-200 sm:flex"
                     >
                         Browse scenarios <ArrowRight size={15} aria-hidden="true" />
                     </button>
@@ -154,7 +154,7 @@ export default function RoleplayWorkspace() {
                         <h2 id="roleplay-recent-heading" className="mt-1 text-xl font-semibold text-white">Recent sessions</h2>
                     </div>
                     {sessions.length > 0 && (
-                        <button type="button" onClick={() => navigate('/chat')} className="text-sm text-slate-400 hover:text-white">
+                        <button type="button" onClick={() => navigate('/chat')} className="py-1 text-sm text-slate-400 hover:text-white">
                             View all <ArrowRight size={14} className="inline" aria-hidden="true" />
                         </button>
                     )}
@@ -205,7 +205,7 @@ export default function RoleplayWorkspace() {
                         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Build as much world as you need</p>
                         <h2 id="roleplay-world-heading" className="mt-1 text-xl font-semibold text-white">Your world</h2>
                     </div>
-                    <button type="button" onClick={() => navigate('/world-vault')} className="text-sm text-cyan-300 hover:text-cyan-200">
+                    <button type="button" onClick={() => navigate('/world-vault')} className="py-1 text-sm text-cyan-300 hover:text-cyan-200">
                         Open World Vault <ArrowRight size={14} className="inline" aria-hidden="true" />
                     </button>
                 </div>
