@@ -10,16 +10,24 @@ Protocol:
 3. Jobs are pushed to connected workers via WebSocket
 4. Worker sends results back
 5. Heartbeat keeps connection alive
+
+The message types and their payload shapes are declared once, in
+`infrastructure.worker_registry` (the `worker protocol` section). This module
+consumes the inbound models and builds its outbound frames from the outbound
+models, so both halves of the socket read from a single contract.
 """
 
-
 import hmac
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 from api.deps import (
     get_job_service,
     get_logger,
+    get_model_service_v2,
     get_provider_service,
     get_session_context,
 )
@@ -37,6 +45,19 @@ from infrastructure.worker_registry import (  # noqa: F401
     touch_heartbeat,
     track_job_future,
     unregister_worker,
+)
+from infrastructure.worker_registry import (
+    ConnectedMessage,
+    GetPendingModelsMessage,
+    HeartbeatAckMessage,
+    HeartbeatMessage,
+    JobCompletedMessage,
+    JobFailedMessage,
+    JobProgressMessage,
+    JobStartedMessage,
+    PendingModelsMessage,
+    ProtocolErrorMessage,
+    parse_worker_message,
 )
 from services.job_processing import normalize_external_outputs
 from services.provider_client import ProviderCallError
@@ -81,6 +102,203 @@ def _coerce_percent(value) -> int:
 # Re-exported from infrastructure.worker_registry so callers (including tests)
 # that historically imported these from the API route keep working.
 # New code should import directly from infrastructure.worker_registry.
+
+
+# ============================================================================
+# Inbound handlers — one per declared message type
+# ============================================================================
+
+Handler = Callable[[WebSocket, Any, str, BaseModel], Awaitable[None]]
+
+
+async def _send_not_assigned(websocket: WebSocket) -> None:
+    await websocket.send_json(ProtocolErrorMessage(message="job is not assigned to this worker").model_dump())
+
+
+async def _fetch_pending_models(provider_id: str) -> list:
+    async with get_session_context() as session:
+        service = get_model_service_v2(session)
+        return service.get_pending_downloads(provider_id)
+
+
+async def _send_pending_models(websocket: WebSocket, models: list) -> None:
+    await websocket.send_json(PendingModelsMessage(models=models).model_dump())
+
+
+async def _handle_heartbeat(websocket: WebSocket, worker, provider_id: str, message: HeartbeatMessage) -> None:
+    await touch_heartbeat(worker)
+    await websocket.send_json(HeartbeatAckMessage().model_dump())
+
+
+async def _handle_job_started(websocket: WebSocket, worker, provider_id: str, message: JobStartedMessage) -> None:
+    job_id = message.job_id
+    if not await _worker_owns_job(job_id, provider_id) or (worker.current_job and worker.current_job != job_id):
+        await _send_not_assigned(websocket)
+        return
+    worker.current_job = job_id
+    logger.info("job_started", job_id=job_id)
+    async with get_session_context() as session:
+        job_service = get_job_service(session)
+        await job_service.update_job(job_id, status=JobStatus.CONNECTED, message="Connected to external worker...")
+
+
+async def _handle_job_progress(websocket: WebSocket, worker, provider_id: str, message: JobProgressMessage) -> None:
+    job_id = message.job_id
+    if not await _worker_owns_job(job_id, provider_id) or (worker.current_job is not None and worker.current_job != job_id):
+        await _send_not_assigned(websocket)
+        return
+    if worker.current_job is None:
+        worker.current_job = job_id
+    # `_worker_owns_job` is False for a missing job_id, so the guard above has
+    # already established that there is one.
+    payload = message.data
+    updates = {}
+
+    # TaskEvent-shaped payloads (canonical): {"event": "progress", "value": percent 0..100}
+    if payload.get("event") == "progress" and payload.get("value") is not None:
+        percent = _coerce_percent(payload["value"])
+        updates["progress"] = percent
+        updates["overall_progress"] = percent
+    else:
+        # Legacy ad-hoc fields: raw progress / overall_progress
+        if "status" in payload:
+            try:
+                updates["status"] = JobStatus(payload["status"])
+            except ValueError as exc:
+                logger.debug("unknown_job_status", status=payload.get("status"), error=str(exc))
+        if "progress" in payload:
+            updates["progress"] = _coerce_percent(payload["progress"])
+        if "overall_progress" in payload:
+            updates["overall_progress"] = _coerce_percent(payload["overall_progress"])
+        elif "progress" in payload:
+            updates["overall_progress"] = _coerce_percent(payload["progress"])
+    if "message" in payload:
+        updates["message"] = payload["message"]
+
+    if updates:
+        async with get_session_context() as session:
+            job_service = get_job_service(session)
+            await job_service.update_job(job_id, **updates)
+
+
+async def _handle_job_completed(websocket: WebSocket, worker, provider_id: str, message: JobCompletedMessage) -> None:
+    job_id = message.job_id
+    if not await _worker_owns_job(job_id, provider_id) or (worker.current_job is not None and worker.current_job != job_id):
+        await _send_not_assigned(websocket)
+        return
+    if worker.current_job is None:
+        worker.current_job = job_id
+    result = message.result
+    async with get_session_context() as session:
+        job_service = get_job_service(session)
+        job = await job_service.get_job(job_id)
+        allow_text = getattr(job, "task_type", None) == "llm"
+    try:
+        outputs = normalize_external_outputs(result.get("outputs", []), allow_text=allow_text)
+    except ValueError as exc:
+        async with get_session_context() as session:
+            job_service = get_job_service(session)
+            await job_service.update_job(
+                job_id,
+                status=JobStatus.FAILED,
+                error=str(exc)
+            )
+
+        worker.current_job = None
+        logger.error("invalid_completed_payload", job_id=job_id, error=str(exc))
+        return
+
+    try:
+        async with get_session_context() as session:
+            job_service = get_job_service(session)
+            job = await job_service.get_job(job_id)
+            # Imported here, not at module scope: the job-processing tests patch
+            # `services.job_processing.finalize_successful_job`, and only a
+            # call-time import sees the patch.
+            from services.job_processing import finalize_successful_job
+
+            await finalize_successful_job(
+                job=job,
+                job_id=job_id,
+                job_service=job_service,
+                load_balancer=None,
+                provider_id=provider_id,
+                final_result=result,
+                process_image_background_fn=None,
+            )
+    except Exception as finalize_exc:
+        # A bare `finally` here used to signal success even when
+        # finalization failed, then let the exception reach the
+        # socket handler — the job row stayed non-terminal while the
+        # caller believed it had succeeded.  Mark it FAILED so the
+        # row reaches a terminal state, and only resolve the future
+        # with a result on the success path.
+        logger.error("job_finalization_failed", job_id=job_id, error=str(finalize_exc))
+        worker.current_job = None
+        try:
+            async with get_session_context() as session:
+                job_service = get_job_service(session)
+                await job_service.update_job(
+                    job_id,
+                    status=JobStatus.FAILED,
+                    error=f"FAILURE_FINALIZATION: {finalize_exc}",
+                )
+        except Exception as mark_exc:
+            logger.error("job_finalization_failure_mark_failed", job_id=job_id, error=str(mark_exc))
+        return
+    else:
+        await resolve_job_future(job_id, result={
+            "__handled_by_external_worker": True,
+            "outputs": outputs,
+        })
+        worker.current_job = None
+        worker.jobs_completed += 1
+        logger.info("job_post_processing", job_id=job_id)
+
+
+async def _handle_job_failed(websocket: WebSocket, worker, provider_id: str, message: JobFailedMessage) -> None:
+    job_id = message.job_id
+    if not await _worker_owns_job(job_id, provider_id) or (worker.current_job is not None and worker.current_job != job_id):
+        await _send_not_assigned(websocket)
+        return
+    if worker.current_job is None:
+        worker.current_job = job_id
+    error = message.error
+
+    try:
+        async with get_session_context() as session:
+            job_service = get_job_service(session)
+            await job_service.update_job(
+                job_id,
+                status=JobStatus.FAILED,
+                error=error
+            )
+    finally:
+        await resolve_job_future(
+            job_id,
+            error=ProviderCallError(error, provider_id=provider_id, is_retryable=False),
+        )
+        worker.current_job = None
+        logger.error("job_failed", job_id=job_id, error=error)
+
+
+async def _handle_get_pending_models(websocket: WebSocket, worker, provider_id: str, message: GetPendingModelsMessage) -> None:
+    # Return models that need to be synced
+    await _send_pending_models(websocket, await _fetch_pending_models(provider_id))
+
+
+# The dispatch table. Keyed by the declared model class, so it cannot name a
+# `type` the contract does not declare, and a declared type with no entry here
+# would fall through the loop unhandled. tests/test_worker_ws.py asserts the
+# two sets are identical so neither half can drift.
+INBOUND_HANDLERS: dict[type[BaseModel], Handler] = {
+    HeartbeatMessage: _handle_heartbeat,
+    JobStartedMessage: _handle_job_started,
+    JobProgressMessage: _handle_job_progress,
+    JobCompletedMessage: _handle_job_completed,
+    JobFailedMessage: _handle_job_failed,
+    GetPendingModelsMessage: _handle_get_pending_models,
+}
 
 
 # ============================================================================
@@ -129,195 +347,37 @@ async def worker_websocket(
     logger.info("worker_connected", provider_id=provider_id)
     
     # Send welcome message
-    await websocket.send_json({
-        "type": "connected",
-        "provider_id": provider_id,
-        "message": "Connected to ComfyUI backend"
-    })
+    await websocket.send_json(
+        ConnectedMessage(
+            provider_id=provider_id,
+            message="Connected to ComfyUI backend",
+        ).model_dump()
+    )
     
-    # Push pending downloads immediately on connect
+    # Push pending downloads immediately on connect. Only when there are any:
+    # the frame is the same one `get_pending_models` replies with, but a
+    # freshly-connected worker with an empty queue never received it.
     try:
-        async with get_session_context() as session:
-            from api.deps import get_model_service_v2
-            service = get_model_service_v2(session)
-            pending = service.get_pending_downloads(provider_id)
-            if pending:
-                await websocket.send_json({
-                    "type": "pending_models",
-                    "models": pending
-                })
-                logger.info("pending_downloads_pushed", count=len(pending), provider_id=provider_id)
+        pending = await _fetch_pending_models(provider_id)
+        if pending:
+            await _send_pending_models(websocket, pending)
+            logger.info("pending_downloads_pushed", count=len(pending), provider_id=provider_id)
     except Exception as exc:
         logger.warning("pending_models_push_failed", provider_id=provider_id, error=str(exc))
     
     try:
         # Main message loop
         while True:
-            data = await websocket.receive_json()
-            msg_type = data.get("type")
-            
-            if msg_type == "heartbeat":
-                await touch_heartbeat(worker)
-                await websocket.send_json({"type": "heartbeat_ack"})
-            
-            elif msg_type == "job_started":
-                job_id = data.get("job_id")
-                if not await _worker_owns_job(job_id, provider_id) or (worker.current_job and worker.current_job != job_id):
-                    await websocket.send_json({"type": "error", "message": "job is not assigned to this worker"})
-                    continue
-                worker.current_job = job_id
-                logger.info("job_started", job_id=job_id)
-                async with get_session_context() as session:
-                    job_service = get_job_service(session)
-                    await job_service.update_job(job_id, status=JobStatus.CONNECTED, message="Connected to external worker...")
-            
-            elif msg_type == "job_progress":
-                payload = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
-                job_id = data.get("job_id") or payload.get("job_id") or payload.get("id")
-                if not await _worker_owns_job(job_id, provider_id) or (worker.current_job is not None and worker.current_job != job_id):
-                    await websocket.send_json({"type": "error", "message": "job is not assigned to this worker"})
-                    continue
-                if worker.current_job is None:
-                    worker.current_job = job_id
-                if job_id:
-                    updates = {}
-
-                    # TaskEvent-shaped payloads (canonical): {"event": "progress", "value": percent 0..100}
-                    if payload.get("event") == "progress" and payload.get("value") is not None:
-                        percent = _coerce_percent(payload["value"])
-                        updates["progress"] = percent
-                        updates["overall_progress"] = percent
-                    else:
-                        # Legacy ad-hoc fields: raw progress / overall_progress
-                        if "status" in payload:
-                            try:
-                                updates["status"] = JobStatus(payload["status"])
-                            except ValueError as exc:
-                                logger.debug("unknown_job_status", status=payload.get("status"), error=str(exc))
-                        if "progress" in payload:
-                            updates["progress"] = _coerce_percent(payload["progress"])
-                        if "overall_progress" in payload:
-                            updates["overall_progress"] = _coerce_percent(payload["overall_progress"])
-                        elif "progress" in payload:
-                            updates["overall_progress"] = _coerce_percent(payload["progress"])
-                    if "message" in payload:
-                        updates["message"] = payload["message"]
-
-                    if updates:
-                        async with get_session_context() as session:
-
-                            job_service = get_job_service(session)
-                            await job_service.update_job(job_id, **updates)
-            
-            elif msg_type == "job_completed":
-                job_id = data.get("job_id")
-                if not await _worker_owns_job(job_id, provider_id) or (worker.current_job is not None and worker.current_job != job_id):
-                    await websocket.send_json({"type": "error", "message": "job is not assigned to this worker"})
-                    continue
-                if worker.current_job is None:
-                    worker.current_job = job_id
-                result = data.get("result", {})
-                async with get_session_context() as session:
-                    job_service = get_job_service(session)
-                    job = await job_service.get_job(job_id)
-                    allow_text = getattr(job, "task_type", None) == "llm"
-                try:
-                    outputs = normalize_external_outputs(result.get("outputs", []), allow_text=allow_text)
-                except ValueError as exc:
-                    async with get_session_context() as session:
-                        from core.entities import JobStatus
-
-                        job_service = get_job_service(session)
-                        await job_service.update_job(
-                            job_id,
-                            status=JobStatus.FAILED,
-                            error=str(exc)
-                        )
-
-                    worker.current_job = None
-                    logger.error("invalid_completed_payload", job_id=job_id, error=str(exc))
-                    continue
-                
-                try:
-                    async with get_session_context() as session:
-                        job_service = get_job_service(session)
-                        job = await job_service.get_job(job_id)
-                        from services.job_processing import finalize_successful_job
-
-                        await finalize_successful_job(
-                            job=job,
-                            job_id=job_id,
-                            job_service=job_service,
-                            load_balancer=None,
-                            provider_id=provider_id,
-                            final_result=result,
-                            process_image_background_fn=None,
-                        )
-                except Exception as finalize_exc:
-                    # A bare `finally` here used to signal success even when
-                    # finalization failed, then let the exception reach the
-                    # socket handler — the job row stayed non-terminal while the
-                    # caller believed it had succeeded.  Mark it FAILED so the
-                    # row reaches a terminal state, and only resolve the future
-                    # with a result on the success path.
-                    logger.error("job_finalization_failed", job_id=job_id, error=str(finalize_exc))
-                    worker.current_job = None
-                    try:
-                        async with get_session_context() as session:
-                            job_service = get_job_service(session)
-                            await job_service.update_job(
-                                job_id,
-                                status=JobStatus.FAILED,
-                                error=f"FAILURE_FINALIZATION: {finalize_exc}",
-                            )
-                    except Exception as mark_exc:
-                        logger.error("job_finalization_failure_mark_failed", job_id=job_id, error=str(mark_exc))
-                    continue
-                else:
-                    await resolve_job_future(job_id, result={
-                        "__handled_by_external_worker": True,
-                        "outputs": outputs,
-                    })
-                    worker.current_job = None
-                    worker.jobs_completed += 1
-                    logger.info("job_post_processing", job_id=job_id)
-
-            elif msg_type == "job_failed":
-                job_id = data.get("job_id")
-                if not await _worker_owns_job(job_id, provider_id) or (worker.current_job is not None and worker.current_job != job_id):
-                    await websocket.send_json({"type": "error", "message": "job is not assigned to this worker"})
-                    continue
-                if worker.current_job is None:
-                    worker.current_job = job_id
-                error = data.get("error", "Unknown error")
-                
-                try:
-                    async with get_session_context() as session:
-                        from core.entities import JobStatus
-                        job_service = get_job_service(session)
-                        await job_service.update_job(
-                            job_id,
-                            status=JobStatus.FAILED,
-                            error=error
-                        )
-                finally:
-                    await resolve_job_future(
-                        job_id,
-                        error=ProviderCallError(error, provider_id=provider_id, is_retryable=False),
-                    )
-                    worker.current_job = None
-                    logger.error("job_failed", job_id=job_id, error=error)
-            
-            elif msg_type == "get_pending_models":
-                # Return models that need to be synced
-                async with get_session_context() as session:
-                    from api.deps import get_model_service_v2
-                    service = get_model_service_v2(session)
-                    pending = service.get_pending_downloads(provider_id)
-                    await websocket.send_json({
-                        "type": "pending_models",
-                        "models": pending
-                    })
+            message = parse_worker_message(await websocket.receive_json())
+            if message is None:
+                # Not a frame the protocol declares (or one that does not
+                # validate). The old `if/elif` chain fell through for an
+                # unrecognised `type`; keep reading.
+                continue
+            handler = INBOUND_HANDLERS.get(type(message))
+            if handler is None:
+                continue
+            await handler(websocket, worker, provider_id, message)
     
     except WebSocketDisconnect:
         logger.info("worker_disconnected", provider_id=provider_id)

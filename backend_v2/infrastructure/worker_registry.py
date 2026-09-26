@@ -3,12 +3,21 @@
 Shared state and operations for tracking external (WebSocket) worker connections.
 Both the worker-ws endpoint and runtime services import from here so that no
 service reaches into ``api.routes`` (which would invert the dependency direction).
+
+This module also owns the ``/ws/worker/{provider_id}`` wire contract: every
+message type and its payload shape is declared once, in the
+``worker protocol`` section below, and both halves of the socket import it —
+``api.routes.worker_ws`` dispatches on the parsed inbound models, and the
+senders in this file build outbound frames from the outbound models. See
+``INBOUND_MESSAGES`` for the registry itself.
 """
 
 import asyncio
 from datetime import datetime, timezone
+from typing import Annotated, Any, Literal
 
 from fastapi import WebSocket
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_validator
 
 from infrastructure.logging import get_logger
 from services.provider_client import ProviderCallError
@@ -21,6 +30,190 @@ connected_workers: dict[str, "ConnectedWorker"] = {}  # provider_id -> worker
 pending_job_futures: dict[str, asyncio.Future] = {}
 _workers_lock = asyncio.Lock()
 _futures_lock = asyncio.Lock()
+
+
+# ============================================================================
+# Worker protocol
+# ============================================================================
+#
+# Every frame that crosses /ws/worker/{provider_id} in either direction is
+# declared here, once. The two halves of the socket used to have to be read
+# together to see the contract: the handler branched on `data.get("type")` and
+# the senders built dicts inline, so a type added on one side was invisible on
+# the other. Now:
+#
+#   * `msg_type` and its payload fields come from the model declarations below;
+#   * the handler parses frames into these models and dispatches on the model
+#     class (see `INBOUND_HANDLERS` in api/routes/worker_ws.py);
+#   * every sender builds its frame from the outbound models.
+#
+# `tests/test_worker_ws.py` asserts the inbound model registry and the handler
+# dispatch table hold the same set of types in both directions, so a type cannot
+# be declared on one side only.
+#
+# The wire format is unchanged. `scripts/external_worker_client.py` is a working
+# reference client for exactly these frames and still passes unmodified.
+#
+# `job_id` is declared optional on the job_* inbound types on purpose: a frame
+# that omits it (or carries a bogus one) must still get the standard
+# "job is not assigned to this worker" error rather than failing validation,
+# because that ownership check is the thing rejecting it.
+
+# --- Inbound: worker -> backend -------------------------------------------
+
+
+class HeartbeatMessage(BaseModel):
+    type: Literal["heartbeat"] = "heartbeat"
+
+
+class JobStartedMessage(BaseModel):
+    type: Literal["job_started"] = "job_started"
+    job_id: str | None = None
+
+
+class JobProgressMessage(BaseModel):
+    """Progress for a running job.
+
+    `data` carries the progress payload and has two accepted shapes, both of
+    which must keep working:
+
+    * canonical TaskEvent — ``{"event": "progress", "value": 0..100}``
+    * legacy ad-hoc fields — ``{"progress": .., "overall_progress": ..,
+      "status": .., "message": ..}``
+
+    `job_id` has historically been sent both at the top level and inside `data`
+    (as `job_id`, and as `id` by some older containers), so it is resolved from
+    all three here rather than at each consumer.
+    """
+
+    type: Literal["job_progress"] = "job_progress"
+    job_id: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_job_id(cls, raw: Any) -> Any:
+        if not isinstance(raw, dict):
+            return raw
+        # A non-dict `data` has always been treated as an empty payload.
+        payload = raw.get("data")
+        if not isinstance(payload, dict):
+            return {**raw, "data": {}}
+        if not raw.get("job_id"):
+            resolved = payload.get("job_id") or payload.get("id")
+            if resolved:
+                return {**raw, "job_id": resolved}
+        return raw
+
+
+class JobCompletedMessage(BaseModel):
+    type: Literal["job_completed"] = "job_completed"
+    job_id: str | None = None
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class JobFailedMessage(BaseModel):
+    type: Literal["job_failed"] = "job_failed"
+    job_id: str | None = None
+    error: str = "Unknown error"
+
+
+class GetPendingModelsMessage(BaseModel):
+    type: Literal["get_pending_models"] = "get_pending_models"
+
+
+InboundMessage = Annotated[
+    HeartbeatMessage
+    | JobStartedMessage
+    | JobProgressMessage
+    | JobCompletedMessage
+    | JobFailedMessage
+    | GetPendingModelsMessage,
+    Field(discriminator="type"),
+]
+
+# Keyed by the Literal default of each model's `type` field, so the registry
+# cannot disagree with the model it indexes.
+INBOUND_MESSAGES: dict[str, type[BaseModel]] = {
+    m.model_fields["type"].default: m
+    for m in (
+        HeartbeatMessage,
+        JobStartedMessage,
+        JobProgressMessage,
+        JobCompletedMessage,
+        JobFailedMessage,
+        GetPendingModelsMessage,
+    )
+}
+
+_inbound_adapter = TypeAdapter(InboundMessage)
+
+
+def parse_worker_message(raw: Any) -> InboundMessage | None:
+    """Validate one frame received from a worker.
+
+    Returns None — and never raises — for a frame the protocol does not declare
+    (missing/blank `type`, an unknown type) or for a declared type whose payload
+    does not validate. The socket loop treats None as "ignore and keep reading",
+    which is what the old `if/elif` chain did for an unrecognised `type`.
+    """
+    try:
+        return _inbound_adapter.validate_python(raw)
+    except ValidationError as exc:
+        kind = raw.get("type") if isinstance(raw, dict) else None
+        logger.debug("worker_message_rejected", msg_type=kind, error=str(exc))
+        return None
+
+
+# --- Outbound: backend -> worker -------------------------------------------
+
+
+class ConnectedMessage(BaseModel):
+    type: Literal["connected"] = "connected"
+    provider_id: str
+    message: str
+
+
+class PendingModelsMessage(BaseModel):
+    type: Literal["pending_models"] = "pending_models"
+    models: list[Any] = Field(default_factory=list)
+
+
+class HeartbeatAckMessage(BaseModel):
+    type: Literal["heartbeat_ack"] = "heartbeat_ack"
+
+
+class ProtocolErrorMessage(BaseModel):
+    type: Literal["error"] = "error"
+    message: str
+
+
+class JobDispatchMessage(BaseModel):
+    type: Literal["job"] = "job"
+    data: dict[str, Any]
+
+
+class CancelJobMessage(BaseModel):
+    type: Literal["cancel_job"] = "cancel_job"
+    job_id: str
+
+
+OUTBOUND_MESSAGES: dict[str, type[BaseModel]] = {
+    m.model_fields["type"].default: m
+    for m in (
+        ConnectedMessage,
+        PendingModelsMessage,
+        HeartbeatAckMessage,
+        ProtocolErrorMessage,
+        JobDispatchMessage,
+        CancelJobMessage,
+    )
+}
+
+# Every type the socket can carry, either way. Not used for dispatch — the
+# handler and the senders are the only dispatchers — but it is the set a new
+# message type has to be added to, and it is asserted in the tests.
+WORKER_MESSAGE_TYPES: frozenset[str] = frozenset(INBOUND_MESSAGES) | frozenset(OUTBOUND_MESSAGES)
 
 
 class ConnectedWorker:
@@ -174,10 +367,7 @@ async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: floa
     await track_job_future(job_id, future)
 
     try:
-        await worker.ws.send_json({
-            "type": "job",
-            "data": job_data,
-        })
+        await worker.ws.send_json(JobDispatchMessage(data=job_data).model_dump())
         worker.current_job = job_id
     except Exception as exc:
         await forget_job_future(job_id)
@@ -201,10 +391,7 @@ async def request_worker_job_cancel(provider_id: str, job_id: str) -> bool:
         return False
 
     try:
-        await worker.ws.send_json({
-            "type": "cancel_job",
-            "job_id": job_id,
-        })
+        await worker.ws.send_json(CancelJobMessage(job_id=job_id).model_dump())
         return True
     except Exception as exc:
         logger.warning("cancel_send_failed", job_id=job_id, provider_id=provider_id, error=str(exc))
