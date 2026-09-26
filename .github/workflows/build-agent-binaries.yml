@@ -57,20 +57,45 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: remote_agent
         run: |
-          ./dist/tnhcomfy-agent & AGENT_PID=$!
+          # REMOTE_AGENT_TOKEN is mandatory: remote_agent/server.py raises at
+          # import time without it (or REMOTE_AGENT_ALLOW_INSECURE=1). Without
+          # this the process exited before the sleep and the curl failed, so
+          # every push touching remote_agent/** or provider_core/** left this
+          # job red.
+          REMOTE_AGENT_TOKEN=ci-verification-token \
+            PORT=8001 \
+            DATA_DIR=/tmp/agentverify \
+            ./dist/tnhcomfy-agent & AGENT_PID=$!
           trap 'kill $AGENT_PID 2>/dev/null || true; rm -rf /tmp/agentverify' EXIT
-          sleep 8
-          curl -fsS http://localhost:8001/health || { kill $AGENT_PID 2>/dev/null; exit 1; }
+          mkdir -p /tmp/agentverify
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8001/health; then exit 0; fi
+            kill -0 $AGENT_PID 2>/dev/null || { echo "agent exited early"; exit 1; }
+            sleep 1
+          done
+          echo "agent did not become healthy in 20s"; exit 1
 
       - name: Verify binary (Windows)
         if: runner.os == 'Windows'
         working-directory: remote_agent
         shell: pwsh
         run: |
-          start-process -FilePath "dist\tnhcomfy-agent.exe" -PassThru -NoNewWindow
-          Start-Sleep -Seconds 8
-          $c = Invoke-WebRequest -UseBasicParsing http://localhost:8001/health
-          if ($c.StatusCode -ne 200) { exit 1 }
+          # Same mandatory token as the Linux leg; server.py raises at import
+          # time without it, so the process died before the healthcheck.
+          New-Item -ItemType Directory -Force -Path "$env:TEMP\agentverify" | Out-Null
+          $env:REMOTE_AGENT_TOKEN = "ci-verification-token"
+          $env:PORT = "8001"
+          $env:DATA_DIR = "$env:TEMP\agentverify"
+          $p = Start-Process -FilePath "dist\tnhcomfy-agent.exe" -PassThru -NoNewWindow
+          for ($i = 0; $i -lt 20; $i++) {
+            if ($p.HasExited) { Write-Error "agent exited early"; exit 1 }
+            try {
+              $c = Invoke-WebRequest -UseBasicParsing http://localhost:8001/health
+              if ($c.StatusCode -eq 200) { exit 0 }
+            } catch { }
+            Start-Sleep -Seconds 1
+          }
+          Write-Error "agent did not become healthy in 20s"; exit 1
 
       - uses: actions/upload-artifact@v4
         with:

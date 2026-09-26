@@ -2,7 +2,18 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EXEC="$SCRIPT_DIR/tnhcomfy-agent"
+# PyInstaller writes to ./dist (see build-agent-binaries.yml and the README), so
+# the binary is one directory below this script. Looking in SCRIPT_DIR meant the
+# documented "build then ./agentctl.sh" always failed with "executable not found".
+if [ -x "$SCRIPT_DIR/tnhcomfy-agent" ]; then
+  EXEC="$SCRIPT_DIR/tnhcomfy-agent"
+elif [ -x "$SCRIPT_DIR/dist/tnhcomfy-agent" ]; then
+  EXEC="$SCRIPT_DIR/dist/tnhcomfy-agent"
+else
+  echo "error: agent executable not found at $SCRIPT_DIR/tnhcomfy-agent or $SCRIPT_DIR/dist/tnhcomfy-agent" >&2
+  echo "hint: build it with  cd remote_agent && pyinstaller --noconfirm --distpath ./dist tnhcomfy-agent.spec" >&2
+  exit 1
+fi
 
 if [ -f "$SCRIPT_DIR/.env" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
