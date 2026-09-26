@@ -3,9 +3,9 @@ import os
 from copy import deepcopy
 from typing import Any
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from core.entities import LoadBalancingConfig, Provider
+from core.entities import Job, LoadBalancingConfig, Provider
 from core.events import EventType, emit_provider_event
 from core.exceptions import NotFoundError, ValidationError
 from infrastructure.logging import provider_logger
@@ -297,6 +297,21 @@ class ProviderService:
         deleted_count = model_repo.delete_all_statuses_for_provider(provider_id)
         if deleted_count > 0:
             logger.info("provider_cascade_delete", provider_id=provider_id, statuses_deleted=deleted_count)
+
+        # `jobs.provider_id` is a plain column with NO ACTION foreign key to
+        # providers (migration 063), so deleting a provider that has run a job
+        # raised ForeignKeyViolationError and 500'd. Job history is worth
+        # keeping, so the reference is cleared rather than cascading: the rows
+        # stay and the provider column becomes NULL, which is exactly what the
+        # column's `str | None` type already allows.
+        detached = self.session.exec(
+            select(Job).where(Job.provider_id == provider_id)
+        ).all()
+        for job in detached:
+            job.provider_id = None
+        if detached:
+            self.session.commit()
+            logger.info("provider_jobs_detached", provider_id=provider_id, jobs_detached=len(detached))
         
         success = self.repo.delete(provider_id)
         if not success:

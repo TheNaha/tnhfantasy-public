@@ -252,6 +252,27 @@ class TestProviderServiceDelete:
         assert "test-provider" not in (state_row.provider_failures or {})
         assert "test-provider" not in (state_row.provider_job_counts or {})
 
+    async def test_delete_provider_keeps_job_history(self, service, session, sample_provider_data):
+        """A provider that has run a job must still be deletable.
+
+        `jobs.provider_id` is a plain column with a NO ACTION foreign key to
+        providers, so deleting such a provider raised ForeignKeyViolationError and
+        the route returned 500. Job history is worth keeping, so the reference is
+        cleared instead of cascading the rows away.
+        """
+        from core.entities import Job, JobStatus
+
+        await service.create_provider(sample_provider_data)
+        job = Job(task_type="image", status=JobStatus.COMPLETED, provider_id="test-provider")
+        session.add(job)
+        session.commit()
+
+        assert await service.delete_provider("test-provider") is True
+
+        session.refresh(job)
+        assert job.provider_id is None
+        assert session.get(Job, job.id) is not None
+
 
 class TestProviderServiceLoadBalancing:
     def test_get_load_balancing_config(self, service):
