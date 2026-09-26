@@ -2,13 +2,16 @@
 # This module abstracts provider-specific logic from the core backend
 
 import base64
+from contextlib import asynccontextmanager
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncIterator
 
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import provider_logger
+
+from infrastructure.providers.base import MAX_INLINE_FILE_BYTES, FileProxyProvider
 
 logger = provider_logger()
 
@@ -20,20 +23,82 @@ def clean_registry_dict(d):
     return {k: v for k, v in d.items() if isinstance(k, str) and v is not None}
 
 
-class HttpFileProxy:
+# Forward a provider's file body in chunks. 8 MiB is a reasonable trade between
+# syscall count and per-chunk overhead at these sizes.
+_STREAM_CHUNK_BYTES = 8 * 1024 * 1024
+
+# Long enough for a multi-GB checkpoint to arrive, short enough that a dead
+# provider does not hold a worker indefinitely.
+_STREAM_TIMEOUT_SECONDS = 600.0
+
+
+class FileTooLargeError(Exception):
+    """A file was too large to return inline. Use `stream_file` instead."""
+
+
+async def _iter_chunks(stream_ctx) -> AsyncIterator[bytes]:
+    """Yield the body of an open response in chunks, closing it when done.
+
+    Takes the context manager rather than the response so the `async with` stays
+    open for the whole iteration — an httpx streaming response is only valid inside
+    its own `stream()` block, which is why `stream_file` is a plain method
+    returning an async iterator rather than an `async def` generator.
+    """
+    async with stream_ctx as response:
+        async for chunk in response.aiter_bytes(_STREAM_CHUNK_BYTES):
+            yield chunk
+
+
+class HttpFileProxy(FileProxyProvider):
     """Shared file proxy implementation for HTTP-based provider containers."""
 
     def __init__(self, provider_id: str, config: dict[str, Any], base_url: str):
-        self.provider_id = provider_id
-        self.config = config
+        # Was not inheriting FileProxyProvider at all, so the ABC's method set was
+        # documentation rather than a contract and nothing verified it. Every
+        # provider type uses this class, so there is only one implementation to
+        # satisfy — including `stream_file`, which is the point.
+        super().__init__(provider_id, config)
         self.base_url = base_url.rstrip("/")
 
+    def stream_file(self, path: str):
+        """Yield the provider's file in chunks, never materialising it.
+
+        `get_file` was the only way to read a file, and it returned `bytes`. For a
+        model that is 7 GB in the worker, 7 GB in the response object, and — on the
+        base64 JSON path the engines still use for small payloads — a 9.3 GB string
+        on top. This is the path a large file should take.
+        """
+        client = get_http_client()
+        encoded_path = urllib.parse.quote(path, safe="/")
+        url = f"{self.base_url}/get-file/{encoded_path}"
+
+        @asynccontextmanager
+        async def _open():
+            async with client.stream("GET", url, timeout=_STREAM_TIMEOUT_SECONDS) as response:
+                if response.status_code != 200:
+                    raise Exception(f"Failed to get file: {response.status_code}")
+                yield response
+
+        return _iter_chunks(_open())
+
     async def get_file(self, path: str) -> bytes:
+        """Retrieve a small file as bytes.
+
+        Refuses anything past `MAX_INLINE_FILE_BYTES`. A caller that genuinely wants
+        a large file should use `stream_file`; returning bytes for one would either
+        exhaust memory or silently truncate, and neither is a useful failure.
+        """
         client = get_http_client()
         encoded_path = urllib.parse.quote(path, safe="/")
         url = f"{self.base_url}/get-file/{encoded_path}"
         response = await client.get(url)
         if response.status_code == 200:
+            declared = response.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > MAX_INLINE_FILE_BYTES:
+                raise FileTooLargeError(
+                    f"{path} is {int(declared)} bytes, past the {MAX_INLINE_FILE_BYTES} byte "
+                    "inline limit. Use stream_file() for a file this size."
+                )
             content_type = response.headers.get("content-type", "") or ""
             if not isinstance(content_type, str):
                 content_type = str(content_type)
@@ -45,6 +110,11 @@ class HttpFileProxy:
                 if isinstance(payload, dict):
                     content_base64 = payload.get("content_base64")
                     if isinstance(content_base64, str):
+                        if len(content_base64) > MAX_INLINE_FILE_BYTES:
+                            raise FileTooLargeError(
+                                f"{path} base64 payload is {len(content_base64)} bytes, past the "
+                                f"{MAX_INLINE_FILE_BYTES} byte inline limit."
+                            )
                         return base64.b64decode(content_base64)
             return response.content
         raise Exception(f"Failed to get file: {response.status_code}")

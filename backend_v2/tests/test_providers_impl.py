@@ -33,6 +33,14 @@ class ConcreteFileProxy(FileProxyProvider):
     async def get_file(self, path):
         return b""
 
+    async def stream_file(self, path):
+        # An empty async iterator, per the FileProxyProvider contract.
+        async def _empty():
+            return
+            yield b""  # pragma: no cover - makes this an async generator
+
+        return _empty()
+
     async def delete_file(self, path):
         return True
 

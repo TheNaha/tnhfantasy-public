@@ -1,6 +1,11 @@
 # Base provider interface for serverless platforms
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from typing import Any
+
+# A file larger than this is not returned inline. 64 MiB is comfortably above any
+# sidecar or thumbnail and comfortably below anything that would hurt.
+MAX_INLINE_FILE_BYTES = 64 * 1024 * 1024
 
 
 class ServerlessProvider(ABC):
@@ -52,8 +57,26 @@ class FileProxyProvider(ABC):
     
     @abstractmethod
     async def get_file(self, path: str) -> bytes:
-        """Retrieve file contents from provider storage."""
-    
+        """Retrieve file contents from provider storage.
+
+        Bytes, so it cannot be used for anything large: a 7 GB SDXL checkpoint
+        becomes 7 GB in the worker, 7 GB in the response, and on the JSON path a
+        base64 copy on top. `stream_file` is what a caller serving a model should
+        use. This one is kept for small payloads — a `.json` sidecar, a preview
+        thumbnail — and `get_file` refuses anything past
+        `MAX_INLINE_FILE_BYTES` rather than trying.
+        """
+
+    @abstractmethod
+    def stream_file(self, path: str) -> AsyncIterator[bytes]:
+        """Yield a provider's file in chunks. Never materialises it in memory.
+
+        Synchronous, returning an async iterator, because httpx's streaming API
+        opens the request eagerly and the response body must be iterated inside the
+        session's lifetime — the caller is responsible for that, and an async
+        generator cannot be iterated correctly from a different task.
+        """
+
     @abstractmethod
     async def delete_file(self, path: str) -> bool:
         """Delete a file from provider storage."""
