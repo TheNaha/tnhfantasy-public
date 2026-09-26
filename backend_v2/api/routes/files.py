@@ -20,6 +20,8 @@
 #   client filename before it reaches the filesystem. Rejections raise
 #   UploadValidationError -> HTTP 400 with a machine-readable `code`.
 import asyncio
+
+from services.asset_reconciler import upsert_asset
 import base64
 import json
 import os
@@ -82,6 +84,10 @@ MAX_EXPORT_FILE_BYTES = MAX_EXPORT_FILE_MB * 1024 * 1024
 MAX_EXPORT_TOTAL_BYTES = MAX_EXPORT_TOTAL_MB * 1024 * 1024
 MAX_PATH_LENGTH = 1024
 
+# Streaming chunk for asset copies. Whole-file reads on the copy path used to
+# buffer an entire generated image into a `bytes` object in the event-loop process.
+_COPY_CHUNK_BYTES = 1024 * 1024
+
 
 def _cancel_checker(request: Request):
     """Build a should_cancel() hook that trips when the client disconnects.
@@ -143,7 +149,7 @@ async def _sync_file_to_providers(session: Session, filename: str, content: byte
     Sync an uploaded file to all active providers.
     Returns {"sync_status": str, "synced_count": int, "failed_count": int}.
     """
-    from services.provider_runtime import resolve_provider_runtime
+    from services.provider_runtime import resolve_provider_runtime_async
 
     sync_status = "local_only"
     synced_count = 0
@@ -165,7 +171,7 @@ async def _sync_file_to_providers(session: Session, filename: str, content: byte
             if not provider_entity:
                 continue
             
-            runtime = resolve_provider_runtime(provider_entity)
+            runtime = await resolve_provider_runtime_async(provider_entity)
             if not runtime.worker_url:
                 continue
                 
@@ -580,13 +586,22 @@ def _query_gallery_files(
         return {"files": [_asset_as_file_data(a, OUTPUT_DIR) for a in page], "total": total}
 
 
-def _soft_delete_assets(relative_or_filename: str) -> int:
-    """Mark matching asset rows deleted after their file is removed from disk."""
+def _soft_delete_assets(relative_or_filename: str, session: Session | None = None) -> int:
+    """Mark matching asset rows deleted after their file is removed from disk.
+
+    Pass `session` to reuse a caller's open session. Opening a second one instead
+    means committing while the first is still uncommitted, which is how
+    `move_asset` ended up with two sessions for one request.
+    """
+    from contextlib import ExitStack
+
     from datetime import datetime, timezone
 
     rel = relative_or_filename.lstrip("/\\")
     now = datetime.now(timezone.utc)
-    with _sync_session() as session:
+    with ExitStack() as stack:
+        if session is None:
+            session = stack.enter_context(_sync_session())
         q = select(Asset).where(Asset.deleted_at.is_(None)).where(
             (Asset.relative_path == rel) | (Asset.relative_path == "/" + rel)
         )
@@ -781,74 +796,92 @@ class MoveAssetRequest(BaseModel):
     copy_file: bool = False
 
 
-@router.post("/api/v2/assets/{asset_id}/move")
-async def move_asset(asset_id: str, body: MoveAssetRequest, session: Session = Depends(get_session)):
-    asset = session.get(Asset, asset_id)
-    if not asset or asset.deleted_at is not None:
-        raise NotFoundError("Asset not found")
+def _move_asset_sync(asset_id: str, body: MoveAssetRequest) -> dict:
+    """Reorganise an asset on disk and in the index.
 
-    if not any([body.workspace, body.character_id, body.story_id]):
-        raise ValidationError("Provide at least one of workspace, character_id, or story_id")
+    Runs in a worker thread, behind a thin async route. It was previously an
+    `async def` with its whole body inline, so `session.get`, `os.makedirs`,
+    `open` and `session.commit` all ran on the event loop — and the copy branch
+    did `dst.write(src.read())`, buffering an entire asset into a `bytes` object
+    in the event-loop process. It also opened a *second* session through
+    `_soft_delete_assets` while the request's own session was still open and
+    uncommitted.
+    """
+    with _sync_session() as session:
+        asset = session.get(Asset, asset_id)
+        if not asset or asset.deleted_at is not None:
+            raise NotFoundError("Asset not found")
 
-    source_path = get_safe_path(OUTPUT_DIR, asset.relative_path)
-    if not os.path.exists(source_path):
-        _soft_delete_assets(asset.relative_path)
-        raise NotFoundError("Asset file missing on disk")
+        if not any([body.workspace, body.character_id, body.story_id]):
+            raise ValidationError("Provide at least one of workspace, character_id, or story_id")
 
-    target_workspace = body.workspace or asset.workspace
-    target_character_id = body.character_id if body.character_id is not None else asset.character_id
-    target_story_id = body.story_id if body.story_id is not None else asset.story_id
+        source_path = get_safe_path(OUTPUT_DIR, asset.relative_path)
+        if not os.path.exists(source_path):
+            # Same session, so the row is marked deleted atomically with the 404
+            # rather than through a second uncommitted session.
+            _soft_delete_assets(session, asset.relative_path)
+            raise NotFoundError("Asset file missing on disk")
 
-    target_rel = os.path.join(
-        target_workspace,
-        *([target_character_id] if target_character_id else []),
-        *([target_story_id] if target_story_id else []),
-        asset.filename,
-    )
-    target_path = get_safe_path(OUTPUT_DIR, target_rel)
+        target_workspace = body.workspace or asset.workspace
+        target_character_id = body.character_id if body.character_id is not None else asset.character_id
+        target_story_id = body.story_id if body.story_id is not None else asset.story_id
 
-    if body.copy_file:
-        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-        with open(source_path, "rb") as src, open(target_path, "wb") as dst:
-            dst.write(src.read())
-        # Routed through `upsert_asset` so the copied row gets the same
-        # statistics rollup columns as any other write. Constructing `Asset`
-        # directly here used to silently drop them.
-        from services.asset_reconciler import upsert_asset
-
-        upsert_asset(
-            session,
-            relative_path=target_rel,
-            filename=asset.filename,
-            user_id=asset.user_id,
-            workspace=target_workspace,
-            character_id=target_character_id,
-            story_id=target_story_id,
-            job_id=asset.job_id,
-            width=asset.width,
-            height=asset.height,
-            blurhash=asset.blurhash,
-            thumbnail_relative_path=asset.thumbnail_relative_path,
-            generated_at=asset.generated_at,
-            metadata=asset.metadata_,
+        target_rel = os.path.join(
+            target_workspace,
+            *([target_character_id] if target_character_id else []),
+            *([target_story_id] if target_story_id else []),
+            asset.filename,
         )
-        copied = session.exec(
-            select(Asset).where(Asset.relative_path == target_rel)
-        ).one()
-        return {"id": copied.id, "relative_path": copied.relative_path}
+        target_path = get_safe_path(OUTPUT_DIR, target_rel)
 
-    if target_path != source_path:
-        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-        os.rename(source_path, target_path)
-        asset.relative_path = target_rel
-        asset.workspace = target_workspace
-        asset.character_id = target_character_id
-        asset.story_id = target_story_id
-        session.add(asset)
-        session.commit()
-        session.refresh(asset)
+        if body.copy_file:
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            # Streamed in chunks. `src.read()` with no argument materialises the
+            # whole asset — a generated image can be tens of megabytes.
+            with open(source_path, "rb") as src, open(target_path, "wb") as dst:
+                while chunk := src.read(_COPY_CHUNK_BYTES):
+                    dst.write(chunk)
+            # Routed through `upsert_asset` so the copied row gets the same
+            # statistics rollup columns as any other write. Constructing `Asset`
+            # directly here used to silently drop them.
+            upsert_asset(
+                session,
+                relative_path=target_rel,
+                filename=asset.filename,
+                user_id=asset.user_id,
+                workspace=target_workspace,
+                character_id=target_character_id,
+                story_id=target_story_id,
+                job_id=asset.job_id,
+                width=asset.width,
+                height=asset.height,
+                blurhash=asset.blurhash,
+                thumbnail_relative_path=asset.thumbnail_relative_path,
+                generated_at=asset.generated_at,
+                metadata=asset.metadata_,
+            )
+            copied = session.exec(
+                select(Asset).where(Asset.relative_path == target_rel)
+            ).one()
+            return {"id": copied.id, "relative_path": copied.relative_path}
 
-    return {"id": asset.id, "relative_path": asset.relative_path}
+        if target_path != source_path:
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            os.rename(source_path, target_path)
+            asset.relative_path = target_rel
+            asset.workspace = target_workspace
+            asset.character_id = target_character_id
+            asset.story_id = target_story_id
+            session.add(asset)
+            session.commit()
+            session.refresh(asset)
+
+        return {"id": asset.id, "relative_path": asset.relative_path}
+
+
+@router.post("/api/v2/assets/{asset_id}/move")
+async def move_asset(asset_id: str, body: MoveAssetRequest):
+    return await asyncio.to_thread(_move_asset_sync, asset_id, body)
 
 
 @router.get("/api/v2/gallery")
