@@ -5,6 +5,7 @@ import ProgressiveImage from '../ProgressiveImage';
 import JobCard from './JobCard';
 import { getItemTimelineDate } from '../../utils/dateTime';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
+import { getAssetPrompt } from '../../utils/assetMetadata';
 import { assetUrl, assetPath } from '../../utils/assetUrl';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { useVirtualListScrollMargin } from '../../hooks/useVirtualListScrollMargin';
@@ -326,9 +327,12 @@ const TimelineImageCard = memo(function TimelineImageCard({
                             </div>
                         </div>
 
-                        {item.prompt && (
+                        {/* Read through the metadata accessor: nothing hoists
+                            `prompt` to the top level of an item, so `item.prompt`
+                            was always undefined and this line never rendered. */}
+                        {getAssetPrompt(item) && (
                             <p className="text-xs text-gray-400 line-clamp-2 mb-2 break-words">
-                                {item.prompt}
+                                {getAssetPrompt(item)}
                             </p>
                         )}
                     </div>

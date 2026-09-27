@@ -7,6 +7,7 @@ import ImageGroup from './ImageGroup';
 import JobCard from './JobCard';
 import ProgressiveImage from '../ProgressiveImage';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
+import { getAssetPrompt } from '../../utils/assetMetadata';
 import { assetUrl, thumbUrl, assetPath } from '../../utils/assetUrl';
 import { formatTimestamp } from '../../utils/dateTime';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
@@ -30,12 +31,17 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
         handleToggleFavorite(assetPath(item));
     }, [handleToggleFavorite, item]);
 
+    // Generation metadata lives under `item.metadata`; nothing hoists it to the
+    // top level, so reading `item.prompt` directly was always undefined and the
+    // hover overlay below never rendered a word.
+    const cardPrompt = getAssetPrompt(item);
+
     return (
         <div
             className={`group relative aspect-square bg-[#0B0E14] rounded-2xl overflow-hidden transition-all duration-500 ease-out hover:shadow-2xl hover:shadow-blue-500/10 hover:-translate-y-1 ${selected ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-[#0B0E14]' : ''}`}
             onClick={onCardClick}
             role="img"
-            aria-label={item.prompt ? `AI generated image: ${item.prompt.slice(0, 100)}${item.prompt.length > 100 ? '...' : ''}` : `Generated image ${item.name}`}
+            aria-label={cardPrompt ? `AI generated image: ${cardPrompt.slice(0, 100)}${cardPrompt.length > 100 ? '...' : ''}` : `Generated image ${item.name}`}
         >
             <div className="w-full h-full relative">
                 <ProgressiveImage
@@ -50,14 +56,19 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
                 {/* Premium Dark Glass Hover Overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 ease-out flex flex-col justify-end p-4">
                     <div className="translate-y-4 group-hover:translate-y-0 transition-transform duration-300 ease-out">
-                        {item.prompt && (
+                        {cardPrompt && (
                             <p className="text-sm font-medium text-white line-clamp-2 leading-tight drop-shadow-md">
-                                {item.prompt}
+                                {cardPrompt}
                             </p>
                         )}
-                        {item.checkpoint && (
+                        {/* Pass the whole item: getCheckpointDisplayName resolves
+                            source.checkpoint ?? source.metadata?.checkpoint itself.
+                            Passing item.checkpoint made this line unrenderable — and
+                            the value it read was undefined anyway, because nothing
+                            hoists checkpoint out of `metadata`. */}
+                        {getCheckpointDisplayName(item) && (
                             <p className="text-xs uppercase tracking-wider text-blue-300 mt-2 font-bold drop-shadow-md">
-                                {getCheckpointDisplayName(item.checkpoint)}
+                                {getCheckpointDisplayName(item)}
                             </p>
                         )}
                     </div>
