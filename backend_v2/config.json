@@ -64,13 +64,14 @@
     "blurhash_resize_max": 64
   },
   "generator": {
-    "default_checkpoint": "sd_xl_base_1.0.safetensors"
+    "default_checkpoint": "_janku_trained_chenkin_noobai__v777_2786084.safetensors"
   },
   "ai": {
     "maxContextTokens": 4096,
     "temperature": 0.8,
     "idleSimEnabled": false,
-    "idleSimIntervalSeconds": 600
+    "idleSimIntervalSeconds": 600,
+    "ragEnabled": true
   },
   "system_prompts": {
     "roleplay_default": "You are a highly descriptive AI roleplay character. Write engaging, detailed, and immersive responses in character. Stay true to the character's personality, background, and speech patterns. Do not act as an AI assistant.\n\nFormatting rules:\n- Put the character's spoken dialogue in double quotation marks, one line per dialogue.\n- Put actions, narration, sounds, and emphasis in asterisks: *she frowns*.\n- Write actions on their own line, separated from dialogue.\n- Never wrap narration or prose in quotation marks.\n- Never leave stray asterisks or quotes; every * and \" must be paired.\n- Keep dialogue on a single line; do not insert line breaks inside quotes.",
