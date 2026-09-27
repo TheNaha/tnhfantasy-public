@@ -5,7 +5,9 @@
 #   INPUT_DIR  – user-uploaded source images for Img2Img/Inpainting
 #
 # KEY ENDPOINTS:
-#   GET  /api/files                        – Paginated file listing (DB-backed assets gallery)
+#   GET  /api/v2/assets                    – Keyset-paginated asset listing
+#   GET  /api/v2/assets/dates              – Per-day counts for the timeline scrubber
+#   GET  /api/v2/assets/{id}/file          – Serve one asset's original bytes
 #   GET  /api/files/{filename}             – Serve a raw file (full resolution)
 #   GET  /api/thumbnail/{size}/{filename}  – Serve a pre-generated WebP thumbnail
 #   POST /api/files/upload                 – Upload a file to OUTPUT_DIR
@@ -25,9 +27,11 @@ from services.asset_reconciler import upsert_asset
 import base64
 import json
 import os
+import re
 import tempfile
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -42,7 +46,12 @@ from api.deps import (
 from infrastructure.logging import get_logger
 from config import settings
 from core.entities import Asset
-from core.exceptions import ComfyError, NotFoundError, ValidationError
+from core.exceptions import (
+    ComfyError,
+    NotFoundError,
+    ServiceUnavailableError,
+    ValidationError,
+)
 from core.upload_validation import (
     ALLOWED_UPLOAD_EXTENSIONS,
     IMAGE_EXTENSIONS,
@@ -61,6 +70,10 @@ from core.upload_validation import (
     require_declared_size,
     require_extension,
     sanitize_filename,
+)
+from services.statistics_service import (
+    ASSET_GALLERY_TIMESTAMP,
+    get_asset_date_histogram,
 )
 
 
@@ -83,6 +96,11 @@ MAX_UPLOAD_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 MAX_EXPORT_FILE_BYTES = MAX_EXPORT_FILE_MB * 1024 * 1024
 MAX_EXPORT_TOTAL_BYTES = MAX_EXPORT_TOTAL_MB * 1024 * 1024
 MAX_PATH_LENGTH = 1024
+# Every item in an asset page carries its `metadata_` jsonb blob, so a page
+# size is a payload budget and not just a row count. The other list routes in
+# this app cap at 100-200; the asset page is the widest row in the schema, so it
+# takes the smallest cap of the four.
+MAX_ASSETS_PAGE_SIZE = 200
 
 # Streaming chunk for asset copies. Whole-file reads on the copy path used to
 # buffer an entire generated image into a `bytes` object in the event-loop process.
@@ -519,8 +537,15 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
         return {"files": paginated, "total": total}
 
     except Exception as e:
-        logger.warning("model_cache_read_failed", error=str(e))
-        return {"files": [], "total": 0}
+        # Re-raised, not softened. This used to return `{"files": [], "total": 0}`
+        # at HTTP 200, which is indistinguishable from "you have no models" to
+        # the caller: a driver failure, a corrupt index or a bug all rendered as
+        # an empty gallery with no error anywhere. `total: 0` was also a lie —
+        # the real count is unknown, not zero.
+        logger.error("model_cache_read_failed", error=str(e), exc_info=True)
+        raise ServiceUnavailableError(
+            "Model cache is unavailable", service="model_cache"
+        ) from e
 
 
 def _resolve_asset_path(rel_or_filename: str, session: Session | None = None) -> str | None:
@@ -656,6 +681,101 @@ def _soft_delete_assets(relative_or_filename: str, session: Session | None = Non
         return len(rows)
 
 
+# ── asset keyset cursor and date seek ───────────────────────────────────────
+#
+# The listing sorts on `(ASSET_GALLERY_TIMESTAMP, id)`. A cursor therefore has
+# to name a *row*, not an instant: `WHERE ts < cursor_ts` is not a total order
+# over `(ts, id)`, so every asset that shares its timestamp with the last row of
+# the previous page falls through the boundary and is silently dropped from the
+# result set. Ties are the normal case, not an edge case — one multi-image job
+# writes several assets with the identical `generated_at`, and the scrubber
+# stresses this hardest because jumping far back in time is exactly the
+# navigation that walks the most pages.
+#
+# Cursor format is `<iso>|<id>`, one `|`, the timestamp always first.
+_ASSET_CURSOR_SEP = "|"
+
+
+def _encode_asset_cursor(moment: datetime, asset_id: str) -> str:
+    return f"{moment.isoformat()}{_ASSET_CURSOR_SEP}{asset_id}"
+
+
+def _decode_asset_cursor(raw: str | None) -> tuple[datetime | None, str | None]:
+    """A cursor as `(timestamp, id)`; `(None, None)` if unusable.
+
+    A bare ISO timestamp — every cursor this endpoint issued before the
+    composite — decodes with `id=None`, which the caller turns into the
+    inclusive-bound fallback documented at its predicate.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None, None
+    stamp, sep, asset_id = text.rpartition(_ASSET_CURSOR_SEP)
+    if not sep:
+        stamp, asset_id = text, ""
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")), asset_id or None
+    except ValueError:
+        logger.debug("invalid_cursor", cursor=text[:64])
+        return None, None
+
+
+def _parse_seek_bound(value: str | None, *, end_of_day: bool) -> datetime | None:
+    """A `?on_or_before=` / `?since=` value as an aware instant, or None.
+
+    A bare `YYYY-MM-DD` is a whole UTC day, not its midnight. That is the unit
+    the scrubber navigates by and the only date form a human types, so
+    `on_or_before=2026-03-02` has to mean "the last instant of 2026-03-02";
+    anchoring it to midnight would return a page holding 2026-03-01's tail,
+    which is the opposite of the request.
+    """
+    text = (value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        try:
+            midnight = datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+        if end_of_day:
+            return midnight + timedelta(days=1) - timedelta(microseconds=1)
+        return midnight
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _validate_seek(sort: str, on_or_before: str | None, since: str | None) -> None:
+    """Refuse a seek that cannot work, rather than silently ignoring it.
+
+    Both bounds are just predicates, so a mismatched pair is not an error at the
+    SQL level — it is a call that returns the newest (or oldest) page of the
+    library and looks like it worked. A jump that lands on the wrong end of a
+    16k gallery is worse than a 400, and both parameters are new, so no existing
+    caller can be relying on the loose behaviour.
+    """
+    if not (on_or_before or since):
+        return
+    if sort.startswith("random"):
+        raise ValidationError(
+            "Date seeking is not available with a random sort; the order carries no timeline."
+        )
+    if on_or_before and since:
+        return
+    if on_or_before and sort == "date_asc":
+        raise ValidationError(
+            "`on_or_before` seeks backwards and needs a descending sort. "
+            "With `sort=date_asc` use `since`."
+        )
+    if since and sort != "date_asc":
+        raise ValidationError(
+            "`since` seeks forwards and needs `sort=date_asc`. "
+            "With a descending sort use `on_or_before`."
+        )
+
+
 def _list_assets_sync(
     limit: int = 24,
     cursor: str | None = None,
@@ -664,21 +784,35 @@ def _list_assets_sync(
     story_id: str | None = None,
     search: str | None = None,
     sort: str = "date_desc",
+    on_or_before: str | None = None,
+    since: str | None = None,
 ):
     """Keyset-paginated asset listing backed by the DB (replaces in-memory scan).
 
-    Ordering uses `generated_at` (true image creation time) falling back to
-    `created_at`, so migrated legacy rows keep their timeline position. Items
-    carry both the legacy gallery shape (`name`/`preview`/`thumbnail`/metadata)
-    and the new id-based fields.
-    """
-    from datetime import datetime
+    Ordering uses `ASSET_GALLERY_TIMESTAMP` — `generated_at` (true image creation
+    time) falling back to `created_at`, so migrated legacy rows keep their
+    timeline position — with `id` as the tiebreak, and the cursor encodes both
+    halves. The same expression drives `GET /api/v2/assets/dates`, so a day's
+    tick and the day's contents cannot disagree.
 
-    from sqlalchemy import func, String
+    `on_or_before` / `since` seek: they bound the start of the first page
+    directly, so a date deep in a 16k library is one request rather than one
+    request per intervening page. Items carry both the legacy gallery shape
+    (`name`/`preview`/`thumbnail`/metadata) and the new id-based fields.
+
+    The cap is re-applied here as well as at the route. The route's
+    `Query(le=...)` guards the wire; this guards the internal callers, and it
+    clamps rather than rejects so an internal caller asking for more than a page
+    gets a page instead of a traceback.
+    """
+    from sqlalchemy import String, and_, func, or_
 
     from services.asset_reconciler import _asset_as_file_data
 
-    order_col = func.coalesce(Asset.generated_at, Asset.created_at)
+    limit = max(1, min(limit, MAX_ASSETS_PAGE_SIZE))
+    order_col = ASSET_GALLERY_TIMESTAMP
+    seek_to = _parse_seek_bound(on_or_before, end_of_day=True)
+    seek_from = _parse_seek_bound(since, end_of_day=False)
     with _sync_session() as session:
         q = select(Asset).where(Asset.deleted_at.is_(None))
         if workspace:
@@ -690,16 +824,8 @@ def _list_assets_sync(
         if search:
             like = f"%{search}%"
             q = q.where((Asset.filename.ilike(like)) | (Asset.metadata_.cast(String).ilike(like)))
-        if sort == "date_asc":
-            if cursor:
-                try:
-                    cur_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
-                    q = q.where(order_col > cur_dt)
-                except Exception as exc:
-                    logger.debug("invalid_cursor", sort=sort, error=str(exc))
-            q = q.order_by(order_col.asc(), Asset.id.asc()).limit(limit + 1)
-        elif sort.startswith("random"):
-            from sqlalchemy import cast, String
+        if sort.startswith("random"):
+            from sqlalchemy import cast
             seed = "stable_random_seed"
             if sort.startswith("random:"):
                 seed = sort.split(":", 1)[1]
@@ -708,13 +834,42 @@ def _list_assets_sync(
                 q = q.where(hash_col > cursor)
             q = q.order_by(hash_col.asc()).limit(limit + 1)
         else:
+            # A date seek positions the *first* page. It composes with a cursor:
+            # the bound still applies, the cursor still resumes within it.
+            ascending = sort == "date_asc"
             if cursor:
-                try:
-                    cur_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
-                    q = q.where(order_col < cur_dt)
-                except Exception as exc:
-                    logger.debug("invalid_cursor", sort=sort, error=str(exc))
-            q = q.order_by(order_col.desc(), Asset.id.desc()).limit(limit + 1)
+                cur_dt, cur_id = _decode_asset_cursor(cursor)
+                if cur_dt is not None:
+                    if cur_id is None:
+                        # Legacy bare-timestamp cursor. The old predicate was a
+                        # strict `ts < cur_ts`, which dropped every row sharing
+                        # `cur_ts`; the inclusive form re-serves them instead,
+                        # so an in-flight infinite scroll sees a one-page
+                        # duplicate rather than silently losing images. It heals
+                        # itself: the cursor this response returns is composite,
+                        # so page N+1 onwards is exact again.
+                        q = q.where(order_col > cur_dt if ascending else order_col <= cur_dt)
+                    else:
+                        # The total-order predicate over `(ts, id)`.
+                        q = q.where(
+                            or_(
+                                order_col > cur_dt,
+                                and_(order_col == cur_dt, Asset.id > cur_id),
+                            )
+                            if ascending
+                            else or_(
+                                order_col < cur_dt,
+                                and_(order_col == cur_dt, Asset.id < cur_id),
+                            )
+                        )
+            if seek_to is not None:
+                q = q.where(order_col <= seek_to)
+            if seek_from is not None:
+                q = q.where(order_col >= seek_from)
+            q = q.order_by(
+                order_col.asc() if ascending else order_col.desc(),
+                Asset.id.asc() if ascending else Asset.id.desc(),
+            ).limit(limit + 1)
         rows = session.exec(q).all()
         has_more = len(rows) > limit
         page = rows[:limit]
@@ -750,26 +905,44 @@ def _list_assets_sync(
                 next_cursor = None
         else:
             order_ts = (page[-1].generated_at or page[-1].created_at) if page else None
-            next_cursor = order_ts.isoformat() if (has_more and order_ts) else None
+            next_cursor = (
+                _encode_asset_cursor(order_ts, page[-1].id)
+                if (has_more and order_ts)
+                else None
+            )
         return {"items": items, "has_more": has_more, "next_cursor": next_cursor}
 
 
 @router.get("/api/v2/assets")
 async def list_assets(
-    limit: int = 24,
+    limit: int = Query(24, ge=1, le=MAX_ASSETS_PAGE_SIZE),
     cursor: str | None = None,
     workspace: str | None = None,
     character_id: str | None = None,
     story_id: str | None = None,
     search: str | None = None,
     sort: str = "date_desc",
+    on_or_before: str | None = None,
+    since: str | None = None,
 ):
     """Keyset-paginated asset listing backed by the DB.
 
     The query runs on a worker thread: it opens a synchronous Session and
     issues a full keyset page, and doing that inline on the event loop blocked
     every other request for the duration.
+
+    `limit` is capped. It was a bare `int = 24`, so `?limit=1000000` scanned the
+    whole asset table and serialised every row's `metadata_` jsonb blob in one
+    response — the sibling list routes in this app (`jobs.py` 200,
+    `sessions.py` 100, `tags.py` 200) all cap, and this one silently did not.
+
+    `on_or_before` (descending) and `since` (`sort=date_asc`) seek the first page
+    to an instant instead of the newest row, so the response already contains
+    the day that was asked for. They accept a full ISO-8601 instant or a bare
+    `YYYY-MM-DD`, which means the whole UTC day. Each is rejected with a 400
+    when it cannot work with the requested sort — see `_validate_seek`.
     """
+    _validate_seek(sort, on_or_before, since)
     return await asyncio.to_thread(
         _list_assets_sync,
         limit=limit,
@@ -779,7 +952,35 @@ async def list_assets(
         story_id=story_id,
         search=search,
         sort=sort,
+        on_or_before=on_or_before,
+        since=since,
     )
+
+
+@router.get("/api/v2/assets/dates")
+async def asset_date_histogram(
+    workspace: str | None = None,
+    character_id: str | None = None,
+    story_id: str | None = None,
+    search: str | None = None,
+):
+    """Per-day image counts for the gallery timeline scrubber.
+
+    Declared here rather than under `/api/statistics` because that endpoint's
+    `images_by_date` buckets on `metadata.job.completed_at` and applies no
+    scope at all: neither agrees with the gallery's own
+    `coalesce(generated_at, created_at)` timeline, and neither describes a
+    filtered gallery. The filters accepted here are exactly the ones
+    `GET /api/v2/assets` accepts, so the rail always matches the list.
+    """
+    return await asyncio.to_thread(
+        get_asset_date_histogram,
+        workspace=workspace,
+        character_id=character_id,
+        story_id=story_id,
+        search=search,
+    )
+
 
 def _serve_asset_file_sync(asset_id: str):
     with _sync_session() as session:
@@ -971,8 +1172,14 @@ async def list_files_endpoint(
                 story_id=story_id,
             )
         except Exception as e:
-            logger.warning("local_file_list_failed", error=str(e))
-            return {"files": [], "total": 0}
+            # Same reasoning as `model_cache_read_failed` above: a 200 with an
+            # empty list is the one response shape that cannot be told apart
+            # from "there is nothing here", which is exactly when the user most
+            # needs to know the query itself failed.
+            logger.error("local_file_list_failed", error=str(e), exc_info=True)
+            raise ServiceUnavailableError(
+                "File listing is unavailable", service="file_listing"
+            ) from e
 
     # Handle Models directories - query from SQLite model service
     if directory.startswith("models/"):

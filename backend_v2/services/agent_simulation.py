@@ -8,6 +8,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import exists
 from sqlmodel import select
 
 from core.entities import Character, Chat, Job, JobStatus, Message
@@ -18,6 +19,19 @@ logger = get_logger("idle_simulation")
 IDLE_SIM_ACTIVITY_AGE_MINUTES = 30
 IDLE_SIM_IN_FLIGHT_LOOKBACK_MINUTES = 120
 MAX_CONTEXT_MESSAGES = 200
+
+# The statuses that mean "a reply is already on its way". Named here because
+# the previous form of this check listed them inside a Python `any()`, which is
+# why the set is easy to forget to extend when a status is added.
+IN_FLIGHT_JOB_STATUSES = (
+    JobStatus.PENDING,
+    JobStatus.SENT_TO_PROVIDER,
+    JobStatus.CONNECTED,
+    JobStatus.PRE_GENERATION,
+    JobStatus.GENERATING,
+    JobStatus.POST_PROCESSING,
+    JobStatus.RETRYING,
+)
 
 _IDLE_SIM_TRIGGER = (
     "[Idle simulation] The user has been away for a while. Act on your own "
@@ -75,25 +89,26 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
 
             # Skip chats that already have an LLM job pending/running — the
             # reply is likely still landing or the user just re-engaged.
-            recent_jobs = session.exec(
-                select(Job)
-                .where(Job.task_type == "llm", Job.created_at >= inflight_cutoff)
-                .where(Job.metadata_["chat_id"].as_string() == chat.id)
-            ).all()
-            busy = any(
-                bool(j.metadata_) and j.metadata_.get("chat_id") == chat.id
-                and j.status
-                in (
-                    JobStatus.PENDING,
-                    JobStatus.SENT_TO_PROVIDER,
-                    JobStatus.CONNECTED,
-                    JobStatus.PRE_GENERATION,
-                    JobStatus.GENERATING,
-                    JobStatus.POST_PROCESSING,
-                    JobStatus.RETRYING,
+            #
+            # `exists()` rather than loading the rows. This ran once per
+            # idle-sim-enabled chat on every tick and pulled every LLM job in
+            # the lookback window for that chat as a WHOLE `Job` — `workflow`,
+            # `metadata_` and `outputs` jsonb included — to read one enum field
+            # and then test it in Python. An existence check is what was being
+            # asked for and it is answered by the database, in one round trip
+            # per chat instead of one that grows with the job table.
+            busy = session.exec(
+                select(
+                    exists(
+                        select(Job.id).where(
+                            Job.task_type == "llm",
+                            Job.created_at >= inflight_cutoff,
+                            Job.status.in_(IN_FLIGHT_JOB_STATUSES),
+                            Job.metadata_["chat_id"].as_string() == chat.id,
+                        )
+                    )
                 )
-                for j in recent_jobs
-            )
+            ).one()
             if busy:
                 continue
 

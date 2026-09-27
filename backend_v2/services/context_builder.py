@@ -22,6 +22,14 @@ DEFAULT_MAX_TOKENS = 4096
 # We use a conservative 3.5 chars-per-token as default for mixed content.
 CHARS_PER_TOKEN = 3.5
 
+# Bounds for the lorebook *fallback* path — the one used when semantic search
+# itself is unavailable. It has no ranking to lean on, so it takes the oldest
+# entries in insertion order, which is why it needs both a per-lorebook scan cap
+# and a total entry cap. Without them, a world book of a few thousand entries
+# went into the system prompt whole.
+LOREBOOK_SCAN_CAP = 200
+LOREBOOK_FALLBACK_ENTRIES = 50
+
 
 _TOKEN_CACHE = TTLCache(maxsize=2048, ttl=300)
 
@@ -437,13 +445,29 @@ def build_system_prompt_sections(
             )
         except Exception as _lb_err:
             logger.warning("lorebook_injection_failed: %s", str(_lb_err))
-            # Absolute fallback: load all entries from all lorebooks (old behaviour)
+            # Absolute fallback: search the lorebooks directly, when the
+            # semantic search itself is what broke.
+            #
+            # This used to load EVERY entry of EVERY lorebook with no `LIMIT`
+            # and paste them all into the system prompt. It is the one path in
+            # this file with *less* bounding than the two paths around it:
+            # `search_lorebook_entries` scans `max(limit, 50)` rows and
+            # `_load_constant_lorebook_entries` takes `limit * 2` per lorebook
+            # and stops early. A SillyTavern world book with a few thousand
+            # entries went wholesale into the prompt, which is both an
+            # unbounded token bill and a prompt the model cannot use.
             entries = []
             for lb_id in lorebook_ids:
                 lb_entries = session.exec(
-                    select(LorebookEntry).where(LorebookEntry.lorebook_id == lb_id)
+                    select(LorebookEntry)
+                    .where(LorebookEntry.lorebook_id == lb_id)
+                    .order_by(LorebookEntry.created_at)
+                    .limit(LOREBOOK_SCAN_CAP)
                 ).all()
                 entries.extend(lb_entries)
+                if len(entries) >= LOREBOOK_FALLBACK_ENTRIES:
+                    break
+            entries = entries[:LOREBOOK_FALLBACK_ENTRIES]
 
         if not entries:
             # Semantic search returns nothing when RAG is off or nothing

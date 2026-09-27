@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from cachetools import TTLCache
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from core.entities import LoadBalancerState, Provider, Job, JobStatus
@@ -228,18 +229,30 @@ class LoadBalancer:
                 state_store.initializing = True
 
         try:
-            state = session.exec(select(LoadBalancerState).where(LoadBalancerState.id == state_id)).first()
+            state = session.exec(
+                select(LoadBalancerState)
+                .where(LoadBalancerState.id == state_id)
+                .limit(1)
+            ).first()
 
             # Calculate actual running job counts from database.
+            #
+            # Counted in SQL, not by loading rows. This used to
+            # `select(Job).where(active).limit(1000)` and iterate in Python,
+            # which materialised the `workflow` and `metadata_` jsonb of up to a
+            # thousand whole Job rows to read one string field off each — and past
+            # a thousand active jobs the counts were silently wrong, with nothing
+            # anywhere saying the number was a floor rather than a total.
             active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING]
-            running_jobs = session.exec(
-                select(Job).where(Job.status.in_(active_states)).limit(1000)
+            counted = session.exec(
+                select(Job.provider_id, func.count(Job.id))
+                .where(Job.status.in_(active_states), Job.provider_id.is_not(None))
+                .group_by(Job.provider_id)
             ).all()
 
-            active_job_counts: dict[str, int] = {}
-            for job in running_jobs:
-                if job.provider_id:
-                    active_job_counts[job.provider_id] = active_job_counts.get(job.provider_id, 0) + 1
+            active_job_counts: dict[str, int] = {
+                provider_id: int(count) for provider_id, count in counted if provider_id
+            }
 
             state_store.round_robin_index = (state.round_robin_index or 0) if state else 0
             state_store.provider_failures = dict(state.provider_failures or {}) if state else {}
@@ -254,7 +267,7 @@ class LoadBalancer:
                 "lb_state_loaded",
                 index=state.round_robin_index if state else 0,
                 active_jobs=active_job_counts,
-                running_jobs=len(running_jobs),
+                running_jobs=sum(active_job_counts.values()),
             )
         except Exception as e:
             state_store.provider_job_counts = {}

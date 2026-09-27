@@ -594,21 +594,33 @@ class ProviderStatusService:
         self,
         providers: list[dict[str, Any]] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """Build canonical provider status cards for all providers."""
-        providers = providers if providers is not None else await self.provider_service.list_providers()
-        cards: dict[str, dict[str, Any]] = {}
+        """Build canonical provider status cards for all providers.
 
-        for provider in providers:
-            provider_id = provider.get("id")
-            if not provider_id:
-                continue
+        Concurrent. This was the serial `for` loop that
+        `build_provider_records` above carries a sixteen-line docstring about
+        having replaced: it paid the SUM of every provider's latency where the
+        slowest one would do, and each card resolves a runtime target, which
+        probes the Docker socket. It is live — `api/routes/providers/lifecycle.py`
+        calls it — so the page was still paying the serial sum after the records
+        path stopped.
+
+        Same shape and the same reasoning as `build_provider_records`: gather,
+        per-provider exception isolation, and the results are re-keyed rather
+        than appended, so completion order cannot affect the output.
+        """
+        providers = providers if providers is not None else await self.provider_service.list_providers()
+
+        async def _build(provider: dict[str, Any], provider_id: str) -> tuple[str, dict[str, Any]]:
             try:
-                cards[provider_id] = await self.build_provider_status_card(
+                return provider_id, await self.build_provider_status_card(
                     provider_id,
                     provider_payload=provider,
                 )
             except Exception as exc:
                 logger.warning("provider_status_card_failed", provider_id=provider_id, error=str(exc))
-                cards[provider_id] = self.build_provider_status_card_fallback(provider)
+                return provider_id, self.build_provider_status_card_fallback(provider)
 
-        return cards
+        buildable = [(p, p["id"]) for p in providers if p.get("id")]
+        if not buildable:
+            return {}
+        return dict(await asyncio.gather(*(_build(p, pid) for p, pid in buildable)))

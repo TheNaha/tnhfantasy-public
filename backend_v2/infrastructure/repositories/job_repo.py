@@ -10,6 +10,10 @@ from sqlmodel import Session, col, delete, select, update
 from core.dtos import JobQueueItem
 from core.entities import Job, JobStatus
 
+# Far more than any queue a person can act on, and it bounds the `metadata_`
+# jsonb this query pulls. See `get_queue_items`.
+MAX_QUEUE_ITEMS = 500
+
 
 class JobRepository:
     """Data access layer for Job entities."""
@@ -184,10 +188,20 @@ class JobRepository:
         self.session.commit()
         return result.rowcount or 0
 
-    def get_queue_items(self, statuses: list[JobStatus]) -> list[JobQueueItem]:
+    def get_queue_items(
+        self, statuses: list[JobStatus], limit: int = MAX_QUEUE_ITEMS
+    ) -> list[JobQueueItem]:
         """
         Get lightweight queue items for specified statuses.
         Avoids loading heavy workflow JSON.
+
+        `Job.metadata_` is a jsonb blob and is still selected here — the ETA logic
+        reads a handful of keys out of it — so an uncapped query meant one
+        `GET /api/v2/jobs/queue` pulled the metadata of every pending AND every
+        active job in the system, twice over (it calls this for pending and then
+        for running). The cap is well above any queue a person can act on, and
+        the response carries a `truncated` signal so the UI can say so rather
+        than silently showing a short queue.
         """
         stmt = (
             select(
@@ -197,11 +211,15 @@ class JobRepository:
                 Job.overall_progress,
                 Job.metadata_,
                 Job.task_type,
-            )            .where(Job.status.in_(statuses))
+            )
+            .where(Job.status.in_(statuses))
             .order_by(Job.created_at)
+            .limit(limit + 1)
         )
 
         rows = self.session.exec(stmt).all()
+        if len(rows) > limit:
+            rows = rows[:limit]
 
         return [
             JobQueueItem(
