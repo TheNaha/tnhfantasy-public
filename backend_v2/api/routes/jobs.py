@@ -461,12 +461,19 @@ def _active_job_ids(service: JobService) -> set[str]:
     This is a "is anything in flight" test, not a liveness proof; there is no
     heartbeat to check. It exists so the destructive path costs an explicit
     `requeue_running=true` instead of happening on a one-line HTTP call.
+
+    A failure here is RAISED, not reported as "nothing is running". The empty
+    set is not a conservative answer: `recover_jobs` branches on
+    `if active_ids and ...`, so "unknown" and "nothing" are the same branch —
+    and the branch leads to `queue_manager.recover`, which per this module's own
+    docstring sets every active job back to PENDING and re-dispatches it. A
+    transient database error during recovery is exactly the moment jobs are
+    most likely to be in flight. The previous `except Exception: return set()`
+    with the comment "a DB failure must not block recovery" asserted the
+    opposite of the safe default: it turned the one query that guards a
+    destructive operation into the one query that could fail open.
     """
-    try:
-        return {job.id for job in service.get_running_jobs() if job.started_at}
-    except Exception as exc:  # pragma: no cover - a DB failure must not block recovery
-        logger.warning("job_recovery_active_check_failed", error=str(exc))
-        return set()
+    return {job.id for job in service.get_running_jobs() if job.started_at}
 
 
 @router.post("/reconcile-chat-replies")

@@ -1,4 +1,5 @@
 # Job Service - Business logic for job management
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from collections.abc import Sequence
@@ -193,6 +194,50 @@ class JobService:
         self.session = session
         self.repo = JobRepository(session)
     
+    def _create_job_sync(
+        self, workflow: dict[str, Any], metadata: dict[str, Any], task_type: str
+    ) -> Job:
+        """The database half of `create_job`. One INSERT, one commit, one refresh.
+
+        Two things changed here and both were costing a round trip on the event
+        loop on every single submission:
+
+        1. The typed routing columns are set BEFORE the insert. They used to be
+           set after `repo.create` had already committed and refreshed, so every
+           job that carried metadata — which is most of them — paid a *second*
+           commit and a second refresh. Six round trips per submission, half of
+           them redundant.
+        2. The whole body is synchronous and therefore runs in a worker thread.
+           `create_job` is `async def` only so it can await the event emission at
+           the end, and it was doing its INSERTs inline on the loop while every
+           caller was on the loop waiting for it. This is the hottest path in the
+           application: every generate, illustrate, narrate and TTS request comes
+           through here.
+
+        The request-scoped session is passed in rather than re-opened, matching
+        `_sync_file_to_providers` in `files.py` and the rest of the codebase. The
+        app-wide invariant is "no concurrent cross-thread use of a Session", not
+        "one Session, one thread" — FastAPI builds the `get_session` dependency in
+        a threadpool thread even for `async def` routes, and the existing
+        synchronous handlers already rely on that.
+        """
+        job = Job(
+            task_type=task_type,
+            workflow=workflow,
+            metadata_=metadata,
+            status=JobStatus.PENDING,
+        )
+        # Populate typed routing columns from metadata for SQL-level filtering.
+        if metadata:
+            job.workspace = metadata.get("workspace")
+            job.character_id = metadata.get("character_id")
+            job.story_id = metadata.get("story_id")
+            job.source = metadata.get("source")
+        self.session.add(job)
+        self.session.commit()
+        self.session.refresh(job)
+        return job
+
     async def create_job(self, workflow: dict[str, Any], metadata: dict[str, Any], task_type: str = "image") -> Job:
         """
         Create a new job.
@@ -204,18 +249,10 @@ class JobService:
         Returns:
             Created job
         """
-        job = self.repo.create(workflow=workflow, metadata=metadata, task_type=task_type)
-        
-        # Populate typed routing columns from metadata for SQL-level filtering
-        if metadata:
-            job.workspace = metadata.get("workspace")
-            job.character_id = metadata.get("character_id")
-            job.story_id = metadata.get("story_id")
-            job.source = metadata.get("source")
-            self.session.add(job)
-            self.session.commit()
-            self.session.refresh(job)
-        
+        job = await asyncio.to_thread(
+            self._create_job_sync, workflow, metadata, task_type
+        )
+
         logger.info("job_created", job_id=job.id)
         metrics.track_job_created()
         
@@ -234,10 +271,14 @@ class JobService:
             self.session.refresh(job)
         except Exception as e:
             logger.debug("job_refresh_failed", job_id=job_id, error=str(e))
-            try:
-                self.session.get(Job, job_id)
-            except Exception:
-                raise NotFoundError("Job", job_id)
+            # The re-read is the real check. It was written as
+            # `try: self.session.get(Job, job_id) except Exception: raise
+            # NotFoundError(...)`, which never fired: `Session.get` returns
+            # `None` for a missing row, it does not raise. So the result was
+            # discarded, the `NotFoundError` was unreachable, and a caller got
+            # back a possibly-stale detached object believing it was fresh.
+            if self.session.get(Job, job_id) is None:
+                raise NotFoundError("Job", job_id) from e
         return job
     
     async def list_jobs(

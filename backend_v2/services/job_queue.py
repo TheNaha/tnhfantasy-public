@@ -433,7 +433,9 @@ class JobQueue:
                     idle_workers.append(task)
             
             removed_count = 0
-            
+            idle_cancelled = 0
+            busy_draining = 0
+
             # 1. Prioritize removing idle workers (cancel immediately)
             while to_remove > 0 and idle_workers:
                 task = idle_workers.pop()
@@ -441,8 +443,9 @@ class JobQueue:
                     self._workers.remove(task)
                     task.cancel()
                     removed_count += 1
+                    idle_cancelled += 1
                     to_remove -= 1
-            
+
             # 2. If still need to remove, mark busy workers to drain (graceful stop)
             while to_remove > 0 and busy_workers:
                 task = busy_workers.pop()
@@ -451,9 +454,18 @@ class JobQueue:
                     self._stopping_workers.add(task)
                     logger.debug("worker_draining", reason="pool_downsize")
                     removed_count += 1
+                    busy_draining += 1
                     to_remove -= 1
-            
-            logger.info("job_queue_resize_complete", idle_cancelled=len(idle_workers), busy_draining=len(busy_workers))
+
+            # Counted in the loops, not measured from the lists afterwards: both
+            # lists are popped empty, so `len(...)` here always read 0 and the
+            # log claimed nothing had been removed however many workers went.
+            logger.info(
+                "job_queue_resize_complete",
+                removed=removed_count,
+                idle_cancelled=idle_cancelled,
+                busy_draining=busy_draining,
+            )
     
     async def _worker(self, worker_id: int) -> None:
         """Worker coroutine that processes jobs from the queue."""
@@ -482,6 +494,14 @@ class JobQueue:
                     # wakeup-only and task_done is not used.
                     if not self._use_db_claims:
                         self._queue.task_done()
+                    else:
+                        # The `finally` below never runs for this job, so the
+                        # DB claim has to be released here. Leaving it set
+                        # strands the row: `_claim_next_job_sync` requires
+                        # `claimed_at IS NULL`, so the job stays PENDING and
+                        # permanently unclaimable — silent job loss, with the
+                        # only symptom being a job that never starts.
+                        await self._clear_claim(job_id)
                     continue
                 
                 logger.info("job_processing", job_id=job_id, worker_id=worker_id)

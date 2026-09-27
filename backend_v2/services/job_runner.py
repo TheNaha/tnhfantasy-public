@@ -204,17 +204,26 @@ async def signal_provider_cancellation(*, runtime, provider_id: str, job_id: str
     return False
 
 
-async def _handle_provider_failure(
+async def _abort_provider_attempt(
     runtime,
     provider_id: str,
     job_id: str,
-    job_service,
     load_balancer,
     error_type: str
-) -> bool:
-    """
-    Handles provider cancellation signal and checks job status.
-    Returns True if the job is terminal (should stop processing), False otherwise.
+) -> None:
+    """Cancel the in-flight work on a provider and record it as failed.
+
+    Renamed from `_handle_provider_failure`, and no longer claims to do two
+    things it did not do. The old docstring said it "checks job status. Returns
+    True if the job is terminal" — but it never read `job_service`, never
+    re-read the job, and ended in a bare `return False`. All three call sites
+    discarded the return value anyway, so the advertised check had no effect
+    either way. Rather than implement a status check no caller wanted, the
+    parameter is gone and the name says what the function does.
+
+    `error_type` was also unused; it is now in the log, because "we tried to
+    cancel and could not confirm it" is not actionable without knowing whether
+    the attempt timed out or errored.
     """
     cancel_signal_delivered = await signal_provider_cancellation(
         runtime=runtime,
@@ -222,10 +231,14 @@ async def _handle_provider_failure(
         job_id=job_id,
     )
     if not cancel_signal_delivered:
-        logger.warning("provider_cancel_not_confirmed", job_id=job_id, provider=provider_id)
-        
+        logger.warning(
+            "provider_cancel_not_confirmed",
+            job_id=job_id,
+            provider=provider_id,
+            error_type=error_type,
+        )
+
     await load_balancer.report_failure(provider_id)
-    return False
 
 
 async def execute_job(
@@ -457,7 +470,7 @@ async def execute_job(
                 except JobTimeoutError as error:
                     logger.warning("job_timeout", job_id=job_id, provider=current_provider.id)
                     await record_attempt("timeout", str(error) or "Provider timed out")
-                    await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "timeout")
+                    await _abort_provider_attempt(runtime, current_provider.id, job_id, load_balancer, "timeout")
                     should_retry, retry_count = await maybe_retry_current_provider(
                         job_service=job_service,
                         job_id=job_id,
@@ -495,7 +508,7 @@ async def execute_job(
                     await record_attempt(
                         "retryable_error" if error.is_retryable else "error", str(error)
                     )
-                    await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "provider_error")
+                    await _abort_provider_attempt(runtime, current_provider.id, job_id, load_balancer, "provider_error")
                     should_retry = False
                     if error.is_retryable:
                         should_retry, retry_count = await maybe_retry_current_provider(
@@ -536,7 +549,7 @@ async def execute_job(
                 except asyncio.TimeoutError:
                     logger.error("job_timeout_exceeded", job_id=job_id, timeout=timeout)
                     await record_attempt("timeout", f"Timed out after {timeout}s")
-                    await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "timeout_exceeded")
+                    await _abort_provider_attempt(runtime, current_provider.id, job_id, load_balancer, "timeout_exceeded")
                     await mark_provider_exhausted(
                         load_balancer=load_balancer,
                         exhausted_providers=exhausted_providers,

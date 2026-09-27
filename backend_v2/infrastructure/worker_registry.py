@@ -341,6 +341,32 @@ async def forget_job_future(job_id: str) -> None:
         pending_job_futures.pop(job_id, None)
 
 
+async def _claim_worker_slot(worker: ConnectedWorker, job_id: str) -> str | None:
+    """Reserve the worker's one job slot. Returns None on success, else the
+    job that already holds it.
+
+    The check and the claim have to be ONE critical section. They were not: the
+    busy check ran after `_get_live_worker` had already released
+    `_workers_lock`, and the assignment ran *after* an `await send_json`. Two
+    concurrent dispatches to the same provider therefore both passed the check
+    and both dispatched. `unregister_worker` can only fail one `current_job`
+    future, so the other dispatch sat on its future until the full timeout
+    expired — and the worker was running a job the backend had no handle on.
+    """
+    async with _workers_lock:
+        if worker.current_job:
+            return worker.current_job
+        worker.current_job = job_id
+        return None
+
+
+async def _release_worker_slot(worker: ConnectedWorker, job_id: str) -> None:
+    """Undo `_claim_worker_slot` when the dispatch never reached the worker."""
+    async with _workers_lock:
+        if worker.current_job == job_id:
+            worker.current_job = None
+
+
 async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: float) -> dict:
     """Send a job to a connected external worker and await its terminal result."""
     worker = await _get_live_worker(provider_id)
@@ -351,16 +377,17 @@ async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: floa
             is_retryable=True,
         )
 
-    if worker.current_job:
-        raise ProviderCallError(
-            f"Worker {provider_id} is busy with job {worker.current_job}",
-            provider_id=provider_id,
-            is_retryable=True,
-        )
-
     job_id = job_data.get("id")
     if not job_id:
         raise ValueError("job_data.id is required")
+
+    busy_with = await _claim_worker_slot(worker, job_id)
+    if busy_with is not None:
+        raise ProviderCallError(
+            f"Worker {provider_id} is busy with job {busy_with}",
+            provider_id=provider_id,
+            is_retryable=True,
+        )
 
     loop = asyncio.get_running_loop()
     future = loop.create_future()
@@ -368,9 +395,9 @@ async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: floa
 
     try:
         await worker.ws.send_json(JobDispatchMessage(data=job_data).model_dump())
-        worker.current_job = job_id
     except Exception as exc:
         await forget_job_future(job_id)
+        await _release_worker_slot(worker, job_id)
         raise ProviderCallError(
             f"Failed to dispatch job to external worker: {exc}",
             provider_id=provider_id,
