@@ -216,7 +216,7 @@ def reset_provider_status(
 # ============================================================================
 
 @router.post("/cleanup-orphaned")
-async def cleanup_orphaned_models(
+def cleanup_orphaned_models(
     session: Session = Depends(get_session)
 ):
     """Remove models whose files have no active provider status.

@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -56,11 +58,8 @@ async def get_available_models(session: Session = Depends(get_session)):
     upstream model list per engine (OpenAI-compat `/models`, Anthropic, Gemini)
     with engine-specific fallbacks.
     """
-    resolved = resolve_default_provider(session)
-    if not resolved:
-        return []
-
-    provider = session.get(Provider, resolved[0])
+    # The route awaits the worker, so the two session reads move to a thread.
+    provider = await asyncio.to_thread(_default_provider_row, session)
     if not provider:
         return []
 
@@ -98,6 +97,18 @@ async def get_available_models(session: Session = Depends(get_session)):
     return [{"id": "default", "name": f"{provider.id} (default)"}]
 
 
+def _default_provider_row(session: Session) -> Provider | None:
+    """The default LLM provider row, or None.
+
+    Synchronous on purpose: the callers await the provider worker, so they
+    cannot be plain `def` routes and these queries would run on the event loop.
+    """
+    resolved = resolve_default_provider(session)
+    if not resolved:
+        return None
+    return session.get(Provider, resolved[0])
+
+
 class LLMProviderInfo(BaseModel):
     provider_id: str
     provider_type: str
@@ -132,9 +143,8 @@ def list_llm_providers(session: Session = Depends(get_session)):
 @router.post("/providers/{provider_id}/test")
 async def test_llm_provider(provider_id: str, session: Session = Depends(get_session)):
     """Test connectivity to an LLM provider worker. Returns health status and available models."""
-    provider = session.get(Provider, provider_id)
-    if not provider or provider.worker_type != "llm":
-        raise NotFoundError("LLM provider", provider_id)
+    # The route awaits the worker, so the provider lookup moves to a thread.
+    provider = await asyncio.to_thread(_llm_provider_row, session, provider_id)
 
     runtime = await resolve_provider_runtime_async(provider)
     if not runtime.worker_url:
@@ -171,3 +181,15 @@ async def test_llm_provider(provider_id: str, session: Session = Depends(get_ses
             logger.debug("llm_list_models_fetch_failed", url=base_url, error=str(exc))
 
     return {"healthy": healthy, "models": models, "error": error, "worker_url": base_url}
+
+
+def _llm_provider_row(session: Session, provider_id: str) -> Provider:
+    """The LLM provider row, or 404.
+
+    Synchronous on purpose: the caller awaits the provider worker, so it cannot
+    be a plain `def` route and this lookup would run on the event loop.
+    """
+    provider = session.get(Provider, provider_id)
+    if not provider or provider.worker_type != "llm":
+        raise NotFoundError("LLM provider", provider_id)
+    return provider

@@ -73,7 +73,7 @@ class WebSocketManager:
     """
     
     def __init__(self):
-        self._broadcast_task = None
+        self._broadcast_task: asyncio.Task | None = None
         self._running = False
     
     async def start_broadcasting(self):
@@ -82,6 +82,17 @@ class WebSocketManager:
             return
         
         self._running = True
+        # Recorded so `stop_broadcasting` can cancel it. This was assigned only in
+        # `__init__` as `None` and never set, so the `if self._broadcast_task:`
+        # guard in the stop path was permanently False and lines 111-115 never
+        # ran — `_running = False` was the only thing the stop method did.
+        #
+        # It also could not have worked by polling: the loop checks `_running`
+        # only *after* receiving an event, so on a quiet bus it never re-checks
+        # and a bare flag flip is not enough to stop it. Cancelling the task is,
+        # and `EventBus.subscribe_multiple` has a `finally` that cancels its
+        # pending queue reads and unsubscribes, so this is the clean exit.
+        self._broadcast_task = asyncio.current_task()
         logger.info("[WebSocket] Starting EventBus broadcast listener")
         
         # Subscribe to all topics

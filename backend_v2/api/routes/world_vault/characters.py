@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import shutil
@@ -449,9 +450,9 @@ def reorder_characters(
 
 @router.post("/{character_id}/avatar")
 async def upload_avatar(character_id: str, file: UploadFile = File(...), session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
-    character = character_repo.get(character_id)
-    if not character:
-        raise NotFoundError("Character", character_id)
+    # The upload read below is awaited, so the two session writes around it move
+    # to a worker thread.
+    await asyncio.to_thread(_require_character, character_repo, character_id)
 
     # Avatars are rendered inline everywhere, so they are bounded tightly and
     # must be a real image (an .html or .svg renamed to .png is rejected).
@@ -465,13 +466,30 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...), session
     with open(avatar_path, "wb") as buffer:
         buffer.write(content)
 
+    await asyncio.to_thread(_save_character_avatar, session, character_repo, character_id, avatar_path)
+
+    return {"message": "Avatar uploaded", "avatar_path": avatar_path, "has_avatar": True}
+
+
+def _require_character(character_repo: CharacterRepository, character_id: str) -> None:
+    """404 before the upload is consumed, off the event loop."""
+    if not character_repo.get(character_id):
+        raise NotFoundError("Character", character_id)
+
+
+def _save_character_avatar(
+    session: Session,
+    character_repo: CharacterRepository,
+    character_id: str,
+    avatar_path: str,
+) -> None:
+    """Persist the stored avatar path on the character."""
+    character = character_repo.get(character_id)
     character.avatar_path = avatar_path
     character.updated_at = datetime.now(timezone.utc)
     session.add(character)
     session.commit()
     session.refresh(character)
-
-    return {"message": "Avatar uploaded", "avatar_path": avatar_path, "has_avatar": True}
 
 from pydantic import BaseModel
 from typing import Optional
@@ -491,8 +509,33 @@ async def generate_animated_avatar(
     """Enqueue a ComfyUI AnimateDiff video generation job for this character's avatar."""
     from services.job_queue import queue_manager
     from services.job_service import JobService
-    from core.workflow_builder import build_video_job_workflow
 
+    # The prompt is built from session-loaded character columns, and only the
+    # job creation below is awaited.
+    character_id, workflow, metadata = await asyncio.to_thread(
+        _animate_avatar_prep_sync, character_repo, character_id, request
+    )
+
+    job = await JobService(session).create_job(
+        task_type="image",
+        workflow=workflow,
+        metadata=metadata,
+    )
+    await queue_manager.enqueue(job.id, task_type="image")
+
+    return {"message": "Animation job enqueued", "job_id": job.id}
+
+
+def _animate_avatar_prep_sync(
+    character_repo: CharacterRepository,
+    character_id: str,
+    request: "AnimateAvatarRequest",
+) -> tuple[str, dict, dict]:
+    """Validate the character and build the AnimateDiff workflow.
+
+    Synchronous on purpose: the job creation is awaited, so the route stays
+    `async def` and these reads would otherwise run on the event loop.
+    """
     character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
@@ -500,6 +543,8 @@ async def generate_animated_avatar(
     prompt = request.prompt
     if not prompt:
         prompt = f"portrait of {character.name}, {character.description}, {character.personality}, highly detailed, cinematic lighting"
+
+    from core.workflow_builder import build_video_job_workflow
 
     workflow, metadata = build_video_job_workflow(
         prompt=prompt,
@@ -511,15 +556,7 @@ async def generate_animated_avatar(
         source="character_avatar_animate",
         character_id=character.id,
     )
-
-    job = await JobService(session).create_job(
-        task_type="image",
-        workflow=workflow,
-        metadata=metadata,
-    )
-    await queue_manager.enqueue(job.id, task_type="image")
-    
-    return {"message": "Animation job enqueued", "job_id": job.id}
+    return character.id, workflow, metadata
 
 @router.get("/{character_id}/avatar")
 def get_avatar(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):

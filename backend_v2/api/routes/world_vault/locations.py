@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 import os
 
@@ -141,9 +142,9 @@ def delete_location(location_id: str, session: Session = Depends(get_session), l
 
 @router.post("/{location_id}/image")
 async def upload_location_image(location_id: str, file: UploadFile = File(...), session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
-    location = location_repo.get(location_id)
-    if not location:
-        raise NotFoundError("Location", location_id)
+    # The upload read below is awaited, so the two session writes around it move
+    # to a worker thread.
+    await asyncio.to_thread(_require_location, location_repo, location_id)
 
     # Bounded + content-verified: the client-supplied extension is replaced by
     # the detected format so the stored path always matches the bytes.
@@ -158,9 +159,26 @@ async def upload_location_image(location_id: str, file: UploadFile = File(...), 
     with open(image_path, "wb") as buffer:
         buffer.write(content)
 
+    await asyncio.to_thread(_save_location_image, session, location_repo, location_id, image_path)
+    return {"message": "Image uploaded", "image_path": image_path}
+
+
+def _require_location(location_repo: LocationRepository, location_id: str) -> None:
+    """404 before the upload is consumed, off the event loop."""
+    if not location_repo.get(location_id):
+        raise NotFoundError("Location", location_id)
+
+
+def _save_location_image(
+    session: Session,
+    location_repo: LocationRepository,
+    location_id: str,
+    image_path: str,
+) -> None:
+    """Persist the stored image path on the location."""
+    location = location_repo.get(location_id)
     location.image_path = image_path
     location.updated_at = datetime.now(timezone.utc)
     session.add(location)
     session.commit()
     session.refresh(location)
-    return {"message": "Image uploaded", "image_path": image_path}

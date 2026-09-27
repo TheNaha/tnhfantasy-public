@@ -1,5 +1,7 @@
 
 
+import asyncio
+
 from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, delete, select
@@ -259,17 +261,13 @@ async def resync_model_from_civitai(
     Version/file data cannot be updated without re-downloading.
     """
     from core.entities import ModelV2
-    
-    # Get the model
-    model = session.get(ModelV2, model_id)
-    if not model:
-        raise NotFoundError("Resource", "Model not found")
-    
-    if not model.civitai_model_id:
-        raise ValidationError("Model has no CivitAI ID - cannot resync")
-    
+
+    # The route awaits CivitAI, so the model lookup before it and the metadata
+    # write after it both run in a worker thread.
+    civitai_model_id = await asyncio.to_thread(_civitai_id_for_resync, session, model_id)
+
     # Fetch fresh data from CivitAI
-    url = f"https://civitai.com/api/v1/models/{model.civitai_model_id}"
+    url = f"https://civitai.com/api/v1/models/{civitai_model_id}"
     try:
         http_client = get_http_client()
         response = await http_client.get(url, timeout=30.0)
@@ -278,14 +276,40 @@ async def resync_model_from_civitai(
         civitai_data = response.json()
     except Exception as e:
         raise ComfyError(f"Failed to fetch from CivitAI: {e!s}")
-    
+
     # Apply metadata using shared helper
+    return await asyncio.to_thread(
+        _apply_resync_sync, session, model_id, civitai_data
+    )
+
+
+def _civitai_id_for_resync(session: Session, model_id: str) -> str:
+    """The model's CivitAI id, or 404/422. Runs off the event loop."""
+    from core.entities import ModelV2
+
+    model = session.get(ModelV2, model_id)
+    if not model:
+        raise NotFoundError("Resource", "Model not found")
+
+    if not model.civitai_model_id:
+        raise ValidationError("Model has no CivitAI ID - cannot resync")
+    return model.civitai_model_id
+
+
+def _apply_resync_sync(session: Session, model_id: str, civitai_data: dict) -> dict:
+    """Apply fetched CivitAI metadata to the model and build the response."""
+    from core.entities import ModelV2
+
+    model = session.get(ModelV2, model_id)
+    if not model:
+        raise NotFoundError("Resource", "Model not found")
+
     _apply_civitai_metadata(model, civitai_data, session)
     session.commit()
-    
+
     # Get service for dict conversion
     service = get_model_service_v2(session)
-    
+
     return {
         "status": "success",
         "message": f"Resynced model '{model.name}' from CivitAI",
@@ -303,7 +327,7 @@ class AddUserTagRequest(BaseModel):
 
 
 @router.get("/{model_id}/tags")
-async def list_model_tags_endpoint(
+def list_model_tags_endpoint(
     model_id: str,
     session: Session = Depends(get_session)
 ):
@@ -312,7 +336,7 @@ async def list_model_tags_endpoint(
 
 
 @router.post("/{model_id}/tags", status_code=201)
-async def add_user_model_tag_endpoint(
+def add_user_model_tag_endpoint(
     model_id: str,
     request: AddUserTagRequest,
     session: Session = Depends(get_session)
@@ -332,7 +356,7 @@ async def add_user_model_tag_endpoint(
 
 
 @router.delete("/{model_id}/tags/{tag}")
-async def remove_user_model_tag_endpoint(
+def remove_user_model_tag_endpoint(
     model_id: str,
     tag: str,
     session: Session = Depends(get_session)
@@ -396,19 +420,35 @@ async def run_background_resync():
             fetch_tasks = [fetch_civitai(m) for m in batch]
             fetched_results = await asyncio.gather(*fetch_tasks)
             
-            for model, civitai_data, exc in fetched_results:
-                if exc:
-                    results["failed"] += 1
-                    results["errors"].append({"model_id": str(model.id), "error": str(exc)})
-                elif civitai_data:
+            # Off the loop. A resync fetches every eligible model from CivitAI in
+            # batches of five, and for a library of a few hundred that is minutes
+            # of `await`s — with `_apply_civitai_metadata` and `commit` running
+            # INLINE on the event loop between every batch. So the whole
+            # application was stalled for the duration of a background job that no
+            # user is waiting on. `api/lifecycle.py:290-295` also schedules this
+            # function every 24 h, so this is not a rare path.
+            def _apply_batch(rows, data_by_index):
+                applied = 0
+                failures = []
+                for (model, _data, exc), data in zip(rows, data_by_index, strict=True):
+                    if exc:
+                        failures.append({"model_id": str(model.id), "error": str(exc)})
+                        continue
+                    if not data:
+                        continue
                     try:
-                        _apply_civitai_metadata(model, civitai_data, bg_session)
-                        results["success"] += 1
+                        _apply_civitai_metadata(model, data, bg_session)
+                        applied += 1
                     except Exception as e:
-                        results["failed"] += 1
-                        results["errors"].append({"model_id": str(model.id), "error": str(e)})
-            
-            bg_session.commit()
+                        failures.append({"model_id": str(model.id), "error": str(e)})
+                bg_session.commit()
+                return applied, failures
+
+            applied, failures = await asyncio.to_thread(
+                _apply_batch, fetched_results, [r[1] for r in fetched_results]
+            )
+            results["success"] += applied
+            results["errors"].extend(failures)
         
         await broadcast_to_all("RESYNC_PROGRESS", {
             "status": "completed",
@@ -420,7 +460,7 @@ async def run_background_resync():
         return results
 
 @router.post("/resync-all")
-async def resync_all(background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+def resync_all(background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """Fetch latest metadata from CivitAI for all non-auto-discovered models."""
     from api.deps import get_model_repo_v2
     repo = get_model_repo_v2(session)
@@ -456,7 +496,7 @@ async def backfill_provider_statuses(
 
     from api.deps import get_provider_service
     provider_service = get_provider_service(session)
-    providers = await provider_service.get_enabled_providers()
+    providers = provider_service.get_enabled_providers()
 
     all_models = await service.list_models(include_versions=True)
     all_files_by_path = {}

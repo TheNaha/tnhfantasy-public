@@ -77,15 +77,23 @@ def _fake_session_context(session=None):
 
 
 def _owned_session(provider_id="provider-a"):
-    """A session whose session.get(Job, ...) resolves to a job owned by `provider_id`.
+    """A session whose ownership query resolves to `provider_id`.
 
-    _worker_owns_job is called before every job_* message is processed, and it
-    now requires an exact provider match.  Previously a bare MagicMock slipped
+    `_worker_owns_job` is called before every job_* message is processed, and it
+    requires an exact provider match.  Previously a bare MagicMock slipped
     through an unreachable `isinstance(job, Job)` fallthrough, so tests passed
     without ever declaring job ownership.
+
+    Both accessors are stubbed.  The query is now a one-column
+    `select(Job.provider_id)` rather than `session.get(Job, ...)` — the old form
+    loaded the whole Job row, `workflow` and `metadata_` jsonb included, once per
+    inbound frame — and it is issued from a worker thread via `get_session_sync`,
+    so `exec` is the path that has to answer.  `get` is left stubbed so the
+    handlers that legitimately use it keep working.
     """
     session = MagicMock()
     session.get.return_value = SimpleNamespace(provider_id=provider_id)
+    session.exec.return_value.first.return_value = provider_id
     return session
 
 
@@ -143,6 +151,7 @@ async def test_worker_websocket_finalization_uses_output_filenames():
 
     finalize = AsyncMock()
     with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.deps.get_session_sync", return_value=_owned_session()), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service), \
          patch("services.job_processing.finalize_successful_job", finalize), \
@@ -172,6 +181,7 @@ async def test_worker_websocket_rejects_unpersisted_outputs():
     job_service = AsyncMock()
 
     with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.deps.get_session_sync", return_value=_owned_session()), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service):
         await worker_websocket(websocket, "provider-a", "token-1")
@@ -203,6 +213,7 @@ async def test_worker_websocket_normalizes_progress_updates():
     job_service = AsyncMock()
 
     with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.deps.get_session_sync", return_value=_owned_session()), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service):
         await worker_websocket(websocket, "provider-a", "token-1")
@@ -544,6 +555,7 @@ async def test_worker_websocket_accepts_canonical_task_event_progress():
     job_service = AsyncMock()
 
     with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.deps.get_session_sync", return_value=_owned_session()), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service):
         await worker_websocket(websocket, "provider-a", "token-1")
@@ -567,6 +579,7 @@ async def test_worker_websocket_ignores_unknown_message_type():
     job_service = AsyncMock()
 
     with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.deps.get_session_sync", return_value=_owned_session()), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service):
         await worker_websocket(websocket, "provider-a", "token-1")
@@ -584,6 +597,7 @@ async def test_worker_websocket_heartbeat_ack_shape():
     provider_service.get_provider.return_value = provider
 
     with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.deps.get_session_sync", return_value=_owned_session()), \
          patch("services.provider_service.ProviderService", return_value=provider_service):
         await worker_websocket(websocket, "provider-a", "token-1")
 
@@ -598,6 +612,7 @@ async def test_worker_websocket_welcome_frame_shape():
     provider_service.get_provider.return_value = provider
 
     with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.deps.get_session_sync", return_value=_owned_session()), \
          patch("services.provider_service.ProviderService", return_value=provider_service):
         await worker_websocket(websocket, "provider-a", "token-1")
 
@@ -624,6 +639,7 @@ async def test_no_pending_models_frame_on_connect_when_the_queue_is_empty():
     model_service.get_pending_downloads.return_value = []
 
     with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.deps.get_session_sync", return_value=_owned_session()), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("api.routes.worker_ws.get_model_service_v2", return_value=model_service):
         await worker_websocket(websocket, "provider-a", "token-1")
@@ -641,6 +657,7 @@ async def test_get_pending_models_always_answers_even_when_empty():
     model_service.get_pending_downloads.return_value = []
 
     with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.deps.get_session_sync", return_value=_owned_session()), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("api.routes.worker_ws.get_model_service_v2", return_value=model_service):
         await worker_websocket(websocket, "provider-a", "token-1")
@@ -658,6 +675,7 @@ async def test_pending_downloads_are_pushed_on_connect():
     model_service.get_pending_downloads.return_value = [{"name": "sdxl.safetensors"}]
 
     with patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.deps.get_session_sync", return_value=_owned_session()), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("api.routes.worker_ws.get_model_service_v2", return_value=model_service):
         await worker_websocket(websocket, "provider-a", "token-1")

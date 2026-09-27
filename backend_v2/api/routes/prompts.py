@@ -63,9 +63,13 @@ class PromptMagicRequest(BaseModel):
 
 
 # CRUD endpoints
+#
+# Plain `def`, not `async def`: these query the request-scoped session
+# synchronously, and FastAPI only keeps that off the event loop when the whole
+# route body is sync.
 
 @router.get("")
-async def list_prompts(
+def list_prompts(
     q: str | None = Query(None, description="Search query for FTS5"),
     category: str | None = Query(None, description="Filter by category"),
     favorite: bool | None = Query(None, description="Filter favorites only"),
@@ -117,7 +121,7 @@ async def list_prompts(
 
 
 @router.get("/categories")
-async def get_categories(session: Session = Depends(get_session)):
+def get_categories(session: Session = Depends(get_session)):
     """Get all unique categories."""
     result = session.execute(text("SELECT DISTINCT category FROM prompts ORDER BY category"))
     categories = [row[0] for row in result]
@@ -128,7 +132,7 @@ async def get_categories(session: Session = Depends(get_session)):
 
 
 @router.get("/favorites")
-async def get_favorites(
+def get_favorites(
     limit: int = Query(20, ge=1, le=100),
     session: Session = Depends(get_session)
 ):
@@ -140,7 +144,7 @@ async def get_favorites(
 
 
 @router.get("/most-used")
-async def get_most_used(
+def get_most_used(
     limit: int = Query(10, ge=1, le=50),
     session: Session = Depends(get_session)
 ):
@@ -152,7 +156,7 @@ async def get_most_used(
 
 
 @router.get("/export")
-async def export_prompts(session: Session = Depends(get_session)):
+def export_prompts(session: Session = Depends(get_session)):
     """Export all prompts as JSON (for backup)."""
     from api.deps import get_prompt_repo
     repo = get_prompt_repo(session)
@@ -161,7 +165,7 @@ async def export_prompts(session: Session = Depends(get_session)):
 
 
 @router.get("/{prompt_id}")
-async def get_prompt(prompt_id: str, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
+def get_prompt(prompt_id: str, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
     """Get a single prompt by ID."""
     prompt = prompt_repo.get(prompt_id)
     if not prompt:
@@ -170,7 +174,7 @@ async def get_prompt(prompt_id: str, session: Session = Depends(get_session), pr
 
 
 @router.post("")
-async def create_prompt(data: PromptCreate, session: Session = Depends(get_session)):
+def create_prompt(data: PromptCreate, session: Session = Depends(get_session)):
     """Create a new prompt."""
     prompt = Prompt(
         name=data.name,
@@ -189,7 +193,7 @@ async def create_prompt(data: PromptCreate, session: Session = Depends(get_sessi
 
 
 @router.put("/{prompt_id}")
-async def update_prompt(prompt_id: str, data: PromptUpdate, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
+def update_prompt(prompt_id: str, data: PromptUpdate, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
     """Update an existing prompt."""
     prompt = prompt_repo.get(prompt_id)
     if not prompt:
@@ -208,7 +212,7 @@ async def update_prompt(prompt_id: str, data: PromptUpdate, session: Session = D
 
 
 @router.delete("/{prompt_id}")
-async def delete_prompt(prompt_id: str, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
+def delete_prompt(prompt_id: str, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
     """Delete a prompt."""
     prompt = prompt_repo.get(prompt_id)
     if not prompt:
@@ -220,7 +224,7 @@ async def delete_prompt(prompt_id: str, session: Session = Depends(get_session),
 
 
 @router.post("/{prompt_id}/use")
-async def increment_usage(prompt_id: str, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
+def increment_usage(prompt_id: str, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
     """Increment usage count for a prompt (called when prompt is used)."""
     prompt = prompt_repo.get(prompt_id)
     if not prompt:
@@ -235,7 +239,7 @@ async def increment_usage(prompt_id: str, session: Session = Depends(get_session
 
 
 @router.post("/import")
-async def import_prompts(data: PromptBulkImport, session: Session = Depends(get_session)):
+def import_prompts(data: PromptBulkImport, session: Session = Depends(get_session)):
     """Bulk import prompts (for migration from localStorage)."""
     imported = []
     

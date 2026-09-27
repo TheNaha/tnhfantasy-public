@@ -1,8 +1,9 @@
+import asyncio
 import json
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -41,6 +42,10 @@ CHAT_HISTORY_HARD_CAP = 5000
 # Chat exports are JSON/JSONL text; 25 MB is far beyond any real campaign and
 # keeps a hostile upload from exhausting memory during decode.
 MAX_CHAT_IMPORT_BYTES = MAX_CARD_SIZE_MB * 1024 * 1024
+# One chat row is small, but the list is unbounded by default if a caller asks
+# for more than a page; `list_messages` allows 1000, so the chat list allows
+# fewer — it is a navigation list, not a fetch.
+MAX_CHAT_PAGE_SIZE = 200
 
 router = APIRouter()
 
@@ -72,6 +77,31 @@ def _load_characters_ordered(session: Session, primary_id: str | None, additiona
     chars = session.exec(select(Character).where(Character.id.in_(ids))).all()
     char_map = {c.id: c for c in chars}
     return [char_map[cid] for cid in ids if cid in char_map]
+
+
+def _chat_context_prep_sync(
+    session: Session, chat_repo: ChatRepository, chat_id: str
+) -> tuple[Chat, list[Message], dict]:
+    """Load a chat, its context window and the context-builder kwargs.
+
+    Synchronous on purpose: the routes that need it also await the context
+    builders, so they cannot become plain `def` routes and these reads would
+    otherwise run on the event loop. See `get_chat_system_prompt`.
+    """
+    chat = chat_repo.get(chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+
+    past_messages = list(
+        session.exec(
+            select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(MAX_CONTEXT_MESSAGES)
+        ).all()
+    )
+    past_messages.reverse()
+
+    characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
+
+    return chat, past_messages, chat_context_kwargs(chat, characters=characters, session=session)
 
 
 class UpdateChatRequest(BaseModel):
@@ -139,10 +169,14 @@ class SendMessageRequest(BaseModel):
 @router.get("", response_model=list[Chat])
 def list_chats(
     session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo),
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=MAX_CHAT_PAGE_SIZE),
+    offset: int = Query(0, ge=0),
     workspace: str | None = None,
     q: str | None = None,):
+    # Capped because `list_messages` 380 lines below this one already is, in the
+    # same file, with an explicit range check. A bare `limit: int = 50` meant
+    # `?limit=100000` read the whole chat table, and a reader had no local signal
+    # that the house style is the strict one.
     stmt = select(Chat).order_by(Chat.updated_at.desc()).offset(offset).limit(limit)
     if workspace:
         stmt = stmt.where(Chat.chat_type == workspace)
@@ -343,6 +377,33 @@ async def import_chat(
     else:
         raise ValidationError("Unrecognized chat file — expected SillyTavern JSONL or an exported chat JSON")
 
+    # The whole persistence half runs in a worker thread: the upload read above
+    # forces this route to stay `async def`, and everything below hits the
+    # synchronous session.
+    return await asyncio.to_thread(
+        _import_chat_sync,
+        session,
+        character_repo,
+        name,
+        character_id,
+        st_format,
+        persona_name,
+        source_chat,
+        raw_messages,
+    )
+
+
+def _import_chat_sync(
+    session: Session,
+    character_repo: CharacterRepository,
+    name: str | None,
+    character_id: str | None,
+    st_format: bool,
+    persona_name: str | None,
+    source_chat: dict,
+    raw_messages: list[dict],
+) -> Chat:
+    """Persist a parsed chat export. Runs off the event loop (see `import_chat`)."""
     primary: Character | None = None
     if character_id:
         primary = character_repo.get(character_id)
@@ -427,7 +488,7 @@ async def import_chat(
 
 
 @router.post("", response_model=Chat)
-async def create_chat(req: CreateChatRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+def create_chat(req: CreateChatRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
     if req.character_id:
         character = character_repo.get(req.character_id)
         if not character:
@@ -540,20 +601,11 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
     """Return the assembled system prompt (with per-section breakdown) for this chat."""
     from services.context_builder import estimate_tokens
 
-    chat = chat_repo.get(chat_id)
-    if not chat:
-        raise NotFoundError("Chat", chat_id)
-
-    past_messages = list(
-        session.exec(
-            select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(MAX_CONTEXT_MESSAGES)
-        ).all()
+    # The context builders below are awaited, so this route cannot be a plain
+    # `def` — but everything they need is read up front, in a worker thread.
+    chat, past_messages, ctx_kwargs = await asyncio.to_thread(
+        _chat_context_prep_sync, session, chat_repo, chat_id
     )
-    past_messages.reverse()
-
-    characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
-
-    ctx_kwargs = chat_context_kwargs(chat, characters=characters, session=session)
 
     sections = await build_system_prompt_sections_async(
         **ctx_kwargs,
@@ -635,14 +687,25 @@ from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.chat_utils import resolve_context_tokens as _resolve_context_tokens
 
 
-@router.post("/{chat_id}/messages")
-async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), message_repo: MessageRepository = Depends(get_message_repo)) -> dict:
-    from services.job_queue import queue_manager
-    
+def _add_message_prep_sync(
+    session: Session,
+    chat_repo: ChatRepository,
+    message_repo: MessageRepository,
+    chat_id: str,
+    request: SendMessageRequest,
+) -> tuple[Message, str, Chat, list[Message], dict | None]:
+    """Persist a user message and assemble the context its reply would use.
+
+    Synchronous on purpose: the reply job is awaited, so the route cannot be a
+    plain `def` and these writes would otherwise land on the event loop. The
+    context is only assembled for a message that will actually get a reply,
+    matching what the route used to fetch inline. The new id is returned
+    separately because creating the reply job commits, which expires `message`.
+    """
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
-        
+
     if request.image_path:
         output_root = os.path.realpath(settings.output_dir)
         image_candidate = os.path.realpath(
@@ -661,18 +724,18 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )
-    
+
     session.add(message)
     session.commit()
     session.refresh(message)
-    
-    job_id = None
-    
+
+    past_messages: list[Message] = []
+    ctx_kwargs: dict | None = None
     if message.role == MessageRole.USER and not request.no_reply:
         past_messages = message_repo.list_by_chat(chat_id)
-        
+
         characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
-            
+
         ctx_kwargs = chat_context_kwargs(
             chat,
             characters=characters,
@@ -681,8 +744,25 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             max_context_tokens=_resolve_context_tokens(chat),
             active_character_id=request.target_character_id,
         )
+    return message, message.id, chat, past_messages, ctx_kwargs
+
+
+@router.post("/{chat_id}/messages")
+async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), message_repo: MessageRepository = Depends(get_message_repo)) -> dict:
+    from services.job_queue import queue_manager
+
+    # Persisting the message and assembling its context are synchronous session
+    # work; the reply job below is awaited, so the route stays `async def` and
+    # the reads run in a worker thread.
+    message, message_id, chat, past_messages, ctx_kwargs = await asyncio.to_thread(
+        _add_message_prep_sync, session, chat_repo, message_repo, chat_id, request
+    )
+
+    job_id = None
+
+    if message.role == MessageRole.USER and not request.no_reply:
         system_prompt, context = await build_chat_context_async(
-            past_messages, 
+            past_messages,
             **ctx_kwargs,
         )
             
@@ -750,7 +830,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
         except Exception as e:
             raise ComfyError(str(e))
 
-    return {"user_message_id": message.id, "job_id": job_id}
+    return {"user_message_id": message_id, "job_id": job_id}
 
 @router.delete("/{chat_id}/messages/{message_id}")
 def delete_message(chat_id: str, message_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo)):
@@ -826,10 +906,45 @@ async def narrate_message(
     queue_manager: QueueManager = Depends(get_queue_manager),
 ):
     """Trigger a TTS job to narrate a specific message."""
+    # Voice resolution is synchronous session work; the job enqueue below is
+    # awaited, so the reads move to a worker thread.
+    message_id, workflow, metadata = await asyncio.to_thread(
+        _narrate_message_prep_sync,
+        session,
+        chat_repo,
+        character_repo,
+        chat_id,
+        message_id,
+        data,
+    )
+
+    job = await job_service.create_job(
+        task_type="image",  # Dispatch to the ComfyUI image_worker adapter
+        workflow=workflow,
+        metadata=metadata,
+    )
+    await queue_manager.enqueue(job.id, task_type="image")
+
+    return {"message_id": message_id, "job_id": job.id}
+
+
+def _narrate_message_prep_sync(
+    session: Session,
+    chat_repo: ChatRepository,
+    character_repo: CharacterRepository,
+    chat_id: str,
+    message_id: str,
+    data: NarrateRequest | None,
+) -> tuple[str, dict, dict]:
+    """Load the message and resolve its voice, then build the TTS workflow.
+
+    Synchronous on purpose: the enqueue is awaited, so the route stays
+    `async def` and these queries would otherwise run on the event loop.
+    """
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
-        
+
     message = session.get(Message, message_id)
     if not message or message.chat_id != chat_id:
         raise NotFoundError("Message", message_id)
@@ -867,15 +982,7 @@ async def narrate_message(
             "message_id": message_id,
         }
     )
-
-    job = await job_service.create_job(
-        task_type="image",  # Dispatch to the ComfyUI image_worker adapter
-        workflow=workflow,
-        metadata=metadata,
-    )
-    await queue_manager.enqueue(job.id, task_type="image")
-    
-    return {"message_id": message.id, "job_id": job.id}
+    return message.id, workflow, metadata
 
 
 @router.post("/{chat_id}/messages/{message_id}/swipe", response_model=Message)
@@ -935,43 +1042,17 @@ async def generate_swipe(
 ) -> dict:
     from services.job_queue import queue_manager
 
-    chat = chat_repo.get(chat_id)
-    if not chat:
-        raise NotFoundError("Chat", chat_id)
-
-    target_msg = session.get(Message, message_id)
-    if not target_msg or target_msg.chat_id != chat_id:
-        raise NotFoundError("Message", message_id)
-    if target_msg.role != MessageRole.CHAR:
-        raise ValidationError("Only character messages can generate swipes")
-
-    all_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(CHAT_HISTORY_HARD_CAP)
-    ).all()
-    all_messages.reverse()
-    
-    target_index = next((i for i, m in enumerate(all_messages) if m.id == target_msg.id), -1)
-    if target_index < 0:
-        raise NotFoundError("Message", message_id)
-
-    remaining = all_messages[:target_index]
-    
-    characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
-
-    ctx_kwargs = chat_context_kwargs(
-        chat,
-        characters=characters,
-        session=session,
-        max_context_tokens=_resolve_context_tokens(chat),
+    # Reading up to CHAT_HISTORY_HARD_CAP messages is synchronous session work
+    # and the context build below is awaited, so the reads run in a thread.
+    chat, remaining, prev_agentic, ctx_kwargs = await asyncio.to_thread(
+        _swipe_prep_sync, session, chat_repo, chat_id, message_id
     )
+
     system_prompt, context = await build_chat_context_async(
         remaining,
         **ctx_kwargs,
     )
 
-    
-    # Mirror agentic state
-    prev_agentic = target_msg.tool_calls is not None or (target_msg.message_metadata or {}).get("agentic", False)
 
     workflow, metadata = build_chat_llm_workflow(
         messages=context,
@@ -1000,13 +1081,57 @@ async def generate_swipe(
 
     job_service = get_job_service(session)
     job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
-    session.commit()
+    await asyncio.to_thread(session.commit)
 
     # Agentic chaining happens when the job completes with tool calls
     # (see job_processing.py) — this route only enqueues the job.
     await queue_manager.enqueue(job.id, task_type="llm")
 
     return {"job_id": job.id}
+
+
+def _swipe_prep_sync(
+    session: Session, chat_repo: ChatRepository, chat_id: str, message_id: str
+) -> tuple[Chat, list[Message], bool, dict]:
+    """Load the swipe target, the history before it and the context kwargs.
+
+    Synchronous on purpose: the context build and the job enqueue are awaited,
+    so the route cannot be a plain `def` and these reads would otherwise run on
+    the event loop.
+    """
+    chat = chat_repo.get(chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+
+    target_msg = session.get(Message, message_id)
+    if not target_msg or target_msg.chat_id != chat_id:
+        raise NotFoundError("Message", message_id)
+    if target_msg.role != MessageRole.CHAR:
+        raise ValidationError("Only character messages can generate swipes")
+
+    all_messages = session.exec(
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(CHAT_HISTORY_HARD_CAP)
+    ).all()
+    all_messages.reverse()
+
+    target_index = next((i for i, m in enumerate(all_messages) if m.id == target_msg.id), -1)
+    if target_index < 0:
+        raise NotFoundError("Message", message_id)
+
+    remaining = all_messages[:target_index]
+
+    characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
+
+    ctx_kwargs = chat_context_kwargs(
+        chat,
+        characters=characters,
+        session=session,
+        max_context_tokens=_resolve_context_tokens(chat),
+    )
+    # Mirror agentic state
+    prev_agentic = target_msg.tool_calls is not None or (target_msg.message_metadata or {}).get("agentic", False)
+    return chat, remaining, prev_agentic, ctx_kwargs
+
 
 class PinMessageRequest(BaseModel):
     pinned: bool
@@ -1097,15 +1222,73 @@ async def regenerate_reply(
     """
     from services.job_queue import queue_manager
 
+    # The delete + history load is synchronous session work and the context
+    # build below is awaited, so the whole prologue runs in a worker thread.
+    chat, anchor_character_id, deleted, prev_agentic, prev_checkpoint, remaining, ctx_kwargs = await asyncio.to_thread(
+        _regenerate_prep_sync, session, chat_repo, chat_id, req.message_id
+    )
+
+    system_prompt, context = await build_chat_context_async(
+        remaining,
+        **ctx_kwargs,
+    )
+
+
+    workflow, metadata = build_chat_llm_workflow(
+        messages=context,
+        chat_id=chat_id,
+        character_id=anchor_character_id or chat.character_id,
+        system_prompt=system_prompt or None,
+        model=chat.llm_model or _get_default_llm_model(),
+        samplers=sampler_overrides(chat),
+        extra_metadata={"regenerated": True},
+    )
+    if prev_agentic:
+        from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
+        workflow["tools"] = filter_agentic_tools(
+            AGENTIC_TOOLS,
+            allow_image=chat.allow_image_generation,
+            allow_narration=chat.allow_narration,
+        )
+        metadata["agentic"] = True
+        metadata["orchestrator_depth"] = 0
+        metadata["original_messages"] = context
+        effective_max = chat.max_agentic_depth
+        if effective_max is not None:
+            metadata["max_agentic_depth"] = effective_max
+    if prev_checkpoint:
+        metadata["generator_checkpoint"] = prev_checkpoint
+
+    job_service = get_job_service(session)
+    try:
+        job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
+        await asyncio.to_thread(session.commit)
+        await queue_manager.enqueue(job.id, task_type="llm")
+    except Exception as e:
+        await asyncio.to_thread(session.rollback)
+        raise ComfyError(str(e))
+
+    return {"job_id": job.id, "removed_messages": deleted}
+
+
+def _regenerate_prep_sync(
+    session: Session, chat_repo: ChatRepository, chat_id: str, message_id: str | None
+) -> tuple[Chat, str | None, int, bool, object, list[Message], dict]:
+    """Drop everything after the anchor message and assemble its context.
+
+    Synchronous on purpose: the context build and the job enqueue are awaited,
+    so the route stays `async def` and these deletes/reads would otherwise run
+    on the event loop.
+    """
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
     anchor = None
-    if req.message_id:
-        anchor = session.get(Message, req.message_id)
+    if message_id:
+        anchor = session.get(Message, message_id)
         if not anchor or anchor.chat_id != chat_id:
-            raise NotFoundError("Message", req.message_id)
+            raise NotFoundError("Message", message_id)
     else:
         # Find the most recent user message without scanning full history.
         anchor = session.exec(
@@ -1166,47 +1349,16 @@ async def regenerate_reply(
         session=session,
         max_context_tokens=_resolve_context_tokens(chat),
     )
-    system_prompt, context = await build_chat_context_async(
+    return (
+        chat,
+        getattr(anchor, "character_id", None),
+        deleted,
+        prev_agentic,
+        prev_checkpoint,
         remaining,
-        **ctx_kwargs,
+        ctx_kwargs,
     )
 
-
-    workflow, metadata = build_chat_llm_workflow(
-        messages=context,
-        chat_id=chat_id,
-        character_id=getattr(anchor, "character_id", None) or chat.character_id,
-        system_prompt=system_prompt or None,
-        model=chat.llm_model or _get_default_llm_model(),
-        samplers=sampler_overrides(chat),
-        extra_metadata={"regenerated": True},
-    )
-    if prev_agentic:
-        from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
-        workflow["tools"] = filter_agentic_tools(
-            AGENTIC_TOOLS,
-            allow_image=chat.allow_image_generation,
-            allow_narration=chat.allow_narration,
-        )
-        metadata["agentic"] = True
-        metadata["orchestrator_depth"] = 0
-        metadata["original_messages"] = context
-        effective_max = chat.max_agentic_depth
-        if effective_max is not None:
-            metadata["max_agentic_depth"] = effective_max
-    if prev_checkpoint:
-        metadata["generator_checkpoint"] = prev_checkpoint
-
-    job_service = get_job_service(session)
-    try:
-        job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
-        session.commit()
-        await queue_manager.enqueue(job.id, task_type="llm")
-    except Exception as e:
-        session.rollback()
-        raise ComfyError(str(e))
-
-    return {"job_id": job.id, "removed_messages": deleted}
 
 class ImpersonateRequest(BaseModel):
     hint: str = ""  # Optional direction for the impersonation
@@ -1222,25 +1374,16 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     """
     from services.job_queue import queue_manager
 
-    chat = chat_repo.get(chat_id)
-    if not chat:
-        raise NotFoundError("Chat", chat_id)
-
-    past_messages = list(
-        session.exec(
-            select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(MAX_CONTEXT_MESSAGES)
-        ).all()
+    # The prologue (history, character, world-state kwargs) is synchronous
+    # session work and the world-state sections below are awaited, so it runs in
+    # a worker thread.
+    chat, user_name, char_name, sections_kwargs, past_messages = await asyncio.to_thread(
+        _impersonate_prep_sync, session, chat_repo, character_repo, chat_id
     )
-    past_messages.reverse()
-
-    character = character_repo.get(chat.character_id) if chat.character_id else None
-
-    user_name = chat.persona_name or "User"
-    char_name = character.name if character else "the AI"
 
     # Build world-state context without character identity (same approach as suggest)
     world_sections = await build_system_prompt_sections_async(
-        **chat_context_kwargs(chat, character=None, include_roleplay_default=False, session=session),
+        **sections_kwargs,
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 
@@ -1300,18 +1443,22 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
         raise ComfyError(str(e))
 
 
-class SuggestReplyRequest(BaseModel):
-    draft: str | None = None
+def _impersonate_prep_sync(
+    session: Session,
+    chat_repo: ChatRepository,
+    character_repo: CharacterRepository,
+    chat_id: str,
+) -> tuple[Chat, str, str, dict, list[Message]]:
+    """Load everything the impersonation prompt is assembled from.
 
-@router.post("/{chat_id}/suggest")
-async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo)) -> dict:
-
-    from services.job_queue import queue_manager
-    
+    Synchronous on purpose: the world-state sections and the job enqueue are
+    awaited, so the route stays `async def` and these reads would otherwise run
+    on the event loop.
+    """
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
-        
+
     past_messages = list(
         session.exec(
             select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(MAX_CONTEXT_MESSAGES)
@@ -1319,26 +1466,49 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     )
     past_messages.reverse()
 
-    character = None
-    if chat.character_id:
-        character = character_repo.get(chat.character_id)
+    character = character_repo.get(chat.character_id) if chat.character_id else None
+
+    sections_kwargs = chat_context_kwargs(
+        chat, character=None, include_roleplay_default=False, session=session
+    )
+    return (
+        chat,
+        chat.persona_name or "User",
+        character.name if character else "the AI",
+        sections_kwargs,
+        past_messages,
+    )
+
+
+class SuggestReplyRequest(BaseModel):
+    draft: str | None = None
+
+@router.post("/{chat_id}/suggest")
+async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo)) -> dict:
+
+    from services.job_queue import queue_manager
+
+    # The prologue (history, character, world-state kwargs) is synchronous
+    # session work and the world-state sections below are awaited, so it runs in
+    # a worker thread.
+    chat, user_name, char_name, original, sections_kwargs, past_messages = await asyncio.to_thread(
+        _suggest_prep_sync, session, chat_repo, character_repo, chat_id
+    )
 
     from config import get_system_prompt_blocks
 
     world_sections = await build_system_prompt_sections_async(
-        **chat_context_kwargs(chat, character=None, include_roleplay_default=False, session=session),
+        **sections_kwargs,
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 
-    user_name = chat.persona_name or "User"
-    char_name = character.name if character else "the AI"
     # Macro inputs shared by both suggest instructions: SillyTavern config
     # prompts may reference {{persona}} / {{original}} as well as {{user}}.
     macro_ctx = {
         "char": char_name,
         "user": user_name,
         "persona_description": chat.persona_description or "",
-        "original": (character.description if character else "") or "",
+        "original": original,
     }
 
     if req.draft and req.draft.strip():
@@ -1421,6 +1591,45 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     except Exception as e:
         raise ComfyError(str(e))
 
+def _suggest_prep_sync(
+    session: Session,
+    chat_repo: ChatRepository,
+    character_repo: CharacterRepository,
+    chat_id: str,
+) -> tuple[Chat, str, str, str, dict, list[Message]]:
+    """Load everything the /suggest prompt is assembled from.
+
+    Synchronous on purpose: the world-state sections and the job enqueue are
+    awaited, so the route stays `async def` and these reads would otherwise run
+    on the event loop.
+    """
+    chat = chat_repo.get(chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+
+    past_messages = list(
+        session.exec(
+            select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(MAX_CONTEXT_MESSAGES)
+        ).all()
+    )
+    past_messages.reverse()
+
+    character = None
+    if chat.character_id:
+        character = character_repo.get(chat.character_id)
+
+    sections_kwargs = chat_context_kwargs(
+        chat, character=None, include_roleplay_default=False, session=session
+    )
+    return (
+        chat,
+        chat.persona_name or "User",
+        character.name if character else "the AI",
+        (character.description if character else "") or "",
+        sections_kwargs,
+        past_messages,
+    )
+
 @router.post("/{chat_id}/scene")
 async def generate_scene(
     chat_id: str, 
@@ -1431,6 +1640,40 @@ async def generate_scene(
 ):
     from services.job_queue import queue_manager
 
+    # History, character and checkpoint resolution are synchronous session
+    # work; only the job enqueue below is awaited, so they run in a thread.
+    chat, workflow, metadata = await asyncio.to_thread(
+        _scene_job_prep_sync, session, chat_repo, character_repo, message_repo, chat_id
+    )
+
+    job_service = JobService(session)
+
+    prompt_job = await job_service.create_job(
+        task_type="llm",
+        workflow=workflow,
+        metadata=metadata,
+    )
+    await queue_manager.enqueue(prompt_job.id, task_type="llm")
+
+    # The scene LLM job is agentic: it calls the generate_image tool (or, when
+    # the model cannot call tools, its plain-text output is chained into an
+    # image job by the scene_prompt finalize branch in job_processing.py).
+    return {"job_id": prompt_job.id, "status": "queued", "message": "Scene generation started"}
+
+
+def _scene_job_prep_sync(
+    session: Session,
+    chat_repo: ChatRepository,
+    character_repo: CharacterRepository,
+    message_repo: MessageRepository,
+    chat_id: str,
+) -> tuple[Chat, dict, dict]:
+    """Validate the chat and build the scene-prompt job.
+
+    Synchronous on purpose: only the job creation and enqueue are awaited, so
+    the route stays `async def` and these reads would otherwise run on the event
+    loop.
+    """
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
@@ -1440,9 +1683,9 @@ async def generate_scene(
     past_messages = message_repo.list_by_chat(chat_id)
     if not past_messages:
         raise ValidationError("No messages in chat to base scene on")
-        
+
     context_text = "\n".join([f"{m.role.value}: {m.content}" for m in past_messages[-10:] if m.content])
-    
+
     # Resolve checkpoint: character > configured default > any installed model
     checkpoint = None
     if chat.character_id:
@@ -1452,7 +1695,7 @@ async def generate_scene(
     if not checkpoint:
         from services.model_availability_service import ModelAvailabilityService
         checkpoint = ModelAvailabilityService(session).resolve_checkpoint()
-    
+
     system_prompt = (
         "You are an AI scene director for a roleplay chat. Read the following recent "
         "roleplay chat context and create a visual depiction of the current scene or the "
@@ -1465,7 +1708,6 @@ async def generate_scene(
         "If you are unable to call tools, output ONLY the image prompt text."
     )
 
-    job_service = JobService(session)
     from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
 
     workflow, metadata = build_chat_llm_workflow(
@@ -1492,18 +1734,7 @@ async def generate_scene(
         allow_image=chat.allow_image_generation,
         allow_narration=chat.allow_narration,
     )
-
-    prompt_job = await job_service.create_job(
-        task_type="llm",
-        workflow=workflow,
-        metadata=metadata,
-    )
-    await queue_manager.enqueue(prompt_job.id, task_type="llm")
-    
-    # The scene LLM job is agentic: it calls the generate_image tool (or, when
-    # the model cannot call tools, its plain-text output is chained into an
-    # image job by the scene_prompt finalize branch in job_processing.py).
-    return {"job_id": prompt_job.id, "status": "queued", "message": "Scene generation started"}
+    return chat, workflow, metadata
 
 
 class ChatIllustrateRequest(BaseModel):
@@ -1522,8 +1753,43 @@ async def illustrate_chat(
 
     Uses the provided prompt, or falls back to the latest character reply when
     no prompt is given. Mirrors the agentic generate_image tool's metadata so
-    the image lands in the chat as a kind=IMAGE message via the chat_image
+    the     image lands in the chat as a kind=IMAGE message via the chat_image
     event (world_integration_service) and in the roleplay workspace.
+    """
+    from services.image_submission import submit_image_job
+
+    # Fallback prompt, character and checkpoint are resolved by a worker thread
+    # (the route awaits the image submission below).
+    character_id, image_prompt, checkpoint, lora_name = await asyncio.to_thread(
+        _illustrate_prep_sync, session, chat_repo, character_repo, chat_id, request.image_prompt
+    )
+
+    job = await submit_image_job(
+        session,
+        prompt=image_prompt,
+        checkpoint=checkpoint,
+        lora=lora_name,
+        filename_prefix="ChatIllustrate",
+        source="chat_image",
+        workspace="chat",
+        chat_id=chat_id,
+        character_id=character_id,
+        extra_metadata={"image_context": image_prompt},
+    )
+    return {"job_id": job.id, "status": "queued", "message": "Illustration started"}
+
+
+def _illustrate_prep_sync(
+    session: Session,
+    chat_repo: ChatRepository,
+    character_repo: CharacterRepository,
+    chat_id: str,
+    image_prompt: str | None,
+) -> tuple[str | None, str, str, str | None]:
+    """Resolve the image prompt, checkpoint and LoRA for a chat illustration.
+
+    Synchronous on purpose: the image submission is awaited, so the route stays
+    `async def` and these queries would otherwise run on the event loop.
     """
     from services.model_availability_service import ModelAvailabilityService
 
@@ -1533,8 +1799,8 @@ async def illustrate_chat(
     if not chat.allow_image_generation:
         raise ValidationError("Image generation is disabled for this chat")
 
-    image_prompt = (request.image_prompt or "").strip()
-    if not image_prompt:
+    prompt = (image_prompt or "").strip()
+    if not prompt:
         last_char = session.exec(
             select(Message)
             .where(
@@ -1555,8 +1821,8 @@ async def illustrate_chat(
             .limit(1)
         ).first()
         if last_char and last_char.content.strip():
-            image_prompt = last_char.content.strip()
-    if not image_prompt:
+            prompt = last_char.content.strip()
+    if not prompt:
         raise ValidationError("No prompt and no character reply to illustrate")
 
     character = character_repo.get(chat.character_id) if chat.character_id else None
@@ -1565,23 +1831,12 @@ async def illustrate_chat(
     if not checkpoint:
         checkpoint = ModelAvailabilityService(session).resolve_checkpoint()
 
-    lora_name = character.lora if character and character.lora else None
-
-    from services.image_submission import submit_image_job
-
-    job = await submit_image_job(
-        session,
-        prompt=image_prompt,
-        checkpoint=checkpoint,
-        lora=lora_name,
-        filename_prefix="ChatIllustrate",
-        source="chat_image",
-        workspace="chat",
-        chat_id=chat_id,
-        character_id=chat.character_id,
-        extra_metadata={"image_context": image_prompt},
+    return (
+        chat.character_id,
+        prompt,
+        checkpoint,
+        character.lora if character and character.lora else None,
     )
-    return {"job_id": job.id, "status": "queued", "message": "Illustration started"}
 
 
 @router.get("/{chat_id}/images")

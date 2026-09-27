@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from infrastructure.deps import get_session_context
-from core.workflow_builder import DEFAULT_CHECKPOINT
 from config import settings
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
@@ -19,10 +18,17 @@ logger = get_logger("job_processing")
 
 
 def get_default_checkpoint() -> str:
-    """Read the configured default checkpoint from settings, falling back to the
-    well-known SDXL base name when no override is present."""
-    from config import get_config
-    return get_config().get("generator", {}).get("default_checkpoint", DEFAULT_CHECKPOINT)
+    """The configured default checkpoint, or the well-known base name.
+
+    Delegates to `config.resolve_default_checkpoint`, which is the single
+    reader of that key. This copy returned `None` when the key was present but
+    empty, so a config with `default_checkpoint: ""` produced a job whose
+    checkpoint was `None` and the failure surfaced much later as a
+    missing-model error naming `None`.
+    """
+    from config import resolve_default_checkpoint
+
+    return resolve_default_checkpoint()
 
 
 _finalizing_jobs: set[str] = set()
@@ -453,7 +459,16 @@ async def _finalize_llm_job(
         memories = parse_extraction_result(text)
         character_id = job.metadata_.get("character_id") if job.metadata_ else None
         if memories and character_id:
-            create_memories_from_extraction(job_service.session, character_id, memories)
+            # Off the loop: this runs a sentence-transformers forward pass per
+            # memory. It is CPU-bound and takes seconds, and the caller is
+            # `async def` on the event loop, so it was freezing every other
+            # request in the process while the model loaded and inferred.
+            await asyncio.to_thread(
+                create_memories_from_extraction,
+                job_service.session,
+                character_id,
+                memories,
+            )
         await finalize_persisted_job_outputs(
             job_service=job_service,
             job_id=job_id,

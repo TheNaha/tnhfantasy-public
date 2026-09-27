@@ -13,7 +13,10 @@ async def health():
 
 
 @router.get("/api/ready")
-async def ready(session=Depends(get_session)):
+# Plain `def` on purpose: the readiness probe is polled by the orchestrator on a
+# tight interval, and `SELECT 1` on the event loop made every health check
+# contend with real request traffic.
+def ready(session=Depends(get_session)):
     try:
         session.exec(text("SELECT 1"))
     except Exception as exc:

@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import datetime, timezone
 from io import BytesIO
@@ -806,13 +807,31 @@ def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(ge
 
 @router.post("/{story_id}/chapters/{chapter_id}/continue")
 async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    # Appending the user's beat is synchronous session work and the enqueue
+    # below is awaited, so the whole prologue runs in a worker thread.
+    story, chapter = await asyncio.to_thread(
+        _continue_story_prep_sync, session, story_repo, story_chapter_repo, story_id, chapter_id, data.prompt
+    )
+
+    job_id = await _enqueue_story_continuation(session, story, chapter)
+    return {"job_id": job_id}
+
+
+def _continue_story_prep_sync(
+    session: Session,
+    story_repo: StoryRepository,
+    story_chapter_repo: StoryChapterRepository,
+    story_id: str,
+    chapter_id: str,
+    prompt: str,
+) -> tuple[Story | None, StoryChapter]:
+    """Load the chapter (appending the author's beat when given) and its story."""
     chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
 
     story = story_repo.get(story_id)
 
-    prompt = data.prompt
     if prompt:
         _ensure_beat_ids(session, chapter)
         chapter.beats.append({
@@ -825,9 +844,12 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         session.add(chapter)
         session.commit()
         session.refresh(chapter)
+        if story is not None:
+            # commit() expired the story's columns; the enqueue helper below
+            # reads them from the event loop.
+            session.refresh(story)
 
-    job_id = await _enqueue_story_continuation(session, story, chapter)
-    return {"job_id": job_id}
+    return story, chapter
 
 
 async def _enqueue_story_continuation(session: Session, story: Story | None, chapter: StoryChapter) -> str:
@@ -851,9 +873,10 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
 
     story_scenario_template = None
     if story and story.scenario_id:
-        scenario = session.get(Scenario, story.scenario_id)
-        if scenario and scenario.prompt_template:
-            story_scenario_template = scenario.prompt_template
+        # The scenario lookup is synchronous session work in an async helper.
+        story_scenario_template = await asyncio.to_thread(
+            _scenario_prompt_template, session, story.scenario_id
+        )
 
     system_prompt, context = await build_chat_context_async(
         [{"role": "user", "content": chapter.content.strip()}],
@@ -903,6 +926,14 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
     return job.id
 
 
+def _scenario_prompt_template(session: Session, scenario_id: str) -> str | None:
+    """A scenario's prompt template, read off the event loop."""
+    scenario = session.get(Scenario, scenario_id)
+    if scenario and scenario.prompt_template:
+        return scenario.prompt_template
+    return None
+
+
 _ACTION_PROMPTS = {
     "rewrite": (
         "You are a skilled fiction editor. Rewrite the provided passage according to the "
@@ -939,10 +970,11 @@ async def story_ai_action(story_id: str, chapter_id: str, data: StoryActionReque
     if not target_text:
         raise ValidationError("target_text is required")
 
-    chapter = story_chapter_repo.get(chapter_id, story_id)
-    if not chapter or chapter.story_id != story_id:
-        raise NotFoundError("StoryChapter", chapter_id)
-    story = story_repo.get(story_id)
+    # Only the context build and the job enqueue below are awaited, so the
+    # chapter/story reads move to a worker thread.
+    story, chapter = await asyncio.to_thread(
+        _story_chapter_pair_sync, story_repo, story_chapter_repo, story_id, chapter_id
+    )
 
     directive = data.directive.strip()
     directive_line = f"\n\nAuthor's directive: {directive}" if directive else ""
@@ -997,10 +1029,47 @@ async def story_ai_action(story_id: str, chapter_id: str, data: StoryActionReque
 async def retry_last_continuation(story_id: str, chapter_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo), story_revision_repo: StoryChapterRevisionRepository = Depends(get_story_revision_repo)):
     """Drop the most recent AI continuation (last narrator beat + its prose)
     and immediately enqueue a fresh continuation in its place."""
+    # Trimming the last continuation is synchronous session work and the enqueue
+    # below is awaited, so the whole prologue runs in a worker thread.
+    story, chapter = await asyncio.to_thread(
+        _retry_last_prep_sync,
+        session,
+        story_repo,
+        story_chapter_repo,
+        story_revision_repo,
+        story_id,
+        chapter_id,
+    )
+
+    job_id = await _enqueue_story_continuation(session, story, chapter)
+    return {"job_id": job_id}
+
+
+def _story_chapter_pair_sync(
+    story_repo: StoryRepository,
+    story_chapter_repo: StoryChapterRepository,
+    story_id: str,
+    chapter_id: str,
+) -> tuple[Story | None, StoryChapter]:
+    """Load a story and one of its chapters, off the event loop."""
     chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
-    story = story_repo.get(story_id)
+    return story_repo.get(story_id), chapter
+
+
+def _retry_last_prep_sync(
+    session: Session,
+    story_repo: StoryRepository,
+    story_chapter_repo: StoryChapterRepository,
+    story_revision_repo: StoryChapterRevisionRepository,
+    story_id: str,
+    chapter_id: str,
+) -> tuple[Story | None, StoryChapter]:
+    """Trim the chapter's last AI continuation, off the event loop."""
+    story, chapter = _story_chapter_pair_sync(
+        story_repo, story_chapter_repo, story_id, chapter_id
+    )
 
     _ensure_beat_ids(session, chapter)
     beats = list(chapter.beats or [])
@@ -1029,9 +1098,11 @@ async def retry_last_continuation(story_id: str, chapter_id: str, session: Sessi
     session.add(chapter)
     session.commit()
     session.refresh(chapter)
-
-    job_id = await _enqueue_story_continuation(session, story, chapter)
-    return {"job_id": job_id}
+    if story is not None:
+        # commit() expired the story's columns; the enqueue helper below reads
+        # them from the event loop.
+        session.refresh(story)
+    return story, chapter
 
 
 def _revision_out(revision: StoryChapterRevision) -> dict:
@@ -1334,18 +1405,11 @@ async def illustrate_chapter(
     story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo),
 ):
 
-    chapter = story_chapter_repo.get(chapter_id, story_id)
-    if not chapter or chapter.story_id != story_id:
-        raise NotFoundError("StoryChapter", chapter_id)
-
-    story = story_repo.get(story_id)
-
-    # Resolve checkpoint: story characters > fallback to an installed model
-    checkpoint = _resolve_default_checkpoint(session)
-    if story and story.character_ids:
-        char = session.get(Character, story.character_ids[0])
-        if char and char.checkpoint:
-            checkpoint = _resolve_default_checkpoint(session, char.checkpoint)
+    # Both the job submission and the LLM job creation are awaited, so the
+    # chapter/story/checkpoint reads run in a worker thread.
+    story, chapter, checkpoint = await asyncio.to_thread(
+        _illustrate_chapter_prep_sync, session, story_repo, story_chapter_repo, story_id, chapter_id
+    )
 
     if data.image_prompt:
         # Provided prompt: queue image job directly (non-blocking)
@@ -1355,7 +1419,6 @@ async def illustrate_chapter(
             session,
             prompt=data.image_prompt,
             checkpoint=checkpoint,
-            filename_prefix="ComfyUI",
             workspace="story",
             story_id=story_id,
             chapter_id=chapter_id,
@@ -1364,7 +1427,63 @@ async def illustrate_chapter(
         return {"job_id": img_job.id, "prompt": data.image_prompt}
 
     # No provided prompt: fire an LLM job to generate one, store context for
-    # chaining into an image job when the LLM completes.
+    # chaining into an image job when the LLM completes. Assembling it reads
+    # characters and lorebooks, so it too runs in a worker thread.
+    system_prompt = await asyncio.to_thread(
+        _illustrate_system_prompt_sync, session, story, chapter
+    )
+
+    job_service = JobService(session)
+
+    workflow, metadata = build_llm_workflow(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Chapter text:\n{chapter.content[-3000:]}"}
+        ],
+        type_="story_illustrate_prompt",
+        story_id=story_id,
+        chapter_id=chapter_id,
+        model=(story.llm_model if story else None) or _get_default_llm_model(),
+        workspace="story",
+        samplers=sampler_overrides(story),
+        source="story_illustrate_prompt",
+        extra_metadata={"scene_checkpoint": checkpoint},
+    )
+    prompt_job = await job_service.create_job(
+        task_type="llm",
+        workflow=workflow,
+        metadata=metadata,
+    )
+    await queue_manager.enqueue(prompt_job.id, task_type="llm")
+
+    return {"job_id": prompt_job.id, "status": "queued", "message": "Illustration prompt generation started"}
+
+
+def _illustrate_chapter_prep_sync(
+    session: Session,
+    story_repo: StoryRepository,
+    story_chapter_repo: StoryChapterRepository,
+    story_id: str,
+    chapter_id: str,
+) -> tuple[Story | None, StoryChapter, str]:
+    """Load the chapter, its story and the checkpoint to illustrate with."""
+    story, chapter = _story_chapter_pair_sync(
+        story_repo, story_chapter_repo, story_id, chapter_id
+    )
+
+    # Resolve checkpoint: story characters > fallback to an installed model
+    checkpoint = _resolve_default_checkpoint(session)
+    if story and story.character_ids:
+        char = session.get(Character, story.character_ids[0])
+        if char and char.checkpoint:
+            checkpoint = _resolve_default_checkpoint(session, char.checkpoint)
+    return story, chapter, checkpoint
+
+
+def _illustrate_system_prompt_sync(
+    session: Session, story: Story | None, chapter: StoryChapter
+) -> str:
+    """Assemble the art-director prompt from the story's characters and lore."""
     system_prompt = (
         "You are an AI art director for a story. Given the story chapter text, "
         "write a highly detailed ComfyUI prompt (comma-separated Danbooru tags, lighting, "
@@ -1432,31 +1551,7 @@ async def illustrate_chapter(
                     lore_lines.append(f"- [{keys_str}]: {entry.content}")
         if lore_lines:
             system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lore_lines)
-
-    job_service = JobService(session)
-
-    workflow, metadata = build_llm_workflow(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Chapter text:\n{chapter.content[-3000:]}"}
-        ],
-        type_="story_illustrate_prompt",
-        story_id=story_id,
-        chapter_id=chapter_id,
-        model=(story.llm_model if story else None) or _get_default_llm_model(),
-        workspace="story",
-        samplers=sampler_overrides(story),
-        source="story_illustrate_prompt",
-        extra_metadata={"scene_checkpoint": checkpoint},
-    )
-    prompt_job = await job_service.create_job(
-        task_type="llm",
-        workflow=workflow,
-        metadata=metadata,
-    )
-    await queue_manager.enqueue(prompt_job.id, task_type="llm")
-
-    return {"job_id": prompt_job.id, "status": "queued", "message": "Illustration prompt generation started"}
+    return system_prompt
 
 
 @router.get("/{story_id}/images")
@@ -1492,24 +1587,17 @@ async def narrate_chapter(
 ):
     """Trigger TTS narration for an entire story chapter."""
     from core.workflow_builder import build_tts_workflow
-    from services.chat_utils import resolve_voice_for_character
 
-    story = story_repo.get(story_id)
-    if not story:
-        raise NotFoundError("Story", story_id)
-    chapter = story_chapter_repo.get(chapter_id, story_id)
-    if not chapter or chapter.story_id != story_id:
-        raise NotFoundError("StoryChapter", chapter_id)
-
-    text = chapter.content.strip()
-    if not text:
-        raise ComfyError("Chapter has no content to narrate")
-
-    # Resolve voice model from story or first character
-    voice_profile = voice_model_id = language = None
-    if story.character_ids:
-        char = session.get(Character, story.character_ids[0])
-        voice_profile, voice_model_id, language = resolve_voice_for_character(session, char)
+    # Story, chapter and voice resolution are synchronous session work; only
+    # the job creation below is awaited.
+    text, voice_profile, voice_model_id, language = await asyncio.to_thread(
+        _narrate_chapter_prep_sync,
+        session,
+        story_repo,
+        story_chapter_repo,
+        story_id,
+        chapter_id,
+    )
 
     workflow, metadata = build_tts_workflow(
         text=text,
@@ -1531,6 +1619,35 @@ async def narrate_chapter(
     await queue_manager.enqueue(job.id, task_type="image")
 
     return {"job_id": job.id, "chapter_id": chapter_id, "story_id": story_id}
+
+
+def _narrate_chapter_prep_sync(
+    session: Session,
+    story_repo: StoryRepository,
+    story_chapter_repo: StoryChapterRepository,
+    story_id: str,
+    chapter_id: str,
+) -> tuple[str, str | None, str | None, str | None]:
+    """Load the chapter text and resolve the voice to narrate it with."""
+    from services.chat_utils import resolve_voice_for_character
+
+    story = story_repo.get(story_id)
+    if not story:
+        raise NotFoundError("Story", story_id)
+    chapter = story_chapter_repo.get(chapter_id, story_id)
+    if not chapter or chapter.story_id != story_id:
+        raise NotFoundError("StoryChapter", chapter_id)
+
+    text = chapter.content.strip()
+    if not text:
+        raise ComfyError("Chapter has no content to narrate")
+
+    # Resolve voice model from story or first character
+    voice_profile = voice_model_id = language = None
+    if story.character_ids:
+        char = session.get(Character, story.character_ids[0])
+        voice_profile, voice_model_id, language = resolve_voice_for_character(session, char)
+    return text, voice_profile, voice_model_id, language
 
 
 def _resolve_default_checkpoint(session: Session, preferred: str | None = None) -> str:
@@ -1576,6 +1693,6 @@ Return a strictly valid JSON object in this format:
     metadata["workspace"] = "story"
     job_service = get_job_service(session)
     job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
-    session.commit()
+    await asyncio.to_thread(session.commit)
     await queue_manager.enqueue(job.id, task_type="llm")
     return {"job_id": job.id}

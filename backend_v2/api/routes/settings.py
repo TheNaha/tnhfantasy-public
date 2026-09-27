@@ -757,7 +757,7 @@ PRESETS = [
 
 
 @router.get("/presets")
-async def get_presets(session: Session = Depends(get_session)):
+def get_presets(session: Session = Depends(get_session)):
     """Returns a list of curated models with installation status."""
     from api.deps import get_model_repo_v2
     repo = get_model_repo_v2(session)

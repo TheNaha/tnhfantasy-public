@@ -17,12 +17,14 @@ consumes the inbound models and builds its outbound frames from the outbound
 models, so both halves of the socket read from a single contract.
 """
 
+import asyncio
 import hmac
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+from sqlmodel import select
 
 from api.deps import (
     get_job_service,
@@ -67,17 +69,37 @@ logger = get_logger("worker_ws")
 router = APIRouter(tags=["worker-ws"])
 
 
+def _assigned_provider_id(job_id: str) -> str | None:
+    """The provider a job is assigned to, or `None` if the job does not exist.
+
+    BLOCKING. Reads one column, not the row: the old form did
+    `session.get(Job, job_id)`, which loaded the whole `Job` — `workflow` and
+    `metadata_` jsonb included — to compare one string field, and did it on the
+    event loop for **every inbound frame** including every progress tick of a
+    live generation. A worker streaming progress for a 60-second image was doing
+    a full-row SELECT per tick on the loop that every other request needed.
+    """
+    from api.deps import get_session_sync
+
+    session = get_session_sync()
+    try:
+        return session.exec(
+            select(Job.provider_id).where(Job.id == job_id)
+        ).first()
+    finally:
+        session.close()
+
+
 async def _worker_owns_job(job_id: str | None, provider_id: str) -> bool:
     if not job_id:
         return False
-    async with get_session_context() as session:
-        job = session.get(Job, job_id)
-    if job is None:
+    assigned = await asyncio.to_thread(_assigned_provider_id, job_id)
+    if assigned is None:
         return False
     # A job with no provider assigned must NOT be claimable by any worker that
     # happens to be connected: provider_id in {None, provider_id} let any worker
     # report progress/completion for a job it was never given.
-    return job.provider_id == provider_id
+    return assigned == provider_id
 
 def _coerce_percent(value) -> int:
     """Normalise a worker-reported progress value to a 0..100 integer.
@@ -116,9 +138,23 @@ async def _send_not_assigned(websocket: WebSocket) -> None:
 
 
 async def _fetch_pending_models(provider_id: str) -> list:
-    async with get_session_context() as session:
-        service = get_model_service_v2(session)
-        return service.get_pending_downloads(provider_id)
+    """Off the loop for the same reason as `_worker_owns_job`.
+
+    This one is on a handshake rather than a per-frame path, but it is a
+    multi-table read of every pending download for a provider, and a worker
+    reconnecting during a burst of downloads is exactly when several sockets are
+    doing this at once.
+    """
+    def _load() -> list:
+        from api.deps import get_session_sync
+
+        session = get_session_sync()
+        try:
+            return get_model_service_v2(session).get_pending_downloads(provider_id)
+        finally:
+            session.close()
+
+    return await asyncio.to_thread(_load)
 
 
 async def _send_pending_models(websocket: WebSocket, models: list) -> None:

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 from sqlmodel import Session
@@ -71,21 +72,46 @@ class JobSubmissionService:
         preferred_provider_id: str | None = None,
         task_type: str = "image",
     ):
-        metadata = metadata or {}
-        if task_type == "llm" and not preferred_provider_id:
-            from services.llm_config import resolve_default_provider
-            try:
-                resolved = resolve_default_provider(self.session)
-            except Exception:
-                resolved = None
-            if resolved:
-                preferred_provider_id = resolved[0]
-                metadata.setdefault("llm_model", resolved[1])
-        if preferred_provider_id:
-            metadata = {**metadata, "preferred_provider_id": preferred_provider_id}
-        required_models, availability = self.validate_workflow(
-            workflow,
-            preferred_provider_id=preferred_provider_id,
+        def _resolve_and_validate():
+            """The database prologue: resolve the provider, then validate the
+            workflow against what is actually installed.
+
+            BLOCKING — three or four queries. This is the caller-visible cost of
+            `submit_image_job` and it was running inline on the event loop, once
+            per generate/illustrate/narrate request, while the request that asked
+            for it waited. The only genuinely async part of this method is the
+            `await` on `create_job` and `enqueue` below, so the prologue is the
+            part that can move.
+
+            Returning rather than mutating keeps the `metadata` rebinding visible:
+            `preferred_provider_id` is reassigned here and used after the
+            `await`, so it has to come back out of the worker thread.
+            """
+            resolved_metadata = dict(metadata or {})
+            resolved_provider_id = preferred_provider_id
+            if task_type == "llm" and not resolved_provider_id:
+                from services.llm_config import resolve_default_provider
+
+                try:
+                    resolved = resolve_default_provider(self.session)
+                except Exception:
+                    resolved = None
+                if resolved:
+                    resolved_provider_id = resolved[0]
+                    resolved_metadata.setdefault("llm_model", resolved[1])
+            if resolved_provider_id:
+                resolved_metadata = {
+                    **resolved_metadata,
+                    "preferred_provider_id": resolved_provider_id,
+                }
+            required, avail = self.validate_workflow(
+                workflow,
+                preferred_provider_id=resolved_provider_id,
+            )
+            return resolved_metadata, resolved_provider_id, required, avail
+
+        metadata, preferred_provider_id, required_models, availability = (
+            await asyncio.to_thread(_resolve_and_validate)
         )
 
         if required_models and not availability.valid:
