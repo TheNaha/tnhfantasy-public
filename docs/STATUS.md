@@ -39,17 +39,41 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of 2026-09-26:
+All three suites green as of **2026-09-27**:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | 1931 passed, 7 skipped | `cd backend_v2 && .venv/bin/pytest` |
-| Frontend | 764 passed across 93 files | `cd frontend_v2 && npm test` |
-| Providers | 105 passed | `cd provider_containers && venv/bin/python -m pytest` |
+| Backend | **2441 passed, 7 skipped** (225 s) | `cd backend_v2 && .venv/bin/pytest` |
+| Frontend | **1080 passed across 116 files** (82 s) | `cd frontend_v2 && npm test` |
+| Providers | **596 passed, 4 skipped** (67 s) | `cd provider_containers && venv/bin/python -m pytest` |
 
-Lint: `ruff check .` clean in the backend, `npm run lint` reports 0 errors
-(one pre-existing `react-hooks/exhaustive-deps` warning on a ref read inside a
-timeout, which is correct as written).
+Lint: `ruff check .` clean in the backend **and** in `provider_containers` (which
+now has its own `ruff.toml` selecting `F`, with F401 on and zero blanket
+ignores). `npm run lint` reports 0 errors and 6 pre-existing warnings.
+
+Compose: `docker compose -f docker-compose.yml -f docker-compose.dev.yml
+--profile providers config --quiet` exits 0, and a CI job now runs it plus a
+build of all three provider Dockerfiles, so a broken `Dockerfile` no longer ships
+green.
+
+Running the suites is the point. 128 provider tests, 11 frontend tests and 10
+backend tests were added by the 2026-09-27 pass alone, and the counts above are
+the only trustworthy thing in this file.
+
+> **The counts above were wrong until 2026-09-27 and this table is the reason to
+> distrust any status table in a repo that nobody re-runs.** The previous
+> revision of this section claimed "all three suites green" with a backend count
+> of 1931; the suite actually had **24 failures** and took **18 minutes** rather
+> than the 197 s it had taken a week earlier. Nothing had been run.
+>
+> `docs/audit-2026-09-27.md` is the record of the consolidation pass that
+> followed: two P0s (committed live credentials; every unhandled exception
+> taking ~22 s to become a 500, which is what had made the suite 5× slower), plus
+> a broken faceted-search endpoint, a job-recovery path that failed **open** on a
+> database error, a job that could be permanently stranded, a paid LLM call on
+> every chat reply, unbounded reads, and roughly forty `async def` handlers doing
+> synchronous queries on the event loop. The backend suite went from 1097 s to
+> ~250 s as a side effect of fixing the logging defect alone.
 
 Feature-wise the project is **complete against its own ambitions**. An earlier
 plan listed sampler controls, story-loop AI actions, chapter revisions, group
