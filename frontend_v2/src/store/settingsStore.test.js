@@ -13,7 +13,6 @@ const DEFAULT_SETTINGS = {
     ui: {
         defaultViewMode: 'grid',
         defaultGridColumns: 4,
-        toastDuration: 3000,
         toastSuccessDuration: 3000,
         toastErrorDuration: 4000,
         animationDuration: 200,
@@ -52,7 +51,7 @@ describe('useSettingsStore', () => {
             const { settings } = useSettingsStore.getState();
             expect(settings.ui.defaultViewMode).toBe('grid');
             expect(settings.ui.defaultGridColumns).toBe(4);
-            expect(settings.ui.toastDuration).toBe(3000);
+            expect(settings.ui.toastSuccessDuration).toBe(3000);
         });
 
         it('has default gallery settings', () => {
@@ -130,7 +129,7 @@ describe('useSettingsStore', () => {
             const { settings } = useSettingsStore.getState();
             // Other ui settings should still be there
             expect(settings.ui.defaultGridColumns).toBe(4);
-            expect(settings.ui.toastDuration).toBe(3000);
+            expect(settings.ui.toastSuccessDuration).toBe(3000);
         });
 
         it('ignores unknown categories', () => {

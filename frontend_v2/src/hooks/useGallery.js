@@ -1,15 +1,21 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { assetsApi, jobsApi } from '../api';
-
-const LIMIT = 20;
+import useSettingsStore from '../store/settingsStore';
 
 export function useGallery(filters = {}) {
+    // Settings > Gallery > "Items Per Page" writes this; it used to be a
+    // hardcoded 20, which left the control dead.
+    const limit = useSettingsStore((s) => s.settings?.gallery?.itemsPerPage) || 20;
+
     return useInfiniteQuery({
-        queryKey: ['gallery', filters],
+        // The limit is in the key so changing "Items Per Page" in Settings takes
+        // effect on the next render instead of the next refetch. Everything that
+        // invalidates the gallery uses `['gallery', filters]` as a prefix.
+        queryKey: ['gallery', filters, limit],
         queryFn: async ({ pageParam = null }) => {
             // Build params (cursor-based keyset pagination)
             const params = {
-                limit: LIMIT,
+                limit,
                 cursor: pageParam || undefined,
                 search: filters.search,
                 workspace: filters.workspace,
@@ -30,7 +36,7 @@ export function useGallery(filters = {}) {
                 assetsApi.list(params),
                 pageParam
                     ? Promise.resolve({ jobs: [] })
-                    : jobsApi.list({ limit: LIMIT, sort: 'created_at_desc' }).catch(() => ({ jobs: [] })),
+                    : jobsApi.list({ limit, sort: 'created_at_desc' }).catch(() => ({ jobs: [] })),
             ]);
 
             return {

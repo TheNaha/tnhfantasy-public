@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import EmptyState from '../EmptyState';
 import { TimelineView } from './TimelineView';
 import GroupedDashboardContent from './GroupedDashboardContent';
+import useSettingsStore from '../../store/settingsStore';
 
 /**
  * DashboardGalleryGrid Component
@@ -32,6 +33,7 @@ import GroupedDashboardContent from './GroupedDashboardContent';
  * 
  * @param {React.RefObject} props.sentinelRef - React Ref for infinite scrolling scroll sentinel
  * @param {boolean} props.isFetchingNextPage - Whether next page is being fetched
+ * @param {boolean} props.isRefreshing - Whether a background refetch is in flight
  */
 export default function DashboardGalleryGrid({
     isLoading,
@@ -59,7 +61,13 @@ export default function DashboardGalleryGrid({
 
     sentinelRef,
     isFetchingNextPage,
+    isRefreshing,
 }) {
+    // Settings > Gallery > "Silent Refresh": a background refetch (job
+    // completion, reconnect) leaves the already-rendered grid alone, so the
+    // indicator is only worth showing when the user turned this off.
+    const silentRefresh = useSettingsStore((s) => s.settings?.gallery?.silentRefresh);
+
     if (isLoading) {
         return (
             <div className="flex justify-center items-center h-64">
@@ -128,6 +136,12 @@ export default function DashboardGalleryGrid({
             {isFetchingNextPage && (
                 <div className="flex justify-center py-8">
                     <Loader2 className="animate-spin text-gray-400" size={32} />
+                </div>
+            )}
+
+            {isRefreshing && !silentRefresh && (
+                <div data-testid="gallery-refreshing" className="flex justify-center items-center gap-2 py-2 text-xs text-gray-500">
+                    <Loader2 className="animate-spin" size={12} /> Refreshing…
                 </div>
             )}
         </>

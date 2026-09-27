@@ -53,7 +53,16 @@ const DEFAULT_FORM = {
     visual_tags: [], lora_triggers: [], voice_profile: '',
 };
 
-export function CharacterModal({ isOpen, onClose, character, onSave, activeTab = 'details', onTabChange }) {
+export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: activeTabProp, onTabChange }) {
+    // `activeTab`/`onTabChange` are optional: call sites that only need the
+    // details form (e.g. StorySandbox's context panel) must not crash on a
+    // missing onTabChange.
+    const [internalTab, setInternalTab] = useState('details');
+    const activeTab = activeTabProp ?? internalTab;
+    const handleTabChange = (tab) => {
+        setInternalTab(tab);
+        onTabChange?.(tab);
+    };
     const [form, setForm] = useState(() => {
         if (character) {
             return {
@@ -387,7 +396,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                             <div className="flex items-center gap-1 px-6 py-2 border-b border-gray-700/30 bg-gray-900/40">
                                 <button
                                     type="button"
-                                    onClick={() => onTabChange('details')}
+                                    onClick={() => handleTabChange('details')}
                                     className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                                         activeTab === 'details'
                                             ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
@@ -398,7 +407,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => onTabChange('memories')}
+                                    onClick={() => handleTabChange('memories')}
                                     className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                                         activeTab === 'memories'
                                             ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'

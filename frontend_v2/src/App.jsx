@@ -19,7 +19,7 @@ import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence, MotionConfig } from 'framer-motion';
 import { Toaster, toast } from 'react-hot-toast';
 import Layout from './components/Layout';
 import ConfirmationHost from './components/ConfirmationHost';
@@ -215,6 +215,12 @@ function GlobalHooks() {
 
 function App() {
     const queryUiSettings = useSettingsStore((state) => state.settings.ui);
+    // Settings > UI > "Animation Duration": the only global handle on how fast
+    // Framer Motion animates, since every page transition reads the default
+    // transition rather than declaring its own.
+    const animationDuration = Number.isFinite(queryUiSettings?.animationDuration)
+        ? queryUiSettings.animationDuration
+        : 300;
     const toastDurations = useSettingsStore(useShallow((state) => ({
         success: state.settings.ui.toastSuccessDuration,
         error: state.settings.ui.toastErrorDuration,
@@ -270,46 +276,48 @@ function App() {
 
     return (
         <ErrorBoundary>
-            <QueryClientProvider client={queryClient}>
-                <GlobalHooks />
-                <Router>
-                    <Layout>
-                        <Suspense fallback={
-                            <div className="flex items-center justify-center h-screen bg-gray-900">
-                                <Loader2 className="animate-spin text-blue-500" size={48} />
-                            </div>
-                        }>
-                            <AnimatedRoutes />
-                        </Suspense>
-                    </Layout>
-                </Router>
-                <ConfirmationHost />
-                <Toaster
-                    position="top-right"
-                    toastOptions={{
-                        className: '',
-                        style: {
-                            background: '#1f2937',
-                            color: '#f3f4f6',
-                            border: '1px solid #374151',
-                        },
-                        success: {
-                            duration: toastDurations.success,
-                            iconTheme: {
-                                primary: '#10b981',
-                                secondary: '#1f2937',
+            <MotionConfig transition={{ duration: animationDuration / 1000 }}>
+                <QueryClientProvider client={queryClient}>
+                    <GlobalHooks />
+                    <Router>
+                        <Layout>
+                            <Suspense fallback={
+                                <div className="flex items-center justify-center h-screen bg-gray-900">
+                                    <Loader2 className="animate-spin text-blue-500" size={48} />
+                                </div>
+                            }>
+                                <AnimatedRoutes />
+                            </Suspense>
+                        </Layout>
+                    </Router>
+                    <ConfirmationHost />
+                    <Toaster
+                        position="top-right"
+                        toastOptions={{
+                            className: '',
+                            style: {
+                                background: '#1f2937',
+                                color: '#f3f4f6',
+                                border: '1px solid #374151',
                             },
-                        },
-                        error: {
-                            duration: toastDurations.error,
-                            iconTheme: {
-                                primary: '#ef4444',
-                                secondary: '#1f2937',
+                            success: {
+                                duration: toastDurations.success,
+                                iconTheme: {
+                                    primary: '#10b981',
+                                    secondary: '#1f2937',
+                                },
                             },
-                        },
-                    }}
-                />
-            </QueryClientProvider>
+                            error: {
+                                duration: toastDurations.error,
+                                iconTheme: {
+                                    primary: '#ef4444',
+                                    secondary: '#1f2937',
+                                },
+                            },
+                        }}
+                    />
+                </QueryClientProvider>
+            </MotionConfig>
         </ErrorBoundary>
     );
 }

@@ -9,7 +9,7 @@ import { useSettings, useUpdateSettings } from '../store/settingsStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
 import { useLLMProviderStatus, useSetLLMDefault } from '../hooks/useLLMProviderStatus';
 import useProvidersPageData from '../hooks/useProvidersPageData';
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 
 
 function SystemPromptsEditor() {
@@ -21,9 +21,15 @@ function SystemPromptsEditor() {
     });
     const [draft, setDraft] = useState({});
     const [saving, setSaving] = useState(false);
+    // Seed once per mount. `refetchOnReconnect` is a global default, so a
+    // reconnect mid-typing used to replace every textarea with the server copy
+    // and silently discard the edit in progress.
+    const seededDraftRef = useRef(false);
 
     useEffect(() => {
-        if (blocksData?.blocks) setDraft({ ...blocksData.blocks });
+        if (seededDraftRef.current || !blocksData?.blocks) return;
+        seededDraftRef.current = true;
+        setDraft({ ...blocksData.blocks });
     }, [blocksData]);
 
     const handleSave = async () => {
@@ -79,7 +85,7 @@ function SystemPromptsEditor() {
 
 export default function Settings() {
     const settings = useSettings();
-    const { updateSetting, resetCategory, resetSettings } = useUpdateSettings();
+    const { updateSetting, updateCategory, resetCategory, resetSettings } = useUpdateSettings();
     const { confirm } = useConfirmation();
     const queryClient = useQueryClient();
 
@@ -98,6 +104,10 @@ export default function Settings() {
         updateSetting(category, key, value);
         toast.success('Setting updated!');
     };
+
+    // Stable, so the AI tab's backend-seed effect keeps its mount-only deps and
+    // does not re-seed (and re-write the whole category) on every render.
+    const handleSyncAiSettings = useCallback((patch) => updateCategory('ai', patch), [updateCategory]);
 
     const handleResetCategory = (category) => {
         resetCategory(category);
@@ -208,6 +218,7 @@ export default function Settings() {
                             <AISettings
                                 settings={settings.ai}
                                 onUpdate={(key, value) => handleUpdateSetting('ai', key, value)}
+                                onSync={handleSyncAiSettings}
                                 onReset={() => handleResetCategory('ai')}
                             />
                         )}
@@ -801,7 +812,7 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                 </SettingGroup>
 
                 {/* Animation Duration */}
-                <SettingGroup title="Animation Duration" description="Speed of UI animations (milliseconds)">
+                <SettingGroup title="Animation Duration" description="Speed of page transition and modal animations (milliseconds)">
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
@@ -1120,7 +1131,7 @@ function SettingGroup({ title, description, children, action }) {
 }
 
 // AI Settings Component
-function AISettings({ settings, onUpdate, onReset }) {
+function AISettings({ settings, onUpdate, onSync, onReset }) {
     const { providers = [] } = useProvidersPageData();
     const llmStatus = useLLMProviderStatus();
     const setDefaultMutation = useSetLLMDefault();
@@ -1158,14 +1169,19 @@ function AISettings({ settings, onUpdate, onReset }) {
                 const res = await settingsApi.get();
                 const ai = res?.settings?.ai;
                 if (ai && !cancelled) {
-                    if (ai.maxContextTokens) onUpdate('maxContextTokens', Number(ai.maxContextTokens));
-                    if (ai.temperature != null) onUpdate('temperature', Number(ai.temperature));
-                    if (ai.top_p != null) onUpdate('topP', Number(ai.top_p));
-                    if (ai.max_output_tokens != null) onUpdate('maxOutputTokens', Number(ai.max_output_tokens));
-                    if (ai.frequency_penalty != null) onUpdate('frequencyPenalty', Number(ai.frequency_penalty));
-                    if (ai.presence_penalty != null) onUpdate('presencePenalty', Number(ai.presence_penalty));
-                    if (ai.idleSimEnabled != null) onUpdate('idleSimEnabled', !!ai.idleSimEnabled);
-                    if (ai.idleSimIntervalSeconds != null) onUpdate('idleSimIntervalSeconds', Number(ai.idleSimIntervalSeconds));
+                    // One set() for the whole patch: eight updateSetting calls
+                    // re-rendered every useSettings() consumer eight times and
+                    // fired eight "Setting updated!" toasts on mount.
+                    const patch = {};
+                    if (ai.maxContextTokens) patch.maxContextTokens = Number(ai.maxContextTokens);
+                    if (ai.temperature != null) patch.temperature = Number(ai.temperature);
+                    if (ai.top_p != null) patch.topP = Number(ai.top_p);
+                    if (ai.max_output_tokens != null) patch.maxOutputTokens = Number(ai.max_output_tokens);
+                    if (ai.frequency_penalty != null) patch.frequencyPenalty = Number(ai.frequency_penalty);
+                    if (ai.presence_penalty != null) patch.presencePenalty = Number(ai.presence_penalty);
+                    if (ai.idleSimEnabled != null) patch.idleSimEnabled = !!ai.idleSimEnabled;
+                    if (ai.idleSimIntervalSeconds != null) patch.idleSimIntervalSeconds = Number(ai.idleSimIntervalSeconds);
+                    if (Object.keys(patch).length > 0) onSync(patch);
                 }
             } catch {
                 // Backend unreachable — keep local defaults.

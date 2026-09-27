@@ -24,10 +24,9 @@ const DEFAULT_SETTINGS = {
     ui: {
         defaultViewMode: 'grid',    // 'grid' | 'list'
         defaultGridColumns: 4,       // columns shown in grid view
-        toastDuration: 3000,         // default toast lifetime (ms)
         toastSuccessDuration: 3000,  // success toast lifetime (ms)
         toastErrorDuration: 4000,    // error toast lifetime (ms) – slightly longer so users can read it
-        animationDuration: 200,      // CSS transition / Framer Motion default (ms)
+        animationDuration: 200,      // Framer Motion default transition (ms)
         queryStaleTime: 300000,      // React Query: how long before data is considered stale (5 min)
         queryCacheTime: 600000       // React Query: how long unused cached data is kept (10 min)
     },
@@ -129,6 +128,29 @@ const useSettingsStore = create(
             },
 
             /**
+             * Update every key of one category in a single `set`, so a patch
+             * read from the server re-renders `useSettings()` consumers once
+             * instead of once per key.
+             *
+             * @param {string} category - Top-level settings group.
+             * @param {object} patch    - Partial settings for that category.
+             *
+             * @example
+             * updateCategory('ai', { temperature: 0.4, maxContextTokens: 8192 });
+             */
+            updateCategory: (category, patch) => {
+                set((state) => {
+                    if (!state.settings[category]) return state;
+                    return {
+                        settings: {
+                            ...state.settings,
+                            [category]: { ...state.settings[category], ...patch },
+                        },
+                    };
+                });
+            },
+
+            /**
              * Reset all settings to their compiled-in defaults.
              * This also clears any values that were persisted in localStorage.
              */
@@ -201,17 +223,19 @@ export const useSettings = () => {
  * Unlike `useSettings`, this does NOT cause re-renders when settings change,
  * because it only selects the action functions (which are stable references).
  *
- * @returns {{ updateSetting, updateSettings, resetSettings, resetCategory }}
+ * @returns {{ updateSetting, updateSettings, updateCategory, resetSettings, resetCategory }}
  */
 export const useUpdateSettings = () => {
     const updateSetting = useSettingsStore((state) => state.updateSetting);
     const updateSettings = useSettingsStore((state) => state.updateSettings);
+    const updateCategory = useSettingsStore((state) => state.updateCategory);
     const resetSettings = useSettingsStore((state) => state.resetSettings);
     const resetCategory = useSettingsStore((state) => state.resetCategory);
 
     return {
         updateSetting,
         updateSettings,
+        updateCategory,
         resetSettings,
         resetCategory
     };

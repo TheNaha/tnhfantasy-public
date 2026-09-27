@@ -76,7 +76,7 @@ describe('useGeneratorJob', () => {
             await result.current.handleGenerate();
         });
 
-        expect(mockNavigate).toHaveBeenCalledWith('/');
+        expect(mockNavigate).toHaveBeenCalledWith('/gallery');
     });
 
     it('silently queues (no progress, no job tracking) when setGeneratingOnQueue=false', async () => {

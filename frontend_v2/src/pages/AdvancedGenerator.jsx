@@ -1,6 +1,5 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { Play, Loader2, Settings2 } from 'lucide-react';
-import toast from 'react-hot-toast';
 import { generateApi, createIdempotencyKey } from '../api';
 import ReactFlowEditor from '../components/generator/ReactFlowEditor';
 import { compileReactFlowToComfy } from '../utils/WorkflowCompiler';
@@ -8,6 +7,7 @@ import UnifiedGeneratorLayout from '../components/generator/UnifiedGeneratorLayo
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import useGenerationPreflight from '../hooks/useGenerationPreflight';
 import useProvidersPageData from '../hooks/useProvidersPageData';
+import useSettingsStore from '../store/settingsStore';
 import { useGeneratorJob } from '../hooks/useGeneratorJob';
 
 export default function AdvancedGenerator() {
@@ -15,6 +15,11 @@ export default function AdvancedGenerator() {
     const [showRunway, setShowRunway] = useState(false);
     const [workflowJson, setWorkflowJson] = useState("");
     const [reactFlowState, setReactFlowState] = useState({ nodes: [], edges: [] });
+    // Seeds live inside the user's own graph nodes here, not in a page-level
+    // store, so the global auto-randomise setting cannot be applied — and must
+    // not be, since pinning a seed is how two graphs are compared.
+    const autoRandomizeSeed = useSettingsStore((s) => s.settings?.generator?.autoRandomizeSeed);
+    const workflowRef = useRef(null);
     const { providers: allProviders = [], isLoading: providersLoading } = useProvidersPageData();
     const providers = useMemo(() => allProviders.filter(p => !(p.type === 'llm' || p.worker_type === 'llm' || p.id.startsWith('llm'))), [allProviders]);
     const {
@@ -24,57 +29,50 @@ export default function AdvancedGenerator() {
     } = useGenerationPreflight();
 
     const {
-        setCurrentJobId,
         progress,
-        setProgress,
         generating,
-        setGenerating,
-    } = useGeneratorJob({ setGeneratingOnQueue: true });
+        handleGenerate,
+    } = useGeneratorJob({
+        type: 'advanced',
+        setGeneratingOnQueue: true,
+        // The editor is where the user watches the job progress; redirecting to
+        // the gallery on submit would tear the graph out from under them.
+        redirectAfterGenerate: false,
+        validate: () => {
+            if (editorMode === 'json' && !workflowJson.trim()) {
+                return 'Workflow is empty';
+            }
+            let workflow;
+            try {
+                workflow = editorMode === 'visual'
+                    ? compileReactFlowToComfy(reactFlowState.nodes, reactFlowState.edges)
+                    : JSON.parse(workflowJson);
+            } catch (e) {
+                return e instanceof SyntaxError ? 'Error: Invalid JSON' : `Error: ${e.message}`;
+            }
+            if (editorMode === 'visual') {
+                // Keep the JSON view in step with the graph, as the old local
+                // handler did on every run.
+                setWorkflowJson(JSON.stringify(workflow, null, 2));
+            }
+            workflowRef.current = workflow;
+            return null;
+        },
+        runSubmission: async () => {
+            const workflow = workflowRef.current;
+            return runWithPreflight(workflow, {
+                onValid: async () => generateApi.workflow(workflow, {}, {
+                    idempotencyKey: createIdempotencyKey('generate-advanced')
+                }),
+            });
+        },
+    });
 
     const handleGraphChange = useCallback((nodes, edges) => {
         setReactFlowState({ nodes, edges });
     }, []);
 
-    const handleGenerate = async () => {
-        try {
-            let workflow;
-            if (editorMode === 'visual') {
-                workflow = compileReactFlowToComfy(reactFlowState.nodes, reactFlowState.edges);
-                setWorkflowJson(JSON.stringify(workflow, null, 2)); // Update JSON view just in case
-            } else {
-                workflow = JSON.parse(workflowJson);
-            }
-            
-            setGenerating(true);
-            setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
-
-            const submission = await runWithPreflight(workflow, {
-                onValid: async () => generateApi.workflow(workflow, {}, {
-                    idempotencyKey: createIdempotencyKey('generate-advanced')
-                }),
-            });
-            if (!submission.ok) {
-                setGenerating(false);
-                setProgress(null);
-                return;
-            }
-
-            const data = submission.submissionResult;
-            if (data && data.id) {
-                setCurrentJobId(data.id);
-                setProgress({ value: 0, max: 100, status: 'queued', node: 'Job queued...' });
-                toast.success('Job queued!', { icon: '⏳' });
-            } else {
-                toast.success("Job queued!");
-                setGenerating(false);
-                setProgress(null);
-            }
-        } catch (e) {
-            toast.error(e instanceof SyntaxError ? "Error: Invalid JSON" : `Error: ${e.message}`);
-            setGenerating(false);
-            setProgress(null);
-        }
-    };
+    const onRunWorkflow = () => handleGenerate();
 
     return (
         <UnifiedGeneratorLayout
@@ -116,7 +114,7 @@ export default function AdvancedGenerator() {
                                 </button>
                             )}
                             <button
-                                onClick={handleGenerate}
+                                onClick={onRunWorkflow}
                                 disabled={generating || (editorMode === 'json' && !workflowJson)}
                                 className="px-6 py-2 bg-green-600 rounded-lg font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
@@ -139,6 +137,13 @@ export default function AdvancedGenerator() {
                                 />
                             </div>
                         </div>
+                    )}
+
+                    {autoRandomizeSeed && (
+                        <p className="mb-4 text-xs text-gray-500">
+                            Auto-randomize seed does not apply in Advanced mode: the seed values inside
+                            your workflow's nodes are sent exactly as you set them.
+                        </p>
                     )}
 
                     <div className="flex-1 overflow-hidden flex flex-col">

@@ -35,13 +35,17 @@ export function useFavorites() {
   });
 
   const favorites = query.data || EMPTY_ARRAY;
+  // `mutation` is a fresh object from useMutation on every render, so it must
+  // not be a useCallback dep: it made `toggleFavorite` (and the memoised
+  // dashboard components behind it) re-render on every parent render.
+  const { mutate } = mutation;
 
   const toggleFavorite = useCallback((filename) => {
     const current = queryClient.getQueryData(['favorites']) || favorites;
     const isFav = current.includes(filename);
     const newFavorites = isFav ? current.filter(f => f !== filename) : [...current, filename];
-    mutation.mutate(newFavorites);
-  }, [favorites, mutation, queryClient]);
+    mutate(newFavorites);
+  }, [favorites, mutate, queryClient]);
 
   const isFavorite = useCallback((filename) => {
     return favorites.includes(filename);

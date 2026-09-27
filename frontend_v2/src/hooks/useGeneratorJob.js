@@ -4,6 +4,10 @@ import toast from 'react-hot-toast';
 import useSettingsStore from '../store/settingsStore';
 import { useJobStatus } from './useJobStatus';
 
+// "Redirect after generate" is documented in Settings as a redirect to the
+// gallery. It used to be '/', which is now a bounce to the roleplay home.
+const GENERATOR_REDIRECT_TARGET = '/gallery';
+
 /**
  * useGeneratorJob — unified job-tracking state + shared generation flow for the
  * guided generator pages (Simple / Img2Img / Inpaint).
@@ -84,7 +88,7 @@ export function useGeneratorJob(opts = {}) {
             toast.success('Generation complete!', { icon: '✨' });
             if (redirectAfterGenerate) {
                 redirectTimerRef.current = setTimeout(
-                    () => navigate('/'),
+                    () => navigate(GENERATOR_REDIRECT_TARGET),
                     Number.isFinite(Number(redirectDelay)) ? Number(redirectDelay) : 0,
                 );
             }
@@ -158,7 +162,7 @@ export function useGeneratorJob(opts = {}) {
                     toast.success('Added to queue!', { icon: '➕' });
                 }
 
-                if (shouldRedirect) navigate('/');
+                if (shouldRedirect) navigate(GENERATOR_REDIRECT_TARGET);
                 if (autoRandomizeSeed) randomizeSeed?.();
             }
         } catch (e) {
