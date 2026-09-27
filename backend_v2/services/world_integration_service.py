@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -20,7 +21,7 @@ from core.entities import (
 from core.events import event_bus, EventType
 from infrastructure.deps import get_session_context
 from infrastructure.logging import get_logger
-from sqlmodel import select
+from sqlmodel import Session, select
 from services.context_builder import build_chat_context_async
 from services.job_queue import queue_manager
 from services.job_service import JobService
@@ -135,7 +136,6 @@ async def _handle_story_illustrate(job_data: dict[str, Any]):
                 session,
                 prompt=prompt,
                 checkpoint=preferred_checkpoint,
-                filename_prefix="ComfyUI",
                 source="story_illustrate",
                 workspace="story",
                 story_id=story_id,
@@ -177,7 +177,6 @@ async def _handle_scene_prompt(job_data: dict[str, Any]):
                 prompt=prompt,
                 negative_prompt=DEFAULT_NEGATIVE_PROMPT,
                 checkpoint=preferred_checkpoint,
-                filename_prefix="ComfyUI",
                 source="scene_illustrate",
                 workspace="chat",
                 chat_id=chat_id,
@@ -308,13 +307,44 @@ async def _handle_story_continue(job_data: dict[str, Any]):
             logger.warning("story_continue_failed", job_id=job_data.get("id"), error=str(e))
 
 
+def _output_paths(job_data: dict[str, Any]) -> list[str]:
+    """Every usable path a completed job produced, in output order.
+
+    This expression was written out five times in this file, once per handler,
+    and every copy read `outputs[0]` only. That is not a cosmetic duplication:
+    `job_processing` reconciles ALL of a batch's outputs into the `assets` table
+    (`job_processing.py:264-289`), so a four-image chat job put four images in
+    the gallery and attached exactly ONE `Message(..., image_path=...)` to the
+    chat. Three of the four silently vanished from the conversation.
+    """
+    paths: list[str] = []
+    for output in job_data.get("outputs") or []:
+        if not isinstance(output, dict):
+            continue
+        path = output.get("relative_path") or output.get("filename")
+        if path and path not in paths:
+            paths.append(path)
+    fallback = job_data.get("image_path")
+    if not paths and fallback:
+        paths.append(fallback)
+    return paths
+
+
+def _first_output_path(job_data: dict[str, Any]) -> str | None:
+    """The first usable path, for the single-output handlers (TTS, previews).
+
+    Deliberately not a general answer: a voice clip and a story illustration are
+    one file each, and taking `[0]` there is correct. It is only the *image*
+    handlers that need all of them.
+    """
+    paths = _output_paths(job_data)
+    return paths[0] if paths else None
+
+
 async def _handle_chat_tts(job_data: dict[str, Any]):
-    outputs = job_data.get("outputs", [])
     chat_id = job_data.get("metadata", {}).get("chat_id")
     message_id = job_data.get("metadata", {}).get("message_id")
-    audio_path = (
-        outputs[0].get("relative_path") if outputs and isinstance(outputs[0], dict) else None
-    ) or job_data.get("image_path")
+    audio_path = _first_output_path(job_data)
     
     if not chat_id or not message_id or not audio_path:
         return
@@ -337,12 +367,9 @@ async def _handle_story_tts(job_data: dict[str, Any]):
     """Store the audio path from a story chapter TTS job into the chapter's beats metadata."""
     from core.entities import StoryChapter
 
-    outputs = job_data.get("outputs", [])
     story_id = job_data.get("metadata", {}).get("story_id")
     chapter_id = job_data.get("metadata", {}).get("chapter_id")
-    audio_path = (
-        outputs[0].get("relative_path") if outputs and isinstance(outputs[0], dict) else None
-    ) or job_data.get("image_path")
+    audio_path = _first_output_path(job_data)
 
     if not story_id or not chapter_id or not audio_path:
         return
@@ -375,13 +402,10 @@ async def _handle_story_tts(job_data: dict[str, Any]):
             logger.warning("story_tts_chapter_failed", job_id=job_data.get("id"), error=str(e))
 
 async def _handle_chat_image(job_data: dict[str, Any]):
-    outputs = job_data.get("outputs", [])
+    image_paths = _output_paths(job_data)
     chat_id = job_data.get("metadata", {}).get("chat_id")
-    image_path = (
-        outputs[0].get("relative_path") if outputs and isinstance(outputs[0], dict) else None
-    ) or job_data.get("image_path")
     metadata = job_data.get("metadata", {})
-    if not chat_id or not image_path:
+    if not chat_id or not image_paths:
         return
 
     async with get_session_context() as session:
@@ -393,19 +417,29 @@ async def _handle_chat_image(job_data: dict[str, Any]):
         else:
             content = metadata.get("image_context", "Generated Image:")
         
-        try:
-            msg = Message(
-                role=MessageRole.SYSTEM,
-                kind=MessageKind.IMAGE,
-                content=content,
-                image_path=image_path,
-                chat_id=chat_id,
-            )
-            session.add(msg)
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            logger.warning("chat_image_msg_failed", job_id=job_data.get("id"), error=str(e))
+        # One message per output. This was `image_path = outputs[0]...`, so a
+        # batch that produced four images attached one and dropped three, even
+        # though all four were already in the `assets` table and visible in the
+        # gallery — the conversation was the only place they went missing.
+        for path in image_paths:
+            try:
+                msg = Message(
+                    role=MessageRole.SYSTEM,
+                    kind=MessageKind.IMAGE,
+                    content=content,
+                    image_path=path,
+                    chat_id=chat_id,
+                )
+                session.add(msg)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.warning(
+                    "chat_image_msg_failed",
+                    job_id=job_data.get("id"),
+                    image_path=path,
+                    error=str(e),
+                )
 
         try:
             character_id = metadata.get("character_id")
@@ -418,38 +452,41 @@ async def _handle_chat_image(job_data: dict[str, Any]):
                     select(Collection).where(Collection.character_id == character_id)
                 ).first()
                 if collection:
-                    existing = session.exec(
-                        select(CollectionImage).where(
-                            CollectionImage.collection_id == collection.id,
-                            CollectionImage.image_filename == image_path,
-                        )
-                    ).first()
-                    if not existing:
-                        session.add(CollectionImage(
-                            collection_id=collection.id,
-                            image_filename=image_path,
-                        ))
-                        session.commit()
+                    for path in image_paths:
+                        existing = session.exec(
+                            select(CollectionImage).where(
+                                CollectionImage.collection_id == collection.id,
+                                CollectionImage.image_filename == path,
+                            )
+                        ).first()
+                        if not existing:
+                            session.add(CollectionImage(
+                                collection_id=collection.id,
+                                image_filename=path,
+                            ))
+                    session.commit()
         except Exception as e:
             session.rollback()
             logger.warning("chat_image_collection_failed", job_id=job_data.get("id"), error=str(e))
 
 
 async def _handle_story_image(job_data: dict[str, Any]):
-    outputs = job_data.get("outputs", [])
+    image_paths = _output_paths(job_data)
     chapter_id = job_data.get("metadata", {}).get("chapter_id")
-    image_path = (
-        outputs[0].get("relative_path") if outputs and isinstance(outputs[0], dict) else None
-    ) or job_data.get("image_path")
-    if not chapter_id or not image_path:
+    if not chapter_id or not image_paths:
         return
 
     async with get_session_context() as session:
         try:
             chapter = session.get(StoryChapter, chapter_id)
             if chapter:
-                if image_path not in (chapter.image_paths or []):
-                    chapter.image_paths = (chapter.image_paths or []) + [image_path]
+                # All of them, appended in order. `image_paths` is already a list
+                # on the chapter, so this is the same shape as the single-image
+                # case — it just no longer stops after the first.
+                existing = list(chapter.image_paths or [])
+                added = [path for path in image_paths if path not in existing]
+                if added:
+                    chapter.image_paths = existing + added
                     session.add(chapter)
                     session.commit()
         except Exception as e:
@@ -577,11 +614,8 @@ async def _handle_voice_preview(job_data: dict[str, Any]):
     """Store the synthesized preview audio path on the voice model row."""
     from core.entities import VoiceModel
 
-    outputs = job_data.get("outputs", [])
     voice_id = job_data.get("metadata", {}).get("voice_id")
-    audio_path = (
-        outputs[0].get("relative_path") if outputs and isinstance(outputs[0], dict) else None
-    ) or job_data.get("image_path")
+    audio_path = _first_output_path(job_data)
 
     if not voice_id or not audio_path:
         return
@@ -666,43 +700,62 @@ async def start_world_integration_service():
         except Exception as exc:
             logger.error("world_integration_event_processing_failed", error=str(exc))
 
+def _install_avatar(video_path: str, avatar_dir: str) -> str:
+    """Copy the rendered video into the character's avatar slot. BLOCKING.
+
+    `os.path.isabs`, `os.path.exists`, `os.makedirs` and `shutil.copy2` are all
+    blocking filesystem calls, and a rendered avatar is a multi-megabyte file on
+    a possibly cold mount. Run in a worker thread: this function is reached from
+    the single JOB_COMPLETED consumer whose own docstring says it must never
+    head-of-line block, because an evicted completed job is a paid generation
+    nothing can reconstruct.
+    """
+    import os
+    import shutil
+
+    if not os.path.isabs(video_path):
+        from config import settings
+
+        video_path = os.path.join(settings.output_dir, video_path)
+    if not os.path.exists(video_path):
+        return ""
+
+    os.makedirs(avatar_dir, exist_ok=True)
+    # Using .webp because our VHS_VideoCombine format is video/webp which works natively in <img> tags
+    new_avatar_path = f"{avatar_dir}/avatar.webp"
+    shutil.copy2(video_path, new_avatar_path)
+    return new_avatar_path
+
+
 async def _handle_avatar_animate(job_data: dict[str, Any]):
     """Update a character's avatar path with the generated AnimateDiff video."""
-    import shutil
-    import os
-    from infrastructure.deps import get_session_context
     from config import settings
     from core.entities import Character
-    
+
+    from infrastructure.deps import get_session_context
+
     metadata = job_data.get("metadata", {})
     character_id = metadata.get("character_id")
     if not character_id:
         return
-        
-    video_path = (
-        job_data.get("result_paths", [None])[0]
-        or (job_data.get("outputs") or [{}])[0].get("relative_path")
-        or (job_data.get("outputs") or [{}])[0].get("filename")
-        or job_data.get("image_path")
-    )
+
+    # `result_paths` was read here and written nowhere in the repository, so that
+    # branch could only ever yield `None` — and it would have raised IndexError
+    # into the blanket handler above if ever present-but-empty. A rendered video
+    # is one file, so the first usable output is the whole answer.
+    video_path = _first_output_path(job_data)
     if not video_path:
         return
-    if not os.path.isabs(video_path):
-        video_path = os.path.join(settings.output_dir, video_path)
-    if not os.path.exists(video_path):
+
+    avatar_dir = f"{settings.character_avatar_dir}/{character_id}"
+    new_avatar_path = await asyncio.to_thread(_install_avatar, video_path, avatar_dir)
+    if not new_avatar_path:
         return
-        
+
     async with get_session_context() as session:
         character = session.get(Character, character_id)
         if not character:
             return
-            
-        avatar_dir = f"{settings.character_avatar_dir}/{character_id}"
-        os.makedirs(avatar_dir, exist_ok=True)
-        # Using .webp because our VHS_VideoCombine format is video/webp which works natively in <img> tags
-        new_avatar_path = f"{avatar_dir}/avatar.webp"
-        
-        shutil.copy2(video_path, new_avatar_path)
         character.avatar_path = new_avatar_path
         session.add(character)
         session.commit()
@@ -774,21 +827,27 @@ def find_unpersisted_chat_replies(
 
     job_ids = [job.id for job, _ in candidates]
     stamped: set[str] = set()
-    rows = session.exec(
-        select(Message).where(
-            Message.chat_id.in_(
-                {
-                    (metadata.get("chat_id") or (job.workflow or {}).get("chat_id"))
-                    for job, metadata in candidates
-                }
-            )
-        )
-    ).all()
-    for msg in rows:
-        msg_meta = msg.message_metadata if isinstance(msg.message_metadata, dict) else {}
-        for value in (msg_meta.get(SOURCE_JOB_ID_METADATA_KEY), *_alternate_source_job_ids(msg_meta)):
-            if value in job_ids:
-                stamped.add(value)
+    # Narrow select, and a narrower question.
+    #
+    # This loaded EVERY `Message` row for the affected chats — no `LIMIT`, no
+    # column narrowing, `content` TEXT included — solely to test one key of
+    # `message_metadata` against a set of at most `limit` job ids. On a
+    # 5,000-message chat that is 5,000 full rows into memory on every
+    # reconciliation tick, to answer "which of these few jobs has already been
+    # stamped onto a message". The content is never read here; the whole row was
+    # loaded and then two fields were picked off it in Python.
+    stamped = _stamped_source_job_ids(session, candidates, job_ids)
+    if not stamped:
+        return [
+            {
+                "id": job.id,
+                "outputs": job.outputs or [],
+                "metadata": metadata,
+                "workflow": job.workflow or {},
+                "type": "chat_reply",
+            }
+            for job, metadata in candidates
+        ]
 
     return [
         {
@@ -801,6 +860,52 @@ def find_unpersisted_chat_replies(
         for job, metadata in candidates
         if job.id not in stamped
     ]
+
+
+def _stamped_source_job_ids(
+    session: Session, candidates: list[tuple[Any, dict[str, Any]]], job_ids: list[str]
+) -> set[str]:
+    """Which of `job_ids` already appear as a `source_job_id` on a message.
+
+    Two narrow queries instead of one unbounded full-row load. The flat
+    `source_job_id` is a scalar in `message_metadata`, so it can be compared and
+    indexed in SQL. A swipe's `alternates` is a LIST of objects nested inside the
+    same jsonb, which no plain column comparison can reach — so that half selects
+    the one jsonb column, with the same chat and job filters applied, and matches
+    in Python. Both queries carry `chat_id IN (...) AND ... IN (job_ids)`, so
+    neither walks a chat.
+    """
+    chat_ids = {
+        (metadata.get("chat_id") or (job.workflow or {}).get("chat_id"))
+        for job, metadata in candidates
+    }
+    chat_ids.discard(None)
+    if not chat_ids:
+        return set()
+
+    wanted = set(job_ids)
+    stamped: set[str] = set()
+
+    flat = Message.message_metadata[SOURCE_JOB_ID_METADATA_KEY].as_string()
+    for value in session.exec(
+        select(flat).where(Message.chat_id.in_(chat_ids), flat.in_(list(wanted)))
+    ).all():
+        if value in wanted:
+            stamped.add(value)
+
+    for alternates in session.exec(
+        select(Message.message_metadata["alternates"]).where(
+            Message.chat_id.in_(chat_ids),
+            Message.message_metadata["alternates"].is_not(None),
+        )
+    ).all():
+        if not isinstance(alternates, list):
+            continue
+        for value in _alternate_source_job_ids({"alternates": alternates}):
+            if value in wanted:
+                stamped.add(value)
+
+    return stamped
 
 
 def _alternate_source_job_ids(msg_metadata: dict) -> list[str]:

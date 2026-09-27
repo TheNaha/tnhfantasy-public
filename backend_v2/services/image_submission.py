@@ -10,8 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from config import get_config
-from core.workflow_builder import DEFAULT_CHECKPOINT, build_image_job_workflow
+from core.workflow_builder import build_image_job_workflow
 from services.job_submission_service import JobSubmissionService
 from services.model_availability_service import ModelAvailabilityService
 
@@ -23,7 +22,7 @@ async def submit_image_job(
     negative_prompt: str | None = None,
     checkpoint: str | None = None,
     lora: str | None = None,
-    filename_prefix: str = "ComfyUI",
+    filename_prefix: str | None = None,
     source: str | None = None,
     workspace: str = "main",
     chat_id: str | None = None,
@@ -46,7 +45,9 @@ async def submit_image_job(
     # error message.  If the preferred isn't installed but *some* checkpoint
     # is, we use that to avoid a false MISSING_MODELS error.
     availability = ModelAvailabilityService(session)
-    fallback_name = checkpoint or get_config().get("generator", {}).get("default_checkpoint") or DEFAULT_CHECKPOINT
+    from config import resolve_default_checkpoint
+
+    fallback_name = checkpoint or resolve_default_checkpoint()
     resolved_checkpoint = availability.get_available_checkpoint(fallback_name) or fallback_name
 
     workflow, metadata = build_image_job_workflow(

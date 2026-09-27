@@ -96,6 +96,14 @@ class GeneratorOptions(BaseModel):
     adetailerDenoise: float = 0.4
     adetailerInpaintMasked: bool = True
 
+    # `SaveImage.filename_prefix`. `None` means "derive one from the mode and
+    # the clock" (`_generate_filename_prefix`), which is the right default for
+    # an ad-hoc generation and the wrong one for a job that wants its output
+    # filed under `ChatIllustrate` or `StoryAgenticGen`. It is `None` and not
+    # `""` so that an explicit empty string is still honoured rather than
+    # silently replaced.
+    filenamePrefix: str | None = None
+
 
 class WorkflowBuilder:
     def __init__(self):
@@ -480,7 +488,14 @@ class WorkflowBuilder:
         elif mode == 'inpaint':
             prefix_type = "Inpaint"
 
-        prefix = self._generate_filename_prefix(prefix_type)
+        # An explicit prefix wins. It used to be accepted by
+        # `build_image_workflow(filename_prefix=...)` and then dropped on the
+        # floor — six call sites passed `ChatIllustrate` / `StoryAgenticGen` /
+        # `AgenticGen` and every one of them produced a `T2I_<timestamp>`
+        # prefix instead, so the outputs could not be told apart by origin. The
+        # video path has always honoured its own parameter; this makes the two
+        # agree.
+        prefix = options.filenamePrefix or self._generate_filename_prefix(prefix_type)
 
         self.add_node("SaveImage", {
             "filename_prefix": prefix,
@@ -505,7 +520,7 @@ def build_image_workflow(
     negative: str = DEFAULT_NEGATIVE_PROMPT,
     checkpoint: str = DEFAULT_CHECKPOINT,
     lora: Optional[str] = None,
-    filename_prefix: str = DEFAULT_FILENAME_PREFIX,
+    filename_prefix: Optional[str] = None,
     width: int = 1024,
     height: int = 1024,
     steps: int = 20,
@@ -527,6 +542,7 @@ def build_image_workflow(
         sampler=sampler_name,
         scheduler=scheduler,
         denoise=denoise,
+        filenamePrefix=filename_prefix,
         loras=[LoraOption(name=lora)] if lora else []
     )
     builder = WorkflowBuilder()
@@ -538,7 +554,7 @@ def build_image_job_workflow(
     negative: str = DEFAULT_NEGATIVE_PROMPT,
     checkpoint: str = DEFAULT_CHECKPOINT,
     lora: Optional[str] = None,
-    filename_prefix: str = DEFAULT_FILENAME_PREFIX,
+    filename_prefix: Optional[str] = None,
     width: int = 1024,
     height: int = 1024,
     steps: int = 20,
