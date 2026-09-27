@@ -181,6 +181,26 @@ async def wake_providers(session: Session = Depends(get_session)):
     return {"status": "success", "message": f"Wake signal sent to {len(active_providers)} providers"}
 
 
+async def _republish_known_provider_hosts() -> None:
+    """Re-read the provider table after a write, so the token attachment is not stale.
+
+    The set of hosts that count as "one of our providers" is published to
+    `infrastructure.http_client` and read from the request path without touching
+    the database — a blocking read inside `build_request()` is impossible to
+    avoid, because `build_request` is synchronous and runs on the event loop. A
+    provider create/update/delete changes the answer, so this is the invalidation
+    point that the published cache is missing. Offloaded, and a failure is
+    logged rather than raised: the loader publishes `None` on failure, which the
+    request path already treats as "attach the token anyway".
+    """
+    from infrastructure.http_client import load_known_provider_hosts
+
+    try:
+        await asyncio.to_thread(load_known_provider_hosts, force=True)
+    except Exception as exc:  # pragma: no cover - the loader handles its own failures
+        logger.warning("provider_host_republish_failed", error=str(exc))
+
+
 def _infer_discovery_type(provider_id: str) -> tuple[str, str]:
     """Map a container-derived provider id to (provider_type, worker_type).
 
@@ -336,6 +356,7 @@ async def create_provider(
     """Create a new provider."""
     service = get_provider_service(session)
     provider = await service.create_provider(request.model_dump())
+    await _republish_known_provider_hosts()
     status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider.id, provider=provider)
 
@@ -360,6 +381,7 @@ async def update_provider(
     service = get_provider_service(session)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     provider = await service.update_provider(provider_id, updates)
+    await _republish_known_provider_hosts()
     status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider.id, provider=provider)
 
@@ -409,6 +431,7 @@ async def delete_provider(
     service = get_provider_service(session)
     await service.delete_provider(provider_id)
     invalidate_provider_status_caches(provider_id)
+    await _republish_known_provider_hosts()
     return {"status": "success"}
 
 

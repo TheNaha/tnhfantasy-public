@@ -29,11 +29,15 @@ _PROVIDER_MANAGEMENT_PATHS = (
     "/config", "/provider-stats", "/object-info", "/info",
 )
 
-# How long a resolved set of known provider hosts stays usable. Short, because a
-# provider's address changes when it is redeployed under a new container id.
+# How long a resolved set of known provider hosts is trusted before it is
+# re-read. Only bounds the RELOAD, never a read: the published set is read
+# without touching the database, so this TTL costs nothing per request.
 _PROVIDER_HOST_CACHE_SECONDS = 30.0
 
-_known_provider_hosts: set[str] = set()
+# `None` means "never resolved, or the last read failed" — i.e. "could not
+# tell". It is deliberately distinct from an empty set, which means "resolved,
+# and there are no providers".
+_known_provider_hosts: frozenset[str] | None = None
 _known_provider_hosts_at: float = 0.0
 
 
@@ -42,8 +46,25 @@ def _is_provider_management_path(url: str) -> bool:
     return any(path.endswith(suffix) for suffix in _PROVIDER_MANAGEMENT_PATHS)
 
 
-def _refresh_known_provider_hosts() -> set[str]:
-    """Hostnames of every provider the backend knows about.
+def published_known_provider_hosts() -> frozenset[str] | None:
+    """The host set, read without touching the database. Safe on the event loop.
+
+    This is the ONLY function the request path is allowed to use. It used to call
+    `_refresh_known_provider_hosts()`, which opened a fresh `get_session_sync()`
+    and ran `ProviderRepository.get_all()` — a full provider-table read, inline,
+    on the event loop, for every outbound provider call whose 30 s TTL was cold.
+    `build_request()` is synchronous and cannot be made async, so the read could
+    not be moved off the loop from where it was. The set is now published by
+    `load_known_provider_hosts()` at startup and after any provider write, and
+    this function is a plain read.
+    """
+    return _known_provider_hosts
+
+
+def load_known_provider_hosts(*, force: bool = False) -> frozenset[str] | None:
+    """Read the provider table and publish the result. BLOCKING — call via `to_thread`.
+
+    Hostnames of every provider the backend knows about.
 
     The `tnhcomfy-` prefix convention only matches containers this project
     started under that name. A self-discovered provider registers
@@ -56,11 +77,17 @@ def _refresh_known_provider_hosts() -> set[str]:
     So: ask the database which hosts are providers, rather than guessing from the
     name. Both the container name and the discovery URL are registered, since
     either can be the address the backend actually dials.
+
+    Args:
+        force: re-read even if the published set is younger than the TTL.
+            Startup and every provider write pass this; nothing else should.
     """
     global _known_provider_hosts, _known_provider_hosts_at
 
     now = time.monotonic()
-    if now - _known_provider_hosts_at < _PROVIDER_HOST_CACHE_SECONDS:
+    if not force and _known_provider_hosts is not None and (
+        now - _known_provider_hosts_at < _PROVIDER_HOST_CACHE_SECONDS
+    ):
         return _known_provider_hosts
 
     hosts: set[str] = set()
@@ -96,12 +123,22 @@ def _refresh_known_provider_hosts() -> set[str]:
         # went out with no token and came back 401 "invalid provider worker
         # token". The inference path stayed up, so it was silent. `None` means
         # "could not tell", and the caller then fails closed.
+        # Publishing the failure is what makes that work: a failed read must not
+        # be indistinguishable from a resolved empty set.
         logger.warning("provider_host_refresh_failed", error=str(exc))
+        _known_provider_hosts = None
+        _known_provider_hosts_at = now
         return None
 
-    _known_provider_hosts = hosts
+    _known_provider_hosts = frozenset(hosts)
     _known_provider_hosts_at = now
-    return hosts
+    return _known_provider_hosts
+
+
+# Kept as the historical name for anything that imported it. Now a pure cache
+# read, so calling it from a request handler is safe; use
+# `load_known_provider_hosts(force=True)` to actually re-read.
+_refresh_known_provider_hosts = published_known_provider_hosts
 
 
 def _is_known_provider_host(
@@ -121,7 +158,7 @@ def _is_known_provider_host(
     if host in allowed_hosts:
         return False
 
-    hosts = _refresh_known_provider_hosts()
+    hosts = published_known_provider_hosts()
     if hosts is None:
         logger.error("provider_host_lookup_unavailable_attaching_token_anyway", host=host)
         return True

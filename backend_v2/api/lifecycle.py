@@ -225,6 +225,23 @@ async def startup_application(process_job, ws_manager):
     logger.info("startup_init", phase="worker_pool")
     configure_worker_pool()
 
+    # Which hosts count as "one of our providers" decides whether an outbound
+    # management call carries the shared worker token. That answer is read on
+    # the event loop from a published set, so it has to be published before the
+    # first request — `build_request()` is synchronous and cannot move the read
+    # off the loop itself. Until it is published the set is `None`, which the
+    # reader treats as "could not tell" and attaches the token anyway; priming
+    # here turns that from "every host gets the token" into a real answer.
+    from infrastructure.http_client import load_known_provider_hosts
+
+    hosts = await asyncio.to_thread(load_known_provider_hosts, force=True)
+    logger.info(
+        "startup_init",
+        phase="provider_hosts",
+        resolved=hosts is not None,
+        count=len(hosts) if hosts else 0,
+    )
+
     logger.info("startup_init", phase="job_queue")
     await queue_manager.start()
 

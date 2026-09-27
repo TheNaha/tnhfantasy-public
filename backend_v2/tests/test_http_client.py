@@ -192,7 +192,7 @@ class TestProviderTokenOnStreamingRequests:
         from infrastructure import http_client
 
         monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
-        monkeypatch.setattr(http_client, "_refresh_known_provider_hosts", lambda: None)
+        monkeypatch.setattr(http_client, "published_known_provider_hosts", lambda: None)
 
         headers = http_client._provider_token_headers(
             f"http://{_PROVIDER_HOST}/inference", {}
@@ -203,9 +203,112 @@ class TestProviderTokenOnStreamingRequests:
         from infrastructure import http_client
 
         monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
-        monkeypatch.setattr(http_client, "_refresh_known_provider_hosts", lambda: set())
+        monkeypatch.setattr(http_client, "published_known_provider_hosts", lambda: frozenset())
 
         headers = http_client._provider_token_headers(
             "https://api.example.com/inference", {},  # not a provider
         )
         assert "X-Provider-Token" not in headers
+
+
+class TestProviderHostLookupDoesNotTouchTheDatabase:
+    """The request path must not do DB I/O.
+
+    `_is_known_provider_host` used to call `_refresh_known_provider_hosts()`,
+    which opened a fresh `get_session_sync()` and ran a full
+    `ProviderRepository.get_all()` — inline, on the event loop, for every
+    outbound provider call whose 30 s TTL was cold. It could not be moved off
+    the loop from where it was: `build_request()` is synchronous, so there is no
+    await point to offload at.
+
+    The fix is architectural, not a bigger timeout: the set is *published* by
+    `load_known_provider_hosts()` (called at startup and after every provider
+    write) and *read* without the database. These tests pin both halves.
+    """
+
+    def test_the_request_path_opens_no_session(self, monkeypatch):
+        from infrastructure import database, http_client
+
+        def _explode(*args, **kwargs):
+            raise AssertionError(
+                "the token path opened a database session on the event loop"
+            )
+
+        monkeypatch.setattr(database, "get_session_sync", _explode)
+        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
+        monkeypatch.setattr(
+            http_client, "published_known_provider_hosts", lambda: frozenset()
+        )
+
+        headers = http_client._provider_token_headers(
+            "https://api.example.com/inference", {}
+        )
+        assert headers == {}
+
+    def test_the_published_set_is_an_immutable_snapshot(self, monkeypatch):
+        """A caller cannot mutate the published set and change what the request
+        path sees; the published value is a `frozenset` built at load time."""
+        from infrastructure import http_client
+
+        monkeypatch.setattr(
+            http_client, "published_known_provider_hosts", lambda: frozenset({"a"})
+        )
+        assert http_client.published_known_provider_hosts() == frozenset({"a"})
+
+    def test_load_publishes_and_force_reloads(self, monkeypatch):
+        from infrastructure import http_client
+
+        calls = []
+
+        class _Repo:
+            def __init__(self, session):
+                pass
+
+            def get_all(self):
+                return []
+
+        class _Session:
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            http_client, "_known_provider_hosts", None, raising=False
+        )
+        monkeypatch.setattr(
+            "infrastructure.database.get_session_sync", lambda: _Session()
+        )
+        monkeypatch.setattr(
+            "infrastructure.repositories.ProviderRepository", _Repo
+        )
+        monkeypatch.setattr(
+            http_client, "_PROVIDER_HOST_CACHE_SECONDS", 30.0
+        )
+
+        calls.append(http_client.load_known_provider_hosts())
+        # Within the TTL a second call is a cache hit...
+        calls.append(http_client.load_known_provider_hosts())
+        # ...and `force` re-reads, which is what startup and every provider
+        # write do.
+        calls.append(http_client.load_known_provider_hosts(force=True))
+
+        assert calls[0] == frozenset()
+        assert calls[1] == frozenset()
+        assert calls[2] == frozenset()
+        assert http_client.published_known_provider_hosts() == frozenset()
+
+    def test_a_failed_load_publishes_none_not_an_empty_set(self, monkeypatch):
+        """`None` and `frozenset()` are different answers and must not collapse.
+
+        An empty set reads as "resolved, and there are no providers", so a failed
+        read that published one would silently stop attaching the token to
+        *every* management call.
+        """
+        from infrastructure import http_client
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr("infrastructure.database.get_session_sync", _boom)
+
+        assert http_client.load_known_provider_hosts(force=True) is None
+        assert http_client.published_known_provider_hosts() is None
