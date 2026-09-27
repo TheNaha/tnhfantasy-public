@@ -43,6 +43,8 @@ import FailedJobsPanel from '../components/dashboard/FailedJobsPanel';
 import GeneratorFloatingButton from '../components/dashboard/GeneratorFloatingButton';
 import DashboardOverlays from '../components/dashboard/DashboardOverlays';
 import DashboardGalleryGrid from '../components/dashboard/DashboardGalleryGrid';
+import GalleryDateRail from '../components/dashboard/GalleryDateRail';
+import GalleryFilterPanel from '../components/dashboard/GalleryFilterPanel';
 import DashboardHeaderToolbar from '../components/dashboard/DashboardHeaderToolbar';
 import SessionPanel, { SessionsToolbar, SessionViewPlaceholder } from '../components/dashboard/SessionPanel';
 
@@ -567,6 +569,22 @@ export default function Dashboard() {
                     isSessionView={isSessionView}
                     onOpenPanel={() => setShowSessionPanel(true)}
                     onToggleViewMode={() => setViewMode(isSessionView ? 'grid' : 'session')}
+                />
+
+                {/* Faceted search. Both panels read page one only — the counts
+                    cannot change between pages of one scroll — and both write into
+                    the same `filters` the grid and the list already share, so
+                    there is one source of truth for what is being shown. */}
+                <GalleryDateRail
+                    filters={filters}
+                    onChange={setFilters}
+                />
+
+                <GalleryFilterPanel
+                    facets={data?.pages?.[0]?.facets}
+                    filters={filters}
+                    onChange={setFilters}
+                    totalMatched={data?.pages?.[0]?.totalMatched}
                 />
 
                 {sessionPlaceholder && (

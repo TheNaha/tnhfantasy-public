@@ -160,6 +160,60 @@ export const assetsApi = {
         params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)),
         ...options,
     }),
+
+    /**
+     * The faceted listing. Returns the SAME `items` / `has_more` /
+     * `next_cursor` shape as `list`, the same sort vocabulary and the same
+     * keyset cursor, and adds `facets`, `sessions` and `total_matched` — so this
+     * is a strict superset and the gallery uses it instead of `list` rather than
+     * running a second query to get the counts.
+     *
+     * `group_by` is capped server-side at 3 dimensions; the panel sends only the
+     * dimensions it is showing.
+     */
+    facet: (params = {}, options = {}) => api.get(`${API_V2_BASE}/assets/facet`, {
+        params: Object.fromEntries(
+            Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
+        ),
+        ...options,
+    }),
+
+    /**
+     * Per-day counts for the date rail, on the gallery's own
+     * `coalesce(generated_at, created_at)` timeline, scoped by exactly the
+     * filters the listing accepts — so a day's tick and that day's contents can
+     * never disagree. Not `/api/statistics`' `images_by_date`, which buckets on
+     * a different column and applies no scope at all.
+     */
+    dates: (params = {}, options = {}) => api.get(`${API_V2_BASE}/assets/dates`, {
+        params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)),
+        ...options,
+    }),
+
+    /** The distinct tag vocabulary, most-used first. `prefix` is anchored. */
+    tags: (params = {}, options = {}) => api.get(`${API_V2_BASE}/tags`, {
+        params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)),
+        ...options,
+    }),
+
+    /** One image's tags with their provenance. */
+    assetTags: (assetId, options = {}) =>
+        api.get(`${API_V2_BASE}/asset/${encodeURIComponent(assetId)}/tags`, options),
+
+    /** Add a `user` tag. Idempotent; the response reports `created: false` on a re-add. */
+    addAssetTag: (assetId, tag, options = {}) =>
+        api.post(`${API_V2_BASE}/asset/${encodeURIComponent(assetId)}/tags`, { tag }, options),
+
+    /**
+     * Remove a `user` tag. 404s when the tag is auto-derived rather than typed,
+     * on purpose: a delete that appears to work and then resurrects itself on
+     * the next rescan is worse than an honest 404.
+     */
+    removeAssetTag: (assetId, tag, options = {}) =>
+        api.delete(
+            `${API_V2_BASE}/asset/${encodeURIComponent(assetId)}/tags/${encodeURIComponent(tag)}`,
+            options
+        ),
 };
 
 export default filesApi;

@@ -1,0 +1,199 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The real module is spread, not replaced: `FACET_DIMENSIONS` drives the panel's
+// sections, and a mock shaped to the import instead of the module would let a
+// renamed export pass every test and then break the build.
+const vocabularyMock = vi.hoisted(() => ({ entries: [] }));
+vi.mock('../../hooks/useGallery', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        useTagVocabulary: (prefix = '') => (prefix
+            ? { data: vocabularyMock.entries, isLoading: false }
+            : { data: [], isLoading: false }),
+    };
+});
+
+import GalleryFilterPanel from './GalleryFilterPanel';
+
+const FACETS = {
+    lora: [
+        { value: '123', count: 12, label: 'Detail Slider' },
+        { value: '456', count: 4, label: 'Detail Tweaker' },
+    ],
+    tag: [
+        { value: 'cyberpunk', count: 9 },
+        { value: 'portrait', count: 3 },
+    ],
+    checkpoint: [
+        { value: 'sdxl.safetensors', count: 20 },
+    ],
+};
+
+function renderPanel(props = {}) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onChange = vi.fn();
+    const utils = render(
+        <QueryClientProvider client={queryClient}>
+            <GalleryFilterPanel facets={FACETS} filters={{}} onChange={onChange} {...props} />
+        </QueryClientProvider>,
+    );
+    return { ...utils, onChange };
+}
+
+function chip(value) {
+    return document.querySelector(`[data-testid="facet-chip-lora"][data-value="${value}"]`);
+}
+
+describe('GalleryFilterPanel', () => {
+    beforeEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        vocabularyMock.entries = [];
+    });
+
+    afterEach(() => cleanup());
+
+    it('toggling a value adds it to the comma-separated string and keeps the existing ones', () => {
+        const { onChange } = renderPanel({ filters: { lora: '999', search: 'portrait' } });
+
+        fireEvent.click(screen.getByRole('button', { name: /Detail Slider/ }));
+
+        expect(onChange).toHaveBeenCalledWith({ lora: '999,123', search: 'portrait' });
+    });
+
+    it('toggling a selected value off removes only that value', () => {
+        const { onChange } = renderPanel({ filters: { lora: '123,456' } });
+
+        fireEvent.click(screen.getByRole('button', { name: /Detail Slider/ }));
+
+        expect(onChange).toHaveBeenCalledWith({ lora: '456' });
+    });
+
+    it('drops the key entirely when the last value is toggled off', () => {
+        const { onChange } = renderPanel({ filters: { lora: '123', search: 'x' } });
+
+        fireEvent.click(screen.getByRole('button', { name: /Detail Slider/ }));
+
+        expect(onChange).toHaveBeenCalledWith({ search: 'x' });
+        expect(onChange.mock.calls[0][0]).not.toHaveProperty('lora');
+    });
+
+    it('does not choke on an empty or malformed comma-separated string', () => {
+        const { onChange } = renderPanel({ filters: { lora: ' , , ' } });
+
+        fireEvent.click(screen.getByRole('button', { name: /Detail Slider/ }));
+
+        expect(onChange).toHaveBeenCalledWith({ lora: '123' });
+    });
+
+    it('keeps a selected value visible when the counts do not contain it', () => {
+        // The count for a dimension is computed with that dimension's own filter
+        // removed, and `facet_limit` can cut a rare value off entirely.
+        renderPanel({ facets: { ...FACETS, lora: [] }, filters: { lora: '777' } });
+
+        const orphan = chip('777');
+        expect(orphan).toBeInTheDocument();
+        expect(orphan).toHaveAttribute('aria-pressed', 'true');
+        expect(orphan).toHaveTextContent('—');
+    });
+
+    it('toggles a selected value that is missing from the counts back off', () => {
+        const { onChange } = renderPanel({ facets: { ...FACETS, lora: [] }, filters: { lora: '777' } });
+
+        fireEvent.click(chip('777'));
+
+        expect(onChange).toHaveBeenCalledWith({});
+    });
+
+    it('marks selected chips as pressed and unselected ones as not', () => {
+        renderPanel({ filters: { lora: '456' } });
+
+        expect(chip('456')).toHaveAttribute('aria-pressed', 'true');
+        expect(chip('123')).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it('shows how many values are selected on each dimension heading', () => {
+        renderPanel({ filters: { lora: '123,456' } });
+
+        expect(screen.getByTestId('facet-selected-lora')).toHaveTextContent('2 selected');
+        expect(screen.queryByTestId('facet-selected-tag')).not.toBeInTheDocument();
+    });
+
+    describe('clear', () => {
+        it('is absent when nothing is selected', () => {
+            renderPanel({ filters: { search: 'still a search, not ours' } });
+
+            expect(screen.queryByTestId('facet-clear')).not.toBeInTheDocument();
+        });
+
+        it('counts a date range as a selection', () => {
+            renderPanel({ filters: { date_from: '2026-09-01T00:00:00Z' } });
+
+            expect(screen.getByTestId('facet-clear')).toBeInTheDocument();
+        });
+
+        it('emits only the keys the panel owns when no onClear is given', () => {
+            const { onChange } = renderPanel({
+                filters: {
+                    lora: '123',
+                    tag: 'cyberpunk',
+                    checkpoint: 'sdxl.safetensors',
+                    date_from: '2026-09-01T00:00:00Z',
+                    date_to: '2026-09-02T23:59:59.999999Z',
+                    search: 'keep me',
+                    sort: 'date_desc',
+                },
+            });
+
+            fireEvent.click(screen.getByTestId('facet-clear'));
+
+            expect(onChange).toHaveBeenCalledWith({ search: 'keep me', sort: 'date_desc' });
+        });
+
+        it('hands the reset to onClear when the host owns one', () => {
+            const onClear = vi.fn();
+            const { onChange } = renderPanel({ filters: { lora: '123' }, onClear });
+
+            fireEvent.click(screen.getByTestId('facet-clear'));
+
+            expect(onClear).toHaveBeenCalledTimes(1);
+            expect(onChange).not.toHaveBeenCalled();
+        });
+    });
+
+    it('collapses to a show-all toggle instead of a scroll region', () => {
+        const many = Array.from({ length: 20 }, (_, i) => ({ value: `ck-${i}`, count: i }));
+        renderPanel({ facets: { ...FACETS, checkpoint: many }, filters: {} });
+
+        expect(screen.getAllByTestId('facet-chip-checkpoint')).toHaveLength(12);
+        const more = screen.getByTestId('facet-checkpoint-more');
+        expect(more).toHaveTextContent('Show all 20');
+
+        fireEvent.click(more);
+
+        expect(screen.getAllByTestId('facet-chip-checkpoint')).toHaveLength(20);
+        expect(screen.getByTestId('facet-checkpoint-more')).toHaveTextContent('Show less');
+    });
+
+    it('reports the matched total, and says so when there is none', () => {
+        const { unmount } = renderPanel({ totalMatched: 1 });
+        expect(screen.getByTestId('facet-total')).toHaveTextContent('1 matching image');
+        unmount();
+
+        renderPanel({ totalMatched: undefined });
+        expect(screen.getByTestId('facet-total')).toHaveTextContent('Matching total unavailable');
+    });
+
+    it('suggests tags from the vocabulary and toggles the suggestion', () => {
+        vocabularyMock.entries = [{ tag: 'neon', count: 6 }];
+        const { onChange } = renderPanel({ filters: {} });
+
+        fireEvent.change(screen.getByTestId('facet-tag-input'), { target: { value: 'ne' } });
+        fireEvent.click(screen.getByRole('button', { name: /neon/ }));
+
+        expect(onChange).toHaveBeenCalledWith({ tag: 'neon' });
+    });
+});
