@@ -212,7 +212,13 @@ export default function Dashboard() {
         closeSelectedImage,
     } = useSelectedImageState();
 
-    const handleImageClick = useCallback((image) => {
+    // `siblings` is the group an image was opened from — for the session view
+    // that is the session's own images, and the lightbox navigates within
+    // them. Null for a gallery image, which navigates the gallery.
+    const [lightboxSiblings, setLightboxSiblings] = useState(null);
+
+    const handleImageClick = useCallback((image, siblings = null) => {
+        setLightboxSiblings(siblings);
         selectImage(image);
     }, [selectImage]);
 
@@ -304,6 +310,7 @@ export default function Dashboard() {
         hasMore: hasNextPage,
         onLoadMore: fetchNextPage,
         isLoadingMore: isFetchingNextPage,
+        images: lightboxSiblings,
     });
 
     const handleLightboxNavigate = useCallback((newIndex) => {

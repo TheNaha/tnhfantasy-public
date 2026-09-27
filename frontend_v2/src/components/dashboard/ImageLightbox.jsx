@@ -333,7 +333,16 @@ export default memo(function ImageLightbox({
                             <p className="text-sm text-gray-500 mt-1">
                                 {Number.isFinite(Number(displayImage.size))
                                     ? `${(Number(displayImage.size) / 1024 / 1024).toFixed(2)} MB`
-                                    : 'Unknown size'}
+                                    : /* No file size on this record. The session
+                                         * member endpoint has no `size` column and
+                                         * stat-ing every file to fill one is not
+                                         * worth a round trip per image — but the
+                                         * dimensions are right there, and "Unknown
+                                         * size" for an image whose 1024x1272 is
+                                         * known is strictly less useful. */
+                                      (Number.isFinite(Number(displayImage.width)) && Number.isFinite(Number(displayImage.height))
+                                          ? `${displayImage.width} x ${displayImage.height}`
+                                          : 'Unknown size')}
                             </p>
                         </div>
 

@@ -75,11 +75,32 @@ export function useLightboxNavigation({
     hasMore = false,
     onLoadMore = null,
     isLoadingMore = false,
+    // An explicit navigation list, for when the images being browsed are not the
+    // gallery's.
+    //
+    // The session view's groups hold SESSIONS, one pseudo-item each, not images,
+    // so `flattenGalleryImages` yields nothing and every session image is
+    // "unlisted" — which is what put `1 / 1+` on the counter and disabled
+    // swiping, in a view whose entire point is browsing a group of images
+    // together. When a session image is opened, its own group's images are
+    // passed here and the lightbox navigates within them, which is the
+    // behaviour a person opening an image out of a group expects.
+    images: imagesOverride = null,
 }) {
-    const images = useMemo(
+    const galleryImages = useMemo(
         () => flattenGalleryImages(sortedGroupedEntries),
         [sortedGroupedEntries],
     );
+
+    // The override wins whenever the selected image is actually in it; otherwise
+    // the gallery list, because opening a gallery image must not start
+    // navigating some unrelated session.
+    const images = useMemo(() => {
+        if (!imagesOverride?.length) return galleryImages;
+        const selectedKey = identityOf(selectedImage);
+        const inOverride = selectedKey && imagesOverride.some((i) => identityOf(i) === selectedKey);
+        return inOverride ? imagesOverride : galleryImages;
+    }, [imagesOverride, galleryImages, selectedImage]);
 
     const foundIndex = useMemo(() => {
         if (!selectedImage) return -1;

@@ -12,6 +12,7 @@ import { getAssetPrompt } from '../../utils/assetMetadata';
 import { assetUrl, thumbUrl, assetPath } from '../../utils/assetUrl';
 import { formatTimestamp } from '../../utils/dateTime';
 import { useSessionAssets } from '../../hooks/useSessions';
+import { toLightboxImage } from '../../utils/lightboxImage';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { useVirtualListScrollMargin } from '../../hooks/useVirtualListScrollMargin';
 
@@ -29,6 +30,9 @@ function estimateSessionUnitSize(item, expanded, gridCols) {
 }
 
 const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onToggleExpand, onImageClick, selectionMode, selectedFiles, toggleSelection }) {
+    // The loaded assets, shaped once. Both the click target and the
+    // lightbox's navigation list come from here, so they can never disagree
+    // about what "this session" contains.
     const { data, isLoading, error } = useSessionAssets(item.sessionId, { enabled: expanded });
 
     return (
@@ -120,7 +124,12 @@ const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onTogg
                                                 toggleSelection?.(asset.relative_path);
                                                 return;
                                             }
-                                            onImageClick?.({ ...asset, type: 'image' });
+                                            onImageClick?.(
+                                                toLightboxImage(asset),
+                                                // The siblings, so the lightbox
+                                                // can be swiped within this group.
+                                                (data?.assets || []).map(toLightboxImage).filter(Boolean),
+                                            );
                                         }}
                                         title={selectionMode
                                             ? (selected ? 'Deselect' : 'Select')
