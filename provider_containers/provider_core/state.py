@@ -4,7 +4,7 @@ Thread-safe state tracking for reconciliation progress.
 """
 
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional
+from typing import Dict, Iterable, List, Any, Optional, Set
 from dataclasses import dataclass, field
 import threading
 
@@ -45,7 +45,50 @@ class ReconciliationState:
         self.provider_id = provider_id
         self._lock = threading.Lock()
         self.reset()
-    
+
+    # Orphan sightings, keyed by provider and held on the class rather than the
+    # instance: a `ReconciliationState` is built per `run_reconciliation_v2` call,
+    # so an instance attribute would only ever hold the current run's list and
+    # "seen in two consecutive reconciliations" could never be evaluated.
+    #
+    # Process-scoped, not persisted to the backend: a worker restart therefore
+    # costs one extra tick before anything becomes deletable, which is the safe
+    # direction to be wrong in.
+    _orphan_sightings: Dict[str, Set[str]] = {}
+    _orphan_sightings_lock = threading.Lock()
+
+    def promote_stable_orphans(self, paths: Iterable[str]) -> List[str]:
+        """Return the orphans reported in this run AND the previous one.
+
+        `RECONCILIATION_DELETE_ORPHANS` is the one switch that arms mass deletion,
+        and until this existed the only guard was `calculate_safe_deletion_limit`
+        (`max(20, total // 5)`) — so a 100-model provider lost 20 files every
+        7200 s tick with no confirmation, and a single mis-scoped
+        `list_existing_files` (a wrong prefix, an empty listing, a provider whose
+        storage endpoint is serving someone else's volume) made *every* file in the
+        directory "orphaned" and armed the lot.
+
+        Two consecutive identical reports is the cheapest signal that separates
+        "this file is genuinely not in the database" from "this run did not see the
+        database". A one-tick gap is enough: the listing is not a sampling error
+        once in any other sense, and the size guard remains as a second limit.
+        """
+        current = {str(path) for path in paths}
+        with type(self)._orphan_sightings_lock:
+            previous = type(self)._orphan_sightings.get(self.provider_id, set())
+            type(self)._orphan_sightings[self.provider_id] = current
+        return sorted(previous & current)
+
+    def peek_orphan_sightings(self) -> Set[str]:
+        """The previous run's orphan set, for tests and diagnostics."""
+        with type(self)._orphan_sightings_lock:
+            return set(type(self)._orphan_sightings.get(self.provider_id, set()))
+
+    def reset_orphan_sightings(self) -> None:
+        """Forget the history, so the next run starts from nothing again."""
+        with type(self)._orphan_sightings_lock:
+            type(self)._orphan_sightings.pop(self.provider_id, None)
+
     def reset(self):
         """Reset state to initial values."""
         with self._lock:

@@ -19,7 +19,12 @@ from .models import (
     build_status_response,
 )
 from .state import ReconciliationState, get_reconciliation_state
-from .http_client import get_http_client, HttpClientConfig
+from .http_client import (
+    configure_http_client,
+    get_http_client,
+    http_client_config_from_env,
+    HttpClientConfig,
+)
 from .reconciliation import (
     report_file_status_v2,
     batch_update_file_status_v2,
@@ -68,6 +73,8 @@ __all__ = [
     "get_reconciliation_state",
     # HTTP Client
     "get_http_client",
+    "configure_http_client",
+    "http_client_config_from_env",
     "HttpClientConfig",
     # Reconciliation
     "report_file_status_v2",

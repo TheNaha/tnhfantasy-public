@@ -13,7 +13,6 @@ provider never held more than a bounded amount at once.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 
 import pytest

@@ -7,7 +7,6 @@ event pushes, and the shared reconciliation orchestration used by workers.
 import asyncio
 import os
 from typing import Awaitable, Callable, Dict, List, Optional, Any, Set
-from datetime import datetime
 
 from .state import ReconciliationState
 from .http_client import get_http_client
@@ -625,29 +624,67 @@ async def run_reconciliation_v2(
                     logger.info(f"[V2 Reconciliation] {registered_count} orphaned files successfully registered and will be kept on disk.")
                     deletion_candidates = []
                 else:
-                    logger.info(f"[V2 Reconciliation] No orphaned files were registered. They are safe to delete.")
+                    logger.info("[V2 Reconciliation] No orphaned files were registered. They are safe to delete.")
                     deletion_candidates = orphaned_file_infos
 
                 if deletion_candidates:
                     delete_enabled = os.getenv("RECONCILIATION_DELETE_ORPHANS", "false").strip().lower() in ("true", "1", "yes")
 
                     if delete_enabled:
+                        # Two limits, and the order matters. The stability filter
+                        # is the one that actually bounds the blast radius: only a
+                        # path reported orphaned by two consecutive reconciliations
+                        # is deletable at all, so a mis-scoped `list_existing_files`
+                        # (wrong prefix, empty listing, a storage endpoint serving
+                        # somebody else's volume) can no longer arm a mass delete
+                        # in a single tick. The size guard stays as the second
+                        # ceiling on how many go per tick.
+                        stable_paths = set(
+                            reconciliation_state.promote_stable_orphans(
+                                candidate["path"] for candidate in deletion_candidates
+                            )
+                        )
+                        newly_seen = len(deletion_candidates) - len(stable_paths)
+                        if newly_seen:
+                            logger.info(
+                                f"[V2 Reconciliation] {newly_seen} of "
+                                f"{len(deletion_candidates)} orphans are not deletable "
+                                "yet — a path must be reported orphaned by two "
+                                "consecutive reconciliations before it is removed"
+                            )
+                        candidates_by_path = {
+                            candidate["path"]: candidate for candidate in deletion_candidates
+                        }
+                        deletion_candidates = [
+                            candidates_by_path[path]
+                            for path in sorted(stable_paths)
+                        ]
+
                         safe_limit = calculate_safe_deletion_limit(len(existing_files), len(deletion_candidates))
                         deletion_candidates = deletion_candidates[:safe_limit]
 
+                        deleted_count = 0
                         for orphan_info in deletion_candidates:
                             try:
                                 deleted = await delete_file(orphan_info["path"])
                                 if deleted is False:
                                     logger.error(f"[V2 Reconciliation] ✗ Failed to delete {orphan_info['path']}")
                                     continue
+                                deleted_count += 1
                                 reconciliation_state.increment_deletions_completed()
-                                logger.info(f"[V2 Reconciliation] ✓ Deleted: {orphan_info['path']}")
+                                # The count is the point: without it the log reads as
+                                # an endless list of successes with no way to notice
+                                # the volume being emptied.
+                                logger.info(
+                                    f"[V2 Reconciliation] ✓ Deleted: {orphan_info['path']} "
+                                    f"({deleted_count}/{len(deletion_candidates)} this tick, "
+                                    f"{len(existing_files) - deleted_count} files left in storage)"
+                                )
                             except Exception as exc:
                                 logger.error(f"[V2 Reconciliation] ✗ Failed to delete {orphan_info['path']}: {exc}")
                     else:
                         logger.info(f"[V2 Reconciliation] Dry-run: would delete {len(deletion_candidates)} orphaned files")
-                        logger.info(f"[V2 Reconciliation] Set RECONCILIATION_DELETE_ORPHANS=true to enable deletion")
+                        logger.info("[V2 Reconciliation] Set RECONCILIATION_DELETE_ORPHANS=true to enable deletion")
             else:
                 logger.info("[V2 Reconciliation] No orphaned files to delete")
 

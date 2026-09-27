@@ -77,19 +77,29 @@ class TestStorageUpstreamsAreAdoptedNotRaised:
 
     @pytest.mark.asyncio
     async def test_beam_get_object_info_keeps_the_upstream_status(self, monkeypatch):
+        """A rejected Beam API key must not read as a generic 500.
+
+        This used to `raise HTTPException(status_code=response.status_code,
+        detail=response.text)`. Because the detail was a plain *string*,
+        `retryable_for_status` fell back to `status_code >= 500`, so a Beam 500 was
+        advertised as retryable and the dispatcher answered by spending money on a
+        second provider; and a 401 lost its body entirely. `failed(..., code=...)`
+        makes the body and the status agree, and is what the two tests above
+        already assert for `validate_all_models`.
+        """
         import image_worker.engines.beam.client as beam_client
-        from fastapi import HTTPException
 
         client = beam_client.BeamProviderClient(runtime_config={})
         http = MagicMock()
         http.get = AsyncMock(return_value=_http(401))
         monkeypatch.setattr(beam_client, "get_http_client", lambda: http)
 
-        with pytest.raises(HTTPException) as exc:
-            await client.get_object_info()
-        assert exc.value.status_code == 401, (
-            "a rejected Beam API key must not read as a generic 500"
-        )
+        payload = await client.get_object_info()
+
+        assert payload["status"] == "error"
+        assert payload["code"] == 401
+        assert payload["retryable"] is False, "4xx is never retryable"
+        assert "401" in payload["message"]
 
     @pytest.mark.asyncio
     async def test_remote_comfy_validate_all_models_reports_a_401(self, monkeypatch):
@@ -434,9 +444,21 @@ class TestTheLlmWorkerStartsBothLoops:
         assert "auto_discovery_loop(" in source, "the existing loop must stay"
 
     def test_it_retains_both_task_references(self):
-        """A bare create_task is GC-eligible while it runs."""
+        """A bare create_task is GC-eligible while it runs.
+
+        The lifespan is now one shared `provider_core.worker_bootstrap.build_lifespan`
+        (item 21), which starts both loops through `spawn_background_task` — so the
+        retention is asserted against the owner, and this worker only has to not
+        reintroduce a bare create_task."""
+        from pathlib import Path
+
+        bootstrap = (
+            Path(__file__).resolve().parents[1] / "provider_core/worker_bootstrap.py"
+        ).read_text()
+        assert bootstrap.count("spawn_background_task(") == 2
         source = self._source()
-        assert source.count("_background_tasks.append(") == 2
+        assert "asyncio.create_task(" not in source
+        assert "build_lifespan(" in source
 
     def test_it_reads_the_same_reconciliation_knobs_as_the_image_worker(self):
         source = self._source()

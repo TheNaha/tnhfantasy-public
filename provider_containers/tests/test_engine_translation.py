@@ -5,7 +5,6 @@ messages; these engines must translate to/from their native dialects so
 function calling works end-to-end.
 """
 
-import json
 
 from llm_worker.engines.anthropic.client import translate_tools, translate_messages as anthropic_translate
 from llm_worker.engines.google.client import translate_tools as google_translate_tools, translate_messages as google_translate

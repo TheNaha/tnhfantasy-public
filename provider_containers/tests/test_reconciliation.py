@@ -163,7 +163,13 @@ async def test_run_reconciliation_v2_marks_existing_pending_files_ready(monkeypa
 @pytest.mark.asyncio
 async def test_run_reconciliation_v2_downloads_missing_files_and_deletes_orphans(monkeypatch):
     monkeypatch.setenv("RECONCILIATION_DELETE_ORPHANS", "true")
-    state = ReconciliationState("beam-primary")
+    # An orphan is only deletable once it has been reported orphaned by TWO
+    # consecutive reconciliations — the guard that stops a single mis-scoped
+    # listing from arming a mass delete. So this is a two-tick test, and the
+    # orphan history is deliberately the only thing that survives between them
+    # (the worker builds a fresh ReconciliationState per tick). See
+    # TestAnOrphanMustBeSeenTwice in tests/test_delete_adoption.py.
+    ReconciliationState("beam-primary").reset_orphan_sightings()
     pending_file = {
         "file_id": 7,
         "model_name": "Model B",
@@ -176,7 +182,8 @@ async def test_run_reconciliation_v2_downloads_missing_files_and_deletes_orphans
 
     monkeypatch.setattr(
         "provider_core.reconciliation.get_pending_downloads",
-        AsyncMock(side_effect=[[pending_file], [pending_file]]),
+        # Once per tick, twice per run (queue then in-flight reconciliation).
+        AsyncMock(side_effect=[[pending_file]] * 4),
     )
     monkeypatch.setattr(
         "provider_core.reconciliation.get_all_expected_paths",
@@ -193,6 +200,31 @@ async def test_run_reconciliation_v2_downloads_missing_files_and_deletes_orphans
     download_file = AsyncMock()
     delete_file = AsyncMock(return_value=True)
 
+    # Tick one: the download happens, the orphan is only *sighted*.
+    first = ReconciliationState("beam-primary")
+    await run_reconciliation_v2(
+        provider_id="beam-primary",
+        backend_url="http://backend",
+        reconciliation_state=first,
+        max_concurrent_downloads=3,
+        hf_token="",
+        civitai_token="civitai-token",
+        storage_label="Beam",
+        validate_existing=validate_existing,
+        list_existing_files=list_existing_files,
+        download_file=download_file,
+        delete_file=delete_file,
+    )
+    assert first.get_stats()["downloads_completed"] == 1
+    assert first.get_stats()["deletions_completed"] == 0, (
+        "one sighting is not a stable signal; deleting here is the blast radius "
+        "this guard exists to bound"
+    )
+    delete_file.assert_not_awaited()
+    assert first.peek_orphan_sightings() == {orphan_path}
+
+    # Tick two: the same path is orphaned again, so now it is deletable.
+    state = ReconciliationState("beam-primary")
     await run_reconciliation_v2(
         provider_id="beam-primary",
         backend_url="http://backend",
@@ -203,18 +235,12 @@ async def test_run_reconciliation_v2_downloads_missing_files_and_deletes_orphans
         storage_label="Beam",
         validate_existing=validate_existing,
         list_existing_files=list_existing_files,
-        download_file=download_file,
+        download_file=AsyncMock(),
         delete_file=delete_file,
     )
 
     assert state.status == "completed"
-    assert state.get_stats()["downloads_completed"] == 1
     assert state.get_stats()["deletions_completed"] == 1
-    download_file.assert_awaited_once_with(
-        pending_file["download_url"],
-        pending_file["storage_path"],
-        "civitai-token",
-    )
     delete_file.assert_awaited_once_with(orphan_path)
     statuses = [call.args[3] for call in report_status.await_args_list]
     assert "downloading" in statuses
