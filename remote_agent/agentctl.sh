@@ -68,7 +68,12 @@ fi
 
 export DATA_DIR="${DATA_DIR:-$SCRIPT_DIR/data}"
 export PORT="${PORT:-8001}"
-export HOST="${HOST:-0.0.0.0}"
+# Only exported when the operator actually set one. server.py resolves its own
+# default, and it clamps that default to 127.0.0.1 under
+# REMOTE_AGENT_ALLOW_INSECURE — exporting 0.0.0.0 here would hand the flag an
+# unauthenticated *writer* bound to every interface by default, which is exactly
+# what the clamp exists to prevent.
+export HOST="${HOST-}"
 
 if [ ! -x "$EXEC" ]; then
     printf 'error: agent executable not found at %s\n' "$EXEC" >&2
