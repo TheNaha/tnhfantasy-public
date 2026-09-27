@@ -9,6 +9,8 @@ import {
   trackEntity,
   uniqueName,
   waitForJob,
+  requireBackend,
+
 } from './fixtures.js';
 import {
   listModels,
@@ -35,6 +37,12 @@ const JOB_TIMEOUT = 360000;
 // ---------------------------------------------------------------------------
 
 test.describe('Image Generation & Asset Management (Module A)', () => {
+  // Needs a real backend. Skipped, not passed, when none is enabled —
+  // see `requireBackend`.
+  test.beforeEach(async ({ page }) => {
+    await requireBackend(page, 'image');
+  });
+
   test.setTimeout(240000);
 
   test('Simple: Generate disabled without a prompt, enabled when filled', async ({ page }) => {

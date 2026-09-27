@@ -7,6 +7,8 @@ import {
   seedChat,
   trackEntity,
   uniqueName,
+  requireBackend,
+
 } from './fixtures.js';
 
 // ---------------------------------------------------------------------------
@@ -26,6 +28,12 @@ async function openSeededChat(page, chatName) {
 // ---------------------------------------------------------------------------
 
 test.describe('Chat Workspace Nuances (Module H)', () => {
+  // Needs a real backend. Skipped, not passed, when none is enabled —
+  // see `requireBackend`.
+  test.beforeEach(async ({ page }) => {
+    await requireBackend(page, 'llm');
+  });
+
   test.setTimeout(240000);
 
   test('Context switches persist via the API', async ({ page }) => {

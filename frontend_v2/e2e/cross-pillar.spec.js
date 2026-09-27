@@ -7,9 +7,17 @@ import {
   seedStoryChapter,
   trackEntity,
   uniqueName,
+  requireBackend,
+
 } from './fixtures.js';
 
 test.describe('Cross-Pillar Flows (Module E)', () => {
+  // Needs a real backend. Skipped, not passed, when none is enabled —
+  // see `requireBackend`.
+  test.beforeEach(async ({ page }) => {
+    await requireBackend(page, 'image');
+  });
+
   test.setTimeout(300000);
 
   test('@fullstack Chat illustration appears in chat gallery and story gallery', async ({ page }) => {

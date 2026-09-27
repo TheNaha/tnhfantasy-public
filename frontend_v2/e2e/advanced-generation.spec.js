@@ -4,6 +4,8 @@ import {
   trackEntity,
   uniqueName,
   waitForJob,
+  requireBackend,
+
 } from './fixtures.js';
 import {
   listModels,
@@ -32,6 +34,13 @@ async function expandEnhancements(page) {
 // ---------------------------------------------------------------------------
 
 test.describe('Advanced Generation Settings (Module G)', () => {
+  // Needs a real backend. Skipped, not passed, when none is enabled —
+  // see `requireBackend`.
+  test.beforeEach(async ({ page }) => {
+    await requireBackend(page, 'llm');
+    await requireBackend(page, 'image');
+  });
+
   test.setTimeout(240000);
 
   test('Simple: auto-randomize toggle flips, seed input refreshes', async ({ page }) => {

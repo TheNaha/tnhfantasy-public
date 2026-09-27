@@ -564,3 +564,43 @@ export async function cleanupProvider(page, id) {
     // Already deleted by the test itself.
   }
 }
+
+/**
+ * Does this instance have a working backend for `kind`?
+ *
+ * A permanently-red test is a test people stop running, and then the suite stops
+ * being evidence of anything. These tests need a real image worker or a real LLM
+ * to talk to; a developer without one configured should get an honest SKIP, not
+ * a failure that looks like a regression.
+ *
+ * Deliberately a *runtime* check against the API rather than a tag: a tag is a
+ * promise about the environment made at authoring time, and the environment
+ * changes underneath it. `@fullstack` in CI already covers the split for the
+ * runner; this covers the developer.
+ *
+ *   test.beforeEach(async ({ page, requireBackend }) => {
+ *     await requireBackend(page, 'llm');
+ *   });
+ *
+ * @param {'image'|'llm'} kind
+ */
+export async function requireBackend(page, kind) {
+  let providers = [];
+  try {
+    providers = (await apiGet(page, '/providers/'))?.providers || [];
+  } catch (err) {
+    testBase.skip(true, `Backend unreachable, cannot tell whether an ${kind} worker is configured: ${err.message}`);
+    return;
+  }
+
+  const wanted = kind === 'llm' ? ['openai_compat', 'anthropic', 'google', 'modal_llm'] : ['modal', 'beam', 'direct_url', 'remote_comfy'];
+  const usable = providers.filter((p) => wanted.includes(p.type) && p.enabled);
+
+  if (usable.length === 0) {
+    testBase.skip(
+      true,
+      `No enabled ${kind} provider on this instance (looked for ${wanted.join(', ')} among `
+      + `${providers.length} configured). This test needs a real ${kind} backend — it is skipped, not passing.`,
+    );
+  }
+}
