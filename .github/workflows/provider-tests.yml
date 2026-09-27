@@ -5,11 +5,18 @@ on:
     branches: [ "main", "master" ]
     paths:
       - 'provider_containers/**'
+      # `remote_agent/` is a 397-line HTTP surface with its own path-traversal
+      # gate, its own auth gate and its own storage dialect. It was in NO test
+      # job's path filter — only in the PyInstaller build, whose sole verification
+      # was a `/health` curl. So "did it boot" was the only thing standing between
+      # an inverted traversal gate and main.
+      - 'remote_agent/**'
       - '.github/workflows/provider-tests.yml'
   pull_request:
     branches: [ "main", "master" ]
     paths:
       - 'provider_containers/**'
+      - 'remote_agent/**'
       - '.github/workflows/provider-tests.yml'
 
 jobs:
@@ -34,10 +41,55 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements-test.txt
+        pip install ruff
+
+    - name: Put the repo root on sys.path
+      # `remote_agent` is a sibling of `provider_containers`, not a package inside
+      # it, and it imports `provider_core` from the provider tree. tests/conftest.py
+      # does this locally; without it `import remote_agent.server` is an
+      # ImportError and every agent test silently stops existing.
+      run: |
+        echo "REPO_ROOT=$PWD/.." >> "$GITHUB_ENV"
+        echo "PYTHONPATH=$PWD/..:$PYTHONPATH" >> "$GITHUB_ENV"
+
+    - name: Lint with ruff
+      # Mirrors backend-tests.yml, which has run `ruff check .` since the backend
+      # config was added. `provider_containers/ruff.toml` selects `F` only, and
+      # F401 is on: the dead imports in the Modal apps (a `compute_hashes` flag
+      # accepted and discarded, a `diagnostics_timeout` parameter never read) were
+      # exactly the shape of drift that cost the LLM worker its
+      # `max_concurrent_downloads`.
+      run: ruff check .
 
     - name: Compile provider sources
-      run: python -m compileall -q provider_core image_worker llm_worker
+      run: python -m compileall -q provider_core image_worker llm_worker ../remote_agent
 
     - name: Run tests with pytest
       run: |
         pytest tests -v
+
+  # ── the images and the compose file, which nothing validated ────────────────
+  # No job built either provider image or rendered the compose file, so a broken
+  # Dockerfile (a bad COPY, a missing system package, a CMD that cannot start)
+  # shipped green, and so did a compose `depends_on` cycle.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate the compose file
+      # Free: it passes today. It stops it from *not* passing later, which is the
+      # point — a `depends_on` cycle or a bad interpolation is a hard `up` failure
+      # with a message that does not name the file that caused it.
+      run: |
+        docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers config --quiet
+        echo "compose OK"
+
+    - name: Build the image worker image
+      run: docker build -f provider_containers/image_worker/Dockerfile -t tnhcomfy-provider-test-image:latest provider_containers
+
+    - name: Build the LLM worker image
+      run: docker build -f provider_containers/llm_worker/Dockerfile -t tnhcomfy-provider-test-llm:latest provider_containers
+
+    - name: Build the remote agent image
+      run: docker build -f remote_agent/Dockerfile -t tnhcomfy-provider-test-agent:latest .

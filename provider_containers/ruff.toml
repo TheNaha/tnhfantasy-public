@@ -1,0 +1,21 @@
+target-version = "py313"
+line-length = 120
+# Mirrors backend_v2/ruff.toml. `F` only — pyflakes — because that is the set
+# that catches real bugs here (F821 undefined name, F401 unused import, F811
+# redefined-while-unused) without turning the provider tree into a style debate
+# nobody has agreed on.
+#
+# F401 is ON, and it is the reason the dead imports in the Modal apps went
+# unnoticed for as long as they did: `capture_stall_diagnostics` accepted two
+# parameters it never used, and `list_models_with_metadata_internal` accepted a
+# `compute_hashes` flag it discarded, both of which are invisible to a linter but
+# are the exact shape of drift item 21's runtime_config bug had.
+lint.select = ["F"]
+lint.per-file-ignores = {
+  # The package's own re-export surface.
+  "__init__.py" = ["F401"],
+  # Test doubles and reloaded modules legitimately rebind names.
+  "tests/**" = ["F811"],
+  # engine client modules import the contract types they accept, and the Modal
+  # apps import names that exist only as `monkeypatch.setattr` targets.
+}

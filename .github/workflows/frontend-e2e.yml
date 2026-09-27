@@ -56,9 +56,14 @@ jobs:
 
     - name: Start backend (migrations auto-run at boot)
       working-directory: ./backend_v2
+      # The PID goes in a file, not only into the shell's job table: this step's
+      # shell exits immediately, and `disown` only hides the job from a shell that
+      # no longer exists, so nothing downstream could stop the process or read
+      # its log. See the teardown step below.
       run: |
         nohup uvicorn api.main:app --host 0.0.0.0 --port 8002 \
           > /tmp/backend.log 2>&1 &
+        echo $! > /tmp/backend.pid
         disown
       shell: bash
 
@@ -87,9 +92,37 @@ jobs:
       run: npx playwright install --with-deps chromium
 
     - name: Run Playwright tests
+      # `--grep-invert @fullstack` is load-bearing, and the backend above is what
+      # the remaining tests need it for: `apiGet`/`apiPost` in e2e/fixtures.js go
+      # through the dev server's proxy (5174 -> 8002), so the UI-level tests still
+      # read and write the real database.
+      #
+      # The @fullstack tests cannot run here. Per e2e/README.md each one submits a
+      # real job through a Modal/Beam provider and a real LLM through llm-local:
+      # they need MODAL_TOKEN_ID/MODAL_TOKEN_SECRET, BEAM_API_KEY and a provider
+      # account, they take minutes, and they are billed per run. This job has none
+      # of that, so un-excluding them would turn a red job into a permanently red
+      # one. `@fullstack` coverage is a manual/on-prem concern
+      # (`npm run test:e2e:fullstack` against a real stack), and this job's
+      # frontend_v2/** AND backend_v2/** trigger is correct because the UI-level
+      # tests exercise both.
       run: npx playwright test --project=chromium --grep-invert @fullstack
       env:
         VITE_PROXY_TARGET: http://localhost:8002
+
+    - name: Stop the backend and show its log
+      # `if: always()` — the log is most useful when the tests above failed, which
+      # is exactly when a plain step would be skipped. Before this, a failing run
+      # showed only Playwright output, and the backend's own error was in
+      # /tmp/backend.log where nothing read it.
+      if: always()
+      run: |
+        echo "--- backend.log (tail) ---"
+        tail -100 /tmp/backend.log || true
+        if [ -f /tmp/backend.pid ]; then
+          kill "$(cat /tmp/backend.pid)" 2>/dev/null || true
+          rm -f /tmp/backend.pid
+        fi
 
     - name: Upload Playwright report
       if: always()
