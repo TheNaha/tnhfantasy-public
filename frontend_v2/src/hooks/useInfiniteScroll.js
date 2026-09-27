@@ -48,8 +48,16 @@ export function useInfiniteScroll({
 
     const markUserActivity = useCallback(() => {
         isUserScrollingRef.current = true;
-        if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-    }, []);
+        // Re-arm the idle timer, do not clear it. There is no "wheel end" or
+        // "scroll end" event, so the only way to detect that a gesture has
+        // finished is to keep pushing the deadline out while events keep
+        // arriving. This used to clear the timer here and rely on
+        // touchend/touchcancel to re-arm it, which meant a mouse wheel -
+        // which never fires either - latched isUserScrollingRef to true after
+        // the first event and infinite scroll never fired again for the rest
+        // of the session.
+        scheduleIdleLoad();
+    }, [scheduleIdleLoad]);
 
     const endUserActivity = useCallback(() => {
         scheduleIdleLoad();
