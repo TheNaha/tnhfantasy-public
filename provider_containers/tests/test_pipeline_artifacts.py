@@ -155,7 +155,11 @@ class TestTheAgentSweepsThem:
             server.delete_model(server.DeleteModelRequest(path="models/checkpoints/big.safetensors"))
         )
 
-        assert payload == {"success": True}
+        # The envelope, not the bare `{"success": True}` this used to return:
+        # `remote_agent` is one of the two server-side files whose dialect was
+        # never unified, and the worker adopts the body verbatim.
+        assert payload["status"] == "success"
+        assert payload["success"] is True
         assert not model.exists(), "the model itself must be gone"
         assert not slot.exists(), (
             "the parked resume slot is the multi-GB file: it is what "
@@ -190,7 +194,8 @@ class TestTheAgentSweepsThem:
             server.delete_model(server.DeleteModelRequest(path="models/checkpoints/gone.safetensors"))
         )
 
-        assert payload == {"success": True}
+        assert payload["status"] == "success"
+        assert payload["success"] is True
         assert not orphan_slot.exists()
 
     def test_deleting_a_directory_does_not_500(self, data_dir):
@@ -210,7 +215,8 @@ class TestTheAgentSweepsThem:
             server.delete_model(server.DeleteModelRequest(path="models/loras/collection"))
         )
 
-        assert payload == {"success": True}
+        assert payload["status"] == "success"
+        assert payload["success"] is True
         assert not directory.exists()
 
     def test_a_missing_file_is_still_reported_as_a_refusal(self, data_dir):

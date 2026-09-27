@@ -7,8 +7,9 @@ import logging
 
 import os
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, AsyncGenerator, List
+from typing import Dict, Any, Optional, AsyncGenerator
 from pathlib import Path
 
 # IMPORTANT: provider_core is a sibling package. Modal cloud functions can fail
@@ -18,10 +19,6 @@ from provider_core.downloads import pending_download_paths
 from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
 from provider_core.downloads import download_model_to_path
 from provider_core.http_client import get_http_client
-from provider_core.validation import (
-    MIN_MODEL_SIZE,
-    VALID_FILE_HEADERS,
-)
 
 def safe_vol_reload():
     try:
@@ -309,17 +306,57 @@ def _free_comfy_memory(port: int, label: str) -> None:
     except Exception as e:
         logger.warning(f"[{label}] /free call failed: {e}")
 
+def _commit_within(commit_fn, timeout_seconds: float) -> None:
+    """Run `commit_fn` under a ceiling, abandoning the thread if it overruns.
+
+    A volume commit is a remote sync, and this one runs while the GPU container is
+    already stalled and about to be restarted — a commit that never returns would
+    hold the restart hostage, which is the very thing the diagnostics exist to
+    diagnose. The thread is abandoned, not joined: the bytes are already written
+    to the mount, only their durability is unconfirmed, and the trace is in
+    Modal's own logs regardless.
+    """
+    if timeout_seconds <= 0:
+        commit_fn()
+        return
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vol-commit")
+    try:
+        executor.submit(commit_fn).result(timeout=timeout_seconds)
+    except TimeoutError:
+        logger.warning(f"vol.commit() did not return within {timeout_seconds}s; abandoning it")
+    except Exception as exc:
+        logger.error(f"vol.commit() failed: {exc}")
+    finally:
+        executor.shutdown(wait=False)
+
+
 def capture_stall_diagnostics(port: int, label: str, details: Optional[Dict[str, Any]] = None, enabled: bool = True, diagnostics_timeout: float = 8.0, max_chars: int = 12000, volume_commit_fn = None) -> Optional[str]:
     if not enabled: return None
     diagnostics_path = Path("/mnt/data/diagnostics/comfyui_stalls") / f"{label.lower()}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
-    diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with open(diagnostics_path, "w", encoding="utf-8") as f: json.dump({"label": label, "port": port, "stall_details": details or {}}, f)
-        if volume_commit_fn: volume_commit_fn()
+        # `details` is capped before it reaches the file, not after: a stall dump
+        # can carry a whole event log, and writing an unbounded blob into the
+        # volume that is already misbehaving is how diagnostics turn into the
+        # outage. The head is kept, because that is where the failing frame is.
+        details_payload: Any = details or {}
+        try:
+            encoded = json.dumps(details_payload)
+        except (TypeError, ValueError):
+            encoded = json.dumps(details_payload, default=str)
+        if len(encoded) > max_chars:
+            details_payload = {
+                "truncated": True,
+                "original_chars": len(encoded),
+                "details": encoded[:max_chars],
+            }
+        diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(diagnostics_path, "w", encoding="utf-8") as f:
+            json.dump({"label": label, "port": port, "stall_details": details_payload}, f)
+        if volume_commit_fn: _commit_within(volume_commit_fn, diagnostics_timeout)
     except Exception as exc: logger.error(f"Failed diagnostics: {exc}")
     return str(diagnostics_path)
 
-async def list_models_with_metadata_internal(base_path: str, directory: str, compute_hashes: bool = False) -> list[Dict[str, Any]]:
+async def list_models_with_metadata_internal(base_path: str, directory: str) -> list[Dict[str, Any]]:
     import aiofiles
     try: target_dir = get_safe_path(base_path, directory)
     except: return []
@@ -334,10 +371,16 @@ async def list_models_with_metadata_internal(base_path: str, directory: str, com
                     if is_model_file(e.name): entries.append((e.name, e.stat().st_size))
         except: pass
         return entries, entry_set
-        
+
     entries, entry_set = await asyncio.to_thread(_scan)
     async def _proc(name: str, size: int):
         fpath = f"{directory}/{name}" if directory else name
+        # `sha256` is a declared field of every listing entry and stays None: this
+        # copy is the inlined twin of image_worker/comfy/models_utils.py, and
+        # hashing a 7 GB checkpoint to fill it costs more than the field is worth.
+        # models_utils honours its `compute_hashes` flag for callers that want it;
+        # this one never had the flag do anything, so the flag is gone rather than
+        # left accepted and ignored.
         res = {"name": name, "path": fpath, "type": "file", "size": size, "sha256": None}
         if f"{os.path.splitext(name)[0]}.preview.png" in entry_set: res["preview"] = f"/api/view/{directory}/{os.path.splitext(name)[0]}.preview.png"
         meta_name = f"{os.path.splitext(name)[0]}.json"
@@ -388,6 +431,12 @@ COMFYUI_MAX_CONTAINERS = int(os.getenv("MODAL_GPU_MAX_CONTAINERS", "1"))
 COMFYUI_SCALEDOWN = int(os.getenv("MODAL_GPU_SCALEDOWN", "40"))
 COMFYUI_SCALEDOWN_SNAPSHOT = int(os.getenv("MODAL_GPU_SCALEDOWN_SNAPSHOT", "40"))
 COMFYUI_STALL_TIMEOUT_SECONDS = float(os.getenv("MODAL_COMFYUI_STALL_TIMEOUT_SECONDS", "300"))
+# Build-time accelerator for the image's `run_commands`/`uv_pip_install` steps.
+# Those four steps were hardcoded to "L4" while `COMFYUI_GPU_TYPE` above drives
+# the runtime classes, so deploying with MODAL_GPU_TYPE=A10G built the image on
+# one card and ran it on another — and the CUDA/arch steps inside the build
+# silently targeted the wrong one. The build follows the runtime.
+MODAL_BUILD_GPU_TYPE = os.getenv("MODAL_BUILD_GPU_TYPE", COMFYUI_GPU_TYPE)
 COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS = float(os.getenv("MODAL_COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS", "180"))
 COMFYUI_MAX_RUNS_BEFORE_RESTART = int(os.getenv("MODAL_COMFYUI_MAX_RUNS_BEFORE_RESTART", "10"))  # 10 = safe margin below observed ~15-run hang
 COMFYUI_CAPTURE_STALL_DIAGNOSTICS = os.getenv("MODAL_COMFYUI_CAPTURE_STALL_DIAGNOSTICS", "true").strip().lower() in {
@@ -439,7 +488,7 @@ image_base = (
     .apt_install("git", "libgl1-mesa-glx", "libglib2.0-0", "procps")
     .uv_pip_install("comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors", "py-spy", "httpx", "aiofiles", "psutil")
     # Install ComfyUI using comfy-cli
-    .run_commands("comfy --skip-prompt install --fast-deps --nvidia --cuda-version 12.8",gpu="L4")
+    .run_commands("comfy --skip-prompt install --fast-deps --nvidia --cuda-version 12.8",gpu=MODAL_BUILD_GPU_TYPE)
     # Ensure torch sees the complete CUDA user-space library set expected by modern nodes.
     .uv_pip_install(
         "nvidia-cuda-runtime-cu12",
@@ -456,12 +505,12 @@ image_base = (
         "nvidia-nvjitlink-cu12",
         "nvidia-nvtx-cu12",
         "nvidia-cufile-cu12",
-        gpu="L4",
+        gpu=MODAL_BUILD_GPU_TYPE,
     )
     # Ensure torch sees CUDA runtime/nvrtc libs expected by its preload path.
     .run_commands(
         "python -c \"import torch; print('torch import OK before nodes:', torch.__version__)\"",
-        gpu="L4",
+        gpu=MODAL_BUILD_GPU_TYPE,
     )
     # Install Custom Nodes via comfy-cli registry
     # See: https://registry.comfy.org/
@@ -488,7 +537,7 @@ image_base = (
         "pip install --no-cache-dir ultralytics dill",
         "python -c \"import ultralytics; print('ultralytics', ultralytics.__version__, 'installed in ComfyUI python env')\"",
         "comfy --help",
-        gpu="L4",
+        gpu=MODAL_BUILD_GPU_TYPE,
     )
     # Create symlinks to volume for models, output, and input
     .run_commands(
@@ -605,8 +654,7 @@ class ComfyUIStable:
     async def run(self, workflow_json: Dict[str, Any]):
         # Refresh the volume replica so inputs uploaded by other containers
         # (FileStorage.put_file) since container start are visible to ComfyUI.
-        async with _reload_lock:
-            await safe_vol_reload_aio()
+        await safe_vol_reload_aio()
 
         if COMFYUI_MAX_RUNS_BEFORE_RESTART > 0 and getattr(self, "_completed_runs", 0) >= COMFYUI_MAX_RUNS_BEFORE_RESTART:
             await asyncio.to_thread(_restart_comfy_server, self.port, "ComfyUIStable")
@@ -718,8 +766,7 @@ class ComfyUISnapshot:
     async def run(self, workflow_json: Dict[str, Any]):
         # Refresh the volume replica so inputs uploaded by other containers
         # (FileStorage.put_file) since container start are visible to ComfyUI.
-        async with _reload_lock:
-            await safe_vol_reload_aio()
+        await safe_vol_reload_aio()
 
         if COMFYUI_MAX_RUNS_BEFORE_RESTART > 0 and getattr(self, "_completed_runs", 0) >= COMFYUI_MAX_RUNS_BEFORE_RESTART:
             await asyncio.to_thread(_restart_comfy_server, self.port, "ComfyUISnapshot")
@@ -941,7 +988,14 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
 
 LIGHTWEIGHT_SCALEDOWN = 15
 
-_reload_lock = asyncio.Lock()
+# A module-level `_reload_lock = asyncio.Lock()` used to guard the three reload
+# sites below, and was wrong twice over. It serialised them: `list_models_with_metadata`
+# runs `@modal.concurrent(max_inputs=20)`, so twenty concurrent listings queued
+# behind one another's volume reload for a result that is identical either way —
+# `vol.reload()` refreshes a local cache, it is idempotent and there is nothing to
+# protect. And an `asyncio.Lock()` binds to the loop that first awaits it, which a
+# Modal container spanning a snapshot restore is not guaranteed to be the same loop
+# for. The reload is per-invocation and the guard is gone.
 
 @app.function(
     image=image,
@@ -952,9 +1006,8 @@ _reload_lock = asyncio.Lock()
 )
 @modal.concurrent(max_inputs=20, target_inputs=10)
 async def list_models_with_metadata(directory: str):
-    async with _reload_lock:
-        await safe_vol_reload_aio()
-        return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
+    await safe_vol_reload_aio()
+    return await list_models_with_metadata_internal("/mnt/data", directory)
 
 
 # ============================================
@@ -969,12 +1022,12 @@ async def list_models_with_metadata(directory: str):
 )
 @modal.concurrent(max_inputs=10, target_inputs=5)
 async def validate_models(directories: list[str], delete_invalid: bool = False):
-    await safe_vol_reload_aio()
     """
     Validate all models in specified directories.
     Checks: minimum size, magic bytes, partial downloads.
     Returns: aggregated results for all directories.
     """
+    await safe_vol_reload_aio()
     # ensure directories is a list
     if isinstance(directories, str):
         directories = [directories]
@@ -986,9 +1039,6 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         "by_directory": {}
     }
 
-    VALID_HEADERS = VALID_FILE_HEADERS
-    MIN_SIZE = MIN_MODEL_SIZE
-    
     def validate_single_file_in_dir(directory, name):
         """Helper to validate a single file, returns (directory, result)."""
         try:
@@ -996,43 +1046,46 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         except Exception:
             return None
 
-        if not is_model_file(name):
-            return None
-        # Never delete a file the download pipeline is using. Reconciliation runs
-        # with delete_invalid=True, and a 0-byte lock or an in-flight temp file
-        # fails validation — removing it would also remove the model's metadata
-        # and preview (splitext("x.safetensors.lock") is "x.safetensors") and
-        # would unlink the flock a concurrent downloader holds.
-        if is_transient_artifact(name):
-            return None
-            
         full_path = os.path.join(target_dir, name)
-        if not os.path.isfile(full_path):
-            return None
-            
-        # Check for partial downloads
-        if name.endswith('.downloading'):
-            file_size = 0
-            if os.path.exists(full_path):
-                file_size = os.path.getsize(full_path)
-            
-            if delete_invalid:
-                try:
-                    os.remove(full_path)
-                    logger.info(f"[Validate] Deleted partial: {name}")
-                except Exception as e:
-                    logger.warning(f"[Validate] Failed to delete partial {name}: {e}")
-                
+
+        # Classified BEFORE the is_model_file filter, which excludes these by
+        # name and returned first. `total_partial` was therefore permanently 0
+        # for this engine, so step 0 of reconciliation — the one step that reads
+        # it — could never reach zero, and the `.downloading` branch below could
+        # not run at all. is_model_file('x.1234.abcd1234.downloading') is False,
+        # so that was not a near-miss.
+        #
+        # Reported, never deleted. Reconciliation calls this with
+        # delete_invalid=True, and removing an in-flight temp leaves the writer
+        # holding a live descriptor: it transfers the whole file and then fails
+        # at os.replace, which reconciliation reports as a failed download.
+        # Deleting a `.lock` is worse still — it unlinks the flock a concurrent
+        # downloader holds (so a second downloader takes a *different* lock and
+        # the interleaving corruption the lock exists to prevent happens again),
+        # and splitext("x.safetensors.lock")[0] is "x.safetensors", so the
+        # model's own .json and .preview.png go with it. Abandoned partials are
+        # reclaimed by FileStorage.delete_file via pending_download_paths, which
+        # is the only place that can tell an in-flight attempt from a dead one —
+        # exactly as remote_agent/server.py `_validate_dir` already does.
+        if is_transient_artifact(name):
+            if not os.path.isfile(full_path):
+                return None
             return {
                 "directory": directory,
                 "type": "partial",
                 "data": {
                     "name": name,
-                    "size": file_size,
-                    "issue": "Incomplete download (temp file)"
-                }
+                    "size": os.path.getsize(full_path),
+                    "issue": "Incomplete download (temp file)",
+                },
             }
-            
+
+        if not is_model_file(name):
+            return None
+
+        if not os.path.isfile(full_path):
+            return None
+
         file_size = os.path.getsize(full_path)
         from provider_core.validation import validate_downloaded_file
         validation = validate_downloaded_file(full_path)
@@ -1283,24 +1336,6 @@ class FileStorage:
         return files
     
     @modal.method()
-    def file_exists(self, path: str) -> bool:
-        """Check if file exists in volume."""
-        import os
-        safe_vol_reload()
-        full_path = get_safe_path("/mnt/data", path)
-        return os.path.exists(full_path)
-    
-    @modal.method()
-    def get_file_size(self, path: str) -> int:
-        """Get file size in bytes."""
-        import os
-        safe_vol_reload()
-        full_path = get_safe_path("/mnt/data", path)
-        if os.path.exists(full_path):
-            return os.path.getsize(full_path)
-        return 0
-    
-    @modal.method()
     def put_file(self, path: str, content: bytes) -> bool:
         """
         Write file contents to volume.
@@ -1337,8 +1372,6 @@ class FileStorage:
 def setup_models():
     safe_vol_reload()
     import os
-    import requests
-    import time
     from provider_core.models import MODEL_DIRECTORIES
     dirs = ["/mnt/data/output", "/mnt/data/downloads"] + [f"/mnt/data/{d}" for d in MODEL_DIRECTORIES]
     for d in dirs:
@@ -1393,19 +1426,38 @@ def setup_models():
         if os.path.exists(full_path):
             logger.info(f"Skipping {model['path']} (already exists)")
             continue
-            
+
         logger.info(f"Downloading {model['path']}...")
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        
+
+        # The shared pipeline, not a raw stream to the FINAL path. The old form
+        # had no `timeout=`, no magic-byte check and no temp file, so a truncated
+        # transfer was published as a good model — and the `os.path.exists` above
+        # then treated it as installed forever, on every subsequent run, with no
+        # way to tell. `download_model_to_path` writes a `.downloading` temp,
+        # validates it (min size + magic bytes), and only then `os.replace`s it
+        # into place, so a partial can never be mistaken for a model.
         try:
-            response = requests.get(model['url'], stream=True)
-            response.raise_for_status()
-            with open(full_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            logger.info(f"Downloaded {model['path']}")
+            result = download_model_to_path(
+                url=model['url'],
+                full_path=full_path,
+                path=model['path'],
+                hf_token=os.environ.get("HF_TOKEN"),
+                civitai_token=os.environ.get("CIVITAI_TOKEN"),
+                log=logger.info,
+                log_prefix="Setup",
+                # Without this, `requests.get` blocks forever on a peer that
+                # accepts the connection and then goes quiet.
+                request_timeout_seconds=DOWNLOAD_HTTP_TIMEOUT,
+            )
         except Exception as e:
             logger.error(f"Failed to download {model['path']}: {e}")
+            continue
+        if result.get("status") == "success":
+            logger.info(f"Downloaded {model['path']}")
+        else:
+            logger.error(f"Failed to download {model['path']}: {result.get('message')}")
 
+    vol.commit()
     logger.info("Model setup complete!")
     return {"status": "success"}

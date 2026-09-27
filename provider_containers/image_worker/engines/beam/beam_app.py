@@ -17,10 +17,9 @@ Deploy:
 # beam is the CLI alias for the beta9 Python package
 from beta9 import asgi, realtime, Image, Volume, QueueDepthAutoscaler, rest_api
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 import os
 import json
-import logging
 import subprocess
 import time
 import asyncio
@@ -29,16 +28,12 @@ import asyncio
 # provider_containers root) can fail with ModuleNotFoundError: provider_core.
 from provider_core.downloads import pending_download_paths
 from provider_core.http_client import get_file_size_cap
-from provider_core.responses import ok, outcome
+from provider_core.responses import failed, ok, outcome
 from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
 from provider_core.logging import get_logger
 
 logger = get_logger("image_worker.beam.beam_app")
 from provider_core.downloads import download_model_to_path
-from provider_core.validation import (
-    MIN_MODEL_SIZE,
-    VALID_FILE_HEADERS,
-)
 from image_worker.comfy.workflow_executor import (
     IMAGE_FETCH_VIEW_API,
     execute_comfy_workflow,
@@ -292,7 +287,7 @@ async def setup():
     dirs = ["/mnt/data/output", "/mnt/data/input", "/mnt/data/downloads"] + [f"/mnt/data/{d}" for d in MODEL_DIRECTORIES]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
-    return {"status": "success", "directories": dirs}
+    return ok("Setup complete", directories=dirs)
 
 
 async def shared_download_model(data: dict):
@@ -307,7 +302,7 @@ async def shared_download_model(data: dict):
         full_path = get_safe_path(base_path, path)
     except Exception as e:
         logger.error(f"[Download] Path traversal blocked: {e}")
-        return {"status": "error", "message": "Invalid path"}
+        return failed("Invalid path", code=400)
 
     import asyncio
     
@@ -565,10 +560,10 @@ async def validate_models(request: Request):
     try:
         target_dir = get_safe_path("/mnt/data", directory)
     except Exception as e:
-        return {"valid": [], "invalid": [], "partial": [], "total": 0, "message": f"Invalid directory: {e}"}
+        return failed(f"Invalid directory: {e}", code=400)
 
     if not os.path.exists(target_dir):
-        return {"valid": [], "invalid": [], "partial": [], "total": 0}
+        return ok(f"{directory} does not exist", valid=[], invalid=[], partial=[], total=0)
     
     def _validate_dir():
         valid_models = []
@@ -611,17 +606,22 @@ async def validate_models(request: Request):
 
     valid_models, invalid_models, partial_downloads = await asyncio.to_thread(_validate_dir)
             
-    return {
-        "directory": directory,
-        "total": len(valid_models) + len(invalid_models) + len(partial_downloads),
-        "valid": valid_models,
-        "valid_count": len(valid_models),
-        "invalid": invalid_models,
-        "invalid_count": len(invalid_models),
-        "partial": partial_downloads,
-        "partial_count": len(partial_downloads),
-        "deleted": delete_invalid
-    }
+    total = len(valid_models) + len(invalid_models) + len(partial_downloads)
+    # The envelope, not a bare `{directory, total, valid, ...}`. The client adopts
+    # this body verbatim through `from_upstream`, which is exactly the case that
+    # needs `status`/`success` present rather than inferred.
+    return ok(
+        f"Validated {total} files in {directory}",
+        directory=directory,
+        total=total,
+        valid=valid_models,
+        valid_count=len(valid_models),
+        invalid=invalid_models,
+        invalid_count=len(invalid_models),
+        partial=partial_downloads,
+        partial_count=len(partial_downloads),
+        deleted=delete_invalid,
+    )
 
 @storage_app.post("/validate-all-models", dependencies=[Depends(verify_beam_token)])
 async def validate_all_models(request: Request):
@@ -667,7 +667,11 @@ async def validate_all_models(request: Request):
         results["total_invalid"] += res.get("invalid_count", 0)
         results["total_partial"] += res.get("partial_count", 0)
 
-    return results
+    return ok(
+        f"Validated {results['total_valid']} models across {len(results['by_directory'])} directories",
+        result=results,
+        **results,
+    )
 
 
 # =============================================================================
@@ -717,7 +721,7 @@ async def comfy_gpu(event):
     # Stream progress updates through WebSocket
     # Note: _run_inference_realtime yields JSON strings
     async for update_json in _run_inference_realtime(workflow):
-        logger.info(f"[comfy_gpu] Sending update through WebSocket")
+        logger.info("[comfy_gpu] Sending update through WebSocket")
         yield update_json
     
     logger.info("[comfy_gpu] Inference complete")
@@ -759,8 +763,8 @@ async def download_model_endpoint(request: Request):
     data = await request.json()
     res = await shared_download_model(data)
     if res.get("status") == "success":
-        return {"status": "success", "path": data.get("path"), "size": res.get("size", 0)}
-    return {"status": "error", "message": res.get("message", "Download failed")}
+        return ok("Download complete", path=data.get("path"), size=res.get("size", 0))
+    return failed(res.get("message", "Download failed"), code=502, retryable=True)
 
 
 @asgi(
@@ -771,9 +775,13 @@ async def download_model_endpoint(request: Request):
     volumes=[Volume(VOL_NAME, mount_path="/mnt/data")],
     timeout=DOWNLOAD_TIMEOUT,
     keep_warm_seconds=DOWNLOAD_KEEP_WARM,
-    concurrent_requests=1,
-    workers=1,
-    autoscaler=QueueDepthAutoscaler(max_containers=DOWNLOAD_MAX_CONTAINERS, tasks_per_container=1)
+    # DOWNLOAD_CONCURRENT, not a hardcoded 1. The knob was read and never used, so
+    # the only way to run two downloads at once was to edit and redeploy — and
+    # the autoscaler's tasks_per_container had to agree, or Beam schedules N tasks
+    # onto a container that will only serve one and the rest queue behind it.
+    concurrent_requests=DOWNLOAD_CONCURRENT,
+    workers=DOWNLOAD_CONCURRENT,
+    autoscaler=QueueDepthAutoscaler(max_containers=DOWNLOAD_MAX_CONTAINERS, tasks_per_container=DOWNLOAD_CONCURRENT)
 )
 def comfy_download():
     """Dedicated download endpoint for model downloads (separate scaling from storage)."""
@@ -786,39 +794,58 @@ def comfy_download():
 
 extractor_app = FastAPI(title="ComfyUI Extractor Server")
 
-@extractor_app.get("/object_info", dependencies=[Depends(verify_beam_token)])
-async def get_object_info():
+def _extract_object_info() -> dict:
+    """Launch ComfyUI on the CPU, read its /object_info, shut it down.
+
+    Entirely synchronous, and called through `asyncio.to_thread` below. It was
+    previously inline in an `async def`, where a 60 s ready-poll (`time.sleep(1)`
+    per attempt) plus a 60 s `requests.get` ran straight on the event loop: the
+    whole Beam extractor deployment — which serves this one route — stopped
+    answering for up to two minutes at a time.
+    """
     import requests
     import subprocess
     import time
-    
+
     port = 8189
     logger.info("[ComfyUINodeExtractor] Starting CPU-only server...")
     cmd = ["comfy", "launch", "--", "--listen", "0.0.0.0", "--port", str(port), "--cpu"]
     server_process = subprocess.Popen(cmd)
-    
-    # Wait for ready
-    deadline = time.time() + 60
-    ready = False
-    while time.time() < deadline:
-        try:
-            response = requests.get(f"http://127.0.0.1:{port}", timeout=2)
-            if response.status_code == 200:
-                ready = True
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-        
-    if not ready:
-        server_process.kill()
-        return {"error": "ComfyUI failed to start in CPU mode for extraction"}
-        
+
     try:
-        response = requests.get(f"http://127.0.0.1:{port}/object_info", timeout=60)
-        response.raise_for_status()
-        data = response.json()
-        logger.info(f"[Extractor] Successfully extracted object_info ({len(data)} nodes).")
+        # Wait for ready
+        deadline = time.time() + 60
+        ready = False
+        while time.time() < deadline:
+            try:
+                response = requests.get(f"http://127.0.0.1:{port}", timeout=2)
+                if response.status_code == 200:
+                    ready = True
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+
+        if not ready:
+            # Was a bare `{"error": ...}` at HTTP 200: indistinguishable from a
+            # successful extraction that happened to return no nodes, and it
+            # carried no `retryable` for the worker to relay.
+            raise ExtractionNotReady(
+                "ComfyUI failed to start in CPU mode for extraction"
+            )
+
+        try:
+            response = requests.get(f"http://127.0.0.1:{port}/object_info", timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            logger.info(f"[Extractor] Successfully extracted object_info ({len(data)} nodes).")
+            return data
+        except Exception as e:
+            # A real 502, not an AttributeError: the client adopts the body through
+            # `from_upstream`, which keys off `status == "error"`.
+            raise ExtractionFailed(
+                f"Extractor could not read /object_info: {e}"
+            ) from e
     finally:
         # Kill the server gracefully
         logger.info("[ComfyUINodeExtractor] Shutting down CPU server...")
@@ -827,14 +854,41 @@ async def get_object_info():
             server_process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             server_process.kill()
-        
+
+
+class ExtractionNotReady(RuntimeError):
+    """ComfyUI never answered within the ready-poll deadline."""
+
+
+class ExtractionFailed(RuntimeError):
+    """ComfyUI answered, but /object_info could not be read."""
+
+
+@extractor_app.get("/object_info", dependencies=[Depends(verify_beam_token)])
+async def get_object_info():
+    # `data` is bound before the call, and the launch/poll/read/shutdown sequence
+    # lives in a worker thread. It used to be inline, which put a 60 s
+    # `time.sleep` poll and a 60 s `requests.get` on the event loop.
+    try:
+        data: dict = await asyncio.to_thread(_extract_object_info)
+    except ExtractionNotReady as e:
+        raise HTTPException(status_code=503, detail={"message": str(e), "retryable": True})
+    except ExtractionFailed as e:
+        raise HTTPException(status_code=502, detail={"message": str(e), "retryable": True})
+
+    # Success is a raw pass-through of ComfyUI's own /object_info document:
+    # api/routes/nodes.py returns it verbatim to the UI.
     return data
 
 @rest_api(
     name="comfyui-extractor",
     cpu=1,
     memory="4Gi",
-    image=gpu_image,
+    # cpu_image, not gpu_image. The endpoint launches ComfyUI with `--cpu` and
+    # reads its /object_info; the two other deployments on this volume already use
+    # cpu_image. Declaring the GPU image here billed a ~15 GB CUDA image and
+    # pinned it to a GPU for a subprocess that is explicitly told not to use one.
+    image=cpu_image,
     volumes=[Volume(VOL_NAME, mount_path="/mnt/data")],
     timeout=300,
     keep_warm_seconds=0,

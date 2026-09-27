@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Any, AsyncIterator, Dict, Iterable, Optional
+from typing import Any, AsyncIterator, Dict, Optional
 
 from provider_core.models import TaskEvent
 

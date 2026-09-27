@@ -5,14 +5,12 @@ import logging
 import time
 import asyncio
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
 
 from provider_core.utils import get_safe_path, is_model_file
 from provider_core.downloads import download_model_to_path, pending_download_paths
 from provider_core.validation import (
     MIN_MODEL_SIZE,
     VALID_FILE_HEADERS,
-    validate_downloaded_file,
 )
 
 logging.basicConfig(
@@ -59,7 +57,7 @@ VALIDATE_TIMEOUT = int(os.environ.get("MODAL_VALIDATE_TIMEOUT", "600"))
 VALIDATE_MAX_CONTAINERS = int(os.environ.get("MODAL_VALIDATE_MAX_CONTAINERS", "2"))
 
 
-async def list_models_with_metadata_internal(base_path: str, directory: str, compute_hashes: bool = False) -> list[Dict[str, Any]]:
+async def list_models_with_metadata_internal(base_path: str, directory: str) -> list[Dict[str, Any]]:
     import aiofiles
     try:
         target_dir = get_safe_path(base_path, directory)
@@ -91,6 +89,9 @@ async def list_models_with_metadata_internal(base_path: str, directory: str, com
 
     async def _proc(name: str, size: int):
         fpath = f"{directory}/{name}" if directory else name
+        # `sha256` is a declared field of every listing entry and stays None; see
+        # the image twin for why the `compute_hashes` flag is gone rather than
+        # accepted and ignored.
         res = {"name": name, "path": fpath, "type": "file", "size": size, "sha256": None}
         if f"{os.path.splitext(name)[0]}.preview.png" in entry_set:
             res["preview"] = f"/api/view/{directory}/{os.path.splitext(name)[0]}.preview.png"
@@ -344,7 +345,7 @@ async def list_models_with_metadata(directory: str):
         await safe_vol_reload_aio()
     except Exception:
         safe_vol_reload()
-    return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
+    return await list_models_with_metadata_internal("/mnt/data", directory)
 
 
 @app.function(
@@ -574,20 +575,6 @@ class FileStorage:
                 files.append(rel_path)
 
         return files
-
-    @modal.method()
-    def file_exists(self, path: str) -> bool:
-        safe_vol_reload()
-        full_path = get_safe_path("/mnt/data", path)
-        return os.path.exists(full_path)
-
-    @modal.method()
-    def get_file_size(self, path: str) -> int:
-        safe_vol_reload()
-        full_path = get_safe_path("/mnt/data", path)
-        if os.path.exists(full_path):
-            return os.path.getsize(full_path)
-        return 0
 
     @modal.method()
     def put_file(self, path: str, content: bytes) -> bool:
