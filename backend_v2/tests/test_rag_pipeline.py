@@ -194,7 +194,16 @@ class TestRagEnabledGate:
         )
         assert rag.rag_enabled() is True
 
-    def test_disabled_returns_empty(self, session, monkeypatch):
+    def test_disabled_still_returns_results_via_fallback(self, session, monkeypatch):
+        """Disabling RAG must remove only the SEMANTIC step, not retrieval.
+
+        This asserted `== []`, which contradicted the settings UI's own
+        description that context "falls back to recent/recency-based retrieval
+        only" — turning the toggle off silently deleted a character's history
+        and made every activated lorebook inert. Both functions already had a
+        keyword/recency path for a blank query; the fix routes a disabled RAG
+        into it instead of returning nothing.
+        """
         import services.rag_pipeline as rag
         import config as app_config
 
@@ -208,8 +217,15 @@ class TestRagEnabledGate:
         monkeypatch.setattr(
             app_config, "get_config", lambda: {"ai": {"ragEnabled": False}}, raising=False
         )
-        assert rag.search_memories(session, char.id) == []
-        assert rag.search_lorebook_entries(session, [lb.id], "gate") == []
+        assert not rag.rag_enabled()
+
+        # Still retrieved, by recency.
+        memories = rag.search_memories(session, char.id)
+        assert [m.content for m in memories] == ["secret memory"]
+
+        # Still retrieved, by key match — keyword search never needed an embedding.
+        entries = rag.search_lorebook_entries(session, [lb.id], "gate")
+        assert [e.content for e in entries] == ["gated entry"]
 
     def test_explicit_true_still_searches(self, session, monkeypatch):
         import services.rag_pipeline as rag
@@ -225,3 +241,58 @@ class TestRagEnabledGate:
         results = rag.search_memories(session, char.id)
         assert len(results) == 1
         assert results[0].content == "visible memory"
+
+
+class TestRagDisabledFallsBackRatherThanReturningNothing:
+    """`ai.ragEnabled` used to gate both search functions with an early
+    `return []`, which contradicted the settings UI's own description that
+    context "falls back to recent/recency-based retrieval only". Turning the
+    semantic layer off must remove only the embedding step."""
+
+    def test_memories_still_returned_when_rag_disabled(self, monkeypatch):
+        from sqlmodel import Session, create_engine
+        from sqlmodel.pool import StaticPool
+        from sqlmodel import SQLModel
+        import core.entities  # noqa: F401
+        from core.entities import CharacterMemory
+        from services import rag_pipeline
+
+        monkeypatch.setattr(rag_pipeline, "rag_enabled", lambda: False)
+
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(engine, tables=[CharacterMemory.__table__])
+        with Session(engine) as s:
+            s.add(CharacterMemory(character_id="c1", content="the user likes tea"))
+            s.add(CharacterMemory(character_id="c1", content="unrelated note"))
+            s.commit()
+
+            # No query -> the recency path, exactly as a blank query behaves.
+            assert len(rag_pipeline.search_memories(s, "c1", limit=5)) == 2
+            # With a query -> keyword matching still works, because keyword
+            # search never needed an embedding.
+            hits = rag_pipeline.search_memories(s, "c1", query="tea", limit=5)
+            assert [h.content for h in hits] == ["the user likes tea"]
+
+    def test_lorebook_entries_still_returned_when_rag_disabled(self, monkeypatch):
+        from sqlmodel import Session, create_engine
+        from sqlmodel.pool import StaticPool
+        from sqlmodel import SQLModel
+        import core.entities  # noqa: F401
+        from core.entities import LorebookEntry
+        from services import rag_pipeline
+
+        monkeypatch.setattr(rag_pipeline, "rag_enabled", lambda: False)
+
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(engine, tables=[LorebookEntry.__table__])
+        with Session(engine) as s:
+            s.add(LorebookEntry(lorebook_id="lb1", content="Zeta is a cat girl", keys=["zeta"]))
+            s.add(LorebookEntry(lorebook_id="lb1", content="unrelated lore", keys=["other"]))
+            s.commit()
+
+            out = rag_pipeline.search_lorebook_entries(s, ["lb1"], limit=5)
+            assert len(out) == 2, "a disabled RAG must not make lorebooks inert"

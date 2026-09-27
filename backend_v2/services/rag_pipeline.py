@@ -57,13 +57,22 @@ def search_memories(
 
     - Blank query: most-recent memories (last_accessed_at, importance, created_at).
     - PostgreSQL: cosine-distance ranking over embedded memories.
-    - Otherwise (SQLite, or embedding model unavailable): ILIKE content match.
+    - Otherwise (SQLite, RAG disabled, or embedding model unavailable): ILIKE
+      content match, or recency order when there is no query.
     - touch_last_accessed: stamps retrieved memories (used by the recall_memory agent tool).
+
+    Turning RAG off does NOT remove retrieval. It removes only the *semantic*
+    step: without an embedding the function falls through to its keyword /
+    recency path, which is what the settings UI promises the user when it says
+    context "falls back to recent/recency-based retrieval only". Returning []
+    here would have made the control mean "no memory at all", and the prompt
+    would silently lose the character's history.
     """
-    if not rag_enabled():
-        return []
+    rag_on = rag_enabled()
     query = (query or "").strip()
-    q_vec = _try_embedding(query) if query and _is_postgres(session) else None
+    q_vec = _try_embedding(query) if (rag_on and query and _is_postgres(session)) else None
+    if not rag_on and query:
+        logger.debug("rag_disabled_keyword_fallback", character_id=character_id)
 
     if q_vec:
         stmt = (
@@ -115,14 +124,18 @@ def search_lorebook_entries(
       matches, the first N entries are returned so context never goes empty.
 
     Returns a flat, deduplicated list ordered by lorebook order then rank.
+
+    Turning RAG off removes only the semantic step, not retrieval: the
+    keyword / recency fallback below still runs, so an activated lorebook keeps
+    contributing to the prompt. The settings UI describes exactly this, so
+    returning [] here would have made lorebooks silently inert.
     """
-    if not rag_enabled():
-        return []
+    rag_on = rag_enabled()
     query = (query or "").strip()
     if not lorebook_ids:
         return []
 
-    q_vec = _try_embedding(query) if query and _is_postgres(session) else None
+    q_vec = _try_embedding(query) if (rag_on and query and _is_postgres(session)) else None
 
     results: list[LorebookEntry] = []
     global_limit = max(limit * 3, limit)
