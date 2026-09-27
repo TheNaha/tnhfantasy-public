@@ -147,24 +147,41 @@ class TestTheConfigComesFromTheEnvironment:
                 f"{module} must use the shared lifespan, which is what configures "
                 "the client"
             )
-            configure_at = next(
-                i for i, line in enumerate(source.splitlines())
-                if line.strip() == "configure_http_client()"
-            ) if any(
-                line.strip() == "configure_http_client()" for line in source.splitlines()
-            ) else None
-            get_at = next(
-                (
-                    i
-                    for i, line in enumerate(source.splitlines())
-                    if "get_http_client()" in line and not line.strip().startswith("#")
-                ),
-                None,
-            )
-            if get_at is not None:
-                # `get_http_client` only appears in a worker's own source if it
-                # got there ahead of the shared configure call.
-                assert configure_at is not None and configure_at < get_at, (
-                    f"{module}: get_http_client() is called before the shared client "
-                    "is configured"
+
+    def test_the_client_is_configured_before_the_lifespan_spawns_anything(self):
+        """The ordering guarantee, asserted by running it instead of scraping it.
+
+        A previous version of this test compared the line numbers of
+        `configure_http_client()` and `get_http_client()` in each worker's source
+        and required the first to come first. That was a proxy for the real
+        invariant and it eventually demanded the wrong thing: a worker that
+        passes `get_http_client()` into a deferred lambda is using the shared
+        pool correctly, but the scrape could only see that the word appeared in
+        the file — so the only way to satisfy it was to drop the call, leaving
+        `auto_discovery_loop` to build a fresh `httpx.AsyncClient` on every
+        60-second heartbeat.
+
+        The real invariant is behavioural: once the lifespan has started, the
+        shared client must already carry the environment-derived configuration.
+        """
+        import asyncio
+        import importlib
+
+        from provider_core import http_client as core_http
+
+        for module in ("image_worker.worker", "llm_worker.worker"):
+            worker = importlib.import_module(module)
+            core_http._http_client = None
+            try:
+                async def _enter():
+                    async with worker.app.router.lifespan_context(worker.app):
+                        return core_http._http_client
+
+                live = asyncio.run(_enter())
+                assert live is not None, f"{module} configured no shared client"
+                assert live.config == core_http.http_client_config_from_env(), (
+                    f"{module}: the shared client is in use before it is configured, "
+                    "so the env knobs are ignored process-wide"
                 )
+            finally:
+                core_http._http_client = None

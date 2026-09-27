@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 
 import { useConfirmation } from '../../store/confirmationStore';
-import useGallery from '../../hooks/useGallery';
+import { useGallery } from '../../hooks/useGallery';
 import { thumbUrl } from '../../utils/assetUrl';
 import { formatTimestamp } from '../../utils/dateTime';
 import { getSessionName } from '../../utils/dashboardItems';

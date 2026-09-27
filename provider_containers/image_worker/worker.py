@@ -13,6 +13,7 @@ had drifted — see the module docstring of `provider_core.worker_bootstrap.py`.
 import os
 from fastapi import FastAPI
 
+from provider_core.http_client import get_http_client
 from provider_core.router import attach_provider_routes
 from provider_core.background import (
     auto_discovery_loop,
@@ -87,7 +88,11 @@ app = FastAPI(
             provider_id=PROVIDER_ID,
             provider_type=ENGINE,
             backend_url=BACKEND_URL,
-            storage_dir=STORAGE_DIR,
+            # The shared, pooled client. Without it the loop falls back to
+            # building an `httpx.AsyncClient` per heartbeat, which is the
+            # fallback inside `auto_discovery_loop` and the reason the shared
+            # client exists.
+            http_client=get_http_client(),
         ),
     ),
 )

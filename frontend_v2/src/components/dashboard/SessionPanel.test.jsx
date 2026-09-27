@@ -28,8 +28,12 @@ vi.mock('../../store/confirmationStore', () => ({
 }));
 
 const galleryMock = vi.hoisted(() => ({ files: [] }));
+// Mocks the module's REAL shape: `useGallery` is a named export. Mocking
+// `default` here is what let a default import of a module that has no default
+// export pass every test and then fail the production build — a mock written to
+// match the import rather than the module hides exactly this.
 vi.mock('../../hooks/useGallery', () => ({
-    default: () => ({
+    useGallery: () => ({
         data: { pages: [{ files: galleryMock.files, jobs: [] }] },
         isLoading: false,
     }),
