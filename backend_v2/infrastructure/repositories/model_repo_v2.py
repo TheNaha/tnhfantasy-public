@@ -1,5 +1,6 @@
 # Model Repository V2 - Version-aware data access layer
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,6 +23,10 @@ from infrastructure.logging import get_logger
 
 logger = get_logger("model_repo_v2")
 
+# A datetime whose fractional-second part is longer than 6 digits, captured with
+# whatever follows it so an offset is preserved: "…:00.000+00:00".
+_FRACTION_OVERLONG = re.compile(r"^(.*\.)(\d{7,})(.*)$")
+
 
 def get_file_priority(f):
     """Lower is better. Prefer safetensors, avoid GGUF."""
@@ -39,25 +44,66 @@ def get_file_priority(f):
 
 
 def parse_civitai_datetime(value: Any) -> datetime | None:
-    """Parse CivitAI datetime string to Python datetime object."""
+    """Parse a CivitAI datetime into a timezone-AWARE UTC datetime.
+
+    Always returns an aware datetime (or None). This must never hand back a
+    naive one: `civitai_published_at` and `civitai_created_at` are `UTCDateTime`
+    columns, and SQLModel's bind processor raises
+    "Datetime values must have timezone information" on a naive value. That
+    turned "Add model" on the Discover page into a 500 for any model whose
+    version carried a timestamp.
+
+    Two things were wrong before:
+
+    * `datetime.strptime(..., "...Z")` never attaches a tzinfo — the `Z` is
+      just a literal in the format — so every strptime path produced a naive
+      value.
+    * the fallback stripped the offset it had just added
+      (`.replace("Z", "+00:00").replace("+00:00", "")`), guaranteeing the same.
+
+    CivitAI's model-version `publishedAt` is UTC serialised *without* an offset
+    (e.g. `2026-04-10T07:59:57.750000`), so a missing offset is the common case
+    and is interpreted as UTC, which is what CivitAI means.
+    """
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        try:
-            # CivitAI uses ISO format: 2024-01-15T12:00:00.000Z
-            # Try multiple formats
-            for fmt in ["%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S"]:
-                try:
-                    return datetime.strptime(value, fmt)
-                except ValueError:
-                    continue
-            # Fallback: try fromisoformat after replacing Z
-            return datetime.fromisoformat(value.replace("Z", "+00:00").replace("+00:00", ""))
-        except (ValueError, AttributeError):
+        # Already parsed: normalise so a naive value is still accepted.
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if not text:
+        return None
+
+    candidate = text
+    if candidate.endswith(("Z", "z")):
+        candidate = candidate[:-1] + "+00:00"
+
+    # `fromisoformat` handles 'Z' and explicit offsets on 3.11+, but chokes on a
+    # fractional part longer than 6 digits, which CivitAI has been known to send.
+    # Trim the fraction only, keeping whatever follows it (an offset, say).
+    trimmed = _FRACTION_OVERLONG.match(candidate)
+    if trimmed:
+        candidate = f"{trimmed.group(1)}{trimmed.group(2)[:6]}{trimmed.group(3)}"
+
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+        else:
+            logger.debug("civitai_datetime_unparsed", value=text)
             return None
-    return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 class ModelRepositoryV2:
