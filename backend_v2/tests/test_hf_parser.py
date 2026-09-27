@@ -394,3 +394,76 @@ class TestInferBaseModelSpellings:
         assert infer_base_model(["stable-diffusion-3-medium"]) == "SD 3"
         assert infer_base_model(["pony"]) == "Pony"
         assert infer_base_model(["anything-v3"]) == "SD 1.5"
+
+
+class TestDeclaredBaseModelWins:
+    """HuggingFace returns the base model STRUCTURALLY. Inference used to run on
+    free-form tags plus the model card's prose, and on this library's real
+    payloads the tag array is empty on most entries that declare one — so a
+    declared Illustrious or Pony LoRA was filed as SD 1.5 and the base-model
+    filter hid it."""
+
+    def test_declared_value_is_used_with_no_tags_at_all(self):
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        assert infer_base_model([], None, "Illustrious") == "Illustrious"
+        assert infer_base_model([], None, "Pony") == "Pony"
+        assert infer_base_model([], None, "SDXL 1.0") == "SDXL 1.0"
+        assert infer_base_model([], None, "SD 1.5") == "SD 1.5"
+        assert infer_base_model([], None, "Flux") == "Flux"
+
+    def test_declared_value_beats_conflicting_tags(self):
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        # An Illustrious LoRA whose repo also carries the generic 'sdxl' tag
+        # must still classify as Illustrious, not SDXL.
+        assert infer_base_model(["sdxl", "diffusers"], None, "Illustrious") == "Illustrious"
+        assert infer_base_model(["sdxl", "diffusers"], None, "Pony") == "Pony"
+
+    def test_unrecognised_declared_value_falls_back_to_heuristics(self):
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        # An odd declared value must not swallow the tag evidence.
+        assert infer_base_model(["illustrious"], None, "something-unknown") == "Illustrious"
+        assert infer_base_model(["stable-diffusion-xl"], None, "weird") == "SDXL 1.0"
+
+    def test_absent_declared_value_is_unchanged_behaviour(self):
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        assert infer_base_model(["illustrious"], None, None) == "Illustrious"
+        assert infer_base_model([], None, None) == "SD 1.5"
+
+    def test_empty_declared_value_is_ignored(self):
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        assert infer_base_model(["pony"], None, "   ") == "Pony"
+
+
+class TestHfBaseModelExtraction:
+    def test_reads_config_and_card_data(self):
+        from services.external_model_service import _hf_base_model
+
+        assert _hf_base_model({"config": {"base_model": "Illustrious"}}) == "Illustrious"
+        assert _hf_base_model({"cardData": {"base_model": "Pony"}}) == "Pony"
+        assert _hf_base_model({"baseModel": "SDXL 1.0"}) == "SDXL 1.0"
+        assert _hf_base_model({"config": {}, "cardData": {}}) is None
+        assert _hf_base_model({}) is None
+
+
+class TestIllustriousFamilyAliases:
+    """NoobAI is an Illustrious finetune. Without it, a NoobAI model falls into
+    the SD 1.5 default and disappears from the base-model filter — measured on
+    this library's payloads, it is a real declared value."""
+
+    def test_noobai_maps_to_illustrious(self):
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        assert infer_base_model([], None, "NoobAI") == "Illustrious"
+        assert infer_base_model(["noobai"], None, None) == "Illustrious"
+
+    def test_variants_normalise_to_the_picker_vocabulary(self):
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        # The picker has one option per family, not per upstream spelling.
+        assert infer_base_model([], None, "Flux.1 S") == "Flux"
+        assert infer_base_model([], None, "Pony V7") == "Pony"

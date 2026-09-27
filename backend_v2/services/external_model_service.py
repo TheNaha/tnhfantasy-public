@@ -44,6 +44,26 @@ def _hf_pipeline_tag(hf_data: dict[str, Any]) -> str | None:
     return pipeline_tag if isinstance(pipeline_tag, str) else None
 
 
+def _hf_base_model(hf_data: dict[str, Any]) -> str | None:
+    """The base model HuggingFace declares structurally.
+
+    This is the only authoritative signal, and it was being thrown away:
+    inference ran on free-form tags plus the model card's prose, so a repo with
+    no family tag was filed as SD 1.5. Measured on this library's payloads, the
+    tag array is empty on most entries that declare a base model at all.
+
+    HuggingFace returns it in either place depending on the repo — `config` for
+    diffusers layouts, `cardData` for metadata in the card — so both are read.
+    """
+    for container in (hf_data.get("config"), hf_data.get("cardData"), hf_data):
+        if isinstance(container, dict):
+            for key in ("base_model", "baseModel"):
+                value = container.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return None
+
+
 @dataclass
 class ExternalModelServiceError(Exception):
     status_code: int
@@ -326,7 +346,9 @@ class ExternalModelService:
         # not be found by type or by tag at all.
         tags = _hf_tags(hf_data)
         model_type = infer_model_type(tags, _hf_pipeline_tag(hf_data))
-        base_model = infer_base_model(tags, hf_data.get("cardData", {}).get("content") or "")
+        base_model = infer_base_model(
+            tags, hf_data.get("cardData", {}).get("content") or "", _hf_base_model(hf_data)
+        )
 
         return {
             "id": hf_data.get("id", model_path),
@@ -375,7 +397,7 @@ class ExternalModelService:
                 {
                     "id": model.get("sha", ""),
                     "name": "main",
-                    "baseModel": infer_base_model(tags),
+                    "baseModel": infer_base_model(tags, None, _hf_base_model(model)),
                     "downloadUrl": f"https://huggingface.co/{model_id}/resolve/main/model.safetensors",
                     "images": [],
                 }

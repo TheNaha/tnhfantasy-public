@@ -57,14 +57,49 @@ def infer_model_type(tags: list[str], pipeline_tag: str = None) -> str:
     return 'Checkpoint'  # Safe default
 
 
-def infer_base_model(tags: list[str], card_content: str = None) -> str:
+def infer_base_model(tags: list[str], card_content: str = None, base_model: str = None) -> str:
     """
-    Infer base model version from tags and model card.
-    
+    Infer base model version from the declared base model, tags and model card.
+
     Returns: 'SD 1.5', 'SDXL 1.0', 'SD 3', 'Pony', 'Illustrious', etc.
+
+    `base_model` is consulted first because it is the only AUTHORITATIVE
+    source: HuggingFace returns it structurally (`config.base_model` /
+    `cardData.base_model`), while tags are free-form user text. Measured on this
+    library's real CivitAI payloads, the tag array is EMPTY on 332 of the
+    entries that declare `baseModel: Illustrious` and on 285 that declare
+    `Pony` — so a tags-only inference calls all of them SD 1.5, which makes the
+    base-model filter hide them entirely.
     """
     tags_lower = [t.lower() for t in tags]
     card_lower = (card_content or '').lower()
+    declared = (base_model or '').strip()
+
+    # The declared value wins when it is a family we recognise, so an odd tag
+    # cannot overrule it. Unrecognised values fall through to the heuristics.
+    if declared:
+        d = declared.lower()
+        # NoobAI is an Illustrious finetune, so it belongs in that family or it
+        # lands in the SD 1.5 fallback and vanishes from the filter.
+        if 'illustrious' in d or 'noobai' in d:
+            return 'Illustrious'
+        if 'pony' in d:
+            return 'Pony'
+        if 'flux' in d:
+            return 'Flux'
+        if 'sdxl' in d or 'stable-diffusion-xl' in d or 'stable diffusion xl' in d:
+            return 'SDXL 1.0'
+        if 'sd3' in d or 'stable-diffusion-3' in d or 'stable diffusion 3' in d:
+            return 'SD 3'
+        if 'sd2' in d or 'stable-diffusion-2' in d or 'stable diffusion 2' in d:
+            return 'SD 2.1'
+        if 'sd1' in d or 'stable-diffusion-1' in d or 'stable diffusion 1' in d:
+            return 'SD 1.5'
+
+    # Treat the declared value as additional evidence when it is not a family we
+    # recognise, so an unusual spelling still contributes to the substring checks.
+    haystack = tags_lower + ([d] if declared else [])
+    haystack_card = card_lower + ((' ' + declared.lower()) if declared else '')
     
     # Check for Illustrious, before the SDXL check rather than with the other
     # specific families below. Illustrious is an SDXL-architecture finetune, so
@@ -75,34 +110,36 @@ def infer_base_model(tags: list[str], card_content: str = None) -> str:
     # 'Illustrious', 'illustrious', 'Illustrious-XL' and 'illustrious-xl' are all
     # the same case, and the XL variant is reported as its family because the
     # picker filter has one option per family, not per variant.
-    if any('illustrious' in t for t in tags_lower) or 'illustrious' in card_lower:
+    if any('illustrious' in t or 'noobai' in t for t in haystack) or 'illustrious' in haystack_card:
         return 'Illustrious'
+    
+    # Check for Pony before SDXL: Pony is also an SDXL-architecture finetune
+    # whose repos carry 'sdxl' too, so it has the same ordering requirement as
+    # Illustrious above.
+    if any('pony' in t for t in haystack) or 'pony' in haystack_card:
+        return 'Pony'
     
     # Check for SDXL. HuggingFace spells it both ways: the `sdxl` shorthand and
     # the full `stable-diffusion-xl` repo/tag spelling. Matching only `sdxl`
     # meant an SDXL model whose tags used the long form fell through every
     # branch and was reported as SD 1.5, so the base-model filter hid it.
     if (
-        any('sdxl' in t or 'stable-diffusion-xl' in t or 'stable diffusion xl' in t for t in tags_lower)
-        or 'sdxl' in card_lower
-        or 'stable-diffusion-xl' in card_lower
+        any('sdxl' in t or 'stable-diffusion-xl' in t or 'stable diffusion xl' in t for t in haystack)
+        or 'sdxl' in haystack_card
+        or 'stable-diffusion-xl' in haystack_card
     ):
         return 'SDXL 1.0'
     
     # Check for SD 3
-    if any('sd3' in t or 'stable-diffusion-3' in t for t in tags_lower) or 'stable diffusion 3' in card_lower:
+    if any('sd3' in t or 'stable-diffusion-3' in t for t in haystack) or 'stable diffusion 3' in haystack_card:
         return 'SD 3'
     
-    # Check for Pony
-    if any('pony' in t for t in tags_lower) or 'pony' in card_lower:
-        return 'Pony'
-    
     # Check for SD 2.x
-    if any('sd2' in t or 'stable-diffusion-2' in t for t in tags_lower):
+    if any('sd2' in t or 'stable-diffusion-2' in t for t in haystack):
         return 'SD 2.1'
     
     # Check for SD 1.5 (most common)
-    if any('sd15' in t or 'sd-1-5' in t or 'stable-diffusion-v1-5' in t for t in tags_lower):
+    if any('sd15' in t or 'sd-1-5' in t or 'stable-diffusion-v1-5' in t for t in haystack):
         return 'SD 1.5'
     
     # Check in card content
