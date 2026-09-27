@@ -121,7 +121,10 @@ describe('BatchGenerate page', () => {
         const body = JSON.parse(init.body);
         expect(body.workflows).toHaveLength(4);
         expect(body.workflows[0].options.prompt).toBe('portrait of Elara Moonwhisper, front view, neutral expression');
-        expect(body.workflows[0].options.width).toBe(512);
+        // Canvas now comes from the shared generator store (1024×1024 default)
+        // instead of the page's own 512×768 size list.
+        expect(body.workflows[0].options.width).toBe(1024);
+        expect(body.workflows[0].options.height).toBe(1024);
         expect(body.workflows[0].metadata.batch_total).toBe(4);
         expect(body.workflows[0].metadata.batch_preset).toBe('character_sheet');
         expect(typeof body.workflows[0].options.seed).toBe('number');

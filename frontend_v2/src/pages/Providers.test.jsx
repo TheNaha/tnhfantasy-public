@@ -40,6 +40,16 @@ vi.mock('../components/ConfirmationModal', () => ({
     default: () => null,
 }));
 
+// The detail panel pulls in a websocket console and job cards; only its dialog
+// behaviour is under test here.
+vi.mock('../hooks/useActiveJobs', () => ({ useActiveJobs: () => ({ data: [] }) }));
+vi.mock('../components/dashboard/JobCard', () => ({ default: () => null }));
+vi.mock('../components/providers/tabs/RuntimeTab', () => ({ default: () => <div data-testid="runtime-tab" /> }));
+vi.mock('../components/providers/tabs/DeployTab', () => ({ default: () => null }));
+vi.mock('../components/providers/tabs/SyncTab', () => ({ default: () => null }));
+vi.mock('../components/providers/tabs/DiagnosticsTab', () => ({ default: () => null }));
+vi.mock('../components/providers/tabs/LiveConsoleTab', () => ({ default: () => null }));
+
 function buildProvider(overrides = {}) {
     return {
         id: 'modal-primary',
@@ -149,5 +159,19 @@ describe('Providers page', () => {
             expect(mockConfirm).toHaveBeenCalled();
         });
         expect(mutationsState.deleteProvider).not.toHaveBeenCalled();
+    });
+
+    it('opens the provider detail panel as a dialog and closes it on Escape', async () => {
+        render(<Providers />);
+
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: /modal-primary/i }));
+        const dialog = await screen.findByRole('dialog', { name: /modal-primary provider/i });
+        expect(dialog).toHaveAttribute('aria-modal', 'true');
+        expect(dialog).toHaveFocus();
+
+        fireEvent.keyDown(window, { key: 'Escape' });
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     });
 });

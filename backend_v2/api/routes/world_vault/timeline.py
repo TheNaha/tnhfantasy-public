@@ -7,6 +7,12 @@ from sqlmodel import Session, func, select
 from api.deps import get_session
 from core.entities import Chat, Message, StoryChapter, CharacterMemory, Asset
 
+# The four sources are merged and then sorted, so a page of the merged timeline
+# needs up to `limit + offset` rows from EACH of them — the multiplier that
+# makes an uncapped `offset` four times as expensive as it looks.
+MAX_TIMELINE_OFFSET = 10_000
+MAX_TIMELINE_FETCH = 5_000
+
 router = APIRouter()
 
 
@@ -17,7 +23,7 @@ def get_timeline(
     chat_id: str | None = Query(default=None),
     location: str | None = Query(default=None),
     limit: int = Query(default=100, le=500),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=MAX_TIMELINE_OFFSET),
     session: Session = Depends(get_session),
 ):
     """Return a unified chronological timeline of events.
@@ -29,7 +35,12 @@ def get_timeline(
     - Image generation (assets)
     """
     events = []
-    fetch_limit = limit + offset
+    # `offset` was uncapped, and this is applied to FOUR independent queries
+    # below (messages, chapters, memories, assets), so
+    # `?limit=500&offset=1000000` asked each of them for 1,000,500 rows. The
+    # offset cap is the fix that makes the multiply harmless; the hard ceiling
+    # is a second belt in case the cap and the arithmetic ever drift apart.
+    fetch_limit = min(limit + offset, MAX_TIMELINE_FETCH)
 
     # Messages
     #

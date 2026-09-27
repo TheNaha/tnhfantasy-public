@@ -11,7 +11,7 @@ export function useDashboardModals({ queryClient, filters }) {
         try {
             await jobsApi.delete(jobId);
             queryClient.invalidateQueries({ queryKey: ['jobs'] });
-            queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: false });
+            queryClient.invalidateQueries({ queryKey: ['gallery', filters] });
         } catch (error) {
             console.error('Failed to delete job:', error);
             throw error;
@@ -24,7 +24,7 @@ export function useDashboardModals({ queryClient, filters }) {
             // A retried job is re-enqueued — refresh the job cache, the active
             // list and the queue panel, not just the gallery.
             queryClient.invalidateQueries({ queryKey: ['jobs'] });
-            queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: false });
+            queryClient.invalidateQueries({ queryKey: ['gallery', filters] });
             return result;
         } catch (error) {
             console.error('Failed to retry job:', error);

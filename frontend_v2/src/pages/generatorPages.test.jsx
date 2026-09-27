@@ -59,7 +59,7 @@ const mocks = vi.hoisted(() => {
         },
     });
 
-    return { workflow, navigate, uploadMask, makeCore, storeOverrides: { value: {} } };
+    return { workflow, navigate, uploadMask, makeCore, storeOverrides: { value: {} }, settingsOverrides: { value: {} } };
 });
 
 /* Shared leaf mocks for hooks / providers / API / utility modules. */
@@ -86,11 +86,27 @@ vi.mock('../hooks/useGeneratorCore', () => ({
     useGeneratorCore: () => mocks.makeCore(mocks.storeOverrides.value),
 }));
 vi.mock('../hooks/useActiveJobs', () => ({ useActiveJobs: () => ({ data: [] }) }));
-vi.mock('../hooks/useModelDirectories', () => ({ useModelDirectories: () => ({ modelsByKey: {} }) }));
+/* AdvancedGenerator reaches for these two directly instead of through
+   useGeneratorCore. */
+vi.mock('../hooks/useProvidersPageData', () => ({
+    default: () => ({ providers: [], isLoading: false }),
+}));
+vi.mock('../hooks/useGenerationPreflight', () => ({
+    default: () => mocks.makeCore().preflight,
+}));vi.mock('../hooks/useModelDirectories', () => ({ useModelDirectories: () => ({ modelsByKey: {} }) }));
 vi.mock('../hooks/useJobStatus', () => ({ useJobStatus: () => ({ data: null }) }));
 vi.mock('../hooks/useKeyboardShortcuts', () => ({ useKeyboardShortcuts: () => {} }));
 vi.mock('../store/settingsStore', () => ({
-    default: (sel) => sel({ settings: { generator: { autoRandomizeSeed: false, redirectAfterGenerate: true, redirectDelay: 0 } } }),
+    default: (sel) => sel({
+        settings: {
+            generator: {
+                autoRandomizeSeed: false,
+                redirectAfterGenerate: true,
+                redirectDelay: 0,
+                ...mocks.settingsOverrides.value,
+            },
+        },
+    }),
 }));
 vi.mock('react-router-dom', async (importOriginal) => {
     const actual = await importOriginal();
@@ -125,6 +141,7 @@ vi.mock('../components/generator/GenerateButtonBar', () => ({
     default: ({ onGenerate }) =>
         React.createElement('button', { 'data-testid': 'simple-generate', onClick: () => onGenerate() }, 'Generate'),
 }));
+vi.mock('../components/generator/ReactFlowEditor', () => ({ default: () => null }));
 
 const renderInRouter = (Page) =>
     render(<MemoryRouter><Page /></MemoryRouter>);
@@ -137,7 +154,7 @@ const assertWired = async (key, expectedNavigate = false) => {
         { idempotencyKey: key },
     );
     if (expectedNavigate) {
-        expect(mocks.navigate).toHaveBeenCalledWith('/');
+        expect(mocks.navigate).toHaveBeenCalledWith('/gallery');
     } else {
         expect(mocks.navigate).not.toHaveBeenCalled();
     }
@@ -148,10 +165,11 @@ beforeEach(() => {
     mocks.navigate.mockClear();
     mocks.uploadMask.mockClear();
     mocks.storeOverrides.value = {};
+    mocks.settingsOverrides.value = {};
 });
 
 describe('SimpleGenerator wiring', () => {
-    it('submits with idempotencyKey `generate-simple` and redirects to /', async () => {
+    it('submits with idempotencyKey `generate-simple` and redirects to /gallery', async () => {
         const { default: SimpleGenerator } = await import('./SimpleGenerator');
         renderInRouter(SimpleGenerator);
         fireEvent.click(screen.getAllByTestId('simple-generate')[0]);
@@ -160,7 +178,7 @@ describe('SimpleGenerator wiring', () => {
 });
 
 describe('Img2ImgGenerator wiring', () => {
-    it('submits with idempotencyKey `generate-img2img` (source image present)', async () => {
+    it('submits with idempotencyKey `generate-img2img` (source image present, redirects to /gallery)', async () => {
         mocks.storeOverrides.value = {
             sourceImage: { filename: 'src.png', width: 512, height: 512 },
         };
@@ -172,7 +190,7 @@ describe('Img2ImgGenerator wiring', () => {
 });
 
 describe('InpaintGenerator wiring', () => {
-    it('uploads mask then submits with idempotencyKey `generate-inpaint`', async () => {
+    it('uploads mask then submits with idempotencyKey `generate-inpaint` (redirects to /gallery)', async () => {
         mocks.storeOverrides.value = {
             sourceImage: { filename: 'src.png', width: 512, height: 512, previewUrl: 'blob:x' },
             maskImage: { data: 'mask-data' },
@@ -184,5 +202,33 @@ describe('InpaintGenerator wiring', () => {
             { data: 'mask-data' }, 'src.png',
         ));
         await assertWired('generate-inpaint', true);
+    });
+});
+
+describe('AdvancedGenerator wiring', () => {
+    it('submits through the shared hook handler and stays on the editor', async () => {
+        const { default: AdvancedGenerator } = await import('./AdvancedGenerator');
+        renderInRouter(AdvancedGenerator);
+        fireEvent.click(screen.getByRole('button', { name: /run workflow/i }));
+
+        await waitFor(() => expect(mocks.workflow).toHaveBeenCalledTimes(1));
+        expect(mocks.workflow).toHaveBeenCalledWith(
+            expect.any(Object),
+            expect.any(Object),
+            { idempotencyKey: 'generate-advanced' },
+        );
+        // `redirectAfterGenerate` is on by default; the advanced editor must
+        // override it or every run would navigate off the graph.
+        expect(mocks.navigate).not.toHaveBeenCalled();
+    });
+
+    it('says out loud that the global auto-randomize seed setting does not apply here', async () => {
+        mocks.settingsOverrides.value = { autoRandomizeSeed: true };
+        const { default: AdvancedGenerator } = await import('./AdvancedGenerator');
+        renderInRouter(AdvancedGenerator);
+
+        expect(
+            screen.getByText(/auto-randomize seed does not apply in advanced mode/i)
+        ).toBeInTheDocument();
     });
 });

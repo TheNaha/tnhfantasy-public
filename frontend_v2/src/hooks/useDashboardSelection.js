@@ -108,7 +108,8 @@ export function useDashboardSelection({
         if (!accepted) return;
         try {
             await filesApi.deleteMultiple(Array.from(selectedFiles));
-            queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
+            // Prefix, not `exact`: the gallery key ends in the page size.
+            queryClient.invalidateQueries({ queryKey: ['gallery', filters] });
             setSelectedFiles(new Set());
             setSelectionMode(false);
             toast.success(`Deleted ${selectedFiles.size} images`);

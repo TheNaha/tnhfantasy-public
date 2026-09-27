@@ -99,7 +99,11 @@ def test_evicting_a_job_completed_is_logged_at_error_with_the_job_id(capsys):
 
     assert bus.dropped_event_count() > 0, "the queue never overflowed"
     assert "content_bearing_event_dropped" in logged
-    assert "[error" in logged, "the drop must be an ERROR, not a counter tick"
+    # Level-agnostic: the app renders levels as `ERROR`/`WARNING`/`INFO` in a
+    # fixed-width column, so match the token rather than structlog's default
+    # `ConsoleRenderer` bracket format.
+    assert "ERROR" in logged, "the drop must be an ERROR, not a counter tick"
+    assert "WARNING" not in logged, "a content-bearing drop is not a warning"
     # The id must be the EVICTED job (the one an operator has to re-drive), not
     # the newest one that was admitted.
     assert "job_id=job-0" in logged

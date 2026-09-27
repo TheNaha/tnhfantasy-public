@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { useSearchParams } from 'react-router-dom';
 import { MessageSquare, Activity, Settings, ImageIcon, X, GitBranch, Volume2 } from 'lucide-react';
 import { settingsApi, TTS_ENABLE_PAYLOAD } from '../api/settingsApi';
-import { useUpdateSettings } from '../store/settingsStore';
+import useSettingsStore, { useUpdateSettings } from '../store/settingsStore';
 import SceneGallery from '../components/SceneGallery';
 import BottomTabBar from '../components/BottomTabBar';
 import NewChatModal from '../components/chat/NewChatModal';
@@ -31,7 +31,7 @@ function ChatWorkspaceLayout() {
     const context = useChatWorkspace();
     const [searchParams, setSearchParams] = useSearchParams();
     const { updateSetting } = useUpdateSettings();
-    const ttsEnabled = context.settings?.ai?.ttsEnabled;
+    const ttsEnabled = useSettingsStore((s) => s.settings?.ai?.ttsEnabled);
     const [ttsBannerDismissed, setTtsBannerDismissed] = useState(false);
 
     const enableTtsMutation = useMutation({

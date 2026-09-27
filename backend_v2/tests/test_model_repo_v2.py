@@ -1,5 +1,5 @@
 """Tests for infrastructure/repositories/model_repo_v2.py"""
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
@@ -99,10 +99,22 @@ class TestParseCivitaiDatetime:
     def test_none_returns_none(self):
         assert parse_civitai_datetime(None) is None
 
-    def test_datetime_passthrough(self):
-        dt = datetime(2024, 1, 15, 12, 0, 0)
-        result = parse_civitai_datetime(dt)
-        assert result == dt
+    def test_naive_datetime_is_upgraded_to_utc(self):
+        """A naive `datetime` is NOT passed through.
+
+        `civitai_published_at` / `civitai_created_at` are `UTCDateTime` columns
+        and SQLModel's bind processor rejects a naive value, so handing one
+        back turned "Add model" into a 500 for any CivitAI model whose version
+        carried a timestamp. A naive value is interpreted as UTC, which is what
+        CivitAI means.
+        """
+        result = parse_civitai_datetime(datetime(2024, 1, 15, 12, 0, 0))
+        assert result.tzinfo is not None
+        assert result == datetime(2024, 1, 15, 12, 0, tzinfo=timezone.utc)
+
+    def test_aware_datetime_is_preserved(self):
+        dt = datetime(2024, 1, 15, 12, 0, tzinfo=timezone.utc)
+        assert parse_civitai_datetime(dt) == dt
 
     def test_iso_with_ms(self):
         result = parse_civitai_datetime("2024-01-15T12:00:00.000Z")
