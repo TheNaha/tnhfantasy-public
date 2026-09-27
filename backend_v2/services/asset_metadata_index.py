@@ -71,6 +71,12 @@ MAX_MODEL_TAGS = 20
 # or used as tag vocabulary rather than being compared as one long string.
 _TAG_SPLIT = re.compile(r"\s*,\s*")
 
+# How strongly an auto-derived image tag is evidenced. See
+# `extract_tag_evidence`; these are consumed by `services.tag_service` and
+# stored on `core.entities.AssetTag.confidence`.
+AUTO_CONFIDENCE_TRAINED_WORD = 0.9
+AUTO_CONFIDENCE_CIVITAI_TAG = 0.5
+
 # Keys read from a reference's top level, in priority order, for each logical
 # field. The first present, non-empty value wins.
 _MODEL_ID_KEYS = ("model_id", "civitai_id", "id")
@@ -343,13 +349,36 @@ def extract_tag_vocabulary(metadata: dict | None) -> set[str]:
     That makes "this LoRA is for character X" and "this LoRA teaches pose Y"
     queryable without asking the user to type tags by hand.
     """
-    vocabulary: set[str] = set()
+    return set(extract_tag_evidence(metadata))
+
+
+def extract_tag_evidence(metadata: dict | None) -> dict[str, float]:
+    """The same vocabulary, with how strongly each tag is evidenced.
+
+    An auto tag is a *propagation* from the LoRA, not an observation of the
+    image, and the two kinds of evidence are not equally strong:
+
+    * `trainedWords` is the literal token that switches the concept on inside
+      the model, so an image generated with the LoRA almost always has it —
+      `AUTO_CONFIDENCE_TRAINED_WORD`.
+    * a CivitAI `tag` is a human catalogue label for the *model*, and it also
+      describes images generated without it — `AUTO_CONFIDENCE_CIVITAI_TAG`.
+
+    Both are weaker than a human typing the tag, which is why the writer path
+    stores no confidence at all rather than a perfect 1.0.
+
+    Defined as a dict keyed by tag (not a list of pairs) because a popular
+    character LoRA's vocabulary overlaps heavily with its own tags: without the
+    merge the same image would carry the same concept at two weights, and the
+    caller would have to reimplement the max. Strongest evidence wins.
+    """
+    evidence: dict[str, float] = {}
     for entry in normalise_loras(metadata):
         for tag in entry.get("tags") or []:
-            vocabulary.add(tag)
+            evidence[tag] = max(evidence.get(tag, 0.0), AUTO_CONFIDENCE_CIVITAI_TAG)
         for word in entry.get("trained_words") or []:
-            vocabulary.add(word)
-    return vocabulary
+            evidence[word] = max(evidence.get(word, 0.0), AUTO_CONFIDENCE_TRAINED_WORD)
+    return evidence
 
 
 # ---------------------------------------------------------------------------

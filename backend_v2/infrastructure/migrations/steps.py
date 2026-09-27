@@ -1665,7 +1665,58 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add asset_loras so the LoRAs an image used are queryable rows rather than a filename buried in jsonb",
             apply_fn=_migration_072_create_asset_loras,
         ),
+        MigrationStep(
+            version="073_create_asset_tags",
+            description="Add asset_tags plus its prefix-scan index, so an image's tags are queryable rows and the vocabulary is autocompleteable",
+            apply_fn=_migration_073_create_asset_tags,
+        ),
     ]
+
+
+def _migration_073_create_asset_tags(conn) -> bool:
+    """Create `asset_tags` if the entity has not already produced it.
+
+    Same shape as 072: `SQLModel.metadata.create_all` creates this table from
+    the entity on a fresh database, so the DDL below only fires for a database
+    created before the entity existed, and it is written to match what SQLModel
+    emits. The unique constraint is a unique INDEX rather than a table-level
+    UNIQUE constraint because SQLite has no `ADD CONSTRAINT ... IF NOT EXISTS`
+    and a unique index is equivalent here.
+
+    The `varchar_pattern_ops` index is the one piece of this migration that a
+    plain btree cannot do. The vocabulary endpoint answers `tag LIKE 'bl%'`
+    ordered by use-count, and this database collates as `en_US.utf8`, where a
+    default btree is NOT usable for a prefix LIKE — only `text_pattern_ops`
+    (byte order) is. Without it the autocomplete is a sequential scan of every
+    tag row on every keystroke. Postgres-only, so it is guarded.
+
+    Returns True unconditionally so the runner records it — see the note in
+    `_migration_070_create_sessions` about `if applied: _record_migration(...)`.
+    """
+    inspector = inspect(conn)
+    if "asset_tags" not in set(inspector.get_table_names()):
+        ts = "TIMESTAMP WITH TIME ZONE" if conn.dialect.name == "postgresql" else "TIMESTAMP"
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS asset_tags (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                asset_id VARCHAR NOT NULL,
+                tag VARCHAR NOT NULL,
+                source VARCHAR(32) NOT NULL DEFAULT 'auto',
+                confidence DOUBLE PRECISION,
+                created_at {ts} NOT NULL
+            )
+        """))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_tag ON asset_tags (asset_id, tag)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_asset_tags_tag ON asset_tags (tag)"))
+        logger.info("migration_table_created", table="asset_tags")
+
+    if conn.dialect.name == "postgresql":
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_asset_tag_prefix "
+            "ON asset_tags (tag varchar_pattern_ops)"
+        ))
+        logger.info("migration_index_created", table="asset_tags", index="idx_asset_tag_prefix")
+    return True
 
 
 def _migration_072_create_asset_loras(conn) -> bool:

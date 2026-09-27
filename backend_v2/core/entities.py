@@ -298,7 +298,7 @@ class Asset(SQLModel, table=True):
     cfg: float | None = Field(default=None)
     seed: int | None = Field(default=None)
     metadata_version: str | None = Field(default=None)
-    metadata_: dict | None = Field(default=None, sa_column=Column(JSONColumn))
+    metadata_: dict | None = Field(default=None, sa_column=Column(JSONColumn), alias="metadata")
     generated_at: datetime | None = Field(default=None, index=True)  # image creation time (from PNG meta or mtime)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     deleted_at: datetime | None = Field(default=None, index=True)  # soft delete
@@ -438,6 +438,74 @@ class AssetLora(SQLModel, table=True):
     model_id: str | None = Field(foreign_key="models_v2.id", default=None, index=True)
     civitai_model_id: int | None = Field(default=None, index=True)
     strength: float | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    asset: Optional["Asset"] = Relationship()
+
+
+class AssetTag(SQLModel, table=True):
+    """One tag on one image, with who claimed it and how strongly.
+
+    Deliberately the same shape as `ModelTag`, for the same reason: a tag whose
+    origin is not recorded is a tag some later writer destroys. The auto-tagger
+    is idempotent and re-runnable, so it must be able to replace its own rows and
+    nothing else, which means the table has to say which rows are its own. Two
+    sources exist and no more:
+
+    * `'auto'` — derived by `services/tag_service.auto_tag_asset` from the
+      booru-style vocabulary of the LoRAs the image actually used (their CivitAI
+      tags plus their `trainedWords`, see
+      `services.asset_metadata_index.extract_tag_evidence`). It is re-derived on
+      every pass, so a LoRA whose upstream tags change converges instead of
+      accumulating stale rows.
+    * `'user'` — typed by a human through the writer path in
+      `services/tag_service.add_user_tag`. Never touched by the auto-tagger, and
+      never deletable through the auto path.
+
+    There is deliberately no `'civitai'` source: a CivitAI tag on an IMAGE is
+    only ever inferred from the LoRA that carried it, so calling it civitai
+    would claim provenance this project does not have. The real provenance
+    (which LoRA, which CivitAI model) stays queryable on `asset_loras`.
+
+    `confidence` is real evidence, not a decoration. An auto tag is a
+    *propagation*, not an observation: a `trainedWords` entry is the literal
+    token that switches the concept on in the model (strong), whereas a CivitAI
+    tag is a human catalogue label that also applies to images made without the
+    LoRA (weak). `extract_tag_evidence` scores the two apart, the UI can grey out
+    the weak ones, and a later re-tagger has something to rank by. A `user` row
+    stores NULL, because "the human said so" is not a number on a scale.
+
+    NO separate vocabulary table. A `Tag` entity with a denormalised use-count
+    buys exactly one thing — a pre-computed count — and costs a second write on
+    every tag insert plus a counter that can drift. The count is a `GROUP BY`
+    over this table (`services.tag_service.list_tag_vocabulary`), which is one
+    query, and the project already stores tag strings in two other shapes
+    (`model_tags.tag`, `locations.tags` as a GIN-indexed JSONB array) without a
+    vocabulary table. One indexed string, one shape.
+    """
+    __tablename__ = "asset_tags"
+    __table_args__ = (
+        # Idempotence: re-running the auto-tagger for an image must not double
+        # its rows, and a tag both a human and the tagger know about is stored
+        # once (see `ModelTag` — same reasoning, same constraint).
+        UniqueConstraint("asset_id", "tag", name="uq_asset_tag"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    # No `index=True` on either key: `uq_asset_tag` is (asset_id, tag), so its
+    # leading column already serves every asset-scoped lookup this table does,
+    # and `ix_asset_tags_tag` (from `tag: index=True` below) serves the tag
+    # side. A second index on either column would be a byte-for-byte duplicate.
+    # The tag index is plain btree; the prefix scan the vocabulary endpoint
+    # needs is a THIRD, Postgres-only `varchar_pattern_ops` index created by
+    # migration 073, because a default btree is unusable for `LIKE 'x%'` under
+    # this database's `en_US.utf8` collation.
+    asset_id: str = Field(foreign_key="assets.id")
+    tag: str = Field(index=True)
+    source: str = Field(default="auto")  # auto | user
+    # Confidence of an auto-derived tag, 0..1. NULL for a user tag — see the
+    # class docstring.
+    confidence: float | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     asset: Optional["Asset"] = Relationship()
