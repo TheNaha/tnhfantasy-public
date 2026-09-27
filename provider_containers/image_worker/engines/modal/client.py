@@ -14,6 +14,7 @@ from provider_core import (
     get_logger
 )
 from provider_core.base_client import BaseProviderClient
+from provider_core.ranged_read import RangedReader, cancel_ranged_reads
 from provider_core.responses import (
     config_fault_detail, from_upstream, ok, outcome
 )
@@ -36,6 +37,18 @@ MODAL_APP_NAME = os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
 # Slice size for ranged volume reads. 8 MiB keeps the RPC payload small
 # enough to stream a 7 GB checkpoint without a second full-size buffer.
 _MODAL_RANGE_BYTES = 8 * 1024 * 1024
+
+# Deadline for one whole ranged read, in seconds.
+#
+# The loop below is a sequence of 875 RPCs against a volume that lives in another
+# container, and every one of them can park indefinitely if that container goes
+# away mid-call: Modal's client retries a dropped connection, so a storage
+# container that never comes back reads as a stream that never ends. A 7 GB
+# checkpoint is ~875 of those calls, and the request then holds a connection, a
+# container and the caller's HTTP worker for as long as the peer is willing to
+# say nothing. Default is generous for a large file on a slow link and short
+# enough that a stuck read surfaces as a 500 the operator sees.
+MODAL_GET_FILE_TIMEOUT_SECONDS = float(os.getenv("MODAL_GET_FILE_TIMEOUT_SECONDS", "3600"))
 MODAL_USERNAME = os.getenv("MODAL_USERNAME", "")
 PROVIDER_ID = os.getenv("PROVIDER_ID", "modal-worker")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8002")
@@ -55,6 +68,19 @@ class ModalProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
         self._deploy_task: Optional[asyncio.Task] = None
+        self._read_tasks: set = set()
+
+    async def close(self):
+        """Cancel in-flight ranged reads so a SIGTERM does not wait them out.
+
+        The worker's lifespan teardown has always looked for `close`
+        (`hasattr(client, "close")`) and this class never defined one, so nothing
+        could cancel a read parked on an ~875-RPC ranged transfer. The reads are
+        held as tasks (see provider_core/ranged_read.py) precisely so this can
+        stop them; cancelling the generator itself is not possible while it is
+        executing.
+        """
+        await cancel_ranged_reads(self._read_tasks)
 
     async def get_health(self) -> Dict[str, Any]:
         missing = []
@@ -79,9 +105,12 @@ class ModalProviderClient(BaseProviderClient):
         return {"provider_id": PROVIDER_ID, "type": "modal", "username": MODAL_USERNAME, "app_name": MODAL_APP_NAME, "containerized": True}
 
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
-        use_snapshot = request.use_snapshot
         job_id = request.job_id
         inference_timeout = max(1.0, float(request.timeout_seconds or self.runtime_config.get("inference_timeout_seconds", 3600.0)))
+        # `request.use_snapshot` is not consulted: `class_name` is fixed, and was
+        # already fixed with a comment saying so. The flag was read into a local
+        # and never used, so a caller passing it got the snapshot class either way
+        # and had no way to know.
         class_name = "ComfyUISnapshot" # Always use snapshot per user request
         
         if job_id:
@@ -201,30 +230,30 @@ class ModalProviderClient(BaseProviderClient):
         memory is one slice on each side, and the transfer costs one RPC per slice,
         which is slow for a very large checkpoint and is the trade for not being
         OOM-killed. A small file is one RPC and behaves exactly as before.
+
+        The loop runs under `asyncio.timeout`; without it there is no deadline at
+        all on a peer that accepts the connection and then stops answering, and
+        `close()` (below) is the other half — it cancels this generator on
+        shutdown so a SIGTERM does not have to wait the deadline out.
         """
         FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
         storage = FileStorage()
 
+        reader = RangedReader(
+            read_size=storage.file_size.remote.aio,
+            read_range=storage.read_file_range.remote.aio,
+            path=path,
+            range_bytes=_MODAL_RANGE_BYTES,
+            timeout_seconds=MODAL_GET_FILE_TIMEOUT_SECONDS,
+            registry=self._read_tasks,
+        )
+
         async def _stream() -> AsyncIterator[bytes]:
             try:
-                total = await storage.file_size.remote.aio(path)
+                async for chunk in reader.stream():
+                    yield chunk
             except FileNotFoundError:
                 raise HTTPException(status_code=404, detail=f"File not found: {path}")
-
-            offset = 0
-            while offset < total:
-                try:
-                    chunk = await storage.read_file_range.remote.aio(
-                        path, offset, _MODAL_RANGE_BYTES
-                    )
-                except FileNotFoundError:
-                    raise HTTPException(status_code=404, detail=f"File not found: {path}")
-                if not chunk:
-                    # A short file between calls, or a concurrent delete. Either
-                    # way there is nothing more to send, and hanging would be worse.
-                    break
-                yield chunk
-                offset += len(chunk)
 
         return StreamingResponse(_stream(), media_type="application/octet-stream")
 

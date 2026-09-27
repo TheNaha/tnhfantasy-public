@@ -61,6 +61,7 @@ __all__ = [
     "failed",
     "outcome",
     "files_response",
+    "files_from",
     "model_file_entries",
     "from_upstream",
     "retryable_for_status",
@@ -169,6 +170,27 @@ def files_response(
         provider=provider,
         files=entries,
     )
+
+
+def files_from(response_json: Any) -> List[Any]:
+    """Pull the file list out of a `/list-models` body, whatever shape it is.
+
+    This is the `response.json().get("files", [])` that three call sites used to
+    inline. That expression raises ``AttributeError`` the moment the body is not a
+    dict — a proxy in front of the storage app answering a bare JSON array, or a
+    401 HTML page, becomes an unhandled 500 that discards the real status and
+    makes an odd response look like a worker bug instead of the empty listing it
+    effectively is.
+
+    Lives here rather than in one client so the storage dialect and the worker
+    that adopts it cannot disagree about what an unexpected body means.
+    """
+    if isinstance(response_json, dict):
+        files = response_json.get("files")
+        return files if isinstance(files, list) else []
+    if isinstance(response_json, list):
+        return response_json
+    return []
 
 
 def model_file_entries(files: Iterable[Any]) -> List[Dict[str, Any]]:

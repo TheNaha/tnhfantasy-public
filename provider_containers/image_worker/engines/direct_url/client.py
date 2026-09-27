@@ -356,8 +356,19 @@ class DirectUrlProviderClient(BaseProviderClient):
         if error is not None:
             return failed(f"Failed to query ComfyUI: {error}", code=502, retryable=True, provider=PROVIDER_ID)
 
-        target_dir = request.directory if isinstance(request.directory, str) else ""
-        available = self._iter_object_info_model_paths(object_info, target_dir)
+        # `request.directory` is `Union[str, List[str]]`. A list used to collapse
+        # to "" here, so `/validate-models` over sixteen MODEL_DIRECTORIES
+        # answered for the WHOLE server and each of the sixteen directories got
+        # the same full-server answer — which is not the same as validating the
+        # one that was asked for. `beam/client.py` and `remote_comfy/client.py`
+        # already iterate `request.directories`; this now matches them.
+        by_directory: Dict[str, list[str]] = {}
+        available: list[str] = []
+        for directory in request.directories:
+            found = self._iter_object_info_model_paths(object_info, directory)
+            by_directory[directory] = found
+            available.extend(found)
+        available = sorted(set(available))
 
         # `available` used to be passed to build_status_response, which dropped
         # it: StatusResponse declares status/message/provider/result/files and
@@ -370,6 +381,7 @@ class DirectUrlProviderClient(BaseProviderClient):
             provider=PROVIDER_ID,
             result=available,
             available=available,
+            by_directory=by_directory,
         )
 
     async def validate_all_models(self) -> Dict[str, Any]:
@@ -421,7 +433,10 @@ class DirectUrlProviderClient(BaseProviderClient):
             try:
                 response = await client.post(url, json=payload, timeout=60.0)
                 if response.status_code == 200:
-                    result = response.json()
+                    # Parsed and discarded. A 200 whose body is not JSON means a
+                    # proxy answered instead of the backend, and letting that
+                    # raise here is what puts it in the log below.
+                    response.json()
                     
                     # Push a completion event so the UI updates
                     from provider_core.reconciliation import push_reconciliation_event

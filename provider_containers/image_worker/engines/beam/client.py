@@ -17,7 +17,7 @@ from provider_core.background import MAX_BACKGROUND_TASKS, BackgroundTaskLimitEx
 from provider_core.base_client import BaseProviderClient
 from provider_core.http_client import get_file_size_cap, relay_bytes
 from provider_core.responses import (
-    config_fault_detail, failed, from_upstream, ok
+    config_fault_detail, failed, files_from, from_upstream, ok
 )
 from provider_core.utils import translate_task_events, TaskEvent
 from provider_core.reconciliation import determine_download_token
@@ -69,23 +69,6 @@ def _declared_length(header_value: Optional[str]) -> Optional[int]:
     except (TypeError, ValueError):
         return None
 
-def _files_from(response_json: Any) -> list:
-    """Pull the file list out of a /list-models body.
-
-    Was `response.json().get("files", [])`, which raises AttributeError -> 500 the
-    moment the storage app answers with a bare JSON array. The storage app
-    returns a dialect dict today, but a 401/404/error body from a proxy in front of
-    it, or a future shape change, turns one odd response into a 500 instead of the
-    empty listing it effectively is.
-    """
-    if isinstance(response_json, dict):
-        files = response_json.get("files")
-        return files if isinstance(files, list) else []
-    if isinstance(response_json, list):
-        return response_json
-    return []
-
-
 class BeamProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
@@ -129,7 +112,9 @@ class BeamProviderClient(BaseProviderClient):
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
         job_id = request.job_id
         inference_timeout = max(1.0, float(request.timeout_seconds or self.runtime_config.get("inference_timeout_seconds", 3600.0)))
-        use_snapshot = bool(getattr(request, "use_snapshot", False))
+        # `request.use_snapshot` is ignored: Beam's snapshot deployment is a
+        # different app name, and choosing between them needs a worker-level
+        # setting, not a per-request one. It was read into a local and dropped.
 
         if job_id:
             await self.job_tracker.start_job(job_id)
@@ -215,7 +200,12 @@ class BeamProviderClient(BaseProviderClient):
                 provider=PROVIDER_ID,
                 message="Setup complete",
             )
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+        return failed(
+            f"Setup failed with status {response.status_code}",
+            code=response.status_code,
+            retryable=response.status_code >= 500,
+            provider=PROVIDER_ID,
+        )
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
         client = get_http_client()
@@ -264,8 +254,13 @@ class BeamProviderClient(BaseProviderClient):
             timeout=60.0
         )
         if response.status_code == 200:
-            return ok("Listed models", provider=PROVIDER_ID, files=_files_from(response.json()))
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+            return ok("Listed models", provider=PROVIDER_ID, files=files_from(response.json()))
+        return failed(
+            f"Listing models failed with status {response.status_code}",
+            code=response.status_code,
+            retryable=response.status_code >= 500,
+            provider=PROVIDER_ID,
+        )
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
         client = get_http_client()
@@ -280,7 +275,12 @@ class BeamProviderClient(BaseProviderClient):
             # `success: false` for a file it could not remove, and reporting
             # that as a success is how a "deleted" model stays on the volume.
             return from_upstream(response.json(), provider=PROVIDER_ID)
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+        return failed(
+            f"Deletion failed with status {response.status_code}",
+            code=response.status_code,
+            retryable=response.status_code >= 500,
+            provider=PROVIDER_ID,
+        )
 
     async def get_file(self, path: str) -> StreamingResponse:
         """Stream the file through instead of buffering it (three times over).
@@ -373,7 +373,12 @@ class BeamProviderClient(BaseProviderClient):
         )
         if response.status_code == 200:
             return from_upstream(response.json(), provider=PROVIDER_ID, message="File uploaded")
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+        return failed(
+            f"File upload failed with status {response.status_code}",
+            code=response.status_code,
+            retryable=response.status_code >= 500,
+            provider=PROVIDER_ID,
+        )
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from provider_core.deploy import start_deploy_task, get_deploy_state
@@ -450,9 +455,11 @@ class BeamProviderClient(BaseProviderClient):
             timeout=120.0,
         )
         if response.status_code != 200:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Beam extractor returned {response.status_code}: {response.text}",
+            return failed(
+                f"Beam extractor returned {response.status_code}: {response.text}",
+                code=response.status_code,
+                retryable=response.status_code >= 500,
+                provider=PROVIDER_ID,
             )
         return response.json()
 
@@ -476,7 +483,7 @@ class BeamProviderClient(BaseProviderClient):
                         f"Beam storage /list-models returned {response.status_code} "
                         f"for {directory}: {response.text}"
                     )
-                return directory, _files_from(response.json())
+                return directory, files_from(response.json())
                 
             results = await asyncio.gather(*[_fetch_dir(d) for d in MODEL_DIRECTORIES])
             for directory, files in results:

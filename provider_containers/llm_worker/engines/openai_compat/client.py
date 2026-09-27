@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-import asyncio
 from typing import Dict, Any, Optional
 
 from fastapi.responses import StreamingResponse
@@ -194,8 +193,18 @@ class OpenAICompatProviderClient(BaseProviderClient):
         return ok("Setup complete", provider=self.provider_id)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
-        """LLM workers delegate model management to the upstream API."""
-        return ok("LLM workers do not manage model files directly.", provider=self.provider_id)
+        """LLM workers delegate model management to the upstream API.
+
+        501, not a success: this method cannot download anything, and answering
+        `ok(...)` told the backend a download had happened when no bytes moved.
+        `direct_url` answers the identical situation the same way.
+        """
+        return failed(
+            "LLM workers do not manage model files directly. "
+            "Add the model through your LLM provider instead.",
+            code=501,
+            provider=self.provider_id,
+        )
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         """List available models from the upstream OpenAI-compatible API."""

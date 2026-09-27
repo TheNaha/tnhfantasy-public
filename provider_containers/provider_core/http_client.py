@@ -178,11 +178,75 @@ class SharedHttpClient:
 _http_client: Optional[SharedHttpClient] = None
 
 
-def get_http_client(config: HttpClientConfig = None) -> SharedHttpClient:
-    """Get or create the global HTTP client."""
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def http_client_config_from_env() -> HttpClientConfig:
+    """The process-wide client config, read from the environment.
+
+    Defaults are the `HttpClientConfig` field defaults, restated so the knobs and
+    the numbers they change are visible in one place.
+    """
+    max_connections = _env_int("PROVIDER_HTTP_MAX_CONNECTIONS", 10)
+    return HttpClientConfig(
+        # 30s, shorter than the per-call timeouts the callers pass explicitly
+        # (a download is 1800s); this is the default for a call that passes none.
+        timeout=_env_float("PROVIDER_HTTP_TIMEOUT_SECONDS", 30.0),
+        max_connections=max_connections,
+        max_keepalive_connections=_env_int("PROVIDER_HTTP_MAX_KEEPALIVE", 5),
+        retry_attempts=_env_int("PROVIDER_HTTP_RETRY_ATTEMPTS", 3),
+        retry_min_wait=_env_float("PROVIDER_HTTP_RETRY_MIN_WAIT", 1.0),
+        retry_max_wait=_env_float("PROVIDER_HTTP_RETRY_MAX_WAIT", 10.0),
+    )
+
+
+def configure_http_client(config: Optional[HttpClientConfig] = None) -> SharedHttpClient:
+    """Install the process-wide client. Call once, at startup.
+
+    This used to be `get_http_client(config)`, which built the singleton on the
+    first call and then **silently ignored `config` on every later call** — so
+    the first caller's timeout/pool/retry count won process-wide, and every
+    subsequent caller was handed a client configured for somebody else's
+    workload with no way to tell. `os.getenv`'s "absent means default" trap made
+    it worse: a caller passing `HttpClientConfig()` looked like it was asking for
+    the defaults and got whatever the first caller had asked for instead.
+
+    So configuration is now explicit and separate from acquisition. `config`
+    defaults to the environment-derived config; passing one is for tests and for a
+    caller that has genuinely built its own.
+    """
+    global _http_client
+    _http_client = SharedHttpClient(config or http_client_config_from_env())
+    return _http_client
+
+
+def get_http_client() -> SharedHttpClient:
+    """Get the process-wide client, creating it with the env config if unset.
+
+    Takes no arguments on purpose. A `config` parameter here is the bug: it reads
+    as "this call decides the config" and would be ignored by every call after
+    the first. Use `configure_http_client` at startup instead.
+    """
     global _http_client
     if _http_client is None:
-        _http_client = SharedHttpClient(config)
+        configure_http_client()
     return _http_client
 
 

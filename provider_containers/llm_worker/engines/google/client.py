@@ -291,7 +291,18 @@ class GoogleProviderClient(BaseProviderClient):
         return ok("Setup complete", provider=self.provider_id)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
-        return ok("Not applicable", provider=self.provider_id)
+        """501, not a success: see the openai_compat twin.
+
+        A hosted model cannot be fetched through this worker, so `ok("Not
+        applicable")` reported a download that never happened. `direct_url`
+        answers the identical situation the same way.
+        """
+        return failed(
+            "LLM workers do not manage model files directly. "
+            "Add the model through Google instead.",
+            code=501,
+            provider=self.provider_id,
+        )
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         fallback = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]

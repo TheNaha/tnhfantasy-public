@@ -8,6 +8,7 @@ import modal
 from fastapi.responses import StreamingResponse
 
 from provider_core.base_client import BaseProviderClient
+from provider_core.ranged_read import RangedReader, cancel_ranged_reads
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, TaskEvent,
@@ -17,7 +18,17 @@ logger = logging.getLogger("provider_core.engines.vllm_modal")
 
 # One ranged slice per RPC. Large enough that a multi-GB model is not thousands
 # of round trips, small enough that neither side holds more than this.
-_MODAL_RANGE_BYTES = 512 * 1024
+#
+# 4 MiB, not 512 KiB: at the old size a 7 GB model was 14,336 RPCs, and the
+# per-call latency multiplied out to a transfer that took longer than anyone
+# would wait through. 4 MiB brings it to ~1,792 while still holding only one
+# slice in memory on each side — the same trade the image worker's 8 MiB makes.
+_MODAL_RANGE_BYTES = 4 * 1024 * 1024
+
+# Deadline for one whole ranged read, in seconds. See
+# provider_core/ranged_read.py: the read is a sequence of RPCs against a
+# container in another place, and nothing else bounds it.
+MODAL_GET_FILE_TIMEOUT_SECONDS = float(os.environ.get("MODAL_GET_FILE_TIMEOUT_SECONDS", "3600"))
 
 
 
@@ -35,6 +46,16 @@ class VLLMModalProviderClient(BaseProviderClient):
         self._cls_cache: dict = {}
         self._func_cache: dict = {}
         self._deploy_task: Optional[asyncio.Task] = None
+        self._read_tasks: set = set()
+
+    async def close(self):
+        """Cancel in-flight ranged reads so a SIGTERM does not wait them out.
+
+        The worker lifespan teardown looks for `hasattr(client, "close")`; this
+        class never defined one, so nothing could cancel a read parked mid-range.
+        The reads are tasks (provider_core/ranged_read.py) so this can stop them.
+        """
+        await cancel_ranged_reads(self._read_tasks)
 
     def _get_vllm_engine_cls(self):
         if "VLLMEngine" not in self._cls_cache:
@@ -199,17 +220,24 @@ class VLLMModalProviderClient(BaseProviderClient):
     async def setup_models(self) -> Dict[str, Any]:
         try:
             setup_func = self._get_modal_function("setup_models")
-            result = await setup_func.spawn.aio()
-            if isinstance(result, dict) and result.get("status") == "error":
-                return failed(
-                    result.get("message", "Setup failed"),
-                    provider=self.provider_id,
-                )
-            if isinstance(result, dict) and result.get("status") == "success":
-                return ok(result.get("message", "Setup complete"), provider=self.provider_id)
-            return ok("Setup complete", provider=self.provider_id, status="queued")
+            # `spawn.aio()` resolves to a `modal.FunctionCall` receipt, never to the
+            # function's return value — so the three `isinstance(result, dict)`
+            # branches this used to hold could not run, and every setup, including
+            # one that failed seconds later, was reported as
+            # ok(..., "Setup complete"). The outcome of a spawned call is not
+            # readable without `get()`, which blocks for the whole run (setup
+            # seeds several GB and can take ten minutes) and defeats the point of
+            # spawning, so the receipt is simply dropped and the answer says what
+            # is actually true: it is queued, not complete.
+            #
+            # Matches image_worker/engines/modal/client.py:167. The backend reads
+            # `status in {"queued", "started"}` here
+            # (services/provider_lifecycle_service.py), so `queued` is still the
+            # accepted shape.
+            await setup_func.spawn.aio()
+            return ok("Setup queued", provider=self.provider_id, status="queued")
         except Exception as e:
-            return failed(f"Failed to setup: {e}", provider=self.provider_id)
+            return failed(f"Failed to queue setup: {e}", provider=self.provider_id)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
         try:
@@ -261,31 +289,31 @@ class VLLMModalProviderClient(BaseProviderClient):
         memory is one slice on each side, and the transfer costs one RPC per
         slice, which is slow for a very large model and is the trade for not being
         OOM-killed. A small file is one RPC and behaves exactly as before.
+
+        The read is deadline-bounded and cancellable (see
+        provider_core/ranged_read.py): without either, a storage container that
+        stops answering holds this call, its RPC and the caller's worker open for
+        as long as the peer stays silent.
         """
         from fastapi import HTTPException
 
         storage = self._get_file_storage_cls()()
 
+        reader = RangedReader(
+            read_size=storage.file_size.remote.aio,
+            read_range=storage.read_file_range.remote.aio,
+            path=path,
+            range_bytes=_MODAL_RANGE_BYTES,
+            timeout_seconds=MODAL_GET_FILE_TIMEOUT_SECONDS,
+            registry=self._read_tasks,
+        )
+
         async def _stream():
             try:
-                total = await storage.file_size.remote.aio(path)
+                async for chunk in reader.stream():
+                    yield chunk
             except FileNotFoundError:
                 raise HTTPException(status_code=404, detail=f"File not found: {path}")
-
-            offset = 0
-            while offset < total:
-                try:
-                    chunk = await storage.read_file_range.remote.aio(
-                        path, offset, _MODAL_RANGE_BYTES
-                    )
-                except FileNotFoundError:
-                    raise HTTPException(status_code=404, detail=f"File not found: {path}")
-                if not chunk:
-                    # A short file between calls, or a concurrent delete. Either
-                    # way there is nothing more to send, and hanging would be worse.
-                    break
-                yield chunk
-                offset += len(chunk)
 
         return StreamingResponse(_stream(), media_type="application/octet-stream")
 

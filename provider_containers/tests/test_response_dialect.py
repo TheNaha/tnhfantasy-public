@@ -23,17 +23,24 @@ Every test here also asserts the *backend contract* — the keys
   * ``result.get("status") in {"queued", "started"}`` for /setup —
     services/provider_lifecycle_service.py
 """
+import ast
+import asyncio
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 
 from provider_core.responses import (
-    failed, files_response, from_upstream, model_file_entries, ok, outcome,
+    failed, files_from, files_response, from_upstream, model_file_entries, ok, outcome,
 )
 
 PROVIDER_ROOT = Path(__file__).resolve().parents[1]
+# `remote_agent/` is a sibling of `provider_containers/`, not a package inside it;
+# tests/conftest.py puts the repo root on sys.path and sets the import-time token.
+REPO_ROOT = PROVIDER_ROOT.parent
 ENGINES = [
     "image_worker/engines/modal/client.py",
     "image_worker/engines/beam/client.py",
@@ -107,6 +114,46 @@ class TestBuilders:
             {"path": "a", "name": "a"},
             {"path": "b"},
         ]
+
+
+class TestFilesFrom:
+    """The `response.json().get("files", [])` three call sites inlined.
+
+    A non-dict body — a proxy's 401 HTML page, or a bare JSON array — made that
+    expression an `AttributeError` and a 500 that discarded the real status, so an
+    odd upstream read as a worker bug instead of the empty listing it is.
+    """
+
+    def test_a_dict_keeps_its_list(self):
+        assert files_from({"files": [{"name": "a"}]}) == [{"name": "a"}]
+
+    def test_a_bare_array_is_the_list(self):
+        assert files_from([{"name": "a"}]) == [{"name": "a"}]
+
+    @pytest.mark.parametrize("body", ["<html>401</html>", 42, None, {"files": "nope"}, {}])
+    def test_anything_else_is_an_empty_listing(self, body):
+        assert files_from(body) == []
+
+    @pytest.mark.asyncio
+    async def test_a_401_html_page_does_not_500_the_remote_comfy_listing(self, monkeypatch):
+        """The behavioural half: the old expression raised here."""
+        from image_worker.engines.remote_comfy.client import RemoteComfyProviderClient
+        from provider_core.models import ListModelsRequest
+
+        client = RemoteComfyProviderClient(runtime_config={})
+        response = MagicMock(status_code=200)
+        # A proxy in front of the agent answering an HTML error page with 200.
+        response.json.return_value = "<html><body>401 Unauthorized</body></html>"
+        shared = MagicMock()
+        shared.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(
+            "image_worker.engines.remote_comfy.client.get_http_client", lambda: shared
+        )
+
+        payload = await client.list_models(ListModelsRequest(directory="models"))
+        assert payload["status"] == "success"
+        assert payload["files"] == []
+        await client.close()
 
 
 class TestFromUpstream:
@@ -413,8 +460,6 @@ PASSTHROUGH_METHODS = {
 
 def _dialect_returns(source: str):
     """Yield (method, description) for every remaining old-dialect return."""
-    import ast
-
     tree = ast.parse(source)
     hits = []
     for node in ast.walk(tree):
@@ -453,8 +498,6 @@ class TestNoDialectLeftInTheEngines:
 
     @pytest.mark.parametrize("engine", ENGINES)
     def test_engine_no_longer_imports_the_old_builders(self, engine):
-        import ast
-
         source = (PROVIDER_ROOT / engine).read_text()
         imported = set()
         for node in ast.walk(ast.parse(source)):
@@ -472,7 +515,11 @@ class TestBeamStorageAppUsesTheSameDialect:
     imported in tests (it needs beta9), so the handlers are checked by source.
     """
 
-    HANDLERS = {"list_models", "delete_model", "delete_file", "upload_file"}
+    HANDLERS = {
+        "list_models", "delete_model", "delete_file", "upload_file",
+        "validate_models", "validate_all_models", "setup",
+        "download_model_endpoint", "shared_download_model",
+    }
 
     def test_handlers_have_no_raw_dialect_return(self):
         source = (PROVIDER_ROOT / "image_worker/engines/beam/beam_app.py").read_text()
@@ -524,6 +571,251 @@ class TestBeamStorageAppUsesTheSameDialect:
         payload = await client.delete_model(DeleteModelRequest(path="models/a"))
         assert payload["status"] == "success"
         assert payload["success"] is True
+
+
+class TestTheServerSideFilesSpeakTheSameDialect:
+    """The two files the ENGINES list above did not cover.
+
+    `provider_core/responses.py`'s module docstring claims four dialects were
+    unified and a fifth cannot appear by accident. That was true of the eight
+    *worker clients* and nothing else. Five more were live in the two server-side
+    files, which a client forwards verbatim through `from_upstream`:
+
+      bare {"files": [...]} with no status   remote_agent list-models,
+                                            remote_agent /validate-models,
+                                            beam_app /validate-models
+      {"success": bool} with no status       remote_agent /delete-model,
+                                            /delete-file  (the exact dialect the
+                                            docstring claims was eliminated)
+      {"status": "success"} with no success  remote_agent /setup, /upload-file
+      {"error": "..."} at HTTP 200           beam_app get_object_info
+
+    `remote_agent` is importable here (tests/conftest.py puts the repo root on
+    sys.path and supplies the import-time token), so those routes are asserted
+    behaviourally. `beam_app` needs beta9 and stays a source check.
+    """
+
+    AGENT_ROUTES = [
+        "setup", "download_model", "list_models", "delete_model",
+        "upload_file", "validate_models",
+    ]
+
+    @staticmethod
+    def _agent():
+        import remote_agent.server as server
+
+        return server
+
+    @pytest.mark.asyncio
+    async def test_the_agent_routes_all_answer_in_the_envelope(self, monkeypatch, tmp_path):
+        """One call per route, asserting the shape rather than the message."""
+        import base64
+
+        server = self._agent()
+        monkeypatch.setattr(server, "DATA_DIR", str(tmp_path))
+        # /setup seeds eight models and /download-model fetches one. Both are
+        # stubbed at the pipeline seam: this test is about the response envelope,
+        # and a real seed download would make it network-dependent and slow.
+        monkeypatch.setattr(server, "download_model_to_path", lambda **_kw: {"status": "success", "size": 1})
+        request = MagicMock()
+        request.headers = {"content-length": "1024"}
+
+        payloads = {
+            "setup": await server.setup(),
+            "download_model": await server.download_model(
+                server.DownloadRequest(url="http://127.0.0.1:1/x", path="models/x.safetensors")
+            ),
+            "list_models": await server.list_models(server.ListModelsRequest(directory="models")),
+            "delete_model": await server.delete_model(
+                server.DeleteModelRequest(path="models/checkpoints/gone.safetensors")
+            ),
+            "upload_file": await server.upload_file(
+                server.UploadFileRequest(
+                    filename="a.txt",
+                    content_base64=base64.b64encode(b"hello").decode(),
+                    directory="input",
+                ),
+                request,
+            ),
+            "validate_models": await server.validate_models(
+                server.ValidateModelsRequest(directory=["models/checkpoints"])
+            ),
+        }
+
+        assert set(payloads) == set(self.AGENT_ROUTES)
+        for route, payload in payloads.items():
+            assert isinstance(payload, dict), route
+            assert "status" in payload, f"{route} answers with no status: {payload}"
+            assert "success" in payload, f"{route} answers with no success flag: {payload}"
+            assert isinstance(payload["message"], str) and payload["message"], route
+            assert payload["success"] is (payload["status"] != "error"), route
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_upload_is_refused_before_the_body_is_kept(self, monkeypatch, tmp_path):
+        import base64
+
+        server = self._agent()
+        monkeypatch.setattr(server, "DATA_DIR", str(tmp_path))
+        request = MagicMock()
+        request.headers = {"content-length": str(server.UPLOAD_MAX_BYTES_ENCODED + 1)}
+
+        with pytest.raises(HTTPException) as exc:
+            await server.upload_file(
+                server.UploadFileRequest(
+                    filename="a.bin",
+                    content_base64=base64.b64encode(b"hello").decode(),
+                    directory="input",
+                ),
+                request,
+            )
+        assert exc.value.status_code == 413
+
+    def test_the_model_rejects_an_over_long_encoded_field(self):
+        import pydantic
+
+        server = self._agent()
+        with pytest.raises(pydantic.ValidationError):
+            server.UploadFileRequest(
+                filename="a.bin",
+                content_base64="A" * (server.UPLOAD_MAX_BYTES_ENCODED + 1),
+                directory="input",
+            )
+
+    def test_get_file_applies_the_shared_size_cap(self, monkeypatch, tmp_path):
+        server = self._agent()
+        monkeypatch.setattr(server, "DATA_DIR", str(tmp_path))
+        (tmp_path / "big.bin").write_bytes(b"x" * 4096)
+        monkeypatch.setattr(server, "get_file_size_cap", lambda: 1024)
+
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(server.get_file("big.bin", type="output", subfolder=""))
+        assert exc.value.status_code == 413
+
+    def test_get_file_still_serves_a_file_under_the_cap(self, monkeypatch, tmp_path):
+        server = self._agent()
+        monkeypatch.setattr(server, "DATA_DIR", str(tmp_path))
+        (tmp_path / "small.bin").write_bytes(b"x" * 16)
+        monkeypatch.setattr(server, "get_file_size_cap", lambda: 1024)
+
+        response = asyncio.run(server.get_file("small.bin", type="output", subfolder=""))
+        assert os.path.basename(response.path) == "small.bin"
+
+    def test_every_to_thread_in_the_agent_is_bounded(self):
+        """Unbounded fan-out is what stopped a single-process agent answering at
+        all: 16 /validate-models scans plus a walk plus a download can occupy every
+        thread the default executor has."""
+        source = (REPO_ROOT / "remote_agent" / "server.py").read_text()
+        tree = ast.parse(source)
+        # The one legitimate `asyncio.to_thread` is inside `_bounded_to_thread`
+        # itself; every other one must go through it.
+        bounded = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "_bounded_to_thread"
+        )
+        unbounded = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "to_thread"
+            and getattr(node.func.value, "id", None) == "asyncio"
+            and node not in set(ast.walk(bounded))
+        ]
+        assert not unbounded, f"unbounded asyncio.to_thread at line(s) {unbounded}"
+        assert "REMOTE_AGENT_THREAD_MAX_CONCURRENT" in source
+
+    def test_the_agent_imports_the_shared_helpers(self):
+        source = (REPO_ROOT / "remote_agent" / "server.py").read_text()
+        assert "from provider_core.responses import" in source
+
+    def test_the_agent_carries_no_bare_dialect_return(self):
+        """Grep guard, so a new route cannot reintroduce one."""
+        source = (REPO_ROOT / "remote_agent" / "server.py").read_text()
+        hits = [
+            (method, what, line)
+            for method, what, line in _dialect_returns(source)
+            if method in self.AGENT_ROUTES
+        ]
+        assert not hits, hits
+
+    def test_beam_app_routes_carry_no_raw_dialect_return(self):
+        source = (PROVIDER_ROOT / "image_worker/engines/beam/beam_app.py").read_text()
+        hits = [
+            (method, what, line)
+            for method, what, line in _dialect_returns(source)
+            if method in TestBeamStorageAppUsesTheSameDialect.HANDLERS
+            or method == "get_object_info"
+        ]
+        assert not hits, hits
+
+    def test_the_extractor_cannot_hit_unboundlocalerror(self):
+        """The audit claimed `return data` after a `try/finally` could run with `data`
+        unbound. As written it could not — an exception in the `try` propagates
+        after the `finally`, so the `return` is unreachable — but the shape is
+        gone anyway, and the assertion below is the one that would catch a
+        regression: a function that returns a name it binds inside a `Try` body
+        and that can also fall through to that `return`."""
+        import ast
+
+        source = (PROVIDER_ROOT / "image_worker/engines/beam/beam_app.py").read_text()
+        tree = ast.parse(source)
+
+        for fn in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):
+            returned = {
+                node.value.id
+                for node in ast.walk(fn)
+                if isinstance(node, ast.Return)
+                and isinstance(node.value, ast.Name)
+            }
+            if not returned:
+                continue
+            bound_inside_try = {
+                target.id
+                for stmt in ast.walk(fn)
+                if isinstance(stmt, ast.Try)
+                for inner in ast.walk(stmt)
+                if isinstance(inner, ast.Assign)
+                for target in inner.targets
+                if isinstance(target, ast.Name)
+            }
+            # A `Return` that is lexically inside the same `Try` is fine: the
+            # exception path never reaches it. One after the `Try` is the bug.
+            for stmt in fn.body:
+                if not isinstance(stmt, ast.Return) or not isinstance(stmt.value, ast.Name):
+                    continue
+                assert stmt.value.id not in bound_inside_try, (
+                    f"{fn.name} returns {stmt.value.id!r} at the end of the function "
+                    "but only ever binds it inside a try — the finally runs first, "
+                    "so an early exception turns this into an UnboundLocalError"
+                )
+
+    def test_the_extractor_route_delegates_and_answers_with_a_status(self):
+        """`get_object_info` used to return `{"error": ...}` at HTTP 200, which no
+        client can distinguish from a successful extraction with no nodes."""
+        import ast
+
+        source = (PROVIDER_ROOT / "image_worker/engines/beam/beam_app.py").read_text()
+        tree = ast.parse(source)
+        route = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "get_object_info"
+        )
+        assert any(
+            isinstance(node, ast.Await)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "to_thread"
+            for node in ast.walk(route)
+        ), (
+            "a 60 s ready-poll plus a 60 s requests.get on the event loop stopped the "
+            "whole extractor deployment answering; it must be in a thread"
+        )
+        assert any(
+            isinstance(node, ast.Raise) and "HTTPException" in ast.dump(node.exc)
+            for node in ast.walk(route)
+        ), "the failure paths must be HTTP statuses, not a 200 with an error key"
 
 
 class TestDialectIsSerialisable:

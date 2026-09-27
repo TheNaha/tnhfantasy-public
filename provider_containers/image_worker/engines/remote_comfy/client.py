@@ -1,7 +1,6 @@
 import asyncio
 import os
 import json
-import base64
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -16,7 +15,7 @@ from provider_core import (
 )
 from provider_core.background import MAX_BACKGROUND_TASKS, BackgroundTaskLimitExceeded, spawn_background_task
 from provider_core.base_client import BaseProviderClient
-from provider_core.responses import failed, from_upstream, ok
+from provider_core.responses import failed, files_from, from_upstream, ok
 from provider_core.utils import translate_task_events, TaskEvent
 from provider_core.reconciliation import determine_download_token
 
@@ -231,7 +230,12 @@ class RemoteComfyProviderClient(BaseProviderClient):
         response = await client.post(f"{REMOTE_AGENT_URL}/setup", headers=self.get_agent_headers(), timeout=60.0)
         if response.status_code == 200:
             return from_upstream(response.json(), provider=PROVIDER_ID, message="Setup complete")
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+        return failed(
+            f"Setup failed with status {response.status_code}",
+            code=response.status_code,
+            retryable=response.status_code >= 500,
+            provider=PROVIDER_ID,
+        )
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
         client = get_http_client()
@@ -279,8 +283,18 @@ class RemoteComfyProviderClient(BaseProviderClient):
             timeout=60.0
         )
         if response.status_code == 200:
-            return ok("Listed models", provider=PROVIDER_ID, files=response.json().get("files", []))
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+            # `files_from`, not `.get("files", [])`: the agent's own dialect is a
+            # dict today, but a proxy in front of it answering a bare JSON array
+            # (or a 401 HTML page) turned this into an AttributeError and a 500
+            # that discarded the real status — an odd upstream body read as a
+            # worker bug rather than the empty listing it effectively is.
+            return ok("Listed models", provider=PROVIDER_ID, files=files_from(response.json()))
+        return failed(
+            f"Listing models failed with status {response.status_code}",
+            code=response.status_code,
+            retryable=response.status_code >= 500,
+            provider=PROVIDER_ID,
+        )
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
         client = get_http_client()
@@ -297,7 +311,12 @@ class RemoteComfyProviderClient(BaseProviderClient):
             # backend dropped the provider-file row while the bytes stayed on the
             # rig. Same reasoning as Beam's delete_model (beam/client.py).
             return from_upstream(response.json(), provider=PROVIDER_ID)
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+        return failed(
+            f"Deletion failed with status {response.status_code}",
+            code=response.status_code,
+            retryable=response.status_code >= 500,
+            provider=PROVIDER_ID,
+        )
 
     async def get_file(self, path: str) -> StreamingResponse:
         """Stream the file straight through from the remote agent.
@@ -355,7 +374,12 @@ class RemoteComfyProviderClient(BaseProviderClient):
         )
         if response.status_code == 200:
             return from_upstream(response.json(), provider=PROVIDER_ID, message="File uploaded")
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+        return failed(
+            f"File upload failed with status {response.status_code}",
+            code=response.status_code,
+            retryable=response.status_code >= 500,
+            provider=PROVIDER_ID,
+        )
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return ok("No deployment needed for remote_comfy", provider=PROVIDER_ID)
@@ -445,7 +469,7 @@ class RemoteComfyProviderClient(BaseProviderClient):
                         f"Remote agent /list-models returned {response.status_code} "
                         f"for {directory}: {response.text}"
                     )
-                return directory, response.json().get("files", [])
+                return directory, files_from(response.json())
 
             results = await asyncio.gather(*[_fetch_dir(d) for d in MODEL_DIRECTORIES])
             for directory, files in results:
