@@ -1,114 +1,101 @@
+"""
+Unified LLM Worker
+This service receives HTTP requests and routes them to the appropriate LLM engine.
+
+The engine registry, the runtime_config builder and the lifespan live in
+`provider_core.worker_bootstrap`; this module supplies the LLM worker's
+environment and its two loops. The client-selection ladder and the lifespan were
+duplicated from `image_worker/worker.py` and had drifted: the two
+`runtime_config` dicts declared different keys (so `max_concurrent_downloads`
+never reached this worker and `base_client` used its default of 2 for every
+reconciliation), and this copy of the teardown had no `except Exception: pass`
+around `client.close()`, so a raising close skipped the rest of shutdown.
+"""
+
 import os
 from fastapi import FastAPI
-from contextlib import asynccontextmanager
 
 from provider_core.router import attach_provider_routes
-from provider_core.logging import get_logger
-
-# Configure logging
-logger = get_logger("provider_core.llm_worker")
+from provider_core.background import (
+    auto_discovery_loop,
+    log_startup_info,
+    reconciliation_loop,
+)
+from provider_core.worker_bootstrap import (
+    LLM_ENGINES,
+    build_lifespan,
+    build_runtime_config,
+    select_client,
+)
 
 # Read environment configuration
-PROVIDER_ID = os.environ.get("PROVIDER_ID", "local-dev")
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8002")
-# `.strip()` for the same reason as image_worker/worker.py: a bare `ENGINE=` in an
-# env file yields "", which matched no branch below and raised at IMPORT, before
-# uvicorn bound. Unset or whitespace-only takes the default.
+# `.strip()` and the `or` fallback, for the same reason as image_worker/worker.py:
+# a bare `ENGINE=` or `PROVIDER_ID=` in an env file yields "", and an empty
+# provider_id registers this worker's models under no provider at all.
+# `os.environ.get`'s default only applies when the variable is ABSENT, so the
+# default has to be applied by hand here.
 ENGINE = (os.environ.get("ENGINE") or "openai_compat").strip().lower() or "openai_compat"
+PROVIDER_ID = (os.environ.get("PROVIDER_ID") or "").strip() or "local-dev"
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8002")
 
 # Same names and defaults as image_worker/worker.py, read from the same env knobs.
 RECONCILIATION_INTERVAL_SECONDS = int(os.environ.get("RECONCILIATION_INTERVAL_SECONDS", "7200"))
 RECONCILIATION_STARTUP_DELAY_SECONDS = int(os.environ.get("RECONCILIATION_STARTUP_DELAY_SECONDS", "130"))
 
-# Runtime config dict (the image_worker pattern)
-runtime_config = {
-    "provider_id": PROVIDER_ID,
-    "backend_url": BACKEND_URL,
-    "storage_dir": "/data",
-}
+# Valid names come from LLM_ENGINES, so this list cannot drift from what
+# select_client can actually build.
+valid_engines = ", ".join(sorted(LLM_ENGINES))
 
-# Initialize appropriate engine client
-if ENGINE == "openai_compat":
-    from llm_worker.engines.openai_compat.client import OpenAICompatProviderClient
-    client = OpenAICompatProviderClient(provider_id=PROVIDER_ID, runtime_config=runtime_config)
-elif ENGINE == "anthropic":
-    from llm_worker.engines.anthropic.client import AnthropicProviderClient
-    client = AnthropicProviderClient(provider_id=PROVIDER_ID, runtime_config=runtime_config)
-elif ENGINE == "google":
-    from llm_worker.engines.google.client import GoogleProviderClient
-    client = GoogleProviderClient(provider_id=PROVIDER_ID, runtime_config=runtime_config)
-elif ENGINE == "modal":
-    from llm_worker.engines.modal.client import VLLMModalProviderClient
-    client = VLLMModalProviderClient(provider_id=PROVIDER_ID, runtime_config=runtime_config)
-else:
-    raise ValueError(
-        f"Unknown ENGINE: {ENGINE!r}. "
-        f"Valid values: openai_compat, anthropic, google, modal."
-    )
+STORAGE_DIR = "/data"
 
+# The same seven keys the image worker emits. This dict used to carry only
+# provider_id/backend_url/storage_dir, so `max_concurrent_downloads` silently
+# fell back to base_client's default of 2 for every LLM reconciliation, and the
+# three timeout knobs were never read on this side at all.
+runtime_config = build_runtime_config(
+    provider_id=PROVIDER_ID,
+    backend_url=BACKEND_URL,
+    storage_dir=STORAGE_DIR,
+    max_concurrent_downloads=int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "5")),
+    validation_timeout_seconds=float(os.environ.get("VALIDATION_TIMEOUT_SECONDS", "300")),
+    reconciliation_list_timeout_seconds=float(
+        os.environ.get("RECONCILIATION_LIST_TIMEOUT_SECONDS", "300")
+    ),
+    inference_timeout_seconds=float(os.environ.get("COMFYUI_TIMEOUT_SECONDS", "3600")),
+)
 
-_background_tasks: list = []
+client = select_client(LLM_ENGINES, ENGINE, runtime_config)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Setup
-    from provider_core.background import auto_discovery_loop, reconciliation_loop
-    from provider_core.http_client import get_http_client, close_http_client
-    import asyncio
+app = FastAPI(
+    title="Unified LLM Worker",
+    lifespan=build_lifespan(
+        client,
+        reconciliation=lambda: reconciliation_loop(
+            provider_id=PROVIDER_ID,
+            backend_url=BACKEND_URL,
+            interval_seconds=RECONCILIATION_INTERVAL_SECONDS,
+            startup_delay_seconds=RECONCILIATION_STARTUP_DELAY_SECONDS,
+        ),
+        auto_discovery=lambda: auto_discovery_loop(
+            provider_id=PROVIDER_ID,
+            provider_type=ENGINE,
+            backend_url=BACKEND_URL,
+            storage_dir=STORAGE_DIR,
+        ),
+    ),
+)
 
-    logger.info(f"Starting LLM Worker (engine={ENGINE}, provider={PROVIDER_ID})")
-
-    # Start auto-discovery for this provider
-    if PROVIDER_ID:
-        _background_tasks.append(
-            asyncio.create_task(
-                auto_discovery_loop(
-                    provider_id=PROVIDER_ID,
-                    provider_type="modal_llm" if ENGINE == "modal" else ENGINE,
-                    backend_url=BACKEND_URL,
-                    interval_seconds=60,
-                    worker_type="llm",
-                    http_client=get_http_client(),
-                )
-            )
-        )
-
-        # Reconciliation, which this worker was missing. image_worker/worker.py
-        # starts one in its lifespan; the LLM twin only ever started
-        # auto_discovery_loop, so a `modal` LLM provider — the only engine with
-        # storage, and the only one whose client implements
-        # run_reconciliation with download/list/validate/delete callbacks — was
-        # never asked to reconcile at all. Its volume drifted out of the database
-        # silently, with no error anywhere: the loop is the only thing that
-        # triggers it, and nothing triggered it.
-        _background_tasks.append(
-            asyncio.create_task(
-                reconciliation_loop(
-                    PROVIDER_ID,
-                    BACKEND_URL,
-                    interval_seconds=RECONCILIATION_INTERVAL_SECONDS,
-                    startup_delay_seconds=RECONCILIATION_STARTUP_DELAY_SECONDS,
-                    http_client=get_http_client(),
-                )
-            )
-        )
-
-    try:
-        yield
-    finally:
-        # Teardown
-        logger.info("Shutting down LLM Worker")
-        for task in _background_tasks:
-            task.cancel()
-        if _background_tasks:
-            await asyncio.gather(*_background_tasks, return_exceptions=True)
-        _background_tasks.clear()
-        if hasattr(client, "close"):
-            await client.close()
-        await close_http_client()
-
-
-app = FastAPI(title="Unified LLM Worker", lifespan=lifespan)
-
-# Register routes using the shared provider router
 attach_provider_routes(app, client)
+
+log_startup_info(
+    PROVIDER_ID,
+    ENGINE,
+    BACKEND_URL,
+    extra_vars={
+        "MAX_CONCURRENT_DOWNLOADS": runtime_config["max_concurrent_downloads"],
+        "RECONCILIATION_INTERVAL_SECONDS": RECONCILIATION_INTERVAL_SECONDS,
+        "RECONCILIATION_STARTUP_DELAY_SECONDS": RECONCILIATION_STARTUP_DELAY_SECONDS,
+        "STORAGE_DIR": STORAGE_DIR,
+        "VALID_ENGINES": valid_engines,
+    },
+)

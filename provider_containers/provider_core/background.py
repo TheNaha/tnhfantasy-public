@@ -166,7 +166,7 @@ async def reconciliation_loop(
     while True:
         try:
             reconcile_url = f"{backend_url}/api/v2/providers/{provider_id}/reconcile?force=true"
-            logger.info(f"[Worker Reconciliation] Attempting to reconcile (force override)...")
+            logger.info("[Worker Reconciliation] Attempting to reconcile (force override)...")
             
             if http_client:
                 response = await http_client.post(reconcile_url, timeout=30.0)
@@ -214,7 +214,7 @@ def log_startup_info(
     hf_token = os.getenv("HF_TOKEN", "")
     civitai_token = os.getenv("CIVITAI_TOKEN", "")
     
-    logger.info(f"[Worker] Starting up...")
+    logger.info("[Worker] Starting up...")
     logger.info(f"[Worker] PROVIDER_ID: {provider_id}")
     logger.info(f"[Worker] PROVIDER_TYPE: {provider_type}")
     logger.info(f"[Worker] BACKEND_URL: {backend_url}")
@@ -232,7 +232,7 @@ def log_startup_info(
             else:
                 logger.info(f"[Worker] {key}: ✗ Not set")
     
-    logger.info(f"[Worker] Startup complete")
+    logger.info("[Worker] Startup complete")
 
 
 class JobCancellationTracker:

@@ -190,15 +190,32 @@ class TestEnginesRetainTheirTasks:
         assert "asyncio.create_task(" not in source
         assert "self._background_tasks" in source
 
-    def test_image_worker_keeps_its_lifespan_tasks_in_a_list(self):
-        """The lifespan tasks are already retained, just not bounded; out of
-        scope for this change, recorded here so it is not forgotten."""
+    def test_the_worker_lifespans_go_through_spawn_background_task(self):
+        """Both workers used a bare `asyncio.create_task` here, so neither applied
+        the `MAX_BACKGROUND_TASKS` bound that function exists to enforce. The
+        lifespans are now one shared `provider_core.worker_bootstrap.build_lifespan`
+        (item 21), so this is asserted against the owner."""
         from pathlib import Path
 
-        source = (
-            Path(__file__).resolve().parents[1] / "image_worker/worker.py"
+        bootstrap = (
+            Path(__file__).resolve().parents[1] / "provider_core/worker_bootstrap.py"
         ).read_text()
-        assert "_background_tasks" in source
+        assert bootstrap.count("spawn_background_task(") == 2
+        assert "asyncio.create_task(" not in bootstrap, (
+            "the shared lifespan must not bypass the bound"
+        )
+        assert "tasks: Set[asyncio.Task] = set()" in bootstrap, (
+            "the shared lifespan must own a long-lived set for the references to "
+            "land in, not a per-lifespan local"
+        )
+
+        for worker in ("image_worker/worker.py", "llm_worker/worker.py"):
+            source = (Path(__file__).resolve().parents[1] / worker).read_text()
+            assert "asyncio.create_task(" not in source, (
+                f"{worker} still creates a task directly instead of going through "
+                "provider_core.worker_bootstrap.build_lifespan"
+            )
+            assert "build_lifespan(" in source
 
 
 class TestDeployLogsAreNotQuadratic:

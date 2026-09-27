@@ -1,124 +1,115 @@
 """
 Unified Image Worker
-This service receives HTTP requests and routes them to the appropriate engine 
-based on the ENGINE environment variable.
+This service receives HTTP requests and routes them to the appropriate engine
+(Modal, Beam, Direct URL, or Remote ComfyUI) for image generation.
+
+The engine registry, the runtime_config builder and the lifespan live in
+`provider_core.worker_bootstrap`; this module supplies the image worker's
+environment and its two loops. The 17-line `if ENGINE ==` ladder and the
+lifespan copy that used to be here were duplicated in `llm_worker/worker.py` and
+had drifted — see the module docstring of `provider_core.worker_bootstrap.py`.
 """
-import asyncio
+
 import os
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
-import sys
 
-sys.path.insert(0, "/app")
-
-from provider_core import (
-    attach_provider_routes,
+from provider_core.router import attach_provider_routes
+from provider_core.background import (
+    auto_discovery_loop,
     log_startup_info,
     reconciliation_loop,
-    auto_discovery_loop,
 )
-from provider_core.http_client import get_http_client, close_http_client
+from provider_core.worker_bootstrap import (
+    IMAGE_ENGINES,
+    build_lifespan,
+    build_runtime_config,
+    select_client,
+)
 
-# `.strip()` because a bare `ENGINE=` in an env file yields "", and "" matches
-# none of the branches below — so it used to reach `raise ValueError` at IMPORT,
-# before uvicorn bound, and the container crash-looped with a message that did
-# not name the valid values. An unset or whitespace-only value is the same
-# request as "not configured", so it takes the default.
-ENGINE = (os.getenv("ENGINE") or "modal").strip().lower() or "modal"
-PROVIDER_ID = os.getenv("PROVIDER_ID", f"{ENGINE}-worker")
+# Read environment configuration
+# `.strip()` and the `or` fallback, not `os.getenv(name, default)`: that default
+# only applies when the variable is ABSENT, so a bare `ENGINE=` in an env file
+# yields "" — which matched no branch of the old ladder and raised at IMPORT,
+# before uvicorn bound.
+ENGINE = (os.getenv("ENGINE") or "").strip().lower() or "modal"
+
+# Same reason as ENGINE above, and `provider_id` is not cosmetic: reconciliation
+# and auto-discovery register discovered models under it, and
+# `provider_container_name(provider.id)` (infrastructure/providers/runtime.py)
+# is the name the backend looks for, so an empty value matches no container.
+PROVIDER_ID = (os.getenv("PROVIDER_ID") or "").strip() or f"{ENGINE}-worker"
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8002")
 
-# Worker settings
-MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))
-VALIDATION_TIMEOUT_SECONDS = float(os.getenv("VALIDATION_TIMEOUT_SECONDS", "300"))
-RECONCILIATION_LIST_TIMEOUT_SECONDS = float(os.getenv("RECONCILIATION_LIST_TIMEOUT_SECONDS", "3600"))
+# Reconciliation cadence. Module constants rather than runtime_config keys: they
+# are read once here and handed to `reconciliation_loop`, not by the client.
 RECONCILIATION_INTERVAL_SECONDS = int(os.getenv("RECONCILIATION_INTERVAL_SECONDS", "7200"))
 RECONCILIATION_STARTUP_DELAY_SECONDS = int(os.getenv("RECONCILIATION_STARTUP_DELAY_SECONDS", "130"))
-INFERENCE_TIMEOUT_SECONDS = float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "3600"))
 
-runtime_config = {
-    "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
-    "validation_timeout_seconds": VALIDATION_TIMEOUT_SECONDS,
-    "reconciliation_list_timeout_seconds": RECONCILIATION_LIST_TIMEOUT_SECONDS,
-    "reconciliation_interval_seconds": RECONCILIATION_INTERVAL_SECONDS,
-    "reconciliation_startup_delay_seconds": RECONCILIATION_STARTUP_DELAY_SECONDS,
-    "inference_timeout_seconds": INFERENCE_TIMEOUT_SECONDS,
-}
+# Valid names come from IMAGE_ENGINES, so this list cannot drift from what
+# select_client can actually build.
+valid_engines = ", ".join(sorted(IMAGE_ENGINES))
 
-_background_tasks: list[asyncio.Task] = []
-client = None
+STORAGE_DIR = os.getenv("COMFY_MODELS_PATH", "/models")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    log_startup_info(
-        provider_id=PROVIDER_ID,
-        provider_type=ENGINE,
-        backend_url=BACKEND_URL,
-        extra_vars={"ENGINE": ENGINE},
-    )
+# Runtime config dict (consumed by provider_core.router + base_client).
+# The same seven keys the LLM worker emits — see
+# provider_core.worker_bootstrap.RUNTIME_CONFIG_KEYS. The two dicts used to
+# disagree silently, because a missing key is a default rather than an error:
+# the LLM worker never got `max_concurrent_downloads`, so base_client fell back
+# to 2 for every LLM reconciliation.
+runtime_config = build_runtime_config(
+    provider_id=PROVIDER_ID,
+    backend_url=BACKEND_URL,
+    storage_dir=STORAGE_DIR,
+    max_concurrent_downloads=int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5")),
+    validation_timeout_seconds=float(os.getenv("VALIDATION_TIMEOUT_SECONDS", "300")),
+    reconciliation_list_timeout_seconds=float(
+        os.getenv("RECONCILIATION_LIST_TIMEOUT_SECONDS", "300")
+    ),
+    inference_timeout_seconds=float(os.getenv("COMFYUI_TIMEOUT_SECONDS", "3600")),
+)
 
-    _background_tasks.append(
-        asyncio.create_task(
-            reconciliation_loop(
-                PROVIDER_ID,
-                BACKEND_URL,
-                interval_seconds=runtime_config["reconciliation_interval_seconds"],
-                startup_delay_seconds=runtime_config["reconciliation_startup_delay_seconds"],
-                http_client=get_http_client(),
-            )
-        )
-    )
-    
-    _background_tasks.append(
-        asyncio.create_task(
-            auto_discovery_loop(
-                provider_id=PROVIDER_ID,
-                provider_type=ENGINE,
-                backend_url=BACKEND_URL,
-                http_client=get_http_client(),
-            )
-        )
-    )
+# Built before the app so a bad ENGINE still fails at import, with the same
+# message the ladder raised: several tests assert it.
+client = select_client(IMAGE_ENGINES, ENGINE, runtime_config)
 
-    try:
-        yield
-    finally:
-        for task in _background_tasks:
-            task.cancel()
-        if _background_tasks:
-            await asyncio.gather(*_background_tasks, return_exceptions=True)
-        _background_tasks.clear()
-        if client is not None and hasattr(client, "close"):
-            try:
-                await client.close()
-            except Exception:
-                pass
-        await close_http_client()
-
-app = FastAPI(title="Unified Image Worker", lifespan=lifespan)
-
-if ENGINE == "modal":
-    from image_worker.engines.modal.client import ModalProviderClient
-    client = ModalProviderClient(runtime_config=runtime_config)
-elif ENGINE == "beam":
-    from image_worker.engines.beam.client import BeamProviderClient
-    client = BeamProviderClient(runtime_config=runtime_config)
-elif ENGINE == "direct_url":
-    from image_worker.engines.direct_url.client import DirectUrlProviderClient
-    client = DirectUrlProviderClient(runtime_config=runtime_config)
-elif ENGINE == "remote_comfy":
-    from image_worker.engines.remote_comfy.client import RemoteComfyProviderClient
-    client = RemoteComfyProviderClient(runtime_config=runtime_config)
-else:
-    raise ValueError(
-        f"Unknown ENGINE: {ENGINE!r}. "
-        f"Valid values: modal, beam, direct_url, remote_comfy."
-    )
+app = FastAPI(
+    title="Unified Image Worker",
+    lifespan=build_lifespan(
+        client,
+        reconciliation=lambda: reconciliation_loop(
+            provider_id=PROVIDER_ID,
+            backend_url=BACKEND_URL,
+            interval_seconds=RECONCILIATION_INTERVAL_SECONDS,
+            startup_delay_seconds=RECONCILIATION_STARTUP_DELAY_SECONDS,
+        ),
+        auto_discovery=lambda: auto_discovery_loop(
+            provider_id=PROVIDER_ID,
+            provider_type=ENGINE,
+            backend_url=BACKEND_URL,
+            storage_dir=STORAGE_DIR,
+        ),
+    ),
+)
 
 attach_provider_routes(app, client)
 
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+# No `if __name__ == "__main__":` uvicorn block: `image_worker/Dockerfile` runs
+# `python -m uvicorn image_worker.worker:app`, which imports this module under its
+# real name, so that block never ran. It was a second, disagreeing owner of
+# $PORT — the Dockerfile's CMD was the live one, and it hardcoded 8000 while this
+# read $PORT. The Dockerfile is the only owner now, and both its healthcheck and
+# its CMD read the same ENV.
+
+log_startup_info(
+    PROVIDER_ID,
+    ENGINE,
+    BACKEND_URL,
+    extra_vars={
+        "MAX_CONCURRENT_DOWNLOADS": runtime_config["max_concurrent_downloads"],
+        "RECONCILIATION_INTERVAL_SECONDS": RECONCILIATION_INTERVAL_SECONDS,
+        "RECONCILIATION_STARTUP_DELAY_SECONDS": RECONCILIATION_STARTUP_DELAY_SECONDS,
+        "COMFY_MODELS_PATH": STORAGE_DIR,
+        "VALID_ENGINES": valid_engines,
+    },
+)
