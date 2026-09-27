@@ -5,6 +5,11 @@ from sqlmodel import select
 
 from core.entities import Asset
 from services.asset_reconciler import (
+    MAX_COMPACT_TAGS,
+    MAX_COMPACT_TRAINED_WORDS,
+    _compact_checkpoint_metadata,
+    _compact_lora_entry,
+    _compact_metadata,
     _derived_workspace,
     reconcile_asset,
     upsert_asset,
@@ -149,3 +154,112 @@ def test_reconcile_asset_updates_existing_row(session, tmp_path):
     assert rows[0].workspace == "story"
     assert rows[0].story_id == "s-9"
     assert rows[0].deleted_at is None
+
+
+# ── LoRA / checkpoint compaction ────────────────────────────────────────────
+
+# The uncompacted shape read off a real legacy sidecar. Every field after
+# "weight" was being dropped, which is why "show me images that used this
+# LoRA" was only answerable by filename string and never by model id.
+LEGACY_LORA_ENTRY = {
+    "name": "boob_tent.safetensors",
+    "display_name": "Boob Tent",
+    "filename": "boob_tent.safetensors",
+    "model_id": 21,
+    "civitai_id": 1009342,
+    "base_model": "Illustrious",
+    "trained_words": ["boob tent"],
+    "tags": ["boob tent", "breasts", "clothing"],
+    "strength": 0.8,
+    "weight": 0.8,
+}
+
+
+def test_compact_lora_entry_keeps_the_ids_and_search_keys():
+    compact = _compact_lora_entry(LEGACY_LORA_ENTRY)
+
+    assert compact["model_id"] == 21
+    assert compact["civitai_id"] == 1009342
+    assert compact["base_model"] == "Illustrious"
+    assert compact["trained_words"] == ["boob tent"]
+    assert compact["tags"] == ["boob tent", "breasts", "clothing"]
+    # The display fields the gallery UI reads are untouched.
+    assert compact["name"] == "boob_tent.safetensors"
+    assert compact["display_name"] == "Boob Tent"
+    assert compact["strength"] == 0.8
+    assert compact["weight"] == 0.8
+
+
+def test_compact_lora_entry_bounds_the_tag_array():
+    """The full CivitAI array would be written into every asset's JSONB, so it
+    is capped; model_tags keeps the full list."""
+    many = {**LEGACY_LORA_ENTRY, "tags": [f"tag{i}" for i in range(95)]}
+    compact = _compact_lora_entry(many)
+
+    assert len(compact["tags"]) == MAX_COMPACT_TAGS
+    assert compact["tags"][0] == "tag0"
+    assert compact["tags"][-1] == f"tag{MAX_COMPACT_TAGS - 1}"
+
+
+def test_compact_lora_entry_bounds_trained_words_far_more_loosely():
+    """Trained words are the trigger vocabulary: dropping one silently breaks
+    reproducing the image, so they get a much looser cap than the tag array."""
+    many = {**LEGACY_LORA_ENTRY, "trained_words": [f"w{i}" for i in range(150)]}
+    compact = _compact_lora_entry(many)
+
+    assert len(compact["trained_words"]) == MAX_COMPACT_TRAINED_WORDS
+    assert len(compact["tags"]) == 3
+
+
+def test_compact_lora_entry_dedupes_and_drops_junk_tags():
+    assert _compact_lora_entry({**LEGACY_LORA_ENTRY, "tags": ["a", " a ", "", None, 7]})["tags"] == ["a"]
+
+
+def test_compact_lora_entry_omits_absent_keys_rather_than_nulling_them():
+    compact = _compact_lora_entry({"name": "a.safetensors", "strength": 1.0})
+    assert set(compact) == {"name", "strength", "weight"}
+
+
+def test_compact_lora_entry_still_handles_the_bare_string_shape():
+    assert _compact_lora_entry("a.safetensors") == {"name": "a.safetensors", "strength": 1.0}
+
+
+def test_compact_checkpoint_metadata_keeps_the_ids():
+    compact = _compact_checkpoint_metadata({
+        "name": "nova_xl.safetensors",
+        "display_name": "Nova XL",
+        "filename": "nova_xl.safetensors",
+        "type": "Checkpoint",
+        "size": 123,
+        "id": "cf-1",
+        "model_id": 7,
+        "civitai_id": 42,
+        "base_model": "SDXL 1.0",
+        "trained_words": ["nova"],
+        "tags": ["sd15", "anime"],
+    })
+
+    assert compact["model_id"] == 7
+    assert compact["civitai_id"] == 42
+    assert compact["base_model"] == "SDXL 1.0"
+    assert compact["trained_words"] == ["nova"]
+    assert compact["tags"] == ["sd15", "anime"]
+    assert compact["type"] == "Checkpoint"
+    assert compact["size"] == 123
+
+
+def test_compact_metadata_keeps_the_enriched_lora_ids_end_to_end():
+    """The whole funnel, because a fix inside _compact_lora_entry is worthless
+    if _compact_metadata drops the entry."""
+    compact = _compact_metadata({
+        "prompt": "a scene",
+        "loras": [LEGACY_LORA_ENTRY],
+        "checkpoint": {"name": "nova_xl.safetensors", "model_id": 7, "civitai_id": 42},
+    })
+
+    assert compact["loras"][0]["model_id"] == 21
+    assert compact["loras"][0]["civitai_id"] == 1009342
+    assert compact["loras"][0]["trained_words"] == ["boob tent"]
+    assert compact["loras"][0]["tags"] == ["boob tent", "breasts", "clothing"]
+    assert compact["checkpoint"]["model_id"] == 7
+    assert compact["prompt"] == "a scene"

@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import ModelSelector from "./ModelSelector";
+import { filesApi } from "../api";
 
 // Mock the hooks and API
 vi.mock("../hooks/useInfiniteScroll", () => ({
@@ -41,6 +42,8 @@ const renderWithProvider = (ui, options) => {
     options
   );
 };
+
+const lastListArgs = () => filesApi.list.mock.calls[filesApi.list.mock.calls.length - 1][0];
 
 describe("ModelSelector Accessibility", () => {
   beforeEach(() => {
@@ -152,5 +155,150 @@ describe("ModelSelector Accessibility", () => {
 
     // Modal should still be open
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+});
+
+// The owner's complaint: "i have a hard time to find a LORA model for a
+// specific character, or a pose". The picker had no way to filter by tag at
+// all, and its search went to a backend that only searched name/filenames, so a
+// LoRA was only findable if its filename happened to name the character.
+describe("ModelSelector tag discovery", () => {
+  beforeEach(() => {
+    queryClient.clear();
+    filesApi.list.mockReset();
+    filesApi.list.mockResolvedValue({ files: [] });
+  });
+
+  // A LoRA whose name and filename say nothing about what it is for.
+  const CHARACTER_LORA = {
+    name: "unnamed_lora_v2.safetensors",
+    display_name: "Untitled LoRA v2",
+    model_id: "m-1",
+    tags: ["character-loRA", "boob tent", "pose"],
+    base_model: "Illustrious",
+    type: "LORA",
+  };
+
+  const selectorProps = {
+    label: "LoRAs",
+    onChange: vi.fn(),
+    directory: "models/loras",
+    selectedModel: { name: "unnamed_lora_v2.safetensors", display_name: "Untitled LoRA v2", versions: [] },
+  };
+
+  const openWith = async (files) => {
+    filesApi.list.mockResolvedValue({ files });
+    renderWithProvider(<ModelSelector {...selectorProps} autoOpen={true} />);
+    await waitFor(() => expect(filesApi.list).toHaveBeenCalled());
+  };
+
+  // The tag options are derived from the loaded models, so the dropdown only
+  // exists after the query resolves and the component re-renders.
+  const openWithTagOptions = async (files) => {
+    await openWith(files);
+    await screen.findByLabelText("Filter by tag, 0 selected");
+  };
+
+  const pickTag = async (tag) => {
+    fireEvent.click(screen.getByLabelText(/Filter by tag, \d+ selected/));
+    fireEvent.click(await screen.findByText(tag));
+  };
+
+  it("sends the typed search term so a tag can match it", async () => {
+    await openWith([CHARACTER_LORA]);
+
+    fireEvent.change(screen.getByLabelText("Search models"), {
+      target: { value: "character-loRA" },
+    });
+
+    await waitFor(() => expect(lastListArgs().search).toBe("character-loRA"));
+  });
+
+  it("finds a LoRA by the character tag it carries, not by its name", async () => {
+    // The backend filters on the tag; the selector's job is to ask for it.
+    filesApi.list.mockImplementation(async (params) => ({
+      files: params.search === "character-loRA" ? [CHARACTER_LORA] : [],
+    }));
+    renderWithProvider(<ModelSelector {...selectorProps} autoOpen={true} />);
+    await waitFor(() => expect(filesApi.list).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText("Search models"), {
+      target: { value: "character-loRA" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Untitled LoRA v2")).toBeInTheDocument();
+    });
+  });
+
+  it("offers a tag dropdown built from the tags of the loaded models", async () => {
+    await openWithTagOptions([CHARACTER_LORA]);
+
+    expect(screen.getByText("character-loRA")).toBeInTheDocument();
+    expect(screen.getByText("boob tent")).toBeInTheDocument();
+    expect(screen.getByText("pose")).toBeInTheDocument();
+  });
+
+  it("sends the selected tags to the backend as the `tags` param", async () => {
+    // The picker never sent `tags`, which is why this was the one model list
+    // that could not filter by tag at all.
+    await openWithTagOptions([CHARACTER_LORA]);
+
+    await pickTag("character-loRA");
+
+    await waitFor(() => expect(lastListArgs().tags).toBe("character-loRA"));
+  });
+
+  it("sends multiple selected tags as a comma list and shows removable pills", async () => {
+    await openWithTagOptions([CHARACTER_LORA]);
+
+    await pickTag("character-loRA");
+    await pickTag("pose");
+
+    await waitFor(() => expect(lastListArgs().tags).toBe("character-loRA,pose"));
+
+    fireEvent.click(screen.getByLabelText("Remove tag character-loRA"));
+    await waitFor(() => expect(lastListArgs().tags).toBe("pose"));
+  });
+
+  it("clears the tag filter along with the other filters", async () => {
+    await openWithTagOptions([CHARACTER_LORA]);
+
+    await pickTag("pose");
+    await waitFor(() => expect(lastListArgs().tags).toBe("pose"));
+    expect(screen.getByLabelText("Remove tag pose")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Clear all filters"));
+    // The tag is gone from the selection, so the picker is back to unfiltered.
+    // No refetch is asserted: React Query serves the unfiltered key from its
+    // still-fresh cache (staleTime 5m), which is the intended behaviour.
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Remove tag pose")).not.toBeInTheDocument()
+    );
+  });
+
+  it("filters a preloaded list client-side, since there is no server to ask", async () => {
+    // No `directory` means the models arrive as props, so tags and description
+    // have to be matched in the browser or they are silently unsearchable.
+    renderWithProvider(
+      <ModelSelector
+        label="LoRAs"
+        onChange={vi.fn()}
+        initialModels={[
+          { ...CHARACTER_LORA, display_name: "Tagged By Character" },
+          { name: "sunset.safetensors", display_name: "Sunset Only", tags: ["landscape"] },
+        ]}
+        autoOpen={true}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Search models"), {
+      target: { value: "character-loRA" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Tagged By Character").length).toBeGreaterThan(0);
+      expect(screen.queryByText("Sunset Only")).not.toBeInTheDocument();
+    });
   });
 });

@@ -103,6 +103,110 @@ class TestFilesRoute:
         assert data["files"][0]["name"] == "model1.safetensors"
 
 
+# A LoRA whose name and filenames say nothing useful — the exact shape that
+# made "find a LORA for a specific character" impossible from the picker.
+CHARACTER_LORA = {
+    "id": "m-1",
+    "name": "unnamed_lora_v2.safetensors",
+    "civitai_model_id": 1009342,
+    "type": "LORA",
+    "description": "Style helper for the tent scene.",
+    "creator": {"username": "someuser"},
+    "base_model": "Illustrious",
+    "tags": ["boob tent", "breasts", "clothing"],
+    "stats": {},
+    "versions": [
+        {
+            "is_default": True,
+            "name": "v2",
+            "base_model": "Illustrious",
+            "trained_words": ["boob tent"],
+            "file": {"filename": "unnamed_lora_v2.safetensors"},
+        }
+    ],
+}
+
+UNRELATED_LORA = {
+    "id": "m-2",
+    "name": "sunset_colors.safetensors",
+    "civitai_model_id": 555,
+    "type": "LORA",
+    "description": "Warmer sunsets.",
+    "creator": {"username": "someone"},
+    "tags": ["landscape", "sunset"],
+    "stats": {},
+    "versions": [
+        {
+            "is_default": True,
+            "name": "v1",
+            "file": {"filename": "sunset_colors.safetensors"},
+        }
+    ],
+}
+
+
+@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+def test_list_files_models_search_covers_tags(mock_list, client):
+    """The picker placeholder promised "name, tags, description" but only name
+    and version filenames were searched, so a tag was not searchable at all."""
+    mock_list.return_value = [CHARACTER_LORA, UNRELATED_LORA]
+
+    response = client.get("/api/files?directory=models/loras&search=boob+tent")
+    assert response.status_code == 200
+    names = [f["name"] for f in response.json()["files"]]
+    assert names == ["unnamed_lora_v2.safetensors"]
+
+
+@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+def test_list_files_models_search_covers_description(mock_list, client):
+    mock_list.return_value = [CHARACTER_LORA, UNRELATED_LORA]
+
+    response = client.get("/api/files?directory=models/loras&search=warmer+sunsets")
+    assert [f["name"] for f in response.json()["files"]] == ["sunset_colors.safetensors"]
+
+
+@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+def test_list_files_models_search_covers_trained_words(mock_list, client):
+    """Trained words are the trigger vocabulary and the only tag an
+    HF-sourced LoRA has, so they have to be searchable too."""
+    mock_list.return_value = [{**CHARACTER_LORA, "tags": []}, UNRELATED_LORA]
+
+    response = client.get("/api/files?directory=models/loras&search=boob+tent")
+    assert [f["name"] for f in response.json()["files"]] == ["unnamed_lora_v2.safetensors"]
+
+
+@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+def test_list_files_models_search_is_case_insensitive_over_tags(mock_list, client):
+    mock_list.return_value = [CHARACTER_LORA, UNRELATED_LORA]
+
+    response = client.get("/api/files?directory=models/loras&search=Breasts")
+    assert [f["name"] for f in response.json()["files"]] == ["unnamed_lora_v2.safetensors"]
+
+
+@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+def test_list_files_models_search_survives_null_description_and_creator(mock_list, client):
+    """description/creator are nullable on a real ModelV2; a naive join raises."""
+    mock_list.return_value = [
+        {**CHARACTER_LORA, "description": None, "creator": None, "tags": None, "stats": {}}
+    ]
+
+    response = client.get("/api/files?directory=models/loras&search=boob")
+    assert response.status_code == 200
+    assert [f["name"] for f in response.json()["files"]] == ["unnamed_lora_v2.safetensors"]
+
+
+@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+def test_list_files_models_tag_filter_still_ands(mock_list, client):
+    """The pre-existing tag filter the picker was failing to send."""
+    mock_list.return_value = [CHARACTER_LORA, UNRELATED_LORA]
+
+    response = client.get("/api/files?directory=models/loras&tags=boob+tent,clothing")
+    assert [f["name"] for f in response.json()["files"]] == ["unnamed_lora_v2.safetensors"]
+
+    response = client.get("/api/files?directory=models/loras&tags=boob+tent,landscape")
+    assert response.json()["files"] == []
+
+
 
     @patch("os.path.exists")
     @patch("os.path.isfile")

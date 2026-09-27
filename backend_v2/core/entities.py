@@ -304,6 +304,145 @@ class Asset(SQLModel, table=True):
     deleted_at: datetime | None = Field(default=None, index=True)  # soft delete
 
 
+class Session(SQLModel, table=True):
+    """A generation session: a curatable group of related images.
+
+    Two things create these and they are deliberately distinguished:
+
+    * **Auto-detected** (`auto_detected=True`, `locked=False`) — written by
+      `services/session_detector` from the cheap signals already promoted to
+      columns: identical `seed`, identical `checkpoint_name`, and a short time
+      gap. Recomputation is idempotent via `signature`, so a re-run produces the
+      same session instead of a duplicate.
+    * **User-curated** — a detected session the human accepted, renamed, split
+      or merged. Any such edit sets `locked=True`, and the detector then never
+      touches it again. Without that flag every recompute would silently undo
+      curation, which is how people come to distrust auto-tagging.
+
+    Membership is a real join table (`SessionAsset`) rather than a computed
+    time range, because split and merge are the operations people actually need
+    and both mutate membership. A split also has to survive the next recompute,
+    which it only can if membership is stored.
+
+    `signature` is the detection key, not a user-facing label. It is nullable so
+    a hand-made session has none, and `unique` is deliberately NOT set on it:
+    two sessions can legitimately share a signature after a split, and a
+    database-level uniqueness constraint there would make the split fail.
+    """
+    __tablename__ = "sessions"
+    __table_args__ = (
+        # Recompute scans by signature to find an existing session for a
+        # detected group.
+        Index("idx_session_signature", "user_id", "signature"),
+        # The scrubber and the gallery both list sessions newest-first.
+        Index("idx_session_user_updated", "user_id", "updated_at"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    user_id: str = Field(default="default_user", index=True)
+
+    # Nullable: an auto-detected session with no better label falls back to a
+    # generated one, but a user-made session may legitimately be unnamed.
+    name: str | None = Field(default=None)
+    description: str | None = Field(default=None)
+
+    # Detection bookkeeping. See the class docstring.
+    signature: str | None = Field(default=None)
+    auto_detected: bool = Field(default=False, index=True)
+    # Set by any user edit (rename, split, merge, manual add/remove). The
+    # detector skips locked sessions entirely.
+    locked: bool = Field(default=False)
+
+    # Scope. `workspace` mirrors Asset.workspace ('main' | 'chat' | 'story');
+    # null means the session spans workspaces, which only a manual merge should
+    # produce. Character/story scoping is derived from the member assets rather
+    # than stored, so it cannot go stale.
+    workspace: str | None = Field(default=None, index=True)
+
+    # Denormalised bounds, maintained on membership change. The scrubber orders
+    # and seeks by these, and recomputing them from members on every read would
+    # be a correlated aggregate per session.
+    start_at: datetime | None = Field(default=None, index=True)
+    end_at: datetime | None = Field(default=None, index=True)
+    image_count: int = Field(default=0)
+
+    thumbnail: str | None = Field(default=None)  # relative_path of a cover image
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    deleted_at: datetime | None = Field(default=None, index=True)  # soft delete
+
+    assets: list["SessionAsset"] = Relationship(
+        back_populates="session",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+
+
+class SessionAsset(SQLModel, table=True):
+    """Join row: which assets belong to which session.
+
+    Keyed on `asset_id` (a real FK to `assets.id`) rather than a filename
+    string. The older `collection_images` table stores a bare
+    `image_filename`, which cannot be joined to `assets` in SQL and does not
+    cascade; that is the mistake this deliberately does not repeat.
+    """
+    __tablename__ = "session_assets"
+    __table_args__ = (
+        UniqueConstraint("session_id", "asset_id", name="uq_session_asset"),
+        # "which session is this image in?" — the facet-filter direction.
+        Index("idx_session_asset_asset", "asset_id"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    session_id: str = Field(foreign_key="sessions.id", index=True)
+    asset_id: str = Field(foreign_key="assets.id", index=True)
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    session: Optional["Session"] = Relationship(back_populates="assets")
+    asset: Optional["Asset"] = Relationship()
+
+
+class AssetLora(SQLModel, table=True):
+    """Which LoRA an image used, as a real row.
+
+    Without this, "show me every image that used this LoRA" has to run a jsonb
+    containment query against `assets.metadata_`, which the GIN index from
+    migration 024 can serve at the asset level — but it cannot cross into
+    `session_assets`, so "show me every SESSION that used this LoRA" would need a
+    correlated subquery per session. A normalised row makes both directions an
+    indexed join, which is what the facet filter needs.
+
+    `model_id` is the internal `models_v2.id` when this project imported the
+    LoRA, and NULL otherwise. `civitai_model_id` is the upstream identity and is
+    present for essentially every reference, because it is recoverable from the
+    image's embedded PNG metadata. Keeping both means the index still works
+    before a model has ever been imported, which is the common case for a LoRA
+    applied but not installed.
+
+    `strength` is what that image actually used, which is not necessarily the
+    LoRA's default — so it is stored per image rather than read off the model.
+    """
+    __tablename__ = "asset_loras"
+    __table_args__ = (
+        # Recomputing the index for an image must be idempotent: the same LoRA
+        # referenced twice collapses to one row.
+        UniqueConstraint("asset_id", "civitai_model_id", name="uq_asset_lora"),
+        # "which images used this LoRA?" — the facet-filter direction.
+        Index("idx_asset_lora_civitai", "civitai_model_id"),
+        # "which installed model is this?" — for display and for the reverse join.
+        Index("idx_asset_lora_model", "model_id"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    asset_id: str = Field(foreign_key="assets.id", index=True)
+    model_id: str | None = Field(foreign_key="models_v2.id", default=None, index=True)
+    civitai_model_id: int | None = Field(default=None, index=True)
+    strength: float | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    asset: Optional["Asset"] = Relationship()
+
+
 # Core domain entities for normalized model metadata (V2 Schema)
 # Replaces flat metadata_ JSON with proper relational tables
 from pgvector.sqlalchemy import Vector
@@ -570,7 +709,13 @@ class ProviderVersionStatus(SQLModel, table=True):
 class ModelTag(SQLModel, table=True):
     """
     Tags for model searchability.
-    Normalized from CivitAI tags array.
+    Normalized from CivitAI tags array, or typed by a user.
+
+    `source` records who owns the row. CivitAI's resync replaces its own tags
+    wholesale, so without provenance a user-typed tag is indistinguishable from
+    a scraped one and the next resync deletes it. The unique constraint stays on
+    (model_id, tag): a tag both sources know about is stored once, owned by
+    whichever writer got there first, and is never duplicated.
     """
     __tablename__ = "model_tags"
     __table_args__ = (
@@ -581,6 +726,7 @@ class ModelTag(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     model_id: str = Field(foreign_key="models_v2.id", index=True)
     tag: str = Field(index=True)
+    source: str = Field(default="civitai")  # civitai | user
     
     # Relationships
     model: Optional["ModelV2"] = Relationship(back_populates="tags")

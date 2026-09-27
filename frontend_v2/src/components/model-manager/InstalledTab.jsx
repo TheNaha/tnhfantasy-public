@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Search, Filter, X, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2 } from 'lucide-react';
+import { Search, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2 } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
 import toast from 'react-hot-toast';
@@ -14,6 +14,7 @@ import {
     formatAvailabilityBadgeLabel,
     getModelAvailabilitySummary,
 } from '../../utils/modelAvailability';
+import ModelTagFilter from '../selector/ModelTagFilter';
 import ModelDetailsModal from './ModelDetailsModal';
 import BatchAutopopulateModal from './BatchAutopopulateModal';
 import BatchResyncModal from './BatchResyncModal';
@@ -291,48 +292,12 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         <Trash2 size={20} className="text-red-400 hover:text-red-300 drop-shadow-md" />
                     </button>
 
-                    {availableTags.length > 0 && (
-                        <div className="relative group">
-                            <button className="flex items-center gap-2 px-5 py-3 bg-[#0B0E14]/80 border border-white/10 rounded-xl text-gray-300 hover:text-white hover:border-white/20 shadow-inner transition-all">
-                                <Filter size={20} />
-                                <span className="font-bold text-2xs uppercase tracking-widest">Tags ({selectedTags.length})</span>
-                            </button>
-                            <div className="absolute right-0 mt-2 w-64 max-h-96 overflow-y-auto glass-panel border border-white/10 rounded-2xl shadow-2xl p-3 hidden group-hover:block z-20 backdrop-blur-xl">
-                                {availableTags.map(tag => (
-                                    <label key={tag} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded-xl cursor-pointer transition-colors">
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedTags.includes(tag)}
-                                            onChange={(e) => {
-                                                if (e.target.checked) setSelectedTags([...selectedTags, tag]);
-                                                else setSelectedTags(selectedTags.filter(t => t !== tag));
-                                            }}
-                                            className="rounded border-white/10 bg-black/40 text-blue-500 focus:ring-blue-500/50"
-                                        />
-                                        <span className="text-sm font-medium text-gray-300">{tag}</span>
-                                    </label>
-                                ))}
-                            </div>
-                        </div>
-                    )}
+                    <ModelTagFilter
+                        availableTags={availableTags}
+                        selectedTags={selectedTags}
+                        onSelectedTagsChange={setSelectedTags}
+                    />
                 </div>
-
-                {/* Selected Tags Pills */}
-                {selectedTags.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                        {selectedTags.map(tag => (
-                            <span key={tag} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/20 text-blue-300 rounded-full text-xs font-bold border border-blue-500/30 shadow-inner">
-                                {tag}
-                                <button onClick={() => setSelectedTags(selectedTags.filter(t => t !== tag))} className="hover:text-white transition-colors" aria-label={`Remove tag ${tag}`}>
-                                    <X size={14} />
-                                </button>
-                            </span>
-                        ))}
-                        <button onClick={() => setSelectedTags([])} className="text-xs font-bold text-gray-500 hover:text-gray-300 uppercase tracking-widest transition-colors" aria-label="Clear all tags">
-                            Clear all
-                        </button>
-                    </div>
-                )}
             </div>
 
             {loading && filteredFiles.length === 0 ? (

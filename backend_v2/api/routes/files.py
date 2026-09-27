@@ -1076,7 +1076,29 @@ async def list_files_endpoint(
                     version_filenames = " ".join([
                         (v.get("file") or {}).get("filename", "") for v in versions if v
                     ])
-                    searchable = f"{file_data['name']} {file_data['display_name']} {version_filenames}".lower()
+                    # tags/trained_words/description are already on file_data but
+                    # were not searched, which is what made the selector's
+                    # "Search models by name, tags, description..." placeholder
+                    # a lie: a LoRA tagged for a character was unfindable by
+                    # that character unless the name happened to contain it.
+                    # CivitAI tags are the only description of what a LoRA is
+                    # FOR, so they carry the search.
+                    model_tags = file_data.get("tags") or []
+                    trained = file_data.get("trained_words") or []
+                    tag_text = " ".join(str(t) for t in model_tags if t)
+                    trained_text = " ".join(str(t) for t in trained if t)
+                    description = file_data.get("description") or ""
+                    creator = file_data.get("creator") or {}
+                    creator_name = creator.get("username") or ""
+                    searchable = " ".join([
+                        file_data["name"],
+                        file_data["display_name"],
+                        version_filenames,
+                        tag_text,
+                        trained_text,
+                        description,
+                        creator_name,
+                    ]).lower()
                     if search_lower not in searchable:
                         continue
                 

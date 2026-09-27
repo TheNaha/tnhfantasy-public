@@ -9,8 +9,39 @@ import httpx
 
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import model_logger
+from infrastructure.parsers.hf_parser import infer_base_model, infer_model_type
 
 logger = model_logger()
+
+# HuggingFace tags that describe the repo format rather than what the model is.
+# Kept out of the user-visible tag list for the same reason the parser drops
+# them, but the raw list is still what infers the type: an HF LoRA is tagged
+# ["diffusers","safetensors","lora",...], and stripping "lora" before inferring
+# would file every LoRA as a checkpoint.
+HF_TECHNICAL_TAGS = frozenset({"diffusers", "safetensors", "pytorch"})
+
+
+def _hf_tags(hf_data: dict[str, Any]) -> list[str]:
+    """Normalised, de-duplicated HuggingFace tag list from a payload."""
+    raw = hf_data.get("tags") or []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    seen: set[str] = set()
+    tags: list[str] = []
+    for tag in raw:
+        if not isinstance(tag, str):
+            continue
+        cleaned = tag.strip()
+        if not cleaned or cleaned.lower() in HF_TECHNICAL_TAGS or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        tags.append(cleaned)
+    return tags
+
+
+def _hf_pipeline_tag(hf_data: dict[str, Any]) -> str | None:
+    pipeline_tag = hf_data.get("pipeline_tag")
+    return pipeline_tag if isinstance(pipeline_tag, str) else None
 
 
 @dataclass
@@ -288,12 +319,22 @@ class ExternalModelService:
         owner = model_path.split("/")[0]
         model_name = model_path.split("/")[-1]
 
+        # HF tags are the only description of what a repo actually is: an HF
+        # LoRA, ControlNet or pose bundle carries no other field that says so.
+        # They were being dropped here, and `type` was hardcoded to
+        # "Checkpoint", so every HF LoRA was filed as a checkpoint and could
+        # not be found by type or by tag at all.
+        tags = _hf_tags(hf_data)
+        model_type = infer_model_type(tags, _hf_pipeline_tag(hf_data))
+        base_model = infer_base_model(tags, hf_data.get("cardData", {}).get("content") or "")
+
         return {
             "id": hf_data.get("id", model_path),
             "name": model_name,
-            "type": "Checkpoint",
+            "type": model_type,
             "nsfw": False,
             "description": hf_data.get("description", ""),
+            "tags": tags,
             "creator": {"username": hf_data.get("author", owner)},
             "stats": {
                 "downloadCount": hf_data.get("downloads", 0),
@@ -303,7 +344,7 @@ class ExternalModelService:
                 {
                     "id": hf_data.get("sha", "main"),
                     "name": "main",
-                    "baseModel": "Unknown",
+                    "baseModel": base_model,
                     "downloadUrl": f"https://huggingface.co/{model_path}/resolve/main/model.safetensors",
                     "files": [
                         {
@@ -321,16 +362,20 @@ class ExternalModelService:
 
     def _normalize_huggingface_model(self, model: dict[str, Any]) -> dict[str, Any]:
         model_id = model.get("id", "")
+        tags = _hf_tags(model)
         return {
             "id": model_id,
             "name": model_id.split("/")[-1],
-            "type": "Checkpoint",
+            "type": infer_model_type(tags, _hf_pipeline_tag(model)),
             "nsfw": False,
+            "description": model.get("description", ""),
+            "tags": tags,
             "creator": {"username": model.get("author", "")},
             "modelVersions": [
                 {
                     "id": model.get("sha", ""),
                     "name": "main",
+                    "baseModel": infer_base_model(tags),
                     "downloadUrl": f"https://huggingface.co/{model_id}/resolve/main/model.safetensors",
                     "images": [],
                 }

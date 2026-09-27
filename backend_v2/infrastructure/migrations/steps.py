@@ -1650,7 +1650,200 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add jobs.acknowledged_at so a read failure can be dismissed without being retried or deleted",
             apply_fn=_migration_069_add_job_acknowledged_at,
         ),
+        MigrationStep(
+            version="070_create_sessions",
+            description="Add sessions and session_assets so related images can be grouped into curatable sessions",
+            apply_fn=_migration_070_create_sessions,
+        ),
+        MigrationStep(
+            version="071_add_model_tag_source",
+            description="Distinguish user-added model tags from source tags so a resync cannot delete them",
+            apply_fn=_migration_071_add_model_tag_source,
+        ),
+        MigrationStep(
+            version="072_create_asset_loras",
+            description="Add asset_loras so the LoRAs an image used are queryable rows rather than a filename buried in jsonb",
+            apply_fn=_migration_072_create_asset_loras,
+        ),
     ]
+
+
+def _migration_072_create_asset_loras(conn) -> bool:
+    """Create `asset_loras` if the entity has not already produced it.
+
+    As with 070, `SQLModel.metadata.create_all` in `infrastructure/database.py`
+    creates this table from the entity on a fresh database, so the DDL below
+    only fires for a database created before the entity existed. It is written
+    to match what SQLModel emits.
+
+    The unique constraint is what makes re-indexing an image idempotent: running
+    it twice must not double the rows. It is created as a unique INDEX rather
+    than a table-level UNIQUE constraint because SQLite has no
+    `ADD CONSTRAINT ... IF NOT EXISTS`, and a unique index is equivalent here.
+
+    Returns True unconditionally so the runner records it — see the note in
+    `_migration_070_create_sessions` about `if applied: _record_migration(...)`.
+    """
+    inspector = inspect(conn)
+    if "asset_loras" not in set(inspector.get_table_names()):
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS asset_loras (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                asset_id VARCHAR NOT NULL,
+                model_id VARCHAR,
+                civitai_model_id INTEGER,
+                strength DOUBLE PRECISION,
+                created_at TIMESTAMP NOT NULL
+            )
+        """))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_lora ON asset_loras (asset_id, civitai_model_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_asset_lora_civitai ON asset_loras (civitai_model_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_asset_lora_model ON asset_loras (model_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_asset_lora_asset_id ON asset_loras (asset_id)"))
+        logger.info("migration_table_created", table="asset_loras")
+    return True
+
+
+def _migration_071_add_model_tag_source(conn) -> bool:
+    """Add `model_tags.source` and backfill every existing row to 'civitai'.
+
+    `model_tags` is created by `SQLModel.metadata.create_all(engine)`, so on a
+    fresh database the column is already there and this is a no-op. It fires
+    only for a database created before the column existed, and is written to
+    match what SQLModel emits so the two paths cannot diverge.
+
+    The backfill is what makes the change safe: every pre-existing row is a tag
+    this project scraped from CivitAI (there was no user writer path before
+    this migration), so all of them must be owned by 'civitai' — otherwise the
+    resync's new `source = 'civitai'` delete filter would silently orphan them
+    and they would never be refreshed again.
+
+    NOT NULL with a default is deliberate: an un-backfilled NULL-source row
+    matches neither the CivitAI delete filter nor the user add/remove paths, so
+    it would become an invisible tag.
+
+    The unique constraint on (model_id, tag) is intentionally left alone — see
+    `core.entities.ModelTag`.
+    """
+    inspector = inspect(conn)
+    if "model_tags" not in inspector.get_table_names():
+        return False
+
+    existing = {col["name"] for col in inspector.get_columns("model_tags")}
+    if "source" in existing:
+        return False
+
+    conn.execute(text(
+        "ALTER TABLE model_tags ADD COLUMN source VARCHAR(32) NOT NULL DEFAULT 'civitai'"
+    ))
+    # Belt and braces for engines that do not backfill a NOT NULL DEFAULT:
+    # Postgres 11+ fills the column from the default above.
+    conn.execute(text(
+        "UPDATE model_tags SET source = 'civitai' WHERE source IS NULL OR source = ''"
+    ))
+    _verify_required_columns(conn, "model_tags", {"source"})
+    logger.info("migration_column_added", table="model_tags", column="source")
+    return True
+
+
+def _migration_070_create_sessions(conn) -> bool:
+    """Add the session tables' indexes, and back-fill them where absent.
+
+    The `sessions` and `session_assets` TABLES themselves are created by
+    `SQLModel.metadata.create_all(engine)` in `infrastructure/database.py:145`,
+    which runs before `run_migrations`. So on a fresh database this step finds
+    them already present and its table-creation branches are skipped — the same
+    situation as `_migration_045_create_locations`. The DDL below therefore only
+    fires for a database created before these entities existed, and is written
+    to match what SQLModel emits so the two paths cannot diverge.
+
+    What genuinely needs a migration is the index on `assets.seed`: the session
+    detector groups by identical seed and that column was unindexed, so
+    "images sharing a seed" was a sequential scan of the whole table. It is
+    partial — NULL dominates the legacy rows, and an index over mostly-NULLs is
+    not worth its write cost — and excludes `seed = 0`, which is simultaneously
+    a valid seed and the "unset" default from `build_image_job_workflow`, so
+    including it would collapse unrelated images into one enormous group.
+
+    NOTE on the return value, which is load-bearing and easy to get wrong:
+    `run_migrations` does `if applied: _record_migration(...)`. A step that
+    returns False is NOT recorded, and therefore re-runs on every startup
+    forever. So this step deliberately reports True even when the index already
+    exists — otherwise a database where `create_all` had already made the
+    tables, and the index was created by an earlier partial run, would never
+    record 070 and would re-execute on every boot. True is correct here because
+    the desired end state is "070 has been applied".
+    """
+    inspector = inspect(conn)
+    existing_tables = set(inspector.get_table_names())
+    is_postgres = conn.dialect.name == "postgresql"
+    changed = False
+
+    if "sessions" not in existing_tables:
+        # TIMESTAMPTZ on Postgres to match what SQLModel emits for a tz-aware
+        # `datetime` field; plain TIMESTAMP on SQLite, which has neither.
+        ts = "TIMESTAMP WITH TIME ZONE" if is_postgres else "TIMESTAMP"
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                user_id VARCHAR NOT NULL DEFAULT 'default_user',
+                name VARCHAR,
+                description TEXT,
+                signature VARCHAR,
+                auto_detected BOOLEAN NOT NULL DEFAULT FALSE,
+                locked BOOLEAN NOT NULL DEFAULT FALSE,
+                workspace VARCHAR,
+                start_at {ts},
+                end_at {ts},
+                image_count INTEGER NOT NULL DEFAULT 0,
+                thumbnail VARCHAR,
+                created_at {ts} NOT NULL,
+                updated_at {ts} NOT NULL,
+                deleted_at {ts}
+            )
+        """))
+        for stmt in (
+            "CREATE INDEX IF NOT EXISTS ix_sessions_user_id ON sessions (user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_sessions_signature ON sessions (user_id, signature)",
+            "CREATE INDEX IF NOT EXISTS ix_sessions_user_updated ON sessions (user_id, updated_at)",
+            "CREATE INDEX IF NOT EXISTS ix_sessions_workspace ON sessions (workspace)",
+            "CREATE INDEX IF NOT EXISTS ix_sessions_start_at ON sessions (start_at)",
+            "CREATE INDEX IF NOT EXISTS ix_sessions_end_at ON sessions (end_at)",
+            "CREATE INDEX IF NOT EXISTS ix_sessions_auto_detected ON sessions (auto_detected)",
+            "CREATE INDEX IF NOT EXISTS ix_sessions_deleted_at ON sessions (deleted_at)",
+        ):
+            conn.execute(text(stmt))
+        logger.info("migration_table_created", table="sessions")
+        changed = True
+
+    if "session_assets" not in existing_tables:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS session_assets (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                session_id VARCHAR NOT NULL,
+                asset_id VARCHAR NOT NULL,
+                added_at TIMESTAMP NOT NULL
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS uq_session_asset ON session_assets (session_id, asset_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_session_assets_session_id ON session_assets (session_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_session_assets_asset_id ON session_assets (asset_id)"))
+        logger.info("migration_table_created", table="session_assets")
+        changed = True
+
+    # Unconditional, and deliberately outside both table guards: `create_all`
+    # cannot produce a partial index on an existing table, so this is the one
+    # thing here that has to run on every database, including a fresh one where
+    # the tables above were already made from the entities.
+    if "assets" in existing_tables:
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_assets_seed_lookup "
+            "ON assets (user_id, seed) WHERE seed IS NOT NULL AND seed != 0"
+        ))
+        logger.info("migration_index_created", table="assets", index="ix_assets_seed_lookup")
+        changed = True
+
+    return changed
 
 
 def _migration_065_index_jobs_metadata_chat_id(conn) -> bool:

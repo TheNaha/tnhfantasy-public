@@ -1,4 +1,5 @@
 import { Search } from 'lucide-react';
+import ModelTagFilter from './ModelTagFilter';
 
 export default function ModelFilterBar({
   search,
@@ -11,6 +12,9 @@ export default function ModelFilterBar({
   onFilterTypeChange,
   showNSFW,
   onShowNSFWChange,
+  availableTags = [],
+  selectedTags = [],
+  onSelectedTagsChange,
   hasActiveFilters,
   onClearFilters,
 }) {
@@ -130,6 +134,17 @@ export default function ModelFilterBar({
           </button>
         )}
       </div>
+
+      {/* Tag filter. Shared with the model manager's Installed tab so there is
+          one tag UX; filtering itself happens server-side via the `tags`
+          query param on GET /api/files. */}
+      {onSelectedTagsChange && (
+        <ModelTagFilter
+          availableTags={availableTags}
+          selectedTags={selectedTags}
+          onSelectedTagsChange={onSelectedTagsChange}
+        />
+      )}
     </>
   );
 }

@@ -54,6 +54,11 @@ const ModelSelector = memo(function ModelSelector({
   const [filterBaseModel, setFilterBaseModel] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [showNSFW, setShowNSFW] = useState(true);
+  // Tag filtering is server-side (GET /api/files?tags=a,b applies AND across the
+  // list). This was missing entirely, so the one place a user picks the model
+  // they are about to generate with could not filter by tag — which is exactly
+  // "I have a hard time to find a LORA for a specific character".
+  const [selectedTags, setSelectedTags] = useState([]);
 
   const {
     data,
@@ -63,7 +68,7 @@ const ModelSelector = memo(function ModelSelector({
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ['models', directory, search, sortBy, filterBaseModel, filterType, showNSFW],
+    queryKey: ['models', directory, search, sortBy, filterBaseModel, filterType, showNSFW, selectedTags],
     queryFn: async ({ pageParam = 0, signal }) => {
       if (!directory) return { files: [] };
       const sortMap = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
@@ -77,6 +82,7 @@ const ModelSelector = memo(function ModelSelector({
         base_model: filterBaseModel !== "all" ? filterBaseModel : undefined,
         model_type: filterType !== "all" ? filterType : undefined,
         show_nsfw: showNSFW,
+        tags: selectedTags.length > 0 ? selectedTags.join(",") : undefined,
       }, { signal });
     },
     getNextPageParam: (lastPage, allPages) => {
@@ -91,6 +97,18 @@ const ModelSelector = memo(function ModelSelector({
     if (!directory && initialModels?.length > 0) return initialModels;
     return data?.pages.flatMap(page => page.files || []) || [];
   }, [data, directory, initialModels]);
+
+  // Tags offered in the dropdown: everything on the loaded models, plus the
+  // current selection so a selected tag is always representable. Deliberately
+  // NOT accumulated across queries — React Query drops `data` while a new key
+  // resolves, and the dropdown narrowing to the selected tags for that one
+  // render is correct; accumulating would need a ref written during render,
+  // which the react-hooks lint rules reject here.
+  const availableTags = useMemo(() => {
+    const tags = new Set(selectedTags);
+    models.forEach(m => (m.tags || []).forEach(t => tags.add(t)));
+    return Array.from(tags).sort();
+  }, [models, selectedTags]);
 
   const internalSelectedModel = useMemo(() => {
     if (!externalSelectedModel && value) {
@@ -173,15 +191,23 @@ const ModelSelector = memo(function ModelSelector({
 
   const filteredAndSortedModels = useMemo(() => {
     if (directory) return models;
-    // Client side filtering ONLY if using initialModels (no directory provided)
+    // Client side filtering ONLY if using initialModels (no directory provided).
+    // Mirrors what the backend now does for the server path, so the two do not
+    // disagree: name, display name, tags, trained words and description.
     let result = [...models];
     if (search) {
       const q = search.toLowerCase();
-      result = result.filter(
-        (m) =>
-          (m.name || '').toLowerCase().includes(q) ||
-          (m.display_name || '').toLowerCase().includes(q)
-      );
+      const haystack = (m) => [
+        m.name,
+        m.display_name,
+        m.description,
+        ...(m.tags || []),
+        ...(m.trained_words || []),
+      ].filter(Boolean).join(" ").toLowerCase();
+      result = result.filter(m => haystack(m).includes(q));
+    }
+    if (selectedTags.length > 0) {
+      result = result.filter(m => selectedTags.every(t => (m.tags || []).includes(t)));
     }
     if (filterBaseModel !== "all" || filterType !== "all" || !showNSFW) {
       result = result.filter((m) => {
@@ -212,7 +238,7 @@ const ModelSelector = memo(function ModelSelector({
       }
     });
     return result;
-  }, [models, directory, search, sortBy, filterBaseModel, filterType, showNSFW]);
+  }, [models, directory, search, sortBy, filterBaseModel, filterType, showNSFW, selectedTags]);
 
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetching) fetchNextPage();
@@ -288,8 +314,11 @@ const ModelSelector = memo(function ModelSelector({
                 onFilterTypeChange={setFilterType}
                 showNSFW={showNSFW}
                 onShowNSFWChange={setShowNSFW}
-                hasActiveFilters={filterBaseModel !== "all" || filterType !== "all" || !showNSFW}
-                onClearFilters={() => { setFilterBaseModel("all"); setFilterType("all"); setShowNSFW(true); }}
+                availableTags={availableTags}
+                selectedTags={selectedTags}
+                onSelectedTagsChange={setSelectedTags}
+                hasActiveFilters={filterBaseModel !== "all" || filterType !== "all" || !showNSFW || selectedTags.length > 0}
+                onClearFilters={() => { setFilterBaseModel("all"); setFilterType("all"); setShowNSFW(true); setSelectedTags([]); }}
               />
             </div>
 
