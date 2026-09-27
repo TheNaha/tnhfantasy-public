@@ -65,6 +65,8 @@ from services.asset_reconciler import METADATA_VERSION
 logger = get_logger("statistics_service")
 
 __all__ = [
+    "ASSET_GALLERY_TIMESTAMP",
+    "get_asset_date_histogram",
     "get_base_statistics",
     "get_detailed_statistics",
     "get_stats_summary",
@@ -121,6 +123,25 @@ _RESOLUTION = func.cast(Asset.width, String) + "x" + func.cast(Asset.height, Str
 # Mirrors `_resolved_timestamp`, which is the Python version used for the
 # timeline buckets.
 _RESOLVED_TS = func.coalesce(Asset.job_completed_at, Asset.generated_at, Asset.created_at)
+
+# The gallery's timeline, and therefore the ONE day-bucketing rule.
+#
+# `_RESOLVED_TS` above is the *analytics* timestamp: it prefers the job's own
+# completion time, which is a different instant from the image's own timestamp on
+# every enriched row. `get_base_statistics()["images_by_date"]` reports days by
+# that instant, so it cannot drive a scrubber attached to the gallery: the two
+# disagree about which day an image is on, and the statistics histogram is
+# additionally unfiltered (no workspace/character/story scope) and only counts
+# rows that carry metadata at all. A scoped gallery would therefore show a rail
+# whose ticks point at the wrong days.
+#
+# So the gallery's rule is `coalesce(generated_at, created_at)` — the moment the
+# image was made (PNG tEXt metadata, else file mtime), falling back to the row's
+# own creation time for a migrated legacy row that has nothing better. It lives
+# here, next to `_RESOLVED_TS`, so that the listing, its date seek and the
+# histogram all bind the *same expression object* rather than three copies of a
+# rule that can drift. `api/routes/files.py` imports it.
+ASSET_GALLERY_TIMESTAMP = func.coalesce(Asset.generated_at, Asset.created_at)
 
 _DIMENSIONS: dict[str, ColumnElement[Any]] = {
     "checkpoint": func.coalesce(Asset.checkpoint_name, _META["checkpoint"]["name"].as_string(), _META["checkpoint"].as_string()),
@@ -473,6 +494,81 @@ def _session_scope() -> Any:
     from infrastructure.database import get_session_sync
 
     return get_session_sync()
+
+
+# ── the gallery's day histogram ─────────────────────────────────────────────
+
+
+def gallery_day_key(moment: Any) -> str | None:
+    """`YYYY-MM-DD` in UTC for one gallery timestamp, or None if unusable.
+
+    The bucketing is done in Python rather than as a SQL `GROUP BY date_trunc`
+    for one reason: correctness across both dialects this module supports.
+    Postgres has no `date_trunc` equivalent in SQLite, and SQLite's `date()` has
+    no Postgres equivalent, so a SQL-side bucket either branches on dialect —
+    which this module's portability rule exists to prevent — or picks
+    `cast(ts AS varchar)` and silently depends on the session `TimeZone` being
+    UTC, which is an environment fact rather than a guarantee. One narrow
+    column scan of already-materialised datetimes is the honest cost: the
+    expensive part of the old row pass was 70 MB of jsonb, not the timestamps.
+    """
+    if not isinstance(moment, datetime):
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+
+def get_asset_date_histogram(
+    *,
+    workspace: str | None = None,
+    character_id: str | None = None,
+    story_id: str | None = None,
+    search: str | None = None,
+) -> dict[str, Any]:
+    """Per-day image counts for the gallery timeline scrubber.
+
+    Scoped by exactly the filters `GET /api/v2/assets` accepts, so the rail
+    always describes the list it is attached to. A full-library histogram next to
+    a character-scoped gallery would put ticks on days the gallery cannot show.
+
+    Days are UTC calendar days of `ASSET_GALLERY_TIMESTAMP` and are returned
+    oldest-first, ascending. The caller projects them onto its own local day keys
+    for display; it does not recompute them.
+    """
+    stmt = select(ASSET_GALLERY_TIMESTAMP).where(Asset.deleted_at.is_(None))
+    if workspace:
+        stmt = stmt.where(Asset.workspace == workspace)
+    if character_id:
+        stmt = stmt.where(Asset.character_id == character_id)
+    if story_id:
+        stmt = stmt.where(Asset.story_id == story_id)
+    if search:
+        like = f"%{search}%"
+        stmt = stmt.where(
+            (Asset.filename.ilike(like)) | (Asset.metadata_.cast(String).ilike(like))
+        )
+
+    session = _session_scope()
+    try:
+        moments = session.execute(stmt).all()
+    finally:
+        session.close()
+
+    counts: Counter[str] = Counter()
+    for (moment,) in moments:
+        key = gallery_day_key(moment)
+        if key is not None:
+            counts[key] += 1
+
+    days = [{"day": day, "count": counts[day]} for day in sorted(counts)]
+    return {
+        "days": days,
+        "total": sum(counts.values()),
+        "first_day": days[0]["day"] if days else None,
+        "last_day": days[-1]["day"] if days else None,
+        "day_rule": "utc",
+    }
 
 
 # ── public API ──────────────────────────────────────────────────────────────

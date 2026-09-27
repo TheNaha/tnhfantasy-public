@@ -193,6 +193,7 @@ class TestRunMigrations:
             "069_add_job_acknowledged_at",
             "070_create_sessions",
             "072_create_asset_loras",
+            "073_create_asset_tags",
             "004_normalize_legacy_job_statuses",
             "006_deleted_file_tombstones",
             "007_add_job_task_type",
@@ -312,6 +313,7 @@ class TestRunMigrations:
             "069_add_job_acknowledged_at",
             "070_create_sessions",
             "072_create_asset_loras",
+            "073_create_asset_tags",
         ]
 
     def test_branching_migration_is_idempotent_with_existing_columns(self, tmp_path):
