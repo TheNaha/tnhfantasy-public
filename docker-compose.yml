@@ -18,6 +18,16 @@ services:
       - tnhcomfy
     restart: unless-stopped
     logging: *bounded-logging
+    # The one service here with neither. Docker's default /dev/shm is 64 MiB,
+    # which PostgreSQL uses for parallel-query shared memory: two concurrent index
+    # builds on a small host fail with "could not resize shared memory segment
+    # /PostgreSQL.<pid>", and the build aborts rather than degrading.
+    shm_size: "1gb"
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "4"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-comfy}"]
       interval: 10s
@@ -274,6 +284,7 @@ services:
     networks:
       - tnhcomfy
     restart: unless-stopped
+    logging: *bounded-logging
     deploy:
       resources:
         limits:
@@ -436,6 +447,10 @@ services:
   #     - REMOTE_AGENT_ALLOW_INSECURE=${REMOTE_AGENT_ALLOW_INSECURE:-}
   #   volumes:
   #     - /opt/comfy/ComfyUI/models:/models:ro
+  #     - :rw, not :ro. The agent's /upload-file, /download-model, /delete-model
+  #     and /delete-file all write, and remote_agent/Dockerfile mounts
+  #     /opt/comfy/ComfyUI/models itself for the same reason — a :ro here would
+  #     make the container's own mount disagree with the image it is built from.
   #     - ./data/remote-agent/downloads:/models/downloads
   #   ports:
   #     - "8001:8001"

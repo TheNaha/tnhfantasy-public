@@ -9,8 +9,8 @@ ComfyUIStable app to characterise:
   3. LoRA-threshold effect (0→4 LoRAs, same checkpoint)
   4. VRAM fragmentation (25 consecutive runs to stress the KSampler hang)
 
-Usage (from provider_containers/ with venv active)
----------------------------------------------------
+Usage (from provider_containers/bench/ with venv active)
+-------------------------------------------------------
   modal run bench_generate.py                  # LoRA sweep (default)
   modal run bench_generate.py --suite cold     # cold-start + warm repeats
   modal run bench_generate.py --suite lora     # LoRA 0→4 threshold sweep

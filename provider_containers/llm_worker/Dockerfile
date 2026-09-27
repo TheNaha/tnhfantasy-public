@@ -32,10 +32,16 @@ RUN useradd -r -u 1000 -s /bin/false worker && \
 
 USER worker
 
+# $PORT is the single source of truth for the listen port — the CMD here
+# hardcoded 8000 while the healthcheck read $PORT, so a provider on any other
+# port probed a port nothing was listening on. See image_worker/Dockerfile.
+ENV PORT=8000
+
 # Health check. /live, not /health, and $PORT, not a literal 8000 — see
 # image_worker/Dockerfile for why both matter.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import os, urllib.request; urllib.request.urlopen('http://localhost:%s/live' % os.environ.get('PORT', '8000'))"
 
-# Run the unified worker app
-CMD ["python", "-m", "uvicorn", "llm_worker.worker:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the unified worker app. Shell form so the CMD can read $PORT; exec form
+# cannot expand it, which is how the CMD and the healthcheck came to disagree.
+CMD python -m uvicorn llm_worker.worker:app --host 0.0.0.0 --port ${PORT:-8000}

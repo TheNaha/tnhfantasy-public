@@ -37,3 +37,14 @@ services:
     ports:
       - "8001:8001"
     restart: unless-stopped
+    # /health, which answers {"status": "healthy"} with no token required
+    # (server.py) — the one endpoint that works before anything else is set up,
+    # and the one the PyInstaller job's only verification curl used. Declaring it
+    # here makes `depends_on: condition: service_healthy` available and gives
+    # `docker compose ps` something true to report. 8001, matching PORT above.
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

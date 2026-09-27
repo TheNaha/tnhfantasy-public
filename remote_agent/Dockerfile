@@ -36,4 +36,10 @@ RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin agent \
     && chown -R agent:agent /app
 USER agent
 
+# /health is unauthenticated and answers {"status": "healthy"} (server.py) — the
+# one route that answers before the token check, the token check being the thing
+# most likely to be misconfigured. 8001 matches the ENV PORT above.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"
+
 CMD ["python", "/app/remote_agent/server.py"]
