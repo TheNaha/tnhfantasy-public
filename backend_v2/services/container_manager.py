@@ -206,21 +206,33 @@ class ContainerManager:
 
         return image_tags
     
-    async def start_container(
+    def _start_container_sync(
         self,
         provider_id: str,
         provider_type: str,
         port: int,
-        env_vars: dict[str, str] | None = None,
-        env_file: str | None = None,
+        env_vars: dict[str, str] | None,
+        container_name: str,
         rebuild: bool = False,
-        container_name: str | None = None,
-    ):
-        """Start a provider worker container."""
-        logger.info("container_start_request", provider_id=provider_id, port=port)
-        
+    ) -> docker.models.containers.Container:
+        """Every blocking Docker SDK call in the start path, in one worker thread.
+
+        Split out of `start_container` because the whole body is synchronous
+        socket I/O against the Docker daemon — `images.get`, a possibly
+        multi-minute `images.build` with its log stream, `containers.get`,
+        `stop`, `remove`, `containers.run` — and it was running on the event
+        loop. `_wait_for_health` one function below already used `to_thread`, so
+        the awareness existed; it just stopped at the boundary. Reached from
+        `provider_lifecycle_service.start_container` and from
+        `load_balancer._warm_provider_in_background`, i.e. while other requests
+        are being served.
+
+        Raises before starting anything if the host path the worker mount depends
+        on is unset, so a misconfigured host does not get as far as replacing a
+        running container.
+        """
         image_tag = ProviderRegistry.get_worker_image(provider_type)
-        
+
         # Check if image exists
         image_exists = False
         try:
@@ -228,39 +240,30 @@ class ContainerManager:
             image_exists = True
         except docker.errors.ImageNotFound:
             pass
-            
+
         # Build if requested or missing
-        if rebuild or not image_exists:
-            logger.info("image_building", image_tag=image_tag, reason="rebuild" if rebuild else "missing")
+        if not image_exists:
+            logger.info(
+                "image_building",
+                image_tag=image_tag,
+                reason="rebuild" if rebuild else "missing",
+            )
             self.build_worker_image(provider_type)
         else:
             logger.debug("image_exists", image_tag=image_tag)
-        
+
         # Prepare environment
         environment = {
             "PROVIDER_ID": provider_id,
             "PORT": str(port),
             "BACKEND_URL": get_worker_backend_url(),
         }
-        
         if env_vars:
             environment.update(env_vars)
-        
-        # Container configuration
-        container_name = container_name or provider_container_name(provider_id)
-        
-        # Check if container already exists
-        try:
-            old_container = self.client.containers.get(container_name)
-            logger.info("container_removing_old", container_name=container_name)
-            old_container.stop()
-            old_container.remove()
-        except docker.errors.NotFound:
-            pass
-        
-        logger.info("container_starting", container_name=container_name, port=port)
-        
-        # Get host backend directory path from environment
+
+        # Check if container already exists. Note this happens AFTER the
+        # HOST_BACKEND_PATH check below, deliberately: stopping a running
+        # provider and then failing to start it again is the worst outcome.
         backend_host_path = os.getenv("HOST_BACKEND_PATH")
         if not backend_host_path:
             raise ValueError(
@@ -269,14 +272,21 @@ class ContainerManager:
                 f"backend code and models. Set HOST_BACKEND_PATH to the host path "
                 f"where the backend directory is mounted."
             )
-        volumes = {
-            backend_host_path: {"bind": "/backend", "mode": "ro"}
-        }
-        
+        volumes = {backend_host_path: {"bind": "/backend", "mode": "ro"}}
+
+        try:
+            old_container = self.client.containers.get(container_name)
+            logger.info("container_removing_old", container_name=container_name)
+            old_container.stop()
+            old_container.remove()
+        except docker.errors.NotFound:
+            pass
+
         # Use the compose-defined network name for container-to-container communication
         target_network = os.getenv("COMFY_DOCKER_NETWORK", "tnhcomfy")
         logger.debug("container_network", network=target_network)
-        
+
+        logger.info("container_starting", container_name=container_name, port=port)
         try:
             container_config = {
                 "image": image_tag,
@@ -291,24 +301,64 @@ class ContainerManager:
                 "detach": True,
                 "remove": False,
                 "labels": {"comfy-provider": "true", "provider-id": provider_id},
-                "network": target_network  # Directly join comfy-network
+                "network": target_network,  # Directly join comfy-network
             }
-            
             container = self.client.containers.run(**container_config)
-            logger.debug("container_network_joined", network=target_network)
-            
+        except Exception:
+            # The container may now exist in a failed state, and the snapshot
+            # cache still describes the pre-start world.
+            self.invalidate_container_snapshot(container_name=container_name)
+            raise
+
+        logger.debug("container_network_joined", network=target_network)
+        self.invalidate_container_snapshot(container_name=container_name)
+        return container
+
+    async def start_container(
+        self,
+        provider_id: str,
+        provider_type: str,
+        port: int,
+        env_vars: dict[str, str] | None = None,
+        rebuild: bool = False,
+        container_name: str | None = None,
+    ):
+        """Start a provider worker container.
+
+        `env_file` used to be a parameter here and was never read by anything —
+        no caller passed it, and the code used `env_vars` exclusively.
+        """
+        logger.info("container_start_request", provider_id=provider_id, port=port)
+
+        resolved_name = container_name or provider_container_name(provider_id)
+        # `rebuild` is consumed inside the worker thread; passing it as a
+        # keyword keeps the blocking signature free of a flag the loop would
+        # otherwise have to read back.
+        container = await asyncio.to_thread(
+            self._start_container_sync,
+            provider_id=provider_id,
+            provider_type=provider_type,
+            port=port,
+            env_vars=env_vars,
+            container_name=resolved_name,
+            rebuild=rebuild,
+        )
+
+        try:
             # Wait for container to be healthy
-            await self._wait_for_health(container, timeout=DEFAULT_HEALTH_TIMEOUT_SECONDS)
-            
+            await self._wait_for_health(
+                container, timeout=DEFAULT_HEALTH_TIMEOUT_SECONDS
+            )
             self.running_containers[provider_id] = container
-            logger.info("container_started", container_name=container_name, provider_id=provider_id)
-            
+            logger.info(
+                "container_started", container_name=resolved_name, provider_id=provider_id
+            )
             return container
-        
         except Exception as e:
             logger.error("container_start_failed", provider_id=provider_id, error=str(e))
+            self.invalidate_container_snapshot(container_name=resolved_name)
             raise
-    
+
     def _health_probe_targets(self, container: docker.models.containers.Container) -> list[tuple[str, str]]:
         """Build health probe targets in order of reliability for current runtime."""
         targets: list[tuple[str, str]] = []
@@ -459,17 +509,17 @@ class ContainerManager:
 
     def stop_container(self, provider_id: str):
         """Stop a provider worker container."""
+        container_name = provider_container_name(provider_id)
         container = self.running_containers.get(provider_id)
         if not container:
-            container_name = provider_container_name(provider_id)
             try:
                 container = self.client.containers.get(container_name)
             except docker.errors.NotFound:
                 logger.warning("container_not_found", provider_id=provider_id)
                 return
-        
+
         logger.info("container_stopping", container=container.name, provider_id=provider_id)
-        
+
         try:
             container.stop(timeout=10)
             container.remove()
@@ -477,9 +527,23 @@ class ContainerManager:
             logger.info("container_stopped", container=container.name, provider_id=provider_id)
         except Exception as e:
             logger.error("container_stop_failed", provider_id=provider_id, error=str(e))
+        finally:
+            # The snapshot describes container state, and the container has
+            # changed either way — a stop that raised halfway still means the
+            # state is not what the cache says. `invalidate_container_snapshot`
+            # had no call site anywhere in the tree, so `resolve_provider_runtime`
+            # could report a stopped container as running for up to the 2 s TTL,
+            # which is exactly long enough for a load-balancer decision to be
+            # made on it.
+            self.invalidate_container_snapshot(container_name=container_name)
     
     def get_container_logs(self, provider_id: str, tail: int = 100) -> str:
-        """Get logs from a provider container."""
+        """Get logs from a provider container.
+
+        Synchronous: `container.logs()` is a blocking socket read. Callers on the
+        request path must offload it (`provider_lifecycle_service` does for its
+        other two Docker methods and not for this one).
+        """
         container = self.running_containers.get(provider_id)
         if not container:
             container_name = provider_container_name(provider_id)

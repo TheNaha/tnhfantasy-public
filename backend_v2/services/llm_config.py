@@ -99,7 +99,16 @@ def resolve_default_provider(session: Session) -> tuple[str, str] | None:
         return stored
 
     providers = session.exec(
-        select(Provider).where(Provider.worker_type == "llm", Provider.enabled == True)  # noqa: E712
+        select(Provider)
+        .where(Provider.worker_type == "llm", Provider.enabled == True)  # noqa: E712
+        # No ORDER BY means Postgres makes no ordering promise, so `providers[0]`
+        # — the fallback whenever no provider matches the preferred-type test —
+        # was whatever the plan happened to return. `resolve_default_provider()`
+        # could then pick a different provider for two consecutive chat messages
+        # with identical configuration, and every caller would have no way to
+        # tell it was not a stable choice. A tie on `priority` breaks on `id`,
+        # which is unique, so the fallback is deterministic.
+        .order_by(Provider.priority, Provider.id)
     ).all()
 
     if not providers:

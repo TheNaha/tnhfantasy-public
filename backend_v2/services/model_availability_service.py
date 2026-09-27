@@ -412,10 +412,9 @@ class ModelAvailabilityService:
         if available:
             return available
         try:
-            from config import get_config
-            cfg_default = (get_config() or {}).get("generator", {}).get("default_checkpoint")
-            if cfg_default:
-                return cfg_default
+            from config import resolve_default_checkpoint
+
+            return resolve_default_checkpoint()
         except Exception as exc:
             logger.debug("model_availability_resolve_failed", error=str(exc))
         from core.workflow_builder import DEFAULT_CHECKPOINT

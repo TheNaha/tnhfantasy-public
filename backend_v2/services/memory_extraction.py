@@ -19,6 +19,12 @@ logger = get_logger("memory_extraction")
 # not mistaken for a deliberate NULL. See create_memories_from_extraction.
 EMBEDDING_PENDING_TAG = "embedding-pending"
 
+# How many recent messages the extraction prompt sees.
+MEMORY_EXTRACTION_WINDOW = 20
+# How many *newly answered* user turns are worth a billed LLM call. Two, so the
+# extraction has something to connect — a single new turn is often small talk.
+MEMORY_EXTRACTION_MIN_NEW_TURNS = 2
+
 EXTRACTION_PROMPT = """You are a memory extraction assistant. Given a conversation between a user and a character, extract durable, factual memories that the character should remember for future interactions.
 
 Rules:
@@ -34,23 +40,56 @@ Conversation:
 """
 
 
-def should_extract_memories(session: Session, chat_id: str) -> bool:
-    """Check if a chat has enough new messages to warrant memory extraction."""
-    recent = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(20)
-    ).all()
-    user_msgs = [m for m in recent if m.role == MessageRole.USER]
-    return len(user_msgs) >= 2
+def _recent_messages(session: Session, chat_id: str) -> list[Message]:
+    """The newest 20 messages, newest first. One query, shared by both callers.
+
+    `should_extract_memories` and `build_extraction_messages` each ran this same
+    `select(...).order_by(created_at.desc()).limit(20)`, so every chat reply
+    fetched the same twenty rows twice.
+    """
+    return list(
+        session.exec(
+            select(Message)
+            .where(Message.chat_id == chat_id)
+            .order_by(Message.created_at.desc())
+            .limit(MEMORY_EXTRACTION_WINDOW)
+        ).all()
+    )
 
 
-def build_extraction_messages(session: Session, chat_id: str) -> list[str]:
-    """Build the message list for the extraction LLM prompt."""
-    messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(20)
-    ).all()
-    messages.reverse()
+def should_extract_memories(recent: list[Message]) -> bool:
+    """Are there enough *newly complete* user turns to be worth an extraction?
+
+    The previous test was `len(user_msgs) >= 2` over the newest 20 messages. Once
+    a chat passed 20 messages that is true forever: any normal user/character
+    alternation puts at least two user messages in the window, so every single
+    chat reply enqueued a second, separately billed LLM job. The gate was
+    supposed to be a throttle and was a constant.
+
+    A turn counts as new when the character has already answered it — i.e. there
+    is a non-user message after it. The message that triggered the extraction
+    IS that answer, so the turn it completes is excluded and the one before it
+    is the first candidate. A conversation that alternates
+    user/character/user/character therefore yields two user messages before the
+    trigger, and the third is the trigger itself: the gate is closed until the
+    user sends a fourth.
+    """
+    answered = False
+    new_user_turns = 0
+    for message in recent:  # newest first
+        if message.role != MessageRole.USER:
+            answered = True
+            continue
+        if answered:
+            new_user_turns += 1
+    return new_user_turns >= MEMORY_EXTRACTION_MIN_NEW_TURNS
+
+
+def build_extraction_messages(recent: list[Message]) -> list[str]:
+    """Render the extraction window as `Role: content` lines, oldest first."""
+    ordered = list(reversed(recent))
     lines = []
-    for m in messages:
+    for m in ordered:
         role = "User" if m.role == MessageRole.USER else "Character"
         lines.append(f"{role}: {m.content}")
     return lines
@@ -63,12 +102,13 @@ async def enqueue_memory_extraction(
     job_service,
 ) -> bool:
     """Enqueue a background LLM job to extract memories from a chat."""
-    if not should_extract_memories(session, chat_id):
+    recent = _recent_messages(session, chat_id)
+    if not should_extract_memories(recent):
         return False
 
     from services.llm_workflow import build_llm_workflow
 
-    lines = build_extraction_messages(session, chat_id)
+    lines = build_extraction_messages(recent)
     if not lines:
         return False
 
@@ -135,9 +175,44 @@ def create_memories_from_extraction(session: Session, character_id: str, memorie
     from services.embedding_service import get_embedding_service
     emb_svc = get_embedding_service()
 
+    # One batched forward pass, not one per memory. The batched API already
+    # exists and `rag_pipeline` already uses it; the per-item loop made this the
+    # only embedding call site in the app that did N forward passes for N
+    # memories, on a caller that runs on the event loop.
+    #
+    # A batch failure falls back to per-item so one un-embeddable memory does not
+    # cost the other four their vectors — the same shape `rag_pipeline` uses, and
+    # the same reason the docstring above cares about NULL vectors.
+    # `errors` is kept per index so a NULL vector is still attributable to a
+    # specific memory and a specific reason in the log.
+    embeddings: list[list[float] | None] = [None] * len(memories)
+    errors: list[Exception | None] = [None] * len(memories)
+    try:
+        batch = emb_svc.generate_embeddings(list(memories))
+        if len(batch) == len(memories):
+            embeddings = list(batch)
+        else:
+            raise ValueError(
+                f"generate_embeddings returned {len(batch)} vectors for "
+                f"{len(memories)} memories"
+            )
+    except Exception as exc:
+        logger.warning(
+            "memory_extraction_embedding_batch_failed",
+            character_id=character_id,
+            count=len(memories),
+            error=str(exc),
+        )
+        for index, content in enumerate(memories):
+            try:
+                embeddings[index] = emb_svc.generate_embedding(content)
+                errors[index] = None
+            except Exception as item_exc:
+                errors[index] = item_exc
+
     created = 0
     embedding_failures = 0
-    for content in memories:
+    for content, embedding, error in zip(memories, embeddings, errors, strict=True):
         now = datetime.now(timezone.utc)
         mem = CharacterMemory(
             character_id=character_id,
@@ -147,17 +222,17 @@ def create_memories_from_extraction(session: Session, character_id: str, memorie
             created_at=now,
             updated_at=now,
         )
-        try:
-            mem.embedding = emb_svc.generate_embedding(content)
-        except Exception as exc:
+        if embedding is None:
             embedding_failures += 1
             mem.tags = [*mem.tags, EMBEDDING_PENDING_TAG]
             logger.warning(
                 "memory_extraction_embedding_failed",
                 character_id=character_id,
                 content_preview=content[:60],
-                error=str(exc),
+                error=str(error) if error is not None else "no vector returned",
             )
+        else:
+            mem.embedding = embedding
         session.add(mem)
         created += 1
 

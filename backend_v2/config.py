@@ -20,6 +20,7 @@
 # - Production deployments to use env vars for secrets and overrides
 # - Runtime configuration updates via UI without restarts
 # - Sensible defaults for quick setup
+import copy
 import json
 import os
 from functools import lru_cache
@@ -367,21 +368,72 @@ def update_config(updates: dict[str, Any], persist: bool = True) -> dict[str, An
 def reset_config() -> dict[str, Any]:
     """
     Reset configuration to defaults.
-    
+
     Returns:
         Default configuration dictionary
     """
     global _config
-    _config = DEFAULT_CONFIG.copy()
-    
-    try:
-        with open(_config_path, 'w') as f:
-            json.dump(_config, f, indent=2)
-        _cfg_logger.info("config_reset")
-    except Exception as e:
-        _cfg_logger.warning("config_reset_save_failed", error=str(e))
-    
+
+    # Same lock and the same atomic writer as `update_config`, one function
+    # above. Without them this was the exact defect `update_config` had just been
+    # fixed for: an unlocked write to the module global that a concurrent
+    # `update_config` could read mid-assignment, and a truncate-then-write
+    # `open(..., 'w')` that a reader — or a crash — could catch half-written.
+    # `settings.py` reaches both through `asyncio.to_thread` from two routes, so
+    # they really can run at the same time.
+    with _config_lock:
+        _config = copy.deepcopy(DEFAULT_CONFIG)
+
+        try:
+            directory = os.path.dirname(_config_path) or "."
+            fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".config-", suffix=".json")
+            try:
+                with os.fdopen(fd, "w") as handle:
+                    json.dump(_config, handle, indent=2)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp_path, _config_path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+            _cfg_logger.info("config_reset")
+        except Exception as e:
+            _cfg_logger.warning("config_reset_save_failed", error=str(e))
+
     return _config
+
+
+def resolve_default_checkpoint() -> str:
+    """The configured default checkpoint, or the well-known base name.
+
+    One place, because there were three readers of `generator.default_checkpoint`
+    and they disagreed on the empty case:
+
+    - `job_processing.get_default_checkpoint` used
+      `.get("default_checkpoint", DEFAULT)`, which returns **None** when the key
+      is present but empty — so a config with `default_checkpoint: ""` produced
+      a job whose checkpoint was `None`, and the failure surfaced later as a
+      missing-model error naming `None`.
+    - `image_submission` used `or DEFAULT`, which does fall back.
+    - `model_availability_service._resolve_default_checkpoint` used a truthiness
+      check and then fell through to `DEFAULT` itself.
+
+    `""` is not a checkpoint, so treat it as absent. Read through `get_config()`
+    like every other config reader; do not cache, because `update_config` and
+    `reset_config` can replace the whole dict under the caller's feet.
+    """
+    try:
+        configured = (get_config() or {}).get("generator", {}).get("default_checkpoint")
+    except Exception:  # pragma: no cover - get_config reads a file
+        configured = None
+    if configured is None or not str(configured).strip():
+        from core.workflow_builder import DEFAULT_CHECKPOINT
+
+        return DEFAULT_CHECKPOINT
+    return str(configured)
 
 
 def _deep_merge(base: dict, updates: dict) -> dict:

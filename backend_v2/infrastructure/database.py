@@ -148,19 +148,33 @@ def create_db_and_tables() -> None:
     run_migrations(engine)
 
 
-async def vacuum_database() -> None:
-    """Run database maintenance using the configured dialect."""
+def _vacuum_sync() -> None:
+    """The VACUUM itself. Blocking by nature — see `vacuum_database`."""
     from sqlalchemy import text
+
+    if database_url.startswith("sqlite"):
+        with engine.connect() as conn:
+            conn.execute(text("VACUUM"))
+            conn.commit()
+    else:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("VACUUM (ANALYZE)"))
+
+
+async def vacuum_database() -> None:
+    """Run database maintenance using the configured dialect.
+
+    Offloaded to a worker thread. `VACUUM (ANALYZE)` on a large Postgres database
+    holds a connection and does real I/O for as long as it needs, and this runs
+    from the daily APScheduler job — on an `AsyncIOScheduler`, the coroutine runs
+    on the event loop, so the vacuum ran with the whole application stalled
+    behind it.
+    """
+    import asyncio
 
     logger.info("vacuum_start")
     try:
-        if database_url.startswith("sqlite"):
-            with engine.connect() as conn:
-                conn.execute(text("VACUUM"))
-                conn.commit()
-        else:
-            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-                conn.execute(text("VACUUM (ANALYZE)"))
+        await asyncio.to_thread(_vacuum_sync)
         logger.info("vacuum_complete")
     except Exception as exc:
         logger.error("vacuum_failed", error=str(exc))
