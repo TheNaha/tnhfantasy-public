@@ -101,9 +101,40 @@ async def deduplicated(key: str, coro_factory: Callable[[], Coroutine[Any, Any, 
         return result
     finally:
         if created_task:
-            with _in_flight_lock:
-                if _in_flight.get(key) is task:
-                    _in_flight.pop(key, None)
+            # Only de-register the task when it is actually FINISHED.
+            #
+            # The `finally` runs on the CREATOR's cancellation too, not only on
+            # completion — `asyncio.shield` protects `task` from that
+            # cancellation, but this block still executes. So a caller who gave
+            # up removed a task from `_in_flight` that was still running: the
+            # next identical request found no entry, started a SECOND concurrent
+            # copy of the work, and the dedup silently stopped deduplicating for
+            # that key. Silent, and only visible under concurrency.
+            #
+            # So: if the task is still running, leave the entry alone and let a
+            # `done_callback` remove it when it really finishes. `clear_dedup_cache`
+            # remains the escape hatch.
+            if task.done():
+                with _in_flight_lock:
+                    if _in_flight.get(key) is task:
+                        _in_flight.pop(key, None)
+            else:
+                task.add_done_callback(_retire_when_done(key, task))
+
+
+def _retire_when_done(key: str, task):
+    """Remove `key` from `_in_flight` once `task` really finishes.
+
+    Identity-checked on the way out, so a later task registered under the same
+    key by a fresh request is not evicted by this one's completion.
+    """
+
+    def _retire(_task):
+        with _in_flight_lock:
+            if _in_flight.get(key) is task:
+                _in_flight.pop(key, None)
+
+    return _retire
 
 
 def make_key(*args) -> str:

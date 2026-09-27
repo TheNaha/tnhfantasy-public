@@ -156,3 +156,50 @@ class TestConfigurationError:
 
     def test_is_comfy_error(self):
         assert isinstance(ConfigurationError("x"), ComfyError)
+
+
+class TestRequestValidationErrorHandler:
+    """A 422 for a malformed body.
+
+    Two leaks are closed here. `exc.body` used to be logged at error severity —
+    so every malformed `POST /api/jobs` wrote the whole ComfyUI workflow,
+    including the user's prompt, into the log — and echoed back to the client,
+    where any proxy or error tracker in between now had a copy of it.
+    """
+
+    def _malformed(self, client, path="/api/jobs", payload=None):
+        return client.post(path, json=payload if payload is not None else {
+            "task_type": "image",
+            # `workflow` must be a dict; a string here is the canonical malformed
+            # body, and it is the one that carries prompt text.
+            "workflow": "a prompt the user typed, sent as a string",
+        })
+
+    def test_the_request_body_is_not_echoed_back(self, client):
+        response = self._malformed(client)
+        assert response.status_code == 422
+        body = response.json()
+        assert "body" not in body
+        assert "a prompt the user typed" not in response.text
+
+    def test_the_error_uses_the_api_envelope(self, client):
+        body = self._malformed(client).json()
+        # Same shape as every other handler, so a client sees one error format.
+        assert body["code"] == "REQUEST_VALIDATION_ERROR"
+        assert isinstance(body["error"], str)
+        assert isinstance(body["detail"], list) and body["detail"]
+
+    def test_the_detail_names_the_offending_field(self, client):
+        detail = self._malformed(client).json()["detail"]
+        assert any("workflow" in item["field"] for item in detail)
+        assert all({"field", "message"} <= set(item) for item in detail)
+
+    def test_the_body_is_not_logged_at_error_severity(self, client, caplog):
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="error_handlers"):
+            self._malformed(client)
+
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert not errors, f"a validation error logged at ERROR: {[r.getMessage() for r in errors]}"
+        assert not any("a prompt the user typed" in r.getMessage() for r in caplog.records)

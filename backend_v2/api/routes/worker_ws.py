@@ -269,7 +269,7 @@ async def _handle_job_completed(websocket: WebSocket, worker, provider_id: str, 
         # caller believed it had succeeded.  Mark it FAILED so the
         # row reaches a terminal state, and only resolve the future
         # with a result on the success path.
-        logger.error("job_finalization_failed", job_id=job_id, error=str(finalize_exc))
+        logger.error("job_finalization_failed", job_id=job_id, error=str(finalize_exc), exc_info=True)
         worker.current_job = None
         try:
             async with get_session_context() as session:
@@ -277,7 +277,17 @@ async def _handle_job_completed(websocket: WebSocket, worker, provider_id: str, 
                 await job_service.update_job(
                     job_id,
                     status=JobStatus.FAILED,
-                    error=f"FAILURE_FINALIZATION: {finalize_exc}",
+                    # A stable code, not the exception text. `jobs.error` is
+                    # returned by `GET /api/jobs/{id}` and embedded in the
+                    # `diagnostics` block, so `str(finalize_exc)` put a
+                    # SQLAlchemy or httpx traceback — possibly a connection URL —
+                    # in front of a browser. The full text is in the log line
+                    # above, which is where a traceback belongs.
+                    error=(
+                        "Generation finished, but saving the result failed. "
+                        "The image may still be on disk; see the server log "
+                        "(job_finalization_failed) for the cause."
+                    ),
                 )
         except Exception as mark_exc:
             logger.error("job_finalization_failure_mark_failed", job_id=job_id, error=str(mark_exc))

@@ -311,6 +311,10 @@ async def startup_application(process_job, ws_manager):
         start_immediately=False,
     )
 
+    # Every startup step announces itself with a `startup_init` phase marker, and
+    # this one had none — so a boot test could see 12 of 13 steps and had no way
+    # to know the event-broadcast listener was missing. The marker is the only
+    # thing that makes a step observable; add it.
     logger.info("startup_init", phase="websocket")
     broadcast_task = start_background_task(
         ws_manager.start_broadcasting(),

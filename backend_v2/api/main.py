@@ -157,8 +157,53 @@ def _json_safe_validation_errors(errors):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
-    logger.error(f"Validation Error 422: {exc.errors()} - Body: {exc.body}")
+    """422 for a malformed request body.
+
+    Two things were wrong here and both leaked user content:
+
+    The body was **logged at error severity**. `exc.body` is the whole request
+    payload, so every malformed `POST /api/jobs` wrote the entire ComfyUI
+    workflow — including the prompt text the user typed — into the log. A
+    validation error is a client mistake, not a server fault; at `warning` it is
+    still recorded, and without the body it is recorded *as something you can
+    act on*: the field locations say which part of the request was wrong.
+
+    The body was also **echoed back to the client** in the response. The client
+    sent it, so this is not a disclosure to that client — but it does mean a
+    proxy, a cache or an error-tracking service in between now has a copy of it
+    in the failure path, which is where error bodies leak from.
+
+    The envelope is the other half: this was the only handler returning
+    `{detail, body}` where every other one returns `{error, code}`. The
+    frontend happens to cope because `api/client.js` scans four keys for a
+    message, but a stricter client sees two different error shapes depending on
+    whether validation failed or anything else did. Same shape now.
+    """
+    errors = _json_safe_validation_errors(exc.errors())
+    # `loc` and `msg` per error, and nothing else. Not the body, and not the
+    # whole error dict either — `input` can hold the offending value, which for
+    # a malformed workflow is the user's prompt.
+    fields = [
+        {"field": ".".join(str(part) for part in (e.get("loc") or ())), "message": e.get("msg", "")}
+        for e in errors
+    ]
+    logger.warning(
+        "request_validation_failed",
+        method=request.method,
+        path=request.url.path,
+        error_count=len(fields),
+        fields=fields[:20],
+    )
     return JSONResponse(
         status_code=422,
-        content={"detail": _json_safe_validation_errors(exc.errors()), "body": exc.body},
+        content={
+            "error": "Request validation failed",
+            # Distinct from the domain `ValidationError`'s VALIDATION_ERROR, which
+            # means "well-formed but semantically wrong". This one means "the body
+            # does not match the schema at all", and a client that wants to react
+            # differently to the two can. No client branches on the code today, so
+            # this costs nothing to get right now.
+            "code": "REQUEST_VALIDATION_ERROR",
+            "detail": fields,
+        },
     )

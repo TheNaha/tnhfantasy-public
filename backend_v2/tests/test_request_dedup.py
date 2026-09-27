@@ -193,32 +193,44 @@ async def test_deduplicated_cache_expiration():
 
 @pytest.mark.asyncio
 async def test_deduplicated_cancellation_cleanup():
-    """Test that cancellation cleans up the in-flight tracking."""
+    """A cancelled caller must not de-register work that is still running.
+
+    This used to assert `in_flight_count == 0` immediately after the caller was
+    cancelled, which is exactly the bug: the shielded work is STILL RUNNING at
+    that point, and unregistering it means the next identical request starts a
+    second concurrent copy. `asyncio.shield` protects the task from the caller's
+    cancellation; the bookkeeping has to agree with it.
+
+    So the entry stays while the work runs and retires when it finishes.
+    """
+    finished = asyncio.Event()
+
     async def slow_coro():
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.4)
+        finished.set()
         return "slow_result"
 
-    # Start a request
     task = asyncio.create_task(deduplicated("key_cancel", slow_coro))
-
-    # Let it start
     await asyncio.sleep(0.1)
 
-    # Verify it is in-flight
     stats = get_dedup_stats()
     assert stats["in_flight_count"] == 1
 
-    # Cancel the request
     task.cancel()
-
-    try:
+    with pytest.raises(asyncio.CancelledError):
         await task
-    except asyncio.CancelledError:
-        pass
 
-    # Verify it is removed from in-flight
-    stats = get_dedup_stats()
-    assert stats["in_flight_count"] == 0
+    # The caller has gone; the work has not.
+    assert not finished.is_set(), "the test needs the work to still be running here"
+    assert get_dedup_stats()["in_flight_count"] == 1, (
+        "a cancelled caller de-registered work that is still running, so the next "
+        "identical request would start a second copy"
+    )
+
+    # And it retires once it really is done.
+    await asyncio.wait_for(finished.wait(), timeout=5)
+    await asyncio.sleep(0)
+    assert get_dedup_stats()["in_flight_count"] == 0
 
 @pytest.mark.asyncio
 async def test_deduplicated_factory_error():

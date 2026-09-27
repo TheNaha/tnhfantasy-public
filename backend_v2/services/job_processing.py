@@ -311,7 +311,19 @@ async def finalize_persisted_job_outputs(
                 logger.error("job_finalize_failed", job_id=job_id, provider_id=provider_id, error=str(exc), exc_info=True)
                 await active_job_service.mark_failed(
                     job_id,
-                    error=str(exc),
+                    # `error` is user-visible: it comes back from
+                    # `GET /api/jobs/{id}` and is embedded in the diagnostics
+                    # block. `str(exc)` put a SQLAlchemy or httpx traceback —
+                    # possibly a connection URL — in front of a browser, in the
+                    # same way it did in `worker_ws`. `error_type` is the stable
+                    # code the diagnostics view groups by, and it is already
+                    # being set, so nothing is lost by keeping the prose generic
+                    # here. The cause is in the log line above.
+                    error=(
+                        "The provider finished, but the result could not be saved. "
+                        "The image may still be on disk; see the server log "
+                        "(job_finalize_failed) for the cause."
+                    ),
                     error_type=FAILURE_FINALIZATION,
                     provider_id=provider_id,
                 )
