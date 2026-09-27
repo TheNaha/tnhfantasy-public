@@ -9,7 +9,7 @@ import { useSettings, useUpdateSettings } from '../store/settingsStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
 import { useLLMProviderStatus, useSetLLMDefault } from '../hooks/useLLMProviderStatus';
 import useProvidersPageData from '../hooks/useProvidersPageData';
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
 
 
 function SystemPromptsEditor() {
@@ -81,8 +81,18 @@ export default function Settings() {
     const settings = useSettings();
     const { updateSetting, resetCategory, resetSettings } = useUpdateSettings();
     const { confirm } = useConfirmation();
+    const queryClient = useQueryClient();
 
     const [activeTab, setActiveTab] = useState('ui');
+    const [resetting, setResetting] = useState(false);
+
+    // `generator.default_checkpoint` lives on the server; the local store key is
+    // only a mirror (ChatWorkspaceContext sends it per message). Keeping the
+    // mirror in step here means any path that writes the category — including
+    // the Generator tab's Reset — cannot leave it stale.
+    const handleMirroredDefaultCheckpoint = useCallback((value) => {
+        if (updateSetting) updateSetting('generator', 'defaultCheckpoint', value);
+    }, [updateSetting]);
 
     const handleUpdateSetting = (category, key, value) => {
         updateSetting(category, key, value);
@@ -94,16 +104,30 @@ export default function Settings() {
         toast.success(`${category.toUpperCase()} settings reset to defaults`, { icon: '↩️' });
     };
 
+    // "Reset All" used to call the Zustand store only, which cleared
+    // localStorage and left config.json untouched — so the job limits, retry
+    // policy and image-processing values the backend actually reads survived it
+    // while the UI claimed everything was back to defaults. POST
+    // /api/settings/reset exists and was fully implemented with no caller.
     const handleResetAll = async () => {
         const confirmed = await confirm({
             title: 'Reset All Settings',
-            message: 'Are you sure you want to reset ALL settings to defaults? This cannot be undone.',
-            confirmText: 'Reset All',
+            message:
+                'This restores the BACKEND config.json to its compiled-in defaults — job concurrency, timeouts, retries, image processing, API, generator and AI settings — and clears this browser\'s UI preferences. Settings overridden by a COMFY_* environment variable are not affected, because the variable keeps winning. This cannot be undone.',
+            confirmText: 'Reset Backend Config',
             isDangerous: true
         });
-        if (confirmed) {
+        if (!confirmed) return;
+        setResetting(true);
+        try {
+            await settingsApi.reset();
             resetSettings();
-            toast.success('All settings reset to defaults', { icon: '↩️' });
+            await queryClient.invalidateQueries({ queryKey: SETTINGS_CONFIG_QUERY_KEY });
+            toast.success('Backend config and local preferences reset to defaults', { icon: '↩️' });
+        } catch {
+            toast.error('Failed to reset backend settings — nothing was changed locally');
+        } finally {
+            setResetting(false);
         }
     };
 
@@ -123,6 +147,7 @@ export default function Settings() {
         { id: 'gallery', label: 'Gallery', icon: SettingsIcon },
         { id: 'models', label: 'Models', icon: SettingsIcon },
         { id: 'generator', label: 'Generator', icon: SettingsIcon },
+        { id: 'backend', label: 'Backend', icon: Server },
     ];
 
 
@@ -150,10 +175,11 @@ export default function Settings() {
 
                     <button
                         onClick={handleResetAll}
-                        className="px-6 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 rounded-xl text-red-400 hover:text-red-300 font-bold tracking-wide flex items-center gap-3 transition-all duration-300 shadow-inner group"
+                        disabled={resetting}
+                        className="px-6 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 rounded-xl text-red-400 hover:text-red-300 font-bold tracking-wide flex items-center gap-3 transition-all duration-300 shadow-inner group disabled:opacity-50"
                     >
                         <RotateCcw size={20} className="group-hover:-rotate-180 transition-transform duration-500" />
-                        Reset All
+                        {resetting ? 'Resetting…' : 'Reset All'}
                     </button>
                 </div>
 
@@ -218,12 +244,319 @@ export default function Settings() {
                                 settings={settings.generator}
                                 onUpdate={(key, value) => handleUpdateSetting('generator', key, value)}
                                 onReset={() => handleResetCategory('generator')}
+                                onMirrorDefaultCheckpoint={handleMirroredDefaultCheckpoint}
                             />
+                        )}
+
+                        {activeTab === 'backend' && (
+                            <BackendSettings onMirroredDefaultCheckpoint={handleMirroredDefaultCheckpoint} />
                         )}
                     </div>
                 </div>
             </div>
         </motion.div>
+    );
+}
+
+// ============================================================================
+// SERVER-SIDE CONFIG (config.json via /api/settings)
+// ============================================================================
+// Server data lives in React Query, not the Zustand store: everything below
+// reads config.json through these queries and writes it with the same
+// PUT /api/settings the AI tab already used, so the backend job runner and the
+// UI cannot disagree about what is configured.
+
+const SETTINGS_CONFIG_QUERY_KEY = ['settings_config'];
+const SETTINGS_SCHEMA_QUERY_KEY = ['settings_schema'];
+
+function getConfigPath(object, path) {
+    return path.split('.').reduce((node, part) => (node == null ? node : node[part]), object);
+}
+
+function setConfigPath(target, path, value) {
+    const parts = path.split('.');
+    let node = target;
+    parts.forEach((part, index) => {
+        if (index === parts.length - 1) {
+            node[part] = value;
+        } else {
+            if (typeof node[part] !== 'object' || node[part] === null) node[part] = {};
+            node = node[part];
+        }
+    });
+    return target;
+}
+
+function useSettingsConfig() {
+    return useQuery({
+        queryKey: SETTINGS_CONFIG_QUERY_KEY,
+        queryFn: () => settingsApi.get(),
+        staleTime: 30000,
+    });
+}
+
+function useSettingsSchema() {
+    return useQuery({
+        queryKey: SETTINGS_SCHEMA_QUERY_KEY,
+        queryFn: () => settingsApi.getSchema(),
+        staleTime: 5 * 60 * 1000,
+    });
+}
+
+// Groups of server-backed settings, keyed by the config section they live in.
+// The per-field type, bounds, default, env-var and restart annotations all come
+// from GET /api/settings/schema, so these lists only say which controls exist
+// and what to call them.
+const BACKEND_GROUPS = [
+    {
+        section: 'jobs',
+        title: 'Job Limits',
+        description: 'How much work the backend keeps in flight, and how long it waits before giving up',
+        fields: [
+            { key: 'max_concurrent', label: 'Max Concurrent Jobs', hint: 'The spend throttle. Applies per task type, and is capped by your enabled provider count.' },
+            { key: 'timeout', label: 'Job Timeout (s)', hint: 'Keep at or above the provider worker timeout, or the backend abandons work that is still running.' },
+            { key: 'max_retries', label: 'Max Retries', hint: 'Automatic retries after a failed attempt' },
+            { key: 'retry_base_delay', label: 'Retry Base Delay (s)', hint: 'First backoff step' },
+            { key: 'retry_max_delay', label: 'Retry Max Delay (s)', hint: 'Backoff ceiling' },
+        ],
+    },
+    {
+        section: 'jobs',
+        title: 'LLM Job Settings',
+        description: 'Overrides applied to LLM jobs only, on top of the job limits above',
+        fields: [
+            { key: 'llm.timeout', label: 'LLM Timeout (s)' },
+            { key: 'llm.max_retries', label: 'LLM Max Retries' },
+            { key: 'llm.stagger_delay', label: 'Failover Stagger (s)', hint: 'Pace between LLM provider failover attempts' },
+        ],
+    },
+    {
+        section: 'image_processing',
+        title: 'Image Processing',
+        description: 'Thumbnails and output files',
+        fields: [
+            { key: 'thumbnail_quality', label: 'Thumbnail Quality', hint: 'Encoder quality for generated thumbnails' },
+            { key: 'output_date_hierarchy', label: 'Date Folder Hierarchy', hint: 'Write outputs into YYYY/MM/DD folders instead of one flat directory' },
+            { key: 'embed_metadata_in_png', label: 'Embed Generation Metadata', hint: 'Write generation parameters into the output file' },
+        ],
+    },
+    {
+        section: 'api',
+        title: 'API Server',
+        description: 'Bound once at startup, so changes here only take effect after a backend restart',
+        fields: [
+            { key: 'cors_origins', label: 'CORS Origins', hint: 'Comma-separated list of allowed origins' },
+            { key: 'gzip_minimum_size', label: 'GZip Minimum Size (bytes)' },
+        ],
+    },
+];
+
+function RestartBadge() {
+    return (
+        <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-2xs font-bold uppercase tracking-wider">
+            Restart required
+        </span>
+    );
+}
+
+function EnvOverrideBadge({ envVar }) {
+    return (
+        <span className="px-2 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-300 text-2xs font-bold uppercase tracking-wider">
+            Overridden by {envVar}
+        </span>
+    );
+}
+
+function ServerConfigControl({ field, spec, value, onChange, envVar, disabled }) {
+    const locked = Boolean(envVar);
+    const hint = locked
+        ? `Set by ${envVar} in this backend's environment. The config file value is ignored while it is present, so this control is read-only.`
+        : spec.restart_required
+            ? 'Read at backend startup — saving here only stages the value for the next restart.'
+            : field.hint;
+    const badges = [
+        ...(locked ? [<EnvOverrideBadge key="env" envVar={envVar} />] : []),
+        ...(spec.restart_required ? [<RestartBadge key="restart" />] : []),
+    ];
+
+    let control;
+    if (spec.type === 'boolean') {
+        control = (
+            <label className="flex items-center gap-4 cursor-pointer group">
+                <div className="relative">
+                    <input
+                        type="checkbox"
+                        checked={Boolean(value)}
+                        disabled={locked || disabled}
+                        onChange={(e) => onChange(e.target.checked)}
+                        className="sr-only peer disabled:opacity-50"
+                    />
+                    <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                </div>
+                <span className="text-sm font-bold uppercase tracking-widest text-gray-400 group-hover:text-white transition-colors">
+                    {value ? 'Enabled' : 'Disabled'}
+                </span>
+            </label>
+        );
+    } else if (spec.type === 'array') {
+        control = (
+            <input
+                type="text"
+                value={Array.isArray(value) ? value.join(', ') : ''}
+                disabled={locked || disabled}
+                onChange={(e) => onChange(e.target.value.split(',').map((origin) => origin.trim()).filter(Boolean))}
+                placeholder="http://localhost:5174, https://example.test"
+                className="w-full md:w-96 bg-[#0B0E14]/80 border border-white/10 rounded-xl p-3 text-white text-sm font-medium focus:ring-2 focus:ring-blue-500/50 shadow-inner glow-focus outline-none disabled:opacity-60"
+            />
+        );
+    } else {
+        const numeric = spec.type === 'integer' || spec.type === 'number';
+        control = (
+            <input
+                type={numeric ? 'number' : 'text'}
+                min={numeric ? spec.min : undefined}
+                max={numeric ? spec.max : undefined}
+                step={spec.type === 'integer' ? 1 : numeric ? 0.1 : undefined}
+                value={value ?? ''}
+                disabled={locked || disabled}
+                onChange={(e) => onChange(numeric ? Number(e.target.value) : e.target.value)}
+                className="w-32 bg-[#0B0E14]/80 border border-white/10 rounded-xl p-3 text-white font-medium focus:ring-2 focus:ring-blue-500/50 shadow-inner glow-focus outline-none disabled:opacity-60"
+            />
+        );
+    }
+
+    return (
+        <SettingGroup
+            title={field.label}
+            description={hint}
+            action={badges.length ? <div className="flex items-center gap-2">{badges}</div> : null}
+        >
+            {control}
+        </SettingGroup>
+    );
+}
+
+function BackendSettings({ onMirroredDefaultCheckpoint }) {
+    const queryClient = useQueryClient();
+    const { data: configResponse, isLoading } = useSettingsConfig();
+    const { data: schemaResponse } = useSettingsSchema();
+    const [draft, setDraft] = useState(null);
+    const [saving, setSaving] = useState(false);
+    const [saveState, setSaveState] = useState('idle');
+
+    // Seed the draft from the server config, and mirror the fallback checkpoint
+    // into the local store so ChatWorkspaceContext can keep sending it per
+    // message as `generator_checkpoint`.
+    useEffect(() => {
+        const settings = configResponse?.settings;
+        if (!settings) return;
+        setDraft(settings);
+        if (onMirroredDefaultCheckpoint) {
+            onMirroredDefaultCheckpoint(settings.generator?.default_checkpoint || null);
+        }
+    }, [configResponse, onMirroredDefaultCheckpoint]);
+
+    const envOverrides = schemaResponse?.env_overrides || {};
+
+    const handleSave = async () => {
+        const payload = {};
+        const skipped = [];
+        for (const group of BACKEND_GROUPS) {
+            for (const field of group.fields) {
+                const path = `${group.section}.${field.key}`;
+                if (envOverrides[path]) {
+                    skipped.push(field.label);
+                    continue;
+                }
+                setConfigPath(payload, `${group.section}.${field.key}`, getConfigPath(draft, `${group.section}.${field.key}`));
+            }
+        }
+        setSaving(true);
+        try {
+            await settingsApi.update(payload);
+            setSaveState('saved');
+            await queryClient.invalidateQueries({ queryKey: SETTINGS_CONFIG_QUERY_KEY });
+            const suffix = skipped.length ? ` (${skipped.join(', ')} kept ${skipped.length === 1 ? 'its' : 'their'} env override)` : '';
+            toast.success(`Backend settings saved${suffix}`);
+        } catch (error) {
+            setSaveState('idle');
+            toast.error(error?.message ? `Rejected: ${error.message}` : 'Failed to save backend settings');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    if (isLoading || !draft) {
+        return (
+            <div className="flex flex-col items-center justify-center h-48 space-y-4">
+                <div className="w-12 h-12 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+                <div className="text-sm font-bold tracking-widest uppercase text-gray-500">Loading backend config…</div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4 pb-6 border-b border-white/5">
+                <div>
+                    <h2 className="text-2xl font-bold tracking-wide text-white">Backend Settings</h2>
+                    <p className="text-sm font-medium text-gray-400 mt-2">
+                        Written to the server&apos;s config.json and read by the job runner, image pipeline and API — not just this browser.
+                    </p>
+                </div>
+                <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 border border-white/10 rounded-xl text-white font-bold tracking-wide flex items-center gap-2 disabled:opacity-50 transition-all duration-300 shadow-lg"
+                >
+                    {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                    {saveState === 'saved' ? 'Saved' : 'Save to backend'}
+                </button>
+            </div>
+
+            <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-5 flex items-start gap-4 shadow-inner">
+                <div className="bg-blue-500/20 p-2 rounded-xl flex-shrink-0">
+                    <Info className="text-blue-400" size={20} />
+                </div>
+                <div>
+                    <p className="font-bold tracking-wide text-blue-400 mb-1 text-sm uppercase">These are server values</p>
+                    <p className="text-sm text-gray-300 font-medium leading-relaxed">
+                        Changes take effect for the next request. Fields controlled by a <code className="text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">COMFY_*</code> environment
+                        variable are shown read-only, because the variable keeps winning over this file.
+                    </p>
+                </div>
+            </div>
+
+            <div className="grid gap-6">
+                {BACKEND_GROUPS.map(group => (
+                    <div key={`${group.section}-${group.title}`} className="border border-white/5 rounded-2xl bg-white/5 shadow-inner p-5">
+                        <h3 className="font-bold text-white tracking-wide">{group.title}</h3>
+                        <p className="text-sm font-medium text-gray-400 mt-1 mb-2">{group.description}</p>
+                        {group.fields.map(field => {
+                            const spec = schemaResponse?.schema?.[group.section]?.fields?.[field.key];
+                            if (!spec) {
+                                return (
+                                    <div key={field.key} className="py-4 border-b border-white/5 text-xs text-amber-300">
+                                        {field.label}: not documented by the backend schema — control hidden.
+                                    </div>
+                                );
+                            }
+                            const path = `${group.section}.${field.key}`;
+                            return (
+                                <ServerConfigControl
+                                    key={field.key}
+                                    field={field}
+                                    spec={spec}
+                                    envVar={envOverrides[path]}
+                                    value={getConfigPath(draft, `${group.section}.${field.key}`)}
+                                    onChange={(next) => setDraft((current) => setConfigPath({ ...current }, `${group.section}.${field.key}`, next))}
+                                />
+                            );
+                        })}
+                    </div>
+                ))}
+            </div>
+        </div>
     );
 }
 
@@ -625,35 +958,96 @@ function ModelsSettings({ settings, onUpdate, onReset }) {
 
 import { useModelDirectories } from '../hooks/useModelDirectories';
 
+// Default Checkpoint is a SERVER setting (`generator.default_checkpoint` in
+// config.json), not a localStorage preference: services/job_processing.py,
+// services/image_submission.py and services/model_availability_service.py all
+// read it as the fallback when a request names no checkpoint. It used to be
+// written to the Zustand store only, so the control silently did nothing to the
+// value the backend actually used.
+function ServerCheckpointSelect({ installed, loading, onMirror }) {
+    const queryClient = useQueryClient();
+    const { data: configResponse } = useSettingsConfig();
+    const [saving, setSaving] = useState(false);
+
+    const serverValue = configResponse?.settings?.generator?.default_checkpoint || '';
+    const installedNames = installed.map((model) => (typeof model === 'string' ? model : model.filename));
+    const notInstalled = Boolean(serverValue) && !installedNames.includes(serverValue);
+
+    useEffect(() => {
+        if (onMirror) onMirror(serverValue || null);
+    }, [serverValue, onMirror]);
+
+    const handleChange = async (next) => {
+        setSaving(true);
+        try {
+            await settingsApi.update({ generator: { default_checkpoint: next } });
+            await queryClient.invalidateQueries({ queryKey: SETTINGS_CONFIG_QUERY_KEY });
+            toast.success(next ? `Server default checkpoint set to ${next}` : 'Server default checkpoint cleared');
+        } catch (error) {
+            toast.error(error?.message ? `Rejected: ${error.message}` : 'Failed to set the default checkpoint');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <>
+            <select
+                value={serverValue}
+                onChange={(e) => handleChange(e.target.value)}
+                className="w-full md:w-64 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                disabled={loading || saving}
+            >
+                <option value="">{'(unset — backend falls back to its compiled-in default)'}</option>
+                {notInstalled && (
+                    <option value={serverValue}>{`${serverValue} (not installed)`}</option>
+                )}
+                {installed.map(model => (
+                    <option key={typeof model === 'string' ? model : model.filename} value={typeof model === 'string' ? model : model.filename}>
+                        {typeof model === 'string' ? model : model.name || model.filename}
+                    </option>
+                ))}
+            </select>
+            {notInstalled && (
+                <p className="mt-2 text-xs text-amber-300">
+                    The configured checkpoint is not among the installed models, so generations fall back to it and will fail
+                    until it is installed or a different one is selected.
+                </p>
+            )}
+        </>
+    );
+}
+
 // Generator Settings Component
-function GeneratorSettings({ settings, onUpdate, onReset }) {
+function GeneratorSettings({ settings, onUpdate, onReset, onMirrorDefaultCheckpoint }) {
     const { modelsByKey, loading } = useModelDirectories([{ directory: 'models/checkpoints', key: 'checkpoints' }]);
     const checkpoints = modelsByKey.checkpoints || [];
-    
+    const { data: configResponse } = useSettingsConfig();
+
+    const handleReset = () => {
+        onReset();
+        // The checkpoint is server-owned, so restoring the local category
+        // defaults must not blank its mirror in the store.
+        if (onMirrorDefaultCheckpoint) {
+            onMirrorDefaultCheckpoint(configResponse?.settings?.generator?.default_checkpoint || null);
+        }
+    };
+
     return (
         <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-end pb-6 border-b border-white/5">
                 <h2 className="text-2xl font-bold tracking-wide text-white">Generator Settings</h2>
-                <button onClick={onReset} className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-gray-300 hover:text-white font-bold tracking-wide flex items-center gap-2 transition-all duration-300 shadow-inner">
+                <button onClick={handleReset} className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-gray-300 hover:text-white font-bold tracking-wide flex items-center gap-2 transition-all duration-300 shadow-inner">
                     <RotateCcw size={16} /> Reset
                 </button>
             </div>
 
             <div className="grid gap-6">
-                <SettingGroup title="Default Checkpoint" description="Default model used for agentic image generation">
-                    <select
-                        value={settings.defaultCheckpoint || ''}
-                        onChange={(e) => onUpdate('defaultCheckpoint', e.target.value)}
-                        className="w-full md:w-64 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                        disabled={loading}
-                    >
-                        <option value="">System Default (SDXL)</option>
-                        {checkpoints.map(model => (
-                            <option key={typeof model === 'string' ? model : model.filename} value={typeof model === 'string' ? model : model.filename}>
-                                {typeof model === 'string' ? model : model.name || model.filename}
-                            </option>
-                        ))}
-                    </select>
+                <SettingGroup
+                    title="Default Checkpoint"
+                    description="Server-side fallback used whenever a generation does not name a checkpoint (agentic image generation, story illustrations)"
+                >
+                    <ServerCheckpointSelect installed={checkpoints} loading={loading} onMirror={onMirrorDefaultCheckpoint} />
                 </SettingGroup>
 
                 <SettingGroup title="Auto-Randomize Seed" description="Automatically randomize seed after each generation">
@@ -1025,7 +1419,7 @@ function AISettings({ settings, onUpdate, onReset }) {
                     <p className="text-xs text-gray-500">
                         {settings.ragEnabled !== false
                             ? 'RAG is enabled. Distant memories and lore entries are retrieved semantically into context.'
-                            : 'RAG is disabled. Context falls back to recent/recency-based retrieval only.'}
+                            : 'RAG is disabled. No memories or lore entries are retrieved at all — there is no recency fallback, so the character relies only on the chat history already in context.'}
                     </p>
                 </SettingGroup>
 

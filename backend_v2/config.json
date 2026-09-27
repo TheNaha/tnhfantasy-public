@@ -1,11 +1,11 @@
 {
   "worker": {
-    "poll_interval": 0.3,
+    "poll_interval": 1.0,
     "retry_delay": 5,
-    "poll_limit": 50
+    "poll_limit": 30
   },
   "jobs": {
-    "default_limit": 20,
+    "default_limit": 30,
     "max_in_memory": 100,
     "max_concurrent": 5,
     "timeout": 3600,

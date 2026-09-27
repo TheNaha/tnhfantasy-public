@@ -44,7 +44,13 @@ const DEFAULT_SETTINGS = {
         autoRandomizeSeed: true,     // randomise seed before each generation
         redirectAfterGenerate: true, // navigate to dashboard after submitting a job
         redirectDelay: 1000,         // delay before redirect (ms) – lets the user see the job appear
-        defaultCheckpoint: null,     // default checkpoint to use for agentic image generation
+        // MIRROR of config.json `generator.default_checkpoint`, not a second
+        // source of truth. The Settings page reads and writes the server value
+        // through PUT /api/settings and seeds this from it, because
+        // ChatWorkspaceContext sends it per message as `generator_checkpoint`.
+        // It used to be written only to localStorage while the backend read
+        // config.json, so the control changed nothing.
+        defaultCheckpoint: null,
         batchPresets: {}             // custom batch generation presets: { name: { preset, basePrompt, charName, sceneName, seedMode, negativePrompt, sizeKey, steps } }
     },
     ai: {

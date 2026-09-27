@@ -121,6 +121,10 @@ DEFAULT_CONFIG = {
         "temperature": 0.8,
         "idleSimEnabled": False,
         "idleSimIntervalSeconds": 600,
+        # Declared here so the key is a real, documented config leaf rather than
+        # an implicit one: `services/rag_pipeline.rag_enabled()` already read
+        # it with a `True` default, so adding the key changes no behaviour.
+        "ragEnabled": True,
     },
     "system_prompts": {
         "roleplay_default": "You are a highly descriptive AI roleplay character. Write engaging, detailed, and immersive responses in character. Stay true to the character's personality, background, and speech patterns. Do not act as an AI assistant.\n\nFormatting rules:\n- Put the character's spoken dialogue in double quotation marks, one line per dialogue.\n- Put actions, narration, sounds, and emphasis in asterisks: *she frowns*.\n- Write actions on their own line, separated from dialogue.\n- Never wrap narration or prose in quotation marks.\n- Never leave stray asterisks or quotes; every * and \" must be paired.\n- Keep dialogue on a single line; do not insert line breaks inside quotes.",
@@ -145,10 +149,19 @@ class Settings(BaseSettings):
     job_retry_delay: float = 5.0
     
     # Job settings (consolidated from file config)
-    job_timeout: int = 300
-    job_max_retries: int = 3
-    job_retry_base_delay: float = 1.0
-    job_retry_max_delay: float = 60.0
+    #
+    # These four are SHADOW values: a getter only reads them when the matching
+    # COMFY_* env var is set, in which case pydantic has parsed the value out of
+    # the environment and the default here is unreachable. They are still
+    # declared, so keep them bound to DEFAULT_CONFIG rather than repeating a
+    # literal: `job_timeout` used to default to 300 while the effective default
+    # was `jobs.timeout` = 3600, and any future reader that skipped the env
+    # check would have silently reinstated the premature-timeout failure the
+    # 3600 comment above exists to prevent.
+    job_timeout: int = DEFAULT_CONFIG["jobs"]["timeout"]
+    job_max_retries: int = DEFAULT_CONFIG["jobs"]["max_retries"]
+    job_retry_base_delay: float = DEFAULT_CONFIG["jobs"]["retry_base_delay"]
+    job_retry_max_delay: float = DEFAULT_CONFIG["jobs"]["retry_max_delay"]
     
     # Downloads
     download_chunk_size: int = 8192
@@ -391,6 +404,103 @@ def _deep_merge(base: dict, updates: dict) -> dict:
     return result
 
 
+# Configurable system-prompt blocks. Defined here (the lowest-level module) so
+# validation can allow-list them; `api/routes/settings.py` re-exports the same
+# names for the /system-prompts route instead of maintaining a second list.
+SYSTEM_PROMPT_KEYS = frozenset({"roleplay_default", "narrator", "suggest_instruction"})
+
+
+# Leaf allow-lists for the sections that are written by name at their read
+# sites. `update_config` deep-merges, so an unknown leaf used to be written into
+# config.json and stay there forever: nothing would ever read it, and only
+# `reset_config` could remove it. A typo is now rejected at the door instead.
+#
+# Each list must contain every leaf of the matching DEFAULT_CONFIG section
+# (asserted in tests/test_settings_exposure.py) but may be a superset: `ai` also
+# carries optional sampler overrides the frontend writes as `null` to mean
+# "engine default", plus `ttsEnabled`, which is frontend-only for now.
+SECTION_LEAF_ALLOW_LISTS: dict[str, frozenset[str]] = {
+    "ai": frozenset({
+        "maxContextTokens",
+        "temperature",
+        "top_p",
+        "max_output_tokens",
+        "frequency_penalty",
+        "presence_penalty",
+        "ttsEnabled",
+        "ragEnabled",
+        "idleSimEnabled",
+        "idleSimIntervalSeconds",
+    }),
+    "generator": frozenset({"default_checkpoint"}),
+    "system_prompts": SYSTEM_PROMPT_KEYS,
+    # Nested per-task-type block merged over the top-level job settings by
+    # `_job_config`; not a top-level DEFAULT_CONFIG section.
+    "jobs.llm": frozenset({"timeout", "max_retries", "stagger_delay"}),
+}
+
+
+def _section_body(config: dict[str, Any], section: str) -> dict[str, Any]:
+    """Return ``config[section]`` as a dict, rejecting anything else."""
+    body = config[section]
+    if not isinstance(body, dict):
+        raise ValueError(f"{section} must be an object")
+    return body
+
+
+def _reject_unknown_leaves(section: str, body: dict[str, Any]) -> None:
+    """Reject leaves outside the section's allow-list."""
+    allowed = SECTION_LEAF_ALLOW_LISTS[section]
+    unknown = sorted(set(body) - set(allowed))
+    if unknown:
+        raise ValueError(
+            f"unknown {section} setting(s): {', '.join(unknown)}. "
+            f"Allowed: {', '.join(sorted(allowed))}"
+        )
+
+
+def _number(section: str, key: str, value: Any) -> float | None:
+    """Coerce a numeric leaf, rejecting bools and non-numbers.
+
+    The older range checks below compare directly, so a string arriving from a
+    hand-rolled client raised TypeError (a 500) instead of being reported as bad
+    input. `None` is passed through: the settings API uses it to clear an
+    optional override.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{section}.{key} must be a number")
+    return float(value)
+
+
+def _check_range(section: str, key: str, value: Any, minimum: Any = None, maximum: Any = None) -> None:
+    """Range-check one numeric leaf, ignoring `None`."""
+    number = _number(section, key, value)
+    if number is None:
+        return
+    if minimum is not None and number < minimum:
+        raise ValueError(f"{section}.{key} must be >= {minimum}")
+    if maximum is not None and number > maximum:
+        raise ValueError(f"{section}.{key} must be <= {maximum}")
+
+
+def _check_bool(section: str, key: str, value: Any) -> None:
+    """Type-check one boolean leaf, ignoring `None`."""
+    if value is not None and not isinstance(value, bool):
+        raise ValueError(f"{section}.{key} must be a boolean")
+
+
+def _check_str(section: str, key: str, value: Any, *, allow_blank: bool = False) -> None:
+    """Type-check one string leaf, ignoring `None`."""
+    if value is None:
+        return
+    if not isinstance(value, str):
+        raise ValueError(f"{section}.{key} must be a string")
+    if not allow_blank and not value.strip():
+        raise ValueError(f"{section}.{key} must not be blank")
+
+
 def _validate_config(config: dict[str, Any]) -> None:
     """
     Validate configuration values.
@@ -428,6 +538,15 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError("jobs.retry_base_delay must be > 0")
         if "retry_max_delay" in jobs and jobs["retry_max_delay"] <= 0:
             raise ValueError("jobs.retry_max_delay must be > 0")
+        # Per-task-type LLM overrides, merged over the top-level values by
+        # `_job_config`. Unvalidated until now, so a typo or a negative timeout
+        # reached the LLM call path.
+        if "llm" in jobs and jobs["llm"] is not None:
+            llm = _section_body(jobs, "llm")
+            _reject_unknown_leaves("jobs.llm", llm)
+            _check_range("jobs.llm", "timeout", llm.get("timeout"), minimum=1)
+            _check_range("jobs.llm", "max_retries", llm.get("max_retries"), minimum=0)
+            _check_range("jobs.llm", "stagger_delay", llm.get("stagger_delay"), minimum=0)
     
     # Model sync validations
     if "model_sync" in config:
@@ -462,8 +581,14 @@ def _validate_config(config: dict[str, Any]) -> None:
         api = config["api"]
         if "gzip_minimum_size" in api and api["gzip_minimum_size"] < 0:
             raise ValueError("api.gzip_minimum_size must be >= 0")
-        if "cors_origins" in api and not isinstance(api["cors_origins"], list):
-            raise ValueError("api.cors_origins must be a list")
+        if "cors_origins" in api and api["cors_origins"] is not None:
+            origins = api["cors_origins"]
+            if not isinstance(origins, list):
+                raise ValueError("api.cors_origins must be a list")
+            # Bound once at app construction, so a malformed entry would surface
+            # as a CORS failure for the whole UI rather than as bad input here.
+            for origin in origins:
+                _check_str("api.cors_origins", "entry", origin)
     
     # Jobs cleanup validations
     if "jobs_cleanup" in config:
@@ -484,6 +609,46 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError("image_processing.blurhash_components_y must be between 1 and 9")
         if "blurhash_resize_max" in img and img["blurhash_resize_max"] <= 0:
             raise ValueError("image_processing.blurhash_resize_max must be > 0")
+        _check_bool("image_processing", "output_date_hierarchy", img.get("output_date_hierarchy"))
+        _check_bool("image_processing", "embed_metadata_in_png", img.get("embed_metadata_in_png"))
+        _check_str("image_processing", "thumbnail_format", img.get("thumbnail_format"))
+        _check_str("image_processing", "thumbnail_directory", img.get("thumbnail_directory"))
+        if "thumbnail_sizes" in img and not isinstance(img["thumbnail_sizes"], dict):
+            raise ValueError("image_processing.thumbnail_sizes must be an object")
+
+    # AI validations
+    #
+    # `ai`, `generator` and `system_prompts` had no branch here at all, so every
+    # key in them was accepted and deep-merged into config.json — including
+    # typos and junk. The ranges below match the controls the Settings UI
+    # exposes so the form and the API agree on what is valid.
+    if "ai" in config:
+        ai = _section_body(config, "ai")
+        _reject_unknown_leaves("ai", ai)
+        _check_range("ai", "maxContextTokens", ai.get("maxContextTokens"), minimum=1024, maximum=32768)
+        _check_range("ai", "temperature", ai.get("temperature"), minimum=0, maximum=2)
+        _check_range("ai", "top_p", ai.get("top_p"), minimum=0, maximum=1)
+        _check_range("ai", "max_output_tokens", ai.get("max_output_tokens"), minimum=1, maximum=131072)
+        _check_range("ai", "frequency_penalty", ai.get("frequency_penalty"), minimum=-2, maximum=2)
+        _check_range("ai", "presence_penalty", ai.get("presence_penalty"), minimum=-2, maximum=2)
+        _check_bool("ai", "ttsEnabled", ai.get("ttsEnabled"))
+        _check_bool("ai", "ragEnabled", ai.get("ragEnabled"))
+        _check_bool("ai", "idleSimEnabled", ai.get("idleSimEnabled"))
+        # A non-positive interval would either spin the idle-simulation loop or
+        # divide by zero in the scheduler, so it is rejected outright rather
+        # than coerced.
+        _check_range("ai", "idleSimIntervalSeconds", ai.get("idleSimIntervalSeconds"), minimum=1)
+
+    if "generator" in config:
+        generator = _section_body(config, "generator")
+        _reject_unknown_leaves("generator", generator)
+        _check_str("generator", "default_checkpoint", generator.get("default_checkpoint"))
+
+    if "system_prompts" in config:
+        prompts = _section_body(config, "system_prompts")
+        _reject_unknown_leaves("system_prompts", prompts)
+        for key, value in prompts.items():
+            _check_str("system_prompts", key, value)
 
 
 # ============================================================================
@@ -525,6 +690,41 @@ def get_max_concurrent_jobs() -> int:
 def _env_var_is_set(env_name: str) -> bool:
     """Check if an environment variable is explicitly set (with COMFY_ prefix)."""
     return os.environ.get(f"COMFY_{env_name}") is not None
+
+
+# Config paths whose file value is IGNORED when the matching env var is set.
+#
+# Only keys a getter actually guards with `_env_var_is_set` belong here. Several
+# `Settings` fields look like overrides (`worker_poll_interval`,
+# `max_concurrent_jobs`, `job_retry_delay`, `modal_*`, `model_sync_*`) but no
+# getter consults them, so listing them would tell a UI that a field is
+# environment-controlled when the env var has no effect at all — the same class
+# of lie as a phantom config key.
+#
+# `api.worker_backend_url` is also env-overridable (see
+# `get_worker_backend_url`) but is absent from DEFAULT_CONFIG, so it is absent
+# here too and stays out of the settings schema.
+ENV_VAR_OVERRIDES: dict[str, str] = {
+    "jobs.timeout": "COMFY_JOB_TIMEOUT",
+    "jobs.max_retries": "COMFY_JOB_MAX_RETRIES",
+    "jobs.retry_base_delay": "COMFY_JOB_RETRY_BASE_DELAY",
+    "jobs.retry_max_delay": "COMFY_JOB_RETRY_MAX_DELAY",
+    "api.cors_origins": "COMFY_CORS_ORIGINS",
+    "api.gzip_minimum_size": "COMFY_GZIP_MINIMUM_SIZE",
+}
+
+
+def get_env_var_overrides() -> dict[str, str]:
+    """Return ``{config_path: env_var_name}`` for the overrides *currently set*.
+
+    The settings UI reads this to render an env-overridden field read-only:
+    writing it would appear to succeed while the env var kept winning.
+    """
+    return {
+        path: env_name
+        for path, env_name in ENV_VAR_OVERRIDES.items()
+        if os.environ.get(env_name) is not None
+    }
 
 
 def _normalize_worker_backend_url(url: str | None) -> str:

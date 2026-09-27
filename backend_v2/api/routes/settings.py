@@ -16,7 +16,7 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlmodel import Session
 
 import config as app_config
@@ -25,8 +25,6 @@ from core.exceptions import ComfyError, ValidationError
 from infrastructure.logging import get_logger
 
 logger = get_logger("settings_route")
-
-from config import DEFAULT_CHECKPOINT
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -52,12 +50,39 @@ async def get_settings() -> dict[str, Any]:
         raise ComfyError(str(e))
 
 
+def _default(path: str) -> Any:
+    """Resolve a dotted path against `config.DEFAULT_CONFIG`.
+
+    Every documented `default` is read from here instead of being retyped, so a
+    changed default can never leave the schema advertising the old value — the
+    four drifts this replaced (thumbnail_quality 85/90, blurhash_resize_max
+    400/64, a phantom `thumb` thumbnail size, and a one-origin CORS default) were
+    all literals that outlived the values they described.
+
+    The schema is still hand-written: types, bounds, descriptions and the
+    env-var / restart annotations are per-field judgement a generator cannot
+    infer. `tests/test_settings_exposure.py` asserts that every key it documents
+    exists in DEFAULT_CONFIG, so it cannot describe config that is not there.
+    """
+    node: Any = app_config.DEFAULT_CONFIG
+    for part in path.split("."):
+        node = node[part]
+    return node
+
+
+# Bound once while the ASGI app is constructed (api/app_setup.py: CORSMiddleware
+# and GZipMiddleware), so changing them in config.json cannot take effect
+# without a restart. Annotated so the UI can say so instead of implying the
+# write was live.
+RESTART_REQUIRED_PATHS = frozenset({"api.cors_origins", "api.gzip_minimum_size"})
+
+
 @router.get("/schema")
 async def get_settings_schema() -> dict[str, Any]:
     """
     Get settings schema with descriptions and types.
     Useful for building dynamic UI.
-    
+
     Returns:
         Settings schema dictionary
     """
@@ -70,21 +95,21 @@ async def get_settings_schema() -> dict[str, Any]:
                     "description": "Seconds between job checks",
                     "min": 0.1,
                     "max": 10,
-                    "default": 0.3
+                    "default": _default("worker.poll_interval")
                 },
                 "retry_delay": {
                     "type": "integer",
                     "description": "Seconds to wait after error before retrying",
                     "min": 1,
                     "max": 60,
-                    "default": 5
+                    "default": _default("worker.retry_delay")
                 },
                 "poll_limit": {
                     "type": "integer",
                     "description": "Number of jobs worker fetches per iteration",
                     "min": 1,
                     "max": 200,
-                    "default": 50
+                    "default": _default("worker.poll_limit")
                 }
             }
         },
@@ -96,14 +121,14 @@ async def get_settings_schema() -> dict[str, Any]:
                     "description": "Default number of jobs to return in API",
                     "min": 1,
                     "max": 100,
-                    "default": 20
+                    "default": _default("jobs.default_limit")
                 },
                 "max_in_memory": {
                     "type": "integer",
                     "description": "Maximum jobs to keep in memory for SSE",
                     "min": 10,
                     "max": 500,
-                    "default": 100
+                    "default": _default("jobs.max_in_memory")
                 },
                 "max_concurrent": {
                     "type": "integer",
@@ -117,7 +142,67 @@ async def get_settings_schema() -> dict[str, Any]:
                     ),
                     "min": 1,
                     "max": 10,
-                    "default": 5
+                    "default": _default("jobs.max_concurrent")
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": (
+                        "Seconds the backend waits for a job before giving up. Keep it "
+                        "at or above the provider worker's own timeout: too low and the "
+                        "backend abandons a workflow that is still legally running."
+                    ),
+                    "min": 60,
+                    "max": 86400,
+                    "default": _default("jobs.timeout"),
+                    "env_var": app_config.ENV_VAR_OVERRIDES["jobs.timeout"]
+                },
+                "max_retries": {
+                    "type": "integer",
+                    "description": "Automatic retries after a failed attempt",
+                    "min": 0,
+                    "max": 10,
+                    "default": _default("jobs.max_retries"),
+                    "env_var": app_config.ENV_VAR_OVERRIDES["jobs.max_retries"]
+                },
+                "retry_base_delay": {
+                    "type": "number",
+                    "description": "Base delay of the exponential backoff between retries (seconds)",
+                    "min": 0.1,
+                    "max": 600,
+                    "default": _default("jobs.retry_base_delay"),
+                    "env_var": app_config.ENV_VAR_OVERRIDES["jobs.retry_base_delay"]
+                },
+                "retry_max_delay": {
+                    "type": "number",
+                    "description": "Ceiling for the exponential backoff between retries (seconds)",
+                    "min": 1,
+                    "max": 3600,
+                    "default": _default("jobs.retry_max_delay"),
+                    "env_var": app_config.ENV_VAR_OVERRIDES["jobs.retry_max_delay"]
+                },
+                # Per-task-type overrides merged over the values above by
+                # config._job_config; dotted keys keep the schema flat and
+                # machine-readable (the UI looks settings up by dotted path).
+                "llm.timeout": {
+                    "type": "integer",
+                    "description": "LLM job timeout override (seconds)",
+                    "min": 10,
+                    "max": 3600,
+                    "default": _default("jobs.llm.timeout")
+                },
+                "llm.max_retries": {
+                    "type": "integer",
+                    "description": "LLM job retry override",
+                    "min": 0,
+                    "max": 10,
+                    "default": _default("jobs.llm.max_retries")
+                },
+                "llm.stagger_delay": {
+                    "type": "number",
+                    "description": "Seconds to wait before failing over to the next LLM provider",
+                    "min": 0,
+                    "max": 60,
+                    "default": _default("jobs.llm.stagger_delay")
                 }
             }
         },
@@ -129,47 +214,21 @@ async def get_settings_schema() -> dict[str, Any]:
                     "description": "Seconds between model syncs",
                     "min": 60,
                     "max": 3600,
-                    "default": 300
+                    "default": _default("model_sync.interval")
                 },
                 "retry_delay": {
                     "type": "integer",
                     "description": "Seconds to wait after sync error",
                     "min": 1,
                     "max": 60,
-                    "default": 10
+                    "default": _default("model_sync.retry_delay")
                 },
                 "reconciliation_interval": {
                     "type": "integer",
                     "description": "Seconds between reconciliation checks",
                     "min": 60,
                     "max": 600,
-                    "default": 120
-                }
-            }
-        },
-        "websocket": {
-            "description": "WebSocket configuration (realtime job updates via Socket.IO)",
-            "fields": {
-                "poll_interval": {
-                    "type": "number",
-                    "description": "Seconds between mobile polling fallback updates",
-                    "min": 0.1,
-                    "max": 5,
-                    "default": 0.5
-                },
-                "reconnect_delay": {
-                    "type": "integer",
-                    "description": "Seconds to wait before reconnecting",
-                    "min": 1,
-                    "max": 30,
-                    "default": 1
-                },
-                "heartbeat_interval": {
-                    "type": "integer",
-                    "description": "Seconds between heartbeat pings",
-                    "min": 10,
-                    "max": 120,
-                    "default": 30
+                    "default": _default("model_sync.reconciliation_interval")
                 }
             }
         },
@@ -181,14 +240,14 @@ async def get_settings_schema() -> dict[str, Any]:
                     "description": "Bytes per download chunk",
                     "min": 1024,
                     "max": 1048576,
-                    "default": 8192
+                    "default": _default("downloads.chunk_size")
                 },
                 "auto_remove_delay": {
                     "type": "integer",
                     "description": "Seconds before auto-removing completed downloads",
                     "min": 0,
                     "max": 300,
-                    "default": 5
+                    "default": _default("downloads.auto_remove_delay")
                 }
             }
         },
@@ -200,19 +259,19 @@ async def get_settings_schema() -> dict[str, Any]:
                     "description": "Maximum age in hours for completed jobs",
                     "min": 1,
                     "max": 168,
-                    "default": 24
+                    "default": _default("jobs_cleanup.max_age_hours")
                 },
                 "auto_cleanup": {
                     "type": "boolean",
                     "description": "Enable automatic cleanup of old jobs",
-                    "default": False
+                    "default": _default("jobs_cleanup.auto_cleanup")
                 },
                 "cleanup_interval": {
                     "type": "integer",
                     "description": "Interval between auto-cleanup runs (seconds)",
                     "min": 60,
                     "max": 86400,
-                    "default": 3600
+                    "default": _default("jobs_cleanup.cleanup_interval")
                 }
             }
         },
@@ -222,35 +281,45 @@ async def get_settings_schema() -> dict[str, Any]:
                 "thumbnail_sizes": {
                     "type": "object",
                     "description": "Thumbnail size definitions {name: max_dimension}",
-                    "default": {"thumb": 256, "medium": 512}
+                    "default": _default("image_processing.thumbnail_sizes")
                 },
                 "thumbnail_quality": {
                     "type": "integer",
-                    "description": "JPEG quality for thumbnails (1-100)",
+                    "description": "Encoder quality for generated thumbnails (1-100)",
                     "min": 1,
                     "max": 100,
-                    "default": 85
+                    "default": _default("image_processing.thumbnail_quality")
+                },
+                "output_date_hierarchy": {
+                    "type": "boolean",
+                    "description": "Write outputs into YYYY/MM/DD folders instead of one flat directory",
+                    "default": _default("image_processing.output_date_hierarchy")
+                },
+                "embed_metadata_in_png": {
+                    "type": "boolean",
+                    "description": "Write generation parameters into the output file's metadata",
+                    "default": _default("image_processing.embed_metadata_in_png")
                 },
                 "blurhash_components_x": {
                     "type": "integer",
                     "description": "BlurHash X components (higher = more detail)",
                     "min": 1,
                     "max": 9,
-                    "default": 4
+                    "default": _default("image_processing.blurhash_components_x")
                 },
                 "blurhash_components_y": {
                     "type": "integer",
                     "description": "BlurHash Y components (higher = more detail)",
                     "min": 1,
                     "max": 9,
-                    "default": 3
+                    "default": _default("image_processing.blurhash_components_y")
                 },
                 "blurhash_resize_max": {
                     "type": "integer",
                     "description": "Max dimension for BlurHash generation (smaller = faster)",
-                    "min": 100,
+                    "min": 16,
                     "max": 1000,
-                    "default": 400
+                    "default": _default("image_processing.blurhash_resize_max")
                 }
             }
         },
@@ -263,21 +332,21 @@ async def get_settings_schema() -> dict[str, Any]:
                     "description": "Timeout for Modal function calls (seconds)",
                     "min": 60,
                     "max": 3600,
-                    "default": 300
+                    "default": _default("modal.timeout")
                 },
                 "max_containers": {
                     "type": "integer",
                     "description": "Maximum number of containers",
                     "min": 1,
                     "max": 10,
-                    "default": 1
+                    "default": _default("modal.max_containers")
                 },
                 "scaledown_window": {
                     "type": "integer",
                     "description": "Scaledown window (seconds)",
                     "min": 0,
                     "max": 600,
-                    "default": 5
+                    "default": _default("modal.scaledown_window")
                 }
             }
         },
@@ -287,14 +356,16 @@ async def get_settings_schema() -> dict[str, Any]:
                 "cors_origins": {
                     "type": "array",
                     "description": "Allowed CORS origins",
-                    "default": ["http://localhost:5174"]
+                    "default": _default("api.cors_origins"),
+                    "env_var": app_config.ENV_VAR_OVERRIDES["api.cors_origins"]
                 },
                 "gzip_minimum_size": {
                     "type": "integer",
                     "description": "Minimum response size for gzip (bytes)",
                     "min": 0,
-                    "max": 10000,
-                    "default": 1000
+                    "max": 100000,
+                    "default": _default("api.gzip_minimum_size"),
+                    "env_var": app_config.ENV_VAR_OVERRIDES["api.gzip_minimum_size"]
                 }
             }
         },
@@ -309,8 +380,12 @@ async def get_settings_schema() -> dict[str, Any]:
             "fields": {
                 "default_checkpoint": {
                     "type": "string",
-                    "description": "Checkpoint used when nothing else is selected",
-                    "default": DEFAULT_CHECKPOINT
+                    "description": (
+                        "Server-side fallback checkpoint, used whenever a request does not "
+                        "name one (agentic image generation, story illustrations, model "
+                        "availability checks)"
+                    ),
+                    "default": _default("generator.default_checkpoint")
                 }
             }
         },
@@ -321,14 +396,36 @@ async def get_settings_schema() -> dict[str, Any]:
                     "type": "integer",
                     "description": "Context window budget for chat replies",
                     "min": 1024,
-                    "default": 4096
+                    "max": 32768,
+                    "default": _default("ai.maxContextTokens")
                 },
                 "temperature": {
                     "type": "number",
                     "description": "Sampling temperature for LLM replies",
                     "min": 0,
                     "max": 2,
-                    "default": 0.8
+                    "default": _default("ai.temperature")
+                },
+                "ragEnabled": {
+                    "type": "boolean",
+                    "description": (
+                        "Semantic retrieval of character memories and lorebook entries. "
+                        "While off, retrieval returns nothing at all — it does not degrade "
+                        "to a recency-based fallback."
+                    ),
+                    "default": _default("ai.ragEnabled")
+                },
+                "idleSimEnabled": {
+                    "type": "boolean",
+                    "description": "Let dormant chats receive proactive in-character messages",
+                    "default": _default("ai.idleSimEnabled")
+                },
+                "idleSimIntervalSeconds": {
+                    "type": "integer",
+                    "description": "Seconds between idle-simulation updates",
+                    "min": 30,
+                    "max": 86400,
+                    "default": _default("ai.idleSimIntervalSeconds")
                 }
             }
         }
@@ -336,7 +433,12 @@ async def get_settings_schema() -> dict[str, Any]:
     
     return {
         "status": "success",
-        "schema": _annotate_writability(schema),
+        "schema": _annotate_writability(_annotate_restart_requirements(schema)),
+        # Dotted config path -> env var name, for the overrides that are set in
+        # this process's environment. Those fields are read-only in the UI: the
+        # file value is ignored while the variable is present, so an editable
+        # control would look like it worked and change nothing.
+        "env_overrides": app_config.get_env_var_overrides(),
     }
 
 
@@ -351,10 +453,15 @@ def _annotate_writability(schema: dict[str, Any]) -> dict[str, Any]:
     """Tag every documented section with whether it can actually be written.
 
     The schema advertised nine sections while `SettingsUpdate` accepted five,
-    and one of the nine (`websocket`) was not a key of config.json at all. A UI
-    built from this endpoint therefore offered controls that failed with
-    "Unknown configuration section" on save, while the two sections that *are*
-    writable and present (`generator`, `ai`) were not documented here at all.
+    and one of the nine (`websocket`) was not a key of config.json at all: it
+    documented `poll_interval`/`reconnect_delay`/`heartbeat_interval` for a
+    section that cannot be written and does not exist. The real knobs are the
+    `COMFY_WS_BROADCAST_QUEUE_SIZE` env var and hardcoded Socket.IO ping
+    settings, neither of which is a config leaf. The section is gone; a UI built
+    from this endpoint no longer offers controls that fail with "Unknown
+    configuration section" on save, and the sections that *are* writable
+    (`worker`, `jobs`, `api`, `image_processing`, `generator`, `ai`) are all
+    documented.
 
     Rather than maintaining a third list, the writable set is read off
     `SettingsUpdate.model_fields`.
@@ -370,13 +477,43 @@ def _annotate_writability(schema: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _annotate_restart_requirements(schema: dict[str, Any]) -> dict[str, Any]:
+    """Tag the fields that are bound once at app construction.
+
+    `api.cors_origins` and `api.gzip_minimum_size` are read by
+    `api/app_setup.configure_app` while the CORSMiddleware and GZipMiddleware
+    are added, so a later config.json change is never picked up. The UI has to
+    say so, or it presents a dead toggle as live.
+    """
+    for section, body in schema.items():
+        fields = body.get("fields", {})
+        for name, spec in fields.items():
+            if f"{section}.{name}" in RESTART_REQUIRED_PATHS:
+                spec["restart_required"] = True
+    return schema
+
+
 class SettingsUpdate(BaseModel):
-    """Pydantic model for settings updates to ensure type safety."""
+    """Pydantic model for settings updates to ensure type safety.
+
+    `image_processing` was missing while being the section holding the
+    thumbnail and output settings; a UI can only expose what this model accepts,
+    so it was the reason those controls could not be written at all.
+
+    `extra="forbid"` because pydantic's default is to ignore unknown keys: a PUT
+    naming a section this endpoint does not accept (as the retired `websocket`
+    documentation invited) was dropped and answered `200
+    {"message": "No settings to update"}`. A control that reports success while
+    changing nothing is worse than one that fails.
+    """
+    model_config = ConfigDict(extra="forbid")
+
     worker: dict[str, Any] | None = None
     jobs: dict[str, Any] | None = None
     api: dict[str, Any] | None = None
     generator: dict[str, Any] | None = None
     ai: dict[str, Any] | None = None
+    image_processing: dict[str, Any] | None = None
 
 
 @router.put("")
@@ -411,7 +548,9 @@ async def update_settings(updates: SettingsUpdate) -> dict[str, Any]:
         raise ComfyError(str(e))
 
 
-SYSTEM_PROMPT_BLOCK_KEYS = {"roleplay_default", "narrator", "suggest_instruction"}
+# Sourced from config so the route's filter and `_validate_config`'s leaf
+# allow-list for `system_prompts` cannot disagree about what a prompt block is.
+SYSTEM_PROMPT_BLOCK_KEYS = app_config.SYSTEM_PROMPT_KEYS
 
 class SystemPromptsRequest(BaseModel):
     """Update the configurable system-prompt blocks."""
