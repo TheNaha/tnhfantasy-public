@@ -32,12 +32,18 @@ export function useStoryStreaming({
         });
         return () => {
             active = false;
-            if (streamSafetyTimerRef.current) {
-                window.clearTimeout(streamSafetyTimerRef.current);
-                streamSafetyTimerRef.current = null;
-            }
         };
     }, [activeStoryId, activeChapterId]);
+
+    // The safety timer belongs to the `isStreaming` effect below, which re-arms
+    // it on every stream. Clearing it here used to leave a stream that started
+    // before the reset microtask ran with no watchdog at all.
+    useEffect(() => () => {
+        if (streamSafetyTimerRef.current) {
+            window.clearTimeout(streamSafetyTimerRef.current);
+            streamSafetyTimerRef.current = null;
+        }
+    }, []);
 
     useEffect(() => {
         isStreamingRef.current = isStreaming;
@@ -68,7 +74,15 @@ export function useStoryStreaming({
             const meta = job.metadata_ ?? job.metadata ?? {};
             
             if (meta.type === 'story_parse' && meta.story_id === activeStoryId) {
-                queryClient.invalidateQueries({ queryKey: ['world_vault'] });
+                // A parse creates characters, locations and lorebooks (one
+                // lorebook per location) and links them onto the story — see
+                // `_handle_story_parse`. That is the whole blast radius: the
+                // bare `['world_vault']` root used to refetch every cached chat,
+                // persona, memory, scenario and relationship graph on top of it.
+                ['characters', 'lorebooks', 'locations'].forEach((resource) => {
+                    queryClient.invalidateQueries({ queryKey: ['world_vault', resource] });
+                });
+                queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId], exact: true });
                 toast.success("Story parsed! Characters & lorebooks imported.");
                 return;
             }

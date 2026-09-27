@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 
 /**
  * @param {string} chatId
@@ -13,7 +14,7 @@ import { api } from '../api';
  */
 export const useBranches = (chatId, activeBranch = null) => {
     const query = useQuery({
-        queryKey: ['world_vault', 'chats', chatId, 'branches'],
+        queryKey: buildQueryKey(QUERY_KEYS.CHATS, chatId, 'branches'),
         queryFn: () => api.get(`/api/v2/chats/${chatId}/branches`),
         enabled: !!chatId,
     });
@@ -30,8 +31,10 @@ export const useCreateBranch = () => {
         mutationFn: ({ chatId, messageId }) =>
             api.post(`/api/v2/chats/${chatId}/branches`, { message_id: messageId }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId, 'branches'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+            // Branches only: the second call, on the chat prefix, refetched the
+            // whole system-prompt assembly (character + lorebook + world state +
+            // last N messages) for a branch insert that changes none of it.
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHATS, variables.chatId, 'branches') });
         }
     });
 };

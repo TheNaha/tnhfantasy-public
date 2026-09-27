@@ -247,11 +247,16 @@ describe('useStories mutations', () => {
         const narrate = renderHook(() => useNarrateChapter(), { wrapper });
         await act(async () => narrate.result.current.mutateAsync({ storyId: 's1', chapterId: 'ch1' }));
         expect(apiMock.post).toHaveBeenCalledWith('/api/v2/stories/s1/chapters/ch1/narrate');
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'stories', 's1'] });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'stories', 's1'], exact: true });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'stories', 's1', 'chapters'] });
+        // The list carries the publish badge, so it has to be refetched too.
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'stories'] });
 
         const publish = renderHook(() => usePublishStory(), { wrapper });
         await act(async () => publish.result.current.mutateAsync({ storyId: 's1' }));
         expect(apiMock.post).toHaveBeenCalledWith('/api/v2/stories/s1/publish');
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'stories', 's1'], exact: true });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'stories'] });
     });
 });
 

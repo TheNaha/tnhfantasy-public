@@ -1,9 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { useCreateResource, useDeleteResource, useUpdateResource } from './useWorldVaultResource';
 
-const STORY_LIST_KEY = ['world_vault', 'stories'];
-const STORY_DETAIL_KEY = (storyId) => ['world_vault', 'stories', storyId];
+const STORY_LIST_KEY = buildQueryKey(QUERY_KEYS.STORIES);
+const STORY_DETAIL_KEY = (storyId) => buildQueryKey(QUERY_KEYS.STORIES, storyId);
+const STORY_CHAPTERS_KEY = (storyId) => buildQueryKey(QUERY_KEYS.STORIES, storyId, 'chapters');
+const STORY_IMAGES_KEY = (storyId) => buildQueryKey(QUERY_KEYS.STORIES, storyId, 'images');
+const CHAPTER_REVISIONS_KEY = (storyId, chapterId) =>
+    buildQueryKey(QUERY_KEYS.STORIES, storyId, 'chapters', chapterId, 'revisions');
 
 export const useStories = () => {
     return useQuery({
@@ -22,7 +27,7 @@ export const useStory = (storyId) => {
 
 export const useStoryChapters = (storyId) => {
     return useQuery({
-        queryKey: ['world_vault', 'stories', storyId, 'chapters'],
+        queryKey: STORY_CHAPTERS_KEY(storyId),
         queryFn: () => api.get(`/api/v2/stories/${storyId}/chapters`),
         enabled: !!storyId
     });
@@ -30,7 +35,7 @@ export const useStoryChapters = (storyId) => {
 
 export const useStoryImages = (storyId) => {
     return useQuery({
-        queryKey: ['world_vault', 'stories', storyId, 'images'],
+        queryKey: STORY_IMAGES_KEY(storyId),
         queryFn: () => api.get(`/api/v2/stories/${storyId}/images`),
         enabled: !!storyId
     });
@@ -46,7 +51,7 @@ export const useCreateChapter = () => {
     return useMutation({
         mutationFn: ({ storyId, data }) => api.post(`/api/v2/stories/${storyId}/chapters`, data),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
         }
     });
 };
@@ -56,7 +61,7 @@ export const useContinueChapter = () => {
     return useMutation({
         mutationFn: ({ storyId, chapterId, prompt }) => api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/continue`, { prompt: prompt || '' }),
         onMutate: async ({ storyId, chapterId, prompt }) => {
-            const key = ['world_vault', 'stories', storyId, 'chapters'];
+            const key = STORY_CHAPTERS_KEY(storyId);
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData(key);
             queryClient.setQueryData(key, (old) => {
@@ -74,14 +79,14 @@ export const useContinueChapter = () => {
         },
         onError: (_, { storyId }, context) => {
             if (context?.previous) {
-                queryClient.setQueryData(['world_vault', 'stories', storyId, 'chapters'], context.previous);
+                queryClient.setQueryData(STORY_CHAPTERS_KEY(storyId), context.previous);
             }
         },
         onSuccess: (_, variables) => {
-            queryClient.setQueryData(['world_vault', 'stories', variables.storyId, 'chapters'], (old) =>
+            queryClient.setQueryData(STORY_CHAPTERS_KEY(variables.storyId), (old) =>
                 old?.map((ch) => ch.id === variables.chapterId ? { ...ch, _isStreaming: false } : ch)
             );
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
         },
     });
 };
@@ -92,7 +97,7 @@ export const useBranchChapter = () => {
         mutationFn: ({ storyId, chapterId, fromBeatId, prompt }) =>
             api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/branch`, { from_beat_id: fromBeatId, prompt: prompt || '' }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
         }
     });
 };
@@ -102,7 +107,7 @@ export const useAddStoryBeat = () => {
     return useMutation({
         mutationFn: ({ storyId, chapterId, content, role }) => api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/beats`, { content, role: role || 'user' }),
         onMutate: async ({ storyId, chapterId, content, role }) => {
-            const key = ['world_vault', 'stories', storyId, 'chapters'];
+            const key = STORY_CHAPTERS_KEY(storyId);
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData(key);
             const optimisticBeat = {
@@ -125,11 +130,11 @@ export const useAddStoryBeat = () => {
         },
         onError: (_, { storyId }, context) => {
             if (context?.previous) {
-                queryClient.setQueryData(['world_vault', 'stories', storyId, 'chapters'], context.previous);
+                queryClient.setQueryData(STORY_CHAPTERS_KEY(storyId), context.previous);
             }
         },
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
         }
     });
 };
@@ -143,7 +148,7 @@ export const useUpdateStoryBeat = () => {
                 ...(role !== undefined ? { role } : {}),
             }),
         onMutate: async ({ storyId, chapterId, beatId, content, role }) => {
-            const key = ['world_vault', 'stories', storyId, 'chapters'];
+            const key = STORY_CHAPTERS_KEY(storyId);
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData(key);
             queryClient.setQueryData(key, (old) => {
@@ -168,7 +173,7 @@ export const useUpdateStoryBeat = () => {
             }
         },
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
         }
     });
 };
@@ -179,7 +184,7 @@ export const useDeleteStoryBeat = () => {
         mutationFn: ({ storyId, chapterId, beatId }) =>
             api.delete(`/api/v2/stories/${storyId}/chapters/${chapterId}/beats/${beatId}`),
         onMutate: async ({ storyId, chapterId, beatId }) => {
-            const key = ['world_vault', 'stories', storyId, 'chapters'];
+            const key = STORY_CHAPTERS_KEY(storyId);
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData(key);
             queryClient.setQueryData(key, (old) => {
@@ -197,7 +202,7 @@ export const useDeleteStoryBeat = () => {
             }
         },
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
         }
     });
 };
@@ -221,7 +226,7 @@ export const useRetryLastContinuation = () => {
 };
 
 const revisionsKey = (storyId, chapterId) =>
-    ['world_vault', 'stories', storyId, 'chapters', chapterId, 'revisions'];
+    CHAPTER_REVISIONS_KEY(storyId, chapterId);
 
 export const useChapterRevisions = (storyId, chapterId) => {
     return useQuery({
@@ -248,7 +253,7 @@ export const useRestoreChapterRevision = () => {
         mutationFn: ({ storyId, chapterId, revisionId }) =>
             api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/revisions/${revisionId}/restore`),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
             queryClient.invalidateQueries({ queryKey: revisionsKey(variables.storyId, variables.chapterId) });
         },
     });
@@ -277,7 +282,7 @@ export const useDeleteChapter = () => {
     return useMutation({
         mutationFn: ({ storyId, chapterId }) => api.delete(`/api/v2/stories/${storyId}/chapters/${chapterId}`),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
         }
     });
 };
@@ -287,7 +292,7 @@ export const useUpdateChapter = () => {
     return useMutation({
         mutationFn: ({ storyId, chapterId, ...data }) => api.put(`/api/v2/stories/${storyId}/chapters/${chapterId}`, data),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
         }
     });
 };
@@ -298,7 +303,7 @@ export const useReorderChapters = () => {
         mutationFn: ({ storyId, chapterIds }) =>
             api.post(`/api/v2/stories/${storyId}/chapters/reorder`, { chapter_ids: chapterIds }),
         onMutate: async ({ storyId, chapterIds }) => {
-            const key = ['world_vault', 'stories', storyId, 'chapters'];
+            const key = STORY_CHAPTERS_KEY(storyId);
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData(key);
             queryClient.setQueryData(key, (old) => {
@@ -319,7 +324,7 @@ export const useReorderChapters = () => {
             }
         },
         onSettled: (_, __, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
         },
     });
 };
@@ -329,9 +334,9 @@ export const useParseStory = () => {
     return useMutation({
         mutationFn: ({ storyId, text }) => api.post(`/api/v2/stories/parse`, { story_id: storyId, text }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'lorebooks'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.LOREBOOKS) });
+            queryClient.invalidateQueries({ queryKey: STORY_LIST_KEY });
         }
     });
 };
@@ -388,7 +393,11 @@ export const useNarrateChapter = () => {
         mutationFn: ({ storyId, chapterId }) =>
             api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/narrate`),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId] });
+            // The story-prefix key also matched the list query, but refetched
+            // every chapter of the story; the list keeps the summary rows fresh.
+            queryClient.invalidateQueries({ queryKey: STORY_DETAIL_KEY(variables.storyId), exact: true });
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            queryClient.invalidateQueries({ queryKey: STORY_LIST_KEY });
         },
     });
 };
@@ -398,7 +407,9 @@ export const usePublishStory = () => {
     return useMutation({
         mutationFn: ({ storyId }) => api.post(`/api/v2/stories/${storyId}/publish`),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId] });
+            // The list carries the `is_published` badge shown in the sidebar.
+            queryClient.invalidateQueries({ queryKey: STORY_DETAIL_KEY(variables.storyId), exact: true });
+            queryClient.invalidateQueries({ queryKey: STORY_LIST_KEY });
         },
     });
 };
@@ -408,7 +419,8 @@ export const useUnpublishStory = () => {
     return useMutation({
         mutationFn: ({ storyId }) => api.post(`/api/v2/stories/${storyId}/unpublish`),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId] });
+            queryClient.invalidateQueries({ queryKey: STORY_DETAIL_KEY(variables.storyId), exact: true });
+            queryClient.invalidateQueries({ queryKey: STORY_LIST_KEY });
         },
     });
 };

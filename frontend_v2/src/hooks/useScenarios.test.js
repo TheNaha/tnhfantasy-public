@@ -68,7 +68,7 @@ describe('useScenarios', () => {
         expect(apiMock.delete).toHaveBeenCalledWith('/api/v2/scenarios/sc1');
     });
 
-    it('useApplyScenario posts target type/id and invalidates scenarios, chats and stories', async () => {
+    it('useApplyScenario posts target type/id and invalidates scenarios, the target chat and stories', async () => {
         apiMock.post.mockResolvedValue({ ok: true });
         const { wrapper, queryClient } = createWrapper();
         const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
@@ -81,7 +81,20 @@ describe('useScenarios', () => {
             target_id: 'c1',
         });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'scenarios'] });
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats'] });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'c1'], exact: true });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'stories'] });
+    });
+
+    it('useApplyScenario on a story does not invalidate chats at all', async () => {
+        apiMock.post.mockResolvedValue({ ok: true });
+        const { wrapper, queryClient } = createWrapper();
+        const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useApplyScenario(), { wrapper });
+        await act(async () =>
+            result.current.mutateAsync({ scenarioId: 'sc1', targetType: 'story', targetId: 's1' })
+        );
+        expect(invalidate).not.toHaveBeenCalledWith(
+            expect.objectContaining({ queryKey: ['world_vault', 'chats'] })
+        );
     });
 });

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { getApiUrl } from '../api/config';
 import {
     DEFAULT_CARD_EXPORT_FORMAT,
@@ -27,7 +28,7 @@ function downloadUrl(url, filename) {
 
 export const useCharacters = () => {
     return useQuery({
-        queryKey: ['world_vault', 'characters'],
+        queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS),
         queryFn: () => api.get('/api/v2/characters')
     });
 };
@@ -37,7 +38,7 @@ export const useCreateCharacter = () => {
     return useMutation({
         mutationFn: (characterData) => api.post('/api/v2/characters', characterData),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
         }
     });
 };
@@ -47,8 +48,8 @@ export const useUpdateCharacter = () => {
     return useMutation({
         mutationFn: ({ id, ...data }) => api.put(`/api/v2/characters/${id}`, data),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', variables.id] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.id) });
         }
     });
 };
@@ -58,8 +59,8 @@ export const usePatchCharacter = () => {
     return useMutation({
         mutationFn: ({ id, ...data }) => api.patch(`/api/v2/characters/${id}`, data),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', variables.id] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.id) });
         }
     });
 };
@@ -78,8 +79,8 @@ export const useUploadAvatar = () => {
             });
         },
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', variables.characterId] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.characterId) });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
         }
     });
 };
@@ -89,7 +90,7 @@ export const useReorderCharacters = () => {
     return useMutation({
         mutationFn: (characterIds) => api.post('/api/v2/characters/reorder', { character_ids: characterIds }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
         }
     });
 };
@@ -99,7 +100,7 @@ export const useDeleteCharacter = () => {
     return useMutation({
         mutationFn: (id) => api.delete(`/api/v2/characters/${id}`),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
         }
     });
 };
@@ -127,9 +128,9 @@ export const useImportCharacterCard = () => {
             return normalizeCardImportResult(raw);
         },
         onSuccess: (result) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             if (result?.character?.id) {
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', result.character.id] });
+                queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, result.character.id) });
             }
         }
     });
@@ -158,14 +159,14 @@ export const useCloneCharacter = () => {
     return useMutation({
         mutationFn: (id) => api.post(`/api/v2/characters/${id}/clone`),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
         }
     });
 };
 
 export const useCharacterCollection = (characterId) => {
     return useQuery({
-        queryKey: ['world_vault', 'characters', characterId, 'collection'],
+        queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, characterId, 'collection'),
         queryFn: () => api.get(`/api/v2/collections/by-character/${characterId}`),
         enabled: !!characterId
     });
@@ -177,7 +178,7 @@ export const useCharacterCollections = (characterIds) => {
         [characterIds]
     );
     return useQuery({
-        queryKey: ['world_vault', 'characters', 'collections-batch', idsParam],
+        queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, 'collections-batch', idsParam),
         queryFn: () => api.get('/api/v2/collections/by-characters', { params: { ids: idsParam } }),
         enabled: idsParam.length > 0
     });
@@ -194,8 +195,8 @@ export const useAnimateCharacterAvatar = () => {
             return response;
         },
         onSuccess: (data, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', variables.characterId] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.characterId) });
         }
     });
 };

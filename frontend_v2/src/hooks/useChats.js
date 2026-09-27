@@ -4,8 +4,20 @@ import { useCreateResource, useDeleteResource } from './useWorldVaultResource';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { isActiveJobStatus } from '../utils/jobStatus';
 
-const CHAT_LIST_KEY = ['world_vault', 'chats'];
-const CHAT_DETAIL_KEY = (chatId) => ['world_vault', 'chats', chatId];
+// Chat cache layout:
+//   ['world_vault','chats','list',workspace,limit,offset]  the list
+//   ['world_vault','chats','list','search',query]           the sidebar search
+//   ['world_vault','chats',chatId]                         one chat's detail
+//   ['world_vault','chats',chatId,'system-prompt'|'jobs'|'images'|'branches']
+//
+// The list used to hang off the root with no marker of its own, so every
+// `invalidateQueries({queryKey: CHAT_LIST_KEY})` — rename, update, send, import,
+// create — also refetched the system-prompt assembly of every cached chat.
+const CHATS_ROOT_KEY = ['world_vault', 'chats'];
+const CHAT_LIST_KEY = [...CHATS_ROOT_KEY, 'list'];
+const CHAT_DETAIL_KEY = (chatId) => [...CHATS_ROOT_KEY, chatId];
+
+export { CHATS_ROOT_KEY, CHAT_LIST_KEY };
 
 export const useChats = ({ limit = 50, offset = 0, workspace } = {}) => {
     const params = {};
@@ -13,7 +25,7 @@ export const useChats = ({ limit = 50, offset = 0, workspace } = {}) => {
     if (limit) params.limit = limit;
     if (offset) params.offset = offset;
     return useQuery({
-        queryKey: buildQueryKey(QUERY_KEYS.CHATS, workspace, limit, offset),
+        queryKey: buildQueryKey(QUERY_KEYS.CHATS, 'list', workspace, limit, offset),
         queryFn: () => api.get('/api/v2/chats', { params })
     });
 };
@@ -125,18 +137,10 @@ export const useUpdateChat = () => {
         mutationFn: ({ chatId, ...data }) => api.patch(`/api/v2/chats/${chatId}`, data),
         onMutate: async (variables) => {
             const { chatId, ...data } = variables;
-            // The list is cached under `buildQueryKey(QUERY_KEYS.CHATS, workspace,
-            // limit, offset)` — a 5-element key. Reading and writing the bare
-            // 2-element prefix always returned `undefined`, so the optimistic
-            // rename never appeared in the sidebar and the `onError` rollback
-            // below was dead code. `get/setQueriesData` matches by prefix, so it
-            // covers every workspace/limit/offset variant at once.
-            //
-            // Two consequences of the prefix also matching the chat *detail*
-            // query: the updater must leave non-array entries alone (calling
-            // `.map` on the detail object threw and failed the whole mutation),
-            // and the snapshot has to be taken *before* the detail is patched or
-            // the rollback would restore the already-optimistic value.
+            // The list is cached per workspace/limit/offset, so the write has to
+            // be a prefix update to reach the variant the sidebar is showing.
+            // `cancelQueries` first, so no in-flight page response lands on top
+            // of the optimistic value.
             await queryClient.cancelQueries({ queryKey: CHAT_LIST_KEY });
             const previousChats = queryClient.getQueriesData({ queryKey: CHAT_LIST_KEY });
 
@@ -174,8 +178,7 @@ export const useUpdateChat = () => {
         onSettled: (data, error, variables) => {
             // The list prefix-matches every cached list variant; the detail key
             // prefix-matches the detail query and its system-prompt/jobs/images
-            // sub-queries, which is intended. A second identical call with an
-            // explicit `exact: false` was a no-op duplicate.
+            // sub-queries, which is intended after a chat-level edit.
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
             queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
         }
@@ -210,10 +213,13 @@ export const useSendMessage = () => {
             // 3-element prefix never matched a real cache entry, so it created
             // an orphan entry and the onError rollback branch that read it back
             // could never run.
-            queryClient.setQueriesData({ queryKey: keyPrefix }, (old) => [
-                ...(old || []),
-                optimisticMessage,
-            ]);
+            //
+            // Non-array entries are left alone, as in useEditMessage: spreading
+            // a non-iterable `old` throws inside the updater and takes the whole
+            // mutation (and its rollback) down with it.
+            queryClient.setQueriesData({ queryKey: keyPrefix }, (old) =>
+                Array.isArray(old) ? [...old, optimisticMessage] : old
+            );
             return { previous };
         },
         onError: (_, { chatId }, context) => {
@@ -240,17 +246,25 @@ export const useIllustrateChat = () => {
 
 export const useChatImages = (chatId) => {
     return useQuery({
-        queryKey: ['world_vault', 'chats', chatId, 'images'],
+        queryKey: [...CHAT_DETAIL_KEY(chatId), 'images'],
         queryFn: () => api.get(`/api/v2/chats/${chatId}/images`),
         enabled: !!chatId
     });
 };
 
+/**
+ * Minimum characters before the sidebar fires a chat search. The endpoint has
+ * no `min_length` of its own, so a one-character query is a real (and
+ * unscoped) table scan rather than a 422; every other search in the app has a
+ * floor (`useWorldVaultSearch`, `useLocations`).
+ */
+export const CHAT_SEARCH_MIN_LENGTH = 2;
+
 export const useSearchChats = (query) => {
     return useQuery({
-        queryKey: buildQueryKey(QUERY_KEYS.CHATS, 'search', query),
+        queryKey: buildQueryKey(QUERY_KEYS.CHATS, 'list', 'search', query),
         queryFn: () => api.get('/api/v2/chats', { params: { q: query } }),
-        enabled: !!query && query.trim().length > 0,
+        enabled: !!query && query.trim().length >= CHAT_SEARCH_MIN_LENGTH,
     });
 };
 

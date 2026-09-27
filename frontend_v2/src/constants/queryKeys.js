@@ -17,6 +17,11 @@ export const QUERY_KEYS = {
     PROVIDERS: 'providers',
     SETTINGS: 'settings',
     STATISTICS: 'statistics',
+    PERSONAS: 'personas',
+    ENTITY: 'entity',
+    DASHBOARD: 'dashboard',
+    RELATIONSHIPS: 'relationships',
+    GRAPH_LAYOUT: 'graph-layout',
 };
 
 export const buildQueryKey = (...parts) => {

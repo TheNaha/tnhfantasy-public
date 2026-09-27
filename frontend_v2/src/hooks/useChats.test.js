@@ -16,6 +16,7 @@ vi.mock('../api', () => ({
 }));
 
 import {
+    CHAT_LIST_KEY,
     useChats,
     useChat,
     useChatSystemPrompt,
@@ -117,7 +118,7 @@ describe('useChats', () => {
 
         await act(async () => result.current.mutateAsync({ chatId: 'c1', name: 'Renamed' }));
         expect(apiMock.patch).toHaveBeenCalledWith('/api/v2/chats/c1', { name: 'Renamed' });
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats'] });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: CHAT_LIST_KEY });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'c1'] });
     });
 
@@ -129,7 +130,7 @@ function useUpdateChatTest(hookFn) {
         apiMock.patch.mockRejectedValue(new Error('nope'));
         const { wrapper, queryClient } = createWrapper();
         queryClient.setQueryData(['world_vault', 'chats', 'c1'], { id: 'c1', name: 'Old' });
-        queryClient.setQueryData(['world_vault', 'chats'], [{ id: 'c1', name: 'Old' }]);
+        queryClient.setQueryData(CHAT_LIST_KEY, [{ id: 'c1', name: 'Old' }]);
         const { result } = renderHook(() => hookFn(), { wrapper });
 
         queryClient.setQueryData(['world_vault', 'chats', 'c1'], { id: 'c1', name: 'Old' });
@@ -142,7 +143,7 @@ function useUpdateChatTest(hookFn) {
         });
 
         const finalDetail = queryClient.getQueryData(['world_vault', 'chats', 'c1']);
-        const finalList = queryClient.getQueryData(['world_vault', 'chats']);
+        const finalList = queryClient.getQueryData(CHAT_LIST_KEY);
         expect(finalDetail.name).toBe('Old');
         expect(finalList[0].name).toBe('Old');
     });
@@ -151,12 +152,12 @@ function useUpdateChatTest(hookFn) {
         apiMock.patch.mockResolvedValue({ id: 'c1', name: 'New' });
         const { wrapper, queryClient } = createWrapper();
         queryClient.setQueryData(['world_vault', 'chats', 'c1'], { id: 'c1', name: 'Old' });
-        queryClient.setQueryData(['world_vault', 'chats'], [{ id: 'c1', name: 'Old' }]);
+        queryClient.setQueryData(CHAT_LIST_KEY, [{ id: 'c1', name: 'Old' }]);
         const { result } = renderHook(() => hookFn(), { wrapper });
 
         await act(async () => result.current.mutateAsync({ chatId: 'c1', name: 'New' }));
         expect(queryClient.getQueryData(['world_vault', 'chats', 'c1']).name).toBe('New');
-        expect(queryClient.getQueryData(['world_vault', 'chats'])[0].name).toBe('New');
+        expect(queryClient.getQueryData(CHAT_LIST_KEY)[0].name).toBe('New');
     });
 }
 
@@ -257,5 +258,14 @@ describe('useChats mutations', () => {
         const second = renderHook(() => useSearchChats('bard'), { wrapper });
         await waitFor(() => expect(second.result.current.isSuccess).toBe(true));
         expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats', { params: { q: 'bard' } });
+    });
+
+    it('useSearchChats stays disabled below the two-character floor', async () => {
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useSearchChats('b'), { wrapper });
+        await waitFor(() => expect(result.current.isEnabled).toBe(false));
+        // A single character used to go straight to the server on every
+        // keystroke, because the sidebar fired the query undebounced.
+        expect(apiMock.get).not.toHaveBeenCalled();
     });
 });

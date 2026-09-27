@@ -11,9 +11,11 @@ import { filesApi } from '../api/files';
 import { addImagesToCollection } from '../api/collectionsApi';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useConfirmation } from '../store/confirmationStore';
-import { useSettings } from '../store/settingsStore';
+import useSettingsStore from '../store/settingsStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
+import { useDebounce } from '../hooks/useDebounce';
 import { useChatStreaming } from '../hooks/useChatStreaming';
+import { CHAT_LIST_KEY } from '../hooks/useChats';
 import { setStreamingJob } from '../hooks/useStreamingJobs';
 import { COMMANDS } from '../components/chat/chatCommands';
 
@@ -91,13 +93,22 @@ export function ChatWorkspaceProvider({ children }) {
     const fileInputRef = useRef(null);
     const messagesEndRef = useRef(null);
     const listContainerRef = useRef(null);
+    // True while the message list is scrolled to (or near) the bottom, so the
+    // stream only auto-scrolls for a reader who is following it.
+    const isPinnedToBottomRef = useRef(true);
     const textareaRef = useRef(null);
     const location = useLocation();
     const navigate = useNavigate();
     const { chatId: urlChatId } = useParams();
     const [searchParams, setSearchParams] = useSearchParams();
 
-    const settings = useSettings();
+    // Select the one field the send path actually sends. Publishing the whole
+    // settings object on the context value re-rendered all ~20
+    // useChatWorkspace() consumers — the virtualised MessageTimeline included —
+    // on any settings change, and the memo carrying them has ~210 dependencies.
+    // The two former consumers of `context.settings` (MessageTimeline and
+    // ChatWorkspaceLayout) read `ai.ttsEnabled` and now select it themselves.
+    const generatorCheckpoint = useSettingsStore((s) => s.settings?.generator?.defaultCheckpoint);
     
     const queryClient = useQueryClient();
     const activeChatId = useWorldVaultStore(state => state.activeChatId);
@@ -143,6 +154,13 @@ export function ChatWorkspaceProvider({ children }) {
         };
     }, []);
 
+    // Declared before the chat-switch reset below, which closes over all three:
+    // the effect only ran because the callback executes after the body
+    // finishes, so hoisting the declarations is what keeps it from becoming a
+    // TDZ ReferenceError the day anyone reorders this block.
+    const [activeCommand, setActiveCommand] = useState(null);
+    const [targetCharacterId, setTargetCharacterId] = useState('');
+
     const previousChatIdRef = useRef(activeChatId);
     useEffect(() => {
         if (previousChatIdRef.current && previousChatIdRef.current !== activeChatId) {
@@ -155,9 +173,6 @@ export function ChatWorkspaceProvider({ children }) {
         }
         previousChatIdRef.current = activeChatId;
     }, [activeChatId]);
-
-    const [activeCommand, setActiveCommand] = useState(null);
-    const [targetCharacterId, setTargetCharacterId] = useState('');
 
     useEffect(() => {
         suggestJobIdRef.current = suggestJobId;
@@ -179,7 +194,12 @@ export function ChatWorkspaceProvider({ children }) {
     const [messagePageCount, setMessagePageCount] = useState(1);
     const [messageSearch, setMessageSearch] = useState('');
 
-    const cwData = useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQuery, messagePageCount, messageSearch, chatOffset });
+    // The sidebar's own input stays on the raw value (a debounced one would
+    // lag behind the caret); only the query it triggers is debounced, and the
+    // list switches on the same debounced value so it cannot flash empty.
+    const debouncedChatSearchQuery = useDebounce(chatSearchQuery, 300);
+
+    const cwData = useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQuery: debouncedChatSearchQuery, messagePageCount, messageSearch, chatOffset });
     const {
         chats, isChatsLoading, searchResults, messagesData, activeChat, lorebooks, characters,
         personas, availableModels, defaultLlmConfig, systemPromptData, chatCollection, chatImages,
@@ -233,12 +253,12 @@ export function ChatWorkspaceProvider({ children }) {
     const suggestReplyMutation = useStableObject(rawSuggestReplyMutation);
 
     const activeChatList = useMemo(
-        () => chatSearchQuery.trim() ? (searchResults || []) : chats,
-        [chatSearchQuery, searchResults, chats]
+        () => debouncedChatSearchQuery.trim() ? (searchResults || []) : chats,
+        [debouncedChatSearchQuery, searchResults, chats]
     );
     const hasMoreChats = useMemo(
-        () => chats?.length === CHAT_PAGE_SIZE && !chatSearchQuery.trim(),
-        [chats, chatSearchQuery]
+        () => chats?.length === CHAT_PAGE_SIZE && !debouncedChatSearchQuery.trim(),
+        [chats, debouncedChatSearchQuery]
     );
 
     const messages = messagesData;
@@ -298,7 +318,6 @@ export function ChatWorkspaceProvider({ children }) {
                             override_greeting: selectedGreeting 
                         });
                         setActiveChatId(chat.id);
-                        window.history.replaceState({}, document.title);
                     }
                 });
             } else {
@@ -307,7 +326,6 @@ export function ChatWorkspaceProvider({ children }) {
                     {
                         onSuccess: (chat) => {
                             setActiveChatId(chat.id);
-                            window.history.replaceState({}, document.title);
                         },
                         onError: () => { hasCreatedChatRef.current = false; }
                     }
@@ -333,9 +351,24 @@ export function ChatWorkspaceProvider({ children }) {
     });
 
     useEffect(() => {
-        // During streaming, use instant (non-smooth) scrolling — smooth
-        // scrolling per token triggers repeated layout + animation on mobile.
+        const el = listContainerRef.current;
+        if (!el) return undefined;
+        const onScroll = () => {
+            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+            isPinnedToBottomRef.current = distanceFromBottom < 80;
+        };
+        onScroll();
+        el.addEventListener('scroll', onScroll, { passive: true });
+        return () => el.removeEventListener('scroll', onScroll);
+    }, []);
+
+    useEffect(() => {
+        // `activeStreamEntries` changes identity per streamed token, so this
+        // used to force a layout on every one of them and drag the viewport
+        // with it. Only follow the stream when the user is already at the
+        // bottom; scrolling up to read history now stays put.
         const hasStreaming = activeStreamEntries.length > 0;
+        if (hasStreaming && !isPinnedToBottomRef.current) return;
         messagesEndRef.current?.scrollIntoView({ behavior: hasStreaming ? 'auto' : 'smooth', block: 'end' });
     }, [messages, activeStreamEntries]);
 
@@ -438,7 +471,7 @@ export function ChatWorkspaceProvider({ children }) {
                     target_character_id: targetCharacterId || null,
                     agentic: agenticMode,
                     narrate: narrateMode,
-                    generator_checkpoint: settings.generator?.defaultCheckpoint || null,
+                    generator_checkpoint: generatorCheckpoint || null,
                     no_reply: noReply
                 }
                 });
@@ -453,7 +486,7 @@ export function ChatWorkspaceProvider({ children }) {
         } catch {
             toast.error('Failed to send message');
         }
-    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, setActiveChatId, settings, updateChatMutation, suggestReplyMutation, activeCommand, targetCharacterId]);
+    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, setActiveChatId, generatorCheckpoint, updateChatMutation, suggestReplyMutation, activeCommand, targetCharacterId]);
 
     const handleSuggestClick = useCallback(async () => {
         if (!activeChatId) return;
@@ -507,7 +540,10 @@ export function ChatWorkspaceProvider({ children }) {
         }
     }, [handleSendMessage, message, activeCommand]);
 
-        const canSend = useCallback(() => (message.trim() || pendingAttachment || activeCommand?.noArgs) && !sendMessageMutation.isPending, [message, pendingAttachment, activeCommand, sendMessageMutation]);
+        const canSend = useMemo(
+            () => !!(message.trim() || pendingAttachment || activeCommand?.noArgs) && !sendMessageMutation.isPending,
+            [message, pendingAttachment, activeCommand, sendMessageMutation]
+        );
 
     const handleGenerateScene = useCallback(async () => {
         if (!activeChatId) return;
@@ -814,7 +850,10 @@ export function ChatWorkspaceProvider({ children }) {
         formData.append('file', file);
         try {
             const chat = await importChatMutation.mutateAsync(formData);
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
+            // Only the list changed: the imported chat has no cached queries
+            // yet, and the root key would refetch every open chat's prompt
+            // assembly.
+            queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
             setActiveChatId(chat.id);
             toast.success(`Imported "${chat.name}"`);
         } catch (err) {
@@ -886,7 +925,7 @@ export function ChatWorkspaceProvider({ children }) {
         agenticMode,
         availableModels,
         avatarModalSrc,
-        canSend: canSend(),
+        canSend,
         characters,
         chatCollection,
         personas,
@@ -1010,7 +1049,6 @@ export function ChatWorkspaceProvider({ children }) {
         setSuggestJobId,
         setTargetCharacterId,
         setTimelineVisible,
-        settings,
         showCharacterDetails,
         showMoreTools,
         showNewChatModal,
@@ -1075,7 +1113,7 @@ export function ChatWorkspaceProvider({ children }) {
         setRenameValue, setRenamingChatId, setSceneJobId,
         setSceneTab, setShowCharacterDetails, setShowMoreTools,
         setShowNewChatModal, setShowScenesModal, setSuggestJobId,
-        setTargetCharacterId, setTimelineVisible, settings,
+        setTargetCharacterId, setTimelineVisible,
         showCharacterDetails, showMoreTools, showNewChatModal,
         showScenesModal, startRename, subscribe, suggestJobId,
         suggestJobIdRef, suggestReplyMutation, suggestSafetyTimerRef,

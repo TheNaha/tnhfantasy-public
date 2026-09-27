@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 
 /**
  * Backend bound, mirrored here: `search_entities` declares
@@ -33,7 +34,7 @@ const ENTITY_PATHS = {
 export const useWorldVaultSearch = (query, type = null) => {
     const q = (query ?? '').trim();
     return useQuery({
-        queryKey: ['world_vault', 'search', q, type],
+        queryKey: buildQueryKey(QUERY_KEYS.SEARCH, q, type),
         queryFn: () => {
             const params = new URLSearchParams({ q });
             if (type) params.set('type', type);
@@ -52,7 +53,7 @@ export const useWorldVaultSearch = (query, type = null) => {
 export const useWorldVaultEntity = (type, id) => {
     const base = ENTITY_PATHS[type];
     return useQuery({
-        queryKey: ['world_vault', 'entity', type, id],
+        queryKey: buildQueryKey(QUERY_KEYS.ENTITY, type, id),
         queryFn: () => api.get(`${base}/${id}`),
         enabled: !!base && !!id,
         staleTime: 60000,
@@ -67,7 +68,7 @@ export const useWorldVaultEntity = (type, id) => {
  */
 export const useWorldVaultDashboard = () => {
     return useQuery({
-        queryKey: ['world_vault', 'dashboard'],
+        queryKey: buildQueryKey(QUERY_KEYS.DASHBOARD),
         queryFn: () => api.get('/api/v2/world-vault/entities'),
         staleTime: 60000,
     });
@@ -78,7 +79,7 @@ export const useWorldVaultDashboard = () => {
  */
 export const useWorldVaultRelationships = () => {
     return useQuery({
-        queryKey: ['world_vault', 'relationships'],
+        queryKey: buildQueryKey(QUERY_KEYS.RELATIONSHIPS),
         queryFn: () => api.get('/api/v2/world-vault/relationships'),
         staleTime: 60000,
     });
@@ -86,8 +87,9 @@ export const useWorldVaultRelationships = () => {
 
 export const useGraphLayout = (name = 'default') => {
     return useQuery({
-        queryKey: ['world_vault', 'graph-layout', name],
+        queryKey: buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name),
         queryFn: () => api.get(`/api/v2/world-vault/graph-layout?name=${encodeURIComponent(name)}`),
+        enabled: !!name,
         staleTime: 30000,
     });
 };
@@ -98,7 +100,7 @@ export const useSaveGraphLayout = () => {
         mutationFn: ({ name = 'default', nodes }) =>
             api.put(`/api/v2/world-vault/graph-layout?name=${encodeURIComponent(name)}`, { nodes }),
         onSuccess: (_, { name = 'default' }) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'graph-layout', name] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name) });
         },
     });
 };

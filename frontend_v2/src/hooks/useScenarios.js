@@ -1,45 +1,27 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { useCreateResource, useDeleteResource, useUpdateResource } from './useWorldVaultResource';
+
+const SCENARIOS_KEY = buildQueryKey(QUERY_KEYS.SCENARIOS);
+const SCENARIO_DETAIL_KEY = (id) => buildQueryKey(QUERY_KEYS.SCENARIOS, id);
 
 export const useScenarios = () => {
     return useQuery({
-        queryKey: ['world_vault', 'scenarios'],
+        queryKey: SCENARIOS_KEY,
         queryFn: () => api.get('/api/v2/scenarios')
     });
 };
 
-export const useCreateScenario = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: (data) => api.post('/api/v2/scenarios', data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'scenarios'] });
-        }
-    });
-};
+export const useCreateScenario = () => useCreateResource({ basePath: '/api/v2/scenarios', listQueryKey: SCENARIOS_KEY });
 
-export const useUpdateScenario = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ id, ...data }) => api.put(`/api/v2/scenarios/${id}`, data),
-        onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'scenarios'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'scenarios', variables.id] });
-        }
-    });
-};
+export const useUpdateScenario = () => useUpdateResource({
+    basePath: '/api/v2/scenarios',
+    listQueryKey: SCENARIOS_KEY,
+    detailQueryKey: SCENARIO_DETAIL_KEY,
+});
 
-
-
-export const useDeleteScenario = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: (id) => api.delete(`/api/v2/scenarios/${id}`),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'scenarios'] });
-        }
-    });
-};
+export const useDeleteScenario = () => useDeleteResource({ basePath: '/api/v2/scenarios', listQueryKey: SCENARIOS_KEY });
 
 export const useApplyScenario = () => {
     const queryClient = useQueryClient();
@@ -48,10 +30,17 @@ export const useApplyScenario = () => {
             `/api/v2/scenarios/${scenarioId}/apply`,
             { target_type: targetType, target_id: targetId }
         ),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'scenarios'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.SCENARIOS) });
+            if (variables?.targetType === 'chat') {
+                // Applying rewrites one chat's system-prompt override, so only
+                // that chat's detail query has to be rebuilt.
+                queryClient.invalidateQueries({
+                    queryKey: buildQueryKey(QUERY_KEYS.CHATS, variables.targetId),
+                    exact: true,
+                });
+            }
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES) });
         }
     });
 };

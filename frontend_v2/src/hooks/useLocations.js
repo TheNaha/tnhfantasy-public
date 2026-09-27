@@ -1,52 +1,35 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { useCreateResource, useDeleteResource, useUpdateResource } from './useWorldVaultResource';
+
+const LOCATIONS_KEY = buildQueryKey(QUERY_KEYS.LOCATIONS);
+const LOCATION_DETAIL_KEY = (id) => buildQueryKey(QUERY_KEYS.LOCATIONS, id);
 
 export const useLocations = () => {
     return useQuery({
-        queryKey: buildQueryKey('locations'),
+        queryKey: LOCATIONS_KEY,
         queryFn: () => api.get('/api/v2/locations'),
     });
 };
 
 export const useLocation = (locationId) => {
     return useQuery({
-        queryKey: buildQueryKey('locations', locationId),
+        queryKey: LOCATION_DETAIL_KEY(locationId),
         queryFn: () => api.get(`/api/v2/locations/${locationId}`),
         enabled: !!locationId,
     });
 };
 
-export const useCreateLocation = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: (data) => api.post('/api/v2/locations', data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: buildQueryKey('locations') });
-        },
-    });
-};
+export const useCreateLocation = () => useCreateResource({ basePath: '/api/v2/locations', listQueryKey: LOCATIONS_KEY });
 
-export const useUpdateLocation = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ id, ...data }) => api.put(`/api/v2/locations/${id}`, data),
-        onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: buildQueryKey('locations') });
-            queryClient.invalidateQueries({ queryKey: buildQueryKey('locations', variables.id) });
-        },
-    });
-};
+export const useUpdateLocation = () => useUpdateResource({
+    basePath: '/api/v2/locations',
+    listQueryKey: LOCATIONS_KEY,
+    detailQueryKey: LOCATION_DETAIL_KEY,
+});
 
-export const useDeleteLocation = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: (id) => api.delete(`/api/v2/locations/${id}`),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: buildQueryKey('locations') });
-        },
-    });
-};
+export const useDeleteLocation = () => useDeleteResource({ basePath: '/api/v2/locations', listQueryKey: LOCATIONS_KEY });
 
 export const useSearchLocations = (query) => {
     return useQuery({

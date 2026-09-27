@@ -81,7 +81,7 @@ describe('useBranches', () => {
         expect(result.current.activeBranchId).toBeNull();
     });
 
-    it('useCreateBranch posts and invalidates branches + chat detail', async () => {
+    it('useCreateBranch posts and invalidates only the branches list', async () => {
         apiMock.post.mockResolvedValue({ id: 'b2' });
         const { wrapper, queryClient } = createWrapper();
         const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
@@ -89,6 +89,9 @@ describe('useBranches', () => {
         await act(async () => result.current.mutateAsync({ chatId: 'c1', messageId: 'm9' }));
         expect(apiMock.post).toHaveBeenCalledWith('/api/v2/chats/c1/branches', { message_id: 'm9' });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'c1', 'branches'] });
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'c1'] });
+        // The chat-prefix call that used to sit next to it refetched the whole
+        // system-prompt assembly (character + lorebook + world state + last N
+        // messages) for a branch insert, which changes none of it.
+        expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'c1'] });
     });
 });
