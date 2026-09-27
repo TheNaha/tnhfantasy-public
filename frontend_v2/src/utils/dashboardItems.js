@@ -41,7 +41,7 @@ function toJobItem(job) {
     };
 }
 
-export const UNTITLED_SESSION_NAME = 'Untitled session';
+export 
 
 function toTimestamp(value) {
     if (value === undefined || value === null || value === '') return null;
@@ -50,24 +50,25 @@ function toTimestamp(value) {
 }
 
 /**
- * The sort key for a session: `[touched, generated]`.
+ * The two instants a session is ordered by, both derived from its IMAGES.
  *
- * `updated_at` stays primary, deliberately — a session someone just curated
- * should float to the top, and that is the intent the existing tests protect.
+ * `newest` — when the session's last image was made.
+ * `oldest` — when its first image was made.
  *
- * It is not sufficient on its own, though. `updated_at` is a bookkeeping column
- * that moves on any write, so a library created or re-indexed in one
- * transaction gives every session the SAME value to the microsecond. Sorting on
- * it alone then falls through to the id tiebreak, and reversing the direction
- * changes nothing — which is exactly what a broken sort looks like: the control
- * moves, the order does not. (In a 1,411-session library every `updated_at` was
- * `2026-09-27T07:46:12.265488Z`.)
+ * This used to key on `updated_at` first, and the reasoning was defensible: a
+ * session someone just curated should float up. But `updated_at` is a
+ * bookkeeping column that moves on any write, so a library created or re-indexed
+ * in one transaction gives every session the SAME value to the microsecond. In a
+ * 1,411-session library every row carried `2026-09-27T07:46:12.265488Z` — the
+ * sort fell through to the id tiebreak, and the control moved while the order did
+ * not. Worse, the visible symptom was a "long scroll bar": the window virtualizer
+ * was measuring the window instead of the scroll pane, so the mount window never
+ * moved and you scrolled into empty space.
  *
- * So the generation window — when the images were actually made — breaks the
- * tie. It is the only ordering that stays meaningful across database
- * maintenance, and it makes the sort visibly work instead of silently not.
+ * A session IS a run of generations, so when those generations happened is the
+ * meaningful ordering, and it survives database maintenance.
  */
-export function getSessionSortDateParts(session) {
+export function getSessionSortDates(session) {
     const first = (values) => {
         for (const value of values) {
             const parsed = toTimestamp(value);
@@ -76,32 +77,22 @@ export function getSessionSortDateParts(session) {
         return 0;
     };
     return {
-        touched: first([session?.updated_at, session?.created_at]),
-        generated: first([session?.end_at, session?.start_at]),
+        // `end_at` is the tail of the generation window, `start_at` its head.
+        newest: first([session?.end_at, session?.start_at, session?.updated_at, session?.created_at]),
+        oldest: first([session?.start_at, session?.end_at, session?.updated_at, session?.created_at]),
     };
 }
 
-/** The primary sort key. Kept for callers that only need one number. */
-export function getSessionSortDate(session) {
-    return getSessionSortDateParts(session).touched;
-}
-
 /** Auto-detected rows routinely arrive unnamed; the UI needs something to show. */
+export const UNTITLED_SESSION_NAME = 'Untitled session';
+
 export function getSessionName(session) {
     const name = typeof session?.name === 'string' ? session.name.trim() : '';
     return name || UNTITLED_SESSION_NAME;
 }
 
-/**
- * Wraps one `SessionOut` row as a dashboard item.
- *
- * A session is one unit the way an `imageGroup` is one unit, so it carries an
- * `id` (the virtualizer's item key) and a sort timestamp rather than a
- * `getLocalDateKey` bucket. `members` is deliberately absent: a session's
- * images live behind `GET /api/v2/sessions/{id}/assets`, and a list of
- * sessions must not become a fan-out of member requests.
- */
 export function toSessionItem(session) {
+    const sortDates = getSessionSortDates(session);
     return {
         type: 'session',
         id: `session-${session?.id}`,
@@ -116,20 +107,11 @@ export function toSessionItem(session) {
         startAt: session?.start_at ?? null,
         endAt: session?.end_at ?? null,
         updatedAt: session?.updated_at ?? null,
-        sortDate: getSessionSortDate(session),
-        sortDateParts: getSessionSortDateParts(session),
+        sortDate: sortDates.newest,
+        sortDates,
     };
 }
 
-/**
- * Session view mode's counterpart to `sortedGroupedEntries`.
- *
- * One entry per session, each holding exactly one item, so the window
- * virtualizer measures a whole session as a single row. Sessions are ordered
- * by `updated_at desc` (ascending for `date_asc`) and never bucketed by day —
- * the date grouping belongs to the image modes, and a session that spans
- * midnight would otherwise tear in half.
- */
 export function buildSessionGroupedEntries(sessions, { sort = 'date_desc' } = {}) {
     const items = (sessions || [])
         .filter((session) => session?.id)
@@ -154,11 +136,12 @@ export function buildSessionGroupedEntries(sessions, { sort = 'date_desc' } = {}
         // the two agree: same seed, same order, and a stable one that survives a
         // re-render and a re-fetch.
         ? seededSort(items, seed, (item) => item.sessionId)
+        // Newest sorts by each session's NEWEST image, oldest by its OLDEST, so
+        // "newest first" means the session containing the newest image leads —
+        // which is what a person looking for their latest work expects.
         : items.sort((left, right) => (
-            (left.sortDateParts.touched - right.sortDateParts.touched) * direction
-            // The tie-break, and the reason the sort works at all when every
-            // session was written in the same transaction.
-            || (left.sortDateParts.generated - right.sortDateParts.generated) * direction
+            (left.sortDates[sort === 'date_asc' ? 'oldest' : 'newest']
+                - right.sortDates[sort === 'date_asc' ? 'oldest' : 'newest']) * direction
             || String(left.sessionId).localeCompare(String(right.sessionId))
         ));
 

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildSessionGroupedEntries,
     getSessionName,
-    getSessionSortDate,
+    getSessionSortDates,
     toSessionItem,
     UNTITLED_SESSION_NAME,
 } from './dashboardItems';
@@ -40,20 +40,33 @@ describe('getSessionName', () => {
     });
 });
 
-describe('getSessionSortDate', () => {
-    it('prefers updated_at', () => {
-        expect(getSessionSortDate(makeSession())).toBe(Date.parse('2026-09-27T14:40:00Z'));
+describe('getSessionSortDates', () => {
+    // Sessions are ordered by their IMAGES: newest by the session's last image,
+    // oldest by its first. This replaced a preference for `updated_at`, which
+    // is a bookkeeping column — a library written in one transaction gives every
+    // session the same value, so the sort silently did nothing.
+    it('reads the generation window, not the bookkeeping column', () => {
+        const session = makeSession();
+        // `updated_at` is deliberately the most recent instant on the row, and
+        // is still ignored: the images are what the sort means.
+        expect(session.updated_at).toBe('2026-09-27T14:40:00Z');
+        expect(getSessionSortDates(session)).toEqual({
+            newest: Date.parse('2026-09-27T14:40:00Z'),
+            oldest: Date.parse('2026-09-27T14:00:00Z'),
+        });
     });
 
-    it('falls back to start_at when updated_at is missing', () => {
-        const { updated_at, ...withoutUpdate } = makeSession();
-        expect(updated_at).toBeDefined();
-        expect(getSessionSortDate(withoutUpdate)).toBe(Date.parse('2026-09-27T14:00:00Z'));
+    it('falls back to the start when the session never ended', () => {
+        const { end_at, ...open } = makeSession();
+        expect(end_at).toBeDefined();
+        const dates = getSessionSortDates(open);
+        expect(dates.newest).toBe(Date.parse('2026-09-27T14:00:00Z'));
+        expect(dates.oldest).toBe(Date.parse('2026-09-27T14:00:00Z'));
     });
 
     it('returns 0 rather than NaN for an empty row', () => {
-        expect(getSessionSortDate({})).toBe(0);
-        expect(getSessionSortDate(null)).toBe(0);
+        expect(getSessionSortDates({})).toEqual({ newest: 0, oldest: 0 });
+        expect(getSessionSortDates(null)).toEqual({ newest: 0, oldest: 0 });
     });
 });
 
@@ -79,9 +92,25 @@ describe('toSessionItem', () => {
 });
 
 describe('buildSessionGroupedEntries', () => {
-    const older = makeSession({ id: 'old', name: 'Older', updated_at: '2026-09-20T10:00:00Z' });
-    const newer = makeSession({ id: 'new', name: 'Newer', updated_at: '2026-09-27T18:00:00Z' });
-    const middle = makeSession({ id: 'mid', name: 'Middle', updated_at: '2026-09-25T10:00:00Z' });
+    // These vary their IMAGE WINDOW, which is what the ordering reads. They used
+    // to vary only `updated_at`, at which point all three tied on the new key and
+    // the expectations below were decided by the id tiebreak rather than by any
+    // sort — which is how a sort that does nothing can pass a test suite.
+    const older = makeSession({
+        id: 'old', name: 'Older',
+        start_at: '2026-09-20T09:00:00Z', end_at: '2026-09-20T10:00:00Z',
+        updated_at: '2026-09-27T18:00:00Z',
+    });
+    const newer = makeSession({
+        id: 'new', name: 'Newer',
+        start_at: '2026-09-27T17:00:00Z', end_at: '2026-09-27T18:00:00Z',
+        updated_at: '2026-09-20T10:00:00Z',
+    });
+    const middle = makeSession({
+        id: 'mid', name: 'Middle',
+        start_at: '2026-09-25T09:00:00Z', end_at: '2026-09-25T10:00:00Z',
+        updated_at: '2026-09-22T10:00:00Z',
+    });
 
     it('emits one entry per session instead of a date bucket', () => {
         const entries = buildSessionGroupedEntries([older, newer, middle]);
@@ -94,17 +123,37 @@ describe('buildSessionGroupedEntries', () => {
         });
     });
 
-    it('orders by updated_at desc, not by the session start', () => {
-        const tricky = makeSession({
+    it('newest first means the session containing the newest image leads', () => {
+        // A session that started long ago but is still producing is what you are
+        // looking for when you sort by newest — so it leads on its LAST image,
+        // not on when its row was last written.
+        const stillGoing = makeSession({
             id: 'tricky',
             name: 'Long stretch',
             start_at: '2026-09-01T00:00:00Z',
-            updated_at: '2026-09-27T23:00:00Z',
+            end_at: '2026-09-28T23:00:00Z',
         });
 
-        const entries = buildSessionGroupedEntries([older, tricky, newer]);
-
+        const entries = buildSessionGroupedEntries([older, stillGoing, newer]);
         expect(entries.map(([, items]) => items[0].sessionId)).toEqual(['tricky', 'new', 'old']);
+    });
+
+    it('oldest first means the session containing the oldest image leads', () => {
+        // The mirror of the above, and the reason both directions are computed
+        // rather than one with a sign flipped: a long-running session has a
+        // different oldest and newest, and only the requested one decides.
+        const stillGoing = makeSession({
+            id: 'tricky',
+            name: 'Long stretch',
+            start_at: '2026-08-01T00:00:00Z',
+            end_at: '2026-09-28T23:00:00Z',
+        });
+
+        const entries = buildSessionGroupedEntries(
+            [older, stillGoing, newer],
+            { sort: 'date_asc' },
+        );
+        expect(entries.map(([, items]) => items[0].sessionId)).toEqual(['tricky', 'old', 'new']);
     });
 
     it('honours date_asc', () => {
@@ -154,14 +203,16 @@ describe('the degenerate-timestamp case', () => {
         expect(asc).toEqual(['a', 'b', 'c']);
     });
 
-    it('still lets a recently curated session win', () => {
+    it('orders by the images even when the bookkeeping column disagrees', () => {
+        // `a` was curated most recently but its images are older. It used to win
+        // on that, which is the behaviour this replaced: the ordering is now
+        // about generations, and `updated_at` cannot move it.
         const touched = [
             { id: 'a', name: 'alpha', updated_at: '2026-09-01T00:00:00Z', start_at: '2026-01-03T10:00:00Z' },
             { id: 'b', name: 'beta', updated_at: '2026-01-01T00:00:00Z', start_at: '2026-08-09T10:00:00Z' },
         ];
         const order = buildSessionGroupedEntries(touched, { sort: 'date_desc' })
             .map(([, items]) => items[0].sessionId);
-        // `a` is older but was curated most recently, and that still wins.
-        expect(order).toEqual(['a', 'b']);
+        expect(order).toEqual(['b', 'a']);
     });
 });
