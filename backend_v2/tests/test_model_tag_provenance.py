@@ -251,3 +251,31 @@ def test_model_tag_source_defaults_to_civitai(session, model):
     session.add(ModelTag(model_id=model.id, tag="implicit"))
     session.commit()
     assert _tags(session, model.id) == {"implicit": MODEL_TAG_SOURCE_CIVITAI}
+
+
+def test_backfill_statuses_reaches_its_provider_lookup(client, session):
+    """`backfill_provider_statuses` used to `await` a plain `def`.
+
+    `ProviderService.get_enabled_providers` is synchronous — it returns
+    `self.repo.get_enabled()`. `await`ing it raised
+    `TypeError: object list can't be used in 'await' expression`, so
+    `POST /api/v2/models/maintenance/backfill-statuses` was 100% broken and
+    nothing noticed: the route has no frontend caller and no test, so the only
+    way it could ever fail is by someone reading it.
+
+    Found by a cross-module AST sweep for `await` of a known-synchronous
+    function. That sweep is the reusable part; the assertion below only pins the
+    one instance it found.
+    """
+    from inspect import iscoroutinefunction
+
+    from services.provider_service import ProviderService
+
+    assert not iscoroutinefunction(ProviderService.get_enabled_providers)
+
+    response = client.post(
+        "/api/v2/models/maintenance/backfill-statuses",
+        params={"providers": "no-such-provider"},
+    )
+    # The point is that it is not a 500 from a TypeError.
+    assert response.status_code < 500, response.text

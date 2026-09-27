@@ -155,3 +155,22 @@ class ConfigurationError(ComfyError):
     """Configuration error."""
     def __init__(self, message: str):
         super().__init__(message=message, code="CONFIGURATION_ERROR")
+
+
+class ServiceUnavailableError(ComfyError):
+    """A dependency this request needs is temporarily down.
+
+    Distinct from `ConfigurationError` (which is a setting nobody set right and
+    will still be wrong after a retry) because the two want opposite operator
+    responses, and distinct from an opaque 500 because a client can tell
+    "try again" apart from "you are holding it wrong".
+
+    Used where the alternative was returning a 200 with an empty body: a
+    dependency that failed cannot be represented as a successful empty result,
+    because the caller cannot tell that apart from a real empty result.
+    """
+
+    def __init__(self, message: str, service: str = "unknown", status_code: int = 503):
+        super().__init__(message=message, code="SERVICE_UNAVAILABLE")
+        self.service = service
+        self.status_code = status_code
