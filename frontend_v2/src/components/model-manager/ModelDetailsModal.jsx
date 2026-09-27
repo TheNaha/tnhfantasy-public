@@ -1,13 +1,214 @@
-import { useState } from 'react';
-import { X, AlertCircle, ExternalLink, Wand2, RefreshCw } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useState, useMemo } from 'react';
+import { X, AlertCircle, ExternalLink, Wand2, RefreshCw, Plus } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
-import { api } from '../../api';
+import { api, modelsApi } from '../../api';
 import ModalOverlay from '../common/ModalOverlay';
 import CivitaiSearchModal from './CivitaiSearchModal';
 import AutopopulateSelector from './AutopopulateSelector';
 import { copyToClipboard } from '../../utils/clipboard';
+
+/**
+ * Query keys whose pages carry a model's tag list. A new tag is only useful if
+ * the list that filters on tags can see it, and there are two such lists: the
+ * model manager's Installed tab and the in-generator ModelSelector. They do
+ * not share a key prefix, so both have to be named — invalidating `['models']`
+ * alone leaves the picker stale, which is the surface the owner actually uses
+ * when hunting for a LoRA.
+ */
+const MODEL_LIST_QUERY_KEYS = [['models'], ['installed-models']];
+
+const tagQueryKey = (modelId) => ['model-tags', modelId];
+
+/**
+ * Add and remove tags on one model.
+ *
+ * The read path cannot answer "is this tag mine?". `GET /api/files` returns
+ * `tags` as bare strings — the ModelTag `source` column never leaves the
+ * backend on that route — and the backend *refuses* to delete a CivitAI-owned
+ * tag, because a resync would recreate it. So a delete control is rendered only
+ * for a tag the maintenance endpoint has positively reported as `user`, and for
+ * nothing else: while provenance is loading, after it failed, or for any tag it
+ * did not mention, there is no delete control. An unhandled rejection from a
+ * 404 is the alternative, and that is worse than not offering the button.
+ */
+export function ModelTagEditor({ modelId, tags = [] }) {
+    const queryClient = useQueryClient();
+    const [draft, setDraft] = useState('');
+
+    const tagQuery = useQuery({
+        queryKey: tagQueryKey(modelId),
+        queryFn: () => modelsApi.listTags(modelId),
+        enabled: !!modelId,
+        staleTime: 30_000,
+    });
+
+    // tag -> 'user' | 'civitai' | undefined. A miss means "unknown", never
+    // "civitai": the union constraint means a tag a user added first stays
+    // user-owned, so an absent entry really is unknown, not known-bad.
+    const sources = useMemo(() => {
+        const map = new Map();
+        for (const entry of tagQuery.data?.tags || []) {
+            if (entry?.tag) map.set(entry.tag, entry.source);
+        }
+        return map;
+    }, [tagQuery.data]);
+
+    // Union of what the list payload carried and what the provenance endpoint
+    // reports, so a tag added a moment ago is visible before the list refetch
+    // lands. Order follows the list payload first, then anything new.
+    const allTags = useMemo(() => {
+        const ordered = [];
+        const seen = new Set();
+        for (const tag of tags) {
+            if (tag && !seen.has(tag)) { seen.add(tag); ordered.push(tag); }
+        }
+        for (const tag of sources.keys()) {
+            if (!seen.has(tag)) { seen.add(tag); ordered.push(tag); }
+        }
+        return ordered;
+    }, [tags, sources]);
+
+    const invalidateLists = () => {
+        for (const queryKey of MODEL_LIST_QUERY_KEYS) {
+            queryClient.invalidateQueries({ queryKey });
+        }
+    };
+
+    const addMutation = useMutation({
+        mutationFn: (tag) => modelsApi.addTag(modelId, tag),
+        onSuccess: (result, tag) => {
+            // Patch the provenance cache directly so the new tag renders (and is
+            // deletable) immediately; the invalidation above is what makes it
+            // *filterable*, which is the half that needs a round trip.
+            queryClient.setQueryData(tagQueryKey(modelId), (prev) => {
+                const existing = prev?.tags || [];
+                if (existing.some((t) => t.tag === tag)) return prev;
+                return { tags: [...existing, { tag, source: result?.source || 'user' }] };
+            });
+            invalidateLists();
+            setDraft('');
+            toast.success(
+                result?.created === false
+                    ? `"${tag}" was already on this model`
+                    : `Tagged "${tag}"`
+            );
+        },
+        onError: (error) => toast.error(`Could not add tag: ${error.message}`),
+    });
+
+    const removeMutation = useMutation({
+        mutationFn: (tag) => modelsApi.removeTag(modelId, tag),
+        onSuccess: (_result, tag) => {
+            queryClient.setQueryData(tagQueryKey(modelId), (prev) => ({
+                tags: (prev?.tags || []).filter((t) => t.tag !== tag),
+            }));
+            invalidateLists();
+            toast.success(`Removed tag "${tag}"`);
+        },
+        onError: (error, tag) => {
+            // A 404 is the backend declining, not a broken request: the row is
+            // CivitAI's (or has already gone) and a resync would put it back.
+            // Say that, and resync our own view of provenance, rather than
+            // surfacing a bare status code or an unhandled rejection.
+            if (error?.status === 404) {
+                queryClient.invalidateQueries({ queryKey: tagQueryKey(modelId) });
+                toast.error(
+                    `"${tag}" is a CivitAI tag. Resyncs replace it, so it cannot be removed — add your own tag instead.`
+                );
+                return;
+            }
+            toast.error(`Could not remove tag: ${error.message}`);
+        },
+    });
+
+    const submitDraft = (event) => {
+        event.preventDefault();
+        const tag = draft.trim();
+        if (!tag) return;
+        addMutation.mutate(tag);
+    };
+
+    const userTags = allTags.filter((tag) => sources.get(tag) === 'user');
+    const otherTags = allTags.filter((tag) => sources.get(tag) !== 'user');
+    const provenancePending = tagQuery.isPending;
+
+    const renderTag = (tag, removable) => (
+        <span
+            key={tag}
+            className={`px-2 py-1 rounded-full text-xs border flex items-center gap-1 ${
+                removable
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    : 'bg-gray-800 text-gray-400 border-gray-700'
+            }`}
+        >
+            {tag}
+            {removable && (
+                <button
+                    type="button"
+                    onClick={() => removeMutation.mutate(tag)}
+                    disabled={removeMutation.isPending}
+                    className="text-emerald-400/70 hover:text-white transition-colors disabled:opacity-40"
+                    aria-label={`Remove tag ${tag}`}
+                >
+                    <X size={12} />
+                </button>
+            )}
+        </span>
+    );
+
+    return (
+        <div className="space-y-3">
+            {userTags.length > 0 && (
+                <div>
+                    <h4 className="text-2xs uppercase tracking-widest text-gray-500 mb-1.5">Your tags</h4>
+                    <div className="flex flex-wrap gap-2">{userTags.map((tag) => renderTag(tag, true))}</div>
+                </div>
+            )}
+
+            {otherTags.length > 0 && (
+                <div>
+                    <h4 className="text-2xs uppercase tracking-widest text-gray-500 mb-1.5">
+                        {provenancePending ? 'Tags' : 'CivitAI tags'}
+                    </h4>
+                    <div className="flex flex-wrap gap-2">{otherTags.map((tag) => renderTag(tag, false))}</div>
+                    <p className="text-2xs text-gray-500 mt-1.5">
+                        {provenancePending
+                            ? 'Checking which tags are yours…'
+                            : 'Synced from CivitAI, which replaces them on every resync — so they cannot be deleted here.'}
+                    </p>
+                </div>
+            )}
+
+            {allTags.length === 0 && (
+                <p className="text-xs text-gray-500">
+                    No tags yet. Tags are searchable — a character, a pose, a style.
+                </p>
+            )}
+
+            <form onSubmit={submitDraft} className="flex gap-2">
+                <input
+                    type="text"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    placeholder="Add a tag…"
+                    aria-label="Add a tag"
+                    maxLength={64}
+                    className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-emerald-500/50"
+                />
+                <button
+                    type="submit"
+                    disabled={!draft.trim() || addMutation.isPending}
+                    className="px-3 py-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-sm font-medium hover:bg-emerald-500/30 transition-colors inline-flex items-center gap-1 disabled:opacity-40"
+                >
+                    <Plus size={14} />
+                    {addMutation.isPending ? 'Adding…' : 'Add'}
+                </button>
+            </form>
+        </div>
+    );
+}
 
 export default function ModelDetailsModal({ file, providers = [], onClose }) {
     const [activeImageIndex, setActiveImageIndex] = useState(null);
@@ -380,19 +581,21 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                                 </div>
                             )}
 
-                            {/* Tags */}
-                            {tags.length > 0 && (
-                                <div>
-                                    <h3 className="text-sm font-medium text-gray-400 mb-2">Tags</h3>
-                                    <div className="flex flex-wrap gap-2">
-                                        {tags.map(tag => (
-                                            <span key={tag} className="px-2 py-1 bg-gray-800 text-gray-400 rounded-full text-xs border border-gray-700">
-                                                {tag}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                            {/* Tags. Read-only before this: every tag here came
+                                from a CivitAI resync, and a resync deletes those
+                                rows, so there was no way to record a tag the
+                                user cared about. The editor owns provenance and
+                                therefore owns the delete controls. */}
+                            <div>
+                                <h3 className="text-sm font-medium text-gray-400 mb-2">Tags</h3>
+                                {file.model_id ? (
+                                    <ModelTagEditor modelId={file.model_id} tags={tags} />
+                                ) : (
+                                    <p className="text-xs text-gray-500">
+                                        This model has no database ID, so its tags cannot be edited.
+                                    </p>
+                                )}
+                            </div>
 
                             {/* File Info */}
                             <div className="text-xs text-gray-500 pt-4 border-t border-gray-800 space-y-1">

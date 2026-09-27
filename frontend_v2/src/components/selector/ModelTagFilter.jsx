@@ -17,11 +17,20 @@ import { Filter, X } from 'lucide-react';
  * only becomes selectable once a model carrying it has been seen — the panel
  * says so rather than the control vanishing, because a control that appears
  * and disappears mid-refresh is both jarring and unreachable.
+ *
+ * Read-only by design. It is a filter over a whole list, so it has no model to
+ * attach a tag to or delete one from; the write side lives with the model
+ * itself, in ModelDetailsModal. It can still *label* a tag's origin, because
+ * "your tag" and "a tag a scraper wrote" are not the same thing to a user who
+ * is trying to remember why a model is findable: `tagSources` maps a tag to
+ * `'user'` or `'civitai'`, and a user tag is marked. A tag missing from the
+ * map is marked nothing at all rather than guessed at — see the prop.
  */
 export default function ModelTagFilter({
     availableTags = [],
     selectedTags = [],
     onSelectedTagsChange,
+    tagSources = {},
 }) {
     // Hover already reveals the panel, but a hover-only menu cannot be reached by
     // keyboard or touch, so click toggles it too.
@@ -55,7 +64,8 @@ export default function ModelTagFilter({
                 >
                     {availableTags.length === 0 && (
                         <p className="p-2 text-xs text-gray-500">
-                            No tags on the loaded models yet.
+                            No tags on the loaded models yet. Open a model's
+                            details to give it a tag of your own.
                         </p>
                     )}
                     {availableTags.map(tag => (
@@ -67,6 +77,14 @@ export default function ModelTagFilter({
                                 className="rounded border-white/10 bg-black/40 text-blue-500 focus:ring-blue-500/50"
                             />
                             <span className="text-sm font-medium text-gray-300">{tag}</span>
+                            {tagSources[tag] === 'user' && (
+                                <span
+                                    className="ml-auto text-2xs uppercase tracking-widest font-bold text-emerald-400/80"
+                                    title="A tag you added. CivitAI tags cannot be removed — a resync replaces them."
+                                >
+                                    yours
+                                </span>
+                            )}
                         </label>
                     ))}
                 </div>

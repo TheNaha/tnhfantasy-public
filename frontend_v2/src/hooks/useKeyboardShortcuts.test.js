@@ -51,7 +51,8 @@ describe('useKeyboardShortcuts', () => {
     });
 
     it('navigates to /gallery when "d" is pressed', () => {
-        // The Dashboard route is /gallery; '/' is the FantasyHub landing page.
+        // The Dashboard route is /gallery; '/' is a redirect to /roleplay and
+        // /hub no longer exists (removed with pages/FantasyHub.jsx in a334e97).
         // The shortcut previously went to '/', contradicting both its own
         // docstring and the shortcuts modal, which both say "Go to Dashboard".
         mockLocation = { pathname: '/generate' };
