@@ -39,16 +39,95 @@ DEFAULT_USER_ID = "default_user"
 # `_compact_metadata`. Bump when the compacted shape changes incompatibly.
 METADATA_VERSION = "2.0"
 
+# Upper bound on the CivitAI tag list copied onto each per-asset LoRA/checkpoint
+# entry. A popular character LoRA carries 30-80 tags and this array is written
+# into every single asset's JSONB column, so an unbounded copy would multiply
+# megabytes across the table for metadata the gallery UI never reads. 20 is the
+# observed useful width — CivitAI orders tags by weight, so the truncation keeps
+# the most significant ones — and it still keeps "find images that used a LoRA
+# tagged X" answerable for the overwhelming majority of real tags. The full
+# array stays on `model_tags`; this is a per-asset convenience copy only.
+MAX_COMPACT_TAGS = 20
+
+# A much looser bound on `trained_words`, which is the LoRA's *trigger
+# vocabulary* rather than taxonomy: dropping a trigger word silently breaks
+# reproducing an image from its metadata, so the cap here is only a guard
+# against a pathological list, and no real LoRA comes near it.
+MAX_COMPACT_TRAINED_WORDS = 100
+
+# Scalar fields kept on every compacted model reference, so an asset row can be
+# joined back to `models_v2` by id instead of by a filename string. `type` and
+# `size` are checkpoint-only, matching the two original key lists.
+_CHECKPOINT_KEYS = (
+    "name",
+    "display_name",
+    "filename",
+    "type",
+    "size",
+    "id",
+    "model_id",
+    "civitai_id",
+    "base_model",
+)
+_LORA_KEYS = (
+    "name",
+    "display_name",
+    "filename",
+    "strength",
+    "weight",
+    "id",
+    "model_id",
+    "civitai_id",
+    "base_model",
+)
+
+
+def _copy_bounded_strings(value: Any, limit: int) -> list[str] | None:
+    """Copy up to `limit` cleaned, de-duplicated strings, or None if there are none."""
+    if not isinstance(value, (list, tuple)):
+        return None
+    strings: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        cleaned = item.strip()
+        if not cleaned or cleaned in strings:
+            continue
+        strings.append(cleaned)
+        if len(strings) >= limit:
+            break
+    return strings or None
+
+
+def _copy_identity_fields(value: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in keys:
+        if key in value:
+            compact[key] = value.get(key)
+    return compact
+
 
 def _compact_checkpoint_metadata(value: Any) -> Any:
-    """Reduce checkpoint metadata to UI/statistics-relevant fields."""
+    """Reduce checkpoint metadata to UI/statistics-relevant fields plus identity.
+
+    `model_id` / `civitai_id` are what make an image joinable to a model row.
+    Without them the only surviving link was the checkpoint filename string,
+    so "which images used this checkpoint" was not answerable by id.
+    """
     if not isinstance(value, dict):
         return value
 
-    compact: dict[str, Any] = {}
-    for key in ["name", "display_name", "filename", "type", "size", "id"]:
-        if key in value:
-            compact[key] = value.get(key)
+    compact = _copy_identity_fields(value, _CHECKPOINT_KEYS)
+
+    # trained_words is the trigger vocabulary; tags is the CivitAI taxonomy
+    # (bounded). Both are what a "find me the LoRA for this character" search
+    # needs, and both were being dropped.
+    trained_words = _copy_bounded_strings(value.get("trained_words"), MAX_COMPACT_TRAINED_WORDS)
+    if trained_words:
+        compact["trained_words"] = trained_words
+    tags = _copy_bounded_strings(value.get("tags"), MAX_COMPACT_TAGS)
+    if tags:
+        compact["tags"] = tags
 
     if not compact:
         fallback_name = value.get("name") or value.get("filename") or value.get("display_name")
@@ -58,16 +137,29 @@ def _compact_checkpoint_metadata(value: Any) -> Any:
 
 
 def _compact_lora_entry(value: Any) -> Any:
-    """Reduce a LoRA entry to display and reuse parameters."""
+    """Reduce a LoRA entry to display/reuse parameters, identity, and search keys.
+
+    `model_id` / `civitai_id` are what make an image joinable to a model row.
+    A real legacy sidecar carries `model_id: 21`, `civitai_id: 1009342`,
+    `base_model: "Illustrious"`, `trained_words: ["boob tent"]` and
+    `tags: ["boob tent", "breasts", "clothing"]`, and the previous version
+    kept only the display strings — so an image's link to its LoRA survived as
+    a filename that could not be resolved to a model id, and "show me images
+    that used this LoRA" was not answerable.
+    """
     if isinstance(value, str):
         return {"name": value, "strength": 1.0}
     if not isinstance(value, dict):
         return value
 
-    compact: dict[str, Any] = {}
-    for key in ["name", "display_name", "filename", "strength", "weight", "id"]:
-        if key in value:
-            compact[key] = value.get(key)
+    compact = _copy_identity_fields(value, _LORA_KEYS)
+
+    trained_words = _copy_bounded_strings(value.get("trained_words"), MAX_COMPACT_TRAINED_WORDS)
+    if trained_words:
+        compact["trained_words"] = trained_words
+    tags = _copy_bounded_strings(value.get("tags"), MAX_COMPACT_TAGS)
+    if tags:
+        compact["tags"] = tags
 
     if "strength" not in compact and "weight" in compact:
         compact["strength"] = compact.get("weight")
@@ -646,18 +738,3 @@ def _asset_as_file_data(asset: Asset, output_dir: str) -> dict[str, Any]:
     if asset.blurhash:
         file_data["blurhash"] = asset.blurhash
     return file_data
-
-
-def all_assets_as_file_data(output_dir: str, db_session_factory) -> list[dict[str, Any]]:
-    """DB-backed equivalent of GalleryIndexer.get_all_files (non-deleted only).
-
-    Used by the statistics endpoints so they stop scanning the filesystem.
-    """
-    session = db_session_factory()
-    try:
-        rows = session.execute(
-            select(Asset).where(Asset.deleted_at.is_(None)).order_by(Asset.created_at.asc())
-        ).scalars().all()
-        return [_asset_as_file_data(a, output_dir) for a in rows]
-    finally:
-        session.close()

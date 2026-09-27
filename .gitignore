@@ -76,8 +76,11 @@ remote_agent/build/tnhcomfy-agent/PYZ-00.toc
 remote_agent/build/tnhcomfy-agent/tnhcomfy-agent.pkg
 remote_agent/build/tnhcomfy-agent/warn-tnhcomfy-agent.txt
 remote_agent/build/tnhcomfy-agent/xref-tnhcomfy-agent.html
-frontend_v2/test-results/.last-run.json
-frontend_v2/playwright-report/index.html
+# Playwright e2e output. The html reporter writes index.html *and* data/*.zip
+# (traces, because playwright.config.js sets trace: 'on-first-retry'), so the
+# single-file rules these replace left captured page content unignored.
+# `test-results/` is already directory-ignored near the top of this file.
+playwright-report/
 test.sh
 .kilo/kilo.jsonc
 .kilo/plans/remediation-plan.md

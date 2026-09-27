@@ -33,7 +33,6 @@ import { useJobsRealtime } from './hooks/useJobsRealtime';
 import { providersApi } from './api/providers';
 import * as ws from './api/websocket';
 // Lazy-loaded pages to minimise initial JS bundle
-const FantasyHub = lazy(() => import('./pages/FantasyHub'));
 const RoleplayWorkspace = lazy(() => import('./pages/RoleplayWorkspace'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const SimpleGenerator = lazy(() => import('./pages/SimpleGenerator'));
@@ -98,14 +97,13 @@ function AnimatedRoutes() {
                     whole premise is roleplay-first — and left two competing landing
                     pages with different design languages.
 
-                    The picker is not deleted: it is at /hub. It has no nav entry and
-                    no link pointing at it — the earlier comment here claimed
-                    otherwise, which is how a "still linked" page ends up orphaned.
-                    Its one unique job, the first-run onboarding wizard, is now
-                    mounted on /roleplay, so nothing about first-run setup depends on
-                    /hub being reachable. */}
+                    The picker is now deleted rather than parked at a second URL.
+                    It had no nav entry and no inbound link anywhere, and its one
+                    unique job — hosting the first-run onboarding wizard — is
+                    mounted on /roleplay, so nothing about first-run setup depended
+                    on it. A second front door that nothing links to is still a
+                    second front door. */}
                 <Route path="/" element={<Navigate to="/roleplay" replace />} />
-                <Route path="/hub" element={<Boundary routeKey={routeKey}><FantasyHub /></Boundary>} />
                 <Route path="/roleplay" element={<Boundary routeKey={routeKey}><RoleplayWorkspace /></Boundary>} />
                 <Route path="/gallery" element={<Boundary routeKey={routeKey}><Dashboard /></Boundary>} />
                 <Route path="/generate" element={<Boundary routeKey={routeKey}><SimpleGenerator /></Boundary>} />
