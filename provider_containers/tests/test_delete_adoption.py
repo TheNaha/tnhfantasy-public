@@ -41,7 +41,14 @@ def _upstream_response(status_code: int, payload: dict) -> MagicMock:
     return response
 
 
-async def _run_delete_phase(delete_file, monkeypatch, storage_paths: set[str], expected_paths: set[str]):
+async def _run_delete_phase(
+    delete_file,
+    monkeypatch,
+    storage_paths: set[str],
+    expected_paths: set[str],
+    *,
+    runs: int = 2,
+):
     """Drive run_reconciliation_v2 to its delete phase and return the state.
 
     `expected_paths` must be non-empty: reconciliation refuses to delete anything
@@ -49,9 +56,15 @@ async def _run_delete_phase(delete_file, monkeypatch, storage_paths: set[str], e
     empty, so everything is an orphan" (calculate_safe_deletion_limit's guard). The
     callers pass one path that is expected-but-absent, which is exactly the shape
     of a real orphan sweep.
+
+    `runs` defaults to 2 because a path must be reported orphaned by TWO
+    consecutive reconciliations before it becomes deletable — that is the guard
+    that bounds the blast radius of RECONCILIATION_DELETE_ORPHANS, and a test that
+    deleted on the first sighting would be asserting the behaviour we removed.
     """
     monkeypatch.setenv("RECONCILIATION_DELETE_ORPHANS", "true")
     state = ReconciliationState("test-provider")
+    state.reset_orphan_sightings()
 
     monkeypatch.setattr(
         "provider_core.reconciliation.get_pending_downloads", AsyncMock(return_value=[])
@@ -71,21 +84,25 @@ async def _run_delete_phase(delete_file, monkeypatch, storage_paths: set[str], e
         AsyncMock(return_value={"imported": 0, "failed": 1}),
     )
 
-    await run_reconciliation_v2(
-        provider_id="test-provider",
-        backend_url="http://backend",
-        reconciliation_state=state,
-        max_concurrent_downloads=2,
-        hf_token="",
-        civitai_token="",
-        storage_label="Test",
-        validate_existing=AsyncMock(return_value={"total_invalid": 0, "total_partial": 0}),
-        list_existing_files=AsyncMock(
-            return_value={path: {"size": 4096} for path in storage_paths}
-        ),
-        download_file=AsyncMock(),
-        delete_file=delete_file,
-    )
+    for _ in range(max(1, runs)):
+        # A fresh ReconciliationState each tick, as the worker does: the orphan
+        # history is what has to survive, not the progress object.
+        state = ReconciliationState("test-provider")
+        await run_reconciliation_v2(
+            provider_id="test-provider",
+            backend_url="http://backend",
+            reconciliation_state=state,
+            max_concurrent_downloads=2,
+            hf_token="",
+            civitai_token="",
+            storage_label="Test",
+            validate_existing=AsyncMock(return_value={"total_invalid": 0, "total_partial": 0}),
+            list_existing_files=AsyncMock(
+                return_value={path: {"size": 4096} for path in storage_paths}
+            ),
+            download_file=AsyncMock(),
+            delete_file=delete_file,
+        )
     return state
 
 
@@ -230,8 +247,132 @@ async def test_a_refused_delete_does_not_abort_the_sweep(monkeypatch):
     assert state.get_stats()["deletions_completed"] == 1
 
 
-# ── and the PUBLIC delete_model routes ───────────────────────────────────────
+# ── the blast radius of RECONCILIATION_DELETE_ORPHANS ───────────────────────
 
+
+class TestAnOrphanMustBeSeenTwice:
+    """`RECONCILIATION_DELETE_ORPHANS` is the one switch that arms mass deletion.
+
+    Its only guard used to be `calculate_safe_deletion_limit` — `max(20,
+    total // 5)` — so a 100-model provider lost 20 files every 7200 s tick with no
+    confirmation and no dedup against the previous run, and a single mis-scoped
+    `list_existing_files` (wrong prefix, an empty listing, a storage endpoint
+    serving somebody else's volume) made every file in the directory "orphaned"
+    and armed the lot.
+    """
+
+    def test_a_first_sighting_deletes_nothing(self):
+        state = ReconciliationState("test-provider")
+        state.reset_orphan_sightings()
+        assert state.promote_stable_orphans(["a", "b"]) == []
+        assert state.promote_stable_orphans(["a", "b"]) == ["a", "b"]
+
+    def test_a_path_that_stops_being_an_orphan_is_forgotten(self):
+        state = ReconciliationState("test-provider")
+        state.reset_orphan_sightings()
+        state.promote_stable_orphans(["a", "b"])
+        # `b` was adopted into the database, or the listing moved. Either way it
+        # must not be deletable on the strength of a stale sighting — the set
+        # compared against is this tick's, not a union of every sighting.
+        assert state.promote_stable_orphans(["a"]) == ["a"]
+
+    def test_the_comparison_is_with_the_previous_tick_not_a_union(self):
+        state = ReconciliationState("test-provider")
+        state.reset_orphan_sightings()
+        state.promote_stable_orphans(["a", "b", "c"])
+        state.promote_stable_orphans(["a"])  # b and c are not orphans any more
+        # A union would still be holding b and c here.
+        assert state.promote_stable_orphans(["b", "c"]) == []
+
+    def test_the_history_is_per_provider(self):
+        first = ReconciliationState("provider-a")
+        second = ReconciliationState("provider-b")
+        first.reset_orphan_sightings()
+        second.reset_orphan_sightings()
+        first.promote_stable_orphans(["a"])
+        assert second.promote_stable_orphans(["a"]) == [], (
+            "one provider's sighting must not arm another's deletion"
+        )
+
+    def test_the_history_survives_a_new_state_object(self):
+        """The worker builds a fresh ReconciliationState per tick; the history is
+        the thing that has to outlive it."""
+        ReconciliationState("test-provider").reset_orphan_sightings()
+        first = ReconciliationState("test-provider")
+        first.promote_stable_orphans(["a"])
+        assert ReconciliationState("test-provider").promote_stable_orphans(["a"]) == ["a"]
+
+    @pytest.mark.asyncio
+    async def test_one_tick_does_not_delete(self, monkeypatch):
+        delete_file = AsyncMock(return_value=True)
+        await _run_delete_phase(
+            delete_file,
+            monkeypatch,
+            {"models/checkpoints/orphan.safetensors"},
+            expected_paths={_KEPT_PATH},
+            runs=1,
+        )
+        delete_file.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_two_ticks_delete(self, monkeypatch):
+        delete_file = AsyncMock(return_value=True)
+        await _run_delete_phase(
+            delete_file,
+            monkeypatch,
+            {"models/checkpoints/orphan.safetensors"},
+            expected_paths={_KEPT_PATH},
+            runs=2,
+        )
+        delete_file.assert_awaited_once_with("models/checkpoints/orphan.safetensors")
+
+    @pytest.mark.asyncio
+    async def test_a_mis_scoped_listing_that_clears_on_the_next_tick_deletes_nothing(
+        self, monkeypatch
+    ):
+        """The concrete failure: one tick where `list_existing_files` is scoped
+        wrongly reports the whole volume as orphaned. Under the old guard the size
+        limit allowed 20% of it to go, unrecoverably."""
+        delete_file = AsyncMock(return_value=True)
+        everything = {f"models/checkpoints/model-{i}.safetensors" for i in range(100)}
+
+        # Tick 1: everything looks orphaned. Tick 2: the listing is correct and
+        # only two files really are.
+        calls = {"n": 0}
+
+        async def _listing(_quick_sync=False):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {path: {"size": 4096} for path in everything}
+            return {path: {"size": 4096} for path in {
+                "models/checkpoints/model-0.safetensors",
+                "models/checkpoints/model-1.safetensors",
+            }}
+
+        monkeypatch.setenv("RECONCILIATION_DELETE_ORPHANS", "true")
+        state = ReconciliationState("test-provider")
+        state.reset_orphan_sightings()
+        for _ in range(2):
+            await run_reconciliation_v2(
+                provider_id="test-provider",
+                backend_url="http://backend",
+                reconciliation_state=ReconciliationState("test-provider"),
+                max_concurrent_downloads=2,
+                hf_token="",
+                civitai_token="",
+                storage_label="Test",
+                validate_existing=AsyncMock(return_value={"total_invalid": 0, "total_partial": 0}),
+                list_existing_files=AsyncMock(side_effect=_listing),
+                download_file=AsyncMock(),
+                delete_file=delete_file,
+            )
+
+        # The intersection is empty, so even after the scare the operator gets one
+        # more tick of evidence before anything is removed.
+        delete_file.assert_not_awaited()
+
+
+# ── and the PUBLIC delete_model routes ───────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_remote_comfy_delete_model_reports_the_agents_refusal(monkeypatch):

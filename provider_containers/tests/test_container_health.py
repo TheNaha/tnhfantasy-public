@@ -30,7 +30,6 @@ definitions, the Dockerfiles' healthcheck commands, and compose's.
 from __future__ import annotations
 
 import pathlib
-import re
 
 import pytest
 from fastapi import FastAPI
@@ -271,15 +270,30 @@ class TestEmptyEngineIsUnsetNotFatal:
             monkeypatch.setenv("ENGINE", "modal")
             importlib.reload(worker)
 
-    def test_an_unknown_engine_names_the_valid_values(self):
+    @pytest.mark.parametrize("registry_name", ["IMAGE_ENGINES", "LLM_ENGINES"])
+    def test_an_unknown_engine_names_the_valid_values(self, registry_name):
+        """The raise moved into `provider_core.worker_bootstrap.select_client`
+        (item 21) — the message it produces is the same one, and it is built from
+        the registry so the list cannot drift from what can actually be built."""
+        from provider_core import worker_bootstrap
+
+        engines = getattr(worker_bootstrap, registry_name)
+        with pytest.raises(ValueError) as exc:
+            worker_bootstrap.select_client(engines, "definitely-not-an-engine", {})
+
+        message = str(exc.value)
+        assert "Valid values" in message, message
+        for engine in engines:
+            assert engine in message, f"the error must name {engine!r}"
+        assert "definitely-not-an-engine" in message
+
+    def test_the_worker_no_longer_owns_the_engine_list(self):
+        """It is a registry now: `select_client` raises, so a stale second list
+        would only be a second thing to forget."""
         import pathlib
 
         text = (
-            pathlib.Path(__file__).resolve().parents[1]
-            / "image_worker/worker.py"
+            pathlib.Path(__file__).resolve().parents[1] / "image_worker/worker.py"
         ).read_text()
-        match = re.search(r'raise ValueError\((.*?)\)\s*\n\s*attach_provider_routes', text, re.S)
-        assert match, "could not find the raise in image_worker/worker.py"
-        message = match.group(1)
-        for engine in ("modal", "beam", "direct_url", "remote_comfy"):
-            assert engine in message, f"the error must name {engine!r}"
+        assert "elif ENGINE ==" not in text, "the client-selection ladder is gone"
+        assert "select_client(IMAGE_ENGINES" in text
