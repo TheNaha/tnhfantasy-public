@@ -9,12 +9,12 @@ const REVISIONS = [
 
 describe('ChapterRevisionsModal', () => {
     it('renders nothing when closed', () => {
-        render(<ChapterRevisionsModal open={false} revisions={REVISIONS} onRestore={vi.fn()} onClose={vi.fn()} />);
+        render(<ChapterRevisionsModal isOpen={false} revisions={REVISIONS} onRestore={vi.fn()} onClose={vi.fn()} />);
         expect(screen.queryByTestId('revisions-modal')).toBeNull();
     });
 
     it('lists revisions with source labels and word counts', () => {
-        render(<ChapterRevisionsModal open chapterTitle="Chapter 1" revisions={REVISIONS} onRestore={vi.fn()} onClose={vi.fn()} />);
+        render(<ChapterRevisionsModal isOpen chapterTitle="Chapter 1" revisions={REVISIONS} onRestore={vi.fn()} onClose={vi.fn()} />);
         expect(screen.getByTestId('revisions-modal')).toBeInTheDocument();
         expect(screen.getAllByTestId('revision-row')).toHaveLength(2);
         expect(screen.getByText('Before retry')).toBeInTheDocument();
@@ -24,13 +24,13 @@ describe('ChapterRevisionsModal', () => {
     });
 
     it('shows the empty state when there are no snapshots', () => {
-        render(<ChapterRevisionsModal open chapterTitle="Chapter 1" revisions={[]} isLoading={false} onRestore={vi.fn()} onClose={vi.fn()} />);
+        render(<ChapterRevisionsModal isOpen chapterTitle="Chapter 1" revisions={[]} isLoading={false} onRestore={vi.fn()} onClose={vi.fn()} />);
         expect(screen.getByText(/No snapshots yet/i)).toBeInTheDocument();
     });
 
     it('calls onRestore with the chosen revision', () => {
         const onRestore = vi.fn();
-        render(<ChapterRevisionsModal open chapterTitle="Chapter 1" revisions={REVISIONS} isRestoring={false} onRestore={onRestore} onClose={vi.fn()} />);
+        render(<ChapterRevisionsModal isOpen chapterTitle="Chapter 1" revisions={REVISIONS} isRestoring={false} onRestore={onRestore} onClose={vi.fn()} />);
         const restoreButtons = screen.getAllByTitle('Restore this revision');
         fireEvent.click(restoreButtons[1]);
         expect(onRestore).toHaveBeenCalledWith(REVISIONS[1]);
@@ -38,7 +38,7 @@ describe('ChapterRevisionsModal', () => {
 
     it('calls onSnapshot from the snapshot button', () => {
         const onSnapshot = vi.fn();
-        render(<ChapterRevisionsModal open chapterTitle="Chapter 1" revisions={[]} onSnapshot={onSnapshot} onRestore={vi.fn()} onClose={vi.fn()} />);
+        render(<ChapterRevisionsModal isOpen chapterTitle="Chapter 1" revisions={[]} onSnapshot={onSnapshot} onRestore={vi.fn()} onClose={vi.fn()} />);
         fireEvent.click(screen.getByTitle("Save a snapshot of the chapter's current prose"));
         expect(onSnapshot).toHaveBeenCalledTimes(1);
     });

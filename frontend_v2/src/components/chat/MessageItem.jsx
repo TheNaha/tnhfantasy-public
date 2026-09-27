@@ -245,7 +245,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 )}
                             </div>
                         )}
-                        <div className="flex items-center gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity mt-0.5">
+                        <div className="flex items-center gap-1 opacity-0 group-hover/message:opacity-100 focus-within:opacity-100 transition-opacity mt-0.5">
                             {(msg.role === 'user' || msg.role === 'char') && (
                                 <>
                                     <button

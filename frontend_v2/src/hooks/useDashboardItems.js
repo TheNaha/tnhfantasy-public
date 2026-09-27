@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer } from 'react';
+import { useCallback, useMemo } from 'react';
 
 import { buildDashboardItems } from '../utils/dashboardItems';
 import { getItemTimelineDate, getLocalDateKey } from '../utils/dateTime';
@@ -10,8 +10,21 @@ function getJobTimelineAnchor(job) {
     return job?.created_at || job?.updated_at || 0;
 }
 
-function buildJobTimelineOverrides(previousAnchors, activeJobs = []) {
-    const nextAnchors = new Map(previousAnchors);
+/**
+ * Anchors for jobs seen while running, keyed by job id.
+ *
+ * A job's `created_at` can be null (recovered jobs), and its timeline date then
+ * falls back to `updated_at` — which moves on every poll, shuffling the item
+ * between date groups. The first-seen anchor has to outlive the render that
+ * recorded it, which is why this is module state: a ref may not be read during
+ * render (`react-hooks/refs`), and a `useReducer` dispatched from an effect on
+ * every `useActiveJobs()` poll re-rendered the whole Dashboard for it. The map
+ * is capped at MAX_JOB_TIMELINE_ANCHORS below.
+ */
+const jobTimelineAnchors = new Map();
+
+function buildJobTimelineOverrides(activeJobs = []) {
+    const nextAnchors = jobTimelineAnchors;
 
     (activeJobs || []).forEach((job) => {
         if (!job?.id || nextAnchors.has(job.id)) {
@@ -34,20 +47,6 @@ function buildJobTimelineOverrides(previousAnchors, activeJobs = []) {
     return nextAnchors;
 }
 
-function areMapsEqual(left, right) {
-    if (left.size !== right.size) {
-        return false;
-    }
-
-    for (const [key, value] of left.entries()) {
-        if (right.get(key) !== value) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 export function useDashboardItems({
     data,
     activeJobs,
@@ -58,18 +57,12 @@ export function useDashboardItems({
     favorites,
     sort = 'date_desc',
 }) {
-    const [jobTimelineOverrides, updateJobTimelineOverrides] = useReducer(
-        (currentAnchors, nextJobs) => {
-            const nextAnchors = buildJobTimelineOverrides(currentAnchors, nextJobs);
-            return areMapsEqual(currentAnchors, nextAnchors) ? currentAnchors : nextAnchors;
-        },
-        activeJobs,
-        (initialJobs) => buildJobTimelineOverrides(new Map(), initialJobs),
+    // Identity is stable: `buildJobTimelineOverrides` mutates the module map in
+    // place, so the downstream memos keyed on it do not re-run per poll.
+    const jobTimelineOverrides = useMemo(
+        () => buildJobTimelineOverrides(activeJobs),
+        [activeJobs]
     );
-
-    useEffect(() => {
-        updateJobTimelineOverrides(activeJobs);
-    }, [activeJobs]);
 
     const { items: allItems, jobsById } = useMemo(() => {
         return buildDashboardItems(data, activeJobs, jobTimelineOverrides, { sort });

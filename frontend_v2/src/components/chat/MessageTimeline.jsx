@@ -4,21 +4,23 @@ import { Loader2, Wand2, ImageIcon, MessageSquare } from 'lucide-react';
 import MessageItem from './MessageItem';
 import TavernMessage from './TavernMessage';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
-import { useVoices } from '../../hooks/useVoices';
+import useSettingsStore from '../../store/settingsStore';
 import { useChatWorkspace } from '../../contexts/ChatWorkspaceContext';
 
 export default function MessageTimeline() {
     const context = useChatWorkspace();
     const {
         messages, listItems, rowVirtualizer, linkedCharacter, activeChat,
-        characters = [], targetCharacterId,
-        settings, handleEditMessage, handleDeleteMessage, handleRegenerate, handleRollback,
+        characters = [], targetCharacterId, voices,
+        handleEditMessage, handleDeleteMessage, handleRegenerate, handleRollback,
         handlePinMessage, handleSwipe, handleGenerateSwipe, handleAvatarClick,
         handleGenerateTTS, handleMessageIllustrate, hasMoreMessages, loadOlderMessages,
         messagesEndRef
     } = context;
 
-    const { data: voices = [] } = useVoices();
+    // Read directly from the store: the provider published the whole settings
+    // object, so any TTS toggle re-rendered this virtualised list.
+    const ttsEnabled = useSettingsStore((s) => s.settings?.ai?.ttsEnabled);
 
     const characterById = useMemo(
         () => new Map(characters.map((c) => [c.id, c])),
@@ -34,9 +36,7 @@ export default function MessageTimeline() {
     // The only thing the index was needed for was "is this the last message".
     // Computing it once here removes a findIndex() over the full message list
     // that previously ran for every virtualised row on every render.
-    const lastMessageKey = messages.length
-        ? (messages[messages.length - 1].id || messages[messages.length - 1]._idx)
-        : null;
+    const lastMessageKey = messages.length ? messages[messages.length - 1].id : null;
 
     const renderRow = (item) => {
         if (item.item) {
@@ -47,7 +47,7 @@ export default function MessageTimeline() {
                     msg={msg}
                     linkedCharacter={speaker}
                     activeChat={activeChat}
-                    canRegenerate={(msg.id || msg._idx) === lastMessageKey}
+                    canRegenerate={msg.id === lastMessageKey}
                     onEdit={handleEditMessage}
                     onDelete={handleDeleteMessage}
                     onRegenerate={handleRegenerate}
@@ -58,7 +58,7 @@ export default function MessageTimeline() {
                     onAvatarClick={handleAvatarClick}
                      onGenerateTTS={handleGenerateTTS}
                     onIllustrate={handleMessageIllustrate}
-                    ttsEnabled={settings.ai?.ttsEnabled}
+                    ttsEnabled={ttsEnabled}
                     voices={voices}
                     chatTtsVoiceId={activeChat?.tts_voice_id}
                     characterVoiceId={speaker?.voice_model_id}

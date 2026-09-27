@@ -21,7 +21,7 @@ const formatTime = (iso) => {
 };
 
 export default function ChapterRevisionsModal({
-    open,
+    isOpen,
     chapterTitle,
     revisions = [],
     isLoading,
@@ -31,14 +31,14 @@ export default function ChapterRevisionsModal({
     onClose,
 }) {
     // Escape dismisses, matching every other dialog expectation.
-    // `open` is the dialog's own visibility. Passing a literal `true` registered a
+    // `isOpen` is the dialog's own visibility (the name <Modal>/<ModalOverlay> use). Passing a literal `true` registered a
     // permanent window keydown listener for a component that is mounted
     // unconditionally, so a hidden dialog could still react to Escape.
-    useEscapeKey(onClose, !!open);
+    useEscapeKey(onClose, !!isOpen);
 
     return (
         <AnimatePresence>
-            {open && (
+            {isOpen && (
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}

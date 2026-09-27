@@ -60,7 +60,11 @@ export default function StorySandbox() {
     const { data: locations = [] } = useLocations();
     const { data: storyImages = [] } = useStoryImages(activeStoryId);
     const { data: collectionsMap = {} } = useCollections('story');
-    const collectionsList = Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    // Memoised: this page re-renders on every streamed token.
+    const collectionsList = useMemo(
+        () => Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+        [collectionsMap]
+    );
 
     const createStory = useCreateStory();
     const createChapter = useCreateChapter();
@@ -155,12 +159,6 @@ export default function StorySandbox() {
      
     }, [activeChapterId]);
 
-    useEffect(() => {
-        const handler = () => setShowParseModal(true);
-        window.addEventListener('open-parse-story', handler);
-        return () => window.removeEventListener('open-parse-story', handler);
-     
-    }, []);
 
     const { data: llmModels = [] } = useLLMAvailableModels();
     const { data: defaultLlmConfig } = useLLMDefaultProvider();
@@ -929,6 +927,7 @@ export default function StorySandbox() {
             )}>
                 <StorySidebar
                     stories={stories}
+                    onImportParse={() => setShowParseModal(true)}
                     activeStoryId={activeStoryId}
                     onSelectStory={(id) => { navigate(`/story/${id}`); setMobileTab('write'); }}
                     onCreateStory={handleCreateStory}
@@ -1118,7 +1117,7 @@ export default function StorySandbox() {
             />
 
             <IllustrateModal
-                open={showIllustrateModal}
+                isOpen={showIllustrateModal}
                 prompt={illustratePrompt}
                 onPromptChange={setIllustratePrompt}
                 onConfirm={handleConfirmIllustrate}
@@ -1126,7 +1125,7 @@ export default function StorySandbox() {
             />
 
             <StoryActionModal
-                open={!!storyAction}
+                isOpen={!!storyAction}
                 action={storyAction?.action}
                 selectionText={storyAction?.selectionText || ''}
                 directive={storyAction?.directive || ''}
@@ -1139,7 +1138,7 @@ export default function StorySandbox() {
             />
 
             <ChapterRevisionsModal
-                open={revisionsOpen}
+                isOpen={revisionsOpen}
                 chapterTitle={activeChapter?.title || 'Untitled chapter'}
                 revisions={chapterRevisions.data || []}
                 isLoading={chapterRevisions.isLoading}
@@ -1150,7 +1149,7 @@ export default function StorySandbox() {
             />
 
             <StoryGalleryModal
-                open={showGallery}
+                isOpen={showGallery}
                 storyTitle={activeStory?.title}
                 images={storyImages.map(img => img.path)}
                 collectionsList={collectionsList}

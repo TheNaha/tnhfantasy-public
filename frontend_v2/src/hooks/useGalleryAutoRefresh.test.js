@@ -82,4 +82,26 @@ describe('useGalleryAutoRefresh', () => {
 
         expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
     });
+
+    it('refreshes for a job that completed while the setting was off', () => {
+        const { rerender } = renderHook((props) => useGalleryAutoRefresh(props), {
+            initialProps: {
+                lastCompletedJob: { id: 'job-7', outputs: [{ filename: 'x.png' }] },
+                autoRefreshOnJobComplete: false,
+                queryClient,
+            },
+        });
+
+        expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
+
+        // The id used to be spent before the enablement check, so switching the
+        // setting on afterwards left this job permanently un-refreshed.
+        rerender({
+            lastCompletedJob: { id: 'job-7', outputs: [{ filename: 'x.png' }] },
+            autoRefreshOnJobComplete: true,
+            queryClient,
+        });
+
+        expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['gallery'] });
+    });
 });

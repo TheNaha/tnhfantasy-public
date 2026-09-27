@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Loader2, Check, ExternalLink, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { createPortal } from 'react-dom';
+import ModalOverlay from '../common/ModalOverlay';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api';
 import * as ws from '../../api/websocket';
@@ -177,8 +177,8 @@ export default function BatchAutopopulateModal({ onClose }) {
         }
     };
 
-    return createPortal(
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
+    return (
+        <ModalOverlay onClose={onClose} className="z-[60] bg-black/80 backdrop-blur-sm">
             <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="p-5 border-b border-gray-800 flex items-center justify-between">
                     <div>
@@ -275,7 +275,6 @@ export default function BatchAutopopulateModal({ onClose }) {
                     </button>
                 </div>
             </div>
-        </div>,
-        document.body
+        </ModalOverlay>
     );
 }

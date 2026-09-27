@@ -1,5 +1,5 @@
 import { renderHook, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const handlers = new Map();
@@ -110,9 +110,11 @@ describe('useJobsRealtime failure cache invalidation', () => {
         expect(keys).not.toContainEqual(['jobs', 'failed']);
     });
 
-    it('refreshes the failed-jobs query on reconnect', async () => {
+    it('refreshes the failed-jobs query on reconnect while it is on screen', async () => {
         const { queryClient: client, wrapper } = makeWrapper();
         const invalidate = vi.spyOn(client, 'invalidateQueries');
+        const observer = new QueryObserver(client, { queryKey: ['jobs', 'failed'], queryFn: async () => [] });
+        const unsubscribe = observer.subscribe(() => {});
 
         renderHook(() => useJobsRealtime(), { wrapper });
         await waitFor(() => expect(handlers.has('connection')).toBe(true));
@@ -121,5 +123,21 @@ describe('useJobsRealtime failure cache invalidation', () => {
         handlers.get('connection')({ connected: true });
 
         expect(invalidate).toHaveBeenCalledWith({ queryKey: ['jobs', 'failed'] });
+        unsubscribe();
+    });
+
+    it('does not refetch caches nothing is watching on reconnect', async () => {
+        const { queryClient: client, wrapper } = makeWrapper();
+        const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+        renderHook(() => useJobsRealtime(), { wrapper });
+        await waitFor(() => expect(handlers.has('connection')).toBe(true));
+        invalidate.mockClear();
+
+        // A route with no job UI mounted: the 20s watchdog and this reconnect
+        // used to fire requests for caches no component is reading.
+        handlers.get('connection')({ connected: true });
+
+        expect(invalidate).not.toHaveBeenCalled();
     });
 });

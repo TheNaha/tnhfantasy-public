@@ -2,6 +2,7 @@ import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { X, ChevronLeft, ChevronRight, Images } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { assetUrl, thumbUrl } from '../utils/assetUrl';
+import ModalOverlay from './common/ModalOverlay';
 
 function buildUrl(filename) {
     if (!filename) return '';
@@ -125,7 +126,10 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
             )}
 
             {selectedIdx !== null && (
-                <div className="fixed inset-0 z-[90] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setSelectedIdx(null)}>
+                <ModalOverlay
+                    onClose={() => setSelectedIdx(null)}
+                    className="z-[90] bg-black/85 backdrop-blur-sm"
+                >
                     <div className="flex items-center justify-between w-full absolute top-0 left-0 right-0 px-4 py-3">
                         <span className="text-xs text-gray-400">{title || 'Scenes'}</span>
                         <div className="flex items-center gap-2">
@@ -145,7 +149,13 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
                     >
                         <ChevronLeft size={22} />
                     </button>
-                    <div className="max-h-full max-w-full" onClick={(e) => e.stopPropagation()}>
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={title || 'Scene image'}
+                        className="max-h-full max-w-full"
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         <img
                             src={buildUrl(imagesList[selectedIdx])}
                             alt=""
@@ -159,7 +169,7 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
                     >
                         <ChevronRight size={22} />
                     </button>
-                </div>
+                </ModalOverlay>
             )}
         </div>
     );

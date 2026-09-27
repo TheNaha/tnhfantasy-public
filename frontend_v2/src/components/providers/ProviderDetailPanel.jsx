@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Circle,
     Server,
@@ -16,6 +16,7 @@ import SyncTab from './tabs/SyncTab';
 import DiagnosticsTab from './tabs/DiagnosticsTab';
 import LiveConsoleTab from './tabs/LiveConsoleTab';
 import { statusDotClass, humanize } from './tabs/utils';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 const EMPTY_OBJECT = Object.freeze({});
 
@@ -37,6 +38,21 @@ export default function ProviderDetailPanel({
     jobsAssigned = 0,
 }) {
     const [activeTab, setActiveTab] = useState('runtime');
+    const panelRef = useRef(null);
+
+    // This covers the page behind it, so it has to answer the keyboard: Escape
+    // dismisses, focus lands inside on open and goes back to the trigger on
+    // close. (No portal — AnimatePresence owns the mount, and unmounting it
+    // early would kill the exit animation.)
+    useEscapeKey(onClose);
+    useEffect(() => {
+        const panel = panelRef.current;
+        const previouslyFocused = document.activeElement;
+        panel?.focus();
+        return () => {
+            if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
+        };
+    }, []);
     const { data: baseJobs = [] } = useActiveJobs();
     const activeJobs = useMemo(() => {
         return baseJobs.filter(j => 
@@ -78,7 +94,7 @@ export default function ProviderDetailPanel({
         <>
             {/* Overlay */}
             <motion.div
-                className="side-drawer-overlay"
+                className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
@@ -88,7 +104,12 @@ export default function ProviderDetailPanel({
 
             {/* Drawer */}
             <motion.div
-                className="side-drawer surface-elevated"
+                ref={panelRef}
+                role="dialog"
+                aria-modal="true"
+                aria-label={`${provider.id} provider`}
+                tabIndex={-1}
+                className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-2xl overflow-y-auto bg-gray-950 border-l border-white/10 shadow-2xl outline-none"
                 initial={{ x: '100%' }}
                 animate={{ x: 0 }}
                 exit={{ x: '100%' }}

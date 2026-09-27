@@ -10,7 +10,7 @@ const ACTION_META = {
 };
 
 export default function StoryActionModal({
-    open,
+    isOpen,
     action,
     selectionText,
     directive,
@@ -22,17 +22,17 @@ export default function StoryActionModal({
     onClose,
 }) {
     // Escape dismisses, matching every other dialog expectation.
-    // `open` is the dialog's own visibility. Passing a literal `true` registered a
+    // `isOpen` is the dialog's own visibility (the name <Modal>/<ModalOverlay> use). Passing a literal `true` registered a
     // permanent window keydown listener for a component that is mounted
     // unconditionally, so a hidden dialog could still react to Escape.
-    useEscapeKey(onClose, !!open);
+    useEscapeKey(onClose, !!isOpen);
 
     const meta = ACTION_META[action] || ACTION_META.rewrite;
     const Icon = meta.icon;
 
     return (
         <AnimatePresence>
-            {open && (
+            {isOpen && (
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}

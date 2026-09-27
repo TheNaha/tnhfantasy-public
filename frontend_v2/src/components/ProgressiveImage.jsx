@@ -24,7 +24,11 @@ const ProgressiveImage = memo(function ProgressiveImage({
     onLoad,
     onError,
 }) {
-    const [isLoaded, setIsLoaded] = useState(false);
+    // Which src has finished loading, not a bare boolean: the lightbox reuses
+    // this component across prev/next, so a `true` from the previous image
+    // would skip both the blurhash and the opacity-0 placeholder and pop the
+    // next one in fully loaded.
+    const [loadedSrc, setLoadedSrc] = useState(null);
     const shouldLoadImmediately = size === 'full';
     // Initialize with shouldLoadImmediately to avoid effect update on mount if true
     const [hasBeenInView, setHasBeenInView] = useState(shouldLoadImmediately);
@@ -35,6 +39,7 @@ const ProgressiveImage = memo(function ProgressiveImage({
 
     // Determine which image to load based on size
     const imageSrc = size === 'medium' ? (medium || src) : src;
+    const isLoaded = loadedSrc === imageSrc;
 
     // Intersection Observer for lazy loading (only for thumbnails/medium size)
     useEffect(() => {
@@ -56,7 +61,7 @@ const ProgressiveImage = memo(function ProgressiveImage({
 
     // Handle image load
     const handleLoad = () => {
-        setIsLoaded(true);
+        setLoadedSrc(imageSrc);
         if (onLoad) onLoad();
     };
 

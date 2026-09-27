@@ -21,15 +21,27 @@ export function useJobsRealtime() {
         connectionToastIdRef.current = null;
     }, []);
 
+    // Invalidate only what some component is actually showing. These run on
+    // every tab focus and every reconnect from every route, including the ones
+    // with no job UI at all, and an unobserved cache refetch buys nothing: the
+    // query is stale either way, so the next mount of its consumer refetches
+    // it (these keys have staleTime 0).
+    const invalidateIfMounted = useCallback((queryKey) => {
+        const isMounted = queryClient.getQueryCache()
+            .findAll({ queryKey })
+            .some((query) => query.getObserversCount() > 0);
+        if (isMounted) queryClient.invalidateQueries({ queryKey });
+    }, [queryClient]);
+
     // Full refresh of the server-backed state after reconnect / refocus. The
     // per-job/per-active caches are already updated incrementally via
     // setQueryData on live events; this covers anything that raced a gap.
     const refreshServerState = useCallback(() => {
-        queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
-        queryClient.invalidateQueries({ queryKey: ['jobs', 'failed'] });
-        queryClient.invalidateQueries({ queryKey: ['gallery'] });
-        queryClient.invalidateQueries({ queryKey: ['statistics'] });
-    }, [queryClient]);
+        invalidateIfMounted(['jobs', 'active']);
+        invalidateIfMounted(['jobs', 'failed']);
+        invalidateIfMounted(['gallery']);
+        invalidateIfMounted(['statistics']);
+    }, [invalidateIfMounted]);
 
     // Replay events missed during a disconnect. lastSequenceNumberRef is the
     // highest sequence number already applied, so the server only replays
@@ -45,9 +57,9 @@ export function useJobsRealtime() {
             console.warn('[useJobsRealtime] Replay request failed:', error);
         }
         // After replay, invalidate to ensure consistency regardless.
-        queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
-        queryClient.invalidateQueries({ queryKey: ['jobs', 'failed'] });
-    }, [queryClient]);
+        invalidateIfMounted(['jobs', 'active']);
+        invalidateIfMounted(['jobs', 'failed']);
+    }, [invalidateIfMounted]);
 
     useEffect(() => {
         // Initial setup — subscribe exactly once. websocket.js re-subscribes
@@ -183,6 +195,12 @@ export function useJobsRealtime() {
         // arriving (silently dropped), refetch the active queue so desktop
         // stays fresh even with refetchOnWindowFocus disabled.
         const watchdog = setInterval(() => {
+            // Nothing to refresh on a route with no active-jobs view mounted
+            // (`/settings`, `/characters`, `/chat`).
+            if (!queryClient.getQueryCache().findAll({ queryKey: ['jobs', 'active'] })
+                .some((query) => query.getObserversCount() > 0)) {
+                return;
+            }
             if (ws.getConnectionStatus() && Date.now() - lastEventTimeRef.current > 15000) {
                 queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
                 lastEventTimeRef.current = Date.now();
