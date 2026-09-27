@@ -8,6 +8,7 @@ from .llm_config import router as llm_config_router
 from .lorebooks import router as lorebooks_router
 from .memories import router as memories_router
 from .scenarios import router as scenarios_router
+from .sessions import router as sessions_router
 from .personas import router as personas_router
 from .stories import router as stories_router
 from .voices import router as voices_router
@@ -28,6 +29,7 @@ router.include_router(scenarios_router, prefix="/scenarios", tags=["Scenarios"])
 router.include_router(personas_router, prefix="/personas", tags=["Personas"])
 router.include_router(campaigns_router, prefix="/campaigns", tags=["Campaigns"])
 router.include_router(stories_router, prefix="/stories", tags=["Stories"])
+router.include_router(sessions_router, prefix="/sessions", tags=["Sessions"])
 router.include_router(voices_router, prefix="/voices", tags=["Voices"])
 router.include_router(world_hub_router, prefix="/world-vault", tags=["World Vault"])
 router.include_router(locations_router, prefix="/locations", tags=["Locations"])
