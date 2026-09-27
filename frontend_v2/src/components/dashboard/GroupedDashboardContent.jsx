@@ -1,17 +1,124 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import { motion } from 'framer-motion';
-import { Calendar, Check, Star } from 'lucide-react';
+import { Calendar, Check, ChevronDown, Layers, Loader2, Star } from 'lucide-react';
 
 import FeedCard from './FeedCard';
 import ImageGroup from './ImageGroup';
 import JobCard from './JobCard';
 import ProgressiveImage from '../ProgressiveImage';
+import { SessionBadges } from './SessionPanel';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
 import { getAssetPrompt } from '../../utils/assetMetadata';
 import { assetUrl, thumbUrl, assetPath } from '../../utils/assetUrl';
 import { formatTimestamp } from '../../utils/dateTime';
+import { useSessionAssets } from '../../hooks/useSessions';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { useVirtualListScrollMargin } from '../../hooks/useVirtualListScrollMargin';
+
+const SESSION_HEADER_HEIGHT = 148;
+const SESSION_MEMBER_ROW_HEIGHT = 116;
+const SESSION_MEMBER_COLUMNS = 6;
+const SESSION_MEMBER_ROW_CAP = 6;
+
+function estimateSessionUnitSize(item, expanded, gridCols) {
+    const collapsed = SESSION_HEADER_HEIGHT;
+    if (!expanded) return collapsed;
+    const columns = Math.max(3, Math.min(SESSION_MEMBER_COLUMNS, gridCols || SESSION_MEMBER_COLUMNS));
+    const rows = Math.min(SESSION_MEMBER_ROW_CAP, Math.ceil((item?.imageCount || 0) / columns));
+    return collapsed + rows * SESSION_MEMBER_ROW_HEIGHT;
+}
+
+const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onToggleExpand }) {
+    const { data, isLoading, error } = useSessionAssets(item.sessionId, { enabled: expanded });
+
+    return (
+        <section
+            className="glass-panel rounded-2xl border border-white/5 p-4"
+            aria-label={`Session ${item.name}`}
+        >
+            <button
+                type="button"
+                onClick={onToggleExpand}
+                aria-expanded={expanded}
+                className="w-full flex items-center gap-4 text-left"
+            >
+                {item.thumbnail ? (
+                    <img
+                        src={thumbUrl(item.thumbnail)}
+                        alt=""
+                        loading="lazy"
+                        className="w-14 h-14 rounded-xl object-cover bg-gray-800 flex-shrink-0"
+                    />
+                ) : (
+                    <span className="w-14 h-14 rounded-xl bg-gray-800 flex items-center justify-center flex-shrink-0">
+                        <Layers size={22} className="text-gray-600" aria-hidden="true" />
+                    </span>
+                )}
+
+                <span className="flex-1 min-w-0">
+                    <span className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white truncate">{item.name}</span>
+                    </span>
+                    <span className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400 font-medium">
+                        <span>{item.imageCount} image{item.imageCount === 1 ? '' : 's'}</span>
+                        <span className="flex items-center gap-1.5">
+                            <Calendar size={12} className="text-gray-500" aria-hidden="true" />
+                            {formatTimestamp(item.startAt || item.updatedAt)}
+                        </span>
+                    </span>
+                    <SessionBadges
+                        autoDetected={item.autoDetected}
+                        locked={item.locked}
+                        className="mt-1.5"
+                    />
+                </span>
+
+                <ChevronDown
+                    size={18}
+                    aria-hidden="true"
+                    className={`text-gray-500 flex-shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                />
+            </button>
+
+            {expanded && (
+                <div className="mt-4">
+                    {isLoading && (
+                        <div className="flex items-center gap-2 py-6 justify-center text-sm text-gray-400">
+                            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                            Loading images…
+                        </div>
+                    )}
+
+                    {error && (
+                        <p role="alert" className="text-sm text-red-300">
+                            {error.message || 'Could not load this session’s images.'}
+                        </p>
+                    )}
+
+                    {!isLoading && !error && (data?.assets?.length ?? 0) === 0 && (
+                        <p className="py-6 text-center text-sm text-gray-500">
+                            This session has no images.
+                        </p>
+                    )}
+
+                    {!isLoading && !error && (data?.assets?.length ?? 0) > 0 && (
+                        <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))' }}>
+                            {data.assets.map((asset) => (
+                                <img
+                                    key={asset.id}
+                                    src={thumbUrl(asset.relative_path)}
+                                    alt={asset.relative_path}
+                                    loading="lazy"
+                                    className="w-full aspect-square object-cover rounded-lg bg-gray-800"
+                                />
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+        </section>
+    );
+});
 
 
 
@@ -256,12 +363,34 @@ export default memo(function GroupedDashboardContent({
         images.forEach((image) => toggleSelection(assetPath(image)));
     }, [toggleSelection]);
 
+    const [expandedSessionIds, setExpandedSessionIds] = useState(() => new Set());
+
+    const handleToggleSessionExpand = useCallback((sessionId) => {
+        setExpandedSessionIds((current) => {
+            const next = new Set(current);
+            if (next.has(sessionId)) {
+                next.delete(sessionId);
+            } else {
+                next.add(sessionId);
+            }
+            return next;
+        });
+    }, []);
+
     const listRef = useRef(null);
     const scrollMargin = useVirtualListScrollMargin(listRef);
     const virtualizer = useWindowVirtualizer({
         count: sortedGroupedEntries.length,
         estimateSize: (index) => {
-            const itemCount = sortedGroupedEntries[index]?.[1]?.length || 1;
+            const groupItems = sortedGroupedEntries[index]?.[1];
+            const itemCount = groupItems?.length || 1;
+            if (viewMode === 'session') {
+                return estimateSessionUnitSize(
+                    groupItems?.[0],
+                    expandedSessionIds.has(groupItems?.[0]?.sessionId),
+                    gridCols,
+                );
+            }
             if (viewMode === 'grid') {
                 return Math.max(320, Math.min(1800, 180 + Math.ceil(itemCount / Math.max(gridCols, 1)) * 260));
             }
@@ -301,12 +430,18 @@ export default memo(function GroupedDashboardContent({
                         paddingBottom: '2rem'
                     }}
                 >
-                    {date !== 'Random' && (
+                    {date !== 'Random' && viewMode !== 'session' && (
                         <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2">
                             <Calendar size={16} /> {formatDateLabel(date)}
                         </h3>
                     )}
-                    {viewMode === 'grid' ? (
+                    {viewMode === 'session' ? (
+                        <SessionGroupCard
+                            item={groupItems[0]}
+                            expanded={expandedSessionIds.has(groupItems[0]?.sessionId)}
+                            onToggleExpand={() => handleToggleSessionExpand(groupItems[0]?.sessionId)}
+                        />
+                    ) : viewMode === 'grid' ? (
                         <div
                             className="grid gap-4"
                             style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}

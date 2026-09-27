@@ -30,6 +30,7 @@ import { useDashboardSelection } from '../hooks/useDashboardSelection';
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
 import { useGalleryAutoRefresh } from '../hooks/useGalleryAutoRefresh';
+import { flattenSessionPages, useSessions } from '../hooks/useSessions';
 
 // Stores
 import { useConfirmation } from '../store/confirmationStore';
@@ -43,11 +44,13 @@ import GeneratorFloatingButton from '../components/dashboard/GeneratorFloatingBu
 import DashboardOverlays from '../components/dashboard/DashboardOverlays';
 import DashboardGalleryGrid from '../components/dashboard/DashboardGalleryGrid';
 import DashboardHeaderToolbar from '../components/dashboard/DashboardHeaderToolbar';
+import SessionPanel, { SessionsToolbar, SessionViewPlaceholder } from '../components/dashboard/SessionPanel';
 
 // Utils
 import {
     applyGeneratorStateFromMetadata,
 } from '../utils/reuseParameters';
+import { buildSessionGroupedEntries } from '../utils/dashboardItems';
 
 export default function Dashboard() {
     const navigate = useNavigate();
@@ -121,7 +124,20 @@ export default function Dashboard() {
     const setViewMode = useCallback((mode) => {
         useSettingsStore.getState().updateSetting('ui', 'defaultViewMode', mode);
     }, []);
-    const [gridCols, setGridCols] = useState(defaultGridColumns);
+    // Grid columns live in the settings store (not local state) so a change made
+    // on /settings is already in force here instead of after a reload.
+    const gridCols = defaultGridColumns;
+    const setGridCols = useCallback((cols) => {
+        useSettingsStore.getState().updateSetting('ui', 'defaultGridColumns', cols);
+    }, []);
+    const [showSessionPanel, setShowSessionPanel] = useState(false);
+
+    const isSessionView = viewMode === 'session';
+    const sessionsQuery = useSessions({}, { enabled: isSessionView });
+    const sessions = useMemo(
+        () => flattenSessionPages(sessionsQuery.data),
+        [sessionsQuery.data],
+    );
 
     // Filters
     const [showFavorites, setShowFavorites] = useState(false);
@@ -203,10 +219,13 @@ export default function Dashboard() {
         data,
         fetchNextPage,
         hasNextPage,
+        isFetching,
         isFetchingNextPage,
         isLoading,
         refetch
     } = useGallery(filters);
+
+    const galleryQueryKey = useMemo(() => ['gallery', filters], [filters]);
 
     const handleToggleFavorite = useCallback((filename) => {
         const wasFavorite = fastIsFavorite(filename);
@@ -218,7 +237,9 @@ export default function Dashboard() {
     }, [toggleFavorite, fastIsFavorite]);
 
     const sentinelRef = useInfiniteScroll({
-        hasMore: hasNextPage,
+        // Session view mode paginates sessions from the drawer, so the gallery
+        // sentinel must not keep pulling asset pages nobody is looking at.
+        hasMore: isSessionView ? false : hasNextPage,
         onLoadMore: fetchNextPage,
         loading: isFetchingNextPage,
         rootMargin: '160px 0px'
@@ -228,7 +249,9 @@ export default function Dashboard() {
         lastCompletedJob,
         autoRefreshOnJobComplete,
         queryClient,
-        galleryQueryKey: ['gallery', filters],
+        // Stable identity: the hook keys its effect on this, and an inline
+        // array re-ran the effect on every Dashboard render.
+        galleryQueryKey,
     });
 
     useKeyboardShortcuts({
@@ -244,7 +267,7 @@ export default function Dashboard() {
         allItems,
         displayedItems,
         selectedJob,
-        sortedGroupedEntries,
+        sortedGroupedEntries: imageGroupedEntries,
         formatDateLabel,
     } = useDashboardItems({
         data,
@@ -256,6 +279,14 @@ export default function Dashboard() {
         favorites,
         sort: filters.sort || 'date_desc',
     });
+
+    const sessionGroupedEntries = useMemo(
+        () => buildSessionGroupedEntries(sessions, { sort: filters.sort || 'date_desc' }),
+        [filters.sort, sessions],
+    );
+
+    const sortedGroupedEntries = isSessionView ? sessionGroupedEntries : imageGroupedEntries;
+    const sessionPlaceholder = isSessionView && sessions.length === 0;
 
     // The lightbox navigates the list the user is actually looking at, not one
     // job's batch. It was only ever handed `siblingImages`, so every ordinary
@@ -284,7 +315,7 @@ export default function Dashboard() {
         if (!accepted) return;
         try {
             await filesApi.deleteMultiple([filename]);
-            queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
+            queryClient.invalidateQueries({ queryKey: ['gallery', filters] });
             if (selectedImage?.name === filename) closeSelectedImage();
             toast.success(`Successfully deleted ${filename}`, {
                 icon: '🗑️',
@@ -357,7 +388,9 @@ export default function Dashboard() {
         } else if (activeCollection) {
             setActiveCollection(null);
         } else if (filters.search) {
-            setFilters({ search: '' });
+            // Functional update: replacing the object dropped `sort` (and the
+            // persisted copy of it in localStorage) along with the search text.
+            setFilters((current) => ({ ...current, search: '' }));
         }
     }, [showFavorites, activeCollection, filters, setShowFavorites, setActiveCollection, setFilters]);
 
@@ -530,31 +563,53 @@ export default function Dashboard() {
                     onFilterChange={setFilters}
                 />
 
-                <DashboardGalleryGrid
-                    isLoading={isLoading}
-                    viewMode={viewMode}
-                    displayedItems={displayedItems}
-                    showFavorites={showFavorites}
-                    activeCollection={activeCollection}
-                    filters={filters}
-                    onClearFilters={handleClearFilters}
-                    allItems={allItems}
-                    onImageClick={handleImageClick}
-                    onJobClick={handleJobClick}
-                    selectionMode={selectionMode}
-                    selectedFiles={selectedFiles}
-                    onToggleSelection={toggleSelection}
-                    isFavorite={fastIsFavorite}
-                    onToggleFavorite={handleToggleFavorite}
-                    sortedGroupedEntries={sortedGroupedEntries}
-                    formatDateLabel={formatDateLabel}
-                    gridCols={gridCols}
-                    onDelete={handleDelete}
-                    onJobDelete={handleJobDelete}
-                    sentinelRef={sentinelRef}
-                    isFetchingNextPage={isFetchingNextPage}
+                <SessionsToolbar
+                    isSessionView={isSessionView}
+                    onOpenPanel={() => setShowSessionPanel(true)}
+                    onToggleViewMode={() => setViewMode(isSessionView ? 'grid' : 'session')}
                 />
+
+                {sessionPlaceholder && (
+                    <SessionViewPlaceholder
+                        isLoading={sessionsQuery.isLoading}
+                        error={sessionsQuery.isError ? sessionsQuery.error : null}
+                        onOpenPanel={() => setShowSessionPanel(true)}
+                    />
+                )}
+
+                {!sessionPlaceholder && (
+                    <DashboardGalleryGrid
+                        isLoading={isLoading}
+                        viewMode={viewMode}
+                        displayedItems={displayedItems}
+                        showFavorites={showFavorites}
+                        activeCollection={activeCollection}
+                        filters={filters}
+                        onClearFilters={handleClearFilters}
+                        allItems={allItems}
+                        onImageClick={handleImageClick}
+                        onJobClick={handleJobClick}
+                        selectionMode={selectionMode}
+                        selectedFiles={selectedFiles}
+                        onToggleSelection={toggleSelection}
+                        isFavorite={fastIsFavorite}
+                        onToggleFavorite={handleToggleFavorite}
+                        sortedGroupedEntries={sortedGroupedEntries}
+                        formatDateLabel={formatDateLabel}
+                        gridCols={gridCols}
+                        onDelete={handleDelete}
+                        onJobDelete={handleJobDelete}
+                        sentinelRef={sentinelRef}
+                        isFetchingNextPage={isFetchingNextPage}
+                        isRefreshing={isFetching && !isLoading}
+                    />
+                )}
             </div>
+
+            <SessionPanel
+                isOpen={showSessionPanel}
+                onClose={() => setShowSessionPanel(false)}
+            />
 
             <DashboardOverlays
                 selectedImage={selectedImage}

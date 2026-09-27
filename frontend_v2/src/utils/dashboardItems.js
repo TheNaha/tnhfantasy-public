@@ -41,6 +41,83 @@ function toJobItem(job) {
     };
 }
 
+export const UNTITLED_SESSION_NAME = 'Untitled session';
+
+function toTimestamp(value) {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = typeof value === 'number' ? value : Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * A session is not a date bucket. It orders by the last time anything happened
+ * to it, which is what `sessions.py` sorts on, and falls back to its start when
+ * a row has never been touched.
+ */
+export function getSessionSortDate(session) {
+    const candidates = [session?.updated_at, session?.start_at, session?.end_at, session?.created_at];
+    for (const value of candidates) {
+        const parsed = toTimestamp(value);
+        if (parsed !== null) return parsed;
+    }
+    return 0;
+}
+
+/** Auto-detected rows routinely arrive unnamed; the UI needs something to show. */
+export function getSessionName(session) {
+    const name = typeof session?.name === 'string' ? session.name.trim() : '';
+    return name || UNTITLED_SESSION_NAME;
+}
+
+/**
+ * Wraps one `SessionOut` row as a dashboard item.
+ *
+ * A session is one unit the way an `imageGroup` is one unit, so it carries an
+ * `id` (the virtualizer's item key) and a sort timestamp rather than a
+ * `getLocalDateKey` bucket. `members` is deliberately absent: a session's
+ * images live behind `GET /api/v2/sessions/{id}/assets`, and a list of
+ * sessions must not become a fan-out of member requests.
+ */
+export function toSessionItem(session) {
+    return {
+        type: 'session',
+        id: `session-${session?.id}`,
+        sessionId: session?.id,
+        session,
+        name: getSessionName(session),
+        imageCount: session?.image_count ?? 0,
+        autoDetected: Boolean(session?.auto_detected),
+        locked: Boolean(session?.locked),
+        thumbnail: session?.thumbnail ?? null,
+        description: session?.description ?? null,
+        startAt: session?.start_at ?? null,
+        endAt: session?.end_at ?? null,
+        updatedAt: session?.updated_at ?? null,
+        sortDate: getSessionSortDate(session),
+    };
+}
+
+/**
+ * Session view mode's counterpart to `sortedGroupedEntries`.
+ *
+ * One entry per session, each holding exactly one item, so the window
+ * virtualizer measures a whole session as a single row. Sessions are ordered
+ * by `updated_at desc` (ascending for `date_asc`) and never bucketed by day —
+ * the date grouping belongs to the image modes, and a session that spans
+ * midnight would otherwise tear in half.
+ */
+export function buildSessionGroupedEntries(sessions, { sort = 'date_desc' } = {}) {
+    const direction = sort === 'date_asc' ? 1 : -1;
+    const items = (sessions || [])
+        .filter((session) => session?.id)
+        .map(toSessionItem)
+        .sort((left, right) => (
+            (left.sortDate - right.sortDate) * direction
+            || String(left.sessionId).localeCompare(String(right.sessionId))
+        ));
+    return items.map((item) => [item.id, [item]]);
+}
+
 export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = null, options = {}) {
     const historicalFiles = data ? data.pages.flatMap((page) => page.files.map(toImageItem)) : [];
     const historicalJobs = data ? data.pages.flatMap((page) => (page.jobs || []).map(toJobItem)) : [];
