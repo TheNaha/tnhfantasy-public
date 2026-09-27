@@ -357,3 +357,40 @@ class TestGetDownloadUrl:
     def test_nested_file_path(self):
         url = get_download_url("user/model", "subdir/file.safetensors")
         assert "subdir/file.safetensors" in url
+
+
+class TestInferBaseModelSpellings:
+    """Base model is a picker FILTER, so a mis-classification does not degrade
+    gracefully — it makes the model unfindable. Both families below have more
+    than one spelling in the wild."""
+
+    def test_sdxl_long_form_is_not_mistaken_for_sd15(self):
+        # HuggingFace uses both `sdxl` and the full `stable-diffusion-xl`.
+        # Matching only the shorthand sent every long-form SDXL model down the
+        # fall-through and reported it as SD 1.5.
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        assert infer_base_model(["stable-diffusion-xl"]) == "SDXL 1.0"
+        assert infer_base_model(["sdxl"]) == "SDXL 1.0"
+        assert infer_base_model(["diffusers", "stable-diffusion-xl", "safetensors"]) == "SDXL 1.0"
+
+    def test_illustrious_spellings_collapse_to_one_family(self):
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        for tags in (["illustrious"], ["Illustrious"], ["illustrious-xl"], ["Illustrious-XL"]):
+            assert infer_base_model(tags) == "Illustrious"
+
+    def test_illustrious_wins_over_sdxl(self):
+        # Illustrious is an SDXL-architecture finetune whose repos also say
+        # "sdxl", so ordering is what makes the common case work.
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        assert infer_base_model(["illustrious", "sdxl", "stable-diffusion-xl"]) == "Illustrious"
+
+    def test_other_families_still_classify(self):
+        from infrastructure.parsers.hf_parser import infer_base_model
+
+        assert infer_base_model(["stable-diffusion-2-1-base"]) == "SD 2.1"
+        assert infer_base_model(["stable-diffusion-3-medium"]) == "SD 3"
+        assert infer_base_model(["pony"]) == "Pony"
+        assert infer_base_model(["anything-v3"]) == "SD 1.5"

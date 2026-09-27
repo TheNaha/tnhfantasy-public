@@ -61,13 +61,32 @@ def infer_base_model(tags: list[str], card_content: str = None) -> str:
     """
     Infer base model version from tags and model card.
     
-    Returns: 'SD 1.5', 'SDXL 1.0', 'SD 3', 'Pony', etc.
+    Returns: 'SD 1.5', 'SDXL 1.0', 'SD 3', 'Pony', 'Illustrious', etc.
     """
     tags_lower = [t.lower() for t in tags]
     card_lower = (card_content or '').lower()
     
-    # Check for SDXL
-    if any('sdxl' in t for t in tags_lower) or 'sdxl' in card_lower:
+    # Check for Illustrious, before the SDXL check rather than with the other
+    # specific families below. Illustrious is an SDXL-architecture finetune, so
+    # its repos and cards routinely say "sdxl" / "stable-diffusion-xl" too, and
+    # checking SDXL first is exactly how an Illustrious model ended up labelled
+    # SDXL 1.0 and disappeared from the base-model filter. One substring covers
+    # every spelling CivitAI uses — `tags_lower` is already folded, so
+    # 'Illustrious', 'illustrious', 'Illustrious-XL' and 'illustrious-xl' are all
+    # the same case, and the XL variant is reported as its family because the
+    # picker filter has one option per family, not per variant.
+    if any('illustrious' in t for t in tags_lower) or 'illustrious' in card_lower:
+        return 'Illustrious'
+    
+    # Check for SDXL. HuggingFace spells it both ways: the `sdxl` shorthand and
+    # the full `stable-diffusion-xl` repo/tag spelling. Matching only `sdxl`
+    # meant an SDXL model whose tags used the long form fell through every
+    # branch and was reported as SD 1.5, so the base-model filter hid it.
+    if (
+        any('sdxl' in t or 'stable-diffusion-xl' in t or 'stable diffusion xl' in t for t in tags_lower)
+        or 'sdxl' in card_lower
+        or 'stable-diffusion-xl' in card_lower
+    ):
         return 'SDXL 1.0'
     
     # Check for SD 3

@@ -101,6 +101,12 @@ export default function ModelFilterBar({
           <option value="SDXL 1.0">SDXL</option>
           <option value="SD 3">SD 3</option>
           <option value="Pony">Pony</option>
+          {/* Without this the option, Illustrious models classified correctly
+              but could not be filtered at all — 98 of 200 LoRAs in the live
+              data carry it. The vocabulary already existed in
+              useCivitaiSearch's fallback list; only this hardcoded dropdown
+              was missing it. */}
+          <option value="Illustrious">Illustrious</option>
         </select>
 
         <select
