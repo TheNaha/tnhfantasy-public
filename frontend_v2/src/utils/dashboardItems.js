@@ -50,17 +50,40 @@ function toTimestamp(value) {
 }
 
 /**
- * A session is not a date bucket. It orders by the last time anything happened
- * to it, which is what `sessions.py` sorts on, and falls back to its start when
- * a row has never been touched.
+ * The sort key for a session: `[touched, generated]`.
+ *
+ * `updated_at` stays primary, deliberately — a session someone just curated
+ * should float to the top, and that is the intent the existing tests protect.
+ *
+ * It is not sufficient on its own, though. `updated_at` is a bookkeeping column
+ * that moves on any write, so a library created or re-indexed in one
+ * transaction gives every session the SAME value to the microsecond. Sorting on
+ * it alone then falls through to the id tiebreak, and reversing the direction
+ * changes nothing — which is exactly what a broken sort looks like: the control
+ * moves, the order does not. (In a 1,411-session library every `updated_at` was
+ * `2026-09-27T07:46:12.265488Z`.)
+ *
+ * So the generation window — when the images were actually made — breaks the
+ * tie. It is the only ordering that stays meaningful across database
+ * maintenance, and it makes the sort visibly work instead of silently not.
  */
+export function getSessionSortDateParts(session) {
+    const first = (values) => {
+        for (const value of values) {
+            const parsed = toTimestamp(value);
+            if (parsed !== null) return parsed;
+        }
+        return 0;
+    };
+    return {
+        touched: first([session?.updated_at, session?.created_at]),
+        generated: first([session?.end_at, session?.start_at]),
+    };
+}
+
+/** The primary sort key. Kept for callers that only need one number. */
 export function getSessionSortDate(session) {
-    const candidates = [session?.updated_at, session?.start_at, session?.end_at, session?.created_at];
-    for (const value of candidates) {
-        const parsed = toTimestamp(value);
-        if (parsed !== null) return parsed;
-    }
-    return 0;
+    return getSessionSortDateParts(session).touched;
 }
 
 /** Auto-detected rows routinely arrive unnamed; the UI needs something to show. */
@@ -94,6 +117,7 @@ export function toSessionItem(session) {
         endAt: session?.end_at ?? null,
         updatedAt: session?.updated_at ?? null,
         sortDate: getSessionSortDate(session),
+        sortDateParts: getSessionSortDateParts(session),
     };
 }
 
@@ -107,15 +131,38 @@ export function toSessionItem(session) {
  * midnight would otherwise tear in half.
  */
 export function buildSessionGroupedEntries(sessions, { sort = 'date_desc' } = {}) {
-    const direction = sort === 'date_asc' ? 1 : -1;
     const items = (sessions || [])
         .filter((session) => session?.id)
-        .map(toSessionItem)
-        .sort((left, right) => (
-            (left.sortDate - right.sortDate) * direction
+        .map(toSessionItem);
+
+    // The gallery's sort is an IMAGE sort, and it arrives here as one of three
+    // shapes: `date_desc`, `date_asc`, or `random:<seed>`.
+    //
+    // The previous version collapsed all three into `sort === 'date_asc' ? 1 :
+    // -1`, which meant Random silently ordered sessions by date, and did so
+    // without saying so — a sort control that looks like it did something and
+    // provably did not. Sessions have no natural random order, so the honest
+    // answer is a real shuffle keyed on the same seed the images use: choosing
+    // Random twice with the same seed gives the same order, which is what makes
+    // a random sort shareable.
+    const isRandom = String(sort).startsWith('random');
+    const seed = isRandom ? String(sort).slice('random:'.length) : '';
+    const direction = sort === 'date_asc' ? 1 : -1;
+
+    const ordered = isRandom
+        // `seededSort` is the same primitive the image grid uses for Random, so
+        // the two agree: same seed, same order, and a stable one that survives a
+        // re-render and a re-fetch.
+        ? seededSort(items, seed, (item) => item.sessionId)
+        : items.sort((left, right) => (
+            (left.sortDateParts.touched - right.sortDateParts.touched) * direction
+            // The tie-break, and the reason the sort works at all when every
+            // session was written in the same transaction.
+            || (left.sortDateParts.generated - right.sortDateParts.generated) * direction
             || String(left.sessionId).localeCompare(String(right.sessionId))
         ));
-    return items.map((item) => [item.id, [item]]);
+
+    return ordered.map((item) => [item.id, [item]]);
 }
 
 export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = null, options = {}) {

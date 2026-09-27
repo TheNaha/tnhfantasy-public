@@ -129,3 +129,39 @@ describe('buildSessionGroupedEntries', () => {
         expect(buildSessionGroupedEntries([makeSession(), { name: 'orphan' }])).toHaveLength(1);
     });
 });
+
+describe('the degenerate-timestamp case', () => {
+    // A library created or re-indexed in one transaction gives every session the
+    // SAME `updated_at`, to the microsecond. That is not hypothetical: in a
+    // 1,411-session library every row carried `2026-09-27T07:46:12.265488Z`.
+    // Sorting on `updated_at` alone then falls through to the id tiebreak, and
+    // reversing the direction changes nothing — a control that moves and an
+    // order that does not.
+    const sameInstant = '2026-09-27T07:46:12.265488Z';
+    const sessions = [
+        { id: 'b', name: 'beta', updated_at: sameInstant, start_at: '2026-03-05T10:00:00Z' },
+        { id: 'a', name: 'alpha', updated_at: sameInstant, start_at: '2026-01-03T10:00:00Z' },
+        { id: 'c', name: 'gamma', updated_at: sameInstant, start_at: '2026-04-23T10:00:00Z' },
+    ];
+
+    it('breaks the tie on when the images were generated', () => {
+        const desc = buildSessionGroupedEntries(sessions, { sort: 'date_desc' })
+            .map(([, items]) => items[0].sessionId);
+        const asc = buildSessionGroupedEntries(sessions, { sort: 'date_asc' })
+            .map(([, items]) => items[0].sessionId);
+
+        expect(desc).toEqual(['c', 'b', 'a']);
+        expect(asc).toEqual(['a', 'b', 'c']);
+    });
+
+    it('still lets a recently curated session win', () => {
+        const touched = [
+            { id: 'a', name: 'alpha', updated_at: '2026-09-01T00:00:00Z', start_at: '2026-01-03T10:00:00Z' },
+            { id: 'b', name: 'beta', updated_at: '2026-01-01T00:00:00Z', start_at: '2026-08-09T10:00:00Z' },
+        ];
+        const order = buildSessionGroupedEntries(touched, { sort: 'date_desc' })
+            .map(([, items]) => items[0].sessionId);
+        // `a` is older but was curated most recently, and that still wins.
+        expect(order).toEqual(['a', 'b']);
+    });
+});

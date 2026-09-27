@@ -46,7 +46,7 @@ import DashboardGalleryGrid from '../components/dashboard/DashboardGalleryGrid';
 import GalleryDateRail from '../components/dashboard/GalleryDateRail';
 import GalleryFilterPanel from '../components/dashboard/GalleryFilterPanel';
 import DashboardHeaderToolbar from '../components/dashboard/DashboardHeaderToolbar';
-import SessionPanel, { SessionsToolbar, SessionViewPlaceholder } from '../components/dashboard/SessionPanel';
+import SessionPanel, { SessionViewPlaceholder } from '../components/dashboard/SessionPanel';
 
 // Utils
 import {
@@ -239,11 +239,15 @@ export default function Dashboard() {
     }, [toggleFavorite, fastIsFavorite]);
 
     const sentinelRef = useInfiniteScroll({
-        // Session view mode paginates sessions from the drawer, so the gallery
-        // sentinel must not keep pulling asset pages nobody is looking at.
-        hasMore: isSessionView ? false : hasNextPage,
-        onLoadMore: fetchNextPage,
-        loading: isFetchingNextPage,
+        // In session view the sentinel pages SESSIONS, not assets. It used to be
+        // switched off there entirely (`hasMore: false`), on the reasoning that
+        // sessions "paginate from the drawer" — so scrolling a 1,411-session
+        // library could never reach page two, and the view looked like it only
+        // ever had the handful the virtualizer happened to mount. The drawer
+        // curates sessions; it is not the only way to see more of them.
+        hasMore: isSessionView ? sessionsQuery.hasNextPage : hasNextPage,
+        onLoadMore: isSessionView ? sessionsQuery.fetchNextPage : fetchNextPage,
+        loading: isSessionView ? sessionsQuery.isFetchingNextPage : isFetchingNextPage,
         rootMargin: '160px 0px'
     });
 
@@ -563,11 +567,8 @@ export default function Dashboard() {
                     onCancelSelectionMode={handleCancelSelectionMode}
                     filters={filters}
                     onFilterChange={setFilters}
-                />
-
-                <SessionsToolbar
                     isSessionView={isSessionView}
-                    onOpenPanel={() => setShowSessionPanel(true)}
+                    onOpenSessionPanel={() => setShowSessionPanel(true)}
                     onToggleViewMode={() => setViewMode(isSessionView ? 'grid' : 'session')}
                 />
 

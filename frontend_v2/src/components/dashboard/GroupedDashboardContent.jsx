@@ -28,7 +28,7 @@ function estimateSessionUnitSize(item, expanded, gridCols) {
     return collapsed + rows * SESSION_MEMBER_ROW_HEIGHT;
 }
 
-const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onToggleExpand }) {
+const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onToggleExpand, onImageClick, selectionMode, selectedFiles, toggleSelection }) {
     const { data, isLoading, error } = useSessionAssets(item.sessionId, { enabled: expanded });
 
     return (
@@ -103,15 +103,43 @@ const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onTogg
 
                     {!isLoading && !error && (data?.assets?.length ?? 0) > 0 && (
                         <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))' }}>
-                            {data.assets.map((asset) => (
-                                <img
-                                    key={asset.id}
-                                    src={thumbUrl(asset.relative_path)}
-                                    alt={asset.relative_path}
-                                    loading="lazy"
-                                    className="w-full aspect-square object-cover rounded-lg bg-gray-800"
-                                />
-                            ))}
+                            {/* These were plain <img> with no handler, so the one
+                                place a session actually showed its images was the
+                                one place you could not open one. The lightbox reads
+                                `relative_path` through `assetPath`, which is exactly
+                                the field the session-assets endpoint returns, so the
+                                same modal the grid opens opens from here. */}
+                            {data.assets.map((asset) => {
+                                const selected = selectedFiles?.has(asset.relative_path) ?? false;
+                                return (
+                                    <button
+                                        type="button"
+                                        key={asset.id}
+                                        onClick={() => {
+                                            if (selectionMode) {
+                                                toggleSelection?.(asset.relative_path);
+                                                return;
+                                            }
+                                            onImageClick?.({ ...asset, type: 'image' });
+                                        }}
+                                        title={selectionMode
+                                            ? (selected ? 'Deselect' : 'Select')
+                                            : 'Open image details'}
+                                        aria-label={asset.relative_path}
+                                        aria-pressed={selectionMode ? selected : undefined}
+                                        className={`relative block w-full aspect-square rounded-lg overflow-hidden bg-gray-800 border-2 transition-colors ${
+                                            selected ? 'border-yellow-400' : 'border-transparent hover:border-purple-500'
+                                        }`}
+                                    >
+                                        <img
+                                            src={thumbUrl(asset.relative_path)}
+                                            alt={asset.relative_path}
+                                            loading="lazy"
+                                            className="w-full h-full object-cover"
+                                        />
+                                    </button>
+                                );
+                            })}
                         </div>
                     )}
                 </div>
@@ -440,6 +468,10 @@ export default memo(function GroupedDashboardContent({
                             item={groupItems[0]}
                             expanded={expandedSessionIds.has(groupItems[0]?.sessionId)}
                             onToggleExpand={() => handleToggleSessionExpand(groupItems[0]?.sessionId)}
+                            onImageClick={handleImageClick}
+                            selectionMode={selectionMode}
+                            selectedFiles={selectedFiles}
+                            toggleSelection={toggleSelection}
                         />
                     ) : viewMode === 'grid' ? (
                         <div

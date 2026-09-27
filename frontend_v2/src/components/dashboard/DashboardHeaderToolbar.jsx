@@ -51,6 +51,9 @@ export default function DashboardHeaderToolbar({
     activeCollectionName,
     setShowCollectionsPanel,
     onClearHistory,
+    isSessionView,
+    onOpenSessionPanel,
+    onToggleViewMode,
 
     onBatchDownload,
     onBatchDelete,
@@ -85,6 +88,9 @@ export default function DashboardHeaderToolbar({
                     activeCollectionName={activeCollectionName}
                     setShowCollectionsPanel={setShowCollectionsPanel}
                     onClearHistory={onClearHistory}
+                    isSessionView={isSessionView}
+                    onOpenSessionPanel={onOpenSessionPanel}
+                    onToggleViewMode={onToggleViewMode}
                 />
 
                 <AnimatePresence>

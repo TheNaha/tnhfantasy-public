@@ -40,6 +40,17 @@ function renderPanel(props = {}) {
             <GalleryFilterPanel facets={FACETS} filters={{}} onChange={onChange} {...props} />
         </QueryClientProvider>,
     );
+    // Sections are COLLAPSED by default (see `FacetSection`), so a test that
+    // wants to click a chip has to open the section first — which is also what a
+    // user does, so the test now exercises the real path to the chip.
+    if (props.expandSections !== false) {
+        ['lora', 'tag', 'checkpoint'].forEach((dim) => {
+            const header = document.querySelector(`[data-testid="facet-section-${dim}"]`);
+            if (header && header.getAttribute('aria-expanded') === 'false') {
+                fireEvent.click(header);
+            }
+        });
+    }
     return { ...utils, onChange };
 }
 
@@ -55,6 +66,44 @@ describe('GalleryFilterPanel', () => {
     });
 
     afterEach(() => cleanup());
+
+    it('collapses its sections by default, and opens only what is filtering', () => {
+        // Three sections open at once is ~70 chips of LoRA names and counts
+        // pushed into the gallery's own scroll area. The panel buries the images
+        // it is supposed to be filtering.
+        const { unmount } = renderPanel({ expandSections: false });
+
+        ['lora', 'tag', 'checkpoint'].forEach((dim) => {
+            const header = document.querySelector(`[data-testid="facet-section-${dim}"]`);
+            expect(header, `${dim} header missing`).not.toBeNull();
+            expect(header.getAttribute('aria-expanded'), `${dim} should start collapsed`).toBe('false');
+        });
+        expect(document.querySelector('[data-testid="facet-chip-lora"]')).toBeNull();
+        unmount();
+
+        // A filter applied from anywhere else — the date rail, a restored
+        // session, a shared link — opens its own section rather than leaving a
+        // live filter hidden behind a closed header.
+        renderPanel({ expandSections: false, filters: { checkpoint: 'sdxl.safetensors' } });
+        expect(
+            document.querySelector('[data-testid="facet-section-checkpoint"]')
+                .getAttribute('aria-expanded')
+        ).toBe('true');
+        // …and the ones that are not filtering stay shut.
+        expect(
+            document.querySelector('[data-testid="facet-section-lora"]')
+                .getAttribute('aria-expanded')
+        ).toBe('false');
+    });
+
+    it('a section the user collapsed stays collapsed even while it filters', () => {
+        const { unmount } = renderPanel({ expandSections: false, filters: { lora: '123' } });
+        const header = document.querySelector('[data-testid="facet-section-lora"]');
+        expect(header.getAttribute('aria-expanded')).toBe('true');
+        fireEvent.click(header);
+        expect(header.getAttribute('aria-expanded')).toBe('false');
+        unmount();
+    });
 
     it('toggling a value adds it to the comma-separated string and keeps the existing ones', () => {
         const { onChange } = renderPanel({ filters: { lora: '999', search: 'portrait' } });

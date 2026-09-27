@@ -219,7 +219,18 @@ function TagTypeahead({ selected, onToggle }) {
 }
 
 function FacetSection({ dimension, entries, selected, onToggle }) {
-    const [open, setOpen] = useState(true);
+    // COLLAPSED by default. Three sections open at once is ~70 chips of LoRA
+    // names and counts pushed into the gallery's own scroll area, which is the
+    // opposite of what a filter panel is for — it buries the images.
+    //
+    // `null` means "the user has not said". Until they do, the section follows
+    // whether it is filtering: a filter applied from anywhere else — the date
+    // rail, a restored session, a shared link — opens its own section rather
+    // than leaving a live filter hidden behind a closed header. Once they
+    // toggle it, their choice wins for good.
+    const [override, setOverride] = useState(null);
+    const open = override ?? selected.length > 0;
+    const setOpen = useCallback((next) => setOverride(typeof next === 'function' ? next(open) : next), [open]);
     const bodyId = useId();
     const label = DIMENSION_LABELS[dimension] ?? dimension;
 

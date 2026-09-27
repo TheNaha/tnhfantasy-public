@@ -1,4 +1,4 @@
-import { Star, FolderOpen, BarChart3, Trash2 } from 'lucide-react';
+import { Star, FolderOpen, Layers, BarChart3, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export function DashboardToolbar({
@@ -8,7 +8,10 @@ export function DashboardToolbar({
     activeCollection,
     activeCollectionName,
     setShowCollectionsPanel,
-    onClearHistory
+    onClearHistory,
+    isSessionView,
+    onOpenSessionPanel,
+    onToggleViewMode
 }) {
     const navigate = useNavigate();
     return (
@@ -37,6 +40,40 @@ export function DashboardToolbar({
                     {activeCollectionName ? activeCollectionName : 'Collections'}
                 </span>
                 <span className="sm:hidden">Collections</span>
+            </button>
+
+            {/* The session controls live here, beside Favorites and Collections,
+                rather than on a row of their own. Two rows of pill buttons for
+                one feature is vertical space taken from the images, and these
+                three are three facets of the same question: what am I looking
+                at, and how do I narrow it. */}
+            <button
+                onClick={onOpenSessionPanel}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-purple-400 border border-gray-700"
+                title="Detect, curate, merge and split sessions"
+                type="button"
+            >
+                <Layers size={16} aria-hidden="true" />
+                <span className="hidden sm:inline">Manage sessions</span>
+                <span className="sm:hidden">Sessions</span>
+            </button>
+
+            <button
+                onClick={onToggleViewMode}
+                aria-pressed={isSessionView}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm border ${
+                    isSessionView
+                        ? 'bg-purple-600 text-white border-purple-500'
+                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-purple-400 border-gray-700'
+                }`}
+                title={isSessionView ? 'Back to the image grid' : 'Browse by generation session'}
+                type="button"
+            >
+                <Layers size={16} aria-hidden="true" />
+                <span className="hidden sm:inline">
+                    {isSessionView ? 'Grouped by session' : 'Group by session'}
+                </span>
+                <span className="sm:hidden">By session</span>
             </button>
 
             <div className="flex-1" />
