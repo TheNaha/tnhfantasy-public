@@ -195,7 +195,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                                     <span>{Math.round(job.overall_progress || 0)}%</span>
                                 </div>
                                 <div className="w-full bg-gray-700 rounded-full h-2">
-                                    <div className="progress-gradient h-full rounded-full transition-all" style={{ width: `${job.overall_progress || 0}%` }} />
+                                    <div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full rounded-full transition-all" style={{ width: `${job.overall_progress || 0}%` }} />
                                 </div>
                             </div>
                             {job.progress > 0 && (

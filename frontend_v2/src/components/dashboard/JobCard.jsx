@@ -196,7 +196,12 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                         <div className="w-full">
                             <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
                                 <div
-                                    className="progress-gradient h-full transition-all duration-300 ease-out"
+                                    // Was `progress-gradient`, a hand-written class defined in no
+                                    // stylesheet and not a Tailwind utility — so the fill was
+                                    // transparent and this bar never painted, at any progress value.
+                                    // Same class of loss as `.glass-panel`. Now a real utility,
+                                    // matching the Node bar below.
+                                    className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full transition-all duration-300 ease-out"
                                     style={{ width: `${job.overall_progress || 0}%` }}
                                 />
                             </div>
@@ -206,7 +211,10 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                             </div>
                         </div>
 
-                        {/* Node Progress */}
+                        {/* Node Progress. `> 0` rather than `!= null` is deliberate: progress is a
+                            non-nullable float defaulting to 0, and both progress reducers coerce a
+                            null/NaN/out-of-range event to 0, so 0 is the honest "nothing yet" value.
+                            The bar is suppressed at 0 rather than showing an empty track. */}
                         {job.progress > 0 && (
                             <div className="w-full mt-1">
                                 <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
