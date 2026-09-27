@@ -143,10 +143,17 @@ class TestNestedLora:
 
 
 class TestFlatCheckpoint:
-    def test_resolves_both_ids(self):
+    def test_resolves_the_civitai_id(self):
         out = normalise_model_reference(FLAT_CHECKPOINT, kind="checkpoint")
         assert out["civitai_id"] == 1234567
-        assert out["model_id"] == 42
+
+    def test_does_not_emit_the_ambiguous_model_id(self):
+        # FLAT_CHECKPOINT carries `model_id: 42`, a small integer written by the
+        # generation pipeline. `models_v2.id` is a UUID, so trusting this field
+        # produced `asset_loras_model_id_fkey` violations on the first real run.
+        # The internal id must come from a lookup, never from here.
+        out = normalise_model_reference(FLAT_CHECKPOINT, kind="checkpoint")
+        assert "model_id" not in out
 
     def test_drops_bulk_and_html(self):
         out = normalise_model_reference(FLAT_CHECKPOINT, kind="checkpoint")
@@ -237,3 +244,69 @@ class TestTagVocabulary:
     def test_empty_metadata_yields_nothing(self):
         assert extract_tag_vocabulary({}) == set()
         assert extract_tag_vocabulary(None) == set()
+
+
+class TestIndexAssetLorasDeduplicates:
+    """An image can reference the same LoRA twice. The unique constraint on
+    (asset_id, civitai_model_id) is what makes re-indexing idempotent, so the
+    duplicates have to be collapsed before insert or the batch dies on
+    `uq_asset_lora`."""
+
+    def _db(self):
+        from sqlmodel import Session, create_engine
+        from sqlmodel.pool import StaticPool
+        from sqlmodel import SQLModel
+        from core.entities import Asset, AssetLora, ModelV2, ModelVersion, ModelFile
+
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        # The resolver queries models_v2 (by civitai id) and model_files (by
+        # filename), so those tables have to exist for it to run at all.
+        SQLModel.metadata.create_all(engine, tables=[
+            Asset.__table__, AssetLora.__table__, ModelV2.__table__,
+            ModelVersion.__table__, ModelFile.__table__,
+        ])
+        return Session(engine)
+
+    def test_same_lora_twice_writes_one_row_with_the_strongest_weight(self):
+        from core.entities import Asset
+        from services.asset_metadata_index import index_asset_loras
+        from sqlmodel import select
+        from core.entities import AssetLora
+
+        s = self._db()
+        s.add(Asset(
+            id="a1", filename="x.png", relative_path="r/x.png",
+            metadata_={"loras": [
+                {"name": "dup.safetensors", "strength": 0.5, "metadata": {"id": 4242}},
+                {"name": "dup.safetensors", "strength": 1.2, "metadata": {"id": 4242}},
+            ]},
+        ))
+        s.commit()
+
+        seen, resolved = index_asset_loras(s, s.get(Asset, "a1"))
+        s.commit()
+
+        rows = s.exec(select(AssetLora)).all()
+        assert len(rows) == 1, "the unique constraint would reject a second row"
+        assert seen == 1
+        assert rows[0].civitai_model_id == 4242
+        assert rows[0].strength == 1.2, "keep the weight that actually shaped the image"
+
+    def test_reindexing_the_same_asset_twice_converges(self):
+        from core.entities import Asset
+        from services.asset_metadata_index import index_asset_loras
+        from sqlmodel import select, func
+        from core.entities import AssetLora
+
+        s = self._db()
+        s.add(Asset(id="a2", filename="y.png", relative_path="r/y.png",
+                    metadata_={"loras": [{"name": "z.safetensors", "strength": 1,
+                                          "metadata": {"id": 7}}]}))
+        s.commit()
+        index_asset_loras(s, s.get(Asset, "a2")); s.commit()
+        first = s.exec(select(func.count()).select_from(AssetLora)).one()
+        index_asset_loras(s, s.get(Asset, "a2")); s.commit()
+        second = s.exec(select(func.count()).select_from(AssetLora)).one()
+        assert first == second == 1

@@ -248,11 +248,11 @@ def normalise_model_reference(entry: Any, kind: str = "model") -> dict | None:
         filename = None
 
     civitai_id = _coerce_int(_lookup(entry, nested, _CIVITAI_ID_KEYS))
-    model_id = _coerce_int(_first(entry, ("model_id",)))
-    if model_id is None and civitai_id is not None and kind == "checkpoint":
-        # On checkpoints the flat `model_id` is the internal ModelV2 id, which
-        # only exists for models this project already imported.
-        model_id = civitai_id
+    # `model_id` is read but deliberately NOT emitted as `model_id`. Several
+    # producers write a small integer there that is not `models_v2.id` (which is
+    # a UUID), so carrying it forward invites a dangling foreign key. The
+    # internal id is derived by lookup instead — see `index_asset_loras`.
+    _coerce_int(_first(entry, ("model_id",)))
 
     # Display name. Order matters and is not "top level first":
     #   - in the NESTED shape the top-level `name` is the .safetensors FILENAME
@@ -280,8 +280,6 @@ def normalise_model_reference(entry: Any, kind: str = "model") -> dict | None:
         "display_name": display_name,
         "filename": filename,
     }
-    if model_id is not None:
-        compact["model_id"] = model_id
     if civitai_id is not None:
         compact["civitai_id"] = civitai_id
     if base_model:
@@ -442,14 +440,41 @@ def index_asset_loras(session: Session, asset: Asset) -> tuple[int, int]:
     seen = 0
     resolved = 0
     now = datetime.now(timezone.utc)
+
+    # An image can reference the SAME LoRA more than once — a workflow with two
+    # LoRALoader nodes for one model, or a duplicated entry in the metadata. The
+    # unique constraint on (asset_id, civitai_model_id) exists to make
+    # re-indexing idempotent, so the duplicates have to be collapsed here or the
+    # insert fails outright. Keyed on the CivitAI id when there is one, else on
+    # the filename, because a NULL civitai id is not a usable identity.
+    deduped: dict[tuple, dict] = {}
     for entry in loras:
         filename = entry.get("filename")
         if not filename:
             continue
         civitai_id = entry.get("civitai_id")
+        key = ("civitai", civitai_id) if civitai_id is not None else ("file", filename)
+        strength = entry.get("strength")
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = {"entry": entry, "strength": strength}
+        elif strength is not None and (existing["strength"] is None or strength > existing["strength"]):
+            # The same LoRA twice: the strongest weight is the one that actually
+            # shaped the image, so that is the one worth reporting.
+            existing["strength"] = strength
+
+    for record in deduped.values():
+        entry = record["entry"]
+        filename = entry["filename"]
+        civitai_id = entry.get("civitai_id")
+        # The internal models_v2.id is resolved ONLY from real lookups, never
+        # from the metadata's own `model_id` field. That field is a small
+        # integer in the images this project writes (21, 301, 298 ...) and is a
+        # pipeline reference, whereas models_v2.id is a UUID — trusting it
+        # produced `asset_loras_model_id_fkey` violations on the first real run.
+        # The foreign key caught it, which is what it is for.
         internal_id = (
-            entry.get("model_id")
-            or civitai_by_internal.get(civitai_id)
+            civitai_by_internal.get(civitai_id)
             or internal_by_filename.get(filename)
         )
         if internal_id is not None or civitai_id is not None:
@@ -459,7 +484,7 @@ def index_asset_loras(session: Session, asset: Asset) -> tuple[int, int]:
                 asset_id=asset.id,
                 model_id=internal_id,
                 civitai_model_id=civitai_id,
-                strength=entry.get("strength"),
+                strength=record["strength"],
                 created_at=now,
             )
         )
@@ -537,6 +562,183 @@ def reindex_asset_loras(
         "loras_seen": loras_seen,
         "loras_resolved": loras_resolved,
         "skipped_no_metadata": skipped_no_metadata,
+        "last_asset_id": last_id,
+        "truncated": truncated,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Refreshing model references from the embedded PNG metadata
+# ---------------------------------------------------------------------------
+
+import os  # noqa: E402
+
+
+def _reference_richness(entries: list[dict]) -> int:
+    """How much information a normalised reference list carries.
+
+    Used to decide whether a value read back from the PNG is genuinely better
+    than the one already stored, rather than replacing on every pass.
+    """
+    score = 0
+    for entry in entries or []:
+        if entry.get("civitai_id") is not None:
+            score += 4
+        if entry.get("model_id") is not None:
+            score += 2
+        if entry.get("display_name") and not str(entry["display_name"]).endswith((".safetensors", ".ckpt", ".pt")):
+            score += 1
+        if entry.get("tags"):
+            score += 1
+        if entry.get("trained_words"):
+            score += 1
+        if entry.get("base_model"):
+            score += 1
+    return score
+
+
+def refresh_asset_model_references(asset, output_dir: str) -> dict:
+    """Re-read one asset's embedded PNG metadata and upgrade its model references.
+
+    WHY THIS EXISTS. The compacted `loras` / `checkpoint` entries on historical
+    rows are close to empty. A real one from this library, straight out of the
+    database:
+
+        {"name": "Hapi_ハピ_..._Illustrious.safetensors", "weight": 1, "strength": 1}
+
+    No id, no display name, no tags, no base model — the historical compaction
+    dropped them, so an `asset_loras` row can only be resolved by matching that
+    filename against `models_v2.storage_filename`, which works while the LoRA is
+    installed and stops working the moment it is not. The CivitAI id, which is
+    the stable identity, survives only in the PNG's `comfy_metadata` text chunk.
+
+    So this re-reads the PNG and merges the richer references back.
+
+    It is a MERGE, not a replace. Only `loras` and `checkpoint` are considered,
+    and only when the PNG version is measurably richer. Everything else in
+    `metadata_` — the job anchor fields the reconciler adds, workspace
+    attribution, anything written after the PNG was produced — is left alone,
+    because clobbering the whole document with a file that predates it would
+    silently lose data.
+
+    Returns a dict describing what happened, for the caller's summary.
+    """
+    result = {"read": False, "upgraded": False, "reason": ""}
+
+    if not asset.relative_path:
+        result["reason"] = "no_relative_path"
+        return result
+
+    full_path = os.path.join(output_dir, asset.relative_path)
+    if not os.path.isfile(full_path):
+        result["reason"] = "file_missing"
+        return result
+
+    # read_image_metadata reads the embedded chunk first and only falls back to
+    # a sidecar, which is the ordering we want: the chunk is what the current
+    # writer produces, and there is exactly one sidecar in this library.
+    from infrastructure.image_processor import read_image_metadata
+
+    try:
+        png_meta = read_image_metadata(full_path) or {}
+    except Exception as exc:  # pragma: no cover - unreadable file
+        result["reason"] = f"read_failed:{type(exc).__name__}"
+        return result
+
+    if not png_meta:
+        result["reason"] = "no_embedded_metadata"
+        return result
+
+    result["read"] = True
+
+    metadata = dict(asset.metadata_ or {})
+    changed = False
+
+    png_loras = normalise_loras(png_meta)
+    if png_loras and _reference_richness(png_loras) > _reference_richness(normalise_loras(metadata)):
+        metadata["loras"] = png_loras
+        changed = True
+
+    png_ckpts = normalise_checkpoints(png_meta)
+    if png_ckpts and _reference_richness(png_ckpts) > _reference_richness(normalise_checkpoints(metadata)):
+        metadata["checkpoint"] = png_ckpts[0]
+        changed = True
+
+    if not changed:
+        result["reason"] = "no_upgrade"
+        return result
+
+    asset.metadata_ = metadata
+    result["upgraded"] = True
+    return result
+
+
+def refresh_asset_metadata_from_png(
+    session: Session,
+    output_dir: str,
+    *,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    limit: int | None = None,
+    after_id: str | None = None,
+    reindex_loras: bool = True,
+) -> dict:
+    """Walk assets, upgrade their model references from the PNG, and reindex.
+
+    Same batching/resume contract as `reindex_asset_loras`. Reads one file per
+    asset, so this is I/O bound: measured at a few thousand images a minute on
+    this library, and resumable via `after_id` if interrupted.
+
+    Args:
+        output_dir: the base the asset's `relative_path` is relative to.
+        reindex_loras: also rebuild `asset_loras` for each upgraded asset. Turn
+            this off if you only want the metadata repaired.
+    """
+    statement = select(Asset).where(Asset.deleted_at.is_(None))
+    if after_id:
+        statement = statement.where(Asset.id > after_id)
+    statement = statement.order_by(Asset.id).limit(batch_size)
+
+    considered = upgraded = files_missing = no_metadata = loras_written = 0
+    last_id = after_id
+    truncated = False
+
+    while True:
+        assets = session.exec(statement).all()
+        if not assets:
+            break
+
+        for asset in assets:
+            last_id = asset.id
+            considered += 1
+            outcome = refresh_asset_model_references(asset, output_dir)
+            if outcome["reason"] == "file_missing":
+                files_missing += 1
+                continue
+            if not outcome["read"]:
+                no_metadata += 1
+                continue
+            if not outcome["upgraded"]:
+                continue
+            upgraded += 1
+            if reindex_loras:
+                seen, _resolved = index_asset_loras(session, asset)
+                loras_written += seen
+
+        session.commit()
+
+        if limit is not None and considered >= limit:
+            truncated = True
+            break
+        if len(assets) < batch_size:
+            break
+        statement = statement.where(Asset.id > last_id)
+
+    return {
+        "considered": considered,
+        "upgraded": upgraded,
+        "files_missing": files_missing,
+        "no_embedded_metadata": no_metadata,
+        "loras_written": loras_written,
         "last_asset_id": last_id,
         "truncated": truncated,
     }
