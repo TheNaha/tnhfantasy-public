@@ -18,6 +18,7 @@ from infrastructure.database import create_db_and_tables, vacuum_database
 from infrastructure.http_client import close_http_client
 from infrastructure.logging import get_logger
 from infrastructure.scheduler import (
+    add_interval_job,
     schedule_cleanup,
     schedule_preview_prefetch,
     schedule_vacuum,
@@ -29,6 +30,24 @@ from services.job_service import JobService
 from services.provider_runtime import monitor_provider_changes
 
 logger = get_logger("lifecycle")
+
+# How often the published provider-host set is re-read from the database.
+#
+# It has to be a timer, not a one-shot. The host a request is actually sent to is
+# resolved from Docker per call, and it changes whenever a container is recreated
+# or a provider registers itself — neither of which writes a provider row through
+# the CRUD routes the set is otherwise refreshed from. A boot-time snapshot
+# therefore goes stale silently, and every later call to the new host is sent
+# WITHOUT the shared worker token and comes back 401, which is indistinguishable
+# from an outage. It happened: `modal-zetsuke` answered 401 on every generation
+# because its container had been recreated and the snapshot still held the old
+# id.
+#
+# The previous code hid this by re-reading on a 30s TTL from inside
+# `build_request()` — on the event loop, on the request path, once per request
+# whose cache was cold. That is what was worth fixing, so the refresh moved to a
+# timer instead of going back onto the request path.
+PROVIDER_HOST_REFRESH_SECONDS = 60
 
 
 async def _process_image_background_for_recovery(image_path: str, job_id: str) -> None:
@@ -242,6 +261,23 @@ async def startup_application(process_job, ws_manager):
         count=len(hosts) if hosts else 0,
     )
 
+    # ...and it has to be KEPT current, which a boot-time snapshot does not do.
+    #
+    # The host a request is actually sent to comes from Docker, resolved per
+    # call, and it changes whenever a container is recreated or a provider
+    # registers itself — neither of which writes a provider row through the CRUD
+    # routes this snapshot is refreshed from. So the set goes stale silently and
+    # every subsequent call to the new host is sent WITHOUT the token and comes
+    # back 401, which reads exactly like an outage. That is not hypothetical: it
+    # is what broke `modal-zetsuke` here.
+    #
+    # The old code hid this by re-reading the database on a 30 s TTL — from the
+    # event loop, on the request path, which is the thing that was worth fixing.
+    # So both: publish once so the request path never does I/O, and refresh on a
+    # timer so it converges.
+    async def _refresh_provider_hosts():
+        await asyncio.to_thread(load_known_provider_hosts, force=True)
+
     logger.info("startup_init", phase="job_queue")
     await queue_manager.start()
 
@@ -258,6 +294,15 @@ async def startup_application(process_job, ws_manager):
 
     logger.info("startup_init", phase="scheduler")
     start_scheduler()
+    add_interval_job(
+        _refresh_provider_hosts,
+        interval_seconds=PROVIDER_HOST_REFRESH_SECONDS,
+        job_id="provider_host_refresh",
+        # Not immediately: startup published it microseconds ago, and running it
+        # twice back to back buys nothing.
+        start_immediately=False,
+    )
+
     schedule_vacuum(vacuum_database, interval_seconds=86400)
     from services.model_preview_service import (
         PREVIEW_PREFETCH_INTERVAL_SECONDS,
@@ -282,7 +327,6 @@ async def startup_application(process_job, ws_manager):
         idle_sim_enabled = bool(get_config().get("ai", {}).get("idleSimEnabled", False))
 
     from services.agent_simulation import run_idle_simulation_tick
-    from infrastructure.scheduler import add_interval_job
     interval_env = os.getenv("COMFY_IDLE_SIM_INTERVAL_SECONDS")
     try:
         interval = int(interval_env) if interval_env else int(get_config().get("ai", {}).get("idleSimIntervalSeconds", 600))

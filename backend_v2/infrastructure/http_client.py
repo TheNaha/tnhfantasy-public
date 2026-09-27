@@ -41,6 +41,22 @@ _known_provider_hosts: frozenset[str] | None = None
 _known_provider_hosts_at: float = 0.0
 
 
+def publish_provider_host(host: str) -> None:
+    """Add a host to the published set, at the moment we resolve it.
+
+    The resolver knows for certain that the address it just produced is one of
+    our providers. The database may not agree yet: a container id changes on every
+    recreate and only reaches `discovery_url` when the worker's next discovery
+    heartbeat writes it. Publishing here removes that window, which was a real
+    401 on every job dispatched in the seconds after a provider was recreated.
+    """
+    global _known_provider_hosts
+    host = (host or "").strip().lower()
+    if not host or host in _known_provider_hosts:
+        return
+    _known_provider_hosts = frozenset({*_known_provider_hosts, host})
+
+
 def _is_provider_management_path(url: str) -> bool:
     path = urlparse(url).path.rstrip("/")
     return any(path.endswith(suffix) for suffix in _PROVIDER_MANAGEMENT_PATHS)

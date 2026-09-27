@@ -84,11 +84,20 @@ EXPECTED_SHUTDOWN_PHASES = [
 # deliberately absent: it is only added when COMFY_IDLE_SIM_ENABLED or
 # config ai.idleSimEnabled is set, and neither is set under test, so its absence
 # is the assertion that the opt-in branch was not taken by accident.
+from api.lifecycle import PROVIDER_HOST_REFRESH_SECONDS
+
 EXPECTED_SCHEDULED_JOBS = {
     "database_vacuum": 86400,
     "preview_prefetch": PREVIEW_PREFETCH_INTERVAL_SECONDS,
     "cleanup": 3600,
     "civitai_resync_job": 86400,
+    # Keeps the published provider-host set current. It belongs here rather than
+    # on the request path: the address dialled can be a Docker container id that
+    # changes on every recreate, and a boot-time snapshot plus a CRUD-triggered
+    # refresh left a window where a dispatched job went out without the shared
+    # worker token and came back 401 — reported as "the provider rejected or
+    # crashed on this job", with nothing pointing at auth.
+    "provider_host_refresh": PROVIDER_HOST_REFRESH_SECONDS,
 }
 
 # Topics the broadcast listener and the provider monitor subscribe to.
