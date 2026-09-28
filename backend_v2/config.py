@@ -51,9 +51,16 @@ DEFAULT_CONFIG = {
         "default_limit": 20,
         "max_in_memory": 100,
         "max_concurrent": 5,
-        # Client-side stream timeout for image jobs. Aligned with the image
-        # worker's INFERENCE_TIMEOUT_SECONDS (3600) so the backend never gives
+        # Client-side stream timeout for image jobs, so the backend never gives
         # up on a workflow the worker is still legally running.
+        #
+        # This comment used to say it was "aligned with the image worker's
+        # INFERENCE_TIMEOUT_SECONDS". No code reads that name. The worker's knob
+        # is `COMFYUI_TIMEOUT_SECONDS` (`image_worker/worker.py:70`) and it
+        # also defaults to 3600, so the intent holds — but the two are
+        # independent: lowering one does not lower the other, and lowering THIS
+        # one below the worker's is exactly the case that abandons a running
+        # workflow. Env override: COMFY_JOB_TIMEOUT.
         "timeout": 3600,
         "max_retries": 3,
         "retry_base_delay": 1.0,
