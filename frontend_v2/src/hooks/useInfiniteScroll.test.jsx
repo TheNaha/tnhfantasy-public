@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, act, cleanup } from '@testing-library/react';
+import { render, act, cleanup, waitFor } from '@testing-library/react';
 import { useInfiniteScroll } from './useInfiniteScroll';
 
 /**
@@ -124,5 +124,76 @@ describe('useInfiniteScroll', () => {
         await fire(true);
         await waitPastIdle();
         expect(onLoadMore).not.toHaveBeenCalled();
+    });
+});
+
+describe('the observer root', () => {
+    // The regression this pins: the observer was created with `root: null`, which
+    // means the viewport. The gallery's list sits ~1400px down inside Layout's
+    // `lg:overflow-y-auto` pane, so the chrome above it — banner, header,
+    // toolbar, date rail, filter panel — sat outside the root rect, `rootMargin`
+    // expanded the viewport instead of the pane, and the sentinel only counted as
+    // "near" once it had been scrolled a whole viewport past the fold. The list
+    // had to grow by a full screen before the next page was requested, which
+    // looks exactly like infinite scroll not working.
+    function stubIntersectionObserver(collect) {
+        const RealIO = global.IntersectionObserver;
+        class FakeIO {
+            constructor(_cb, opts) { collect(opts.root); }
+            observe() {}
+            disconnect() {}
+        }
+        global.IntersectionObserver = FakeIO;
+        return () => { global.IntersectionObserver = RealIO; };
+    }
+
+    it('observes the sentinel scrollable ancestor rather than the viewport', async () => {
+        const roots = [];
+        const restore = stubIntersectionObserver((r) => roots.push(r));
+        const scroller = document.createElement('div');
+        scroller.style.overflowY = 'auto';
+        document.body.appendChild(scroller);
+
+        function Probe() {
+            const sentinelRef = useInfiniteScroll({
+                hasMore: true, onLoadMore: () => {}, loading: false,
+            });
+            return <div ref={sentinelRef} data-testid="sentinel" />;
+        }
+        // The hook resolves its root from the sentinel's own ancestry, so the
+        // sentinel has to be mounted inside the scroller.
+        const into = document.createElement('div');
+        scroller.appendChild(into);
+        into.appendChild(document.createElement('div')); // placeholder so React has a parent
+        const { rerender } = render(<Probe />, { container: into });
+        rerender(<Probe />);
+
+        await waitFor(() => expect(roots.length).toBeGreaterThan(0));
+        expect(roots[0]).toBe(scroller);
+
+        cleanup();
+        scroller.remove();
+        restore();
+    });
+
+    it('falls back to the viewport when nothing above the sentinel scrolls', async () => {
+        const roots = [];
+        const restore = stubIntersectionObserver((r) => roots.push(r));
+
+        function Probe() {
+            const sentinelRef = useInfiniteScroll({
+                hasMore: true, onLoadMore: () => {}, loading: false,
+            });
+            return <div ref={sentinelRef} data-testid="plain" />;
+        }
+        render(<Probe />);
+
+        await waitFor(() => expect(roots.length).toBeGreaterThan(0));
+        // A sentinel in normal document flow keeps the old behaviour: `null`
+        // means "use the viewport" to IntersectionObserver.
+        expect(roots[0]).toBeNull();
+
+        cleanup();
+        restore();
     });
 });

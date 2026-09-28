@@ -88,6 +88,34 @@ export function useInfiniteScroll({
         const currentSentinel = sentinelRef.current;
         if (!currentSentinel || !hasMore) return undefined;
 
+        // Observe the element that ACTUALLY SCROLLS, not the viewport.
+        //
+        // The gallery's list lives inside `Layout`'s
+        // `flex-1 relative z-10 lg:overflow-y-auto` pane, ~1400px below the top
+        // of the window (failed-jobs banner, header, toolbar, search, the date
+        // rail, the filter panel). With `root: null` the observer measures against
+        // the VIEWPORT, so all of that chrome is outside the root rect and
+        // `rootMargin` expands the viewport rather than the pane — the sentinel
+        // only counts as "near" once it has been scrolled well past the fold.
+        // The list then has to grow a whole viewport before the next page is
+        // asked for, which reads as infinite scroll not working. The model
+        // selector's grid starts at the top of its pane, so the same code felt
+        // instant there and broken here: nothing was broken, the trigger was
+        // simply measured against the wrong box.
+        //
+        // Falls back to the viewport when the sentinel has no scrollable
+        // ancestor, so a sentinel in normal document flow behaves as before.
+        const resolveRoot = () => {
+            if (scrollRoot) return scrollRoot;
+            let el = currentSentinel.parentElement;
+            while (el && el !== document.body) {
+                const overflowY = getComputedStyle(el).overflowY;
+                if (overflowY === 'auto' || overflowY === 'scroll') return el;
+                el = el.parentElement;
+            }
+            return null;
+        };
+
         const observer = new IntersectionObserver(
             ([entry]) => {
                 if (!entry.isIntersecting) return;
@@ -98,7 +126,7 @@ export function useInfiniteScroll({
                 requestLoad();
             },
             {
-                root: scrollRoot,
+                root: resolveRoot(),
                 rootMargin,
                 threshold: 0.1,
             },
