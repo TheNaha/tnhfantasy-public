@@ -55,7 +55,38 @@ services:
       - ./frontend_v2/public:/app/public
       - ./frontend_v2/index.html:/app/index.html
       - ./frontend_v2/vite.config.js:/app/vite.config.js
-      # Preserve node_modules from the build (don't mount over it)
+      # Build inputs that change independently of `src`. Without these the
+      # container silently uses the image's copies, which reads as a Vite or
+      # Tailwind bug rather than a mount gap:
+      #   package.json / package-lock.json -> dependency edits and lockfile
+      #     bumps are invisible until a rebuild;
+      #   postcss.config.js -> a Tailwind change to index.html IS picked up but
+      #     runs through the IMAGE's plugin config, so it half-applies;
+      #   eslint.config.js -> `npm run lint` in the container lints the wrong
+      #     rules;
+      #   scripts/ -> holds the preinstall npm-only guard.
+      - ./frontend_v2/package.json:/app/package.json
+      - ./frontend_v2/package-lock.json:/app/package-lock.json
+      - ./frontend_v2/postcss.config.js:/app/postcss.config.js
+      - ./frontend_v2/eslint.config.js:/app/eslint.config.js
+      - ./frontend_v2/scripts:/app/scripts
+      # Preserve node_modules from the build (don't mount over it).
+      #
+      # ANONYMOUS, and that is load-bearing. Docker seeds a fresh *anonymous*
+      # volume from the image's contents; a *named* volume starts empty. Naming
+      # it (`frontend_node_modules:`) for visibility therefore made the container
+      # start with no node_modules at all and the dev server died on
+      # `exec: npm: not found` — so the visibility win cost the whole frontend.
+      # A named volume would need an entrypoint that seeds or re-runs `npm ci`,
+      # which is more moving parts than this is worth.
+      #
+      # The cost of staying anonymous: it is invisible to `docker volume ls`, so
+      # a lockfile change needs the `-V` / `--renew-anon-volumes` flag on
+      # `docker compose up` to take effect. AGENTS.md and README.md both
+      # document `-V` for exactly this reason, and `docker volume ls -f
+      # dangling=true` will find it. Mounting package.json does NOT fix the
+      # stale-dependency case on its own: a changed lockfile still needs the
+      # re-`npm ci` that `-V` triggers.
       - /app/node_modules
     # Healthcheck on port 5174
     healthcheck:

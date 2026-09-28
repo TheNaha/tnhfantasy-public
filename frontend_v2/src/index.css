@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+/* `@tailwindcss/typography` — the plugin behind `prose`.
+ *
+ * Seven elements name `prose prose-invert` (the Story editor's preview, the
+ * public `StoryReader`, and the description panels in three model dialogs) and
+ * the plugin was never a dependency, so every one of them rendered markdown with
+ * body-size headings, unindented lists and unstyled `pre`/`code`. The two
+ * compensating rules further down this file only covered `pre` and `code`.
+ *
+ * `@plugin` must be top level in Tailwind v4 — nesting it inside `@layer` or
+ * `@theme` silently produces no `prose` utilities at all, which is why it sits
+ * immediately after the import and `designTokens.test.js` asserts that ordering.
+ */
+@plugin "@tailwindcss/typography";
+
 /* ============================================================================
    Design tokens
 
@@ -333,12 +347,11 @@
   }
 }
 
-/* `@tailwindcss/typography` is not a dependency, and `prose` is named 64 times
-   (StoryEditor's preview, the public StoryReader, and three model-description
-   panels). Without the plugin, `prose prose-invert prose-sm` renders headings
-   at body size, unindented lists and unstyled `pre`/`code`. These two rules
-   were the only partial compensation and were deleted with the rest; the
-   structural half of the problem needs the plugin and is tracked separately. */
+/* Overrides that sit on top of `@tailwindcss/typography`, which now supplies the
+   `prose` base. These were the only compensation while the plugin was missing
+   and are kept deliberately: `max-w-none` and the app's own dark palette
+   interact badly with the plugin defaults for a full-bleed editor panel, and
+   these pin the two properties that actually differ from a blog post. */
 @layer components {
   .prose pre {
     overflow-x: auto;

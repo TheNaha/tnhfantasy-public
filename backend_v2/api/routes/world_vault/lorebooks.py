@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import json
 import re
 
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Depends, Body, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session
@@ -17,6 +17,15 @@ from core.exceptions import NotFoundError, ValidationError
 from services.embedding_service import EmbeddingService
 
 logger = get_logger("lorebooks_route")
+
+# Bound on the entries listing. See `list_entries`.
+#
+# `memories.py` already bounds its listing the same way (200/500 + offset), so
+# this is consistency rather than a new idea. 2,000 is generous enough that a
+# real world book never hits it: a large SillyTavern import is a few hundred
+# entries, and anything past this is a page the client should ask for.
+LOREBOOK_ENTRY_PAGE_DEFAULT_LIMIT = 1000
+LOREBOOK_ENTRY_PAGE_MAX_LIMIT = 2000
 router = APIRouter()
 
 
@@ -128,8 +137,20 @@ def reindex_lorebook(
 # ENTRIES CRUD
 # ============================================================================
 @router.get("/{lorebook_id}/entries", response_model=list[LorebookEntry])
-def list_entries(lorebook_id: str, session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo), lorebook_entry_repo: LorebookEntryRepository = Depends(get_lorebook_entry_repo)):
-    return lorebook_entry_repo.list_by_lorebook(lorebook_id)
+def list_entries(
+    lorebook_id: str,
+    limit: int = Query(default=LOREBOOK_ENTRY_PAGE_DEFAULT_LIMIT, ge=1, le=LOREBOOK_ENTRY_PAGE_MAX_LIMIT),
+    session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo), lorebook_entry_repo: LorebookEntryRepository = Depends(get_lorebook_entry_repo), ):
+    """List a lorebook's entries, oldest first.
+
+    Bounded because the query had neither a `LIMIT` nor an `ORDER BY`, so a
+    SillyTavern import with a few thousand entries returned every row — and each
+    row used to carry a 384-float embedding on top of its text. The default is
+    generous because a personal world book is normally far smaller; an
+    over-limit request is rejected rather than silently clamped, so a client
+    that thinks it has the whole book finds out.
+    """
+    return lorebook_entry_repo.list_by_lorebook(lorebook_id, limit=limit)
 
 @router.post("/{lorebook_id}/entries", response_model=LorebookEntry)
 def create_entry(

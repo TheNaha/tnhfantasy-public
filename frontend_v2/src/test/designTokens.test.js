@@ -128,6 +128,38 @@ describe('colour literals are not growing', () => {
  * assertion: a class cannot be deleted from the stylesheet and quietly stop
  * working without failing here.
  */
+describe('the typography plugin is actually loaded', () => {
+    // `prose prose-invert` is named in seven places (the Story editor's preview,
+    // the public StoryReader, and three model-description panels). The plugin
+    // was never a dependency, so all seven rendered markdown with body-size
+    // headings, unindented lists and unstyled `pre`/`code` — and nothing failed,
+    // because `prose` is just a class name to the compiler until the plugin is
+    // registered. The ORDER matters: Tailwind v4 ignores an `@plugin` nested
+    // inside `@theme` or `@layer`, producing no `prose` utilities at all with no
+    // error, so a plain text match would not catch the failure this prevents.
+    const css = readFileSync(join(SRC, 'index.css'), 'utf8');
+
+    it('declares the plugin at the top level, before @theme', () => {
+        expect(css).toMatch(/^@plugin\s+"@tailwindcss\/typography";/m);
+        expect(css.indexOf('@plugin')).toBeGreaterThan(-1);
+        expect(css.indexOf('@plugin')).toBeLessThan(css.indexOf('@theme'));
+    });
+
+    it('has the plugin as a real dependency, not a transitive one', () => {
+        const pkg = JSON.parse(readFileSync(join(SRC, '..', 'package.json'), 'utf8'));
+        expect(pkg.dependencies['@tailwindcss/typography']).toBeTruthy();
+    });
+
+    it('has @dnd-kit/utilities as a direct dependency', () => {
+        // Three components import it (CharacterCard, StoryBeatsPanel,
+        // ChapterSidebar) and it resolved only because @dnd-kit/core and
+        // @dnd-kit/sortable both depend on it. A hoisting change, a strict
+        // node_modules layout, or a sortable v11 bump is a build failure.
+        const pkg = JSON.parse(readFileSync(join(SRC, '..', 'package.json'), 'utf8'));
+        expect(pkg.dependencies['@dnd-kit/utilities']).toBeTruthy();
+    });
+});
+
 describe('component classes resolve to a real rule', () => {
     const BESPOKE_CLASSES = [
         'glass',
