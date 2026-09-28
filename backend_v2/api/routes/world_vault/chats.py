@@ -33,6 +33,10 @@ from services.job_service import JobService
 from services.job_queue import QueueManager
 from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
 from config import settings
+from infrastructure.logging import get_logger
+
+# Same convention as the sibling route modules (`lorebooks.py`, `memories.py`).
+logger = get_logger("chats_route")
 
 MAX_CONTEXT_MESSAGES = 200
 # Hard cap for endpoints that stream an entire chat history into memory
@@ -1238,8 +1242,60 @@ def edit_message(
     session.refresh(message)
     return message
 
+async def _cancel_inflight_chat_jobs(session: Session, chat_id: str, *, reason: str) -> int:
+    """Cancel every LLM job still in flight for `chat_id`. Returns how many.
+
+    The existence check is the one already used by the idle simulator
+    (`agent_simulation.py`): `select(Job.id)` with the status set, so it fetches
+    ids rather than whole `Job` rows with their `workflow`, `metadata_` and
+    `outputs` jsonb. Then the id list is handed to `job_processing.cancel_job`,
+    which also signals the provider.
+
+    A job that reached a terminal state between the read and the cancel raises
+    `ValidationError` from `cancel_job`. That is the COMMON case for a rollback,
+    not an edge case — the reply usually already landed, which is the situation
+    the user is rolling back from — so it is swallowed per job. One job failing to
+    cancel must not 500 the rollback and leave the conversation half-rewound.
+    """
+    from services.agent_simulation import IN_FLIGHT_JOB_STATUSES
+    from services.job_processing import cancel_job as cancel_job_processing
+    from services.job_service import JobService
+
+    in_flight = session.exec(
+        select(Job.id).where(
+            Job.task_type == "llm",
+            Job.status.in_(IN_FLIGHT_JOB_STATUSES),
+            Job.metadata_["chat_id"].as_string() == chat_id,
+        )
+    ).all()
+    if not in_flight:
+        return 0
+
+    job_service = JobService(session)
+    cancelled = 0
+    for job_id in in_flight:
+        try:
+            await cancel_job_processing(
+                job_service=job_service, job_id=job_id, reason=reason
+            )
+            cancelled += 1
+        except ValidationError:
+            # Finished between the read and the cancel. Nothing left to stop.
+            continue
+        except Exception as exc:
+            logger.warning(
+                "chat_rollback_job_cancel_failed",
+                job_id=job_id, chat_id=chat_id, error=str(exc),
+            )
+    if cancelled:
+        logger.info(
+            "chat_rollback_jobs_cancelled", chat_id=chat_id, cancelled=cancelled
+        )
+    return cancelled
+
+
 @router.post("/{chat_id}/rollback")
-def rollback_chat(
+async def rollback_chat(
     chat_id: str,
     req: RollbackRequest,
     session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), ):
@@ -1252,6 +1308,22 @@ def rollback_chat(
     anchor = session.get(Message, req.message_id)
     if not anchor or anchor.chat_id != chat_id:
         raise NotFoundError("Message", req.message_id)
+
+    # Stop any reply that is still in flight BEFORE deleting the messages it is
+    # replying to.
+    #
+    # Neither this nor `regenerate_reply` looked at the job table at all. The
+    # user hits undo, the messages are deleted, and twenty seconds later the
+    # already-paid job completes and `_handle_chat_reply` appends its reply at
+    # the tail — content the user just undid, reappearing with nothing to tell
+    # it apart from a new reply. For `regenerate_reply` it is worse: two jobs
+    # race, and the loser appends a duplicate.
+    #
+    # Uses `job_processing.cancel_job` rather than `JobService.cancel_job` so
+    # the provider is signalled too. An LLM job mid-generation is
+    # mid-generation; cancelling only the local record leaves the token spend
+    # running on the provider.
+    await _cancel_inflight_chat_jobs(session, chat_id, reason="chat rollback")
 
     # Delete at the SQL level — never loads the full chat history into Python.
     result = session.execute(
@@ -1287,6 +1359,12 @@ async def regenerate_reply(
     chat, anchor_character_id, deleted, prev_agentic, prev_checkpoint, remaining, ctx_kwargs = await asyncio.to_thread(
         _regenerate_prep_sync, session, chat_repo, chat_id, req.message_id
     )
+
+    # Before the new job is created, or it would cancel itself. `_regenerate_prep_sync`
+    # has already deleted the messages the previous reply was going to answer, so
+    # leaving that job running means it completes against a tail that no longer
+    # exists and appends a duplicate of the reply we are about to regenerate.
+    await _cancel_inflight_chat_jobs(session, chat_id, reason="chat regenerate")
 
     system_prompt, context = await build_chat_context_async(
         remaining,

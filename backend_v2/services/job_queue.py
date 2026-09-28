@@ -19,6 +19,11 @@ _DB_CLAIMS_ENABLED = database_url.startswith("postgresql")
 
 _NOTIFY_CHANNEL = "job_queue_wake"
 
+# Backoff between `_PgNotifyListener` reconnect attempts. Capped rather than
+# exponential-and-forever: a database that is down for an hour should still be
+# retried every 30 s, not drift out to minutes.
+_RECONNECT_BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
+
 
 class _PgNotifyListener:
     """Dedicated thread that LISTENs on the Postgres notify channel.
@@ -57,35 +62,91 @@ class _PgNotifyListener:
         for q in self._queues:
             self._loop.call_soon_threadsafe(q.put_nowait, (None, None))
 
-    def _run(self) -> None:
+    def _connect_and_listen(self):
+        """Open a dedicated connection and `LISTEN`. Raises on failure."""
+        import psycopg2
+
+        conn = psycopg2.connect(database_url)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute(f"LISTEN {_NOTIFY_CHANNEL}")
+        logger.info("pg_notify_listener_listening", channel=_NOTIFY_CHANNEL)
+        return conn
+
+    def _pump(self, conn) -> None:
+        """Drain notifications until the socket closes or `stop()` is called.
+
+        Raises whatever psycopg2 raises once the connection is gone, which is
+        the signal for `_run` to reconnect.
+        """
         import select
 
-        try:
-            import psycopg2
+        while not self._stop_event.is_set():
+            if select.select([conn], [], [], 1.0)[0]:
+                conn.poll()
+                while conn.notifies:
+                    conn.notifies.pop(0)
+                    self._wake()
 
-            conn = psycopg2.connect(database_url)
-            conn.autocommit = True
-            cur = conn.cursor()
-            cur.execute(f"LISTEN {_NOTIFY_CHANNEL}")
-            logger.info("pg_notify_listener_listening", channel=_NOTIFY_CHANNEL)
-        except Exception as exc:
-            logger.warning("pg_notify_listener_connect_failed", error=str(exc))
-            return
+    def _run(self) -> None:
+        """Connect, listen, and RECONNECT until stopped.
 
-        try:
-            while not self._stop_event.is_set():
-                if select.select([conn], [], [], 1.0)[0]:
-                    conn.poll()
-                    while conn.notifies:
-                        conn.notifies.pop(0)
-                        self._wake()
-        except Exception as exc:
-            logger.warning("pg_notify_listener_error", error=str(exc))
-        finally:
+        The thread used to `return` on a connect failure and fall out of the
+        loop on a runtime error, in both cases logging exactly one line. Nothing
+        called `start()` again, so a single dropped connection silently ended
+        cross-process wakeups for the rest of the container's life: workers still
+        claimed jobs correctly (the Postgres claim query is independent) but
+        every wakeup fell back to the 1 s timeout, so a single-process deployment
+        looked fine and a multi-process one degraded with nothing but a warning
+        to show for it.
+
+        A bounded backoff rather than an external supervisor, because the failure
+        mode is a dead thread and a dead thread cannot report itself. The delay
+        list is capped so a database that is down for an hour is retried every
+        30 s instead of backing off exponentially forever.
+
+        `self._stop_event.wait(delay)` rather than `time.sleep`, so `stop()`
+        stays responsive instead of waiting out the backoff.
+        """
+        attempt = 0
+        while not self._stop_event.is_set():
             try:
-                conn.close()
+                conn = self._connect_and_listen()
             except Exception as exc:
-                logger.debug("pg_notify_listener_close_failed", error=str(exc))
+                delay = _RECONNECT_BACKOFF_SECONDS[
+                    min(attempt, len(_RECONNECT_BACKOFF_SECONDS) - 1)
+                ]
+                attempt += 1
+                logger.warning(
+                    "pg_notify_listener_connect_failed",
+                    error=str(exc),
+                    attempt=attempt,
+                    retry_in=delay,
+                )
+                self._stop_event.wait(delay)
+                continue
+
+            attempt = 0
+            try:
+                self._pump(conn)
+                # A clean exit means `stop()` was called; nothing to do but stop.
+                break
+            except Exception as exc:
+                logger.warning(
+                    "pg_notify_listener_error",
+                    error=str(exc),
+                    reconnecting=True,
+                )
+            finally:
+                try:
+                    conn.close()
+                except Exception as exc:
+                    logger.debug("pg_notify_listener_close_failed", error=str(exc))
+            # Back off a little even after a successful connect, so a database
+            # that accepts connections and immediately drops them cannot spin
+            # this thread at full speed.
+            self._stop_event.wait(_RECONNECT_BACKOFF_SECONDS[0])
+
 
 
 class JobQueue:

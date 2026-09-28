@@ -20,6 +20,22 @@ IDLE_SIM_ACTIVITY_AGE_MINUTES = 30
 IDLE_SIM_IN_FLIGHT_LOOKBACK_MINUTES = 120
 MAX_CONTEXT_MESSAGES = 200
 
+# How many chats one tick may bill for.
+#
+# The loop had no ceiling, and its input is every `Chat` with idle simulation
+# enabled and no bound on the query. So N dormant chats meant N paid LLM calls
+# every tick, on top of the N paid memory-extraction calls each one triggers —
+# a cost multiplier on a feature that is off by default and easy to forget is
+# on. The default interval is 600 s, so an account with 50 idle-enabled chats
+# spent 50 generations every ten minutes for messages nobody asked for.
+#
+# Deliberately checked BEFORE the per-chat work rather than after the increment,
+# so the last iteration does not bill one more than the cap allows. The overflow
+# is not deferred to the next tick: each tick re-evaluates dormency, and a chat
+# that is skipped now may be re-engaged by the next one. The cap is a spend
+# ceiling, not a queue.
+IDLE_SIM_MAX_JOBS_PER_TICK = 5
+
 # The statuses that mean "a reply is already on its way". Named here because
 # the previous form of this check listed them inside a Python `any()`, which is
 # why the set is easy to forget to extend when a status is added.
@@ -61,17 +77,29 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
     from services.job_queue import queue_manager
     from services.job_service import JobService
     from services.llm_config import get_default_llm_model
-    from services.llm_workflow import build_chat_llm_workflow
+    from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
 
     spawned = 0
+    eligible = 0
     now = datetime.now(timezone.utc)
     activity_cutoff = now - timedelta(minutes=min_activity_age_minutes)
     inflight_cutoff = now - timedelta(minutes=IDLE_SIM_IN_FLIGHT_LOOKBACK_MINUTES)
 
     async with get_session_context() as session:
         chats = session.exec(select(Chat).where(Chat.idle_sim_enabled.is_(True))).all()
+        eligible = len(chats)
 
         for chat in chats:
+            # Before any per-chat work, so the cap is a real ceiling on spend
+            # rather than a post-hoc report of how much was already spent.
+            if spawned >= IDLE_SIM_MAX_JOBS_PER_TICK:
+                logger.warning(
+                    "idle_sim_tick_capped",
+                    spawned=spawned,
+                    cap=IDLE_SIM_MAX_JOBS_PER_TICK,
+                    eligible_chats=eligible,
+                )
+                break
             if chat.chat_type not in ("chat", "story"):
                 continue
 
@@ -163,6 +191,14 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
                 model=chat.llm_model or get_default_llm_model(),
                 type_="chat_reply",
                 source="idle_simulation",
+                # Honour the chat's own sampler settings. Every other
+                # Chat-bearing reply path passes this (7 call sites in
+                # `chats.py`); this one did not, so a chat configured for
+                # `temperature: 0.2` and `max_output_tokens: 300` — deliberately
+                # short, low-variance idle chatter — got the global default
+                # instead: an unbounded, high-temperature, long-form generation
+                # the user neither configured nor wanted, billed every tick.
+                samplers=sampler_overrides(chat),
                 extra_metadata={"idle_simulation": True},
             )
 
