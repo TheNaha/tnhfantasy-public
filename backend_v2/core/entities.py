@@ -31,7 +31,25 @@ class JobStatus(str, Enum):
 
 # Canonical worker/task type vocabulary. Anything else is rejected so
 # ad-hoc values (e.g. "text") can't silently fall into the image queue.
-VALID_TASK_TYPES = {"image", "llm"}
+# Task types a Job can carry, and a Provider can serve.
+#
+# `tts` is new and is the reason `Provider.capabilities` exists. `worker_type`
+# alone is a SINGLE value, so a provider is either an image worker or an LLM
+# endpoint — it cannot be both, and it cannot say "image, and also speech". TTS
+# is the first task type served by the same ComfyUI container as image work, so
+# the second dimension is now modelled explicitly rather than by overloading
+# `worker_type`.
+#
+# `worker_type` is kept, not replaced: it still decides which execution path a
+# provider uses (a ComfyUI container vs an always-on API endpoint), and the
+# load balancer branches on it. `capabilities` decides which *jobs* it may be
+# handed. Splitting those two questions is the point.
+VALID_TASK_TYPES = {"image", "llm", "tts"}
+
+# Capabilities that imply a ComfyUI container (and therefore the container
+# cold-start, health-check and model-volume machinery) rather than a plain HTTP
+# endpoint to an always-running service.
+CONTAINER_TASK_TYPES = {"image", "tts"}
 
 
 class Job(SQLModel, table=True):
@@ -123,9 +141,16 @@ class Provider(SQLModel, table=True):
     
     id: str = Field(primary_key=True)  # e.g., "modal-primary", "modal-step"
     type: str = Field(default="modal")  # Provider type
-    worker_type: str = Field(default="image")  # e.g., image, llm, audio
+    worker_type: str = Field(default="image")  # e.g., image, llm
     enabled: bool = Field(default=True)
     priority: int = Field(default=1)  # Lower = higher priority
+
+    # Task types this provider may be handed. A LIST, because one ComfyUI
+    # container serves both `image` and `tts` — the difference is the workflow
+    # graph, not the machine. Empty means "whatever `worker_type` says", which is
+    # what every provider existing before this column had, so a NULL here is a
+    # supported state rather than an unconfigured one. See `Provider.serves()`.
+    capabilities: list[str] = Field(default=[], sa_column=Column(JSONColumn))
 
     @field_validator("worker_type")
     @classmethod
@@ -133,7 +158,48 @@ class Provider(SQLModel, table=True):
         if value not in VALID_TASK_TYPES:
             raise ValueError(f"worker_type must be one of {sorted(VALID_TASK_TYPES)}, got {value!r}")
         return value
-    
+
+    @field_validator("capabilities")
+    @classmethod
+    def _validate_capabilities(cls, value: list[str]) -> list[str]:
+        """Reject an unknown capability rather than accepting a typo.
+
+        A misspelt entry here is worse than a missing one: the load balancer
+        would filter the provider out for a task type nobody asked about, and the
+        job would fail as "no provider available" with nothing pointing at a
+        spelling mistake in a JSON column.
+        """
+        for item in value or []:
+            if item not in VALID_TASK_TYPES:
+                raise ValueError(
+                    f"capability {item!r} must be one of {sorted(VALID_TASK_TYPES)}"
+                )
+        # A provider that declares nothing serves whatever its worker_type says.
+        # Returning worker_type here rather than keeping the list empty means
+        # callers never have to remember the fallback rule.
+        return list(value or [])
+
+    def serves(self, task_type: str) -> bool:
+        """Whether this provider may be handed a job of `task_type`.
+
+        ADDITIVE, and deliberately so. A provider always serves its own
+        `worker_type`, because that is the execution path it was deployed with;
+        `capabilities` only ever ADDS further task types on top.
+
+        The first version made `capabilities` authoritative when set, so a
+        provider declaring `["tts"]` would stop serving `image`. That is a
+        footgun reachable from the UI: any editor that sent the capabilities it
+        happened to know about would silently take a working image provider out
+        of rotation, and the symptom — "no provider available" for every image
+        job — points at routing, not at a form field. Under the additive rule,
+        `["tts"]` on an image worker means "also does tts", and the worst a
+        mistaken value can do is grant a capability the provider may not really
+        have, which surfaces as a failed job on that task type alone.
+        """
+        if task_type == self.worker_type:
+            return True
+        return task_type in (self.capabilities or [])
+
     # Credentials (stored securely, used for container env vars)
     credentials: dict[str, Any] = Field(default={}, sa_column=Column(JSONColumn))
     

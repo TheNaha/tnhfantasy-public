@@ -1,0 +1,192 @@
+"""Provider capabilities: which jobs a provider may be handed.
+
+`worker_type` is a single value, so it could only ever say "image" or "llm".
+That was sufficient while each task type was served by exactly one kind of
+worker, and TTS breaks it: the same ComfyUI container serves `image` and `tts`,
+differing only in the workflow graph. So there are now two questions and two
+fields:
+
+    `worker_type`   which EXECUTION PATH — a ComfyUI container that cold-starts,
+                    or an always-on HTTP endpoint the load balancer branches on
+    `capabilities`  which JOBS may be handed to it
+
+This exists because a TTS job had no honest route. `voices.py` created it with
+`task_type="image"` — "TTS runs on the image_worker adapter" — which was true of
+the code path and false of the capability: no provider in this deployment has a
+text-to-speech node installed, so the job went to a worker that cannot build its
+graph. `config.py` already conceded it, in a comment: `ttsEnabled` is
+"frontend-only for now".
+
+A second, quieter win: `get_next_provider` used to return `None` both for "no
+provider is healthy" and for "no provider can serve this task type", and the
+caller could not tell them apart. It now logs the declared capabilities.
+"""
+
+import pytest
+
+from core.entities import CONTAINER_TASK_TYPES, VALID_TASK_TYPES, Provider
+from core.exceptions import ValidationError
+from services.provider_service import _normalize_capabilities
+
+
+def _provider(session, pid, **kw):
+    p = Provider(id=pid, type=kw.pop("type", "modal"), enabled=True, **kw)
+    session.add(p)
+    session.commit()
+    session.refresh(p)
+    return p
+
+
+class TestServes:
+    def test_tts_is_a_task_type(self):
+        assert "tts" in VALID_TASK_TYPES
+        # TTS is container-backed, not an always-on endpoint, so it shares the
+        # image queue and the `max_containers` budget.
+        assert "tts" in CONTAINER_TASK_TYPES
+        assert "llm" not in CONTAINER_TASK_TYPES
+
+    def test_a_provider_with_no_capabilities_keeps_its_old_behaviour(self):
+        """Every provider that existed before this column was edited. The empty
+        case has to mean "same as worker_type" or the backfill would have to
+        touch all of them on read."""
+        p = Provider(id="x", worker_type="image")
+        assert p.capabilities == []
+        assert p.serves("image") is True
+        assert p.serves("tts") is False
+        assert p.serves("llm") is False
+
+    def test_one_container_serves_image_and_tts(self):
+        """The case `worker_type` could not express."""
+        p = Provider(id="x", worker_type="image", capabilities=["image", "tts"])
+        assert p.serves("image") is True
+        assert p.serves("tts") is True
+        assert p.serves("llm") is False
+
+    def test_capabilities_are_additive_not_authoritative(self):
+        """Declaring `tts` must not take the provider out of image rotation.
+
+        The first version treated a non-empty list as authoritative, so a
+        provider declaring only `["tts"]` stopped serving `image` — reachable
+        from any UI that sent the capabilities it knew about, and the symptom
+        ("no provider available" for every image job) points nowhere near a
+        form field. Additive: `worker_type` is always served, and the list only
+        adds."""
+        p = Provider(id="x", worker_type="image", capabilities=["tts"])
+        assert p.serves("image") is True
+        assert p.serves("tts") is True
+
+    def test_capabilities_do_not_override_worker_type_for_routing_shape(self):
+        """Declaring `tts` must not make the container look like an LLM
+        endpoint — the load balancer branches on `worker_type` for the cold-start
+        and health-check machinery, and that must not change."""
+        p = Provider(id="x", worker_type="image", capabilities=["image", "tts"])
+        assert p.worker_type == "image"
+        assert p.worker_type in CONTAINER_TASK_TYPES
+
+
+class TestNormaliseCapabilities:
+    def test_a_new_provider_inherits_its_worker_type(self):
+        assert _normalize_capabilities(None, existing=None, worker_type="image") == ["image"]
+
+    def test_an_existing_provider_keeps_its_capabilities(self):
+        existing = Provider(id="x", worker_type="image", capabilities=["image", "tts"])
+        assert _normalize_capabilities(None, existing=existing, worker_type="image") == ["image", "tts"]
+
+    def test_an_empty_list_inherits_rather_than_declaring_nothing(self):
+        """`[]` must not mean "serves nothing" — that would silently disable a
+        provider by sending an empty array."""
+        assert _normalize_capabilities([], existing=None, worker_type="llm") == ["llm"]
+
+    def test_order_is_preserved_and_duplicates_dropped(self):
+        assert _normalize_capabilities(
+            ["tts", "image", "tts"], existing=None, worker_type="image"
+        ) == ["tts", "image"]
+
+    def test_a_typo_is_rejected_rather_than_ignored(self):
+        """The failure this prevents: `serves()` would exclude the provider for a
+        task type nobody asked about, the job would fail as "no provider
+        available", and nothing would point at a spelling mistake in a JSON
+        column."""
+        with pytest.raises(ValidationError) as exc:
+            _normalize_capabilities(["images"], existing=None, worker_type="image")
+        assert "images" in str(exc.value)
+        assert "tts" in str(exc.value), "the message should list what IS valid"
+
+    def test_a_bare_string_is_rejected(self):
+        with pytest.raises(ValidationError):
+            _normalize_capabilities("image,tts", existing=None, worker_type="image")
+
+
+class TestRouting:
+    """The behaviour change, not just the data model."""
+
+    @pytest.mark.asyncio
+    async def test_tts_is_not_routed_to_an_image_only_provider(self, session):
+        from services.load_balancer_factory import create_load_balancer
+
+        _provider(session, "img-only", worker_type="image", capabilities=["image"])
+        lb = create_load_balancer(session, task_type="tts")
+        assert await lb.get_next_provider(task_type="tts") is None, (
+            "a TTS job was routed to a provider with no TTS nodes"
+        )
+
+    @pytest.mark.asyncio
+    async def test_tts_routes_to_a_provider_that_declares_it(self, session):
+        from services.load_balancer_factory import create_load_balancer
+
+        _provider(session, "img-only", worker_type="image", capabilities=["image"])
+        _provider(session, "comfy-tts", worker_type="image", capabilities=["image", "tts"])
+        lb = create_load_balancer(session, task_type="tts")
+        chosen = await lb.get_next_provider(task_type="tts")
+        assert chosen is not None
+        assert chosen.id == "comfy-tts", (
+            "the provider that declared tts was not the one chosen"
+        )
+
+    @pytest.mark.asyncio
+    async def test_declaring_tts_does_not_stop_a_provider_serving_images(self, session):
+        """The regression a capability filter could easily introduce: filtering
+        too hard and taking the provider out of image rotation."""
+        from services.load_balancer_factory import create_load_balancer
+
+        _provider(session, "comfy-tts", worker_type="image", capabilities=["image", "tts"])
+        lb = create_load_balancer(session, task_type="image")
+        chosen = await lb.get_next_provider(task_type="image")
+        assert chosen is not None and chosen.id == "comfy-tts"
+
+    @pytest.mark.asyncio
+    async def test_an_undeclared_capability_does_not_disable_image(self, session):
+        """A provider that declares ONLY `tts` still serves images, because
+        `worker_type` is what decides the execution path."""
+        from services.load_balancer_factory import create_load_balancer
+
+        _provider(session, "tts-only", worker_type="image", capabilities=["tts"])
+        assert await create_load_balancer(session, task_type="image").get_next_provider(
+            task_type="image"
+        ) is not None
+
+
+class TestQueueSelection:
+    def test_tts_shares_the_container_queue_with_image(self):
+        """They are the same Modal class under one `max_containers` budget, so
+        they contend — which is the honest behaviour when the class is capped at
+        one, and batching is what mitigates it."""
+        from services.job_queue import QueueManager
+
+        mgr = QueueManager()
+        assert mgr.get_queue("tts") is mgr.image
+        assert mgr.get_queue("image") is mgr.image
+        assert mgr.get_queue("llm") is mgr.llm
+
+    def test_a_future_container_task_type_does_not_default_to_llm(self):
+        """`get_queue` used to be `if task_type == "llm": llm else image`, so a
+        new container-backed type landed on the image queue by omission rather
+        than by decision."""
+        from core.entities import CONTAINER_TASK_TYPES
+        from services.job_queue import QueueManager
+
+        mgr = QueueManager()
+        for t in CONTAINER_TASK_TYPES:
+            assert mgr.get_queue(t) is mgr.image
+        for t in VALID_TASK_TYPES - CONTAINER_TASK_TYPES:
+            assert mgr.get_queue(t) is mgr.llm

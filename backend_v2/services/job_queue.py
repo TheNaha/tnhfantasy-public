@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from config import get_config
+from core.entities import CONTAINER_TASK_TYPES
 from infrastructure.background_tasks import start_background_task
 from infrastructure.database import database_url
 from infrastructure.logging import get_logger
@@ -684,10 +685,23 @@ class QueueManager:
         self.llm.set_processor(processor)
 
     def get_queue(self, task_type: str) -> "JobQueue":
-        """Return the appropriate queue for a task type."""
-        if task_type == "llm":
-            return self.llm
-        return self.image
+        """Return the queue that serves a task type.
+
+        There are two physical queues, not one per task type, because there are
+        two kinds of execution: an always-on HTTP endpoint (LLM) and a ComfyUI
+        container that has to cold-start (image, tts). `tts` belongs with `image`
+        because it is the same container and the same `max_containers` budget —
+        it differs only in the workflow graph, so a TTS job and an image job
+        contend for one Modal container exactly as they should when the class is
+        capped at one.
+
+        Stated with `CONTAINER_TASK_TYPES` rather than left as "anything that
+        isn't llm", so adding a fourth container-backed task type later does not
+        silently default onto the image queue by omission.
+        """
+        if task_type in CONTAINER_TASK_TYPES:
+            return self.image
+        return self.llm
 
     async def enqueue(self, job_id: str, provider_id: str | None = None, task_type: str = "image") -> None:
         """Enqueue a job into the correct typed queue."""

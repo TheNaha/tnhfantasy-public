@@ -196,6 +196,7 @@ class TestRunMigrations:
             "073_create_asset_tags",
             "074_add_job_enqueued_at",
             "075_index_asset_gallery_timestamp",
+            "076_provider_capabilities",
             "004_normalize_legacy_job_statuses",
             "006_deleted_file_tombstones",
             "007_add_job_task_type",
@@ -318,6 +319,7 @@ class TestRunMigrations:
             "073_create_asset_tags",
             "074_add_job_enqueued_at",
             "075_index_asset_gallery_timestamp",
+            "076_provider_capabilities",
         ]
 
     def test_branching_migration_is_idempotent_with_existing_columns(self, tmp_path):

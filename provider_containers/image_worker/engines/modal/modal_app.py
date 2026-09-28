@@ -652,9 +652,33 @@ class ComfyUIStable:
     
     @modal.enter()
     def launch_server(self):
-        logger.info("[ComfyUIStable] Starting ComfyUI server via comfy-cli...")
+        # Cold-start telemetry, kept permanently.
+        #
+        # Measured on Modal L4 against `comfy-modal-stack`, cold, from the first
+        # entry into the container hook to ComfyUI answering /ready:
+        #
+        #   container_enter        t=0.00
+        #   comfy-cli spawn        t=0.00   (returns immediately; it forks)
+        #   ComfyUI ready          t=44.15   <- ~42s of that is ComfyUI's own boot
+        #
+        # Modal's own reported cold time for the same request was 57.66s, so
+        # roughly 13.5s is provisioning plus image pull and ~44s is in-container.
+        # That ratio is the number that decides whether a dedicated TTS worker is
+        # worth its own deployment: a TTS-only ComfyUI has none of the image
+        # stack's boot cost, and the addressable part is the large one.
+        #
+        # The original cold start looked like it might be dominated by custom
+        # node discovery. It is not, at least not by count — this image has 8 node
+        # packs, not 60+. What it does carry is `ultralytics` (a heavy import:
+        # torch, opencv, scipy) and a `models/` directory of 531 files on the
+        # /mnt/data network volume, which ComfyUI enumerates at boot. Both are
+        # image-specific. See `docs/audit-2026-09-29.md`.
+        _t0 = time.time()
+        logger.info("[boot] container_enter t=0.00")
         _start_comfy_server(self.port)
+        logger.info("[boot] after_spawn t=%.2f" % (time.time() - _t0))
         _wait_for_comfy_ready(self.port, COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS, "ComfyUIStable")
+        logger.info("[boot] comfy_ready t=%.2f" % (time.time() - _t0))
         self._completed_runs = 0
     
     @modal.method()

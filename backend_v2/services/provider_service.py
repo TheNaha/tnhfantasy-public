@@ -7,7 +7,7 @@ from typing import Any
 from sqlmodel import Session
 from sqlalchemy import update
 
-from core.entities import Job, LoadBalancingConfig, Provider
+from core.entities import VALID_TASK_TYPES, Job, LoadBalancingConfig, Provider
 from core.events import EventType, emit_provider_event
 from core.exceptions import NotFoundError, ValidationError
 from infrastructure.logging import provider_logger
@@ -35,6 +35,60 @@ logger = provider_logger()
 
 # Provider types that are always LLM workers regardless of id/name.
 LLM_PROVIDER_TYPES = {"openai_compat", "openai", "anthropic", "google", "gemini", "ollama", "modal_llm"}
+
+
+def _normalize_capabilities(
+    value: Any,
+    *,
+    existing: Provider | None,
+    worker_type: str,
+) -> list[str]:
+    """Validate and canonicalise `Provider.capabilities` on the write path.
+
+    Validation lives here, not on the model's `field_validator`, because
+    SQLModel does not run validators for table models on either assignment or
+    construction unless `validate_assignment` is set — and setting it on a model
+    this widely used has a blast radius well beyond this column. Every provider
+    write funnels through this method, so this is the right seam.
+
+    Unknown entries are REJECTED rather than dropped or ignored. A typo here is
+    the worst kind of config error: `serves()` would quietly exclude the
+    provider for a task type nobody asked about, the job would fail as "no
+    provider available", and nothing would point at a spelling mistake in a JSON
+    column. Failing at the write, with the valid set in the message, is the only
+    version the operator can act on.
+
+    Absent means "inherit". An existing provider keeps whatever it had; a new
+    one with nothing declared gets `[worker_type]`, which is exactly its
+    behaviour before this column existed.
+
+    A declared list does NOT need to repeat `worker_type`: `serves()` is
+    additive, so `["tts"]` on an image worker means "also does tts". That
+    matters because the alternative — requiring the full list — makes a
+    narrowed edit a way to take a working provider out of image rotation.
+    """
+    if value is None:
+        current = list(getattr(existing, "capabilities", None) or [])
+        return current or [worker_type]
+
+    if not isinstance(value, (list, tuple, set)):
+        raise ValidationError(
+            f"capabilities must be a list of task types, got {type(value).__name__}"
+        )
+
+    declared = [str(v) for v in value if str(v).strip()]
+    unknown = sorted({c for c in declared if c not in VALID_TASK_TYPES})
+    if unknown:
+        raise ValidationError(
+            f"unknown provider capabilit{'y' if len(unknown) == 1 else 'ies'} "
+            f"{unknown}; valid task types are {sorted(VALID_TASK_TYPES)}"
+        )
+
+    # De-duplicate while preserving the declared order, which is how the UI
+    # renders them and how a diff reads.
+    seen: set[str] = set()
+    ordered = [c for c in declared if not (c in seen or seen.add(c))]
+    return ordered or [worker_type]
 
 
 def _infer_worker_type(provider_id: str, provider_type: str, explicit: str | None = None) -> str:
@@ -72,6 +126,11 @@ class ProviderService:
         worker_type = _infer_worker_type(provider_id, provider_type, worker_type)
 
         payload["worker_type"] = worker_type
+        payload["capabilities"] = _normalize_capabilities(
+            payload.get("capabilities"),
+            existing=existing,
+            worker_type=worker_type,
+        )
         existing_config = clean_dict(getattr(existing, "config", None))
         merged_config = clean_dict(existing_config)
         merged_config.update(clean_dict(payload.get("config")))

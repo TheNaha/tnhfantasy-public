@@ -1680,6 +1680,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Index coalesce(generated_at, created_at) WHERE deleted_at IS NULL, the gallery's ordering key, which nothing covered",
             apply_fn=_migration_075_index_asset_gallery_timestamp,
         ),
+        MigrationStep(
+            version="076_provider_capabilities",
+            description="Add providers.capabilities so a provider declares which task types (image/tts) it can serve, backfilled from worker_type; a tts job no longer routes to a worker with no TTS nodes",
+            apply_fn=_migration_076_provider_capabilities,
+        ),
     ]
 
 
@@ -3125,4 +3130,57 @@ def _migration_075_index_asset_gallery_timestamp(conn) -> bool:
         WHERE deleted_at IS NULL
     """))
     logger.info("migration_index_created", table="assets", index="ix_assets_gallery_ts")
+    return True
+
+
+def _migration_076_provider_capabilities(conn) -> bool:
+    """Add `providers.capabilities` and give every existing provider its `worker_type`.
+
+    A TTS job has no execution path today. `services/world_vault/voices.py`
+    creates it with `task_type="image"` — "TTS runs on the image_worker adapter" —
+    which was true of the *code path* and false of the *capability*: the load
+    balancer filtered on `p.worker_type == task_type`, and no ComfyUI provider
+    in this deployment has a text-to-speech node installed at all
+    (`grep -i 'xtts|saveaudio' provider_containers` is empty), so the job was
+    dispatched to a worker that cannot build its graph. `config.py` had already
+    conceded the point in a comment: `ttsEnabled` is "frontend-only for now".
+
+    `worker_type` is a single value, so it cannot express "image AND speech" for
+    one container. This column is the second dimension: which JOBS a provider may
+    be handed, as distinct from which EXECUTION PATH it uses.
+
+    Backfilled to `[worker_type]` rather than left empty, so the column is
+    truthful on read as well as on write: `Provider.serves()` treats empty as
+    "same as worker_type" for a provider nobody has edited yet, and an explicit
+    value for everyone else. Leaving them all empty would work identically and
+    make the admin UI show a blank capability list for every existing provider.
+    """
+    if conn.dialect.name != "postgresql":
+        return True
+
+    inspector = inspect(conn)
+    if "providers" not in inspector.get_table_names():
+        return False
+
+    existing = {col["name"] for col in inspector.get_columns("providers")}
+    if "capabilities" not in existing:
+        conn.execute(text("ALTER TABLE providers ADD COLUMN capabilities JSONB"))
+        logger.info("migration_column_added", table="providers", column="capabilities")
+
+    # Backfill in SQL rather than row by row. `jsonb_build_array(worker_type)`
+    # mirrors the Python `default=[]` -> `serves()` fallback exactly, so a
+    # provider written by the ORM with no declared capabilities and one written
+    # by this backfill behave the same way.
+    result = conn.execute(
+        text(
+            "UPDATE providers SET capabilities = jsonb_build_array(worker_type) "
+            "WHERE capabilities IS NULL OR jsonb_array_length(capabilities) = 0"
+        )
+    )
+    logger.info(
+        "migration_backfilled",
+        table="providers",
+        column="capabilities",
+        rows=result.rowcount if result.rowcount and result.rowcount > 0 else 0,
+    )
     return True

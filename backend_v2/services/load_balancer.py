@@ -12,7 +12,7 @@ from cachetools import TTLCache
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from core.entities import LoadBalancerState, Provider, Job, JobStatus
+from core.entities import LoadBalancerState, Provider, Job, JobStatus, CONTAINER_TASK_TYPES
 from infrastructure.background_tasks import start_background_task
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
@@ -472,15 +472,51 @@ class LoadBalancer:
             Provider or None if no providers available
         """
         providers = self.repo.get_enabled()
-        # Filter by worker_type matching the task_type
-        providers = [p for p in providers if p.worker_type == task_type]
-        
+        # Filter by capability, not by `worker_type` equality.
+        #
+        # This was `p.worker_type == task_type`, which works only because
+        # `worker_type` is a single value and every task type happened to be
+        # served by exactly one kind of worker. TTS breaks that: the same ComfyUI
+        # container serves `image` and `tts`, and the difference is the workflow
+        # graph rather than the machine, so a provider has to be able to say
+        # both. `Provider.serves()` resolves the empty-capabilities case back to
+        # `worker_type`, so every provider that has not been edited behaves
+        # exactly as it did before this column existed.
+        providers = [p for p in providers if p.serves(task_type)]
+
         excluded = exclude_provider_ids or set()
         if excluded:
             providers = [p for p in providers if p.id not in excluded]
-        
+
         if not providers:
             return None
+
+        # A ComfyUI-container task type (`image`, `tts`) that nobody can serve.
+        # Returning None here is indistinguishable from "no provider is healthy",
+        # so the failure is reported as an empty pool by the caller. Log the
+        # capability sets so the cause is visible in the log rather than
+        # inferred — this is the failure the whole column exists to prevent,
+        # since before it a `tts` job was simply handed to an image worker that
+        # has no TTS nodes and failed inside the graph.
+        if task_type in CONTAINER_TASK_TYPES:
+            capable = [
+                p.id
+                for p in self.repo.get_enabled()
+                if p.serves(task_type)
+            ]
+            if not capable:
+                logger.warning(
+                    "no_provider_declares_capability",
+                    task_type=task_type,
+                    providers=[
+                        {"id": p.id, "worker_type": p.worker_type, "capabilities": p.capabilities}
+                        for p in self.repo.get_enabled()
+                    ],
+                    hint=(
+                        f"set providers.capabilities to include {task_type!r} on a provider "
+                        "whose worker image actually has the node pack installed"
+                    ),
+                )
 
         # LLM failover routing: API-endpoint providers are always-running
         # endpoints (not ComfyUI containers), so the container cold-start/health
