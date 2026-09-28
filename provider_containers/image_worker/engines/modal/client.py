@@ -34,6 +34,25 @@ from provider_core.models import MODEL_DIRECTORIES
 
 MODAL_APP_NAME = os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
 
+# The TTS worker is a SEPARATE Modal app with a separate image, deployed by the
+# same `modal deploy` (see `tts_worker/engines/modal/modal_app.py` and
+# `backend_v2/services/provider_utils.py`). It has to be a separate app because
+# the image worker's cold start is 57.66s, of which ~44s is in-container and
+# ~42s of that is ComfyUI's own boot — the heavy `ultralytics` import and the
+# enumeration of 531 model files on the /mnt/data volume. A TTS image has
+# neither.
+#
+# So a TTS job cannot go to the image app: it would fail inside a container on a
+# graph naming nodes that image does not have, which is the exact state TTS was
+# in before. `InferenceRequest.task_type` is what tells us which app to use; it
+# is optional so a provider that hosts only one app is unaffected.
+MODAL_TTS_APP_NAME = os.getenv("MODAL_TTS_APP_NAME", "comfy-modal-tts")
+
+# task_type -> (app name, class in that app)
+_APP_FOR_TASK_TYPE = {
+    "tts": (MODAL_TTS_APP_NAME, "TTSWorker"),
+}
+
 # Slice size for ranged volume reads. 8 MiB keeps the RPC payload small
 # enough to stream a 7 GB checkpoint without a second full-size buffer.
 _MODAL_RANGE_BYTES = 8 * 1024 * 1024
@@ -111,13 +130,24 @@ class ModalProviderClient(BaseProviderClient):
         # already fixed with a comment saying so. The flag was read into a local
         # and never used, so a caller passing it got the snapshot class either way
         # and had no way to know.
-        class_name = "ComfyUISnapshot" # Always use snapshot per user request
-        
+        # Always use snapshot per user request — for the IMAGE app. A TTS job
+        # resolves to a different app and class below.
+        class_name = "ComfyUISnapshot"
+        app_name = MODAL_APP_NAME
+        if request.task_type in _APP_FOR_TASK_TYPE:
+            app_name, class_name = _APP_FOR_TASK_TYPE[request.task_type]
+            logger.info(
+                "modal_routing_to_task_app",
+                task_type=request.task_type,
+                app_name=app_name,
+                class_name=class_name,
+            )
+
         if job_id:
             await self.job_tracker.start_job(job_id)
-        
+
         try:
-            ComfyUIClass = modal.Cls.from_name(MODAL_APP_NAME, class_name)
+            ComfyUIClass = modal.Cls.from_name(app_name, class_name)
             comfy_instance = ComfyUIClass()
             
             async def generate():

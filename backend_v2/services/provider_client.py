@@ -101,10 +101,19 @@ async def stream_task_events(
 
     async with get_streaming_client(timeout=timeout) as client:
         try:
+            # The task type travels with the request so a worker that hosts more
+            # than one app can pick the right one. It is already an argument
+            # here, used to choose the reducer — but it was never put in the
+            # payload, so the worker could not see it, and a provider hosting
+            # separate image and TTS apps would send both to the same one.
+            # `stream_task_events` is the only caller of this POST, so adding it
+            # at the single call site is enough; it is set unconditionally rather
+            # than only for `tts` so a worker can key on anything.
+            wire_payload = payload if payload.get("task_type") == task_type else {**payload, "task_type": task_type}
             async with client.stream(
                 "POST",
                 f"{worker_url}/inference",
-                json=payload,
+                json=wire_payload,
                 timeout=timeout,
             ) as response:
                 if response.status_code != 200:

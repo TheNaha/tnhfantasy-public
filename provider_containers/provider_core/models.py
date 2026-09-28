@@ -31,6 +31,20 @@ class InferenceRequest(BaseModel):
     job_id: Optional[str] = None
     timeout_seconds: Optional[float] = None
 
+    # Which app to run this on, for providers that host more than one.
+    #
+    # `workflow` alone does not say: an image job and a TTS job are both a
+    # ComfyUI graph, differing only in the node types. The worker needs to be told
+    # or it sends both to the same Modal app — so a TTS job would land on the
+    # image worker and fail inside a container naming nodes that image image
+    # does not have. The backend already knows this (it is the `Job.task_type`
+    # it is dispatching) and sets it; a worker that does not host a second app
+    # ignores it.
+    #
+    # Optional rather than required, so an older backend talking to a newer
+    # worker — or any other caller of this schema — keeps working unchanged.
+    task_type: Optional[str] = None
+
     @model_validator(mode="after")
     def _ensure_payload_present(self):
         if not (self.workflow or self.messages or self.tools or self.model):
