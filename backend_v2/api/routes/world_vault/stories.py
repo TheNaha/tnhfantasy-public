@@ -16,11 +16,11 @@ from infrastructure.repositories.story_repo import StoryRepository
 from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
 from infrastructure.repositories.story_revision_repo import StoryChapterRevisionRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Story, StoryBeatRole, StoryChapter, StoryChapterRevision, Lorebook, LorebookEntry, Character, Location, Scenario, Asset, AssetKind
+from core.entities import Story, StoryBeatRole, StoryChapter, StoryChapterRevision, Lorebook, Character, Location, Scenario, Asset, AssetKind
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow, sampler_overrides
-from services.rag_pipeline import rag_enabled, search_lorebook_entries
+from services.rag_pipeline import search_lorebook_entries
 from services.job_service import JobService
 from services.job_queue import QueueManager, queue_manager
 from services.model_availability_service import ModelAvailabilityService
@@ -1595,42 +1595,41 @@ def _illustrate_system_prompt_sync(
             system_prompt += "\n\nStory Characters (Use these details for illustration):\n" + "\n".join(characters_content)
 
     if story and story.lorebook_ids:
+        # One path for both RAG states.
+        #
+        # There used to be an `if rag_enabled()` branch here, and the else arm
+        # loaded EVERY entry of EVERY story lorebook with no `LIMIT` and no
+        # `ORDER BY`, then concatenated all of them into a paid LLM system
+        # prompt. So a SillyTavern import with a few thousand entries produced a
+        # multi-megabyte prompt — and the asymmetry was perverse: the setting the
+        # UI offers as a memory saver made THIS prompt larger, while the same
+        # story's Continue path went through `context_builder`, which bounds lore
+        # deliberately.
+        #
+        # `search_lorebook_entries` already degrades correctly when RAG is off:
+        # its docstring is explicit that "turning RAG off removes only the
+        # semantic step, not retrieval" and that returning [] would make
+        # lorebooks silently inert. So there is nothing to choose between the two
+        # arms — the branch was only ever duplicating it badly.
+        #
+        # With the semantic cutoff now in place (see
+        # `rag_pipeline.rag_max_distance`), this also inherits the fix for the
+        # inverse problem: when nothing in the lorebook is relevant, fewer than
+        # `limit` entries come back rather than an arbitrary top-N.
         lore_lines = []
-        if rag_enabled():
-            # Semantic top-K retrieval — same canonical path as chat/story context.
-            try:
-                relevant = search_lorebook_entries(
-                    session,
-                    story.lorebook_ids,
-                    query=(chapter.content or "")[-2000:],
-                    limit=8,
-                )
-            except Exception as exc:  # pragma: no cover - retrieval edge cases
-                logger.warning("illustrate_lorebook_retrieval_failed", error=str(exc))
-                relevant = []
-            for entry in relevant:
-                keys_str = ", ".join(entry.keys) if entry.keys else "General"
-                lore_lines.append(f"- [{keys_str}]: {entry.content}")
-        else:
-            # RAG disabled: fall back to dumping entries so prompts keep parity
-            # with the pre-RAG behavior instead of silently losing all lore.
-            lorebooks = session.exec(
-                select(Lorebook).where(Lorebook.id.in_(story.lorebook_ids))
-            ).all()
-            lb_map = {lb.id: lb for lb in lorebooks}
-            all_entries = session.exec(
-                select(LorebookEntry).where(LorebookEntry.lorebook_id.in_(story.lorebook_ids))
-            ).all()
-            entries_by_lb: dict[str, list] = {}
-            for entry in all_entries:
-                entries_by_lb.setdefault(entry.lorebook_id, []).append(entry)
-            for lb_id in story.lorebook_ids:
-                lb = lb_map.get(lb_id)
-                if not lb:
-                    continue
-                for entry in entries_by_lb.get(lb.id, []):
-                    keys_str = ", ".join(entry.keys) if entry.keys else "General"
-                    lore_lines.append(f"- [{keys_str}]: {entry.content}")
+        try:
+            relevant = search_lorebook_entries(
+                session,
+                story.lorebook_ids,
+                query=(chapter.content or "")[-2000:],
+                limit=8,
+            )
+        except Exception as exc:  # pragma: no cover - retrieval edge cases
+            logger.warning("illustrate_lorebook_retrieval_failed", error=str(exc))
+            relevant = []
+        for entry in relevant:
+            keys_str = ", ".join(entry.keys) if entry.keys else "General"
+            lore_lines.append(f"- [{keys_str}]: {entry.content}")
         if lore_lines:
             system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lore_lines)
     return system_prompt

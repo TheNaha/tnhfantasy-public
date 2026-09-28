@@ -328,19 +328,27 @@ def export_lorebook_sillytavern(
             "keysecondary": [],
             "comment": "",
             "content": entry.content or "",
-            "constant": False,
+            # `not entry.keys` is this app's own always-on semantics, and
+            # `rag_pipeline` already treats a keyless entry that way. Hardcoding
+            # `False` exported every keyless entry as key-triggered, so a
+            # "constant" world-book entry stopped firing the moment it left here.
+            "constant": not entry.keys,
             "vectorized": True,
             "selective": True,
             "selectiveLogic": 0,
             "addMemo": True,
+            # `order`, `disable` and `position` have no column on `LorebookEntry`
+            # at all, so 100/False/0 is the only faithful value. The two that DO
+            # have columns were hardcoded too, which meant a depth or
+            # probability the user had set was silently discarded on export.
             "order": 100,
             "position": 0,
             "disable": False,
             "excludeRecursion": False,
             "preventRecursion": False,
-            "probability": 100,
+            "probability": entry.probability if entry.probability is not None else 100,
             "useProbability": True,
-            "depth": 4,
+            "depth": entry.depth,
             "group": "",
             "displayIndex": idx,
         }

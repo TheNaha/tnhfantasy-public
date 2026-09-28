@@ -243,15 +243,32 @@ def _chat_to_sillytavern_jsonl(
             continue
         alternates = meta.get("alternates") or [msg.content]
         active_index = meta.get("active_index", 0)
+        if not isinstance(active_index, int) or not 0 <= active_index < len(alternates):
+            active_index = 0
         entry = {
             "name": _st_speaker_name(msg, chat, char_names),
             "is_user": msg.role == MessageRole.USER,
             "is_system": msg.role == MessageRole.SYSTEM,
             "send_date": msg.created_at.isoformat() if msg.created_at else created.isoformat(),
             "meta": {"tnh_kind": msg.kind.value if msg.kind else None},
-            "swipes": [msg.content] + [a for a in alternates if a != msg.content],
+            # `alternates` already contains the active text at `active_index` —
+            # `swipe_message` appends the new text and sets the index to the end.
+            # The old expression, `[msg.content] + [a for a in alternates if a !=
+            # msg.content]`, rebuilt the list in a different order while leaving
+            # `swipe_id` pointing at the old index, so the exported `swipe_id`
+            # addressed a shifted list: ST would show a different reply than the
+            # user was looking at. Emitting `alternates` verbatim and deriving
+            # `mes` from the index keeps the two consistent.
+            "swipes": list(alternates),
             "swipe_id": active_index,
-            "mes": msg.content,
+            "mes": alternates[active_index],
+            # Round-trips to `Message.pinned` on import. Without it a pinned
+            # message came back unpinned, so context that the user had
+            # deliberately protected from pruning was prunable after one export.
+            "pinned": bool(msg.pinned),
+            # `meta` is SillyTavern's own bag; our extras ride in `extra` so a
+            # chat authored in ST keeps whatever it already had there.
+            "extra": {k: v for k, v in meta.items() if k not in ("alternates", "active_index")},
         }
         lines.append(json.dumps(entry, ensure_ascii=False))
     return "\n".join(lines)
@@ -446,10 +463,35 @@ def _import_chat_sync(
 
     created_messages: list[Message] = []
     for i, obj in enumerate(raw_messages):
+        meta: dict = {}
+        pinned = False
         if st_format:
             content = str(obj.get("mes") or "").strip()
             if not content:
                 continue
+            # SillyTavern keeps the full swipe list in `swipes` and the selected
+            # index in `swipe_id`, with `mes` holding the active text. Only `mes`
+            # used to be read, so importing a chat this app had exported dropped
+            # every alternate and the active index — and since export wrote
+            # `swipes` and `swipe_id`, the round trip was lossy in *our* format.
+            #
+            # `content` is taken from `swipes[swipe_id]` rather than trusting
+            # `mes`, because the two can disagree after an edit (see
+            # `edit_message`) and `active_index` is the authority in this app.
+            # Deriving from the index is what makes the round trip stable.
+            swipes = obj.get("swipes")
+            if isinstance(swipes, list):
+                stripped = [str(s).strip() for s in swipes if str(s).strip()]
+                if stripped:
+                    swipe_id = obj.get("swipe_id")
+                    idx = (
+                        swipe_id
+                        if isinstance(swipe_id, int) and 0 <= swipe_id < len(stripped)
+                        else 0
+                    )
+                    content = stripped[idx]
+                    meta = {"alternates": stripped, "active_index": idx}
+            pinned = bool(obj.get("pinned"))
             if obj.get("is_system"):
                 role, kind = MessageRole.SYSTEM, MessageKind.SYSTEM
             elif obj.get("is_user"):
@@ -466,6 +508,15 @@ def _import_chat_sync(
                     cid = matched.id
                 elif primary_id:
                     cid = primary_id
+            # `extra` is SillyTavern's own metadata bag. Anything under
+            # `tnh_kind` came from our exporter; the rest is preserved verbatim so
+            # a chat authored in ST keeps whatever it carried.
+            extra = obj.get("extra")
+            if isinstance(extra, dict):
+                for key, value in extra.items():
+                    if key == "tnh_kind":
+                        continue
+                    meta.setdefault(key, value)
         else:
             content = str(obj.get("content") or "").strip()
             if not content or obj.get("kind") == MessageKind.IMAGE.value:
@@ -483,6 +534,15 @@ def _import_chat_sync(
                 kind = MessageKind.CHAR
             cid = obj.get("character_id")
             ts = _parse_message_timestamp(obj.get("created_at")) or (base_ts + timedelta(seconds=i))
+            # The JSON exporter writes `pinned` and `message_metadata` and the
+            # JSON importer read neither, so a JSON round trip also lost the pin
+            # state and every swipe. `message_metadata` is passed through rather
+            # than re-derived, because it may hold alternates, an active index,
+            # agentic flags or a world-state marker we do not want to rebuild.
+            pinned = bool(obj.get("pinned"))
+            raw_meta = obj.get("message_metadata")
+            if isinstance(raw_meta, dict):
+                meta = dict(raw_meta)
         created_messages.append(
             Message(
                 chat_id=chat.id,
@@ -492,6 +552,8 @@ def _import_chat_sync(
                 character_id=cid,
                 created_at=ts,
                 updated_at=ts,
+                pinned=pinned,
+                message_metadata=meta or None,
             )
         )
     for msg in created_messages:
@@ -1235,6 +1297,36 @@ def edit_message(
         raise NotFoundError("Message", message_id)
     if message.role not in (MessageRole.USER, MessageRole.CHAR):
         raise ValidationError("Only user and character messages can be edited")
+    # Keep the swipe list in step with the text the user can actually see.
+    #
+    # This assigned `content` and left `message_metadata` alone, so after an edit
+    # the displayed text appeared nowhere in `alternates` while `active_index`
+    # still pointed at the old entry. Two things then went wrong:
+    #
+    #   * the next `swipe_message` does `if content not in alternates:
+    #     alternates.insert(0, content)` — so the edited text was pushed to the
+    #     FRONT, shifting every stored index by one, and "swipe right" landed on
+    #     a different reply than the UI implied;
+    #   * the ST export wrote `swipe_id=active_index` against that same shifted
+    #     list, so a re-import showed the wrong text as active.
+    #
+    # Editing IN PLACE is the small change: the user asked to change the message
+    # they are looking at, and that is the slot `active_index` already names. It
+    # also preserves the other alternates, which replacing the list would throw
+    # away, and it makes the `content not in alternates` guard a no-op
+    # afterwards, so the shift cannot happen.
+    meta = dict(message.message_metadata or {})
+    alternates: list[str] = list(meta.get("alternates") or [])
+    if alternates:
+        idx = meta.get("active_index", 0)
+        if not isinstance(idx, int) or not 0 <= idx < len(alternates):
+            idx = 0
+        alternates[idx] = data.content
+        message.message_metadata = {
+            **meta,
+            "alternates": alternates,
+            "active_index": idx,
+        }
     message.content = data.content
     message.updated_at = datetime.now(timezone.utc)
     session.add(message)
