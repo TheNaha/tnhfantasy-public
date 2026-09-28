@@ -11,9 +11,27 @@ Deploying TNHComfy is designed to be straightforward, leveraging Docker and Dock
 Before deploying, configure the backend environment and each provider environment file referenced by the Compose file:
 ```bash
 cp .env.example .env
-cp .env.example.provider .env.modal-hp196
+cp .env.example.provider.engines .env.modal-hp196
 ```
-Repeat the provider step for every provider service that should run. Keep all credential files out of version control.
+**Use `.env.example.provider.engines`, not `.env.example.provider`.** The latter is a
+35-line stub in which every assignment is commented out, so copying it produces a
+provider with no `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` that cannot start. The engines
+file is the canonical reference and says so at its own line 5.
+
+With `--profile providers`, compose needs **all five** provider env files present
+(`.env.modal-zetsuke`, `.env.modal-hp196`, `.env.modal-stepmania`, `.env.llm-local`,
+`.env.direct-url`) plus `.env`, and refuses to start if any is missing —
+`scripts/preflight.sh` hard-fails on exactly these. There is no
+`.env.example.llm-local`; the LLM worker's variables are the provider ones.
+
+```bash
+cp .env.example.provider.engines .env.modal-zetsuke
+cp .env.example.provider.engines .env.modal-stepmania
+cp .env.example.provider.engines .env.llm-local
+cp .env.example.direct-url     .env.direct-url
+```
+
+Keep all credential files out of version control.
 Key variables:
 - `HF_TOKEN`: Hugging Face API token for downloading models.
 - `CIVITAI_TOKEN`: Civitai API token for accessing specific models.

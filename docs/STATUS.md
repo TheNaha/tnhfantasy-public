@@ -43,18 +43,23 @@ All three suites green as of **2026-09-27**:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **2441 passed, 7 skipped** (225 s) | `cd backend_v2 && .venv/bin/pytest` |
-| Frontend | **1080 passed across 116 files** (82 s) | `cd frontend_v2 && npm test` |
-| Providers | **596 passed, 4 skipped** (67 s) | `cd provider_containers && venv/bin/python -m pytest` |
+| Backend | **2473 passed, 7 skipped** (248 s) | `cd backend_v2 && .venv/bin/pytest` |
+| Frontend | **1143 passed across 122 files** (~110 s) | `cd frontend_v2 && npm test` |
+| Providers | **634 passed, 4 skipped** (77 s) | `cd provider_containers && venv/bin/python -m pytest` |
 
 Lint: `ruff check .` clean in the backend **and** in `provider_containers` (which
 now has its own `ruff.toml` selecting `F`, with F401 on and zero blanket
-ignores). `npm run lint` reports 0 errors and 6 pre-existing warnings.
+ignores). `npm run lint` reports 0 errors and 7 warnings. `npm run build` is
+clean.
 
 Compose: `docker compose -f docker-compose.yml -f docker-compose.dev.yml
 --profile providers config --quiet` exits 0, and a CI job now runs it plus a
-build of all three provider Dockerfiles, so a broken `Dockerfile` no longer ships
-green.
+build of all three provider Dockerfiles. That job was **red at its first step
+on every clean checkout** until 2026-09-28 — compose refuses to render while an
+`env_file:` is missing, and every `.env*` is gitignored, so the step exited 1 and
+the three `docker build`s below it never ran. It now seeds the required env
+files first. `backend_v2/Dockerfile` and `frontend_v2/Dockerfile` are still built
+by no workflow.
 
 Running the suites is the point. 128 provider tests, 11 frontend tests and 10
 backend tests were added by the 2026-09-27 pass alone, and the counts above are
@@ -81,6 +86,24 @@ chats with speaker attribution, agentic story illustration, SillyTavern
 interop and a command palette — all are implemented and wired, not stubbed.
 The gap was never missing capability; it was that some things lied about
 themselves. See the audit.
+
+> **`docs/audit-2026-09-28.md` supersedes this section for the 2026-09-28
+> findings.** The paragraph above is now wrong in three specific ways, which is
+> exactly the failure mode it describes. As of that audit:
+>
+> - **Group chats with speaker attribution were NOT wired.** The roster field was
+>   missing from both chat request models and pydantic dropped it silently, and
+>   the job-completion event discarded `character_id` before it reached the
+>   message — so every AI reply was attributed to the primary character. Both
+>   fixed, with regression tests.
+> - **Chapter revisions were partially wired.** The autosave path bypassed the
+>   revision repository, so the retention limit was never enforced on the path
+>   that actually creates revisions — and the same path was destroying the
+>   chapter's beat list on every save.
+> - **Roughly forty `async def` handlers** became ~196, and only some were
+>   fixed. Measured on the running stack: 20 concurrent requests to a 9 ms
+>   endpoint take **400 ms**, so effective concurrency is 1×. The high-frequency
+>   offenders are fixed; the architectural cause is not.
 
 ## What was actually wrong, and is now fixed
 
@@ -115,26 +138,64 @@ Items 1-6 of the previous list were fixed — see §1b of the follow-up. What re
    the decision as out of scope for a local single-user studio — but it means
    every destructive endpoint, including the unauthenticated published-story
    export, is reachable by anyone who can reach the port. Do not expose this
-   to a network you do not control.
+   to a network you do not control. Note that the production compose publishes
+   **8002 on 0.0.0.0**, and `docs/api.md`'s stated mitigation ("enforce
+   authentication at the reverse-proxy layer") has no Traefik router for 8002 —
+   the only router is for 5174. The dev override restricts `db` to `127.0.0.1`,
+   which makes the omission look accidental rather than intended.
 2. **A 7 GB checkpoint is now servable, but slowly on Modal.** All four engines
    stream instead of buffering, and the backend has a `stream_file` path. Modal is
    the exception: a modal method serialises its return value across RPC, so the
    client pulls fixed 8 MiB ranges — one RPC per slice. Correct, memory-safe, and
    slower than the others. Streaming that engine properly means a presigned URL or
    a volume mount rather than RPC, which is a platform decision.
-3. **Provider model downloads still have no resume.** The per-path lock and unique
-   temp file landed, so concurrent downloads cannot corrupt a model, and
-   `Range`-based resume is in progress.
-4. **`world_hub.get_relationships` applies its `limit`/`offset` to one of five
-   sub-queries**, so the advertised pagination is not honoured. Everything is
-   bounded, so it is a wrong-answer bug rather than a cliff.
+3. ~~**Provider model downloads still have no resume.**~~ **Fixed** — already
+   shipped before this audit: `downloads.py` has `_transfer_with_resume`,
+   `_claim_resume_slot`, `Content-Range` parsing, `If-Range`, and a "server
+   ignored Range" restart path, pinned by `tests/test_download_resume.py` (29
+   tests). The 2026-09-28 audit additionally removed an `os.remove` that sat
+   immediately before the atomic `os.replace`, which opened a window where a kill
+   left neither the old nor the new model.
+4. ~~**`world_hub.get_relationships` applies its `limit`/`offset` to one of five
+   sub-queries.**~~ **Fixed** — the route now clamps `limit` (1-1000) and
+   `offset` (>=0) and windows every sub-query; its docstring records the fix, and
+   `tests/test_world_hub_relationship_pagination.py` pins it.
 5. **Remaining hand-rolled overlays.** The highest-value conversions are done and
-   `Modal` is built on `ModalOverlay`; the rest is mechanical and wide.
+   `Modal` is built on `ModalOverlay`; the rest is mechanical and wide. A
+   one-line `@media (hover: none)` rule now also makes all 30 hover-revealed
+   action rows reachable on touch, which had made nine roleplay dialogs and every
+   per-message action unusable on a phone.
 6. **The embedding model still loads inside the reindex request** — seconds on
-   first call. Moving it to startup needs `services/embedding_service.py`.
-7. **The two `worker.py` bootstraps share ~35 lines** — the `if ENGINE ==` client
-   selection and the lifespan teardown. That is the real residual duplication
-   between the image and LLM workers, and it belongs in `provider_core`.
+   first call. Moving it to startup needs `services/embedding_service.py`. (The
+   two *inference* call sites are now off the event loop; this one is not.)
+7. ~~**The two `worker.py` bootstraps share ~35 lines.**~~ **Fixed** —
+   `provider_core/worker_bootstrap.py` exists and both entrypoints import from
+   it. Residual duplication is ~35 lines of env-parsing preamble in each, plus
+   the four "method not supported" tails and the four hand-rolled SSE parsers on
+   the LLM side.
+
+### Added by the 2026-09-28 audit
+
+`docs/audit-2026-09-28.md` is the full list. The four that changed behaviour
+rather than tidying:
+
+- **The LLM Modal provider deleted every model on its volume every two hours.**
+  A magic-byte table was unpacked backwards, so `bytes` was compared to a format
+  name — always false — and reconciliation swept the directory as "invalid".
+  Only the LLM twin re-implemented a check the shared helper already owned.
+- **Chapter autosave destroyed the beat list, silently, every few seconds.** The
+  PUT body deserialised into a SQLModel *table* model, which FastAPI does not
+  validate, so an absent field arrived as `[]` and the guard read it as "clear".
+- **The job-completion event dropped the job's metadata.** A shallow merge meant
+  a three-key `event_extra` replaced the whole dict, which is why group-chat
+  attribution and swipe alternates never worked.
+- **The gallery virtualizer measured `window` while the app scrolls an inner
+  pane**, so it rendered the first viewportful and never advanced — on every
+  desktop visit. It survived a green suite because being bound to `window` meant
+  it always had a height, so it always rendered *something*.
+
+The heaviest frontend chunk also went from 1281.92 kB to 252.86 kB: the story
+editor was shipping all 594 of `refractor`'s syntax grammars to render prose.
 
 ### Dropped after investigation, not overlooked
 

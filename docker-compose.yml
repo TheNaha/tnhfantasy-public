@@ -51,7 +51,16 @@ services:
     environment:
       - OUTPUT_DIR=/data/output
       - INPUT_DIR=/data/input
-      - COMFY_DATABASE_URL=postgresql://${POSTGRES_USER:-comfy}:${POSTGRES_PASSWORD:-comfy}@db:5432/${POSTGRES_DB:-comfy}
+      # The DSN is assembled by the backend from discrete values, which is the
+      # only place a password can be percent-encoded. Interpolating it here meant
+      # a `POSTGRES_PASSWORD` containing `@ : / #` produced an unparseable URL, the
+      # backend never passed its healthcheck, and the frontend plus all five
+      # providers — every one of which waits on that healthcheck — never started.
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-comfy}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-comfy}
+      - POSTGRES_DB=${POSTGRES_DB:-comfy}
       - COMFY_PREVIEW_CACHE_DIR=/data/models/cache
       - COMFY_PREVIEW_PREFETCH_ENABLED=true
       - HF_HOME=/data/hf-cache

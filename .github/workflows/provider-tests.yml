@@ -77,10 +77,36 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Create the env files compose requires
+      # `.env` and every `.env.*` are gitignored, so a clean checkout has none of
+      # them — and compose refuses to render while an `env_file:` is missing. That
+      # made this job exit 1 at its first step, so the three `docker build`s below
+      # never ran and a broken provider Dockerfile shipped green, which is the
+      # exact thing this job exists to prevent. `docs/STATUS.md` claimed CI ran
+      # these builds; it did not, and could not.
+      #
+      # Compose only needs the files to *exist* for `config --quiet`; it does not
+      # read their values. Seed each one from the example it mirrors so the tree
+      # looks like a developer's, and export the handful of variables the
+      # `environment:` blocks interpolate so `${VAR:-default}` has a real value.
+      run: |
+        cp .env.example .env
+        cp .env.example.direct-url .env.direct-url
+        cp .env.example.remote-comfy .env.remote-comfy
+        cp .env.example.provider.engines .env.modal-hp196
+        cp .env.example.provider.engines .env.modal-stepmania
+        cp .env.example.provider.engines .env.modal-zetsuke
+        # There is no `.env.example.llm-local`; the LLM worker's variables are the
+        # provider ones. `.env.example.provider` is the all-commented stub, so it
+        # is the wrong source — that mistake is what `docs/deployment.md` used to
+        # tell people to copy.
+        cp .env.example.provider.engines .env.llm-local
+        echo "seeded: $(ls -1 .env .env.* | tr '\n' ' ')"
+
     - name: Validate the compose file
-      # Free: it passes today. It stops it from *not* passing later, which is the
-      # point — a `depends_on` cycle or a bad interpolation is a hard `up` failure
-      # with a message that does not name the file that caused it.
+      # Free once the env files exist. It stops it from *not* passing later,
+      # which is the point — a `depends_on` cycle or a bad interpolation is a hard
+      # `up` failure with a message that does not name the file that caused it.
       run: |
         docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers config --quiet
         echo "compose OK"

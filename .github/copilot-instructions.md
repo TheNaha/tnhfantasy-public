@@ -17,11 +17,11 @@ TNHComfy is a serverless ComfyUI wrapper with three parts:
 
 - `backend_v2/`: FastAPI + PostgreSQL/pgvector (SQLite-compatible tests) + async job queue
 - `frontend_v2/`: React + Vite + Tailwind
-- `provider_containers/`: provider workers (`modal_worker/`, `beam_worker/`) plus shared `provider_core/`
+- `provider_containers/`: provider workers (`image_worker/`, `llm_worker/`) plus shared `provider_core/`
 
 Main request flow:
 
-`POST /api/generate` -> `JobService.create_job` -> `job_queue.enqueue` -> provider call (`/inference` NDJSON stream) -> `ImageService.save()` -> WebSocket event -> frontend refresh.
+`POST /api/generate` -> `JobService.create_job` -> `job_queue.enqueue` -> provider call (`/inference` NDJSON stream) -> `infrastructure/image_processor.py` -> WebSocket event -> frontend refresh.
 
 ## Build And Test
 
@@ -32,10 +32,13 @@ Use these entry points unless a task requires something else.
 bash setup_jules.sh
 
 # Full stack (Docker)
+# preflight.sh first on a new host: compose declares `metrics` and `proxy` as
+# external, and without them `up` fails for every service at network creation.
+bash scripts/preflight.sh
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up -d
 
 # Backend (from backend_v2/)
-pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt
 uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
 pytest
 

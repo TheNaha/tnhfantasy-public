@@ -44,9 +44,16 @@ Frontend is npm-only. `pnpm` and `yarn` are rejected by a preinstall guard (`fro
 ## CI test triggers
 
 Tests run on push/PR to `main`/`master` only when the relevant directory changes:
-- `backend_v2/**` -> `backend-tests.yml` (Python 3.13, pytest)
-- `frontend_v2/**` -> `frontend-tests.yml` (Node 20, vitest)
-- `provider_containers/**` -> `provider-tests.yml` (Python 3.13, pytest)
+- `backend_v2/**` -> `backend-tests.yml` (Python 3.13, pytest + ruff)
+- `frontend_v2/**` -> `frontend-tests.yml` (Node 20, vitest + eslint + build)
+- `frontend_v2/**` or `backend_v2/**` -> `frontend-e2e.yml` (Playwright)
+- `provider_containers/**` or `remote_agent/**` -> `provider-tests.yml`
+  (Python 3.13, pytest + ruff + compileall). The `build` job also validates the
+  compose file and builds the three provider images; it seeds the required
+  `.env*` files first, because compose refuses to render while an `env_file:` is
+  missing and every one of them is gitignored.
+- any path -> `secret-scan.yml` (gitleaks)
+- `remote_agent/**` -> `build-agent-binaries.yml` (PyInstaller, push/release only)
 
 ## Backend conventions
 
@@ -152,8 +159,10 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 
 - `docs/` has architecture, backend, frontend, deployment, and API reference.
 - `docs/STATUS.md` is the authoritative project status and what-is-still-open list.
-  `docs/audit-2026-09-26-followup.md` is the most recent code audit (a second
-  pass over the first, which is `docs/audit-2026-09-26.md`). Read STATUS.md and
-  the follow-up before large-scale changes. `docs/archive/` holds superseded planning docs —
+  `docs/audit-2026-09-28.md` is the most recent code audit, and it supersedes
+  `docs/audit-2026-09-27.md`, `docs/audit-2026-09-26.md` and
+  `docs/audit-2026-09-26-followup.md` for everything it marks fixed. Read
+  STATUS.md and the 2026-09-28 audit before large-scale changes.
+  `docs/archive/` holds superseded planning docs —
   historical only, and they contradict each other.
 - `.github/instructions/backend.instructions.md` has backend-specific rules scoped to `backend_v2/**`.

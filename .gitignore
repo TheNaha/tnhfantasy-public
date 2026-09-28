@@ -40,6 +40,13 @@ backend_v2/patch_*.py
 # Provider envs
 provider_containers/**/.env.*
 !provider_containers/**/.env.example
+# The remote agent's live token file. `.env` (line 2) matches at any depth but
+# NOT `.env.agent`, and `docs/deployment.md`, `remote_agent/README.md` and
+# `remote_agent/docker-compose.yml` all instruct you to create it holding a real
+# `REMOTE_AGENT_TOKEN` — so it was a one-command commit of a credential.
+remote_agent/.env.agent
+remote_agent/**/.env.*
+!remote_agent/**/.env.example*
 data/db/comfy.db
 
 .ocx/

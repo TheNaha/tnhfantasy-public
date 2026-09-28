@@ -46,7 +46,11 @@ The backend consists of several key modules:
    ```
 
 ## Migrations
-Migrations are manual and live in `infrastructure/migrations/` (tracked via a `schema_migrations` table). Do not introduce Alembic unless explicitly requested.
+Migrations run **automatically at backend startup** via the ordered steps runner in
+`infrastructure/migrations/steps.py`. Each step is a `MigrationStep(version=..., apply_fn=...)`
+entry, is recorded in the `schema_migrations` table, and runs once. Add new migrations as
+new entries in that list — there is no manual step to run and no Alembic. Do not introduce
+Alembic unless explicitly requested.
 
 ## Background Tasks
 The backend completes image jobs in the background (thumbnail generation + blurhash + `assets` row upsert via `asset_reconciler.reconcile_asset`) before transitioning to `COMPLETED`, ensuring the gallery is always consistent and the frontend never fetches unindexed thumbnails.
