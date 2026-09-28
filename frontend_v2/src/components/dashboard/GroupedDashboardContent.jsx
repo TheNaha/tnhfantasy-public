@@ -196,8 +196,15 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
                     className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
                 />
                 
-                {/* Premium Dark Glass Hover Overlay */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 ease-out flex flex-col justify-end p-4">
+                {/* Premium Dark Glass Hover Overlay.
+
+                    `hidden sm:block` on the WHOLE overlay, not just the model
+                    line. On a touch device there is no hover, so :hover latches on
+                    tap and the caption then covers the image with nothing able to
+                    dismiss it. A hover-only affordance has no meaning where
+                    pointers do not exist, so it is not rendered there at all.
+                    Everything it showed is in the lightbox one tap away. */}
+                <div className="hidden sm:absolute sm:inset-0 sm:bg-gradient-to-t sm:from-black/90 sm:via-black/40 sm:to-transparent sm:opacity-0 sm:group-hover:opacity-100 transition-all duration-300 ease-out flex flex-col justify-end p-4">
                     <div className="translate-y-4 group-hover:translate-y-0 transition-transform duration-300 ease-out">
                         {cardPrompt && (
                             <p className="text-sm font-medium text-white line-clamp-2 leading-tight drop-shadow-md">
@@ -208,9 +215,27 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
                             source.checkpoint ?? source.metadata?.checkpoint itself.
                             Passing item.checkpoint made this line unrenderable — and
                             the value it read was undefined anyway, because nothing
-                            hoists checkpoint out of `metadata`. */}
+                            hoists checkpoint out of `metadata`.
+
+                            Clamped to one line, and hidden on coarse pointers.
+                            Both because this string is a merged CivitAI filename —
+                            "✨ JANKU Trained + Chenkin & NoobAI + RouWei
+                            Illustrious XL ✨" is a real `display_name` here — and
+                            unclamped it wrapped to three lines on a phone card.
+
+                            The coarse-pointer rule is the bug half. This whole
+                            overlay is `opacity-0 group-hover:opacity-100`, and a
+                            touch device has no hover: a tap sets :hover and it
+                            STAYS set, so on a phone the model line appeared
+                            permanently over the image. There is no pointer to move
+                            away, so there is nothing to restore it — the
+                            affordance was broken on touch rather than merely noisy.
+                            The model is still one tap away in the lightbox. */}
                         {getCheckpointDisplayName(item) && (
-                            <p className="text-xs uppercase tracking-wider text-blue-300 mt-2 font-bold drop-shadow-md">
+                            <p
+                                title={getCheckpointDisplayName(item)}
+                                className="hidden sm:block sm:line-clamp-1 text-xs uppercase tracking-wider text-blue-300 mt-2 font-bold drop-shadow-md truncate"
+                            >
                                 {getCheckpointDisplayName(item)}
                             </p>
                         )}

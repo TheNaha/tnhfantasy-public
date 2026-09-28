@@ -463,6 +463,7 @@ class ProviderService:
         provider_type: str,
         internal_url: str,
         worker_type: str = "image",
+        capabilities: list[str] | None = None,
     ) -> Provider:
         """Create or update a provider record from a live discovery heartbeat.
         
@@ -476,11 +477,21 @@ class ProviderService:
         container_name = provider_container_name(provider_id)
         container_config = {"container_name": container_name}
 
+        # A worker heartbeat states what it can run. Absent, the provider is
+        # treated as serving its own `worker_type` alone, which is what every
+        # worker sent before this — so an older container registers exactly as it
+        # did. Declared, it is authoritative and re-asserted on every heartbeat,
+        # so a container that gains or loses a capability converges without a
+        # manual edit.
+        declared = list(capabilities) if capabilities else [worker_type]
+
         existing = self.repo.get(provider_id)
         if existing:
             updates: dict[str, Any] = {}
             if existing.worker_type != worker_type:
                 updates["worker_type"] = worker_type
+            if list(existing.capabilities or []) != declared:
+                updates["capabilities"] = declared
             config = dict(existing.config or {})
             config["last_seen_at"] = now
             config["discovery_url"] = internal_url
@@ -495,6 +506,7 @@ class ProviderService:
             "id": provider_id,
             "type": provider_type,
             "worker_type": worker_type,
+            "capabilities": declared,
             "enabled": os.getenv("COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS", "0") == "1",
 
             "priority": 1,

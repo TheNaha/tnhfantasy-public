@@ -227,6 +227,11 @@ async def test_call_image_provider_sends_timeout_seconds_and_canonical_inference
         "use_snapshot": True,
         "job_id": "job-timeout",
         "timeout_seconds": 12.5,
+        # Stated rather than tolerated: this is the signal a provider container
+        # uses to pick which of its apps to run, and it was the missing piece that
+        # had a TTS job silently dispatched to an image app. Asserting the exact
+        # payload is what makes its removal a test failure instead of a mystery.
+        "task_type": "image",
     }
 
 

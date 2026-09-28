@@ -61,6 +61,12 @@ provider_fixes.patch
 .env.modal-zetsuke
 .env.zetsuke
 .env.modal-*
+# The TTS provider's env file. Listed separately because `.env.modal-*` does NOT
+# cover it: the file is `.env.tts-modal-hp196`, which starts `tts-`, not `modal-`.
+# It holds the same live MODAL_TOKEN_ID / MODAL_TOKEN_SECRET / PROVIDER_WORKER_TOKEN
+# as the other providers, so failing to match it means committing credentials.
+# An earlier version of this change did exactly that.
+.env.tts-*
 .env.beam
 .env.beam-*
 .env.direct-url
@@ -91,3 +97,7 @@ playwright-report/
 test.sh
 .kilo/kilo.jsonc
 .kilo/plans/remediation-plan.md
+
+# Screenshots dropped at the repo root by a user asking about a UI problem.
+# They are conversation input, not source.
+/imagecard.jpeg

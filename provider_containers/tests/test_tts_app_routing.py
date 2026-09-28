@@ -36,37 +36,79 @@ class TestRequestCarriesTheTaskType:
         assert InferenceRequest(workflow={"1": {}}).task_type is None
 
 
-class TestModalClientRouting:
-    def _client_module(self):
-        import importlib
+class TestTheImageWorkerIsImageOnly:
+    """A regression guard on an error, not a description of a design.
+
+    The image worker's Modal client was briefly taught to route `task_type="tts"`
+    to a second app, on the theory that TTS could be a second Modal app behind
+    the same provider. That is wrong on the codebase's own model — one provider
+    is one container, each with its own Dockerfile and its own health — and it
+    put a speech app in the deploy path of every image provider. TTS is now
+    `tts_worker/`, its own container. If the routing creeps back, the image
+    provider will again start building an app it never registered to serve."""
+
+    @staticmethod
+    def _image_client_source() -> str:
         import os
+
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(
+            os.path.join(here, "image_worker", "engines", "modal", "client.py"),
+            encoding="utf-8",
+        ) as fh:
+            return fh.read()
+
+    def test_it_mentions_no_tts_app(self):
+        src = self._image_client_source()
+        assert "MODAL_TTS_APP_NAME" not in src
+        assert "_APP_FOR_TASK_TYPE" not in src
+        assert "TTSWorker" not in src
+
+    def test_it_still_resolves_the_image_app_unconditionally(self):
+        src = self._image_client_source()
+        assert "modal.Cls.from_name(MODAL_APP_NAME, class_name)" in src
+
+
+class TestTheTTSWorkerIsItsOwnProvider:
+    @staticmethod
+    def _import(name: str):
+        import importlib
         import sys
         from unittest.mock import MagicMock
 
-        # `modal` is not installed in the provider venv; the routing table is
-        # module-level and does not need it, so stub it.
+        # `modal` is not installed in the provider venv; neither module needs it
+        # at import beyond the symbol they call, so stub it.
         if "modal" not in sys.modules:
             fake = MagicMock()
             fake.Cls.from_name = MagicMock()
             sys.modules["modal"] = fake
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        return importlib.import_module("image_worker.engines.modal.client")
+        return importlib.import_module(name)
 
-    def test_tts_routes_to_the_tts_app(self):
-        mod = self._client_module()
-        app, cls = mod._APP_FOR_TASK_TYPE["tts"]
-        assert app == mod.MODAL_TTS_APP_NAME
-        assert cls == "TTSWorker"
-        # A different app AND a different class from the image path. Getting
-        # either wrong sends TTS to an image container.
-        assert app != mod.MODAL_APP_NAME
-        assert cls != "ComfyUISnapshot"
+    def test_the_engine_registry_points_at_the_tts_client(self):
+        from provider_core.worker_bootstrap import TTS_ENGINES
 
-    def test_image_and_anything_else_stay_on_the_image_app(self):
-        mod = self._client_module()
-        # Only `tts` is remapped. An image job, and a request from a backend
-        # that does not send the field, must be completely unaffected.
-        assert set(mod._APP_FOR_TASK_TYPE) == {"tts"}
+        assert "modal" in TTS_ENGINES
+        entry = TTS_ENGINES["modal"]
+        assert entry["module"] == "tts_worker.engines.modal.client"
+        assert entry["class_name"] == "ModalTTSProviderClient"
+
+    def test_the_tts_client_resolves_a_different_app_than_the_image_one(self):
+        """A different app AND a different class. Getting either wrong sends
+        speech to an image container."""
+        tts = self._import("tts_worker.engines.modal.client")
+        image = self._import("image_worker.engines.modal.client")
+
+        assert tts.MODAL_TTS_APP_NAME != image.MODAL_APP_NAME
+        assert tts.TTS_CLASS_NAME == "TTSWorker"
+        assert tts.TTS_CLASS_NAME != "ComfyUISnapshot"
+
+    def test_the_tts_worker_declares_only_the_tts_capability(self):
+        """Not `["image", "tts"]`. `Provider.serves()` is additive, so a provider
+        always serves its own `worker_type` — which is how a TTS container avoids
+        being offered checkpoint jobs it cannot run."""
+        worker = self._import("tts_worker.worker")
+        assert worker.WORKER_TYPE == "tts"
+        assert worker.CAPABILITIES == ["tts"]
 
     def test_the_tts_class_satisfies_the_call_contract(self):
         """The client calls `.run.remote_gen.aio(workflow)`. If the TTS class

@@ -1,6 +1,13 @@
 # Dockerfile for the TTS Worker
 # Build context: provider_containers/
 #
+# BOTH a provider container and a deploy container. Started normally it serves
+# the provider (CMD below, `tts_worker.worker:app`); the deploy orchestrator
+# overrides the command with `sleep <n>` and runs `modal deploy` inside it,
+# which is how `POST /api/v2/providers/{id}/deploy` builds `comfy-modal-tts`.
+# So the modal CLI has to be in the image, which is why it is installed here
+# even though a running TTS worker never shells out.
+#
 # Same shape as image_worker/Dockerfile and llm_worker/Dockerfile, because
 # `ProviderDeployOrchestrator.start_attempt_container` builds its deploy container
 # with `dockerfile=f"{worker_kind}_worker/Dockerfile"` against this directory as
@@ -38,18 +45,32 @@ COPY provider_core/ /app/provider_core/
 # TTS worker source
 COPY tts_worker/ /app/tts_worker/
 
-# Unprivileged user matching the host UID, as the other two workers do: the
-# deploy step reads the mounted source and the deploy runs as this user.
+# Unprivileged user matching the host UID, so the shared volume is writable. The
+# worker reads `/mnt/data/models` for the TTS model; it writes nothing else.
 RUN useradd -r -u 1000 -s /bin/false worker && \
     chown -R worker:worker /app
 
 USER worker
 
+# Set by the compose service. Read at module import, so a bare `ENGINE=` would
+# raise before uvicorn binds — hence the `.strip()` + fallback in worker.py.
 ENV ENGINE=modal
 ENV MODAL_TTS_APP_NAME=comfy-modal-tts
+# The Modal app, not the image one. Deployed by
+# `POST /api/v2/providers/{id}/deploy` on THIS provider row, so the image
+# provider's deploy target no longer builds it.
+ENV MODAL_TTS_TIMEOUT=1800
 
+# $PORT is the single source of truth for the listen port, and BOTH the healthcheck
+# and the CMD read it. `image_worker/Dockerfile` learned that the hard way: its
+# CMD hardcoded 8000 while its healthcheck read $PORT, so a provider on another
+# port bound 8000 and probed 8001 and was permanently UNHEALTHY.
+ENV PORT=8000
 EXPOSE 8000
 
-# Not a serving container — it exists to run one `modal deploy` and exit. The
-# orchestrator overrides the command with `sleep <n>`, so there is no CMD here on
-# purpose: a stray CMD would be a foot-gun for anyone running the image directly.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://localhost:%s/live' % os.environ.get('PORT', '8000'))"
+
+# Shell form, not exec form, so the CMD can read $PORT — exec form cannot expand
+# it, which is how the two disagreed in the first place.
+CMD python -m uvicorn tts_worker.worker:app --host 0.0.0.0 --port ${PORT:-8000}

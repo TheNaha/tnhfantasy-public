@@ -276,6 +276,67 @@ services:
       retries: 5
       start_period: 30s
 
+  # TTS provider. One provider = one container, the same as the image and LLM
+  # workers: its own Dockerfile, its own compose service, and it registers
+  # itself with the backend by heartbeat.
+  #
+  # It is separate rather than a second app behind the image worker because the
+  # image worker's `/health` only checks that MODAL_APP_NAME is set, so a shared
+  # container would report healthy for both apps while being entirely blind to
+  # the TTS one. Separate containers mean separate health, separate failure
+  # domains, and TTS can be deployed or removed without touching image work.
+  #
+  # It deploys the `comfy-modal-tts` Modal app, which has its own image: the
+  # image worker's cold start is 57.66s on an L4, of which ~44s is in-container
+  # and ~42s of that is ComfyUI's own boot — the heavy `ultralytics` import and
+  # the enumeration of 531 model files on the /mnt/data volume. The TTS image has
+  # neither.
+  #
+  # Name it `tts-modal-*` so `_infer_discovery_type` registers it with
+  # worker_type="tts"; anything else falls through to direct_url/image and the
+  # provider is offered checkpoint jobs its container cannot run.
+  provider-tts-modal-hp196:
+    build:
+      context: ./provider_containers
+      dockerfile: tts_worker/Dockerfile
+    container_name: tnhcomfy-tts-modal-hp196
+    depends_on:
+      backend_v2:
+        condition: service_healthy
+    profiles:
+      - providers
+    env_file:
+      - .env.tts-modal-hp196
+    environment:
+      - PROVIDER_ID=tts-modal-hp196
+      - PORT=8000
+      - BACKEND_URL=http://backend_v2:8002
+      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
+      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
+      - ENGINE=modal
+    user: "1000:1000"
+    logging: *bounded-logging
+    volumes:
+      - ./data:/data
+    networks:
+      - tnhcomfy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          # Speaks over Modal; holds no models. The image worker gets 8G/4cpu
+          # because it reconciles hundreds of checkpoints; this needs neither.
+          memory: 2G
+          cpus: "1"
+    healthcheck:
+      # /live, not /health: reports whether the worker process is serving. Same
+      # reasoning and same $PORT reading as the other providers.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://localhost:%s/live' % os.environ.get('PORT', '8000'))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   provider-llm-local:
     build:
       context: ./provider_containers

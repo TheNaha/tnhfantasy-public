@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from core.entities import VALID_TASK_TYPES
+
 from api.deps import get_provider_service
 from infrastructure.providers.provider_registry import ProviderRegistry
 from infrastructure.logging import get_logger
@@ -20,6 +22,11 @@ class DiscoveryPayload(BaseModel):
     provider_id: str
     provider_type: str
     worker_type: str = "image"
+    # What this container can actually run, beyond its worker_type. Optional, and
+    # absent from every worker that predates it — the backend then treats the
+    # provider as serving its `worker_type` alone, which is exactly what it did
+    # before, so an older container registers unchanged.
+    capabilities: list[str] | None = None
     status: str
     internal_url: str
     hostname: str
@@ -57,8 +64,25 @@ async def handle_provider_discovery(
         raise HTTPException(status_code=401, detail="invalid discovery token")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", payload.provider_id):
         raise HTTPException(status_code=422, detail="invalid provider_id")
-    if payload.worker_type not in {"image", "llm"}:
-        raise HTTPException(status_code=422, detail="invalid worker_type")
+    # `tts` was missing here, so a TTS worker was rejected outright with a 422 on
+    # its first heartbeat — it could never register at all. That is the same
+    # closed set the load balancer and `VALID_TASK_TYPES` already had to learn
+    # about `tts`, and the check was the one place that was not updated.
+    if payload.worker_type not in VALID_TASK_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"invalid worker_type; expected one of {sorted(VALID_TASK_TYPES)}",
+        )
+    # Validated here as well as on the write path, because a discovery payload
+    # arrives over the network from a container and a typo in it would otherwise
+    # register a provider that is silently offered nothing.
+    if payload.capabilities:
+        unknown = sorted(set(payload.capabilities) - VALID_TASK_TYPES)
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown capabilities {unknown}; expected a subset of {sorted(VALID_TASK_TYPES)}",
+            )
     if not ProviderRegistry.is_registered(payload.provider_type):
         raise HTTPException(status_code=422, detail="unknown provider_type")
     parsed_url = urlparse(payload.internal_url)
@@ -87,6 +111,7 @@ async def handle_provider_discovery(
         provider_id=payload.provider_id,
         provider_type=payload.provider_type,
         worker_type=payload.worker_type,
+        capabilities=payload.capabilities,
         internal_url=payload.internal_url,
     )
 

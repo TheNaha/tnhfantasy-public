@@ -1690,6 +1690,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Rename campaigns to worlds, widen a world's index to lorebooks/scenarios/voices, and give chats and stories a nullable world_id so a world can actually scope something",
             apply_fn=_migration_077_campaigns_to_worlds,
         ),
+        MigrationStep(
+            version="078_provider_worker_type_tts",
+            description="Widen chk_providers_worker_type to allow tts; the CHECK constraint was the last place still restricted to image/llm and rejected every TTS worker at insert",
+            apply_fn=_migration_078_provider_worker_type_tts,
+        ),
     ]
 
 
@@ -3295,4 +3300,87 @@ def _migration_077_campaigns_to_worlds(conn) -> bool:
             text(f"CREATE INDEX IF NOT EXISTS ix_{table}_world_id ON {table} (world_id)")
         )
 
+    return True
+
+
+def _migration_078_provider_worker_type_tts(conn) -> bool:
+    """Widen `chk_providers_worker_type` to allow `tts`.
+
+    A database constraint is a second source of truth for an enumeration, and
+    this one was missed. `VALID_TASK_TYPES`, `Provider._validate_worker_type`
+    and the discovery endpoint's guard all learned about `tts`; the CHECK
+    constraint did not. So a TTS worker passed every layer of application-level
+    validation and was then rejected by Postgres at insert, and the whole
+    registration failed with:
+
+        psycopg2.errors.CheckViolation: new row for relation "providers"
+        violates check constraint "chk_providers_worker_type"
+
+    which surfaced to the container as a 500 from `/api/v2/providers/discovery`
+    and left the provider permanently unregistered.
+
+    The class of bug is the one worth naming: an enumeration that lives in two
+    places has to be changed in both, and nothing enforces that. Every other
+    `worker_type` check in the codebase now reads `VALID_TASK_TYPES`; this one
+    could not, because it is SQL. The migration below is the fix, and
+    `tests/test_provider_capabilities.py` asserts the constraint accepts exactly
+    the values the Python constant does, so the two cannot drift again without a
+    test failing.
+
+    Rewritten rather than altered: Postgres cannot widen a CHECK in place, so it
+    is dropped and re-added. `NOT VALID` would skip the scan but would also leave
+    pre-existing bad rows unexamined, and `ALTER TABLE ... DROP CONSTRAINT` takes
+    no lock beyond ACCESS EXCLUSIVE on the table.
+    """
+    if conn.dialect.name != "postgresql":
+        return True
+
+    inspector = inspect(conn)
+    if "providers" not in set(inspector.get_table_names()):
+        return False
+
+    columns = {c["name"] for c in inspector.get_columns("providers")}
+    if "worker_type" not in columns:
+        return False
+
+    # Idempotent: only rewrite when the current definition does not already
+    # allow `tts`, so a re-run is a no-op rather than a needless table rewrite.
+    row = conn.execute(
+        text(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conname = 'chk_providers_worker_type'"
+        )
+    ).fetchone()
+    if row and "'tts'" in str(row[0]):
+        return True
+
+    # Any worker_type already in the table that the new constraint would reject
+    # would make the ADD fail. Logged rather than coerced: rewriting a provider's
+    # declared kind is not this migration's decision.
+    rejected = [
+        r[0]
+        for r in conn.execute(
+            text(
+                "SELECT DISTINCT worker_type FROM providers "
+                "WHERE worker_type NOT IN ('image', 'llm', 'tts')"
+            )
+        ).all()
+    ]
+    if rejected:
+        logger.warning(
+            "provider_worker_type_outside_constraint",
+            values=rejected,
+            note="the new CHECK will reject these rows; they must be corrected first",
+        )
+
+    conn.execute(
+        text("ALTER TABLE providers DROP CONSTRAINT IF EXISTS chk_providers_worker_type")
+    )
+    conn.execute(
+        text(
+            "ALTER TABLE providers ADD CONSTRAINT chk_providers_worker_type "
+            "CHECK (worker_type IN ('image', 'llm', 'tts'))"
+        )
+    )
+    logger.info("provider_worker_type_constraint_widened", added="tts")
     return True

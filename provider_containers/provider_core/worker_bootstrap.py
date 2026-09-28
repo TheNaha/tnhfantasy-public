@@ -53,6 +53,30 @@ IMAGE_ENGINES: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# Text-to-speech engines.
+#
+# Modal only, deliberately. A TTS worker is a separate provider CONTAINER —
+# built from `tts_worker/Dockerfile`, registered by self-discovery, with its own
+# health and its own Modal app — because the image worker's `/health` only checks
+# that `MODAL_APP_NAME` is set, so a shared container would report healthy for
+# both apps while being entirely blind to the TTS one. Separate containers mean
+# separate health, separate failure domains, and TTS can be deployed or removed
+# without touching the image path.
+#
+# The image worker's client was briefly taught to route `tts` to a second app
+# instead. That was wrong on the codebase's own model — one provider is one
+# container — and is reverted.
+#
+# Beam / direct_url / remote_comfy are absent because none of them can run a
+# ComfyUI graph on a machine you do not control, which is what a TTS model
+# needs. Adding one later is one entry here plus a client module.
+TTS_ENGINES: Dict[str, Dict[str, Any]] = {
+    "modal": {
+        "module": "tts_worker.engines.modal.client",
+        "class_name": "ModalTTSProviderClient",
+    },
+}
+
 LLM_ENGINES: Dict[str, Dict[str, Any]] = {
     "openai_compat": {
         "module": "llm_worker.engines.openai_compat.client",

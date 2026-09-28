@@ -162,7 +162,12 @@ class TestTheHealthchecksCallLive:
         uncommented = "\n".join(
             line for line in compose.splitlines() if not line.lstrip().startswith("#")
         )
-        assert uncommented.count(live_call) == 5, (
+        # Six now: the five original providers plus `provider-tts-modal-hp196`.
+        # Counted rather than named because the point of the test is that EVERY
+        # active provider healthchecks on /live, so a new provider without one
+        # fails here — which is exactly what happened when the TTS service was
+        # added and the count was not updated.
+        assert uncommented.count(live_call) == 6, (
             f"expected 5 active provider healthchecks on /live, "
             f"found {uncommented.count(live_call)}"
         )

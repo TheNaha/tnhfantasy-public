@@ -198,6 +198,7 @@ class TestRunMigrations:
             "075_index_asset_gallery_timestamp",
             "076_provider_capabilities",
             "077_campaigns_to_worlds",
+            "078_provider_worker_type_tts",
             "004_normalize_legacy_job_statuses",
             "006_deleted_file_tombstones",
             "007_add_job_task_type",
@@ -322,6 +323,7 @@ class TestRunMigrations:
             "075_index_asset_gallery_timestamp",
             "076_provider_capabilities",
             "077_campaigns_to_worlds",
+            "078_provider_worker_type_tts",
         ]
 
     def test_branching_migration_is_idempotent_with_existing_columns(self, tmp_path):

@@ -72,33 +72,20 @@ def default_deploy_mode(provider_type: str) -> str:
 
 def default_deploy_targets(provider_type: str) -> list[dict[str, Any]]:
     if provider_type == "modal":
-        # TWO targets, not one. The TTS worker is a separate Modal APP with a
-        # separate image, and it has to be: the measured cold start on
-        # `comfy-modal-stack` is 57.66s, of which ~44s is in-container and ~42s of
-        # that is ComfyUI's own boot — the heavy `ultralytics` import and the
-        # enumeration of 531 model files on the /mnt/data volume. A TTS image has
-        # neither, so sharing one image would mean paying image-worker boot costs
-        # on every voice, and adding the TTS node pack to the image image would
-        # mean paying TTS costs on every image.
+        # ONE target: the image app.
         #
-        # A list rather than a new provider type because `deploy_config.targets`
-        # is already a list and `beam` already returns three targets for one
-        # provider row. This reuses that instead of adding a `modal_tts` provider
-        # type, which would have needed a `ProviderTypeConfig`, its own
-        # credentials, registry wiring and a fourth set of per-engine variants.
-        #
-        # It deploys from the same `modal deploy` the user already triggers via
-        # `POST /api/v2/providers/{id}/deploy`; nobody runs `modal deploy` by hand.
+        # A `tts_app` target briefly sat here, on the theory that a TTS worker
+        # could be a second Modal app deployed from the same image provider. That
+        # is wrong on the codebase's own model — one provider is one container —
+        # and it put a TTS app in the deploy path of every image provider, so
+        # deploying `modal-hp196` would also build speech it never registered to
+        # serve. TTS is its own provider row with its own Dockerfile, its own
+        # container and its own deploy target; see `tts_worker/`.
         return [
             {
                 "name": "modal_app",
                 "entrypoint": "/app/image_worker/engines/modal/modal_app.py",
                 "command": ["modal", "deploy", "/app/image_worker/engines/modal/modal_app.py"],
-            },
-            {
-                "name": "tts_app",
-                "entrypoint": "/app/tts_worker/engines/modal/modal_app.py",
-                "command": ["modal", "deploy", "/app/tts_worker/engines/modal/modal_app.py"],
             },
         ]
     if provider_type == "modal_llm":

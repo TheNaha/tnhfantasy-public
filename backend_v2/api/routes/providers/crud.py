@@ -210,6 +210,13 @@ def _infer_discovery_type(provider_id: str) -> tuple[str, str]:
     """
     if provider_id == "llm-local" or "llm" in provider_id:
         return "openai_compat", "llm"
+    # TTS before the `modal-` branch, because a TTS provider is named
+    # `tts-modal-<name>` and would otherwise be registered as an image worker —
+    # offered checkpoint jobs its container cannot run. Checked before `llm` too
+    # for the same reason: the substring test on "llm" is loose enough to catch
+    # any name containing it, and order is what makes the specific cases win.
+    if "tts" in provider_id:
+        return "modal", "tts"
     if provider_id.startswith("modal-"):
         return "modal", "image"
     if provider_id.startswith("beam-"):
@@ -291,6 +298,10 @@ async def detect_provider_containers(
             worker_type=worker_type,
             internal_url=f"http://{container_name}:8000",
         )
+        # Container SCAN has no heartbeat payload, so capabilities come from the
+        # inferred worker_type alone — a scanned `tts-modal-*` container gets
+        # `[worker_type]` from the upsert default, which is correct. The heartbeat
+        # path, when the container is reachable, overrides with what it declares.
         created.append(provider_id)
 
     already = sorted(existing)

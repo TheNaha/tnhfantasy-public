@@ -81,6 +81,7 @@ async def auto_discovery_loop(
     interval_seconds: int = 60,
     http_client=None,
     worker_type: str = "image",
+    capabilities: list[str] | None = None,
 ):
     """
     Background task to register this provider with the backend.
@@ -108,7 +109,13 @@ async def auto_discovery_loop(
                 "worker_type": worker_type,
                 "status": "online",
                 "internal_url": internal_url,
-                "hostname": hostname
+                "hostname": hostname,
+                # What this container can actually run, beyond its worker_type.
+                # Optional and sent only when set, so an older backend
+                # ignores it and an older worker omits it. `worker_type` alone
+                # cannot express "a ComfyUI container that speaks rather than
+                # draws", which is what this is.
+                "capabilities": list(capabilities) if capabilities else None,
             }
             
             discovery_headers = {}

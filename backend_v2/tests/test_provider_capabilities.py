@@ -166,6 +166,108 @@ class TestRouting:
         ) is not None
 
 
+class TestTheTtsProviderIsItsOwnThing:
+    """A TTS worker registers itself, like any other provider.
+
+    It is a container, not a second Modal app behind the image worker. That was
+    the first attempt and it was wrong on the codebase's own model: one provider
+    is one container, and the image worker's `/health` only checks that
+    `MODAL_APP_NAME` is set — so a shared container would report healthy for both
+    apps while being entirely blind to the TTS one.
+    """
+
+    def test_discovery_recognises_a_tts_provider_id(self):
+        """Without this, `tts-modal-hp196` falls through to `direct_url`/`image`
+        and the provider is offered checkpoint jobs its container cannot run."""
+        from api.routes.providers.crud import _infer_discovery_type
+
+        assert _infer_discovery_type("tts-modal-hp196") == ("modal", "tts")
+
+    def test_it_does_not_shadow_the_other_prefixes(self):
+        from api.routes.providers.crud import _infer_discovery_type
+
+        assert _infer_discovery_type("modal-hp196") == ("modal", "image")
+        assert _infer_discovery_type("llm-local") == ("openai_compat", "llm")
+        assert _infer_discovery_type("direct_url") == ("direct_url", "image")
+
+    def test_discovery_accepts_a_tts_worker_type(self):
+        """It did not. `worker_type not in {"image", "llm"}` was a 422, so a TTS
+        worker could never register at all — the closed set the load balancer and
+        `VALID_TASK_TYPES` had already learned about, in the one place that had
+        not been updated."""
+        from api.routes.discovery import DiscoveryPayload
+
+        assert DiscoveryPayload(
+            provider_id="tts-modal-hp196", provider_type="modal",
+            worker_type="tts", status="online",
+            internal_url="http://tnhcomfy-tts-modal-hp196:8000",
+            hostname="tts-modal-hp196",
+        ).worker_type == "tts"
+
+    def test_a_tts_worker_can_state_its_capability(self):
+        from api.routes.discovery import DiscoveryPayload
+
+        payload = DiscoveryPayload(
+            provider_id="tts-modal-hp196", provider_type="modal",
+            worker_type="tts", status="online",
+            internal_url="http://tnhcomfy-tts-modal-hp196:8000",
+            hostname="tts-modal-hp196", capabilities=["tts"],
+        )
+        assert payload.capabilities == ["tts"]
+
+    def test_the_database_constraint_allows_tts(self):
+        """The enum lived in three places and the database was the one missed.
+
+        `VALID_TASK_TYPES`, `Provider._validate_worker_type` and the discovery
+        guard all learned about `tts`; `chk_providers_worker_type` did not. A TTS
+        worker passed every layer of application validation and was then rejected
+        by Postgres at insert, so registration failed with a 500 and the provider
+        stayed unregistered forever. This asserts the SQL constraint's vocabulary
+        is exactly the Python constant's, so the two cannot drift again.
+
+        SQLite, which the suite runs on, has no such constraint — so the test
+        asserts the vocabulary the migration installs, from the migration source,
+        and the live constraint is verified against the real database by the
+        migration itself.
+        """
+        import inspect
+        import re
+
+        from core.entities import VALID_TASK_TYPES
+        from infrastructure.migrations.steps import _migration_078_provider_worker_type_tts
+
+        src = inspect.getsource(_migration_078_provider_worker_type_tts)
+        # The tuple the migration installs into the CHECK constraint.
+        m = re.search(r"CHECK \(worker_type IN \(([^)]*)\)\)", src)
+        assert m, "could not find the CHECK constraint the migration installs"
+        allowed = set(re.findall(r"'([a-z]+)'", m.group(1)))
+        assert allowed == set(VALID_TASK_TYPES), (
+            f"the SQL constraint allows {sorted(allowed)} but VALID_TASK_TYPES is "
+            f"{sorted(VALID_TASK_TYPES)}; an enumeration in two places has to be "
+            "changed in both and nothing else enforces that"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_tts_provider_is_offered_tts_and_not_image(self, session):
+        """The end of the chain: the container registered as `tts`, and the load
+        balancer hands it speech without ever offering it a checkpoint."""
+        from services.load_balancer_factory import create_load_balancer
+
+        _provider(session, "tts-modal-x", worker_type="tts", capabilities=["tts"])
+        _provider(session, "img-only", worker_type="image", capabilities=["image"])
+
+        tts = await create_load_balancer(session, task_type="tts").get_next_provider(
+            task_type="tts"
+        )
+        assert tts is not None and tts.id == "tts-modal-x"
+
+        # And the image provider still gets image work, unchanged.
+        img = await create_load_balancer(session, task_type="image").get_next_provider(
+            task_type="image"
+        )
+        assert img is not None and img.id == "img-only"
+
+
 class TestQueueSelection:
     def test_tts_shares_the_container_queue_with_image(self):
         """They are the same Modal class under one `max_containers` budget, so

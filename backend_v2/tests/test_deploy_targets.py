@@ -81,15 +81,25 @@ class TestEntrypointExists:
 
 
 class TestDefaults:
-    def test_modal_deploys_the_image_worker_and_the_tts_app(self):
-        names = [t["name"] for t in default_deploy_targets("modal")]
-        assert names == ["modal_app", "tts_app"]
+    def test_modal_deploys_only_the_image_app(self):
+        """The image provider must not build the TTS app.
 
-    def test_the_tts_target_points_at_the_tts_app(self):
-        tts = next(t for t in default_deploy_targets("modal") if t["name"] == "tts_app")
-        assert tts["command"] == [
-            "modal", "deploy", "/app/tts_worker/engines/modal/modal_app.py",
-        ]
+        A `tts_app` target briefly sat here, on the theory that a TTS worker
+        could be a second Modal app from the same image provider. That put a
+        speech app in the deploy path of every image provider — deploying
+        `modal-hp196` would build speech it never registered to serve. TTS is its
+        own provider row, with its own Dockerfile and its own target."""
+        names = [t["name"] for t in default_deploy_targets("modal")]
+        assert names == ["modal_app"]
+
+    def test_the_tts_app_is_not_in_any_image_providers_targets(self):
+        for targets in (
+            default_deploy_targets("modal"),
+            default_deploy_targets("beam"),
+            default_deploy_targets("direct_url"),
+        ):
+            for target in targets:
+                assert "tts_worker" not in " ".join(target["command"])
 
     def test_llm_and_beam_are_untouched(self):
         """Renaming the modal target list must not disturb the other two, which
@@ -108,23 +118,13 @@ class TestRepair:
         entry = next(t for t in out if t["name"] == "modal_app")
         assert entry["entrypoint"] == "/app/image_worker/engines/modal/modal_app.py"
 
-    def test_a_missing_default_is_appended(self):
-        """The feature this exists for: a new worker kind reaches existing
-        providers without a manual database edit."""
-        stored = [
-            {"name": "modal_app", "entrypoint": "/app/image_worker/engines/modal/modal_app.py"},
-        ]
-        out = _repair_stored_targets(stored, default_deploy_targets("modal"))
-        assert [t["name"] for t in out] == ["modal_app", "tts_app"]
-
-    def test_order_is_preserved_so_image_builds_first(self):
-        """A deploy runs targets in order; image-first keeps the working worker
-        deployed before a new, unproven one."""
+    def test_order_is_preserved(self):
+        """A deploy runs targets in order, so a repaired list keeps its sequence."""
         out = _repair_stored_targets(
             [{"name": "modal_app", "entrypoint": "/app/image_worker/engines/modal/modal_app.py"}],
             default_deploy_targets("modal"),
         )
-        assert [t["name"] for t in out] == ["modal_app", "tts_app"]
+        assert [t["name"] for t in out] == ["modal_app"]
 
     def test_a_user_target_we_have_no_default_for_is_kept(self):
         stored = [
@@ -137,7 +137,7 @@ class TestRepair:
     def test_a_stored_target_whose_file_vanished_and_has_no_default_is_dropped(self):
         stored = [{"name": "ghost", "entrypoint": "/app/deleted/thing.py"}]
         out = _repair_stored_targets(stored, default_deploy_targets("modal"))
-        assert [t["name"] for t in out] == ["modal_app", "tts_app"]
+        assert [t["name"] for t in out] == ["modal_app"]
 
     def test_a_healthy_stored_list_is_returned_unchanged(self):
         """No churn when there is nothing to fix — a rewritten list on every
@@ -145,7 +145,7 @@ class TestRepair:
         healthy = default_deploy_targets("modal")
         assert _repair_stored_targets([dict(t) for t in healthy], healthy) is not None
         assert [t["name"] for t in _repair_stored_targets(
-            [dict(t) for t in healthy], healthy)] == ["modal_app", "tts_app"]
+            [dict(t) for t in healthy], healthy)] == ["modal_app"]
 
 
 class TestExtractDeployConfig:
@@ -155,11 +155,11 @@ class TestExtractDeployConfig:
             {"name": "modal_app", "entrypoint": "/app/modal_app.py",
              "command": ["modal", "deploy", "/app/modal_app.py"]},
         ]}})
-        assert [t["name"] for t in cfg["targets"]] == ["modal_app", "tts_app"]
+        assert [t["name"] for t in cfg["targets"]] == ["modal_app"]
 
     def test_a_provider_with_no_stored_targets_gets_the_defaults(self):
         assert [t["name"] for t in extract_deploy_config("modal", {})["targets"]] == [
-            "modal_app", "tts_app",
+            "modal_app",
         ]
 
     def test_deploy_mode_is_still_defaulted(self):

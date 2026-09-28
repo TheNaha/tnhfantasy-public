@@ -27,10 +27,15 @@ COMPOSE = REPO_ROOT / "docker-compose.yml"
 PREFLIGHT = REPO_ROOT / "scripts/preflight.sh"
 
 # Every `env_file:` that belongs to a service compose will actually start.
+# One entry per provider container, because compose `env_file:` refuses to render
+# without the file and EVERY service then fails to start. Adding a provider
+# therefore means adding a line here, which is the point: a new provider that
+# ships without its env file breaks the whole stack, not just itself.
 REQUIRED = {
     ".env.modal-zetsuke",
     ".env.modal-stepmania",
     ".env.modal-hp196",
+    ".env.tts-modal-hp196",
     ".env.llm-local",
     ".env.direct-url",
 }
