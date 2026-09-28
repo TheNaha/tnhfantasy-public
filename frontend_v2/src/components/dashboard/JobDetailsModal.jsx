@@ -189,23 +189,33 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                     {/* Progress Bars (if processing) */}
                     {isProcessing && (
                         <div className="space-y-2">
+                            {/* `overall_progress` counts completed NODES, so it is
+                                frozen for the whole time a checkpoint sampler runs
+                                — the phase that actually takes the time. Leading with
+                                it made a live job look stalled. The render/sampler
+                                percentage moves throughout, so it leads. Labels
+                                corrected to match what the backend computes
+                                (services/provider_client.py:228-241). */}
                             <div>
                                 <div className="flex justify-between text-xs text-gray-500 mb-1">
-                                    <span>Workflow Progress</span>
-                                    <span>{Math.round(job.overall_progress || 0)}%</span>
+                                    <span>{job.progress > 0 ? 'Render Progress' : 'Workflow Progress'}</span>
+                                    <span>{Math.round(job.progress > 0 ? job.progress : (job.overall_progress || 0))}%</span>
                                 </div>
                                 <div className="w-full bg-gray-700 rounded-full h-2">
-                                    <div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full rounded-full transition-all" style={{ width: `${job.overall_progress || 0}%` }} />
+                                    <div
+                                        className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full rounded-full transition-all"
+                                        style={{ width: `${job.progress > 0 ? job.progress : (job.overall_progress || 0)}%` }}
+                                    />
                                 </div>
                             </div>
                             {job.progress > 0 && (
                                 <div>
                                     <div className="flex justify-between text-xs text-gray-500 mb-1">
-                                        <span>Render Progress</span>
-                                        <span>{Math.round(job.progress || 0)}%</span>
+                                        <span>Nodes Completed</span>
+                                        <span>{Math.round(job.overall_progress || 0)}%</span>
                                     </div>
                                     <div className="w-full bg-gray-700 rounded-full h-2">
-                                        <div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full rounded-full transition-all" style={{ width: `${job.progress || 0}%` }} />
+                                        <div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full rounded-full transition-all" style={{ width: `${job.overall_progress || 0}%` }} />
                                     </div>
                                 </div>
                             )}

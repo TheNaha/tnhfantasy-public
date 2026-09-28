@@ -74,6 +74,15 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const checkpoint = typeof meta.checkpoint === 'object' ? meta.checkpoint?.name : meta.checkpoint;
     const checkpointShort = checkpoint ? checkpoint.replace('.safetensors', '').slice(0, 20) : null;
     const loraCount = (meta.loras || []).length;
+
+    // `progress` is the sampler's own percentage and moves during the expensive
+    // part; `overall_progress` counts completed nodes and is frozen while a
+    // checkpoint sampler runs. Show whichever is actually moving, so the headline
+    // number never sits still while the job visibly progresses. See the render
+    // block below for the measured behaviour.
+    const isSampling = job.progress > 0;
+    const samplingProgress = isSampling ? job.progress : (job.overall_progress || 0);
+    const nodeProgress = job.overall_progress || 0;
     const dimensions = meta.width && meta.height ? `${meta.width}×${meta.height}` : null;
     const prompt = meta.prompt || '';
     const promptPreview = prompt.length > 60 ? prompt.slice(0, 60) + '...' : prompt;
@@ -193,42 +202,70 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                         </p>
 
                         {/* Overall Progress */}
+                        {/* Two progress fields, and they are not interchangeable.
+
+                            `progress`          the SAMPLER's own percentage. Emitted
+                                                on every ComfyUI `progress` frame and
+                                                labelled server-side "Rendering: N%".
+                                                Smooth, and it moves *during* the
+                                                expensive part.
+                            `overall_progress`  nodes executed / total nodes
+                                                (services/provider_client.py:228).
+                                                Coarse: a checkpoint sampler is one
+                                                node and can run for a minute, so
+                                                this is frozen for the whole time
+                                                anything is actually happening and
+                                                then jumps.
+
+                            They were labelled the other way round — the node
+                            counter was captioned "Workflow" and the sampler
+                            percentage "Node" — and the frozen node counter was
+                            the prominent one. That is what "progress is pooled"
+                            looked like: the number sat still at 83% for fifteen
+                            seconds while the bar underneath it, showing the
+                            sampler, was the only thing moving.
+
+                            Measured over a real 20-step generation: 24 socket
+                            events in 40s at a 1.25s median — genuinely live — while
+                            the node counter read 0, 58, 83, 83, 83, 100. */}
                         <div className="w-full">
                             <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
                                 <div
                                     // Was `progress-gradient`, a hand-written class defined in no
                                     // stylesheet and not a Tailwind utility — so the fill was
                                     // transparent and this bar never painted, at any progress value.
-                                    // Same class of loss as `.glass-panel`. Now a real utility,
-                                    // matching the Node bar below.
+                                    // Same class of loss as `.glass-panel`. Now a real utility.
                                     className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full transition-all duration-300 ease-out"
-                                    style={{ width: `${job.overall_progress || 0}%` }}
+                                    style={{ width: `${Math.round(samplingProgress)}%` }}
                                 />
                             </div>
                             <div className="flex justify-between text-xs sm:text-xs text-gray-500 mt-1">
-                                <span>Workflow</span>
-                                <span>{Math.round(job.overall_progress || 0)}%</span>
+                                <span>{isSampling ? 'Sampling' : 'Workflow'}</span>
+                                <span>{Math.round(samplingProgress)}%</span>
                             </div>
                         </div>
 
-                        {/* Node Progress. `> 0` rather than `!= null` is deliberate: progress is a
+                        {/* Node counter. `> 0` rather than `!= null` is deliberate: progress is a
                             non-nullable float defaulting to 0, and both progress reducers coerce a
                             null/NaN/out-of-range event to 0, so 0 is the honest "nothing yet" value.
                             The bar is suppressed at 0 rather than showing an empty track. */}
-                        {job.progress > 0 && (
+                        {/* Only while the sampler is also reporting. Before that
+                            the headline IS the node counter, so a second bar
+                            would print the same number twice. */}
+                        {isSampling && nodeProgress > 0 && (
                             <div className="w-full mt-1">
                                 <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
                                     <div
                                         className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full transition-all duration-300 ease-out"
-                                        style={{ width: `${job.progress}%` }}
+                                        style={{ width: `${Math.round(nodeProgress)}%` }}
                                     />
                                 </div>
                                 <div className="flex justify-between items-center text-xs sm:text-xs text-blue-400 mt-1">
                                     <div className="flex items-center gap-1">
                                         <Loader2 size={10} className="animate-spin" />
-                                        <span>Node</span>
+                                        <span>Nodes</span>
                                     </div>
-                                    <span>{job.progress}%</span>
+                                    <span>{Math.round(nodeProgress)}%</span>
                                 </div>
                             </div>
                         )}

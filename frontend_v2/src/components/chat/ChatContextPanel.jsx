@@ -198,8 +198,15 @@ function ChatContextPanel() {
                                     <span className={clsx("w-1.5 h-1.5 rounded-full shrink-0", isFailed ? "bg-red-400" : isComplete ? (isImage ? "bg-emerald-400" : "bg-blue-400") : isRunning ? "bg-amber-400 animate-pulse" : "bg-gray-600")} />
                                     <span className="truncate flex-1 font-medium">{isImage ? (job.type === 'agentic_image' ? 'Image generation' : 'Image job') : 'LLM reply'}</span>
                                     <span className="text-xs text-gray-500 shrink-0">{isFailed ? 'Failed' : isComplete ? 'Done' : isRunning ? 'Active' : job.status}</span>
-                                    {isRunning && job.overall_progress != null && (
-                                        <span className="text-xs text-amber-300/80 shrink-0">{Math.round(job.overall_progress)}%</span>
+                                    {/* The sampler percentage, not the node counter.
+                                        `overall_progress` is frozen while a
+                                        checkpoint sampler runs — the phase that takes
+                                        the time — so the row sat at one number for a
+                                        minute while the job visibly progressed. */}
+                                    {isRunning && (job.progress || job.overall_progress) != null && (
+                                        <span className="text-xs text-amber-300/80 shrink-0">
+                                            {Math.round(job.progress > 0 ? job.progress : job.overall_progress)}%
+                                        </span>
                                     )}
                                 </div>
                             );
