@@ -16,6 +16,122 @@ logger = scheduler_logger()
 # Global scheduler instance
 _scheduler: AsyncIOScheduler | None = None
 
+# Advisory-lock key for "this process owns the scheduled jobs".
+#
+# Every key here names one job id, so the lock is held PER RUN and released
+# immediately. That is not an optimisation: the alternative — one lock held for
+# the scheduler's lifetime — would designate a single owning process and take
+# that job off the other processes entirely, which is a bigger behaviour change
+# than this change is meant to be. Per-run locking keeps the existing
+# "every process schedules, only one acts" shape, so a process that dies simply
+# stops taking the lock and the others pick up on the next tick.
+_SCHEDULER_LOCK_NAMESPACE = 4_118_227_004_771_902_337
+
+
+class _AdvisoryRunLock:
+    """Context manager holding a per-run advisory lock for a scheduled job.
+
+    Entered by the wrapper below so the lock is released as soon as the job
+    finishes, on every path including an exception. `pg_try_advisory_lock` is
+    re-entrant per session, so it is taken at most once per acquire.
+    """
+
+    def __init__(self, job_id: str):
+        self._job_id = job_id
+        self._session = None
+        self._held = False
+        self._granted = True
+
+    def __enter__(self) -> bool:
+        from infrastructure.database import engine
+
+        if engine.dialect.name != "postgresql":
+            return True
+        from sqlalchemy import text
+        from sqlmodel import Session
+
+        try:
+            self._session = Session(engine)
+            key = _SCHEDULER_LOCK_NAMESPACE + (
+                abs(hash(self._job_id)) % 1_000_000_007
+            )
+            self._held = bool(
+                self._session.exec(
+                    text("SELECT pg_try_advisory_lock(:key)"), params={"key": key}
+                ).scalar()
+            )
+            return self._held
+        except Exception as exc:
+            logger.warning(
+                "scheduler_lock_failed", job_id=self._job_id, error=str(exc)
+            )
+            self._session = None
+            self._held = False
+            return True
+
+    def __exit__(self, *_exc) -> None:
+        if self._session is None or not self._held:
+            return
+        try:
+            from sqlalchemy import text
+
+            self._session.exec(
+                text("SELECT pg_advisory_unlock(:key)"),
+                params={
+                    "key": _SCHEDULER_LOCK_NAMESPACE
+                    + (abs(hash(self._job_id)) % 1_000_000_007)
+                },
+            )
+            self._session.commit()
+        except Exception as exc:
+            # A connection returned to the pool with a lock still held would
+            # block the next process indefinitely, so this is worth logging
+            # loudly even though nothing can be done about it here.
+            logger.error("scheduler_lock_release_failed", job_id=self._job_id, error=str(exc))
+        finally:
+            try:
+                self._session.close()
+            except Exception:
+                pass
+
+
+def _guarded(func: Callable, job_id: str) -> Callable:
+    """Wrap a scheduled job so only one process runs each tick.
+
+    `max_instances=1` stops one *process* from overlapping itself and does
+    nothing about two processes. Every job registered here then fires in all of
+    them, which is duplicated spend for the two that bill an LLM — the idle
+    simulation and memory extraction — and merely duplicated work for the rest.
+
+    Non-blocking, and the lock is released as soon as the job returns. If a
+    process dies mid-run the database closes its session and releases the lock,
+    so there is no lease to expire and nothing to clean up.
+    """
+    import functools
+    import inspect as _inspect
+
+    if _inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def _async_wrapper(*args, **kwargs):
+            with _AdvisoryRunLock(job_id) as granted:
+                if not granted:
+                    logger.debug("scheduler_tick_skipped", job_id=job_id, reason="held_by_another_process")
+                    return None
+                return await func(*args, **kwargs)
+
+        return _async_wrapper
+
+    @functools.wraps(func)
+    def _wrapper(*args, **kwargs):
+        with _AdvisoryRunLock(job_id) as granted:
+            if not granted:
+                logger.debug("scheduler_tick_skipped", job_id=job_id, reason="held_by_another_process")
+                return None
+            return func(*args, **kwargs)
+
+    return _wrapper
+
 
 def get_scheduler() -> AsyncIOScheduler:
     """Get or create the global scheduler instance."""
@@ -75,11 +191,11 @@ def add_interval_job(
         scheduler.remove_job(job_id)
     
     trigger = IntervalTrigger(seconds=interval_seconds)
-    
+
     next_run = datetime.now() if start_immediately else datetime.now() + timedelta(seconds=interval_seconds)
-    
+
     scheduler.add_job(
-        func,
+        _guarded(func, job_id),
         trigger=trigger,
         id=job_id,
         kwargs=kwargs,
@@ -89,7 +205,7 @@ def add_interval_job(
         max_instances=1,
         misfire_grace_time=misfire_grace_time,
     )
-    
+
     logger.info("job_scheduled", job_id=job_id, interval_seconds=interval_seconds)
 
 
@@ -130,7 +246,7 @@ def add_cron_job(
     )
     
     scheduler.add_job(
-        func,
+        _guarded(func, job_id),
         trigger=trigger,
         id=job_id,
         kwargs=kwargs,
