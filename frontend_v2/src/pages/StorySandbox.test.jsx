@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import toast from 'react-hot-toast';
 import { awaitJobText } from '../hooks/useLLMJobResult';
 import StorySandbox from './StorySandbox';
@@ -462,5 +462,130 @@ describe('StorySandbox page', () => {
             expect(screen.getByTestId('revisions-modal')).toBeInTheDocument();
         });
         expect(screen.queryAllByTestId('revision-row')).toHaveLength(0);
+    });
+});
+
+/**
+ * Switching chapters inside the 2s auto-save window used to destroy the pending
+ * write outright.
+ *
+ * The auto-save is a debounce, and its cleanup cancelled the timer. A debounce is
+ * *designed* to drop its work when reset — right for a search box, and
+ * catastrophic for an editor, because the content lived only inside that closure.
+ * On a chapter switch the timer was cancelled, the editor was then overwritten
+ * with the new chapter's content, and `isDirtyRef` was reset: the user's last
+ * edits to the old chapter were gone with no error, no toast, and no way to
+ * recover.
+ *
+ * The fix holds the payload in a ref so it outlives the timer, and flushes it on
+ * the way out. These drive the real editor through the real switch.
+ */
+describe('StorySandbox auto-save durability', () => {
+    const TWO_CHAPTERS = [
+        { id: 'ch-1', story_id: 'story-1', chapter_number: 1, content: 'Chapter one text', beats: [], image_paths: [] },
+        { id: 'ch-2', story_id: 'story-1', chapter_number: 2, content: 'Chapter two text', beats: [], image_paths: [] },
+    ];
+
+    let updateMutateAsync;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        updateMutateAsync = vi.fn().mockResolvedValue({});
+        mockStories.mockReturnValue({
+            data: [{ id: 'story-1', title: 'My Story', description: '', genre: 'Fantasy' }],
+            isLoading: false,
+        });
+        mockChapters.mockReturnValue({ data: TWO_CHAPTERS, isLoading: false });
+        mockLorebooks.mockReturnValue({ data: [], isLoading: false });
+        mockCreateStory.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
+        mockDeleteStory.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
+        mockUpdateStory.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
+        mockCreateChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
+        mockDeleteChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
+        mockUpdateChapter.mockReturnValue({ mutate: vi.fn(), mutateAsync: updateMutateAsync });
+        mockContinueChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'j' }) });
+        mockBranchChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
+        mockAddStoryBeat.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
+        mockIllustrateChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'i' }) });
+        mockStoryAiAction.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'j' }), isPending: false });
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const editor = () =>
+        screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA');
+
+    it('writes the pending edit when the user switches chapter inside the window', async () => {
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => expect(editor()?.value).toContain('Chapter one text'), { timeout: 3000 });
+
+        // Type, then immediately switch chapters — well inside the 2s debounce,
+        // so the timer would have been cancelled with the text still in it.
+        fireEvent.change(editor(), { target: { value: 'Chapter one text EDITED' } });
+        fireEvent.click(screen.getAllByText(/Chapter 2/)[0]);
+
+        // The outgoing chapter's edit must be written, not discarded.
+        await waitFor(() => {
+            expect(updateMutateAsync).toHaveBeenCalledWith(
+                expect.objectContaining({ chapterId: 'ch-1', content: 'Chapter one text EDITED' })
+            );
+        }, { timeout: 3000 });
+    });
+
+    it('writes the pending edit on unmount, without waiting for the debounce', async () => {
+        const { unmount } = renderWithProviders(<StorySandbox />);
+        await waitFor(() => expect(editor()?.value).toContain('Chapter one text'), { timeout: 3000 });
+
+        fireEvent.change(editor(), { target: { value: 'Chapter one text UNMOUNTED' } });
+        unmount();
+
+        await waitFor(() => {
+            expect(updateMutateAsync).toHaveBeenCalledWith(
+                expect.objectContaining({ chapterId: 'ch-1', content: 'Chapter one text UNMOUNTED' })
+            );
+        }, { timeout: 3000 });
+    });
+
+    it('still writes on the debounce when nothing interrupts it', async () => {
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => expect(editor()?.value).toContain('Chapter one text'), { timeout: 3000 });
+
+        fireEvent.change(editor(), { target: { value: 'Chapter one text DEBOUNCED' } });
+        await vi.advanceTimersByTimeAsync(2000);
+
+        await waitFor(() => {
+            expect(updateMutateAsync).toHaveBeenCalledWith(
+                expect.objectContaining({ chapterId: 'ch-1', content: 'Chapter one text DEBOUNCED' })
+            );
+        }, { timeout: 3000 });
+    });
+
+    it('warns before a tab close while a save is pending', async () => {
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => expect(editor()?.value).toContain('Chapter one text'), { timeout: 3000 });
+
+        const event = new Event('beforeunload', { cancelable: true });
+        // Nothing pending yet: a dialog here would train people to click through it.
+        window.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+
+        fireEvent.change(editor(), { target: { value: 'Chapter one text PENDING' } });
+        const pending = new Event('beforeunload', { cancelable: true });
+        window.dispatchEvent(pending);
+        expect(pending.defaultPrevented).toBe(true);
+    });
+
+    it('a failed flush is reported and not silently dropped', async () => {
+        updateMutateAsync.mockRejectedValueOnce(new Error('network down'));
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => expect(editor()?.value).toContain('Chapter one text'), { timeout: 3000 });
+
+        fireEvent.change(editor(), { target: { value: 'Chapter one text WILL FAIL' } });
+        fireEvent.click(screen.getAllByText(/Chapter 2/)[0]);
+
+        await waitFor(() => expect(toast.error).toHaveBeenCalled(), { timeout: 3000 });
     });
 });

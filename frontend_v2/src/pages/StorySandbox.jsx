@@ -198,6 +198,18 @@ export default function StorySandbox() {
         const chapterChanged = loadedChapterIdRef.current !== activeChapterId;
 
         if (chapterChanged) {
+            // Flush the outgoing chapter's pending save BEFORE the buffer is
+            // reused for the new one.
+            //
+            // The auto-save below is a 2s debounce, and its cleanup only
+            // clears the timer. So switching chapters inside that window used to
+            // destroy the pending write outright: the timer was cancelled, the
+            // editor was then overwritten with the new chapter's content, and
+            // `isDirtyRef` was reset — the user's last edits to the old chapter
+            // were gone, with no error, no toast, and no way to recover. The
+            // pending payload lives in a ref specifically so it outlives the
+            // timer that would have written it.
+            flushPendingSave();
             loadedChapterIdRef.current = activeChapterId;
             isDirtyRef.current = false;
         } else if (isDirtyRef.current) {
@@ -303,7 +315,56 @@ export default function StorySandbox() {
     // don't hammer the API. Skipped while streaming (the server pushes the
     // updated content via WebSocket and refetches).
     const autoSaveTimerRef = useRef(null);
+    // The chapter content waiting to be written, held separately from the timer
+    // that would have written it.
+    //
+    // Holding it here is what makes the debounce safe to cancel. A debounce is
+    // *designed* to drop its work when it is reset, which is right for a search
+    // box and catastrophic for an editor: every way this timer could be cleared
+    // (chapter switch, story switch, unmount, the Ctrl+S guard) took the user's
+    // uncommitted text with it. The ref survives all of them, and
+    // `flushPendingSave` writes it on the way out.
+    const pendingSaveRef = useRef(null);
     const updateChapterMutateAsync = updateChapter.mutateAsync;
+
+    const flushPendingSave = useCallback(async () => {
+        const pending = pendingSaveRef.current;
+        if (!pending) return;
+        pendingSaveRef.current = null;
+        if (autoSaveTimerRef.current) {
+            clearTimeout(autoSaveTimerRef.current);
+            autoSaveTimerRef.current = null;
+        }
+        try {
+            await updateChapterMutateAsync(pending);
+            isDirtyRef.current = false;
+        } catch {
+            // Put it back so a later flush — or the beforeunload guard — can
+            // still try, and tell the user it did not stick.
+            pendingSaveRef.current = pending;
+            toast.error('Chapter auto-save failed');
+        }
+    }, [updateChapterMutateAsync]);
+
+    // Unmount, and a browser tab close / reload. React cleanups do not reliably
+    // run for a tab being closed, and a story sandbox is exactly where someone
+    // has an afternoon of prose they will notice losing. The prompt is
+    // suppressed in the common case because by the time this runs the debounce
+    // has usually already fired and the ref is empty.
+    useEffect(() => {
+        const onBeforeUnload = (event) => {
+            if (!pendingSaveRef.current) return;
+            event.preventDefault();
+            // Chrome requires returnValue to be set to trigger the dialog.
+            event.returnValue = '';
+        };
+        window.addEventListener('beforeunload', onBeforeUnload);
+        return () => {
+            window.removeEventListener('beforeunload', onBeforeUnload);
+            flushPendingSave();
+        };
+    }, [flushPendingSave]);
+
     useEffect(() => {
         if (!activeChapterId || isStreaming) return;
         // Only a *user* edit may be auto-saved. A buffer that differs from the
@@ -315,26 +376,32 @@ export default function StorySandbox() {
         if (!isDirtyRef.current) return;
         if (activeChapterId !== loadedChapterIdRef.current) return;
 
-        const currentContent = editorContent;
-        autoSaveTimerRef.current = setTimeout(async () => {
+        // The payload is recorded *before* the timer is armed, so it exists even
+        // if this effect is cleaned up in the same tick it ran.
+        pendingSaveRef.current = {
+            storyId: activeStoryId,
+            chapterId: activeChapterId,
+            content: editorContent,
+        };
+
+        autoSaveTimerRef.current = setTimeout(() => {
+            // The timer only proposes. `flushPendingSave` re-checks that the
+            // payload still belongs to the chapter the editor is showing, so a
+            // timer that fires after a switch writes nothing rather than
+            // writing the old chapter's text over the new one.
             if (
-                activeChapterId &&
-                activeChapterId === loadedChapterIdRef.current &&
-                !isStreamingRef.current
+                pendingSaveRef.current?.chapterId !== loadedChapterIdRef.current
+                || isStreamingRef.current
             ) {
-                try {
-                    await updateChapterMutateAsync({
-                        storyId: activeStoryId,
-                        chapterId: activeChapterId,
-                        content: currentContent,
-                    });
-                    isDirtyRef.current = false;
-                } catch {
-                    toast.error('Chapter auto-save failed');
-                }
+                return;
             }
+            flushPendingSave();
         }, 2000);
 
+        // Cancel the timer only. The payload stays in `pendingSaveRef` and is
+        // written by `flushPendingSave` on the way out — from the chapter-change
+        // branch above, or from unmount. Clearing the payload here as well is
+        // what lost the text.
         return () => clearTimeout(autoSaveTimerRef.current);
     // Depend on the stable mutateAsync reference, not the mutation result
     // object: react-query v5 returns a new object literal from useMutation on
@@ -346,7 +413,7 @@ export default function StorySandbox() {
     // must react to local edits only; re-running it because the server changed
     // the chapter is what turned every server-side prose rewrite into a
     // destructive write-back.
-    }, [editorContent, activeChapterId, isStreaming, activeStoryId, updateChapterMutateAsync]);
+    }, [editorContent, activeChapterId, isStreaming, activeStoryId, flushPendingSave]);
 
     const handleContinue = useCallback(async () => {
         if (!activeStoryId || !activeChapterId || isStreaming) return;
