@@ -720,6 +720,13 @@ class ChapterUpdate(BaseModel):
     Every field is optional and absent means "leave it alone", which is the
     semantics a PATCH/PUT-on-a-partial-resource needs and a table model cannot
     express.
+
+    Every field declared here is applied by `update_chapter`. `title`,
+    `chapter_number` and `image_paths` were accepted and dropped: the AI title
+    generator fires a real paid LLM job, the editor then PUTs the result, the
+    route answered 200, the UI toasted "Title generated!", and the text was
+    thrown away. A field in the request model with no assignment is the mirror
+    image of the missing-field bug above, and just as silent.
     """
 
     content: str | None = None
@@ -812,6 +819,22 @@ def update_chapter(story_id: str, chapter_id: str, chapter_update: ChapterUpdate
         chapter.content = chapter_update.content
     if chapter_update.beats is not None:
         chapter.beats = chapter_update.beats
+    # `title`, `chapter_number` and `image_paths` were declared in the request
+    # model and then never assigned: the handler applied only `content` and
+    # `beats`, answered 200, and the value was gone. The visible symptom was the
+    # AI title generator — a real paid LLM job whose result the editor PUTs, gets
+    # a 200 for, and then toasts "Title generated!" about.
+    #
+    # The model is the contract now: a declared field is applied. `chapter_number`
+    # is deliberately not uniqueness-checked here, matching `reorder_chapters`
+    # and `create_chapter`; the chapter list orders by it and duplicates are the
+    # caller's problem, not something to 400 on mid-autosave.
+    if chapter_update.title is not None:
+        chapter.title = chapter_update.title
+    if chapter_update.chapter_number is not None:
+        chapter.chapter_number = chapter_update.chapter_number
+    if chapter_update.image_paths is not None:
+        chapter.image_paths = chapter_update.image_paths
 
     chapter.updated_at = datetime.now(timezone.utc)
     session.add(chapter)
@@ -1362,8 +1385,21 @@ def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, ses
     """Fork the story at a specific beat into a new chapter.
 
     The new chapter keeps the shared history up to (and including) the
-    branch point, then continues from there. Content is rebuilt from beats
-    so the editor stays consistent with the beat list.
+    branch point, then continues from there.
+
+    The fork is taken from the chapter's **prose**, truncated at the anchor
+    beat, not rebuilt from the beat list. It used to be rebuilt purely from
+    `beats[:idx+1]`, so any prose that had no beat behind it was silently
+    dropped from the fork: hand-typed editor text never creates a beat, and
+    `restore_chapter_revision` rewrites `content` from a snapshot while leaving
+    `beats` untouched, so the two diverge after any restore. The user branched,
+    were navigated to the new chapter, and found their chapter truncated — while
+    the dialog said "The original chapter is untouched", implying a complete
+    fork.
+
+    When the anchor beat's text is not present in the prose (the two have
+    drifted, or the chapter is empty) there is no safe truncation point, so it
+    falls back to the beat-derived text, which is at least internally consistent.
     """
     chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
@@ -1378,7 +1414,9 @@ def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, ses
             idx = i
             break
     if idx is None:
-        raise NotFoundError("StoryBeat", chapter_id)
+        # The id is the *beat's*, not the chapter's. Reporting the chapter id
+        # here sent the caller looking up the wrong entity on a bad beat id.
+        raise NotFoundError("StoryBeat", data.from_beat_id)
 
     prefix = [dict(b) for b in beats[: idx + 1]]
 
@@ -1400,7 +1438,23 @@ def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, ses
             content_parts.append(f"\n\n> {text}\n\n")
         else:
             content_parts.append(f"\n\n{text}\n\n")
-    new_content = "".join(content_parts).strip()
+    beat_derived = "".join(content_parts).strip()
+
+    # Prefer the real prose, cut at the anchor beat. `_replace_beat_text` /
+    # `_remove_beat_text` already own the convention of locating a beat by its
+    # snippet (`_beat_snippet`), so the same search is used here.
+    new_content = None
+    anchor_beat = prefix[idx] if idx < len(prefix) else {}
+    anchor_text = (anchor_beat.get("content") or "").strip()
+    source_content = chapter.content or ""
+    if anchor_text and source_content:
+        cut = _beat_snippet(anchor_text, anchor_beat.get("role"))
+        position = source_content.find(cut)
+        if position != -1:
+            new_content = source_content[: position + len(cut)].strip()
+
+    if not new_content:
+        new_content = beat_derived
 
     max_chapter = session.exec(
         select(StoryChapter)

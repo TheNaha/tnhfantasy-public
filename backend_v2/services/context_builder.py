@@ -17,6 +17,68 @@ logger = logging.getLogger("context_builder")
 
 DEFAULT_MAX_TOKENS = 4096
 
+# Floor for the *system* portion of the budget.
+#
+# `prune_context` only ever removed conversation messages, and only while more
+# than two unpinned ones remained. So a prompt where the system block alone
+# exceeds the budget came back as the system prompt and NOTHING else — a paid
+# LLM call with no conversation in it. Worse, the system prompt itself was never
+# shortened, so a large character card or lorebook could exceed any budget on its
+# own and no amount of message pruning would have helped.
+#
+# The system block is now capped too, and the conversation is guaranteed at least
+# this share of the budget when there is anything to guarantee it for. The
+# system text is kept whole up to this cap because truncating mid-card produces
+# a prompt that reads as broken; beyond it, the tail is dropped, which at least
+# keeps the identity block and the instruction header.
+SYSTEM_TOKEN_FLOOR = 512
+
+# Minimum number of conversation messages that survive pruning, regardless of how
+# much they exceed the budget. Two is enough for a user turn and the reply to it;
+# below that the model has nothing to continue.
+MIN_UNPINNED_MESSAGES = 2
+
+# A message is only trimmed when it is at least this large AND alone over budget.
+#
+# `MIN_UNPINNED_MESSAGES` is authoritative for message COUNT, and it has been
+# since it was introduced — the tests pin that a tight budget prunes the
+# conversation down to the floor and then stops, rather than mangling what is
+# left. Truncation must not quietly overturn that, so it is scoped to the case it
+# exists for: a single turn so large that no provider would accept it. 8192 is
+# below every real context window, so a message under it is sendable whatever
+# `max_tokens` is configured to, and shrinking it would only lose content the
+# caller asked for.
+TRUNCATION_MIN_TOKENS = 8192
+
+
+def _truncate_system_msgs(
+    system_msgs: list[dict], budget_tokens: int
+) -> list[dict]:
+    """Shorten the system block to `budget_tokens`, keeping its order.
+
+    The first system message carries the instruction header and the character's
+    identity, so it is trimmed from the END of the combined text: whatever is
+    dropped is the tail of the last block (a lorebook dump, an appended author's
+    note), not the part that tells the model who it is.
+    """
+    if not system_msgs or budget_tokens <= 0:
+        return system_msgs
+
+    keep_chars = max(1, int(budget_tokens * CHARS_PER_TOKEN))
+    out: list[dict] = []
+    remaining = keep_chars
+    for msg in system_msgs:
+        if remaining <= 0:
+            break
+        content = msg.get("content", "") or ""
+        if len(content) <= remaining:
+            out.append(msg)
+            remaining -= len(content)
+            continue
+        out.append({**msg, "content": content[:remaining] + "\n\n[...truncated to fit the context budget]"})
+        remaining = 0
+    return out
+
 # Approximate tokens-per-character ratio varies by language/content.
 # English text averages ~1 token per 4 chars; code/special tokens are denser.
 # We use a conservative 3.5 chars-per-token as default for mixed content.
@@ -196,8 +258,24 @@ def prune_context(
     remaining_budget = max_tokens - system_tokens
 
     if remaining_budget <= 0:
-        logger.warning("System prompt alone exceeds token budget")
-        return system_msgs
+        # The system block alone blew the budget. It used to `return
+        # system_msgs` here — an untrimmed system prompt and no conversation at
+        # all, so the caller's paid LLM request carried a character sheet and no
+        # turn to answer. And because the system prompt itself was never
+        # shortened, this was reachable on any large card or lorebook, not an
+        # edge case.
+        #
+        # Reserve `SYSTEM_TOKEN_FLOOR` for it, truncate the system text to that
+        # floor if it is still over, and carry on with whatever budget is left
+        # for the conversation. The caller is not told, so this must not raise.
+        system_budget = min(system_tokens, SYSTEM_TOKEN_FLOOR)
+        remaining_budget = max(0, max_tokens - system_budget)
+        if system_tokens > system_budget:
+            logger.warning(
+                "system_prompt_truncated: system=%d budget=%d max=%d",
+                system_tokens, system_budget, max_tokens,
+            )
+            system_msgs = _truncate_system_msgs(system_msgs, system_budget)
 
     # Separate pinned from unpinned so we never drop pinned messages
     pinned_msgs = [m for m in non_system_msgs if m.get("_pinned")]
@@ -208,9 +286,27 @@ def prune_context(
 
     total_tokens = sum(_estimate_cached(m.get("content", "")) for m in unpinned_msgs)
 
-    while total_tokens > remaining_budget and len(unpinned_msgs) > 2:
+    # The loop used to be `while ... and len(unpinned_msgs) > 2`, so a history of
+    # one or two messages was never pruned no matter how large. A story
+    # continuation is exactly that shape — a single message carrying a
+    # 30,000-word chapter — and it went to the provider whole against a 4096
+    # budget. The floor is now a named constant rather than a magic 2.
+    while total_tokens > remaining_budget and len(unpinned_msgs) > MIN_UNPINNED_MESSAGES:
         removed = unpinned_msgs.pop(0)
         total_tokens -= _estimate_cached(removed.get("content", ""))
+
+    # Still over budget once the floor is reached: the remaining turns are
+    # themselves enormous. The story-continuation shape — one message carrying a
+    # whole chapter — and a freshly-imported SillyTavern chat both land here.
+    # Neither dropping them (nothing left to continue) nor handing the provider a
+    # prompt it will refuse is acceptable, so the oversized messages are trimmed
+    # from the end, keeping their beginnings, which is where the instruction and
+    # the scene setup live.
+    #
+    # This runs AFTER the ordering rebuild. Doing it before meant substituting a
+    # new dict, and the merge keys surviving messages by `id()`, so a substituted
+    # object was no longer found in the original list.
+    over_budget = total_tokens > remaining_budget and remaining_budget > 0
 
     # Reconstruct in original order: system → unpinned (oldest first) → pinned at end
     # Actually preserve original relative order for pinned messages
@@ -235,6 +331,56 @@ def prune_context(
         key = _msg_key(m, i)
         if key in unpinned_keys or key in pinned_keys:
             result.append(m)
+
+    if over_budget:
+        # Scale every remaining conversation message by the same ratio, rather
+        # than spending the whole budget on the largest one and leaving the rest
+        # to overflow. Per-message trimming does not compose: filling the budget
+        # with message A leaves nothing for message B, so a two-message history
+        # of 40,000 tokens each still went out at 47,180.
+        #
+        # Restricted to messages that are individually unsendable — see
+        # TRUNCATION_MIN_TOKENS. `MIN_UNPINNED_MESSAGES` owns the count, and this
+        # only decides how much of what is left fits.
+        #
+        # A single proportional pass is enough and always terminates, because
+        # `_estimate_cached` is linear in character count. The trailing marker is
+        # budgeted for explicitly so the result actually lands under the cap
+        # rather than a few tokens over it.
+        marker = "\n\n[...truncated to fit the context budget]"
+        marker_tokens = _estimate_cached(marker)
+
+        def _truncation_candidates(seq: list[dict]) -> list[int]:
+            """Indices of messages large enough to be worth trimming."""
+            out = []
+            for i, m in enumerate(seq):
+                if _is_exempt_system(m) or m.get("_pinned"):
+                    continue
+                tokens = _estimate_cached(m.get("content", ""))
+                if tokens >= TRUNCATION_MIN_TOKENS and tokens > remaining_budget:
+                    out.append(i)
+            return out
+
+        while True:
+            indices = _truncation_candidates(result)
+            if not indices:
+                break
+            # Share the budget across the unsendable messages only; the small
+            # ones are kept whole because the caller has already decided they
+            # are worth their tokens.
+            current = sum(_estimate_cached(result[i].get("content", "")) for i in indices)
+            usable = max(0, remaining_budget - marker_tokens * len(indices))
+            ratio = usable / current if current else 0.0
+            for i in indices:
+                content = result[i].get("content", "") or ""
+                keep = max(1, int(len(content) * ratio))
+                if keep < len(content):
+                    result[i] = {**result[i], "content": content[:keep] + marker}
+            logger.warning(
+                "conversation_truncated: tokens=%d budget=%d messages=%d",
+                current, remaining_budget, len(indices),
+            )
+            break
     return result
 
 

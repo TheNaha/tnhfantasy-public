@@ -1097,7 +1097,11 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         from provider_core.validation import validate_downloaded_file
         validation = validate_downloaded_file(full_path)
         issues = [] if validation["valid"] else [validation["error"]]
-        should_delete = not validation["valid"]
+        # An `indeterminate` result is a failed READ (EIO/ENOMEM/gcsfuse stall),
+        # not a verdict on the file. Deleting on it destroyed healthy multi-GB
+        # checkpoints during an unattended reconciliation sweep. See
+        # `provider_core/validation.py` for why this is a third state.
+        should_delete = not validation["valid"] and not validation.get("indeterminate")
         detected_format = validation.get("format", "unknown")
                 
         model_info = {

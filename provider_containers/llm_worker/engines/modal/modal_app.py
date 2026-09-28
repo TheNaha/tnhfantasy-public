@@ -390,7 +390,15 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         """
         full_dir = get_safe_path("/mnt/data", directory) if directory else "/mnt/data"
         filepath = os.path.join(full_dir, name)
-        if not os.path.exists(filepath):
+        # `isfile`, not `exists`. `exists` is true for a DIRECTORY, and
+        # `LLMModal.setup_models` creates `/mnt/data/models` with subdirectories
+        # that `list_directory` walks one level at a time — so every directory
+        # under the model tree was classified "invalid" on every tick, counted in
+        # `total_invalid`, reported to the backend, and then handed to
+        # `os.remove`, which raised IsADirectoryError into a bare `except: pass`.
+        # The image twin at `image_worker/engines/modal/modal_app.py:1093` has
+        # always checked `isfile` first.
+        if not os.path.isfile(filepath):
             return None
         label = f"{directory}/{name}" if directory else name
         try:
@@ -398,8 +406,24 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
                 filepath, unknown_header_log_prefix="llm_modal/validate_models"
             )
         except Exception as e:
-            return {"name": name, "path": label, "status": "invalid", "reason": str(e)}
-        size = os.path.getsize(filepath)
+            # A validator that itself raised tells us nothing about the file.
+            # Reporting "invalid" here let the caller's `delete_invalid` remove a
+            # model on an infrastructure error.
+            return {
+                "name": name,
+                "path": label,
+                "status": "indeterminate",
+                "reason": str(e),
+            }
+        try:
+            size = os.path.getsize(filepath)
+        except OSError as e:
+            return {
+                "name": name,
+                "path": label,
+                "status": "indeterminate",
+                "reason": f"Could not stat file: {e}",
+            }
         if validation["valid"]:
             return {"name": name, "path": label, "status": "valid", "size": size}
         return {
@@ -408,6 +432,9 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
             "status": "invalid",
             "size": size,
             "reason": validation.get("error", "Invalid file"),
+            # Carried through so the caller can refuse to delete on a failed
+            # read. See `provider_core/validation.py`.
+            "indeterminate": bool(validation.get("indeterminate")),
         }
 
     def validate_directory(dir_path: str) -> Dict[str, Any]:
@@ -453,12 +480,23 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
                 continue
             if info["status"] == "valid":
                 result["valid"].append(info)
+            elif info["status"] == "indeterminate":
+                # The read failed (EIO, ENOMEM, a gcsfuse stall). That is not a
+                # verdict on the file, and the sweep below runs unattended with
+                # `delete_invalid=True` every 2h, so treating it as invalid meant
+                # one transient read error destroyed a healthy multi-GB model.
+                # Reported, kept, and re-read on the next tick.
+                result.setdefault("indeterminate", []).append(info)
             elif info["status"] == "invalid":
                 # A file under the size floor is a truncated transfer, not a
                 # corrupt model. It is classified and reported, and left on
                 # disk: deciding it is abandoned is pending_download_paths' job.
                 if "too small" in info.get("reason", "").lower():
                     result["partial"].append(info)
+                elif info.get("indeterminate"):
+                    # A content check that could not complete. Same reasoning as
+                    # above: no deletion on a guess.
+                    result.setdefault("indeterminate", []).append(info)
                 else:
                     result["invalid"].append(info)
                     if delete_invalid:

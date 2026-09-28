@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, BookOpen, Images, Sparkles, ChevronDown, Layers3, Command, HelpCircle, FileText, ImagePlus, Paintbrush } from 'lucide-react';
-import { useMemo, useState, memo, useEffect } from 'react';
+import { useMemo, useState, memo, useEffect, useRef } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
@@ -170,6 +170,27 @@ export default function Layout({ children }) {
     const safeBranding = branding || { appName: 'TNH-Comfy', logoUrl: '/logo.png', faviconUrl: '/favicon.ico' };
     const location = useLocation();
     const isFullBleed = /^\/(chat|story|characters)/.test(location.pathname);
+    const mainScrollRef = useRef(null);
+
+    // Reset the scroll position on navigation.
+    //
+    // This <main> is rendered OUTSIDE `AnimatedRoutes`, so it is the same DOM
+    // node for every page — and at `lg+` the window never scrolls, this pane
+    // does. Nothing else reset it, so scrolling 2000px down the Gallery and
+    // clicking "Settings" in the sidebar opened Settings 2000px down. Every
+    // page pair inherited the previous page's offset.
+    //
+    // Deliberately not react-router's <ScrollRestoration/>: that is a data
+    // router API and would also mean saving and restoring per-entry positions,
+    // which is the opposite of what a settings page wants. Scrolling to the top
+    // on a *pathname* change is the behaviour every other page-to-page
+    // navigation in the app already has via the window.
+    useEffect(() => {
+        const el = mainScrollRef.current;
+        if (el) el.scrollTop = 0;
+        // Mobile: the pane is not the scroller below lg, the window is.
+        window.scrollTo(0, 0);
+    }, [location.pathname]);
 
     // Initialize global keyboard shortcuts
     useKeyboardShortcuts({
@@ -372,6 +393,7 @@ export default function Layout({ children }) {
                 {/* Full-bleed routes (/chat, /story) get no padding so they fill edge-to-edge */}
                 <main
                     id="main-scroll-container"
+                    ref={mainScrollRef}
                     className={clsx(
                         "flex-1 relative z-10",
                         isFullBleed

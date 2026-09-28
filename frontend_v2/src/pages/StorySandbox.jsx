@@ -881,7 +881,23 @@ export default function StorySandbox() {
             const typing =
                 target instanceof HTMLElement &&
                 (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
-            if (typing) return;
+
+            // These two shortcuts are modifier-based and target the chapter the
+            // user is writing, so unlike every other handler in the app they must
+            // NOT bail when the caret is in a field. The guard was unconditional,
+            // and the chapter editor IS a <textarea> — so `Ctrl+S` and
+            // `Ctrl+Shift+C` were dead in the only place they are useful, while
+            // the Keyboard Shortcuts modal (mounted globally from Layout) still
+            // advertised them. `Ctrl+S` additionally fell through to the
+            // browser's "Save page" dialog.
+            //
+            // Text inputs other than the chapter editor are still excluded, so a
+            // search box or a rename field keeps its native behaviour.
+            const isChapterEditor =
+                target instanceof HTMLElement &&
+                (target.tagName === 'TEXTAREA' || target.isContentEditable);
+
+            if (typing && !isChapterEditor) return;
 
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                 e.preventDefault();

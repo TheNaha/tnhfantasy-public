@@ -41,13 +41,55 @@ def validate_downloaded_file(
     *,
     unknown_header_log_prefix: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Validate a downloaded file and return a normalized validation payload."""
+    """Validate a downloaded file and return a normalized validation payload.
+
+    Three outcomes, not two:
+
+    * `valid: True` — read it, it is fine.
+    * `valid: False, indeterminate: False` — read it, it is genuinely bad.
+    * `valid: False, indeterminate: True` — **could not** read it (EIO, ENOMEM,
+      EMFILE, a JSON parse error, a gcsfuse stall).
+
+    That third case is the reason this function has a flag rather than a boolean.
+    A `read()` raising `OSError` and a header that genuinely is not a model both
+    used to append to the same `validation_errors` list, so both produced
+    `valid: False`. Reconciliation calls all three validators with
+    `delete_invalid=True` (`image_worker/engines/modal/client.py`,
+    `llm_worker/engines/modal/client.py`, `image_worker/engines/beam/client.py`),
+    which then `os.remove`d the model *and* its `.json` and `.preview.png`
+    sidecars. So one transient read error on a healthy 7 GB checkpoint destroyed
+    it, unattended, every 2 hours. These are network (gcsfuse) mounts where EIO
+    and stalls are far more likely than on a local disk, and it is exactly the
+    failure direction that costs money.
+
+    A caller that can act destructively on `invalid` MUST check `indeterminate`
+    first. Deleting on an indeterminate result is never correct: the file may be
+    fine, and there is no way to recover a multi-GB download that was deleted on
+    a guess.
+    """
     validation_errors = []
+    # Set when a failure is "we could not find out" rather than "it is bad".
+    # Tracked separately so the destructive callers can refuse to act on it.
+    indeterminate = False
 
     if not os.path.isfile(path):
-        return {"valid": False, "error": "File not found or is a directory"}
+        return {
+            "valid": False,
+            "indeterminate": True,
+            "error": "File not found or is a directory",
+        }
 
-    actual_size = os.path.getsize(path)
+    try:
+        actual_size = os.path.getsize(path)
+    except OSError as exc:
+        # EACCES, EIO, ENOENT racing a download. Not a verdict on the file.
+        logger.warning(f"validation_stat_failed: path={path} error={exc}")
+        return {
+            "valid": False,
+            "indeterminate": True,
+            "error": f"Could not stat file: {exc}",
+        }
+
     if total_size > 0 and actual_size != total_size:
         validation_errors.append(f"Size mismatch: expected {total_size}, got {actual_size}")
 
@@ -82,8 +124,16 @@ def validate_downloaded_file(
                         f"[{unknown_header_log_prefix}] Unknown format: "
                         f"header={header[:8].hex()}"
                     )
-        except Exception as exc:
+        except OSError as exc:
+            # A read that fails is an I/O fault, not a corrupt file. These
+            # providers store models on gcsfuse volumes where EIO and EMFILE are
+            # routine, and this branch used to feed `delete_invalid`.
+            logger.warning(f"validation_header_read_failed: path={path} error={exc}")
             validation_errors.append(f"Error reading header: {exc}")
+            indeterminate = True
+        except Exception as exc:  # pragma: no cover - defensive
+            validation_errors.append(f"Error reading header: {exc}")
+            indeterminate = True
 
     if "safetensors" in detected_format or path.endswith(".safetensors"):
         if actual_size >= MIN_MODEL_SIZE and not validation_errors:
@@ -101,12 +151,24 @@ def validate_downloaded_file(
                     header = json.loads(header_bytes)
                     if not isinstance(header, dict):
                         raise ValueError("Header is not a dict")
-            except Exception as exc:
+            except (ValueError, struct.error) as exc:
+                # The bytes were read and do not parse as a safetensors header.
+                # That IS a verdict.
                 validation_errors.append(f"Safetensors corrupted: {exc}")
+            except OSError as exc:
+                logger.warning(f"validation_safetensors_read_failed: path={path} error={exc}")
+                validation_errors.append(f"Error reading safetensors header: {exc}")
+                indeterminate = True
+            except Exception as exc:  # pragma: no cover - defensive
+                validation_errors.append(f"Safetensors corrupted: {exc}")
+                indeterminate = True
 
     if validation_errors:
         return {
             "valid": False,
+            # Absent from the healthy result too, so a caller can use
+            # `result.get("indeterminate")` without a KeyError.
+            "indeterminate": indeterminate,
             "error": "; ".join(validation_errors),
             "errors": validation_errors,
             "format": detected_format,
@@ -114,6 +176,7 @@ def validate_downloaded_file(
 
     return {
         "valid": True,
+        "indeterminate": False,
         "format": detected_format,
         "size": actual_size,
     }

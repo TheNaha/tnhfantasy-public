@@ -265,7 +265,17 @@ export default function RelationshipGraph() {
         const base = nodeRouteMap[node.type];
         if (!base) return;
         if (openPage || (node.type !== 'story' && node.type !== 'chat')) {
-            navigate(base);
+            // A character node is a specific character, so it gets the same
+            // `#char-<id>` deep link the World Timeline and Avatar Gallery use —
+            // and that `Characters.jsx` already implements. Navigating to a bare
+            // `/characters` opened the LIST, so the same affordance scrolled to
+            // the character on two pages and dumped the user on an index on the
+            // third.
+            if (node.type === 'character' && node.id) {
+                navigate(`${base}#char-${node.id}`);
+            } else {
+                navigate(base);
+            }
         } else {
             navigate(`${base}/${node.id}`);
         }

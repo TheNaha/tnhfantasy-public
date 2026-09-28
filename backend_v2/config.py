@@ -242,7 +242,59 @@ settings = get_settings()
 _config: dict[str, Any] = None
 _config_lock = threading.Lock()
 
-_config_path = os.path.join(os.path.dirname(__file__), "config.json")
+# Where the writable settings file lives.
+#
+# The default is the repository copy next to this module, which is what you want
+# on a dev machine: the Settings UI edits it in place and you can see the diff.
+#
+# In the container that default is WRONG, and silently so. `backend_v2/Dockerfile`
+# does `COPY . .` into `/app` and the production compose mounts only
+# `./data:/data`, so `<repo>/config.json` resolves to `/app/config.json` — the
+# container's writable layer. `update_config` then reports success, and every
+# change made through the Settings UI (system prompts, `generator.default_checkpoint`,
+# `jobs.*`, `image_processing.*`) is discarded by the next `up --build` or any
+# container recreate. Only the dev override's `./backend_v2:/app` bind mount made
+# it durable, which is why this was invisible: dev worked, production did not.
+#
+# `COMFY_CONFIG_PATH` points it at a durable volume instead. The production
+# compose sets it to `/data/config.json`, which is on the same bind mount as the
+# Postgres cluster and the generated images, and `_seed_config_file` copies the
+# shipped defaults there on first boot so an empty volume still starts.
+def _default_config_path() -> str:
+    override = os.environ.get("COMFY_CONFIG_PATH", "").strip()
+    if override:
+        return override
+    return os.path.join(os.path.dirname(__file__), "config.json")
+
+
+_config_path = _default_config_path()
+
+
+def _seed_config_file(path: str) -> None:
+    """Copy the shipped config to `path` when `path` does not exist yet.
+
+    Only ever runs on a missing target, so it cannot overwrite an operator's
+    saved settings. `shutil.copyfile` plus a temp-and-rename would be safer
+    against a concurrent reader, but this runs once, before the app serves, from
+    the lifespan — and `load_config` already tolerates a partially written file
+    by falling back to `DEFAULT_CONFIG` with a warning.
+    """
+    if os.path.exists(path):
+        return
+    packaged = os.path.join(os.path.dirname(__file__), "config.json")
+    try:
+        if os.path.abspath(packaged) == os.path.abspath(path):
+            return
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(packaged, "r") as src:
+            contents = src.read()
+        with open(path, "w") as dst:
+            dst.write(contents)
+        _cfg_logger.info("config_seeded", path=path, source=packaged)
+    except Exception as exc:  # pragma: no cover - never block startup on this
+        _cfg_logger.warning("config_seed_failed", path=path, error=str(exc))
 
 
 def load_config(config_path: str = None) -> dict[str, Any]:
@@ -260,7 +312,9 @@ def load_config(config_path: str = None) -> dict[str, Any]:
     
     if config_path:
         _config_path = config_path
-    
+
+    _seed_config_file(_config_path)
+
     # If config exists, load it
     if os.path.exists(_config_path):
         try:

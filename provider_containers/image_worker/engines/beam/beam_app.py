@@ -26,6 +26,7 @@ import asyncio
 # IMPORTANT: provider_core is a sibling package and must be present in the deploy
 # source context. Deploying beam_app.py from only image_worker/engines/beam/ (without the
 # provider_containers root) can fail with ModuleNotFoundError: provider_core.
+from provider_core.auth import bearer_from_header, token_matches
 from provider_core.downloads import pending_download_paths
 from provider_core.http_client import get_file_size_cap
 from provider_core.responses import failed, ok, outcome
@@ -40,7 +41,6 @@ from image_worker.comfy.workflow_executor import (
 )
 from typing import Dict, Any
 import base64
-import hmac
 
 
 # =============================================================================
@@ -270,12 +270,11 @@ async def verify_beam_token(request: Request):
             },
         )
 
-    provided = request.headers.get("Authorization", "")
-    if not provided.startswith("Bearer "):
-        provided = ""
-    else:
-        provided = provided[len("Bearer "):]
-    if not provided or not hmac.compare_digest(provided, expected):
+    # `provider_core/auth.py` — see there for why the comparison is done on
+    # bytes: a non-ASCII header raised TypeError inside compare_digest, was
+    # reported as a 500 with `retryable: true`, and the dispatcher turned a
+    # malformed token into a paid retry on every other provider.
+    if not token_matches(bearer_from_header(request.headers.get("Authorization")), expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return True
 
@@ -572,10 +571,6 @@ async def validate_models(request: Request):
         with os.scandir(target_dir) as entries:
             for entry in entries:
                 name = entry.name
-                if not is_model_file(name):
-                    continue
-                if not entry.is_file():
-                    continue
                 full_path = entry.path
                 if is_transient_artifact(name):
                     # Reported, never deleted. Unlinking an in-flight temp leaves
@@ -587,12 +582,15 @@ async def validate_models(request: Request):
                     # the interleaving corruption the lock exists to prevent
                     # happens. See `provider_core/utils.py`.
                     #
-                    # Classified before `is_model_file`, which excludes `.lock`
-                    # and `.downloading` by name — that ordering is why
-                    # `total_partial` was permanently 0 on this engine, so
-                    # reconciliation step 0 (the only step that reads it) ran
-                    # blind. The image Modal app and the LLM app both classify;
-                    # this third copy did not.
+                    # ORDER MATTERS, and it was wrong here. This block sat AFTER
+                    # `if not is_model_file(name): continue`, and `is_model_file`
+                    # is false for every `.lock` and `.downloading` name — so the
+                    # branch was unreachable, `partial_downloads` was permanently
+                    # `[]`, and `total_partial` was permanently 0 on this engine.
+                    # Reconciliation step 0 is the only step that reads it, so it
+                    # ran blind here while the image Modal app and the LLM app
+                    # both classified correctly. Same three-line order as
+                    # `image_worker/engines/modal/modal_app.py:1077`.
                     if not entry.is_file():
                         continue
                     partial_downloads.append({
@@ -601,6 +599,10 @@ async def validate_models(request: Request):
                         "format": "partial",
                         "issues": ["Incomplete download (temp file)"],
                     })
+                    continue
+                if not is_model_file(name):
+                    continue
+                if not entry.is_file():
                     continue
                 file_size = entry.stat().st_size
                 validation = validate_downloaded_file(full_path)
@@ -613,7 +615,16 @@ async def validate_models(request: Request):
                 if not validation["valid"]:
                     model_info["issues"] = [validation["error"]]
                     invalid_models.append(model_info)
-                    if delete_invalid:
+                    # `indeterminate` means the read FAILED (EIO, ENOMEM, a
+                    # gcsfuse stall) — not that the file is bad. Reconciliation
+                    # runs this every 2h with `delete_invalid=True` on a network
+                    # volume, so deleting here destroyed healthy 7 GB checkpoints
+                    # on a transient read error, together with their .json and
+                    # .preview.png sidecars. There is no way to recover a
+                    # multi-GB download that was removed on a guess, so an
+                    # unreadable file is reported and left alone; the next tick
+                    # reads it again.
+                    if delete_invalid and not validation.get("indeterminate"):
                         os.remove(full_path)
                         for ext in [".json", ".preview.png", ".sha256"]:
                             side_file = os.path.splitext(full_path)[0] + ext
@@ -693,6 +704,30 @@ async def validate_all_models(request: Request):
     )
 
 
+def _realtime_token_ok(provided: str | None) -> bool:
+    """Constant-time token check for the `@realtime` GPU handler.
+
+    Fails CLOSED when `BEAM_API_KEY` is unset. An unconfigured deployment
+    refusing inference is recoverable; one serving free GPU time to anyone who
+    finds the URL is not.
+
+    The comparison itself lives in `provider_core/auth.py`, shared with the
+    storage/download/extractor gate on this same deployment and with the
+    `X-Provider-Token` gate in the router. It encodes to bytes first, because
+    `hmac.compare_digest` raises `TypeError` on a `str` holding a byte >= 0x80 and
+    a WebSocket payload is decoded as latin-1 — a non-ASCII token would otherwise
+    raise inside the comparison instead of being rejected.
+    """
+    expected = os.environ.get("BEAM_API_KEY", "").strip()
+    if not expected:
+        logger.error(
+            "beam_token_not_configured: BEAM_API_KEY is not set on the GPU "
+            "deployment; refusing to serve an unauthenticated inference endpoint."
+        )
+        return False
+    return token_matches(provided, expected)
+
+
 # =============================================================================
 # Deployment Entry Points
 # =============================================================================
@@ -713,13 +748,29 @@ async def validate_all_models(request: Request):
 async def comfy_gpu(event):
     """
     GPU endpoint for inference via WebSocket (realtime).
-    
+
     Uses checkpoint restore for fast cold starts - ComfyUI is already
     loaded and ready when the container resumes from checkpoint.
-    
-    Event format: {"workflow": {...}}
+
+    Event format: {"token": "...", "workflow": {...}}
     Yields: Progress updates through WebSocket
     Returns: Final {"status": "success", "images": [...]}
+
+    AUTHENTICATION. This handler bills GPU time, executes an arbitrary ComfyUI
+    graph, and reads and writes the shared `/mnt/data` volume that holds the
+    multi-GB checkpoints — and it was the only route on this deployment with no
+    gate at all. `verify_beam_token` protects `storage_app`, `download_app` and
+    `extractor_app`, but not this one, so anyone who learned the deployment URL
+    got free SDXL inference. The client was already sending
+    `Authorization: Bearer $BEAM_API_KEY` on the socket; nothing read it.
+
+    The token is read from the *payload* rather than a request context. A
+    `@realtime` handler's signature is what the SDK's decorator inspects, and the
+    beta9 context object is not available in every version this container has
+    been deployed under — a handler that took a second positional parameter
+    would fail to bind rather than fail safe. The payload channel works
+    identically on every version, and both ends change together in the same
+    commit. Comparison is constant-time.
     """
     # Parse event if it's a string (WebSocket sends raw JSON)
     if isinstance(event, str):
@@ -728,21 +779,35 @@ async def comfy_gpu(event):
         except json.JSONDecodeError:
             yield json.dumps({"status": "error", "message": f"Invalid JSON: {event[:100]}"})
             return
-    
+    if not isinstance(event, dict):
+        yield json.dumps({"status": "error", "message": "Expected a JSON object"})
+        return
+
+    if not _realtime_token_ok(event.get("token")):
+        logger.error("[comfy_gpu] Rejected an unauthenticated inference request")
+        # Close rather than continue: a rejected call must not leave the
+        # container warm and billable.
+        yield json.dumps({
+            "status": "error",
+            "message": "Unauthorized",
+            "retryable": False,
+        })
+        return
+
     workflow = event.get("workflow", {})
-    
+
     if not workflow:
         yield json.dumps({"status": "error", "message": "No workflow provided"})
         return  # Exit generator early
-    
+
     logger.info(f"[comfy_gpu] Received workflow with {len(workflow)} nodes")
-    
+
     # Stream progress updates through WebSocket
     # Note: _run_inference_realtime yields JSON strings
     async for update_json in _run_inference_realtime(workflow):
         logger.info("[comfy_gpu] Sending update through WebSocket")
         yield update_json
-    
+
     logger.info("[comfy_gpu] Inference complete")
 
 

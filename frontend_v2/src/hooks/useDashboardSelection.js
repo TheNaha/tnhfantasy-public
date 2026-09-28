@@ -2,10 +2,10 @@ import { useState, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { filesApi } from '../api';
 
-export function useDashboardSelection({ 
-    favorites, 
-    toggleFavorite, 
-    queryClient, 
+export function useDashboardSelection({
+    favorites,
+    addFavorites,
+    queryClient,
     filters,
     confirm,
     activeCollection,
@@ -57,18 +57,19 @@ export function useDashboardSelection({
         setSelectedFiles(new Set());
     }, [selectedFiles, confirm]);
 
+    // One `addFavorites` call, not a loop of `toggleFavorite`. The favorites
+    // endpoint replaces the whole list, so the loop was a read-modify-write
+    // race: every iteration read the pre-batch list because `onMutate` had not
+    // run yet, N overwrites went to the server, and only the last image
+    // survived. The count reported here is now the count actually sent.
     const handleBatchFavorite = useCallback(() => {
-        let addedCount = 0;
-        Array.from(selectedFiles).forEach(filename => {
-            if (!favorites.includes(filename)) {
-                toggleFavorite(filename);
-                addedCount += 1;
-            }
-        });
-        if (addedCount > 0) {
-            toast.success(`Added ${addedCount} image${addedCount !== 1 ? 's' : ''} to favorites`, { icon: '⭐' });
+        const additions = Array.from(selectedFiles).filter(filename => !favorites.includes(filename));
+        if (additions.length === 0) {
+            return;
         }
-    }, [favorites, selectedFiles, toggleFavorite]);
+        addFavorites(additions);
+        toast.success(`Added ${additions.length} image${additions.length !== 1 ? 's' : ''} to favorites`, { icon: '⭐' });
+    }, [favorites, selectedFiles, addFavorites]);
 
     const handleAddSelectionToCollection = useCallback(() => {
         setShowSelectCollection(true);

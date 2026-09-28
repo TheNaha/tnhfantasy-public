@@ -58,8 +58,9 @@ There are two ways to run the application: Production and Development.
 
 **Production Mode:**
 Runs the optimized, pre-built frontend and backend without hot-reloading.
-1. Ensure the `.env` file is properly configured.
-2. Run the following command from the root directory:
+1. Run `scripts/preflight.sh` first. It creates the `metrics` and `proxy` networks that `docker-compose.yml` declares `external: true`, and reports the config that silently disables features. Without it the command below fails at network creation for *every* service, with an error that does not name the cause.
+2. Ensure the `.env` file is properly configured.
+3. Run the following command from the root directory:
    ```bash
    docker compose -f docker-compose.yml --profile providers up -d --build -V
    ```
@@ -76,8 +77,8 @@ Runs the application with hot-reloading for both backend and frontend. The provi
    ```
 
 The application should now be accessible.
-   - **Frontend:** Port 5174 (dev) or 80 (prod via Traefik).
-   - **Backend:** Port 8002 (internal, but exposed in dev).
+   - **Frontend:** Port 5174 in both modes. The production compose publishes `5174:5174`; the only Traefik router is on the `websecure` entrypoint (443), so there is no port 80 anywhere.
+   - **Backend:** Port 8002, published on `0.0.0.0` by the base compose in both modes. It has no authentication, so on a reachable host it is open to anyone who can route to it. Restrict it at the firewall, or bind it to loopback and reach the backend through the frontend's `/api/` proxy.
 
 ### Adding a Provider
 1. Copy the `provider-modal` block in `docker-compose.yml`.
@@ -97,9 +98,10 @@ docker compose down
 ```
 
 ## Production Considerations
-- **Security:** Ensure that `.env`, provider credential files, the PostgreSQL volume (`data/pgdata`), and generated images (`output` directory) are protected and not publicly accessible.
+- **Security:** Ensure that `.env`, provider credential files, the PostgreSQL bind mount (`data/pgdata`), and generated images (`data/output`) are protected and not publicly accessible. Two container-level footguns are already handled and are worth not undoing: the frontend image runs as uid 1000 rather than root (it is the only Traefik-exposed service), and the provider image build excludes nested `.env*` files — the build context is the repository root, so a root-anchored `.dockerignore` pattern would bake `remote_agent/.env.agent`, and with it a live `REMOTE_AGENT_TOKEN`, into a published image layer.
 - **Reverse Proxy:** The `docker-compose.yml` includes Traefik labels for routing. Configure Traefik according to your domain setup.
-- **Persistent Data:** The `./data` directory is mapped to the host filesystem via volumes, ensuring data persists across container restarts.
+- **Persistent Data:** The `./data` bind mount maps to the host filesystem, so data survives container restarts. `data/pgdata` is the PostgreSQL cluster, `data/output` holds generated images, and `data/config.json` is the Settings UI's writable state file (see `COMFY_CONFIG_PATH` in `docker-compose.yml` — without it the container writes to its own layer and every setting reverts on recreate).
+- **No automated backup exists.** Nothing in this repo takes one. `data/pgdata` holds the entire World Vault, so a `pg_dump` on a schedule is the operator's responsibility. `data/old-dont-touch-unless-backup/` exists on some hosts, which is an ad-hoc manual copy, not a procedure.
 - **Frontend Polling:** Docker frontend file watching requires polling mode (`usePolling: true` in `vite.config.js`).
 
 ## Logs

@@ -108,3 +108,74 @@ describe('colour literals are not growing', () => {
         expect(hexish, 'hardcoded colours are creeping back in').toBeLessThanOrEqual(400);
     });
 });
+
+/**
+ * Commit 10024929 ("a real token layer") deleted ~40 hand-written component
+ * classes from `index.css` and only restored one of them. The other ~94
+ * `className` references stayed, so every one of them became a silent no-op:
+ * the sidebar provider dot rendered 0x0 and was invisible, the provider tab
+ * strip fell back to browser-default buttons, every metric pill collapsed to
+ * bare text, and `<Modal>`/ErrorBoundary/404 lost their panel surface.
+ *
+ * A deleted selector and a live usage are individually invisible — the JSX is
+ * valid, the build is clean, lint is clean, and the token test above only
+ * counts literals. It took a diff against the previous revision to notice.
+ *
+ * The list is explicit rather than derived. Distinguishing a bespoke class from
+ * a Tailwind utility by shape is not reliable (`flex`, `p-4` and `truncate` all
+ * look like bespoke names), and an inferred allowlist just teaches the test to
+ * agree with whatever the current source happens to say. Naming them is the
+ * assertion: a class cannot be deleted from the stylesheet and quietly stop
+ * working without failing here.
+ */
+describe('component classes resolve to a real rule', () => {
+    const BESPOKE_CLASSES = [
+        'glass',
+        'glass-panel',
+        'card-elevated',
+        'card-elevated-hover',
+        'glow-focus',
+        'text-gradient-primary',
+        'metric-chip',
+        'tab-bar',
+        'provider-dot',
+        'pb-safe',
+        'custom-scrollbar',
+    ];
+
+    const cssSources = FILES
+        .filter((f) => f.endsWith('.css'))
+        .map((f) => readFileSync(f, 'utf8'))
+        .join('\n');
+
+    it('every bespoke component class still has a rule', () => {
+        const missing = BESPOKE_CLASSES.filter(
+            (name) => !new RegExp(`\\.${name}[\\s,{:.]`).test(cssSources)
+        );
+        expect(
+            missing,
+            `used by live components but defined in no stylesheet, so they render unstyled: ${missing.join(', ')}`
+        ).toEqual([]);
+    });
+
+    it('the provider dot has a size, so it is not invisible', () => {
+        // The specific regression that prompted this file: `.provider-dot` lost
+        // its width/height, so the element laid out at 0x0 and the sidebar's
+        // System Status panel showed a status label with no dot beside it.
+        const rule = cssSources.slice(cssSources.indexOf('.provider-dot {'));
+        expect(rule).toBeTruthy();
+        expect(rule.slice(0, 200)).toMatch(/width:\s*6px/);
+        expect(rule.slice(0, 200)).toMatch(/height:\s*6px/);
+    });
+
+    it('every provider status tone has a colour', () => {
+        // `providerDotToneClass()` returns these bare names; if a tone loses its
+        // rule the dot renders with no background rather than a wrong one.
+        const tones = ['online', 'offline', 'processing', 'syncing', 'downloading',
+                       'deploying', 'warning', 'working', 'failed'];
+        const missing = tones.filter(
+            (tone) => !new RegExp(`\\.provider-dot\\.${tone}\\s*\\{`).test(cssSources)
+        );
+        expect(missing, `provider status tones with no colour: ${missing.join(', ')}`).toEqual([]);
+    });
+});

@@ -1,13 +1,14 @@
 # TNHComfy — Project Status
 
 **The single authoritative status document.** Everything here was verified
-against the code on 2026-09-26, not carried over from an earlier plan.
+against the code on 2026-09-28, not carried over from an earlier plan.
 
-If you are about to make a decision about what to work on next, this file,
-`docs/audit-2026-09-26-followup.md` and `docs/audit-2026-09-26.md` are the only
-three things you need to read. The other planning documents that used to sit at
-the repo root are historical and live in `docs/archive/` — they are kept for
-provenance, not for guidance.
+If you are about to make a decision about what to work on next, read this file
+and then the **most recent** audit, which is `docs/audit-2026-09-29.md`. Each
+audit supersedes its predecessors for everything it marks fixed; reading an
+older one tells you about defects that no longer exist. The other planning
+documents that used to sit at the repo root are historical and live in
+`docs/archive/` — they are kept for provenance, not for guidance.
 
 ## What this is
 
@@ -130,7 +131,7 @@ notable ones:
 ## What is genuinely still open
 
 Verified as real and not yet fixed. Ordered by how much they cost you.
-`docs/audit-2026-09-26-followup.md` §2 has the full list with file:line detail.
+The most recent audit has the full list with file:line detail.
 
 Items 1-6 of the previous list were fixed — see §1b of the follow-up. What remains:
 
@@ -232,9 +233,9 @@ The frontend serves on **:5174** (not 5173) and proxies `/api` and
 
 | I want to… | Look in |
 |---|---|
-| Know what's left to do | this file, then `docs/audit-2026-09-26-followup.md` §2 |
+| Know what's left to do | this file, then the most recent audit's open-findings table |
 | Understand the code | `AGENTS.md`, then the module itself |
 | Understand the product intent | `VISION.md` |
 | Understand a past decision | `docs/archive/` (historical; may be wrong) |
-| See what the last audit found | `docs/audit-2026-09-26-followup.md` |
-| See the audit before it | `docs/audit-2026-09-26.md` |
+| See what the last audit found | `docs/audit-2026-09-29.md` |
+| See earlier audits | `docs/audit-2026-09-28.md`, then `docs/audit-2026-09-27.md` (each superseded by the next) |

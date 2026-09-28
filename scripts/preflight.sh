@@ -24,9 +24,10 @@ note() { printf '  \033[33mnote\033[0m  %s\n' "$1"; }
 
 echo
 echo "==> Docker networks"
-# `metrics` and `proxy` are declared external in docker-compose.yml. Create any
-# that are absent so compose can attach to them.
-for net in tnhcomfy metrics proxy; do
+# `metrics` and `proxy` are declared `external: true` in docker-compose.yml, so
+# compose will NOT create them and every service fails at network creation if
+# they are missing — with an error that does not name the cause.
+for net in metrics proxy; do
   if docker network inspect "$net" >/dev/null 2>&1; then
     ok "network '$net' exists"
   elif [[ $CHECK_ONLY -eq 1 ]]; then
@@ -37,6 +38,15 @@ for net in tnhcomfy metrics proxy; do
     bad "network '$net' is MISSING and could not be created"
   fi
 done
+
+# `tnhcomfy` is NOT external — compose creates and owns it. It used to be in the
+# loop above, which meant every `up` warned that an existing network was not
+# created by compose. Check it for information only; never create it.
+if docker network inspect tnhcomfy >/dev/null 2>&1; then
+  ok "network 'tnhcomfy' exists (compose-managed; safe to delete while stopped)"
+else
+  echo "  note 'tnhcomfy' not present yet; compose will create it on first up"
+fi
 
 echo
 echo "==> Provider env files"

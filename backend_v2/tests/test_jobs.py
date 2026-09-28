@@ -75,19 +75,42 @@ def test_get_job_not_found(client):
     assert response.status_code == 404
 
 
-def test_delete_job(client, sample_job_data):
-    """Test deleting a job."""
-    # Create a job
+def test_delete_job(client, sample_job_data, session):
+    """Test deleting a terminal job.
+
+    The job is driven to a terminal state first: `POST /api/jobs` leaves it
+    PENDING, and DELETE now refuses a PENDING job because it is work a worker is
+    about to claim. Deleting it anyway let the worker finish into a missing row
+    and silently threw away a paid generation.
+    """
+    from core.entities import JobStatus
+
     create_response = client.post("/api/jobs", json=sample_job_data)
     job_id = create_response.json()["id"]
-    
+
+    job = session.get(Job, job_id)
+    job.status = JobStatus.COMPLETED
+    session.add(job)
+    session.commit()
+
     # Delete it
     response = client.delete(f"/api/jobs/{job_id}")
     assert response.status_code == 200
-    
+
     # Verify it's gone
     get_response = client.get(f"/api/jobs/{job_id}")
     assert get_response.status_code == 404
+
+
+def test_delete_pending_job_is_refused(client, sample_job_data):
+    """A queued job cannot be deleted — it is live work, and there is a cancel
+    endpoint for that. The refusal must leave the job intact."""
+    create_response = client.post("/api/jobs", json=sample_job_data)
+    job_id = create_response.json()["id"]
+
+    response = client.delete(f"/api/jobs/{job_id}")
+    assert response.status_code == 400
+    assert client.get(f"/api/jobs/{job_id}").status_code == 200
 
 
 def test_clear_jobs(client, sample_job_data):

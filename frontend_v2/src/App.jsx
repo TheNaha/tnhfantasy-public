@@ -268,18 +268,25 @@ function App() {
             return;
         }
 
+        // This effect exists only to apply the two user-configurable cache
+        // timings. It must not restate the rest of the policy: `setDefaultOptions`
+        // REPLACES both sub-objects wholesale, so the version that also passed
+        // `mutations: { retry: 1 }` undid the constructor's `retry: 0` on every
+        // page load — re-enabling retried non-idempotent POST/DELETEs (duplicate
+        // jobs, duplicated chat messages and paid LLM calls, duplicate
+        // characters, and DELETEs that succeeded then reported a 404 failure).
+        // The guard above also never matched on mount, because the constructor
+        // hardcodes a 30-minute gcTime while the store default is 10 — so the
+        // overwrite was unconditional, not an edge case.
+        //
+        // Merging keeps `mutations` exactly as the constructor set it, and means
+        // a future default added here survives a settings change too.
         queryClient.setDefaultOptions({
+            ...queryClient.getDefaultOptions(),
             queries: {
+                ...current,
                 staleTime,
                 gcTime,
-                retry: 1,
-                refetchOnWindowFocus: false,
-                refetchOnReconnect: true,
-                networkMode: 'online',
-            },
-            mutations: {
-                retry: 1,
-                networkMode: 'online',
             },
         });
     }, [queryClient, queryUiSettings]);

@@ -57,10 +57,23 @@ export default function ModelImportCard({ model, onCancel }) {
     };
 
     return createPortal(
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-            <div className="bg-gray-900 w-full max-w-5xl h-[80vh] rounded-2xl border border-gray-800 flex overflow-hidden shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 overflow-y-auto">
+            {/* `h-[80vh]` + `overflow-hidden` + a FIXED 400px left pane meant the
+                two-column layout could not reflow: below `sm`, the 400px pane
+                exceeded the available width (viewport minus the p-4 backdrop),
+                `flex-1` on the right collapsed to 0, and the parent's
+                `overflow-hidden` clipped the overflow with no scroll. The version
+                selector and the Install button were unreachable on a phone with
+                no way to reach them — the one dialog whose entire purpose is
+                choosing a version and installing.
+
+                Fixed by stacking below `sm` (the left pane becomes full-width
+                and the whole dialog scrolls) and only side-by-side from `sm` up.
+                `max-h`/`overflow-y-auto` on the outer panel keeps the footer
+                reachable on a short landscape viewport too. */}
+            <div className="bg-gray-900 w-full max-w-5xl h-[80vh] max-h-[90vh] rounded-2xl border border-gray-800 flex flex-col sm:flex-row overflow-y-auto sm:overflow-hidden shadow-2xl">
                 {/* Left: Images */}
-                <div className="w-[400px] bg-gray-950 p-4 border-r border-gray-800 flex flex-col gap-4 overflow-y-auto relative">
+                <div className="w-full sm:w-[400px] sm:shrink-0 bg-gray-950 p-4 sm:border-r border-gray-800 flex flex-col gap-4 overflow-y-auto relative">
                     {previewImage ? (
                         <div className="relative aspect-[2/3] rounded-xl overflow-hidden border border-gray-800 bg-gray-900 shrink-0">
                             <img
@@ -115,8 +128,13 @@ export default function ModelImportCard({ model, onCancel }) {
                                 )}
                             </div>
                         </div>
-                        <button onClick={onCancel} className="p-2 hover:bg-gray-800 rounded-full transition-colors">
-                            <X size={24} />
+                        <button
+                            onClick={onCancel}
+                            className="p-2 hover:bg-gray-800 rounded-full transition-colors"
+                            aria-label="Close model import"
+                            title="Close"
+                        >
+                            <X size={24} aria-hidden="true" />
                         </button>
                     </div>
 

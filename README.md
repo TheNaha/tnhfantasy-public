@@ -21,12 +21,16 @@ This project serves as a dynamic, containerized wrapper around ComfyUI that inte
 
 ## Quick Start
 1. Copy `.env.example` to `.env` and configure the backend settings.
-2. Copy `.env.example.provider` to each provider environment file referenced by `docker-compose.yml` (for example `.env.modal-hp196`) and configure that provider's credentials.
-3. Start the project with the development Compose override and provider profile:
+2. **On a new host, run `scripts/preflight.sh` first.** Compose declares the `metrics` and `proxy` networks as external, so without it every `up` fails at network creation — for every service, with an error that does not name the cause. It also reports the config that silently disables features.
+3. Configure the providers you actually want. Each provider is opt-in via a Compose profile, so there is no one file to copy:
+   - `--profile providers` enables `modal-hp196`, `modal-stepmania`, `modal-zetsuke`, `llm-local` and `direct_url`.
+   - **Do not copy `.env.example.provider`.** It is an all-commented stub with zero assignments — it is a reference, not a template. It is also missing `.env.llm-local` and `.env.direct-url`, so a copy-driven setup silently ends up with two required `env_file`s absent. Create the per-provider files you need from `.env.example.provider.engines` and fill in only the keys for the providers you enabled.
+4. Start the project with the development Compose override and provider profile:
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
    ```
-4. Access the Web UI on port 5174.
+   `-V` (`--renew-anon-volumes`) matters in dev: the frontend's `node_modules` is an anonymous volume initialised from the image, and without `-V` a lockfile change leaves the container serving the previous dependency set with no error.
+5. Access the Web UI on port 5174.
 
 ## Package Manager
 The frontend workspace in `frontend_v2` is `npm`-only.
@@ -34,4 +38,4 @@ Use `npm install`, `npm run dev`, `npm test`, and `npm run build`.
 `pnpm` and `yarn` are intentionally rejected by the frontend `preinstall` guard.
 
 ## Project Maintenance
-Built to scale seamlessly using serverless providers. Output images are stored on the filesystem and the PostgreSQL database (`COMFY_DATABASE_URL`) is excluded from version control for security.
+Built to scale seamlessly using serverless providers. Output images are stored on the filesystem, and the whole `data/` directory — the PostgreSQL cluster (`data/pgdata`), the image output, and the generated `config.json` — is excluded from version control, not just the database. Nothing under `data/` is lost by `docker compose down -v`, because it is a bind mount rather than a named volume, but there is also no automated backup: see `docs/deployment.md`.

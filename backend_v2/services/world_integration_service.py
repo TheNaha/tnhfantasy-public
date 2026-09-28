@@ -252,6 +252,17 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
             if metadata.get("is_swipe") and metadata.get("target_message_id"):
                 # Append as alternate to existing message
                 target_msg = session.get(Message, metadata["target_message_id"])
+                if target_msg and target_msg.chat_id != chat_id:
+                    # The id exists but belongs to a different chat. Swiping a
+                    # message in one conversation from another is never intended,
+                    # and writing to it would move text across chats.
+                    logger.warning(
+                        "chat_swipe_target_wrong_chat",
+                        job_id=job_data.get("id"),
+                        chat_id=chat_id,
+                        target_chat_id=target_msg.chat_id,
+                    )
+                    return
                 if target_msg:
                     target_meta = dict(target_msg.message_metadata or {})
                     alternates = target_meta.get("alternates", [target_msg.content])
@@ -269,6 +280,28 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
                     session.add(target_msg)
                     session.commit()
                     return
+                # The target is gone (deleted, or rolled back) while this job was
+                # in flight. Appending a fresh CHAR message at the tail would be
+                # wrong in two reachable ways: the user regenerates or deletes the
+                # message they asked to swipe, the in-flight job lands afterwards
+                # and re-inserts the text they discarded; and
+                # `POST /api/jobs/reconcile-chat-replies` replays every COMPLETED
+                # chat_reply with no source stamp, so every reply that was ever
+                # regenerated or rolled back — the ones whose stamped message was
+                # deleted — would be reported as a lost reply and resurrected at
+                # the end of the chat.
+
+                # A swipe has no meaning without its anchor, so this is a no-op
+                # rather than a fallback. The job still completes normally, so the
+                # cost is already sunk either way; what matters is that it does
+                # not mutate the conversation.
+                logger.warning(
+                    "chat_swipe_target_missing",
+                    job_id=job_data.get("id"),
+                    chat_id=chat_id,
+                    target_message_id=metadata.get("target_message_id"),
+                )
+                return
 
             # Normal path: insert NEW CHAR message
             msg = Message(

@@ -65,6 +65,14 @@ services:
       - COMFY_PREVIEW_PREFETCH_ENABLED=true
       - HF_HOME=/data/hf-cache
       - XDG_CACHE_HOME=/data/cache
+      # The Settings UI writes this file. Without the override it resolves to
+      # /app/config.json — the container's writable layer, since this service
+      # mounts only ./data — so every change made in the UI (system prompts,
+      # generator.default_checkpoint, jobs.*, image_processing.*) was accepted
+      # with a 200 and then discarded by the next recreate. /data is the same
+      # bind mount as the Postgres cluster and the generated images, and
+      # config.py seeds it from the shipped defaults on first boot.
+      - COMFY_CONFIG_PATH=/data/config.json
       - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
       - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
       - COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS=${COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS:-0}

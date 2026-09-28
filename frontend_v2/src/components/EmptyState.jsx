@@ -193,7 +193,7 @@ const EmptyState = ({
             primaryLabel: primaryLabel || "Add Images",
             primaryAction: primaryAction,
             secondaryLabel: secondaryLabel || "View All Images",
-            secondaryAction: secondaryAction || (() => navigate('/')),
+            secondaryAction: secondaryAction || (() => navigate('/gallery')),
             tutorialHint: "💡 Tip: Select images in the gallery and click 'Add to Collection'"
         },
         favorites: {
@@ -201,7 +201,7 @@ const EmptyState = ({
             title: title || "No favorites yet",
             description: description || "Star your best images to quickly find them later",
             primaryLabel: primaryLabel || "View All Images",
-            primaryAction: primaryAction || (() => navigate('/')),
+            primaryAction: primaryAction || (() => navigate('/gallery')),
             secondaryLabel: null,
             tutorialHint: "💡 Tip: Click the star icon on any image to add it to favorites"
         },

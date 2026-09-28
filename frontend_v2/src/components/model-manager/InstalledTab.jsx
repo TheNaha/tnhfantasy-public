@@ -57,8 +57,11 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             directory: path,
             search: searchTerm,
             sortBy,
-            filterBaseModel,
-            filterType,
+            // `baseModel` / `modelType` are the names `modelListKey` destructures.
+            // Passing `filterBaseModel` / `filterType` dropped both, so the key
+            // never changed and the two dropdowns did not filter the list.
+            baseModel: filterBaseModel,
+            modelType: filterType,
             showNSFW,
             selectedTags,
             pageSize: itemsPerPage,

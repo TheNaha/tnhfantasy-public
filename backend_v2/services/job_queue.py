@@ -126,7 +126,7 @@ class JobQueue:
     async def enqueue(self, job_id: str, provider_id: str | None = None) -> None:
         """
         Add a job to the queue.
-        
+
         Args:
             job_id: Job ID to process
             provider_id: Optional preferred provider ID
@@ -134,10 +134,41 @@ class JobQueue:
         In Postgres mode the payload is wakeup-only: workers claim the actual
         job row from the DB. A NOTIFY is also fired so other processes' workers
         wake up.
+
+        This is the single funnel every dispatch path goes through — 20 call
+        sites, from `/api/generate` to the idle simulator — so it is also where
+        `enqueued_at` is stamped. The claim query requires that column, which
+        is what keeps a job that was created to be run *inline* (the agentic
+        narrator, which holds its parent's queue slot) from also being claimed
+        and dispatched a second time.
         """
+        await asyncio.to_thread(self._mark_enqueued, job_id)
         await self._queue.put((job_id, provider_id))
         if self._use_db_claims:
             self._schedule_notify()
+
+    @staticmethod
+    def _mark_enqueued(job_id: str) -> None:
+        """Stamp `enqueued_at` so the claim query can see this row.
+
+        Best-effort and idempotent: the `IS NULL` predicate means a retry or a
+        duplicate enqueue cannot move the stamp, and a failure here must not
+        stop a job that is already in the in-process queue from running on a
+        SQLite deployment (where the claim query does not exist). On Postgres a
+        failure WOULD strand the job, so it is logged at error level.
+        """
+        from infrastructure.database import engine
+        from sqlmodel import Session, text
+
+        try:
+            with Session(engine) as session:
+                session.execute(
+                    text("UPDATE jobs SET enqueued_at = now() WHERE id = :id AND enqueued_at IS NULL"),
+                    {"id": job_id},
+                )
+                session.commit()
+        except Exception as exc:
+            logger.error("job_enqueue_stamp_failed", job_id=job_id, error=str(exc))
 
     def _schedule_notify(self) -> None:
         try:
@@ -259,6 +290,14 @@ class JobQueue:
                 WHERE task_type = :task_type
                   AND status = 'PENDING'
                   AND claimed_at IS NULL
+                  -- Only rows that were actually handed to the queue. A job row
+                  -- can exist purely as an event carrier for work its creator
+                  -- runs inline (the agentic narrator holds its parent's queue
+                  -- slot, so a queued narrator job could never be claimed).
+                  -- Without this predicate the LLM worker claimed those too:
+                  -- two paid calls per narration and the same paragraph
+                  -- inserted into the chat twice.
+                  AND enqueued_at IS NOT NULL
                 ORDER BY created_at, id
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED

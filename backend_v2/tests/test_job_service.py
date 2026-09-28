@@ -7,7 +7,8 @@ from sqlmodel import Session
 
 from core.dtos import JobQueueItem
 from core.entities import Job, JobStatus
-from core.exceptions import NotFoundError
+from services.job_service import CANCELLABLE_JOB_STATUSES
+from core.exceptions import NotFoundError, ValidationError
 from services.job_service import JOB_STATUS_TRANSITIONS, JobService
 
 
@@ -323,11 +324,25 @@ class TestJobServiceFsm:
 class TestJobServiceDelete:
     """Tests for JobService.delete_job."""
 
-    @pytest.mark.asyncio
-    async def test_delete_existing_job(self, session: Session, sample_workflow):
-        """Deleting an existing job returns True."""
+    async def _terminal_job(self, session: Session, sample_workflow) -> Job:
+        """A job in a state the delete guard allows.
+
+        `create_job` leaves a job PENDING, and PENDING is now refused: it is
+        work a worker is about to claim. Delete has always been a history
+        operation, so the fixture has to reach a terminal state first.
+        """
         service = JobService(session)
         job = await service.create_job(workflow=sample_workflow, metadata={})
+        job.status = JobStatus.COMPLETED
+        session.add(job)
+        session.commit()
+        return job
+
+    @pytest.mark.asyncio
+    async def test_delete_existing_job(self, session: Session, sample_workflow):
+        """Deleting a terminal job returns True."""
+        service = JobService(session)
+        job = await self._terminal_job(session, sample_workflow)
         result = await service.delete_job(job.id)
         assert result is True
 
@@ -335,10 +350,38 @@ class TestJobServiceDelete:
     async def test_delete_removes_job(self, session: Session, sample_workflow):
         """After deletion, job is no longer retrievable."""
         service = JobService(session)
-        job = await service.create_job(workflow=sample_workflow, metadata={})
+        job = await self._terminal_job(session, sample_workflow)
         await service.delete_job(job.id)
         with pytest.raises(NotFoundError):
             await service.get_job(job.id)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", list(CANCELLABLE_JOB_STATUSES))
+    async def test_delete_refuses_a_live_job(self, session: Session, sample_workflow, status):
+        """Deleting a job a worker still owns discards a paid generation.
+
+        The worker finishes, `finalize_persisted_job_outputs` calls `get_job()`,
+        the NotFoundError is swallowed with a warning, and the images on disk are
+        never reconciled into `assets` or shown. The frontend hides the button,
+        but the API has no auth, so the guard has to live here.
+        """
+        service = JobService(session)
+        job = await service.create_job(workflow=sample_workflow, metadata={})
+        job.status = status
+        session.add(job)
+        session.commit()
+
+        with pytest.raises(ValidationError):
+            await service.delete_job(job.id)
+
+        # Still there, and still cancellable — the refusal must not destroy work.
+        assert (await service.get_job(job.id)).status == status
+
+    @pytest.mark.asyncio
+    async def test_delete_missing_job_raises_not_found(self, session: Session):
+        service = JobService(session)
+        with pytest.raises(NotFoundError):
+            await service.delete_job("no-such-job")
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent_raises(self, session: Session):

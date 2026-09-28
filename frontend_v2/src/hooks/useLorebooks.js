@@ -5,7 +5,15 @@ import { useCreateResource, useDeleteResource, useUpdateResource } from './useWo
 
 const LOREBOOKS_KEY = buildQueryKey(QUERY_KEYS.LOREBOOKS);
 const LOREBOOK_DETAIL_KEY = (id) => buildQueryKey(QUERY_KEYS.LOREBOOKS, id);
-const LOREBOOK_ENTRIES_KEY = (lorebookId) => LOREBOOK_ENTRIES_KEY(lorebookId);
+// This was `(lorebookId) => LOREBOOK_ENTRIES_KEY(lorebookId)` — the factory
+// called itself, so every consumer raised `RangeError: Maximum call stack size
+// exceeded` during render. That is the Lorebooks page as soon as a lorebook is
+// selected, `EntityContextInspector`, and all six entry mutations' `onSuccess`
+// (the write landed server-side and then the invalidation threw, so the list
+// never refreshed). Both test files `vi.mock` this module, which is why the
+// suite stayed green. The regression test is
+// `useLorebooks.test.js`, which imports the real module.
+const LOREBOOK_ENTRIES_KEY = (lorebookId) => buildQueryKey(QUERY_KEYS.LOREBOOKS, lorebookId, 'entries');
 
 export const useLorebooks = () => {
     return useQuery({

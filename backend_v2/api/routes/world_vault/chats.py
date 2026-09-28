@@ -597,6 +597,21 @@ def list_messages(chat_id: str, branch_id: str | None = None, session: Session =
     query = select(Message).where(Message.chat_id == chat_id)
     if branch_id:
         query = query.where(Message.branch_id == branch_id)
+    else:
+        # No `branch_id` means "the thread the user is looking at", and the
+        # frontend's `activeBranch` is null exactly when that is the original
+        # thread (`useMessages` omits the param, and `branch_id IS NULL` is the
+        # documented convention — see `_branch_scope`).
+        #
+        # The filter used to be applied only when a branch was passed, so the
+        # main timeline returned EVERY branch's copies as well. Branch copies
+        # carry the same `chat_id` and the same `created_at` as their originals
+        # (branches.py), so they interleaved into the conversation among equal
+        # timestamps, and the same unfiltered read fed the LLM from `add_message`
+        # and `_swipe_prep_sync` — the model received the same conversation
+        # duplicated and interleaved. `regenerate`/`rollback` were already
+        # branch-scoped, which is what made the inconsistency visible.
+        query = query.where(Message.branch_id.is_(None))
     if q:
         query = query.where(Message.content.ilike(f"%{q}%"))
     if tail:
@@ -755,7 +770,14 @@ def _add_message_prep_sync(
     past_messages: list[Message] = []
     ctx_kwargs: dict | None = None
     if message.role == MessageRole.USER and not request.no_reply:
-        past_messages = message_repo.list_by_chat(chat_id)
+        # The most recent MAX_CONTEXT_MESSAGES, fetched newest-first so the
+        # database does the limiting. This was `list_by_chat(chat_id)` with no
+        # limit — the whole transcript materialised and ORM-instantiated on every
+        # send, then handed to `prune_context`, which keeps at most
+        # MAX_CONTEXT_MESSAGES of it anyway.
+        past_messages = message_repo.list_by_chat(
+            chat_id, limit=MAX_CONTEXT_MESSAGES, newest_first=True
+        )
 
         characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
@@ -1703,7 +1725,10 @@ def _scene_job_prep_sync(
     if not chat.allow_image_generation:
         raise ValidationError("Image generation is disabled for this chat")
 
-    past_messages = message_repo.list_by_chat(chat_id)
+    # Only the last 10 turns are used, so ask the database for the last 10 rather
+    # than loading the whole transcript and slicing it. This was an unbounded
+    # `list_by_chat(chat_id)` on a long roleplay.
+    past_messages = message_repo.list_by_chat(chat_id, newest_first=True)
     if not past_messages:
         raise ValidationError("No messages in chat to base scene on")
 

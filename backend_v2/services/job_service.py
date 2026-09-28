@@ -220,7 +220,17 @@ class JobService:
         "one Session, one thread" — FastAPI builds the `get_session` dependency in
         a threadpool thread even for `async def` routes, and the existing
         synchronous handlers already rely on that.
+
+        The model records in `metadata` are slimmed here rather than at each call
+        site: the client sends the full `GET /api/v2/models/` row for the
+        checkpoint and every selected LoRA, which measured 59 KB per job row, and
+        `build_job_outputs` copies both verbatim into the PNG sidecar and
+        `assets.metadata_`, so it was paid for three times. See
+        `services/job_metadata.py` for the measurement and the field list.
         """
+        from services.job_metadata import slim_model_metadata
+
+        metadata = slim_model_metadata(metadata) or {}
         job = Job(
             task_type=task_type,
             workflow=workflow,
@@ -696,7 +706,36 @@ class JobService:
         return payload
     
     async def delete_job(self, job_id: str) -> bool:
-        """Delete a job."""
+        """Delete a job, refusing while it is still live.
+
+        `repo.delete` is `session.get` → `session.delete` → `commit` with no
+        status predicate, so this accepted a job in any state. Deleting one that
+        a worker still owns means the worker finishes, then
+        `finalize_persisted_job_outputs` calls `get_job()`, which raises
+        `NotFoundError`, which is swallowed with a `job_finalize_not_found`
+        warning: the images are on disk but never reconciled into `assets`, never
+        shown, and `wait_for_gallery_outputs` never runs. A paid generation
+        silently discarded, with the load-balancer slot released by the generic
+        exception handler rather than the normal path.
+
+        The frontend gates the button to terminal statuses, but the API has no
+        auth at all, so that gate is cosmetic. `clear_all_jobs` already refused
+        while work was running; this is the same rule for the single-row path.
+
+        `CANCELLABLE_JOB_STATUSES` is the codebase's existing answer to "is this
+        job still live" — PENDING plus everything in `ACTIVE_JOB_STATUSES` — and
+        is reused rather than re-derived. The error names cancel so the API is
+        self-describing rather than making the caller guess.
+        """
+        job = self.repo.get(job_id)
+        if not job:
+            logger.warning("job_delete_not_found", job_id=job_id)
+            raise NotFoundError("Job", job_id)
+        if job.status in CANCELLABLE_JOB_STATUSES:
+            raise ValidationError(
+                f"Cannot delete a job that is still {job.status.value}. "
+                "Cancel it first, then delete it."
+            )
         success = self.repo.delete(job_id)
         if not success:
             logger.warning("job_delete_not_found", job_id=job_id)

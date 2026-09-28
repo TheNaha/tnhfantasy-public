@@ -1,5 +1,16 @@
-.env*
-!.env.example*
+# Root-anchored, so this only excluded `.env` at the repository root.
+# `remote_agent/docker-compose.yml` builds with `context: ..` and its Dockerfile
+# does `COPY remote_agent/ /app/remote_agent/`, so `remote_agent/.env.agent` — the
+# file `docs/deployment.md` tells you to create, holding a live
+# `REMOTE_AGENT_TOKEN` — was being baked into an image layer. `.gitignore`
+# covers it for git and gitleaks, which is precisely why the leak path was
+# invisible: only the image was affected. `**/.env*` is the pattern that also
+# matches nested paths.
+**/.env*
+!.env.example
+!.env.example.*
+!**/.env.example
+!**/.env.example.*
 data/
 output/
 input/

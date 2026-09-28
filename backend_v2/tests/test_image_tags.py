@@ -863,7 +863,13 @@ def test_migration_073_is_idempotent_and_registered_last():
         rows = conn.execute(text("SELECT tag, source FROM asset_tags")).all()
 
     assert rows == [("blonde hair", "auto")]
-    assert [s.version for s in _get_schema_migration_steps()][-1] == "073_create_asset_tags"
+    # Not "is last" — `073` is the last migration that *creates a table*, and
+    # later steps have been appended as indexes and columns. What actually
+    # matters is that 073 is registered, and that the version list stays
+    # strictly increasing so the runner applies each step exactly once.
+    versions = [s.version for s in _get_schema_migration_steps()]
+    assert "073_create_asset_tags" in versions
+    assert versions == sorted(versions), "migration versions must stay ordered"
 
 
 def test_asset_tag_confidence_defaults_to_null(session, asset):

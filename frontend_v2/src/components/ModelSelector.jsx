@@ -61,6 +61,14 @@ const ModelSelector = memo(function ModelSelector({
   // "I have a hard time to find a LORA for a specific character".
   const [selectedTags, setSelectedTags] = useState([]);
 
+  // The sort is normalised BEFORE the key is built, and the same normalised
+  // value is used for the request. It used to be built from the raw UI value
+  // ('name'), so this component's keys did not match `modelListKey`'s documented
+  // 'name_asc' contract — fine while the two pickers are separated by
+  // `directory`, a collision the moment they are unified.
+  const SORT_MAP = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
+  const finalSort = sortBy.startsWith("random") ? sortBy : (SORT_MAP[sortBy] || "name_asc");
+
   const {
     data,
     fetchNextPage,
@@ -69,11 +77,15 @@ const ModelSelector = memo(function ModelSelector({
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: modelListKey({ directory, search, sortBy, filterBaseModel, filterType, showNSFW, selectedTags, pageSize: 50 }),
+    // `baseModel` / `modelType`, not `filterBaseModel` / `filterType` — the
+    // factory destructures those two names, so the filters were dropped on the
+    // floor and both fell back to 'all'. The query key therefore never changed
+    // when either dropdown was used, so `useInfiniteQuery` neither refetched
+    // nor cleared: the base-model and model-type filters in the generator's
+    // model picker were dead controls.
+    queryKey: modelListKey({ directory, search, sortBy: finalSort, baseModel: filterBaseModel, modelType: filterType, showNSFW, selectedTags, pageSize: 50 }),
     queryFn: async ({ pageParam = 0, signal }) => {
       if (!directory) return { files: [] };
-      const sortMap = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
-      const finalSort = sortBy.startsWith("random") ? sortBy : (sortMap[sortBy] || "name_asc");
       return filesApi.list({
         directory,
         limit: 50,

@@ -81,7 +81,16 @@ class TestBeamTaskEventParity:
         assert events[0]["node"] == "KSampler"
         assert events[1]["value"] == 50
         assert events[2]["outputs"][0]["_base64_encoded"] is True
-        assert ws.sent == [{"workflow": {"nodes": []}}]
+        # The payload carries the provider token as well as the workflow. The
+        # `@realtime` GPU handler is the one route on this deployment that was
+        # reachable with no gate at all — it bills GPU time, executes an arbitrary
+        # ComfyUI graph, and reads/writes the shared model volume. The client was
+        # already sending the token in the socket header; nothing read it. The
+        # payload is the channel that is guaranteed readable regardless of the
+        # `@realtime` context shape, which the SDK decorator's signature handling
+        # makes version-dependent.
+        assert [p["workflow"] for p in ws.sent] == [{"nodes": []}]
+        assert all("token" in p for p in ws.sent)
 
     @pytest.mark.asyncio
     async def test_already_formed_task_event_passthrough(self, monkeypatch):

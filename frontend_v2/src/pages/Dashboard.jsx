@@ -62,7 +62,7 @@ export default function Dashboard() {
     const toastSuccessDuration = useSettingsStore((state) => state.settings.ui.toastSuccessDuration);
     const toastErrorDuration = useSettingsStore((state) => state.settings.ui.toastErrorDuration);
     
-    const { favorites, isFavorite: fastIsFavorite, toggleFavorite } = useFavorites();
+    const { favorites, isFavorite: fastIsFavorite, toggleFavorite, addFavorites } = useFavorites();
     const activeCollection = useStore((state) => state.activeCollection);
     const setActiveCollection = useStore((state) => state.setActiveCollection);
     
@@ -187,7 +187,7 @@ export default function Dashboard() {
         handleCancelSelectionMode,
     } = useDashboardSelection({
         favorites,
-        toggleFavorite,
+        addFavorites,
         queryClient,
         filters,
         confirm,

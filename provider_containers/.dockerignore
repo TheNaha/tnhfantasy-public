@@ -2,8 +2,14 @@ __pycache__/
 *.pyc
 .pytest_cache/
 tests/
-.env
-.env.*
+# `**/` for the same reason as the root .dockerignore: a bare `.env` / `.env.*`
+# is anchored to this directory, so a nested one (`llm_worker/.env.local`) was
+# still sent to the daemon and could be copied into a layer. `.gitignore` covers
+# those paths for git and gitleaks, which is what made the image the only leak
+# route and therefore the one nobody was looking at.
+**/.env
+**/.env.*
 !.env.example
+!**/.env.example
 venv/
 .venv/

@@ -91,6 +91,19 @@ class Job(SQLModel, table=True):
     # Not NULL while a worker owns the job; cleared when processing finishes.
     claimed_at: datetime | None = Field(default=None)
 
+    # "This row was handed to the queue", as a queryable fact rather than an
+    # assumption. `QueueManager.enqueue` is the only place a job becomes
+    # dispatchable, but the claim query used to select *any* PENDING,
+    # unclaimed row of the task type — so `orchestrator_service._tool_narrate_scene`,
+    # which deliberately creates a row and runs it inline (it holds the parent
+    # job's queue slot, so a queued narrator job could never be claimed),
+    # was picked up by the LLM worker as well. Every agentic `narrate_scene`
+    # turn therefore cost two paid LLM calls and inserted its narration twice.
+    # The claim now requires this column to be set, so "created but not
+    # enqueued" is expressible and the inline path is actually exclusive.
+    # NULL for a job that is being executed inline by its creator.
+    enqueued_at: datetime | None = Field(default=None, index=True)
+
     # Typed routing columns (backed by metadata_ JSON; populated on write, indexed for SQL queries).
     workspace: str | None = Field(default=None, index=True)
     character_id: str | None = Field(default=None, index=True)

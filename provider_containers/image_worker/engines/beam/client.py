@@ -134,7 +134,20 @@ class BeamProviderClient(BaseProviderClient):
                                 additional_headers=headers,
                                 open_timeout=WS_OPEN_TIMEOUT,
                             ) as ws:
-                                payload = {"workflow": request.workflow}
+                                # The token travels in the payload as well as the
+                                # header. `comfy_gpu` is a `@realtime` handler
+                                # whose signature the SDK decorator inspects, and
+                                # the request-context object that would carry the
+                                # header is not present in every version this has
+                                # been deployed under — so the payload is the
+                                # channel that is guaranteed to be readable. The
+                                # GPU endpoint bills GPU time and executes an
+                                # arbitrary ComfyUI graph against the shared
+                                # model volume, so it fails closed without one.
+                                payload = {
+                                    "token": BEAM_API_KEY,
+                                    "workflow": request.workflow,
+                                }
                                 await ws.send(json.dumps(payload))
                                 async for message in ws:
                                     if job_id and await self.job_tracker.is_cancelled(job_id):

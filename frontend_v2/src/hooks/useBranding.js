@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/settingsApi';
 
@@ -7,8 +8,31 @@ const DEFAULT_BRANDING = {
     faviconUrl: '/favicon.ico',
 };
 
+/**
+ * Push the configured app name into the document title.
+ *
+ * The Settings field for `appName` is labelled "The name displayed in the browser
+ * tab and sidebar", and only the second half was true: `index.html` hardcoded
+ * `<title>TNH-Comfy</title>` and nothing anywhere in the app assigned
+ * `document.title`. Renaming the app in Settings updated the sidebar and left
+ * the tab alone — a setting that silently does half of what it says.
+ *
+ * The favicon is NOT applied here. That is a different file (a static asset under
+ * `public/`) and `Settings.jsx` documents that honestly, so it is left alone.
+ */
+function useDocumentTitle(appName) {
+    useEffect(() => {
+        if (!appName) return;
+        const previous = document.title;
+        document.title = appName;
+        return () => {
+            document.title = previous;
+        };
+    }, [appName]);
+}
+
 export function useBranding() {
-    return useQuery({
+    const query = useQuery({
         queryKey: ['branding'],
         queryFn: async () => {
             const branding = await settingsApi.getBranding();
@@ -25,6 +49,10 @@ export function useBranding() {
         // page load for data that is effectively static.
         refetchInterval: false,
     });
+
+    useDocumentTitle(query.data?.appName);
+
+    return query;
 }
 
 export function useSaveBranding() {

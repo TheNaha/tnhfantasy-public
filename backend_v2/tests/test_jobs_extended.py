@@ -64,11 +64,29 @@ class TestJobsRouteExtended:
         assert data["status"] == "success"
         assert data["new_job_id"] != job_id
 
-    def test_delete_job(self, client, sample_job_data):
+    def test_delete_job(self, client, sample_job_data, session):
+        # Drive the job to a terminal state first: a freshly created job is
+        # PENDING, and DELETE refuses a PENDING job because it is live work
+        # (a worker is about to claim it, and deleting the row makes the worker
+        # finish into nothing — see `JobService.delete_job`).
+        from core.entities import Job, JobStatus
+
+        create_response = client.post("/api/generate", json=sample_job_data)
+        job_id = create_response.json()["id"]
+        job = session.get(Job, job_id)
+        job.status = JobStatus.COMPLETED
+        session.add(job)
+        session.commit()
+
+        response = client.delete(f"/api/jobs/{job_id}")
+        assert response.status_code in (200, 204)
+
+    def test_delete_live_job_is_refused(self, client, sample_job_data):
         create_response = client.post("/api/generate", json=sample_job_data)
         job_id = create_response.json()["id"]
         response = client.delete(f"/api/jobs/{job_id}")
-        assert response.status_code in (200, 204)
+        assert response.status_code == 400
+        assert client.get(f"/api/jobs/{job_id}").status_code == 200
 
     def test_delete_nonexistent_job(self, client):
         response = client.delete("/api/jobs/nonexistent-id")

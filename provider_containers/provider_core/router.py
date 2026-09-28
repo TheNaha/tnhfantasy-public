@@ -1,4 +1,3 @@
-import hmac
 import os
 from typing import Protocol, Any, Dict, Optional
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -6,6 +5,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .auth import token_matches
 from .logging import get_logger
 from .models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
@@ -65,8 +65,14 @@ async def _require_worker_token(request: Request) -> None:
                 "PROVIDER_WORKER_TOKEN is not configured on this provider container"
             ),
         )
-    provided = request.headers.get("X-Provider-Token", "")
-    if not provided or not hmac.compare_digest(provided, expected):
+    # `provider_core/auth.py` owns the comparison. It encodes to bytes first
+    # because `hmac.compare_digest` raises TypeError on a `str` holding a byte
+    # >= 0x80, and Starlette decodes header bytes as latin-1: a single non-ASCII
+    # character in X-Provider-Token raised *inside* this check, and the catch-all
+    # above turned that into a 500 with `retryable: true`, which the backend
+    # reads as "this provider is unhealthy, try the request elsewhere" — so one
+    # malformed auth header became a paid retry across the whole pool.
+    if not token_matches(request.headers.get("X-Provider-Token"), expected):
         raise HTTPException(status_code=401, detail="invalid provider worker token")
 
 

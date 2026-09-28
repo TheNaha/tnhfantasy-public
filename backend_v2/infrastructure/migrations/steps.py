@@ -1670,6 +1670,16 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add asset_tags plus its prefix-scan index, so an image's tags are queryable rows and the vocabulary is autocompleteable",
             apply_fn=_migration_073_create_asset_tags,
         ),
+        MigrationStep(
+            version="074_add_job_enqueued_at",
+            description="Add jobs.enqueued_at so the Postgres claim query only claims rows that were actually handed to the queue, and an inline-only job row cannot be dispatched a second time",
+            apply_fn=_migration_074_add_job_enqueued_at,
+        ),
+        MigrationStep(
+            version="075_index_asset_gallery_timestamp",
+            description="Index coalesce(generated_at, created_at) WHERE deleted_at IS NULL, the gallery's ordering key, which nothing covered",
+            apply_fn=_migration_075_index_asset_gallery_timestamp,
+        ),
     ]
 
 
@@ -3010,4 +3020,109 @@ def _migration_069_add_job_acknowledged_at(conn) -> bool:
     conn.execute(text("ALTER TABLE jobs ADD COLUMN acknowledged_at TIMESTAMP"))
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_acknowledged_at ON jobs (acknowledged_at)"))
     logger.info("migration_column_added", table="jobs", column="acknowledged_at")
+    return True
+
+
+def _migration_074_add_job_enqueued_at(conn) -> bool:
+    """Add `jobs.enqueued_at` and index it, then backfill the queueable rows.
+
+    The Postgres claim query used to select *any* `task_type = <t> AND status =
+    'PENDING' AND claimed_at IS NULL` row, which made "enqueued" an assumption
+    rather than a fact. `orchestrator_service._tool_narrate_scene` creates a job
+    row and then runs it INLINE — deliberately, because the agentic chain holds
+    the parent job's queue slot, so a queued narrator job could never be
+    claimed. That row looked exactly like a queued one to the LLM worker, which
+    claimed and dispatched it within a second. Every agentic `narrate_scene`
+    turn therefore cost two paid LLM calls, produced two JOB_COMPLETED events
+    for one job id, and inserted the same narration into the chat twice.
+
+    `QueueManager.enqueue` is now the only thing that stamps this column, and the
+    claim requires it to be set.
+
+    The backfill matters as much as the column: an existing deployment has
+    PENDING rows that were legitimately enqueued before this migration, and
+    leaving them NULL would strand every queued job in the table on the next
+    boot. Rows in any *other* state are left NULL on purpose — they are not
+    claimable anyway, and stamping them would misrepresent the inline path.
+    """
+    inspector = inspect(conn)
+    if "jobs" not in inspector.get_table_names():
+        return False
+
+    existing = {col["name"] for col in inspector.get_columns("jobs")}
+    if "enqueued_at" not in existing:
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN enqueued_at TIMESTAMP"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_enqueued_at ON jobs (enqueued_at)"))
+        logger.info("migration_column_added", table="jobs", column="enqueued_at")
+
+    # Backfill regardless of `added`: a database where the column arrived via
+    # `SQLModel.metadata.create_all` (a fresh install) has every row NULL too,
+    # and an interrupted earlier run of this migration may have added the
+    # column without backfilling.
+    #
+    # Guarded on the columns it reads existing. The migration runner also has
+    # fixtures and partially-created tables that carry `jobs` without the full
+    # entity shape, and an `ALTER TABLE` that succeeded on such a table would
+    # otherwise be followed by a backfill that raises and, because the runner
+    # re-raises on the first failing step, bricks startup.
+    if {"created_at", "status"} <= existing:
+        conn.execute(text("""
+            UPDATE jobs
+            SET enqueued_at = created_at
+            WHERE enqueued_at IS NULL
+              AND status = 'PENDING'
+        """))
+        logger.info("migration_backfilled", table="jobs", column="enqueued_at")
+    else:
+        logger.info(
+            "migration_backfill_skipped",
+            table="jobs",
+            column="enqueued_at",
+            reason="created_at_or_status_absent",
+        )
+    return True
+
+
+def _migration_075_index_asset_gallery_timestamp(conn) -> bool:
+    """Index `coalesce(generated_at, created_at)` — the gallery's ordering key.
+
+    `ASSET_GALLERY_TIMESTAMP` (`services/statistics_service.py`) is the one
+    expression the gallery listing, its date seek and its day histogram all
+    order and filter on, and the codebase already goes out of its way to bind the
+    same expression object in all three so they cannot disagree. But nothing
+    indexed it, and the two composite indexes that look relevant
+    (`idx_asset_workspace(user_id, workspace, created_at)`,
+    `idx_asset_character(user_id, character_id)`) lead with `user_id`, which is
+    never in the predicate — so Postgres cannot use either.
+
+    The result was a sequential scan of the whole `assets` heap, and the rows
+    are wide: the average non-deleted row measured 3469 bytes, because
+    `metadata_` carries the full job metadata. So every gallery page and every
+    histogram read the entire table, and the projection detoasted the jsonb for
+    each row before the top-N sort could discard it.
+
+    Measured on the running stack (16,165 live assets, 207 MB table):
+      `GET /api/v2/gallery?limit=48`   477 ms -> 92 ms
+      `GET /api/v2/assets/dates`       533 ms -> 211 ms
+      raw `count(coalesce(...))`       374 ms -> 14 ms
+
+    Partial on `deleted_at IS NULL` so the index only carries live rows, and
+    so it is usable for the histogram's `WHERE deleted_at IS NULL` predicate.
+
+    Postgres only: SQLite has no expression index of this shape in the
+    migrations' portability rule, and its query plans are not the problem here.
+    """
+    if conn.dialect.name != "postgresql":
+        return True
+
+    inspector = inspect(conn)
+    if "assets" not in inspector.get_table_names():
+        return False
+
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS ix_assets_gallery_ts
+        ON assets (coalesce(generated_at, created_at))
+        WHERE deleted_at IS NULL
+    """))
+    logger.info("migration_index_created", table="assets", index="ix_assets_gallery_ts")
     return True

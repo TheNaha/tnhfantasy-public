@@ -73,7 +73,16 @@ class TestBeamClientInference:
         assert [e["event"] for e in events] == ["node", "completed"]
         assert events[0]["node"] == "KSampler"
         assert events[1]["outputs"][0]["_base64_encoded"] is True
-        assert ws.sent == [{"workflow": {"nodes": []}}]
+        # The payload carries the provider token as well as the workflow. The
+        # `@realtime` GPU handler is the one route on this deployment that was
+        # reachable with no gate at all — it bills GPU time, executes an arbitrary
+        # ComfyUI graph, and reads/writes the shared model volume. The client was
+        # already sending the token in the socket header; nothing read it. The
+        # payload is the channel that is guaranteed readable regardless of the
+        # `@realtime` context shape, which the SDK decorator's signature handling
+        # makes version-dependent.
+        assert [p["workflow"] for p in ws.sent] == [{"nodes": []}]
+        assert all("token" in p for p in ws.sent)
 
     @pytest.mark.asyncio
     async def test_sends_only_workflow_ignoring_use_snapshot(self, monkeypatch):
@@ -89,7 +98,16 @@ class TestBeamClientInference:
 
         events = [json.loads(l) for l in body.strip().split("\n") if l.strip()]
         assert events == []
-        assert ws.sent == [{"workflow": {"nodes": []}}]
+        # The payload carries the provider token as well as the workflow. The
+        # `@realtime` GPU handler is the one route on this deployment that was
+        # reachable with no gate at all — it bills GPU time, executes an arbitrary
+        # ComfyUI graph, and reads/writes the shared model volume. The client was
+        # already sending the token in the socket header; nothing read it. The
+        # payload is the channel that is guaranteed readable regardless of the
+        # `@realtime` context shape, which the SDK decorator's signature handling
+        # makes version-dependent.
+        assert [p["workflow"] for p in ws.sent] == [{"nodes": []}]
+        assert all("token" in p for p in ws.sent)
 
     @pytest.mark.asyncio
     async def test_cancellation_emits_cancelled_event(self, monkeypatch):

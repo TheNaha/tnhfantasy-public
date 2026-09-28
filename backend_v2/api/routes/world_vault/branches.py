@@ -139,17 +139,31 @@ def _copy_candidates(
     if rows:
         return list(rows), count
 
-    # The original thread carries no branch_id on its rows, so fall back to
-    # "everything in the chat up to the anchor".
+    # The original thread carries no branch_id on its rows, so fall back to the
+    # original thread's messages up to the anchor.
+    #
+    # The `branch_id IS NULL` predicate is load-bearing, not redundant. Branch
+    # copies share their originals' `chat_id` AND `created_at`, so an unfiltered
+    # "everything in the chat up to the anchor" also matched every message of
+    # every PREVIOUSLY created branch. Branching from the main thread therefore
+    # silently merged every other branch into the new one, retagged with the new
+    # branch_id, and corrupted the tree — with no error anywhere.
+    #
+    # It also has to be `IS NULL` and not `!= anchor.id`, which is the same
+    # convention `_branch_scope` in `chats.py` uses, so "the original thread"
+    # means one thing across the module.
+    original_thread = Message.branch_id.is_(None)
     count = (
         select(func.count())
         .select_from(Message)
         .where(Message.chat_id == chat_id)
+        .where(original_thread)
         .where(Message.created_at <= anchor.created_at)
     )
     fallback = session.exec(
         select(Message)
         .where(Message.chat_id == chat_id)
+        .where(original_thread)
         .where(Message.created_at <= anchor.created_at)
         .order_by(Message.created_at, Message.id)
         .limit(BRANCH_COPY_MAX_MESSAGES + 1)

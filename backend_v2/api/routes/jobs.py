@@ -230,22 +230,36 @@ async def search_jobs(
 
 @router.get("/active")
 def get_active_jobs(service: JobService = Depends(get_job_service)):
-    """Get all active (pending/running) jobs to rehydrate frontend state."""
+    """Get all active (pending/running) jobs to rehydrate frontend state.
+
+    Serialized with `include_full_metadata=False`, the contract the sibling
+    `list_jobs` already documents and passes. It was omitted here, so every
+    poll returned each job's entire `metadata_` — including
+    `original_messages`, the whole agentic conversation — for every PENDING row
+    in the table. PENDING has no limit: only `max_concurrent` are claimed at a
+    time, so the queue can hold thousands, and `useActiveJobs` polls this every
+    5 seconds from `Dashboard.jsx`. `LIST_METADATA_OMIT` exists for exactly
+    this and was not applied.
+
+    The job still carries `workflow`, so the frontend can key a rehydrated job
+    to its graph; that is what the active-jobs view is for, and it is a single
+    graph rather than a transcript.
+    """
     pending = service.get_pending_jobs()
     running = service.get_running_jobs()
-    
+
     jobs_data = []
     per_type_position = {}
-    
+
     for job in running:
-        jobs_data.append(service._job_to_dict(job))
-        
+        jobs_data.append(service._job_to_dict(job, include_full_metadata=False))
+
     for job in pending:
-        job_dict = service._job_to_dict(job)
+        job_dict = service._job_to_dict(job, include_full_metadata=False)
         per_type_position[job.task_type] = per_type_position.get(job.task_type, 0) + 1
         job_dict["queue_position"] = per_type_position[job.task_type]
         jobs_data.append(job_dict)
-        
+
     return {"jobs": jobs_data}
 
 

@@ -81,6 +81,16 @@ app = FastAPI(
             provider_id=PROVIDER_ID,
             provider_type=ENGINE,
             backend_url=BACKEND_URL,
+            # Without this the loop sends the default `worker_type="image"`
+            # (background.py:83), and the backend applies it UNCONDITIONALLY:
+            # `provider_service` writes `worker_type` on every heartbeat whose
+            # value differs. So this provider's row flipped `llm -> image` every
+            # 60 seconds, which removed it from the LLM sections of Settings and
+            # Providers, made it eligible for IMAGE dispatch — where it is handed
+            # `{"messages": []}` and returns a paid 400 — and then flipped back
+            # 60 seconds later. The image worker passes `"image"` explicitly for
+            # the same reason.
+            worker_type="llm",
             # The shared, pooled client. Without it the loop falls back to
             # building an `httpx.AsyncClient` per heartbeat, which is the
             # fallback inside `auto_discovery_loop` and the reason the shared
