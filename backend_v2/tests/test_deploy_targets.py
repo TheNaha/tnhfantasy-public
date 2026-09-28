@@ -41,6 +41,37 @@ class TestEntrypointExists:
         assert _entrypoint_exists("") is False
         assert _entrypoint_exists(None) is False
 
+    def test_it_does_not_report_missing_when_the_source_tree_is_absent(
+        self, monkeypatch
+    ):
+        """The container case, and the one that produced a wall of noise.
+
+        The first version resolved the source tree as
+        `Path(__file__).parents[2] / "provider_containers"`, which is the repo
+        root on a developer machine and `/` inside the backend container, where
+        the backend lives at `/app` and there is no `provider_containers` at
+        all. Every call therefore resolved to a non-existent path, good
+        targets were reported missing, and the provider reconciliation loop —
+        which reads provider config every few seconds — logged a pair of
+        `deploy_target_entrypoint_missing_using_default` warnings on every pass,
+        each naming an entrypoint and a "replacement" that were byte-identical.
+        """
+        import services.provider_utils as pu
+
+        monkeypatch.setattr(pu, "_provider_containers_dir", lambda: None)
+        # "I cannot check" is not "it is missing".
+        assert pu._entrypoint_exists("/app/image_worker/engines/modal/modal_app.py") is True
+        assert pu._entrypoint_exists("/app/modal_app.py") is True
+
+    def test_no_warning_when_the_entrypoint_is_already_correct(self):
+        """The exact pair from the log: identical entrypoint and replacement.
+        Must be silent — a repair that changes nothing has nothing to say."""
+        from services.provider_utils import _repair_stored_targets, default_deploy_targets
+
+        defaults = default_deploy_targets("modal")
+        out = _repair_stored_targets([dict(t) for t in defaults], defaults)
+        assert [t["entrypoint"] for t in out] == [t["entrypoint"] for t in defaults]
+
     def test_a_beta9_handler_spec_resolves_on_its_file(self):
         """Beam targets use `path:handler`; the file half is what exists."""
         assert (

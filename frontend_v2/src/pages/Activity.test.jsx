@@ -2,7 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import WorldTimeline from './WorldTimeline';
+import Activity from './Activity';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -84,7 +84,7 @@ function renderWithProviders(ui) {
     );
 }
 
-describe('WorldTimeline page', () => {
+describe('Activity page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockNavigate.mockReset();
@@ -92,28 +92,28 @@ describe('WorldTimeline page', () => {
     });
 
     it('renders the main heading, description, and filters toggle', () => {
-        renderWithProviders(<WorldTimeline />);
-        expect(screen.getByRole('heading', { name: 'World Timeline' })).toBeInTheDocument();
-        expect(screen.getByText(/Chronological view of all events/i)).toBeInTheDocument();
+        renderWithProviders(<Activity />);
+        expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
+        expect(screen.getByText(/Everything that has happened in your vault/i)).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /filters/i })).toBeInTheDocument();
     });
 
     it('shows a loading skeleton while fetching events', () => {
         mockTimeline.mockReturnValue({ data: undefined, isLoading: true });
-        const { container } = renderWithProviders(<WorldTimeline />);
+        const { container } = renderWithProviders(<Activity />);
         expect(container.querySelector('.animate-pulse')).toBeInTheDocument();
         expect(screen.queryByText('No events yet')).not.toBeInTheDocument();
     });
 
     it('shows an empty state when there are no events', () => {
         mockTimeline.mockReturnValue({ data: { events: [] }, isLoading: false });
-        renderWithProviders(<WorldTimeline />);
+        renderWithProviders(<Activity />);
         expect(screen.getByText('No events yet')).toBeInTheDocument();
         expect(screen.getByText(/Start chatting, writing stories/i)).toBeInTheDocument();
     });
 
     it('renders events grouped by date with titles, type labels, and timestamps', () => {
-        renderWithProviders(<WorldTimeline />);
+        renderWithProviders(<Activity />);
         expect(screen.getByText('2026-08-11')).toBeInTheDocument();
         expect(screen.getByText('2026-08-10')).toBeInTheDocument();
         expect(screen.getByText('Aria greets the party')).toBeInTheDocument();
@@ -127,7 +127,7 @@ describe('WorldTimeline page', () => {
     });
 
     it('toggles the filter panel open and closed', () => {
-        renderWithProviders(<WorldTimeline />);
+        renderWithProviders(<Activity />);
         const filtersButton = screen.getByRole('button', { name: /filters/i });
         fireEvent.click(filtersButton);
         expect(screen.getByLabelText('Character')).toBeInTheDocument();
@@ -139,7 +139,7 @@ describe('WorldTimeline page', () => {
     });
 
     it('passes updated filters to the timeline hook when a filter is selected', () => {
-        renderWithProviders(<WorldTimeline />);
+        renderWithProviders(<Activity />);
         fireEvent.click(screen.getByRole('button', { name: /filters/i }));
         fireEvent.change(screen.getByLabelText('Character'), {
             target: { value: 'c-1' },
@@ -150,7 +150,7 @@ describe('WorldTimeline page', () => {
     });
 
     it('navigates to the source entity when an event card is clicked', () => {
-        renderWithProviders(<WorldTimeline />);
+        renderWithProviders(<Activity />);
         fireEvent.click(screen.getByTitle('Open chat'));
         expect(mockNavigate).toHaveBeenCalledWith('/chat/ch-1');
         fireEvent.click(screen.getByTitle('Open story'));
@@ -159,7 +159,7 @@ describe('WorldTimeline page', () => {
 
     it('shows a load-more control and grows the page size when more events exist', () => {
         mockTimeline.mockReturnValue({ data: { ...eventsData, total: 150 }, isLoading: false });
-        renderWithProviders(<WorldTimeline />);
+        renderWithProviders(<Activity />);
         expect(screen.getByText('Showing 3 of 150 events')).toBeInTheDocument();
         const loadMore = screen.getByRole('button', { name: /load more/i });
         fireEvent.click(loadMore);

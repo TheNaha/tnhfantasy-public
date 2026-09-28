@@ -14,7 +14,7 @@ import {
     sortableKeyboardCoordinates,
     arrayMove,
 } from '@dnd-kit/sortable';
-import { Users, Plus, Upload, Search, X, Loader2, User, Images, Sparkles, Brain } from 'lucide-react';
+import { Users, Plus, Upload, Search, X, Loader2, User, Images, Sparkles, Brain, LayoutGrid, Rows3 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, useExportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter } from '../hooks/useWorldVault';
@@ -672,6 +672,9 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
 
 export default function Characters() {
     const [searchQuery, setSearchQuery] = useState('');
+    // 'comfortable' | 'compact'. Carried over from the retired Avatar Gallery,
+    // which was this grid with a density switch and the edit actions removed.
+    const [density, setDensity] = useState('comfortable');
     const [modalOpen, setModalOpen] = useState(false);
     const [editingCharacter, setEditingCharacter] = useState(null);
     const [activeTab, setActiveTab] = useState('details');
@@ -865,8 +868,29 @@ export default function Characters() {
                         className="w-full bg-gray-900/50 border border-gray-700/50 rounded-lg pl-10 pr-4 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all"
                     />
                 </div>
-                <div className="text-sm text-gray-500">
-                    {filteredCharacters.length} character{filteredCharacters.length !== 1 ? 's' : ''}
+                <div className="flex items-center gap-3">
+                    <div className="text-sm text-gray-500">
+                        {filteredCharacters.length} character{filteredCharacters.length !== 1 ? 's' : ''}
+                    </div>
+                    {/* Density toggle, the one capability the Avatar Gallery had
+                        that this page did not. */}
+                    <div className="flex items-center gap-1 rounded-lg bg-gray-900/50 border border-gray-700/50 p-0.5">
+                        {['comfortable', 'compact'].map((mode) => (
+                            <button
+                                key={mode}
+                                onClick={() => setDensity(mode)}
+                                aria-pressed={density === mode}
+                                title={mode === 'compact' ? 'Compact grid' : 'Comfortable grid'}
+                                className={`p-1.5 rounded-md transition-colors ${density === mode
+                                    ? 'bg-blue-500/20 text-blue-300'
+                                    : 'text-gray-500 hover:text-gray-300'}`}
+                            >
+                                {mode === 'compact'
+                                    ? <LayoutGrid size={14} aria-hidden="true" />
+                                    : <Rows3 size={14} aria-hidden="true" />}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             </div>
 
@@ -899,7 +923,17 @@ export default function Characters() {
                             items={filteredCharacters.map(c => c.id)}
                             strategy={rectSortingStrategy}
                         >
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                            {/* Density toggle, folded in from the retired Avatar
+                                Gallery. That page was a second rendering of this
+                                grid using the same `useCharacters()` and the same
+                                `CharacterCard`, with the edit actions stripped off;
+                                its only capability this lacked was a denser
+                                layout. Its `visual_tags` search was NOT unique —
+                                `filteredCharacters` below already matches
+                                `visual_tags`. */}
+                            <div className={density === 'compact'
+                                ? 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3'
+                                : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'}>
                                 {filteredCharacters.map(character => (
                                     <SortableCharacterCard
                                         key={character.id}

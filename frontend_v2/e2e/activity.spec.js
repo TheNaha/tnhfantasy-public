@@ -1,4 +1,4 @@
-// Module E: World Timeline — date-grouped events + filter panel.
+// Module E: Activity — date-grouped events + filter panel.
 //
 // Seed strategy: a chat message (POST /v2/chats/{id}/messages, role=char —
 // never spawns an LLM job) and a story chapter (POST /v2/stories/{id}/chapters).
@@ -14,11 +14,11 @@ import {
   uniqueName,
 } from './fixtures.js';
 
-test.describe('World Timeline', () => {
+test.describe('Activity', () => {
   test('page renders heading, subtitle and filter controls', async ({ page }) => {
-    await page.goto('/world-timeline');
+    await page.goto('/activity');
 
-    await expect(page.getByRole('heading', { level: 1, name: 'World Timeline' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Activity' })).toBeVisible();
     await expect(page.getByText('Chronological view of all events across your world')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Filters', exact: true })).toBeVisible();
 
@@ -31,7 +31,7 @@ test.describe('World Timeline', () => {
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
     trackEntity(page, 'chat', chat.id);
 
-    await page.goto('/world-timeline');
+    await page.goto('/activity');
     const filtersBtn = page.getByRole('button', { name: 'Filters', exact: true });
 
     await filtersBtn.click();
@@ -66,7 +66,7 @@ test.describe('World Timeline', () => {
     const chapter = await seedStoryChapter(page, story.id, { title: chapterTitle });
     trackEntity(page, 'chapter', `${story.id}:${chapter.id}`);
 
-    await page.goto('/world-timeline');
+    await page.goto('/activity');
 
     await expect(page.getByText('No events yet', { exact: true })).toHaveCount(0, { timeout: 15000 });
     await expect(page.getByText(new RegExp(messageContent))).toBeVisible();

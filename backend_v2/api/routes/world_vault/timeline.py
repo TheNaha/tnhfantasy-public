@@ -2,6 +2,8 @@
 World Timeline — chronological aggregation of all events across entities.
 """
 from fastapi import APIRouter, Depends, Query
+
+from core.exceptions import ValidationError
 from sqlmodel import Session, func, select
 
 from api.deps import get_session
@@ -22,18 +24,45 @@ def get_timeline(
     story_id: str | None = Query(default=None),
     chat_id: str | None = Query(default=None),
     location: str | None = Query(default=None),
+    types: str | None = Query(default=None),
     limit: int = Query(default=100, le=500),
     offset: int = Query(default=0, ge=0, le=MAX_TIMELINE_OFFSET),
     session: Session = Depends(get_session),
 ):
-    """Return a unified chronological timeline of events.
-    
-    Events include:
-    - Messages (chat messages)
-    - Chapter updates (story chapters)
-    - Memory creation (character memories)
-    - Image generation (assets)
+    """Return a unified chronological feed of activity.
+
+    NOT a world timeline. It has no world, no world_id, and no notion of one —
+    it merges four unrelated streams by timestamp:
+      - Messages (chat messages)
+      - Chapter updates (story chapters)
+      - Memory creation (character memories)
+      - Image generation (assets)
+
+    The name was the problem. Called "World Timeline" and described as "see how a
+    world changes over time", it read as authored chronology — canon, the order
+    things happened in the fiction. It is the opposite: a log of what YOU did, and
+    `assets` is ~99% of it. Measured on the live deployment, 16,529 events, and
+    page 1 was 200 consecutive image generations with one narrative event in
+    sight. A user looking for lore chronology found their own message log.
+
+    `types` exists because of that asymmetry. `?types=message,chapter,memory`
+    returns the narrative streams alone, which is what anyone opening this page
+    actually wanted. Image generation already has a page of its own — the
+    Gallery, which is where clicking an image event already sent them.
     """
+    wanted: set[str] | None = None
+    if types:
+        wanted = {t.strip() for t in types.split(",") if t.strip()}
+        unknown = wanted - {"message", "chapter", "memory", "image"}
+        if unknown:
+            # ValidationError, not ValueError: a bare ValueError escapes the
+            # handler as a 500, so a typo in a query parameter read as a server
+            # fault rather than a bad request.
+            raise ValidationError(
+                f"unknown event type(s) {sorted(unknown)}; valid types are "
+                "message, chapter, memory, image"
+            )
+
     events = []
     # `offset` was uncapped, and this is applied to FOUR independent queries
     # below (messages, chapters, memories, assets), so
@@ -160,6 +189,17 @@ def get_timeline(
             "story_id": a.story_id,
             "kind": "image",
         })
+
+    # Applied here rather than by skipping each stream's query.
+    #
+    # One place, and it cannot be forgotten when a stream is added: the four
+    # collectors append into the same `events` list with their own `type`, so
+    # filtering once at the end is both correct and impossible to get wrong by
+    # omission. Skipping the queries instead would be faster but needs a guard
+    # beside each of them, and the day someone adds a fifth stream without one it
+    # silently ignores the filter.
+    if wanted is not None:
+        events = [e for e in events if e.get("type") in wanted]
 
     # Sort by timestamp descending
     events.sort(key=lambda e: e.get("timestamp") or "", reverse=True)

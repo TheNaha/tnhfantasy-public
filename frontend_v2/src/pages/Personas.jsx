@@ -77,7 +77,7 @@ export default function Personas() {
     return (
         <RoleplayPageShell
             title="Personas"
-            description="Reusable identities for chatting as a character."
+            description="Who you are in a conversation. A persona sets {{user}} in the system prompt."
             icon={UserRound}
             actions={
                 <button
@@ -145,7 +145,7 @@ export default function Personas() {
                 <EmptyState
                     icon={UserRound}
                     title="No personas yet"
-                    description="Create reusable user personas to quickly start chats as any character you like."
+                    description="Create reusable user personas to be yourself in any conversation, with any character."
                     primaryLabel="Create Persona"
                     onAction={() => setShowCreate(true)}
                 />

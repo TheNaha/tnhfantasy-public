@@ -54,9 +54,8 @@ const Voices = lazy(() => import('./pages/Voices'));
 const Lorebooks = lazy(() => import('./pages/Lorebooks'));
 const WorldVaultHub = lazy(() => import('./pages/WorldVaultHub'));
 const Locations = lazy(() => import('./pages/Locations'));
-const AvatarGallery = lazy(() => import('./pages/AvatarGallery'));
 const BatchGenerate = lazy(() => import('./pages/BatchGenerate'));
-const WorldTimeline = lazy(() => import('./pages/WorldTimeline'));
+const Activity = lazy(() => import('./pages/Activity'));
 const Campaigns = lazy(() => import('./pages/Campaigns'));
 const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
 const Prompts = lazy(() => import('./pages/Prompts'));
@@ -126,9 +125,16 @@ function AnimatedRoutes() {
                 <Route path="/lorebooks" element={<Boundary routeKey={routeKey}><Lorebooks /></Boundary>} />
                 <Route path="/world-vault" element={<Boundary routeKey={routeKey}><WorldVaultHub /></Boundary>} />
                 <Route path="/locations" element={<Boundary routeKey={routeKey}><Locations /></Boundary>} />
-                <Route path="/avatar-gallery" element={<Boundary routeKey={routeKey}><AvatarGallery /></Boundary>} />
+                {/* Retired. The Avatar Gallery was this page's grid again with
+                    the edit actions stripped off, so it owned no data and no
+                    capability that could not live here. Redirected rather than
+                    404'd so any bookmark keeps working. */}
+                <Route path="/avatar-gallery" element={<Navigate to="/characters" replace />} />
                 <Route path="/batch-generate" element={<Boundary routeKey={routeKey}><BatchGenerate /></Boundary>} />
-                <Route path="/world-timeline" element={<Boundary routeKey={routeKey}><WorldTimeline /></Boundary>} />
+                <Route path="/activity" element={<Boundary routeKey={routeKey}><Activity /></Boundary>} />
+                {/* Kept as an alias: the page was called "World Timeline" and is now
+                    "Activity", and bookmarks should survive a rename. */}
+                <Route path="/world-timeline" element={<Navigate to="/activity" replace />} />
                 <Route path="/campaigns" element={<Boundary routeKey={routeKey}><Campaigns /></Boundary>} />
                 <Route path="/world-graph" element={<Boundary routeKey={routeKey}><RelationshipGraph /></Boundary>} />
                 <Route path="/prompts" element={<Boundary routeKey={routeKey}><Prompts /></Boundary>} />

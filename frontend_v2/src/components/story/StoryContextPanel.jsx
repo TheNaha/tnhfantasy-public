@@ -60,7 +60,7 @@ export default React.memo(function StoryContextPanel({
                     onEditLorebook={onEditLorebook}
                     onEditLocation={onEditLocation}
                     extraLinks={[
-                        { to: '/world-timeline', label: 'Timeline', icon: Calendar },
+                        { to: '/activity', label: 'Activity', icon: Calendar },
                         { to: '/world-graph', label: 'Relationships', icon: Layers },
                     ]}
                 />

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Filter, MessageSquare, BookOpen, Brain, Image as ImageIcon, Calendar } from 'lucide-react';
+import { Filter, MessageSquare, BookOpen, Brain, Image, Calendar } from 'lucide-react';
 import { useTimeline } from '../hooks/useTimeline';
 import { useCharacters } from '../hooks/useCharacters';
 import { useStories } from '../hooks/useStories';
@@ -14,7 +14,7 @@ const EVENT_ICONS = {
     message: MessageSquare,
     chapter: BookOpen,
     memory: Brain,
-    image: ImageIcon,
+    image: Image,
 };
 
 const EVENT_COLORS = {
@@ -31,8 +31,28 @@ const EVENT_LABELS = {
     image: 'Image',
 };
 
-export default function WorldTimeline() {
+/**
+ * Activity — a chronological log of what happened in the vault.
+ *
+ * Renamed from "World Timeline". It has no world, no world_id, and no notion of
+ * one: it merges chat messages, story chapter edits, character memories and
+ * image generations into one list ordered by timestamp. Described as "see how a
+ * world changes over time" it read as authored chronology — canon, the order
+ * things happened in the fiction — when it is the opposite: a log of what the
+ * user did.
+ *
+ * The default filter is the NARRATIVE streams, not everything. Measured live,
+ * the unfiltered first page was 196 image generations against 3 messages and 1
+ * chapter, out of 16,530 events — so a user opening this page to see what
+ * happened in their story saw a wall of pictures. Images are one click away in
+ * the Gallery, which is where clicking an image event already sent them, so they
+ * are opt-in rather than the default.
+ */
+const DEFAULT_TYPES = 'message,chapter,memory';
+
+export default function Activity() {
     const [searchParams, setSearchParams] = useSearchParams();
+    const [showImages, setShowImages] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
 
     const initialFilters = {
@@ -53,7 +73,10 @@ export default function WorldTimeline() {
         setSearchParams(next, { replace: true });
     }, [filters, setSearchParams]);
 
-    const { data, isLoading } = useTimeline({ ...filters, limit });
+    // `showImages` is opt-in. See the module comment: unfiltered, the first page
+    // was 196 images against 3 messages, and the Gallery is one click away.
+    const types = showImages ? 'message,chapter,memory,image' : DEFAULT_TYPES;
+    const { data, isLoading } = useTimeline({ ...filters, limit, types });
 
     const { data: characters = [] } = useCharacters();
     const { data: stories = [] } = useStories();
@@ -98,16 +121,32 @@ export default function WorldTimeline() {
 
     return (
         <RoleplayPageShell
-            title="World Timeline"
-            description="Chronological view of all events across your world."
+            title="Activity"
+            description="Everything that has happened in your vault, newest first — conversations, story chapters, and character memories."
             icon={Calendar}
             actions={
-                <button
-                    onClick={() => setShowFilters(!showFilters)}
-                    className={`flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors ${showFilters ? 'bg-cyan-500/20 text-cyan-300' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
-                >
-                    <Filter size={16} /> Filters
-                </button>
+                <div className="flex items-center gap-2">
+                    {/* Images are ~99% of the events (16,530 total on the live
+                        deployment, and the unfiltered first page was 196 images
+                        against 3 messages), so they are opt-in. The Gallery is
+                        one click away and is where clicking an image event
+                        already sent you. */}
+                    <button
+                        onClick={() => setShowImages(!showImages)}
+                        title={showImages
+                            ? 'Hiding image generations'
+                            : 'Include image generations'}
+                        className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${showImages ? 'bg-purple-500/20 text-purple-300' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
+                    >
+                        <Image size={16} /> Images {showImages ? 'on' : 'off'}
+                    </button>
+                    <button
+                        onClick={() => setShowFilters(!showFilters)}
+                        className={`flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors ${showFilters ? 'bg-cyan-500/20 text-cyan-300' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
+                    >
+                        <Filter size={16} /> Filters
+                    </button>
+                </div>
             }
         >
 

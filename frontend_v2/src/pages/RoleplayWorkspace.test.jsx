@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { EXPERT_TOOLS } from '../constants/navigation';
 import RoleplayWorkspace from './RoleplayWorkspace';
 
 vi.mock('../hooks/useChats', () => ({
@@ -76,7 +77,7 @@ describe('RoleplayWorkspace', () => {
         expect(screen.getAllByText('Lorebooks').length).toBeGreaterThan(0);
     });
 
-    it('lists the same expert tools as the sidebar, including Personas', () => {
+    it('lists exactly the expert tools the sidebar does, including Personas', () => {
         render(
             <MemoryRouter>
                 <RoleplayWorkspace />
@@ -87,8 +88,17 @@ describe('RoleplayWorkspace', () => {
         // Personas sets {{user}} and the system prompt, so it has to be
         // discoverable from the front door and not only from Cmd+K.
         expect(screen.getByText('Personas')).toBeInTheDocument();
-        for (const label of ['Characters', 'Avatar Gallery', 'World Timeline', 'Campaigns', 'Locations', 'Scenarios', 'Voices', 'Lorebooks']) {
-            expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+
+        // Asserted against EXPERT_TOOLS rather than a hardcoded list. The two
+        // surfaces render the same constant, so a name hardcoded here went stale
+        // the moment a tool was retired — the Avatar Gallery removal failed this
+        // test for exactly that reason, and the failure said nothing about the
+        // property the test exists to check.
+        for (const tool of EXPERT_TOOLS) {
+            expect(
+                screen.getAllByText(tool.label).length,
+                `${tool.label} is in EXPERT_TOOLS but not rendered on the front door`,
+            ).toBeGreaterThan(0);
         }
     });
 

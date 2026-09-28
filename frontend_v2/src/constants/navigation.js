@@ -21,8 +21,7 @@ import { Users, Contact, User, Calendar, Swords, GitBranch, MapPin, Sparkles, Mi
 export const EXPERT_TOOLS = [
     { to: '/characters', label: 'Characters', icon: Users, description: 'Your cast, with appearances and voices', color: 'text-purple-300' },
     { to: '/personas', label: 'Personas', icon: Contact, description: 'Who you are — sets {{user}} and the system prompt', color: 'text-sky-300' },
-    { to: '/avatar-gallery', label: 'Avatar Gallery', icon: User, description: 'Generated portraits and persona images', color: 'text-fuchsia-300' },
-    { to: '/world-timeline', label: 'World Timeline', icon: Calendar, description: 'See how a world changes over time', color: 'text-rose-300' },
+    { to: '/activity', label: 'Activity', icon: Calendar, description: 'Recent conversations, chapters, and memories', color: 'text-rose-300' },
     { to: '/campaigns', label: 'Campaigns', icon: Swords, description: 'Group characters, chats, and stories', color: 'text-red-300' },
     { to: '/world-graph', label: 'World Graph', icon: GitBranch, description: 'Explore relationships and connections', color: 'text-indigo-300' },
     { to: '/locations', label: 'Locations', icon: MapPin, description: 'Places, imagery, and atmosphere', color: 'text-amber-300' },

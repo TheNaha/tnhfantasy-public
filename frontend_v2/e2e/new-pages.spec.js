@@ -71,49 +71,14 @@ test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
     await expect(page.getByRole('heading', { name: 'Relationship Graph' })).toBeVisible({ timeout: 15000 });
   });
 
-  test('Avatar Gallery renders and handles character selection', async ({ page }) => {
-    const char = await seedCharacter(page, { name: uniqueName('avatar-char') });
-    trackEntity(page, 'character', char.id);
-
+  // The three Avatar Gallery specs are gone with the page. It was a second
+  // rendering of the Characters grid using the same `useCharacters()` and the
+  // same `CharacterCard`, with the edit actions stripped off, so the coverage
+  // they provided is covered by the Characters specs. The route now redirects to
+  // `/characters`, which is asserted here so a bookmark does not dead-end.
+  test('the retired avatar gallery route redirects to characters', async ({ page }) => {
     await page.goto('/avatar-gallery');
-
-    // Check main gallery container elements
-    await expect(page.getByText('Character Avatar Gallery')).toBeVisible({ timeout: 15000 });
-
-    // Check if the character we created appears in the gallery
-    await expect(page.getByText(char.name)).toBeVisible({ timeout: 15000 });
-
-    // Click on the character card and verify chat button exists
-    await expect(page.getByRole('button', { name: /Chat/i }).first()).toBeVisible({ timeout: 15000 });
-  });
-
-  test('Avatar Gallery filters characters by search query', async ({ page }) => {
-    const char1 = await seedCharacter(page, { name: uniqueName('avatar-search-a') });
-    trackEntity(page, 'character', char1.id);
-    const char2 = await seedCharacter(page, { name: uniqueName('avatar-search-b') });
-    trackEntity(page, 'character', char2.id);
-
-    await page.goto('/avatar-gallery');
-
-    // Both should be visible initially
-    await expect(page.getByText(char1.name)).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText(char2.name)).toBeVisible({ timeout: 10000 });
-
-    // Search for char1's name
-    await page.locator('input[placeholder="Search characters..."]').fill(char1.name);
-    await page.waitForTimeout(500);
-
-    // char1 should still be visible, char2 should be hidden
-    await expect(page.getByText(char1.name)).toBeVisible();
-    await expect(page.getByText(char2.name)).not.toBeVisible();
-  });
-
-  test('Avatar Gallery shows scene counts on character cards', async ({ page }) => {
-    const char = await seedCharacter(page, { name: uniqueName('avatar-scene-char') });
-    trackEntity(page, 'character', char.id);
-
-    await page.goto('/avatar-gallery');
-
-    await expect(page.getByText(char.name)).toBeVisible({ timeout: 15000 });
+    await expect(page).toHaveURL(/\/characters/, { timeout: 15000 });
+    await expect(page.getByRole('heading', { name: /Character Vault/i })).toBeVisible({ timeout: 15000 });
   });
 });

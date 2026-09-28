@@ -180,6 +180,29 @@ def extract_runtime_config(provider_type: str, container_config: Any, config: di
     return runtime_config
 
 
+def _provider_containers_dir() -> Path | None:
+    """Locate `provider_containers/`, or None when this process cannot see it.
+
+    Found by walking up from this file rather than by a fixed depth. The first
+    version used `Path(__file__).parents[2]`, which is the repo root on a
+    developer machine and `/` inside the backend container — where the backend
+    lives at `/app` and there is no `provider_containers` at all. Every call
+    therefore resolved to a non-existent path, `_entrypoint_exists` returned
+    False for perfectly good targets, and the provider reconciliation loop —
+    which reads provider config every few seconds — logged a pair of
+    `deploy_target_entrypoint_missing_using_default` warnings on every pass,
+    naming an entrypoint and a "replacement" that were byte-identical.
+
+    So: search upward, and report None when there is nothing to search. The
+    caller treats None as "cannot validate", which is the honest answer.
+    """
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "provider_containers"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def _entrypoint_exists(entrypoint: str | None) -> bool:
     """Whether a stored deploy target's entrypoint still exists in the source tree.
 
@@ -190,23 +213,21 @@ def _entrypoint_exists(entrypoint: str | None) -> bool:
     moved, and the deploy fails inside the container with a `FileNotFoundError`
     that says nothing about the cause.
 
-    It was not hypothetical. Every deployed Modal provider carried
-    `entrypoint: /app/modal_app.py`, a path that has not existed since the
-    engine code moved under `engines/<engine>/`. The entrypoint is resolved
-    relative to `provider_containers/`, which is the build context for the deploy
-    image, so that is the only place the check can be made truthfully.
+    Returns True when the source tree is not visible (a deployed backend), since
+    "I cannot check" must not be reported as "it is missing". Validation is a
+    development-time convenience; it has no business failing a production log.
     """
     if not entrypoint:
         return False
+    base = _provider_containers_dir()
+    if base is None:
+        return True
     rel = str(entrypoint).lstrip("/")
     if rel.startswith("app/"):
         rel = rel[len("app/"):]
-    base = Path(__file__).resolve().parents[2] / "provider_containers"
-    candidate = base / rel
-    if candidate.exists():
-        return True
-    # `beta9` targets use `path:handler`; check the file half.
+    # `beta9` targets use `path:handler`; the file half is what exists.
     return (base / rel.split(":", 1)[0]).exists()
+
 
 
 def _repair_stored_targets(
