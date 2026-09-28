@@ -121,7 +121,16 @@ def _warn_if_multiple_processes() -> None:
     """
     import multiprocessing
 
-    requested = os.getenv("COMFY_UVICORN_WORKERS") or os.getenv("WEB_CONCURRENCY") or ""
+    # Compose sets `COMFY_UVICORN_WORKERS` unconditionally, and an EMPTY value is
+    # the normal state for a single-worker deployment. `int("")` raises, so the
+    # first version logged "unparseable" on every single boot. Strip first and
+    # treat empty as unset, which is what it means.
+    requested = (
+        os.getenv("COMFY_UVICORN_WORKERS", "").strip()
+        or os.getenv("WEB_CONCURRENCY", "").strip()
+    )
+    if not requested:
+        return
     try:
         workers = int(requested)
     except ValueError:

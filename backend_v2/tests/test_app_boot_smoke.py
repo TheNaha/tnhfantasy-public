@@ -457,15 +457,23 @@ async def test_app_serves_requests_after_boot(client, boot):
     await _run_boot()
 
     spec = app.openapi()
-    # 247 unique paths / 327 operations, counted from the code rather than
+    # 249 unique paths / 329 operations, counted from the code rather than
     # guessed — regenerate with:
     #   python -c "from api.main import app; s=app.openapi(); \
     #     print(len(s['paths']), sum(len(v) for v in s['paths'].values()))"
     # 15 routers mounted by `configure_app`, plus its two inline routes (`/`
     # and `/metrics`). The `/socket.io` mount is deliberately absent: it is a
     # raw ASGI sub-app, so FastAPI does not put it in the OpenAPI document.
-    assert len(spec["paths"]) == 247
-    assert sum(len(ops) for ops in spec["paths"].values()) == 327
+    # An exact count, so a route that stops being registered is caught. It has to
+    # be bumped when routes are ADDED on purpose — the two voice endpoints
+    # (`/api/v2/voices/design` and `/api/v2/voices/speak`) took it from 247.
+    assert len(spec["paths"]) == 249, (
+        "route count changed; if routes were added deliberately, bump this"
+    )
+    # Bumped by 2 for the voice design and speak endpoints. An exact count so a
+    # route that stops being registered is caught; it has to be nudged when
+    # routes are added on purpose, which is why the two numbers are adjacent.
+    assert sum(len(ops) for ops in spec["paths"].values()) == 329
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 

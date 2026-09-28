@@ -101,7 +101,7 @@ def test_delete_voice(client, session, voice_model):
     assert response.status_code == 404
 
 
-def test_voice_preview(client, session, voice_model):
+def test_voice_preview(client, session, voice_model, tts_capable):
     response = client.post(f"/api/v2/voices/{voice_model.id}/preview")
     assert response.status_code == 200
     data = response.json()
@@ -111,15 +111,31 @@ def test_voice_preview(client, session, voice_model):
     from core.entities import Job
     job = session.get(Job, data["job_id"])
     assert job is not None
-    assert job.task_type == "image"
+    # Was "image", with the comment "TTS runs on the image_worker adapter". That
+    # was true of the code path and false of the capability: no provider image
+    # had a text-to-speech node, so the job went to a worker that could not build
+    # its graph. The dedicated TTS app is a different provider capability, so the
+    # task type has to say so.
+    assert job.task_type == "tts"
     metadata = job.metadata_ or {}
     assert metadata.get("type") == "voice_preview"
     assert metadata.get("voice_id") == voice_model.id
 
 
-def test_voice_preview_missing_voice(client):
+def test_voice_preview_missing_voice(client, tts_capable):
     response = client.post("/api/v2/voices/nonexistent-id/preview")
     assert response.status_code == 404
+
+
+def test_voice_preview_refuses_when_no_provider_can_serve_tts(client, voice_model):
+    """The failure this replaces: a job accepted, queued, and then died inside a
+    container on a ComfyUI graph naming a node that was never installed. Now it
+    is refused before a job row exists, with a message that says what to do."""
+    response = client.post(f"/api/v2/voices/{voice_model.id}/preview")
+    assert response.status_code == 400
+    body = response.text.lower()
+    assert "tts" in body
+    assert "capabilit" in body, "the error should name the missing capability"
 
 
 def test_voice_preview_no_preview_text(client, session):
@@ -129,3 +145,22 @@ def test_voice_preview_no_preview_text(client, session):
     session.refresh(vm)
     response = client.post(f"/api/v2/voices/{vm.id}/preview")
     assert response.status_code == 400  # ComfyError raised for missing preview_text
+
+
+@pytest.fixture
+def tts_capable(session):
+    """A provider that declares the `tts` capability, for tests that need one.
+
+    Every TTS endpoint refuses when nothing declares it, which is the intended
+    behaviour, so tests that are about something else need this to get past the
+    guard.
+    """
+    from core.entities import Provider
+
+    provider = Provider(
+        id="tts-provider", type="modal", worker_type="image",
+        capabilities=["image", "tts"], enabled=True,
+    )
+    session.add(provider)
+    session.commit()
+    return provider

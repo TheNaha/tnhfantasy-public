@@ -1,8 +1,12 @@
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from core.entities import Provider
+from infrastructure.logging import get_logger
+
+logger = get_logger("provider_utils")
 
 DEPLOY_STATE_KEY = "deploy_state"
 DEPLOY_IN_PROGRESS_TTL = 1800  # 30 minutes in seconds
@@ -68,12 +72,34 @@ def default_deploy_mode(provider_type: str) -> str:
 
 def default_deploy_targets(provider_type: str) -> list[dict[str, Any]]:
     if provider_type == "modal":
+        # TWO targets, not one. The TTS worker is a separate Modal APP with a
+        # separate image, and it has to be: the measured cold start on
+        # `comfy-modal-stack` is 57.66s, of which ~44s is in-container and ~42s of
+        # that is ComfyUI's own boot — the heavy `ultralytics` import and the
+        # enumeration of 531 model files on the /mnt/data volume. A TTS image has
+        # neither, so sharing one image would mean paying image-worker boot costs
+        # on every voice, and adding the TTS node pack to the image image would
+        # mean paying TTS costs on every image.
+        #
+        # A list rather than a new provider type because `deploy_config.targets`
+        # is already a list and `beam` already returns three targets for one
+        # provider row. This reuses that instead of adding a `modal_tts` provider
+        # type, which would have needed a `ProviderTypeConfig`, its own
+        # credentials, registry wiring and a fourth set of per-engine variants.
+        #
+        # It deploys from the same `modal deploy` the user already triggers via
+        # `POST /api/v2/providers/{id}/deploy`; nobody runs `modal deploy` by hand.
         return [
             {
                 "name": "modal_app",
                 "entrypoint": "/app/image_worker/engines/modal/modal_app.py",
                 "command": ["modal", "deploy", "/app/image_worker/engines/modal/modal_app.py"],
-            }
+            },
+            {
+                "name": "tts_app",
+                "entrypoint": "/app/tts_worker/engines/modal/modal_app.py",
+                "command": ["modal", "deploy", "/app/tts_worker/engines/modal/modal_app.py"],
+            },
         ]
     if provider_type == "modal_llm":
         return [
@@ -154,6 +180,108 @@ def extract_runtime_config(provider_type: str, container_config: Any, config: di
     return runtime_config
 
 
+def _entrypoint_exists(entrypoint: str | None) -> bool:
+    """Whether a stored deploy target's entrypoint still exists in the source tree.
+
+    Deploy targets are persisted per provider in `config.deploy_config.targets`,
+    and a stored list WINS over `default_deploy_targets`. That is the right
+    precedence — it is how a user overrides a command — but it means a target
+    recorded against an older layout silently keeps pointing at a file that has
+    moved, and the deploy fails inside the container with a `FileNotFoundError`
+    that says nothing about the cause.
+
+    It was not hypothetical. Every deployed Modal provider carried
+    `entrypoint: /app/modal_app.py`, a path that has not existed since the
+    engine code moved under `engines/<engine>/`. The entrypoint is resolved
+    relative to `provider_containers/`, which is the build context for the deploy
+    image, so that is the only place the check can be made truthfully.
+    """
+    if not entrypoint:
+        return False
+    rel = str(entrypoint).lstrip("/")
+    if rel.startswith("app/"):
+        rel = rel[len("app/"):]
+    base = Path(__file__).resolve().parents[2] / "provider_containers"
+    candidate = base / rel
+    if candidate.exists():
+        return True
+    # `beta9` targets use `path:handler`; check the file half.
+    return (base / rel.split(":", 1)[0]).exists()
+
+
+def _repair_stored_targets(
+    stored: list[dict[str, Any]], defaults: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Merge stored deploy targets over the current defaults.
+
+    Two jobs, both of which come from the same real problem: a stored list wins
+    over `default_deploy_targets`, and the stored lists in this deployment were
+    written against a layout that has since changed.
+
+    1. REPAIR. A target whose entrypoint no longer exists is replaced by the
+       current default of the same name. Every deployed Modal provider carried
+       `entrypoint: /app/modal_app.py`, which has not existed since the engine
+       code moved under `engines/<engine>/`; the deploy would have failed inside
+       the container with a `FileNotFoundError` that says nothing about the
+       cause.
+
+    2. ADD. A default target with no stored counterpart is appended. This is what
+       lets a new worker kind — the TTS app — be deployed by the same
+       `POST /providers/{id}/deploy` call without hand-editing every provider
+       row's `deploy_config` in the database.
+
+    The cost is that *removing* a default target does not stick: it is re-added
+    on the next write. That is the right trade here, because the alternative is a
+    new capability silently requiring a manual database edit per provider, which
+    is exactly how a feature ends up half-deployed. A provider that must not
+    build a target sets its `deploy.targets` explicitly with the entrypoints it
+    wants and accepts that the defaults are the base.
+
+    Ordering is preserved: stored targets keep their position, appended defaults
+    go last, so a deploy runs image worker first and TTS second.
+    """
+    by_name = {d.get("name"): d for d in defaults}
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    repaired = False
+
+    for target in stored:
+        name = target.get("name")
+        if _entrypoint_exists(target.get("entrypoint")):
+            merged.append(target)
+            seen.add(name)
+            continue
+        fallback = by_name.get(name)
+        if fallback:
+            logger.warning(
+                "deploy_target_entrypoint_missing_using_default",
+                target_name=name,
+                entrypoint=target.get("entrypoint"),
+                replacement=fallback.get("entrypoint"),
+            )
+            merged.append(dict(fallback))
+            seen.add(name)
+        else:
+            logger.warning(
+                "deploy_target_entrypoint_missing_dropped",
+                target_name=name,
+                entrypoint=target.get("entrypoint"),
+            )
+        repaired = True
+
+    for default in defaults:
+        if default.get("name") not in seen:
+            logger.info(
+                "deploy_target_added_from_defaults",
+                target_name=default.get("name"),
+                entrypoint=default.get("entrypoint"),
+            )
+            merged.append(dict(default))
+            repaired = True
+
+    return merged if repaired else stored
+
+
 def extract_deploy_config(provider_type: str, config: dict[str, Any]) -> dict[str, Any]:
     deploy_config = clean_dict(config.get(DEPLOY_CONFIG_KEY))
 
@@ -166,7 +294,14 @@ def extract_deploy_config(provider_type: str, config: dict[str, Any]) -> dict[st
         deploy_config["functions"] = functions_config
 
     deploy_config.setdefault("deploy_mode", default_deploy_mode(provider_type))
-    deploy_config.setdefault("targets", default_deploy_targets(provider_type))
+    defaults = default_deploy_targets(provider_type)
+    stored = deploy_config.get("targets")
+    if stored:
+        deploy_config["targets"] = _repair_stored_targets(
+            [t for t in stored if isinstance(t, dict)], defaults
+        )
+    else:
+        deploy_config["targets"] = defaults
     return deploy_config
 
 

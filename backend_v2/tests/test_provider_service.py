@@ -536,9 +536,16 @@ class TestProviderServiceDeploy:
 
         assert result["status"] == "succeeded"
         assert container.commands
+        # The subject of this test is the `beam` -> `beta9` rewrite.
         assert container.commands[0][0] == "beta9"
         assert container.commands[0][1] == "deploy"
-        assert container.commands[0][2] == "beam_app.py:comfy_gpu"
+        # The path is now the REPAIRED one. This assertion used to require the
+        # stored `/app/beam_app.py:comfy_gpu` to pass through untouched, which
+        # pinned a path that has not existed since the engine code moved under
+        # `engines/<engine>/` — the deploy would have failed inside the container
+        # with a FileNotFoundError. Stale stored targets are now replaced by the
+        # current default of the same name; see `test_deploy_targets.py`.
+        assert container.commands[0][2] == "image_worker/engines/beam/beam_app.py:comfy_gpu"
 
     async def test_beam_deploy_sets_ci_env_for_non_interactive_cli(self, service):
         provider_data = {
