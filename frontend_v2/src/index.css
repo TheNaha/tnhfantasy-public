@@ -131,3 +131,36 @@
 .text-\[10px\] {
   font-size: var(--text-xs);
 }
+
+/* Hover-revealed controls are always visible where hover does not exist.
+
+   Thirty sites reveal their action row with `opacity-0 group-hover:opacity-100`:
+   per-message edit/delete/swipe/regenerate, chat rename and delete, lorebook
+   entry management, story and chapter delete, the persona-name pencil, the
+   context-panel entity links, the gallery card overlay, and so on.
+
+   On a touch device there is no hover and the rows themselves are not
+   focusable, so every one of those controls was unreachable — on a phone you
+   could not edit, delete, swipe, regenerate, roll back or pin a single chat
+   message, and could not rename a chat or delete a story, chapter or lorebook
+   entry. The UI looked like the features did not exist.
+
+   `hover: none` is the capability query, not a width guess: it matches devices
+   with no hover-capable pointer regardless of screen size, and does not match a
+   touchscreen laptop with a trackpad, where hover still works and the reveal is
+   still the right behaviour. A `max-width` media query would have gotten the
+   hybrid case wrong.
+
+   Unlayered, for the same reason as the type floor above: this has to beat
+   Tailwind's `opacity-0` utility, which lives inside `@layer utilities`.
+
+   Written against the escaped utility names so a newly added hover-reveal is
+   covered by the same rule instead of needing to be remembered here. */
+@media (hover: none) {
+  .opacity-0.group-hover\:opacity-100,
+  .opacity-0.group-hover\/message\:opacity-100,
+  .opacity-0.group-hover\/chat-row\:opacity-100,
+  .opacity-0.group-hover\/menu-item\:opacity-100 {
+    opacity: 1;
+  }
+}

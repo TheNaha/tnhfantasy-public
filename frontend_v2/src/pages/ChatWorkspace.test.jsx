@@ -10,6 +10,7 @@ Element.prototype.scrollIntoView = vi.fn();
 
 const mockActiveChatId = vi.hoisted(() => vi.fn(() => 'chat-1'));
 const mockSetActiveChat = vi.hoisted(() => vi.fn());
+const addImagesToCollectionMock = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 
 vi.mock('../store/worldVaultStore', () => ({
     useWorldVaultStore: (sel) =>
@@ -88,9 +89,15 @@ vi.mock('../api', () => ({
 }));
 vi.mock('../hooks/useCollections', () => ({
     useCollections: () => ({ data: {} }),
+    // The context saves chat images through this mutation rather than calling
+    // `addImagesToCollection` directly, so the hook owns the invalidation
+    // policy for both the collection list and the per-character collection
+    // query. Mocking the mutation (not the raw API function) keeps the test
+    // honest about which layer the component depends on.
+    useAddImagesToCollection: () => ({ mutateAsync: addImagesToCollectionMock }),
 }));
 vi.mock('../api/collectionsApi', () => ({
-    addImagesToCollection: vi.fn(),
+    addImagesToCollection: addImagesToCollectionMock,
 }));
 
 vi.mock('../api/websocket', () => ({

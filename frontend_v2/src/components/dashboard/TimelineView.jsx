@@ -7,8 +7,7 @@ import { getItemTimelineDate } from '../../utils/dateTime';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
 import { getAssetPrompt } from '../../utils/assetMetadata';
 import { assetUrl, assetPath } from '../../utils/assetUrl';
-import { useWindowVirtualizer } from '@tanstack/react-virtual';
-import { useVirtualListScrollMargin } from '../../hooks/useVirtualListScrollMargin';
+import { useListVirtualizer } from '../../hooks/useScrollRoot';
 
 /**
  * TimelineView Component
@@ -88,15 +87,13 @@ export const TimelineView = memo(function TimelineView({
     }, [items, sort]);
 
     const listRef = useRef(null);
-    const scrollMargin = useVirtualListScrollMargin(listRef);
-    const virtualizer = useWindowVirtualizer({
+    const virtualizer = useListVirtualizer(listRef, {
         count: timelineGroups.length,
         estimateSize: (index) => {
             const itemCount = timelineGroups[index]?.items.length || 1;
             return Math.max(320, Math.min(2200, 180 + itemCount * 190));
         },
         getItemKey: (index) => timelineGroups[index]?.date || `timeline-${index}`,
-        scrollMargin,
         overscan: 2,
     });
 
@@ -129,7 +126,7 @@ export const TimelineView = memo(function TimelineView({
                                 top: 0,
                                 left: 0,
                                 width: '100%',
-                                transform: `translateY(${virtualItem.start - scrollMargin}px)`,
+                                transform: `translateY(${virtualItem.start}px)`,
                                 paddingBottom: '3rem'
                             }}
                         >

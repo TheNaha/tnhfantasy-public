@@ -134,7 +134,7 @@ export default function Lorebooks() {
                     icon={BookOpen}
                     title="No lorebooks yet"
                     description="Create a lorebook to store world facts, character backgrounds, and setting details."
-                    actionLabel="New Lorebook"
+                    primaryLabel="New Lorebook"
                     onAction={() => { resetForm(); setShowForm(true); }}
                 />
             ) : (

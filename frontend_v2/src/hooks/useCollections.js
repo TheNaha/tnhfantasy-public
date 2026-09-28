@@ -13,6 +13,16 @@ const OLD_STORAGE_KEY = 'comfy-storage';
 // clear all variants, not just the prefix or the null-scope one.
 function invalidateAllCollections(queryClient) {
     queryClient.invalidateQueries({ queryKey: ['collections'] });
+    // A character's collection membership is a *second* server entity read
+    // under ['world_vault','characters', id, 'collection']
+    // (GET /api/v2/collections/by-character/:id), rendered by
+    // `ChatContextPanel`. Only one call site in the app remembered to refresh
+    // it, and it did so by hand, so every other add/remove left the chat panel
+    // showing the membership from before the edit. The query is mounted for the
+    // life of the chat and `refetchOnWindowFocus` is globally off, so nothing
+    // corrected it later. Invalidate the character list instead: that is the
+    // prefix the detail key lives under, so it covers the per-id variant too.
+    queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
 }
 
 // One-time bootstrap migration: imports collections from the legacy

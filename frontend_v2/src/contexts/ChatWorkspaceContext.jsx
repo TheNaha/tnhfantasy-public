@@ -8,7 +8,7 @@ import { useChatWorkspaceData } from '../hooks/useChatWorkspaceData';
 import { useChatWorkspaceMutations } from '../hooks/useChatWorkspaceMutations';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { filesApi } from '../api/files';
-import { addImagesToCollection } from '../api/collectionsApi';
+import { useAddImagesToCollection } from '../hooks/useCollections';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useConfirmation } from '../store/confirmationStore';
 import useSettingsStore from '../store/settingsStore';
@@ -251,6 +251,7 @@ export function ChatWorkspaceProvider({ children }) {
     const illustrateMutation = useStableObject(rawIllustrateMutation);
     const generateSceneMutation = useStableObject(rawGenerateSceneMutation);
     const suggestReplyMutation = useStableObject(rawSuggestReplyMutation);
+    const addImagesToCollectionMutation = useAddImagesToCollection();
 
     const activeChatList = useMemo(
         () => debouncedChatSearchQuery.trim() ? (searchResults || []) : chats,
@@ -384,6 +385,14 @@ export function ChatWorkspaceProvider({ children }) {
     }, [message]);
 
     const handleSendMessage = useCallback(async () => {
+        // Guard against a second send while the first is still in flight. The
+        // Enter key called this directly and only the send *button* consulted
+        // `canSend`, so a double-Enter — which is what a fast typist or an
+        // impatient one does — produced two identical user messages and two
+        // paid LLM jobs for one thought. Neither chat nor story write routes
+        // carry an Idempotency-Key, so the server has no way to collapse them.
+        if (sendMessageMutation.isPending) return;
+
         const msgContentRaw = message.trim();
         if (!msgContentRaw && !pendingAttachment && !activeCommand?.noArgs) {
             toast.error('Message cannot be empty');
@@ -496,9 +505,16 @@ export function ChatWorkspaceProvider({ children }) {
             const res = await suggestReplyMutation.mutateAsync({ chatId: activeChatId, draft: draft || undefined });
             if (res.job_id) {
                 setSuggestJobId(res.job_id);
-                // Safety net: if the completion event is missed (reconnect gap),
-                // don't leave the Suggest button disabled forever.
-                suggestSafetyTimerRef.current = window.setTimeout(() => {
+            // Safety net: if the completion event is missed (reconnect gap),
+            // don't leave the Suggest button disabled forever.
+            // Clear any previous timer first. Two suggests inside the safety
+            // window left the first one orphaned, and the unmount cleanup only
+            // cleared the last — so a stale timer could still fire after the
+            // user had moved on, clearing the disabled state mid-suggest.
+            if (suggestSafetyTimerRef.current) {
+                clearTimeout(suggestSafetyTimerRef.current);
+            }
+            suggestSafetyTimerRef.current = window.setTimeout(() => {
                     setSuggestJobId((current) => (current === res.job_id ? null : current));
                 }, 120000);
             }
@@ -577,16 +593,17 @@ export function ChatWorkspaceProvider({ children }) {
     const handleSaveImageToCollection = useCallback(async (collectionId, path) => {
         if (!collectionId || !path) return;
         try {
-            await addImagesToCollection(collectionId, [path]);
-            queryClient.invalidateQueries({ queryKey: ['collections'] });
-            if (activeChat?.character_id) {
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', activeChat.character_id, 'collection'] });
-            }
+            // Through the mutation, not the raw API function. The hook owns the
+            // invalidation policy for both the collection list and the per
+            // character collection query; calling `addImagesToCollection`
+            // directly is what forced this call site to re-implement that
+            // policy by hand, and it was the only call site that remembered.
+            await addImagesToCollectionMutation.mutateAsync({ collectionId, images: [path] });
             toast.success('Image saved to collection');
         } catch {
             toast.error('Failed to save image');
         }
-    }, [queryClient, activeChat?.character_id]);
+    }, [addImagesToCollectionMutation]);
 
     const triggerAutoTitle = useCallback(async () => {
         if (!activeChatId) return;
@@ -749,11 +766,24 @@ export function ChatWorkspaceProvider({ children }) {
     }, [activeChatId, confirm, rollbackMutation]);
 
     const handleRegenerate = useCallback(async (msgId) => {
+        // The route deletes every message after this one. It was reachable from
+        // an 11px hover-revealed icon whose own tooltip said "(Deletes
+        // following messages)", with no confirmation — while the sibling
+        // rollback, which deletes the same messages, went through `confirm`.
+        // A mis-tap truncated the conversation irrecoverably. `msgId` is the
+        // first message to be removed.
+        const ok = await confirm({
+            title: 'Regenerate from here',
+            message: 'This will delete this message and everything after it, then generate a new reply.',
+            confirmText: 'Regenerate',
+            isDangerous: true,
+        });
+        if (!ok) return;
         try {
             const res = await regenerateMutation.mutateAsync({ chatId: activeChatId, messageId: msgId });
             if (res?.job_id) setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'llm' });
         } catch { toast.error('Failed to regenerate'); }
-    }, [activeChatId, regenerateMutation, queryClient]);
+    }, [activeChatId, confirm, regenerateMutation, queryClient]);
 
     const handleImpersonate = useCallback(async (hint = '') => {
         if (!activeChatId) return;

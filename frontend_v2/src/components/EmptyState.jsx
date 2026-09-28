@@ -1,4 +1,4 @@
-import { ImageOff, Search, Package, FolderOpen, Star, Sparkles, Download } from 'lucide-react';
+import { ImageOff, Search, Package, FolderOpen, Star, Sparkles, Download, Compass } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 
@@ -213,12 +213,41 @@ const EmptyState = ({
             primaryAction: primaryAction || (() => navigate('/generate')),
             secondaryLabel: secondaryLabel || "View Examples",
             tutorialHint: "💡 Tip: Each generation is saved with its prompt and settings for easy iteration"
-        }
+        },
+        // The World Vault pages — lorebooks, locations, personas, scenarios,
+        // campaigns, characters. There is no `roleplay` type, so every one of
+        // them fell through to `config.gallery` and rendered "Generate Your
+        // First Image" over a list of nothing but characters and stories, with
+        // a button that navigated to the image generator. A CTA that lies about
+        // what the page is for is worse than no CTA, so this type has no
+        // default action at all: the caller supplies both the label and the
+        // handler, or neither is rendered.
+        roleplay: {
+            icon: Compass,
+            title: title || "Nothing here yet",
+            description: description || '',
+            primaryLabel: primaryLabel || null,
+            primaryAction: primaryAction || null,
+            secondaryLabel: secondaryLabel || null,
+            secondaryAction: secondaryAction || null,
+            tutorialHint: null
+        },
     };
 
     const currentConfig = config[type] || config.gallery;
     const Icon = CustomIcon || currentConfig.icon;
     const Illustration = EmptyIllustrations[type];
+
+    // A button with no handler is worse than no button: it looks actionable and
+    // does nothing. `collection` declares `primaryLabel: "Add Images"` with a
+    // `primaryAction` that is `undefined` when the caller passes none, which is
+    // how the memories panel ended up with a dead "Add Images" button.
+    const primaryHandler = onAction || currentConfig.primaryAction;
+    const showPrimary = Boolean(currentConfig.primaryLabel && primaryHandler);
+    const secondaryHandler = onSecondary || currentConfig.secondaryAction;
+    const showSecondary = Boolean(currentConfig.secondaryLabel && secondaryHandler);
+    // `roleplay` has no description of its own; do not render an empty <p>.
+    const showDescription = Boolean(currentConfig.description);
 
     return (
         <motion.div
@@ -247,9 +276,11 @@ const EmptyState = ({
             </h3>
 
             {/* Description */}
-            <p className="text-gray-400 mb-6 leading-relaxed">
-                {currentConfig.description}
-            </p>
+            {showDescription && (
+                <p className="text-gray-400 mb-6 leading-relaxed">
+                    {currentConfig.description}
+                </p>
+            )}
 
             {/* Tutorial Hint */}
             {showTutorialHint && currentConfig.tutorialHint && (
@@ -264,12 +295,13 @@ const EmptyState = ({
             )}
 
             {/* Actions */}
+            {(showPrimary || showSecondary) && (
             <div className="flex flex-col sm:flex-row gap-3 w-full">
-                {currentConfig.primaryLabel && (
+                {showPrimary && (
                     <motion.button
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
-                        onClick={onAction || currentConfig.primaryAction}
+                        onClick={primaryHandler}
                         className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-all shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2"
                     >
                         <Sparkles size={18} />
@@ -277,17 +309,18 @@ const EmptyState = ({
                     </motion.button>
                 )}
 
-                {currentConfig.secondaryLabel && (
+                {showSecondary && (
                     <motion.button
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
-                        onClick={onSecondary || currentConfig.secondaryAction}
+                        onClick={secondaryHandler}
                         className="flex-1 px-6 py-3 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg font-medium transition-all border border-gray-700"
                     >
                         {currentConfig.secondaryLabel}
                     </motion.button>
                 )}
             </div>
+            )}
         </motion.div>
     );
 };

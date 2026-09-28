@@ -158,9 +158,12 @@ export default function Campaigns() {
                 </div>
             ) : filteredCampaigns.length === 0 ? (
                 <EmptyState
+                    type="roleplay"
                     icon={Swords}
                     title="No campaigns yet"
                     description="Create your first campaign to start organizing your world."
+                    primaryLabel="New Campaign"
+                    onAction={() => { resetForm(); setShowForm(true); }}
                 />
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

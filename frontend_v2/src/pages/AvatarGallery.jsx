@@ -86,9 +86,12 @@ export default function AvatarGallery() {
                 <div className="text-center py-12 text-gray-400">Loading characters...</div>
             ) : filteredCharacters.length === 0 ? (
                 <EmptyState
+                    type="roleplay"
                     icon={User}
                     title="No characters found"
                     description="Create some characters first to see them here."
+                    primaryLabel="Go to Characters"
+                    onAction={() => navigate('/characters')}
                 />
             ) : viewMode === VIEW_MODES.CARDS ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">

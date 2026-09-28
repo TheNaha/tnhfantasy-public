@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Search, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2 } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
+import { modelListKey } from '../../constants/queryKeys';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
 import toast from 'react-hot-toast';
 import { filesApi, api } from '../../api';
@@ -52,8 +53,17 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         isFetchingNextPage,
         refetch,
     } = useInfiniteQuery({
-        queryKey: ['installed-models', path, searchTerm, sortBy, filterBaseModel, filterType, showNSFW, selectedTags],
-        queryFn: async ({ pageParam = 0 }) => {
+        queryKey: modelListKey({
+            directory: path,
+            search: searchTerm,
+            sortBy,
+            filterBaseModel,
+            filterType,
+            showNSFW,
+            selectedTags,
+            pageSize: itemsPerPage,
+        }),
+        queryFn: async ({ pageParam = 0, signal }) => {
             if (!path) return { files: [], total: 0 };
             const sortMap = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
             const res = await filesApi.list({
@@ -66,7 +76,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                 model_type: filterType !== 'all' ? filterType : undefined,
                 show_nsfw: showNSFW,
                 tags: selectedTags.length > 0 ? selectedTags.join(",") : undefined,
-            });
+            }, { signal });
             return res;
         },
         getNextPageParam: (lastPage, allPages) => {

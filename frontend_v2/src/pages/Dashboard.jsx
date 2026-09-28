@@ -416,7 +416,14 @@ export default function Dashboard() {
         });
         if (!accepted) return;
         await jobsApi.clear();
-        queryClient.setQueryData(['jobs', 'active'], []);
+        // Invalidate the whole `jobs` subtree, not just `['jobs','active']`.
+        // The failed-jobs banner reads `['jobs','failed']` and the queue panel
+        // reads `['jobs','queue']`; neither was touched here, so both kept
+        // rendering rows for jobs the server had just deleted, and
+        // `refetchOnWindowFocus` is globally off, so it was not a
+        // self-healing staleness. The sibling single-delete path
+        // (`useDashboardModals`) already invalidated `['jobs']`.
+        await queryClient.invalidateQueries({ queryKey: ['jobs'] });
         refetch();
     }, [confirm, queryClient, refetch]);
 

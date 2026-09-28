@@ -21,8 +21,18 @@ const FORM_FIELDS = [
     { key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'Location name' },
     { key: 'description', label: 'Description', type: 'textarea', placeholder: 'A vivid description of this location...' },
     { key: 'atmosphere', label: 'Atmosphere', type: 'textarea', placeholder: 'The mood, lighting, sounds, and feeling of this place...' },
-    { key: 'tags', label: 'Tags', type: 'text', placeholder: 'tavern, forest, castle (comma-separated)' },
+    // `tags` is deliberately absent. It is a `list[str]`, and the generic
+    // `FormInput` below writes `e.target.value` — a string — into whatever field
+    // it is given. Two controls were writing the same field with incompatible
+    // types: this text box and the chip editor below it. Typing
+    // "tavern, forest" here and then pressing Add in the chip editor ran
+    // `[...form.tags, tag]` on a string, which spreads one element per
+    // character, and persisted `['t','a','v','e','r','n',',',' ','f',…]` — then
+    // rendered a chip per character. The chip editor owns the field; the type
+    // now matches the writer.
 ];
+
+const TAG_FIELD = { key: 'tags', label: 'Tags' };
 
 const DEFAULT_FORM = {
     name: '',
@@ -41,12 +51,10 @@ export default function Locations() {
     const [uploadingImage, setUploadingImage] = useState(false);
 
     const setSearchQuery = (query) => {
-        if (query) {
-            setSearchParams({ q: query }, { replace: true });
-        } else {
-            searchParams.delete('q');
-            setSearchParams(searchParams, { replace: true });
-        }
+        // `setSearchParams({})` clears the key. The previous version called
+        // `searchParams.delete('q')` and passed the object back, mutating the
+        // instance React Router handed us rather than producing a new one.
+        setSearchParams(query ? { q: query } : {}, { replace: true });
     };
 
     const [showForm, setShowForm] = useState(false);
@@ -151,14 +159,20 @@ export default function Locations() {
 
     const addTag = () => {
         const tag = tagInput.trim();
-        if (tag && !form.tags.includes(tag)) {
-            setForm(f => ({ ...f, tags: [...(f.tags || []), tag] }));
+        // Normalise to a list first. `form.tags` is `list[str]`, but if a
+        // string ever reaches it, spreading it yields one element per character
+        // and the card renders a chip per character. Coercing here means the
+        // bug cannot come back through a future edit to the form.
+        const current = Array.isArray(form.tags) ? form.tags : [];
+        if (tag && !current.includes(tag)) {
+            setForm(f => ({ ...f, tags: [...current, tag] }));
         }
         setTagInput('');
     };
 
     const removeTag = (tag) => {
-        setForm(f => ({ ...f, tags: (f.tags || []).filter(t => t !== tag) }));
+        const current = Array.isArray(form.tags) ? form.tags : [];
+        setForm(f => ({ ...f, tags: current.filter(t => t !== tag) }));
     };
 
     return (
@@ -210,9 +224,12 @@ export default function Locations() {
                 </div>
             ) : filteredLocations.length === 0 ? (
                 <EmptyState
+                    type="roleplay"
                     icon={MapPin}
                     title="No locations yet"
                     description="Create your first location to start building your world."
+                    primaryLabel="New Location"
+                    onAction={() => { resetForm(); setShowForm(true); }}
                 />
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -305,35 +322,36 @@ export default function Locations() {
                                         placeholder={field.placeholder}
                                         required={field.required}
                                     />
-                                    {field.key === 'tags' && (
-                                        <div className="mb-4">
-                                            <div className="flex gap-2 mb-2">
-                                                <input
-                                                    type="text"
-                                                    value={tagInput}
-                                                    onChange={(e) => setTagInput(e.target.value)}
-                                                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addTag())}
-                                                    placeholder="Add tag..."
-                                                    className="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                                />
-                                                <button onClick={addTag} className="px-3 py-1.5 bg-gray-700 text-white rounded-lg text-sm hover:bg-gray-600">
-                                                    Add
-                                                </button>
-                                            </div>
-                                            <div className="flex flex-wrap gap-1">
-                                                {(form.tags || []).map(tag => (
-                                                    <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 text-xs border border-blue-500/20">
-                                                        {tag}
-                                                        <button onClick={() => removeTag(tag)} className="hover:text-white">
-                                                            <X size={10} />
-                                                        </button>
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
                                 </div>
                             ))}
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-300 mb-1">
+                                    {TAG_FIELD.label}
+                                </label>
+                                <div className="flex gap-2 mb-2">
+                                    <input
+                                        type="text"
+                                        value={tagInput}
+                                        onChange={(e) => setTagInput(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addTag())}
+                                        placeholder="Add tag..."
+                                        className="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                    <button onClick={addTag} className="px-3 py-1.5 bg-gray-700 text-white rounded-lg text-sm hover:bg-gray-600">
+                                        Add
+                                    </button>
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                    {(form.tags || []).map(tag => (
+                                        <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 text-xs border border-blue-500/20">
+                                            {tag}
+                                            <button onClick={() => removeTag(tag)} className="hover:text-white">
+                                                <X size={10} />
+                                            </button>
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
                             {editingLocation && (
                                 <div className="mb-4">
                                     <label className="block text-sm font-medium text-gray-300 mb-1">Image</label>

@@ -238,7 +238,17 @@ function App() {
                     networkMode: 'online',
                 },
                 mutations: {
-                    retry: 1,
+                    // NOT 1. react-query v5 applies the mutation retry to every
+                    // mutation regardless of method and does not filter by
+                    // status class, so a retry on a lost response re-sent every
+                    // non-idempotent POST and DELETE in the app: a second job
+                    // from /jobs/:id/retry, a duplicated chat message and a
+                    // duplicated LLM call from send, a duplicate character, and
+                    // a DELETE that succeeded server-side then reported "Failed
+                    // to remove job" on its 404. Only /api/generate* send an
+                    // Idempotency-Key. Opt individual mutations back in where a
+                    // retry is actually safe.
+                    retry: 0,
                     networkMode: 'online',
                 },
             },

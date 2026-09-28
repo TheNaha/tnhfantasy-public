@@ -208,7 +208,7 @@ export default function Scenarios() {
                     icon={Tag}
                     title="No scenarios yet"
                     description="Create a scenario to define reusable prompt templates for chats and stories."
-                    actionLabel="Create Scenario"
+                    primaryLabel="Create Scenario"
                     onAction={() => setShowCreate(true)}
                 />
             ) : (

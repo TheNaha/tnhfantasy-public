@@ -1,0 +1,116 @@
+import { useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+
+/**
+ * Virtualizing a list inside this app's layout.
+ *
+ * The app shell (`Layout.jsx`) puts the page body in
+ * `flex-1 relative z-10 lg:overflow-y-auto` and gives it
+ * `id="main-scroll-container"`. On any viewport at `lg` and above, the window
+ * itself never scrolls: the pane does. That distinction has broken three
+ * separate things, each of which looked fine in isolation:
+ *
+ *   - infinite scroll measured its sentinel against the viewport
+ *   - the gallery virtualizer bound `useWindowVirtualizer` to `window`, so its
+ *     `scrollOffset` stayed 0 forever and it rendered only the first viewportful
+ *   - the scroll-margin helper added `window.scrollY` (always 0) to a
+ *     viewport-relative `rect.top`
+ *
+ * All three are the same mistake, so they share one resolver.
+ */
+
+export function resolveScrollRoot(element, explicitRoot = null) {
+    if (explicitRoot) return explicitRoot;
+    let el = element?.parentElement ?? null;
+    while (el && el !== document.body) {
+        const overflowY = getComputedStyle(el).overflowY;
+        if (overflowY === 'auto' || overflowY === 'scroll') return el;
+        el = el.parentElement;
+    }
+    return null;
+}
+
+/**
+ * `getScrollElement` for `@tanstack/react-virtual`.
+ *
+ * An element that cannot be *measured* falls back to the viewport.
+ * `@tanstack/react-virtual` derives its visible range from the scroll element's
+ * height, so handing it a zero-height element makes `getVirtualItems()` return
+ * an empty array and the list renders as nothing at all — which is what jsdom
+ * (no layout engine) produces, and what a container that has not been laid out
+ * yet produces for one frame. The viewport always has a height, so it is the
+ * only answer that can show the rows.
+ */
+export function useScrollElement(ref, explicitRoot = null) {
+    return useCallback(() => {
+        const el = resolveScrollRoot(ref.current, explicitRoot);
+        if (!el) return window;
+        return el.clientHeight > 0 ? el : window;
+    }, [ref, explicitRoot]);
+}
+
+/**
+ * `observeElementRect` that is correct for a window scroll element.
+ *
+ * `useWindowVirtualizer` exists only to override this: the default
+ * implementation reads `element.offsetHeight`, which is `undefined` on `window`,
+ * so the visible range becomes `NaN` and nothing renders. `useVirtualizer` with
+ * a `window` scroll element — which is what the fallback above produces on
+ * narrow viewports and under jsdom — silently renders an empty list. Supplying
+ * the override explicitly means one hook covers both cases, instead of forcing
+ * every call site to branch on which hook to use.
+ */
+function observeElementRect(instance, cb) {
+    const element = instance.scrollElement;
+    if (!element) return undefined;
+    const targetWindow = instance.targetWindow;
+    if (!targetWindow) return undefined;
+
+    const handler = (rect) => cb({ width: Math.round(rect.width), height: Math.round(rect.height) });
+
+    const isWindowScroll = element === targetWindow || element === targetWindow.document;
+    if (isWindowScroll) {
+        handler({ width: targetWindow.innerWidth, height: targetWindow.innerHeight });
+    } else {
+        handler({ width: element.offsetWidth, height: element.offsetHeight });
+    }
+
+    if (!targetWindow.ResizeObserver) return () => {};
+    const observer = new targetWindow.ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (entry?.borderBoxSize?.[0]) {
+            const box = entry.borderBoxSize[0];
+            handler({ width: box.inlineSize, height: box.blockSize });
+            return;
+        }
+        if (isWindowScroll) {
+            handler({ width: targetWindow.innerWidth, height: targetWindow.innerHeight });
+            return;
+        }
+        handler({ width: element.offsetWidth, height: element.offsetHeight });
+    });
+    observer.observe(isWindowScroll ? targetWindow.document.documentElement : element);
+
+    return () => observer.disconnect();
+}
+
+/**
+ * `useVirtualizer` bound to the element that actually scrolls this list.
+ *
+ * Replaces `useWindowVirtualizer` at the gallery and the timeline. The
+ * `scrollMargin` option is deliberately not accepted: with a real scroll
+ * element, `virtualItem.start` is already relative to that element's content
+ * box, and subtracting a document-level margin double-counted it.
+ *
+ * The options object is built fresh on every render on purpose. `count`,
+ * `estimateSize` and `getItemKey` are all closures over live render state, and
+ * `useVirtualizer` re-reads its options on every render and re-renders when
+ * they change; memoizing it would freeze the list at its first shape.
+ * `observeElementRect` is module-level precisely so that the identity which
+ * *does* have to be stable — the one the library uses to decide whether to
+ * unsubscribe and resubscribe — is.
+ */
+export function useListVirtualizer(ref, options) {
+    const getScrollElement = useScrollElement(ref, options.scrollRoot ?? null);
+    return useVirtualizer({ ...options, getScrollElement, observeElementRect });
+}

@@ -227,7 +227,7 @@ export default function Voices() {
                     icon={Volume2}
                     title="No voice models yet"
                     description="Create a voice model to enable text-to-speech narration for your characters."
-                    actionLabel="Create Voice"
+                    primaryLabel="Create Voice"
                     onAction={() => setShowCreate(true)}
                 />
             ) : (

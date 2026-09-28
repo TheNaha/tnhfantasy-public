@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Loader2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { QUERY_KEYS } from '../../constants/queryKeys';
 import ModalOverlay from '../common/ModalOverlay';
 import { api } from '../../api';
 import * as ws from '../../api/websocket';
@@ -22,7 +23,7 @@ export default function BatchResyncModal({ onClose }) {
                 setLogs(prev => [...prev, `[DONE] Batch resync completed! ${payload.results?.success || 0} succeeded, ${payload.results?.failed || 0} failed.`]);
                 toast.success('Batch resync complete!');
                 setIsProcessing(false);
-                queryClient.invalidateQueries({ queryKey: ['models'] });
+                queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
                 // Do not auto-close so the user can read the logs.
             }
             

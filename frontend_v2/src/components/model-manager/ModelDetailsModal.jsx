@@ -8,16 +8,20 @@ import ModalOverlay from '../common/ModalOverlay';
 import CivitaiSearchModal from './CivitaiSearchModal';
 import AutopopulateSelector from './AutopopulateSelector';
 import { copyToClipboard } from '../../utils/clipboard';
+import { QUERY_KEYS } from '../../constants/queryKeys';
 
 /**
  * Query keys whose pages carry a model's tag list. A new tag is only useful if
  * the list that filters on tags can see it, and there are two such lists: the
- * model manager's Installed tab and the in-generator ModelSelector. They do
- * not share a key prefix, so both have to be named — invalidating `['models']`
- * alone leaves the picker stale, which is the surface the owner actually uses
- * when hunting for a LoRA.
+ * model manager's Installed tab and the in-generator ModelSelector.
+ *
+ * They used to be two independent caches of one list, under `['models', …]` and
+ * `['installed-models', …]`, and every mutation here had to remember to
+ * invalidate both. They now share `modelListKey` (`constants/queryKeys.js`), so
+ * this is one prefix: invalidating it refreshes both, and a new call site that
+ * forgets cannot silently leave the other stale.
  */
-const MODEL_LIST_QUERY_KEYS = [['models'], ['installed-models']];
+const MODEL_LIST_QUERY_KEYS = [[QUERY_KEYS.MODELS]];
 
 const tagQueryKey = (modelId) => ['model-tags', modelId];
 
@@ -307,7 +311,7 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
             const payload = civitaiId ? { civitai_id: civitaiId } : {};
             await api.post(`/api/v2/models/${file.model_id}/autopopulate`, payload);
             toast.success(isAutoDiscovered ? "Model details autopopulated!" : "Model metadata refetched!");
-            queryClient.invalidateQueries({ queryKey: ['models'] });
+            queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
             queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });
             setShowSearchModal(false);
             onClose();
@@ -325,7 +329,7 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
         try {
             await api.post(`/api/v2/models/maintenance/${file.model_id}/resync`);
             toast.success("Model metadata refreshed from CivitAI!");
-            queryClient.invalidateQueries({ queryKey: ['models'] });
+            queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
             queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });
             onClose();
         } catch (e) {
@@ -640,7 +644,7 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                     modelDirectory={file.directory}
                     onClose={() => setShowAutopopulateSelector(false)}
                     onComplete={() => {
-                        queryClient.invalidateQueries({ queryKey: ['models'] });
+                        queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
                         queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });
                     }}
                 />

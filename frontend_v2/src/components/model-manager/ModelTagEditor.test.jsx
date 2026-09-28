@@ -184,11 +184,16 @@ describe('ModelTagEditor', () => {
             expect(queryClient.getQueryData(['model-tags', MODEL_ID])).toEqual({
                 tags: [{ tag: 'anime', source: 'user' }],
             });
-            // Both lists, not just one: the generator's ModelSelector and the
-            // model manager's Installed tab do not share a key prefix, and the
-            // picker is the surface someone hunting for a LoRA actually uses.
+            // One key, and it covers both lists. The generator's ModelSelector
+            // and the model manager's Installed tab are the same list from the
+            // same endpoint; they used to live under `['models', …]` and
+            // `['installed-models', …]`, and this assertion is what made every
+            // mutation remember to invalidate two prefixes. `modelListKey`
+            // collapsed them, so the picker — the surface someone hunting for a
+            // LoRA actually uses — can no longer be left stale by a call site
+            // that only remembers one.
             expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['models'] });
-            expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['installed-models'] });
+            expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['installed-models'] });
         });
 
         it('says the tag was already there when the backend reports created:false', async () => {
@@ -246,7 +251,7 @@ describe('ModelTagEditor', () => {
             );
             await waitFor(() => expect(screen.queryByLabelText('Remove tag anime')).toBeNull());
             expect(queryClient.getQueryData(['model-tags', MODEL_ID])).toEqual({ tags: [] });
-            expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['installed-models'] });
+            expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['models'] });
         });
 
         it('surfaces a 404 refusal as a message about CivitAI, not an unhandled rejection', async () => {

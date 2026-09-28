@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
+import { resolveScrollRoot } from './useScrollRoot';
 
 const SCROLL_IDLE_MS = 180;
 
@@ -64,31 +65,8 @@ export function useInfiniteScroll({
     }, [scheduleIdleLoad]);
 
     useEffect(() => {
-        const root = scrollRoot || window;
-        const options = { passive: true };
-        root.addEventListener('touchstart', markUserActivity, options);
-        root.addEventListener('touchmove', markUserActivity, options);
-        root.addEventListener('touchend', endUserActivity, options);
-        root.addEventListener('touchcancel', endUserActivity, options);
-        root.addEventListener('wheel', markUserActivity, options);
-        root.addEventListener('scroll', markUserActivity, options);
-
-        return () => {
-            root.removeEventListener('touchstart', markUserActivity);
-            root.removeEventListener('touchmove', markUserActivity);
-            root.removeEventListener('touchend', endUserActivity);
-            root.removeEventListener('touchcancel', endUserActivity);
-            root.removeEventListener('wheel', markUserActivity);
-            root.removeEventListener('scroll', markUserActivity);
-            if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-        };
-    }, [endUserActivity, markUserActivity, scrollRoot]);
-
-    useEffect(() => {
         const currentSentinel = sentinelRef.current;
-        if (!currentSentinel || !hasMore) return undefined;
-
-        // Observe the element that ACTUALLY SCROLLS, not the viewport.
+        // The element that ACTUALLY SCROLLS, not the viewport.
         //
         // The gallery's list lives inside `Layout`'s
         // `flex-1 relative z-10 lg:overflow-y-auto` pane, ~1400px below the top
@@ -105,36 +83,52 @@ export function useInfiniteScroll({
         //
         // Falls back to the viewport when the sentinel has no scrollable
         // ancestor, so a sentinel in normal document flow behaves as before.
-        const resolveRoot = () => {
-            if (scrollRoot) return scrollRoot;
-            let el = currentSentinel.parentElement;
-            while (el && el !== document.body) {
-                const overflowY = getComputedStyle(el).overflowY;
-                if (overflowY === 'auto' || overflowY === 'scroll') return el;
-                el = el.parentElement;
-            }
-            return null;
+        const root = resolveScrollRoot(currentSentinel, scrollRoot) ?? window;
+
+        // Gesture listeners belong on the same root as the observer. They were
+        // bound to `window` unconditionally, so on the gallery the wheel and
+        // scroll events that drive the idle timer never fired at all: every load
+        // had to go through the `pendingLoadRef` path instead, and the one
+        // wheel gesture that should have been enough was not.
+        const options = { passive: true };
+        root.addEventListener('touchstart', markUserActivity, options);
+        root.addEventListener('touchmove', markUserActivity, options);
+        root.addEventListener('touchend', endUserActivity, options);
+        root.addEventListener('touchcancel', endUserActivity, options);
+        root.addEventListener('wheel', markUserActivity, options);
+        root.addEventListener('scroll', markUserActivity, options);
+
+        let observer = null;
+        if (currentSentinel && hasMore) {
+            observer = new IntersectionObserver(
+                ([entry]) => {
+                    if (!entry.isIntersecting) return;
+                    if (isUserScrollingRef.current) {
+                        pendingLoadRef.current = true;
+                        return;
+                    }
+                    requestLoad();
+                },
+                {
+                    root: resolveScrollRoot(currentSentinel, scrollRoot),
+                    rootMargin,
+                    threshold: 0.1,
+                },
+            );
+            observer.observe(currentSentinel);
+        }
+
+        return () => {
+            root.removeEventListener('touchstart', markUserActivity);
+            root.removeEventListener('touchmove', markUserActivity);
+            root.removeEventListener('touchend', endUserActivity);
+            root.removeEventListener('touchcancel', endUserActivity);
+            root.removeEventListener('wheel', markUserActivity);
+            root.removeEventListener('scroll', markUserActivity);
+            observer?.disconnect();
+            if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
         };
-
-        const observer = new IntersectionObserver(
-            ([entry]) => {
-                if (!entry.isIntersecting) return;
-                if (isUserScrollingRef.current) {
-                    pendingLoadRef.current = true;
-                    return;
-                }
-                requestLoad();
-            },
-            {
-                root: resolveRoot(),
-                rootMargin,
-                threshold: 0.1,
-            },
-        );
-
-        observer.observe(currentSentinel);
-        return () => observer.disconnect();
-    }, [hasMore, requestLoad, rootMargin, scrollRoot]);
+    }, [endUserActivity, hasMore, markUserActivity, requestLoad, rootMargin, scrollRoot]);
 
     return sentinelRef;
 }

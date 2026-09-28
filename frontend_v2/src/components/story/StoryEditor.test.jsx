@@ -2,7 +2,9 @@ import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 
-vi.mock('@uiw/react-md-editor', () => ({ default: () => <div data-testid="md-editor" /> }));
+// `@uiw/react-md-editor` is gone: it pulled `rehype-prism-plus` -> `refractor`,
+// which registers 594 language grammars (1.1 MB minified) into the app's
+// heaviest chunk, to render a prose editor's paragraphs. Nothing to mock.
 vi.mock('./MentionPicker', () => ({ default: () => <div /> }));
 
 import StoryEditor from './StoryEditor';

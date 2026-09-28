@@ -146,7 +146,7 @@ export default function Personas() {
                     icon={UserRound}
                     title="No personas yet"
                     description="Create reusable user personas to quickly start chats as any character you like."
-                    actionLabel="Create Persona"
+                    primaryLabel="Create Persona"
                     onAction={() => setShowCreate(true)}
                 />
             ) : (

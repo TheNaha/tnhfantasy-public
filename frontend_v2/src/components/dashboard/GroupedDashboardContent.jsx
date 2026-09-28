@@ -13,8 +13,7 @@ import { assetUrl, thumbUrl, assetPath } from '../../utils/assetUrl';
 import { formatTimestamp } from '../../utils/dateTime';
 import { useSessionAssets } from '../../hooks/useSessions';
 import { toLightboxImage } from '../../utils/lightboxImage';
-import { useWindowVirtualizer } from '@tanstack/react-virtual';
-import { useVirtualListScrollMargin } from '../../hooks/useVirtualListScrollMargin';
+import { useListVirtualizer } from '../../hooks/useScrollRoot';
 
 const SESSION_HEADER_HEIGHT = 148;
 const SESSION_MEMBER_ROW_HEIGHT = 116;
@@ -415,8 +414,7 @@ export default memo(function GroupedDashboardContent({
     }, []);
 
     const listRef = useRef(null);
-    const scrollMargin = useVirtualListScrollMargin(listRef);
-    const virtualizer = useWindowVirtualizer({
+    const virtualizer = useListVirtualizer(listRef, {
         count: sortedGroupedEntries.length,
         estimateSize: (index) => {
             const groupItems = sortedGroupedEntries[index]?.[1];
@@ -437,7 +435,6 @@ export default memo(function GroupedDashboardContent({
             return Math.max(280, Math.min(2000, 160 + itemCount * 220));
         },
         getItemKey: (index) => sortedGroupedEntries[index]?.[0] || `group-${index}`,
-        scrollMargin,
         overscan: 2,
     });
 
@@ -463,7 +460,7 @@ export default memo(function GroupedDashboardContent({
                         top: 0,
                         left: 0,
                         width: '100%',
-                        transform: `translateY(${virtualItem.start - scrollMargin}px)`,
+                        transform: `translateY(${virtualItem.start}px)`,
                         paddingBottom: '2rem'
                     }}
                 >

@@ -1,6 +1,7 @@
 import { useState, useEffect, memo, useMemo, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import { createPortal } from "react-dom";
+import { modelListKey } from "../constants/queryKeys";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { filesApi } from "../api";
@@ -68,7 +69,7 @@ const ModelSelector = memo(function ModelSelector({
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ['models', directory, search, sortBy, filterBaseModel, filterType, showNSFW, selectedTags],
+    queryKey: modelListKey({ directory, search, sortBy, filterBaseModel, filterType, showNSFW, selectedTags, pageSize: 50 }),
     queryFn: async ({ pageParam = 0, signal }) => {
       if (!directory) return { files: [] };
       const sortMap = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
