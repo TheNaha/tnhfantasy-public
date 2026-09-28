@@ -407,7 +407,14 @@ async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: floa
     try:
         return await asyncio.wait_for(future, timeout=timeout)
     except asyncio.TimeoutError as exc:
+        # The slot has to be released here as well as on the send failure above.
+        # `worker.current_job` stayed pinned to the timed-out job, so
+        # `_claim_worker_slot` answered `busy_with` for every later dispatch —
+        # each one a retryable ProviderCallError, so a single-worker provider
+        # exhausted the job's attempts and the only things that could clear it
+        # were a worker reconnect or the 90s heartbeat-stale eviction.
         await forget_job_future(job_id)
+        await _release_worker_slot(worker, job_id)
         raise exc
 
 

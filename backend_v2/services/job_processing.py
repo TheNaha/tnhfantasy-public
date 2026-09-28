@@ -188,8 +188,19 @@ async def wait_for_gallery_outputs(
     The DB-backed asset index replaces the old in-memory GalleryIndexer, so we
     verify files exist on the filesystem directly (the worker writes them before
     completion) rather than depending on an index that may not be populated yet.
+
+    Raises `ProviderCallError` if the files never appear. Returning quietly used
+    to let `complete_when_ready` mark the job COMPLETED with no image on disk:
+    the user got a green tick and an empty gallery, and nothing anywhere
+    recorded that the worker had reported a `completed` event for output it
+    never wrote. Raising keeps the failure on the retry/failover path, which is
+    the only place that can still recover it.
     """
     import os
+
+    # Local import: `provider_client` imports from this module, so a top-level
+    # import here is a cycle.
+    from services.provider_client import ProviderCallError
 
     output_paths = [
         output.get("path") or output.get("relative_path")
@@ -208,9 +219,18 @@ async def wait_for_gallery_outputs(
     output_paths = [_absolutize(p) for p in output_paths]
 
     for _ in range(attempts):
-        if all(os.path.exists(p) for p in output_paths):
+        missing = [p for p in output_paths if not os.path.exists(p)]
+        if not missing:
             return
+        last_missing = missing
         await asyncio.sleep(delay_seconds)
+
+    raise ProviderCallError(
+        f"Worker reported {len(output_paths)} image output(s) but "
+        f"{len(last_missing)} never appeared on disk after "
+        f"{attempts * delay_seconds:.0f}s (first missing: {last_missing[0]})",
+        is_retryable=True,
+    )
 
 
 async def finalize_persisted_job_outputs(

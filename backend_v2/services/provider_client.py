@@ -15,6 +15,11 @@ logger = get_logger("provider_client")
 # only the latest payload per job (lossless), so fewer emits never drop tokens.
 LLM_PROGRESS_THROTTLE_SECONDS = 1.0 / 60.0
 
+# How often a generation's progress may be written to the `jobs` row. The
+# websocket event is unaffected, so the UI still updates smoothly; this bounds
+# the number of synchronous commits on the event loop per generation.
+PROGRESS_PERSIST_INTERVAL_SECONDS = 1.0
+
 
 class ProviderCallError(Exception):
     """Raised when a provider call fails and may be retried."""
@@ -172,6 +177,35 @@ class _ImageReducer:
         self.provider_id = provider_id
         self.executed_nodes = set()
         self.final_result = None
+        # Progress frames are coalesced for the database, not for the UI.
+        # ComfyUI emits a `node` and a `progress` event for every step of every
+        # attempt, so a 20-step SDXL job produced 40-60 `update_job` calls, each
+        # one a synchronous SELECT + UPDATE + COMMIT + REFRESH on the event
+        # loop plus a websocket broadcast and a flushed log line. Every gallery,
+        # job-list and provider-status request queued behind them.
+        #
+        # The websocket event still goes out on every frame — that is what the
+        # progress bar reads, and it is cheap. Only the row write is throttled,
+        # to at most one per PROGRESS_PERSIST_INTERVAL_SECONDS.
+        #
+        # No flush is needed. Every terminal branch below discards the pending
+        # frame, because `completed`/`failed`/`cancelled` all overwrite status,
+        # progress and message anyway. And a stream that ends with no terminal
+        # event raises in `finalize()`, which routes to the job's failure path —
+        # so there is no exit where a dropped frame is the last thing the user
+        # would have seen.
+        self._last_persist_at = 0.0
+        self._pending_progress: dict | None = None
+
+    async def _persist_progress(self, **fields) -> None:
+        """Write progress to the row, coalescing bursts. Terminal states bypass."""
+        now = time.perf_counter()
+        if now - self._last_persist_at < PROGRESS_PERSIST_INTERVAL_SECONDS:
+            self._pending_progress = fields
+            return
+        self._last_persist_at = now
+        self._pending_progress = None
+        await self.job_service.update_job(self.job_id, **fields)
 
     async def __call__(self, ev: dict) -> None:
         event = ev.get("event")
@@ -183,8 +217,8 @@ class _ImageReducer:
             # containers still emit 0..1 fractions until they are redeployed.
             percent = int(val * 100) if val <= 1 else int(val)
             overall = int((len(self.executed_nodes) / self.total_nodes) * 100) if self.total_nodes > 0 else percent
-            await self.job_service.update_job(
-                self.job_id, status=JobStatus.GENERATING, progress=percent,
+            await self._persist_progress(
+                status=JobStatus.GENERATING, progress=percent,
                 overall_progress=overall, message=f"Rendering: {percent}%",
             )
         elif event == "node":
@@ -192,8 +226,8 @@ class _ImageReducer:
             if node_id:
                 self.executed_nodes.add(node_id)
             overall = int((len(self.executed_nodes) / self.total_nodes) * 100) if self.total_nodes > 0 else 0
-            await self.job_service.update_job(
-                self.job_id, status=JobStatus.GENERATING, overall_progress=overall,
+            await self._persist_progress(
+                status=JobStatus.GENERATING, overall_progress=overall,
                 message=f"Executing node {len(self.executed_nodes)}/{self.total_nodes}...",
             )
         elif event == "cached_nodes":
@@ -201,11 +235,15 @@ class _ImageReducer:
             for node_id in nodes:
                 self.executed_nodes.add(node_id)
             overall = int((len(self.executed_nodes) / self.total_nodes) * 100) if self.total_nodes > 0 else 0
-            await self.job_service.update_job(
-                self.job_id, status=JobStatus.GENERATING, overall_progress=overall,
+            await self._persist_progress(
+                status=JobStatus.GENERATING, overall_progress=overall,
                 message=f"Cached {len(nodes)} nodes...",
             )
         elif event == "completed":
+            # Terminal: the last coalesced progress frame is now moot, because
+            # the completion path overwrites status, progress and message
+            # anyway. Flushing here would be a redundant write.
+            self._pending_progress = None
             try:
                 validate_image_outputs(ev)
             except ValueError as error:
@@ -225,9 +263,11 @@ class _ImageReducer:
             else:
                 self.final_result = ev
         elif event == "failed":
+            self._pending_progress = None
             raise ProviderCallError(ev.get("message", "Image generation failed"), provider_id=self.provider_id,
                                     is_retryable=bool(ev.get("retryable", False)))
         elif event == "cancelled":
+            self._pending_progress = None
             raise JobCancelledError(ev.get("message") or "Job cancelled by user", provider_id=self.provider_id)
 
     def finalize(self):

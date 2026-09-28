@@ -238,7 +238,27 @@ async def detect_provider_containers(
     candidates: dict[str, str] = {}
 
     if container_manager:
-        for entry in container_manager.list_containers():
+        # Both of these are synchronous Docker socket reads with no timeout, on
+        # the event loop of an `async def` handler. `list_containers` is a raw
+        # `client.containers.list()` with no TTL cache, so this was a blocking
+        # round-trip to the daemon on every call, stalling every other
+        # in-flight request for its duration. `container_manager`'s own
+        # docstring says to call it from `asyncio.to_thread`.
+        #
+        # The session work below stays on the loop: it is bounded, indexed, and
+        # moving a request-scoped `Session` into a worker thread is the pattern
+        # that breaks the moment anything else uses it concurrently.
+        def _scan() -> tuple[list[dict], object, str | None]:
+            entries = container_manager.list_containers()
+            try:
+                raw = container_manager.client.containers.list(all=False)
+            except Exception as exc:
+                return entries, [], str(exc)
+            return entries, raw, None
+
+        entries, raw, scan_error = await asyncio.to_thread(_scan)
+
+        for entry in entries:
             name = entry.get("name") or ""
             provider_id = entry.get("provider_id") or (
                 name[len("tnhcomfy-"):] if name.startswith("tnhcomfy-") else None
@@ -246,11 +266,8 @@ async def detect_provider_containers(
             if provider_id:
                 candidates[provider_id] = name
 
-        try:
-            raw = container_manager.client.containers.list(all=False)
-        except Exception as exc:
-            logger.warning("detect_container_scan_failed", error=str(exc))
-            raw = []
+        if scan_error is not None:
+            logger.warning("detect_container_scan_failed", error=scan_error)
             container_runtime_available = False
 
         skip_prefixes = ("tnhcomfy-backend", "tnhcomfy-frontend", "tnhcomfy-db", "tnhcomfy-deploy-")

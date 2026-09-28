@@ -127,12 +127,48 @@ def _cancel_checker(request: Request):
     return _should_cancel
 
 
-def _delete_thumbnails(local_path: str) -> None:
+def _indexed_thumbnail_path(relative_path: str, session: Session | None) -> str | None:
+    """The exact thumbnail location for an asset, if the index knows it.
+
+    One indexed lookup replaces a walk of the whole thumbnail tree. Returns
+    `None` when the asset is not indexed, which is the only case where a search
+    is justified.
+    """
+    rel = relative_path
+    if not rel:
+        return None
+    try:
+        with _sync_session() as lookup:
+            asset = lookup.exec(
+                select(Asset).where(Asset.relative_path == rel)
+            ).first()
+            if not asset and "/" not in rel:
+                asset = lookup.exec(select(Asset).where(Asset.filename == rel)).first()
+            thumb_rel = asset.thumbnail_relative_path if asset else None
+    except Exception as exc:
+        logger.debug("thumbnail_index_lookup_failed", path=rel, error=str(exc))
+        return None
+    if not thumb_rel:
+        return None
+    try:
+        return get_safe_path(OUTPUT_DIR, thumb_rel)
+    except ValidationError:
+        return None
+
+
+def _delete_thumbnails(local_path: str, session: Session | None = None) -> None:
     """Remove all thumbnail variants for an output image.
 
     Thumbnails live in OUTPUT_DIR/thumb mirrored by date hierarchy
     (output/thumb/YYYY/MM/DD/name.webp) plus legacy flat files
     (output/thumb/name.medium.png / name.full.png).
+
+    The catch-all glob at the end is a full recursive walk of the thumbnail
+    tree — twice, since it runs a `**/*.webp` and a `**/*.png` pattern. At
+    `MAX_BATCH_ITEMS` (1000) that was 2000 full tree walks inside one request,
+    which on a 13k-image library is minutes of syscalls. It now runs only when
+    the index cannot name the thumbnail, which is the rare case; the indexed
+    path is O(1).
     """
     import glob
 
@@ -144,6 +180,13 @@ def _delete_thumbnails(local_path: str) -> None:
         os.path.join(OUTPUT_DIR, "thumb", f"{name_only}.medium.png"),
         os.path.join(OUTPUT_DIR, "thumb", f"{name_only}.full.png"),
     ]
+    # The partitioned layout the reconciler actually writes to, from the index.
+    indexed = _indexed_thumbnail_path(
+        os.path.relpath(local_path, OUTPUT_DIR).replace("\\", "/"), session
+    )
+    if indexed:
+        candidates.append(indexed)
+
     for candidate in candidates:
         try:
             if os.path.exists(candidate):
@@ -151,7 +194,11 @@ def _delete_thumbnails(local_path: str) -> None:
         except OSError as exc:
             logger.debug("thumbnail_remove_failed", path=candidate, error=str(exc))
 
-    # Catch any stragglers elsewhere in the thumb tree (same basename).
+    if indexed:
+        # Every location the reconciler can name has been covered.
+        return
+
+    # Unindexed: catch any stragglers elsewhere in the thumb tree (same basename).
     thumb_root = os.path.join(OUTPUT_DIR, "thumb")
     for pattern in (f"**/{name_only}.webp", f"**/{name_only}.png"):
         for match in glob.glob(os.path.join(thumb_root, pattern), recursive=True):
@@ -1142,9 +1189,9 @@ async def get_v2_gallery(
 
 @router.get("/api/files")
 async def list_files_endpoint(
-    directory: str = "output", 
-    limit: int = 20, 
-    offset: int = 0, 
+    directory: str = "output",
+    limit: int = Query(20, ge=1, le=MAX_BATCH_ITEMS),
+    offset: int = Query(0, ge=0),
     sort: str = "date_desc", 
     search: str | None = None,
     base_model: str | None = None,
@@ -2008,7 +2055,7 @@ def _batch_delete_sync(directory: str, filenames: list[str]) -> dict:
                         if os.path.exists(meta_path):
                             os.remove(meta_path)
 
-                        _delete_thumbnails(local_path)
+                        _delete_thumbnails(local_path, session)
                         _soft_delete_assets(filename, session)
 
                         success_count += 1

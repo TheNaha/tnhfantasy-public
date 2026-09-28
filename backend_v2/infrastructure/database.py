@@ -2,6 +2,7 @@
 import os
 from collections.abc import Generator
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -49,9 +50,49 @@ DB_POOL_TIMEOUT = _positive_int_env("COMFY_DB_POOL_TIMEOUT", 30)
 DB_POOL_RECYCLE = _positive_int_env("COMFY_DB_POOL_RECYCLE", 1800)
 
 
+def _database_url_from_postgres_env() -> str | None:
+    """Assemble a Postgres DSN from discrete `POSTGRES_*` variables.
+
+    `docker-compose.yml` used to interpolate the DSN itself:
+
+        COMFY_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+
+    A URL userinfo section cannot contain `@ : / #` unescaped, and
+    `.env.example` tells the operator to pick their own password — so any of
+    those four characters produced a DSN that fails to parse, the backend never
+    passed its healthcheck, and every service with
+    `depends_on: {backend_v2: {condition: service_healthy}}` (the frontend and
+    all five providers) silently never started. Compose cannot percent-encode an
+    interpolated value, so the assembly has to happen here.
+
+    Returns `None` when `POSTGRES_HOST` is unset, which is how a SQLite or
+    remote-Postgres deployment stays unaffected.
+    """
+    host = os.environ.get("POSTGRES_HOST")
+    if not host:
+        return None
+    user = os.environ.get("POSTGRES_USER", "comfy")
+    password = os.environ.get("POSTGRES_PASSWORD", "comfy")
+    port = os.environ.get("POSTGRES_PORT", "5432")
+    name = os.environ.get("POSTGRES_DB", "comfy")
+    userinfo = quote(user, safe="")
+    if password:
+        userinfo = f"{userinfo}:{quote(password, safe='')}"
+    # Only the userinfo is percent-encoded. SQLAlchemy's URL parser does not
+    # decode the path, so encoding the database name would hand it a literal
+    # `my%20db`; a name with a space in it is a misconfiguration, not a case to
+    # silently transform into a different name.
+    return f"postgresql://{userinfo}@{host}:{port}/{name}"
+
+
 def get_database_url() -> str:
     """Get database URL, ensuring data directory exists."""
-    url = settings.database_url
+    # An explicit `COMFY_DATABASE_URL` always wins: that is how a developer
+    # points at a local SQLite file or a managed instance.
+    url = os.environ.get("COMFY_DATABASE_URL") or settings.database_url
+
+    if not url.startswith("postgresql"):
+        url = _database_url_from_postgres_env() or url
 
     # If using SQLite, ensure directory exists
     if url.startswith("sqlite"):
