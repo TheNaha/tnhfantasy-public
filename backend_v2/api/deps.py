@@ -178,9 +178,9 @@ def get_voice_model_repo(session: Session = Depends(get_session)):
     return VoiceModelRepository(session)
 
 
-def get_campaign_repo(session: Session = Depends(get_session)):
-    from infrastructure.repositories.campaign_repo import CampaignRepository
-    return CampaignRepository(session)
+def get_world_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.world_repo import WorldRepository
+    return WorldRepository(session)
 
 
 def get_scenario_repo(session: Session = Depends(get_session)):

@@ -9,7 +9,7 @@ from api.deps import get_session
 from core.entities import (
     Character, Chat, Lorebook, LorebookEntry,
     Story, Scenario, VoiceModel, CharacterMemory,
-    Location, Campaign,
+    Location, World,
 )
 
 router = APIRouter()
@@ -28,7 +28,7 @@ def get_entity_dashboard(session: Session = Depends(get_session)):
         "voices": session.exec(select(func.count()).select_from(VoiceModel)).one(),
         "memories": session.exec(select(func.count()).select_from(CharacterMemory)).one(),
         "locations": session.exec(select(func.count()).select_from(Location)).one(),
-        "campaigns": session.exec(select(func.count()).select_from(Campaign)).one(),
+        "worlds": session.exec(select(func.count()).select_from(World)).one(),
     }
 
     # Recent activity: last 5 characters, chats, stories

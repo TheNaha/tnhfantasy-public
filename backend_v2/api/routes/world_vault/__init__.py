@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from .characters import router as characters_router
 from .chats import router as chats_router
 from .branches import router as branches_router
-from .campaigns import router as campaigns_router
+from .worlds import router as worlds_router
 from .llm_config import router as llm_config_router
 from .lorebooks import router as lorebooks_router
 from .memories import router as memories_router
@@ -28,7 +28,7 @@ router.include_router(lorebooks_router, prefix="/lorebooks", tags=["Lorebooks"])
 router.include_router(memories_router, prefix="/memories", tags=["Memories"])
 router.include_router(scenarios_router, prefix="/scenarios", tags=["Scenarios"])
 router.include_router(personas_router, prefix="/personas", tags=["Personas"])
-router.include_router(campaigns_router, prefix="/campaigns", tags=["Campaigns"])
+router.include_router(worlds_router, prefix="/worlds", tags=["Worlds"])
 router.include_router(stories_router, prefix="/stories", tags=["Stories"])
 router.include_router(sessions_router, prefix="/sessions", tags=["Sessions"])
 # No sub-prefix: the tag paths are already absolute under /api/v2

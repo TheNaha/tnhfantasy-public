@@ -1685,6 +1685,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add providers.capabilities so a provider declares which task types (image/tts) it can serve, backfilled from worker_type; a tts job no longer routes to a worker with no TTS nodes",
             apply_fn=_migration_076_provider_capabilities,
         ),
+        MigrationStep(
+            version="077_campaigns_to_worlds",
+            description="Rename campaigns to worlds, widen a world's index to lorebooks/scenarios/voices, and give chats and stories a nullable world_id so a world can actually scope something",
+            apply_fn=_migration_077_campaigns_to_worlds,
+        ),
     ]
 
 
@@ -3183,4 +3188,111 @@ def _migration_076_provider_capabilities(conn) -> bool:
         column="capabilities",
         rows=result.rowcount if result.rowcount and result.rowcount > 0 else 0,
     )
+    return True
+
+
+def _migration_077_campaigns_to_worlds(conn) -> bool:
+    """Rename `campaigns` to `worlds`, widen its index, and give chats/stories an owner.
+
+    `Campaign` was the only entity in the vault that grouped anything and it was
+    referenced by nothing: no foreign key in either direction, and no read outside
+    its own dashboard. Meanwhile three surfaces were already called "World" with
+    no world behind any of them. The rename is what lets the timeline and the
+    graph be *scoped* rather than global.
+
+    Three changes, and the third is the one that matters:
+
+      1. `campaigns` -> `worlds`, so the name and the table agree. A rename
+         rather than drop-and-recreate, so ids and any external references
+         survive. The entity was renamed too, so the old name exists nowhere
+         except in git history and this comment.
+      2. `lorebook_ids`, `scenario_ids`, `voice_ids` added. Campaign could only
+         index characters, locations, chats and stories, so a world could not
+         show the lorebooks or voices that belong to it — the two things a world
+         most needs to name.
+      3. `chats.world_id` and `stories.world_id`, NULLABLE. This is the actual
+         gap: a membership array is an index, not ownership, and a world that
+         owns nothing cannot scope the timeline or the graph. Nullable because
+         forcing every existing chat into a world would be inventing a
+         relationship the user never stated, and because the front door still has
+         to work for someone who has not made a world yet.
+
+    The graph layout is scoped by `graph_layouts.name`, which already exists and
+    already defaults to "default" — so per-world layouts need no schema change,
+    only a different value for that column. Done in the frontend/API layer.
+    """
+    if conn.dialect.name != "postgresql":
+        return True
+
+    inspector = inspect(conn)
+    tables = set(inspector.get_table_names())
+
+    # Three end states are possible and the migration has to handle all of them,
+    # because `create_db_and_tables()` runs `SQLModel.create_all` BEFORE this
+    # function and the entity is now `World`:
+    #
+    #   campaigns only  -> rename it (the common case: an existing deployment)
+    #   both            -> `create_all` already made an EMPTY `worlds`, so the
+    #                      rename is skipped and `campaigns` is left orphaned.
+    #                      The first version of this migration stopped here and
+    #                      never recorded the step correctly.
+    #   worlds only     -> nothing to do (a fresh install)
+    #
+    # So when both exist, reconcile rather than assume: move any rows across, then
+    # drop the empty husk. Dropping is safe precisely because `Campaign` had no
+    # foreign keys in either direction, so nothing can cascade.
+    if "campaigns" in tables and "worlds" in tables:
+        legacy_rows = conn.execute(text("SELECT count(*) FROM campaigns")).scalar() or 0
+        if legacy_rows:
+            shared = [
+                "id", "name", "description", "character_ids", "location_ids",
+                "story_ids", "chat_ids", "created_at", "updated_at",
+            ]
+            conn.execute(
+                text(
+                    "INSERT INTO worlds (" + ", ".join(shared) + ") "
+                    "SELECT " + ", ".join(shared) + " FROM campaigns "
+                    "WHERE id NOT IN (SELECT id FROM worlds)"
+                )
+            )
+            logger.info(
+                "migration_campaign_rows_moved", table="campaigns", rows=legacy_rows
+            )
+        conn.execute(text("DROP TABLE campaigns"))
+        logger.info("migration_table_dropped", table="campaigns", reason="renamed_to_worlds")
+        tables.discard("campaigns")
+    elif "campaigns" in tables:
+        conn.execute(text("ALTER TABLE campaigns RENAME TO worlds"))
+        logger.info("migration_table_renamed", old="campaigns", new="worlds")
+        tables.discard("campaigns")
+        tables.add("worlds")
+
+    if "worlds" not in tables:
+        return False
+
+    world_cols = {c["name"] for c in inspect(conn).get_columns("worlds")}
+    for column in ("lorebook_ids", "scenario_ids", "voice_ids"):
+        if column not in world_cols:
+            conn.execute(text(f"ALTER TABLE worlds ADD COLUMN {column} JSONB"))
+            logger.info("migration_column_added", table="worlds", column=column)
+
+    # Columns FIRST, indexes second.
+    #
+    # The original order built `ix_chats_world_id` before the column existed, so
+    # it failed with `column "world_id" does not exist` and — because the runner
+    # re-raises on the first failing step — took the whole application down at
+    # startup. A migration that cannot run must not be able to prevent a
+    # deployment from booting, but the ordering here is simply wrong and the fix
+    # is to add the column and then index it.
+    for table in ("chats", "stories"):
+        if table not in tables:
+            continue
+        cols = {c["name"] for c in inspect(conn).get_columns(table)}
+        if "world_id" not in cols:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN world_id VARCHAR"))
+            logger.info("migration_column_added", table=table, column="world_id")
+        conn.execute(
+            text(f"CREATE INDEX IF NOT EXISTS ix_{table}_world_id ON {table} (world_id)")
+        )
+
     return True

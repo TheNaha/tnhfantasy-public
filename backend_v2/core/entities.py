@@ -1178,6 +1178,12 @@ class Chat(SQLModel, table=True):
     character_id: str | None = Field(foreign_key="characters.id", default=None, index=True)
     name: str = Field(default="New Chat")
     chat_type: str = Field(default="chat") # "chat" or "story"
+    # The world this chat belongs to. Nullable, so an existing chat is not
+    # forced into one and the migration is a pure addition. This is the
+    # ownership of record — `World.chat_ids` is a denormalised index for the
+    # world page and the graph, and the two can legitimately disagree for a chat
+    # that was added to a world's index without being moved into it.
+    world_id: str | None = Field(foreign_key="worlds.id", default=None, index=True)
     persona_name: str | None = Field(default=None) # Used for {{user}} substitutions
     additional_character_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     story_time: str | None = Field(default=None)
@@ -1387,6 +1393,8 @@ class Story(SQLModel, table=True):
     lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # active lorebooks
     location_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # active locations
     scenario_id: str | None = Field(default=None, foreign_key="scenarios.id")  # base scenario
+    # See `Chat.world_id`.
+    world_id: str | None = Field(foreign_key="worlds.id", default=None, index=True)
     llm_model: str | None = Field(default=None)  # Per-story LLM model override
     memory: str | None = Field(default=None, sa_column=Column(Text))  # Global author's note / story memory
     # Story state
@@ -1464,15 +1472,38 @@ class Location(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-class Campaign(SQLModel, table=True):
-    __tablename__ = "campaigns"
+class World(SQLModel, table=True):
+    """A world: the thing the rest of the vault is organised around.
+
+    Was `Campaign`, and the name is the point of the rename. The product already
+    had three surfaces called "World" — World Timeline, World Graph, World Vault —
+    with no world behind any of them, while `Campaign` was the only entity
+    grouping anything and was referenced by nothing: no FK in either direction, no
+    read outside its own dashboard, and no entry point from a chat or a story.
+    The two names had to be reconciled, and "World" is the one the rest of the UI
+    already assumed existed.
+
+    The membership columns are a *denormalised index* for the graph and the world
+    page, not the ownership of record. A world may list a character it does not
+    own — that is what makes it an index. Ownership of a chat or a story is
+    `Chat.world_id` / `Story.world_id`, which is why those were added: a world
+    that owns nothing cannot scope anything, and the timeline and the graph both
+    need a scope to filter on.
+    """
+    __tablename__ = "worlds"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
     description: str | None = Field(default=None, sa_column=Column(Text))
     character_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    location_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    scenario_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    voice_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    # Kept from Campaign: the dashboard reads these directly, and a world that
+    # indexes its chats and stories is what makes "what is in this world" one
+    # query rather than a join across three ownership columns.
     story_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     chat_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
-    location_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
