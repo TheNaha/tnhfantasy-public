@@ -133,12 +133,45 @@ export function ChatWorkspaceProvider({ children }) {
     }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
+        // URL -> store, only.
+        //
+        // This used to be a two-way sync, and that is why you could not change
+        // chats. The store is what `ChatSidebar` sets on click; the URL is what
+        // this effect treated as authoritative. Selecting a second chat set the
+        // store while the URL still held the first, so the next render came back
+        // through here and reset the store to the URL's chat — the selection was
+        // reverted the instant it was made, with no error and no console warning.
+        //
+        // Deleting a chat hit the same fight from the other side: the handler
+        // moved the store to the next chat, this effect pulled it back to the
+        // deleted one, and its queries 404'd and retried — the "the chat is gone"
+        // loop.
+        //
+        // So the URL is now the single writer for *which* chat is open, and
+        // `selectChat` (below) is the only thing that changes it. A deep link
+        // still works, because the URL drives the store.
         if (urlChatId && activeChatId !== urlChatId) {
             setActiveChatId(urlChatId);
         } else if (!urlChatId && activeChatId) {
             navigate(`/chat/${activeChatId}`, { replace: true });
         }
     }, [activeChatId, urlChatId, navigate, setActiveChatId]);
+
+    /**
+     * Select a chat: one navigation, which is the only thing that changes it.
+     *
+     * Every call site went through the bare store setter, which is why the URL
+     * and the store could disagree. `navigate` is used rather than
+     * `setSearchParams` so the chat id stays a path segment and the address bar
+     * is shareable, matching the `/chat/:id` route.
+     */
+    const selectChat = useCallback(
+        (chatId) => {
+            if (!chatId || chatId === activeChatId) return;
+            navigate(`/chat/${chatId}`);
+        },
+        [activeChatId, navigate]
+    );
 
     const [suggestJobId, setSuggestJobId] = useState(null);
     const suggestJobIdRef = useRef(null);
@@ -318,7 +351,7 @@ export function ChatWorkspaceProvider({ children }) {
                             character_id: characterId,
                             override_greeting: selectedGreeting 
                         });
-                        setActiveChatId(chat.id);
+                        selectChat(chat.id);
                     }
                 });
             } else {
@@ -326,7 +359,7 @@ export function ChatWorkspaceProvider({ children }) {
                     { name: 'New Chat', character_id: characterId },
                     {
                         onSuccess: (chat) => {
-                            setActiveChatId(chat.id);
+                            selectChat(chat.id);
                         },
                         onError: () => { hasCreatedChatRef.current = false; }
                     }
@@ -335,6 +368,10 @@ export function ChatWorkspaceProvider({ children }) {
         }
     }, [location.state?.characterId, characters, activeChatId, createChatMutation, setActiveChatId]);
 
+    // Bootstrap only: no chat is open and the list has one. Deliberately the raw
+    // setter, because the URL is empty here and the effect above turns the store
+    // value into the URL. Navigating directly would work too, but keeping the
+    // "URL is the writer" rule means exactly one place changes the URL.
     useEffect(() => {
         if (chats?.length > 0 && !activeChatId) {
             setActiveChatId(chats[0].id);
@@ -404,7 +441,7 @@ export function ChatWorkspaceProvider({ children }) {
             try {
                 const newChat = await createChatMutation.mutateAsync({ name: 'New Chat' });
                 chatIdToUse = newChat.id;
-                setActiveChatId(newChat.id);
+                selectChat(newChat.id);
             } catch {
                 toast.error('Failed to create chat');
                 return;
@@ -668,7 +705,7 @@ export function ChatWorkspaceProvider({ children }) {
                         ...payload,
                         override_greeting: selectedGreeting 
                     });
-                    setActiveChatId(chat.id);
+                    selectChat(chat.id);
                     setMobileTab('chat');
                     toast.success('New chat created');
                 }
@@ -678,7 +715,7 @@ export function ChatWorkspaceProvider({ children }) {
                 payload,
                 {
                     onSuccess: (chat) => {
-                        setActiveChatId(chat.id);
+                        selectChat(chat.id);
                         setMobileTab('chat');
                         toast.success('New chat created');
                     },
@@ -719,13 +756,23 @@ export function ChatWorkspaceProvider({ children }) {
             await deleteChatMutation.mutateAsync(chat.id);
             if (activeChatId === chat.id) {
                 const remaining = chats?.filter(c => c.id !== chat.id);
-                setActiveChatId(remaining?.[0]?.id || null);
+                // Navigate, do not set the store. Setting the store left the URL
+                // pointing at the chat that had just been deleted, and the
+                // URL-authoritative effect above pulled the selection straight back
+                // to it — so the workspace loaded a chat that no longer existed and
+                // its queries 404'd on every refetch.
+                if (remaining?.[0]?.id) {
+                    selectChat(remaining[0].id);
+                } else {
+                    setActiveChatId(null);
+                    navigate('/chat', { replace: true });
+                }
             }
             toast.success('Chat deleted');
         } catch {
             toast.error('Failed to delete chat');
         }
-    }, [activeChatId, chats, confirm, deleteChatMutation, setActiveChatId]);
+    }, [activeChatId, chats, confirm, deleteChatMutation, navigate, selectChat, setActiveChatId]);
 
     const startRename = useCallback((chat) => { setRenamingChatId(chat.id); setRenameValue(chat.name || ''); }, []);
     const finishRename = useCallback(async () => {
@@ -884,7 +931,7 @@ export function ChatWorkspaceProvider({ children }) {
             // yet, and the root key would refetch every open chat's prompt
             // assembly.
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
-            setActiveChatId(chat.id);
+            selectChat(chat.id);
             toast.success(`Imported "${chat.name}"`);
         } catch (err) {
             toast.error(err.message || 'Failed to import chat');
@@ -1051,6 +1098,7 @@ export function ChatWorkspaceProvider({ children }) {
         sendMessageMutation,
         setActiveBranch,
         setActiveChatId,
+        selectChat,
         setActiveCommand,
         setAgenticMode,
         setAvatarModalSrc,

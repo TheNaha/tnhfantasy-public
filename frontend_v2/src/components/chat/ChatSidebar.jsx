@@ -17,7 +17,7 @@ export default function ChatSidebar({
     renameValue,
     setRenameValue,
     finishRename,
-    setActiveChatId,
+    selectChat,
     setMobileTab,
     activeChatId,
     characters,
@@ -109,8 +109,8 @@ export default function ChatSidebar({
                             <div
                                 role="button"
                                 tabIndex={0}
-                                onClick={() => { setActiveChatId(chat.id); setMobileTab('chat'); }}
-                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveChatId(chat.id); setMobileTab('chat'); } }}
+                                onClick={() => { selectChat(chat.id); setMobileTab('chat'); }}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectChat(chat.id); setMobileTab('chat'); } }}
                                 className={clsx(
                                     "w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-center gap-2.5 cursor-pointer",
                                     activeChatId === chat.id

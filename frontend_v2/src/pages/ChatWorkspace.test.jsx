@@ -9,8 +9,16 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false 
 Element.prototype.scrollIntoView = vi.fn();
 
 const mockActiveChatId = vi.hoisted(() => vi.fn(() => 'chat-1'));
+// `MemoryRouter` swallows navigation, so the URL change is observed at the
+// `useNavigate` boundary — which is also the unit the fix changed.
+const mockNavigate = vi.hoisted(() => vi.fn());
 const mockSetActiveChat = vi.hoisted(() => vi.fn());
 const addImagesToCollectionMock = vi.hoisted(() => vi.fn().mockResolvedValue({}));
+
+vi.mock('react-router-dom', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, useNavigate: () => mockNavigate };
+});
 
 vi.mock('../store/worldVaultStore', () => ({
     useWorldVaultStore: (sel) =>
@@ -220,6 +228,68 @@ describe('ChatWorkspace page', () => {
         await waitFor(() => {
             expect(delChat).toHaveBeenCalledWith('chat-1');
         });
+    });
+
+    // The URL is the single writer for which chat is open.
+    //
+    // These two used to fail, and the failure was silent. The context synced the
+    // URL and the worldVault store in BOTH directions while every writer — the
+    // sidebar click, the delete handler, new-chat, import — only set the store.
+    // The URL always won, so selecting a different chat was reverted on the next
+    // render (no error, no console warning, the item never highlighted), and
+    // deleting the open chat pulled the selection back to the chat that had just
+    // been deleted, whose queries then 404'd on every refetch.
+    it('selecting a chat navigates instead of only writing the store', async () => {
+        mockChats.mockReturnValue({
+            data: [
+                { id: 'chat-1', name: 'Test Chat', character_id: null },
+                { id: 'chat-2', name: 'Second Chat', character_id: null },
+            ],
+            isLoading: false,
+        });
+
+        renderWithProviders(<ChatWorkspace />);
+
+        fireEvent.click(screen.getByText('Second Chat'));
+
+        // The store write alone is not the assertion — that is exactly what got
+        // stomped. The navigation is the durable half, and it is the only thing
+        // the URL-authoritative effect cannot undo.
+        await waitFor(() => {
+            expect(mockNavigate).toHaveBeenCalledWith('/chat/chat-2');
+        });
+    });
+
+    it('deleting the open chat navigates away from the deleted id', async () => {
+        // The loop. The handler moved the store to the next chat and the effect
+        // pulled it back to the deleted one, so the workspace loaded a chat that
+        // no longer existed.
+        const delChat = vi.fn().mockResolvedValue({});
+        mockDeleteChat.mockReturnValue({ mutateAsync: delChat, isPending: false });
+        mockChats.mockReturnValue({
+            data: [
+                { id: 'chat-1', name: 'Test Chat', character_id: null },
+                { id: 'chat-survivor', name: 'Survivor', character_id: null },
+            ],
+            isLoading: false,
+        });
+
+        renderWithProviders(<ChatWorkspace />);
+
+        // Cleared here, not in `beforeEach`: with no `:id` route param the
+        // bootstrap effect navigates to the open chat on mount, and that is
+        // unrelated to the delete under test. Asserting over the full call log
+        // therefore measured the wrong thing.
+        mockNavigate.mockClear();
+
+        // Scoped to the first row: two chats means two "Delete chat" buttons,
+        // and the one under test is the open one.
+        fireEvent.click(screen.getAllByLabelText('Delete chat')[0]);
+        await waitFor(() => expect(delChat).toHaveBeenCalledWith('chat-1'));
+
+        const destinations = mockNavigate.mock.calls.map((c) => String(c[0]));
+        expect(destinations.some((d) => d.endsWith('/chat-1'))).toBe(false);
+        expect(destinations).toContain('/chat/chat-survivor');
     });
 
     it('enters rename mode and updates chat name', async () => {
