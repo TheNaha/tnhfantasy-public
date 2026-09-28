@@ -1122,6 +1122,21 @@ async def generate_swipe(
         metadata["agentic"] = True
         metadata["orchestrator_depth"] = 0
         metadata["original_messages"] = context
+        # This is a re-generation of a turn the user already has, not a new
+        # conversational turn, so it must not trigger memory extraction.
+        #
+        # The extraction hook fires for every job classified `chat_reply`, and
+        # this one is exactly that. `should_extract_memories` counts only USER
+        # messages, so a swipe leaves the count unchanged and RE-OPENS the gate —
+        # the extractor then runs over a near-identical 20-message window and
+        # produces a second copy of the same memories. Deduplication catches the
+        # identical case, but a regeneration deletes the messages the window was
+        # built from, so the two windows differ and the same fact can come back
+        # reworded and slip past an exact match.
+        #
+        # Suppressing it here is the actual fix; the dedup in
+        # `memory_extraction` is the backstop for every other re-run path.
+        metadata["suppress_memory_extraction"] = True
         metadata["max_agentic_depth"] = chat.max_agentic_depth or 3
 
     job_service = get_job_service(session)
@@ -1298,6 +1313,21 @@ async def regenerate_reply(
         metadata["agentic"] = True
         metadata["orchestrator_depth"] = 0
         metadata["original_messages"] = context
+        # This is a re-generation of a turn the user already has, not a new
+        # conversational turn, so it must not trigger memory extraction.
+        #
+        # The extraction hook fires for every job classified `chat_reply`, and
+        # this one is exactly that. `should_extract_memories` counts only USER
+        # messages, so a swipe leaves the count unchanged and RE-OPENS the gate —
+        # the extractor then runs over a near-identical 20-message window and
+        # produces a second copy of the same memories. Deduplication catches the
+        # identical case, but a regeneration deletes the messages the window was
+        # built from, so the two windows differ and the same fact can come back
+        # reworded and slip past an exact match.
+        #
+        # Suppressing it here is the actual fix; the dedup in
+        # `memory_extraction` is the backstop for every other re-run path.
+        metadata["suppress_memory_extraction"] = True
         effective_max = chat.max_agentic_depth
         if effective_max is not None:
             metadata["max_agentic_depth"] = effective_max

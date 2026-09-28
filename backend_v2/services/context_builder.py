@@ -38,6 +38,63 @@ SYSTEM_TOKEN_FLOOR = 512
 # below that the model has nothing to continue.
 MIN_UNPINNED_MESSAGES = 2
 
+# How much of a message contributes to the lorebook relevance query.
+#
+# The query is not the prompt — it is the text used to rank world-info entries by
+# embedding similarity. Short turns contribute all of themselves. A long one is
+# truncated from the END, not the start, because the end is what a continuation
+# has to react to: a story chapter's opening is the setup that was already
+# resolved, and `story_illustrate_system_prompt` in `stories.py` already slices
+# the same way with `[-2000:]`. Taking `[:200]` for a 30,000-word chapter
+# therefore threw away the entire scene the user had just written and searched
+# on its preamble instead.
+LOREBOOK_QUERY_CHARS = 500
+
+
+def _msg_field(message: Any, field: str, default: Any = None) -> Any:
+    """Read `field` off a message that may be a dict OR a SQLModel row.
+
+    `build_chat_context` has two kinds of caller and they disagree on the type
+    they pass. The chat paths (`chats.py`, `agent_simulation.py`,
+    `world_integration_service.py`) pass ORM `Message` rows. Both story paths
+    pass a list of **dicts** — `stories.py` builds
+    `[{"role": "user", "content": chapter.content}]`, because a story chapter is
+    not a chat message and has no `Message` row to point at.
+
+    Reading those dicts with `getattr(m, 'role', None)` returns `None`, because a
+    dict has no attribute `role`. That is not a loud failure: `None` is simply
+    not in the role set, the list comes back empty, and the caller proceeds with
+    whatever it has. That is exactly what happened — the story paths' lorebook
+    query was always empty, so `search_lorebook_entries` skipped semantic search
+    and returned `entries[:limit]`, i.e. the five newest (or, on the constant
+    path, the five oldest) entries per lorebook. Story continuation got
+    recency-ordered world info and the 30,000 words the user had just written
+    never selected any.
+
+    The message-list normalization lower down in this function already
+    branches on `isinstance(msg, dict)`, so the two representations are a known
+    part of the contract here rather than a surprise. This is the same branch,
+    factored out, so the query and the list cannot disagree about what a message
+    is.
+
+    `MessageRole` is a `str` enum, so a dict's `"user"` compares equal to
+    `MessageRole.USER` and no normalisation is needed on either side.
+    """
+    if isinstance(message, dict):
+        return message.get(field, default)
+    return getattr(message, field, default)
+
+
+def _lorebook_query_text(message: Any) -> str:
+    """The slice of one message that should feed the lorebook relevance query."""
+    content = _msg_field(message, "content", "") or ""
+    if not isinstance(content, str) or not content:
+        return ""
+    if len(content) <= LOREBOOK_QUERY_CHARS:
+        return content
+    return content[-LOREBOOK_QUERY_CHARS:]
+
+
 # A message is only trimmed when it is at least this large AND alone over budget.
 #
 # `MIN_UNPINNED_MESSAGES` is authoritative for message COUNT, and it has been
@@ -809,10 +866,20 @@ def build_chat_context(
         _lorebook_query += f"{story_location} "
     if story_time:
         _lorebook_query += f"{story_time} "
-    # Add the last few message contents for richer context
+    # Add the last few message contents for richer context.
+    #
+    # Reads through `_msg_field` so the two story paths, which pass dicts, are
+    # included. This single `getattr` was the whole bug: for a dict it returned
+    # None, `recent` was always empty, and the query stayed "" — see
+    # `_msg_field`. The tail-biased slice is `_lorebook_query_text`.
     if messages:
-        recent = [m for m in messages[-6:] if getattr(m, 'role', None) in (MessageRole.USER, MessageRole.CHAR)]
-        _lorebook_query += " ".join(m.content[:200] for m in recent if m.content)
+        recent = [
+            m for m in messages[-6:]
+            if _msg_field(m, "role") in (MessageRole.USER, MessageRole.CHAR)
+        ]
+        _lorebook_query += " ".join(
+            text for text in (_lorebook_query_text(m) for m in recent) if text
+        )
 
     sections = build_system_prompt_sections(
         session,

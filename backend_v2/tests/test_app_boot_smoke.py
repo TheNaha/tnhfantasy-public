@@ -315,9 +315,18 @@ async def test_lifespan_runs_every_declared_startup_phase(boot, session):
         # Subscriptions are created by the consumer coroutines, which are
         # scheduled rather than run to completion by `start_background_task`, so
         # they are polled for here instead of being assumed to have happened.
-        await _await_until(
-            lambda: event_bus.subscriber_count("provider") > baseline["provider"]
-        )
+        #
+        # The poll's result is ASSERTED. It used to be discarded, so a timeout
+        # fell through to the assertions below and surfaced as a confusing
+        # failure about subscriber counts or worker pools, pointing at the
+        # lifespan rather than at "the task never started within the window".
+        # That misattribution is what made this look like a real regression when
+        # the full suite ran: it starts real threads, and 5 s is tight when 2550
+        # other tests have just been hammering the same event loop.
+        assert await _await_until(
+            lambda: event_bus.subscriber_count("provider") > baseline["provider"],
+            timeout=20.0,
+        ), "the provider consumer never subscribed within 20s of startup"
         return {
             "image_workers": len(queue_manager.image._workers),
             "llm_workers": len(queue_manager.llm._workers),

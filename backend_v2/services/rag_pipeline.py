@@ -46,6 +46,47 @@ def rag_enabled() -> bool:
     return bool(ai_block.get("ragEnabled", True))
 
 
+# Fallback when the config read fails. Matches the shipped default in
+# `config.py` DEFAULT_CONFIG, so an unreadable config behaves like a default one
+# rather than silently disabling retrieval or silently enabling noise.
+_RAG_MAX_DISTANCE_FALLBACK = 0.6
+
+
+def rag_max_distance() -> float:
+    """Cosine-distance cutoff for semantic retrieval (config `ai.ragMaxDistance`).
+
+    pgvector's `cosine_distance` is 0.0 for identical vectors, 1.0 for
+    orthogonal ones and 2.0 for opposite ones. Both searches below used to
+    `ORDER BY cosine_distance LIMIT n` with no cutoff at all, so the top-N were
+    injected into the prompt unconditionally — including the nearest neighbour
+    when it was semantically unrelated. That is pure prompt-budget waste and an
+    active distractor.
+
+    It also compounded a separate defect: `memory_extraction` inserted memories
+    with no dedup, so near-identical copies are always mutual nearest
+    neighbours, which means a fixed top-N retrieved the same duplicates for every
+    query no matter what the user was talking about.
+
+    Returning fewer rows than `limit` is the intended outcome when nothing is
+    close. Injecting unrelated world info into a roleplay is worse than
+    injecting none. Set `ai.ragMaxDistance` to 2.0 to restore unconditional
+    top-N.
+    """
+    import config as app_config
+
+    try:
+        ai_block = app_config.get_config().get("ai") or {}
+    except Exception:  # pragma: no cover - config read failures
+        return _RAG_MAX_DISTANCE_FALLBACK
+    try:
+        value = float(ai_block.get("ragMaxDistance", _RAG_MAX_DISTANCE_FALLBACK))
+    except (TypeError, ValueError):
+        return _RAG_MAX_DISTANCE_FALLBACK
+    # Clamp rather than reject: a config that somehow holds a nonsense value
+    # should not make retrieval throw on every turn.
+    return max(0.0, min(2.0, value))
+
+
 def search_memories(
     session: Session,
     character_id: str,
@@ -86,11 +127,16 @@ def search_memories(
         logger.debug("rag_disabled_keyword_fallback", character_id=character_id)
 
     if q_vec:
+        # `.where(distance < cutoff)` is applied in SQL rather than by fetching
+        # the top-N and filtering in Python, so the LIMIT means "the N nearest
+        # that are actually relevant" instead of "the N nearest, most of which
+        # are thrown away".
         stmt = (
             select(CharacterMemory)
             .where(
                 CharacterMemory.character_id == character_id,
                 CharacterMemory.embedding.is_not(None),
+                CharacterMemory.embedding.cosine_distance(q_vec) < rag_max_distance(),
             )
             .order_by(CharacterMemory.embedding.cosine_distance(q_vec))
             .limit(limit)
@@ -193,6 +239,12 @@ def search_lorebook_entries(
                     .where(
                         LorebookEntry.lorebook_id == lb_id,
                         LorebookEntry.embedding.is_not(None),
+                        # Same cutoff as the memory search, and for the same
+                        # reason. Without it every story turn and every chat turn
+                        # received `[World Information]` holding the N nearest
+                        # entries whether or not they had anything to do with the
+                        # scene.
+                        LorebookEntry.embedding.cosine_distance(q_vec) < rag_max_distance(),
                     )
                     .order_by(LorebookEntry.embedding.cosine_distance(q_vec))
                     .limit(limit)
@@ -203,6 +255,20 @@ def search_lorebook_entries(
                             seen.add(e.id)
                             results.append(e)
                     continue
+                # `top` is empty but we had a query vector, so embeddings EXIST
+                # for this lorebook and none of them is within
+                # `rag_max_distance()`. That is a real answer: nothing here is
+                # relevant to the current scene.
+                #
+                # Falling through to the keyword path here would hand back up to
+                # `limit` arbitrary entries anyway, which is the precise
+                # behaviour the cutoff exists to stop — and it would do so
+                # silently, because the caller cannot tell "5 relevant entries"
+                # from "5 arbitrary ones". Only reach the keyword scan when there
+                # was no vector to begin with (RAG off, SQLite, or the embedding
+                # model unavailable); the `except` below keeps that path too,
+                # since a pgvector error also means no vector.
+                continue
             except Exception as exc:  # pragma: no cover - pgvector edge cases
                 logger.warning(
                     "lorebook_semantic_fallback", lorebook_id=lb_id, error=str(exc)
@@ -230,20 +296,22 @@ def search_lorebook_entries(
                 if e.id not in seen:
                     seen.add(e.id)
                     results.append(e)
+            _append_keyless(session, lb_id, seen, results, limit, len(results))
             continue
 
         query_lower = query.lower()
         matched: list[LorebookEntry] = []
         for e in entries[:scan_cap]:
-            if not e.keys:
+            # Keyless entries are "always on" — `context_builder` injects them
+            # unconditionally — so they match whatever the query is.
+            if not e.keys or any(k.lower() in query_lower for k in e.keys):
                 if e.id not in seen:
                     seen.add(e.id)
                     matched.append(e)
-                continue
-            if any(k.lower() in query_lower for k in e.keys):
-                if e.id not in seen:
-                    seen.add(e.id)
-                    matched.append(e)
+                # The break belongs HERE, not only in the keyed branch below it.
+                # It used to be inside the keyed arm, so a lorebook with many
+                # keyless entries appended every one of them and blew through the
+                # caller's `limit` by 10x, then through `global_limit`.
                 if len(matched) >= limit:
                     break
 
@@ -254,8 +322,57 @@ def search_lorebook_entries(
                     matched.append(e)
 
         results.extend(matched)
+        # Keyless entries are always-on, and the scan above only sees the newest
+        # `scan_cap` rows — so an always-on fact written early in a SillyTavern
+        # import was invisible forever. That is the worst direction for a
+        # "constant" entry: it is supposed to always apply. Fetch them oldest
+        # first so age does not decide visibility.
+        _append_keyless(session, lb_id, seen, results, limit, len(results))
 
     return results[:global_limit]
+
+
+def _append_keyless(
+    session: Session,
+    lorebook_id: str,
+    seen: set[str],
+    results: list[LorebookEntry],
+    limit: int,
+    already: int,
+) -> None:
+    """Append keyless ("always on") entries oldest-first, skipping `seen`.
+
+    A second, ascending query rather than a bigger `scan_cap`: raising the cap
+    would trade a correctness bug for a memory bug on a path that runs on every
+    chat message, suggest, impersonate and story continue. The rows are bounded by
+    `limit` regardless.
+
+    `keys == []` renders as `keys = %(keys_1)s::JSONB` on Postgres and
+    `keys = ?` on SQLite — the same bound-parameter comparison, so no dialect
+    branch is needed. The `not entry.keys` guard afterwards keeps this honest on
+    any backend that stores the empty list differently: a row that slips through
+    the predicate but is not actually keyless is skipped rather than injected.
+    """
+    remaining = max(0, limit - (already - len(seen)))
+    if remaining <= 0:
+        return
+    try:
+        keyless = session.exec(
+            select(LorebookEntry)
+            .where(
+                LorebookEntry.lorebook_id == lorebook_id,
+                LorebookEntry.keys == [],
+            )
+            .order_by(LorebookEntry.created_at.asc())
+            .limit(remaining)
+        ).all()
+    except Exception as exc:  # pragma: no cover - dialect differences
+        logger.debug("keyless_entry_query_skipped", lorebook_id=lorebook_id, error=str(exc))
+        return
+    for entry in keyless:
+        if not entry.keys and entry.id not in seen:
+            seen.add(entry.id)
+            results.append(entry)
 
 
 # Lorebook reindex bounding. Same shape as the memories backfill

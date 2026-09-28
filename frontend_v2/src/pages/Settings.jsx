@@ -1179,6 +1179,8 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                     if (ai.max_output_tokens != null) patch.maxOutputTokens = Number(ai.max_output_tokens);
                     if (ai.frequency_penalty != null) patch.frequencyPenalty = Number(ai.frequency_penalty);
                     if (ai.presence_penalty != null) patch.presencePenalty = Number(ai.presence_penalty);
+                    if (ai.ragEnabled != null) patch.ragEnabled = !!ai.ragEnabled;
+                    if (ai.memoryExtractionEnabled != null) patch.memoryExtractionEnabled = !!ai.memoryExtractionEnabled;
                     if (ai.idleSimEnabled != null) patch.idleSimEnabled = !!ai.idleSimEnabled;
                     if (ai.idleSimIntervalSeconds != null) patch.idleSimIntervalSeconds = Number(ai.idleSimIntervalSeconds);
                     if (Object.keys(patch).length > 0) onSync(patch);
@@ -1204,6 +1206,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                     presence_penalty: settings.presencePenalty == null ? null : Number(settings.presencePenalty),
                     ttsEnabled: settings.ttsEnabled,
                     ragEnabled: settings.ragEnabled !== false,
+                    memoryExtractionEnabled: settings.memoryExtractionEnabled !== false,
                     idleSimEnabled: !!settings.idleSimEnabled,
                     idleSimIntervalSeconds: Number(settings.idleSimIntervalSeconds) || 600,
                 }
@@ -1436,6 +1439,29 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                         {settings.ragEnabled !== false
                             ? 'RAG is enabled. Distant memories and lore entries are retrieved semantically into context.'
                             : 'RAG is disabled. No memories or lore entries are retrieved at all — there is no recency fallback, so the character relies only on the chat history already in context.'}
+                    </p>
+                </SettingGroup>
+
+                <SettingGroup
+                    title="Memory Extraction"
+                    description="Background LLM calls that turn finished conversations into durable character memories"
+                    action={
+                        <button
+                            onClick={() => onUpdate('memoryExtractionEnabled', settings.memoryExtractionEnabled === false)}
+                            className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                                settings.memoryExtractionEnabled !== false
+                                    ? 'bg-green-500/20 border border-green-500/30 text-green-400'
+                                    : 'bg-gray-500/20 border border-gray-600/30 text-gray-500'
+                            }`}
+                        >
+                            {settings.memoryExtractionEnabled !== false ? 'On' : 'Off'}
+                        </button>
+                    }
+                >
+                    <p className="text-xs text-gray-500">
+                        {settings.memoryExtractionEnabled !== false
+                            ? 'Extraction is enabled. Every few user turns a background LLM call reads the recent conversation and writes durable memories. This is a real billable call, and it also runs for swipes, regenerations and idle-simulation replies. Memories are de-duplicated before writing, so repeats do not accumulate.'
+                            : 'Extraction is off. No background LLM calls are made, so memory extraction costs nothing — but the character stops learning new durable facts from conversations. Existing memories are kept and still retrieved.'}
                     </p>
                 </SettingGroup>
 

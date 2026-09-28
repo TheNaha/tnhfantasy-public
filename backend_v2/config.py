@@ -126,6 +126,30 @@ DEFAULT_CONFIG = {
         # an implicit one: `services/rag_pipeline.rag_enabled()` already read
         # it with a `True` default, so adding the key changes no behaviour.
         "ragEnabled": True,
+        # Cosine-distance cutoff for semantic retrieval, applied to BOTH the
+        # character-memory search and the lorebook search. pgvector's
+        # `cosine_distance` is 0 for identical, 1.0 for orthogonal and 2.0 for
+        # opposite, so 1.0 is "no relationship at all" and anything above it is
+        # noise.
+        #
+        # There was no cutoff, so the top-N were injected unconditionally: the
+        # nearest neighbour was included even when it was semantically unrelated,
+        # which spends prompt budget on distractor lore and, because
+        # `memory_extraction` inserts duplicate memories that are then always
+        # near-identical to each other, the same few memories were retrieved for
+        # every query. Raising this drops those; set it to 2.0 to restore the
+        # old unconditional top-N.
+        "ragMaxDistance": 0.6,
+        # Whether a chat reply may enqueue the background LLM call that writes
+        # character memories.
+        #
+        # There was no gate at all, so this was an unconditional paid call on
+        # every Nth turn with no way to turn it off — including for swipes and
+        # regenerations, and for idle-simulation replies the user never wrote.
+        # Default stays TRUE so upgrading changes no behaviour, but the switch
+        # now exists and is exposed in Settings. Set false to make the cost zero
+        # at the price of memories not accumulating.
+        "memoryExtractionEnabled": True,
     },
     "system_prompts": {
         "roleplay_default": "You are a highly descriptive AI roleplay character. Write engaging, detailed, and immersive responses in character. Stay true to the character's personality, background, and speech patterns. Do not act as an AI assistant.\n\nFormatting rules:\n- Put the character's spoken dialogue in double quotation marks, one line per dialogue.\n- Put actions, narration, sounds, and emphasis in asterisks: *she frowns*.\n- Write actions on their own line, separated from dialogue.\n- Never wrap narration or prose in quotation marks.\n- Never leave stray asterisks or quotes; every * and \" must be paired.\n- Keep dialogue on a single line; do not insert line breaks inside quotes.",
@@ -529,6 +553,8 @@ SECTION_LEAF_ALLOW_LISTS: dict[str, frozenset[str]] = {
     "ai": frozenset({
         "maxContextTokens",
         "temperature",
+        "ragMaxDistance",
+        "memoryExtractionEnabled",
         "top_p",
         "max_output_tokens",
         "frequency_penalty",
@@ -739,6 +765,11 @@ def _validate_config(config: dict[str, Any]) -> None:
         _check_range("ai", "presence_penalty", ai.get("presence_penalty"), minimum=-2, maximum=2)
         _check_bool("ai", "ttsEnabled", ai.get("ttsEnabled"))
         _check_bool("ai", "ragEnabled", ai.get("ragEnabled"))
+        # pgvector cosine_distance runs 0 (identical) to 2 (opposite), so 2.0
+        # is the value that disables the cutoff entirely and restores the old
+        # unconditional top-N.
+        _check_range("ai", "ragMaxDistance", ai.get("ragMaxDistance"), minimum=0, maximum=2)
+        _check_bool("ai", "memoryExtractionEnabled", ai.get("memoryExtractionEnabled"))
         _check_bool("ai", "idleSimEnabled", ai.get("idleSimEnabled"))
         # A non-positive interval would either spin the idle-simulation loop or
         # divide by zero in the scheduler, so it is rejected outright rather

@@ -1228,7 +1228,19 @@ class CharacterMemory(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     character_id: str = Field(foreign_key="characters.id", index=True)
     content: str = Field(sa_column=Column(Text))
-    embedding: list[float] | None = Field(default=None, sa_column=Column(Vector(384)))
+    # `exclude=True` keeps 384 floats out of every API response. The route
+    # handlers return ORM rows, and `api/routes/world_vault/memories.py` declares
+    # no `response_model` at all, so FastAPI fell through to `jsonable_encoder`
+    # and serialised the whole vector: a 200-row page of memories is ~1.5 MB of
+    # JSON the UI never reads, re-fetched and re-cached on every page.
+    #
+    # This is the only place a 384-float vector should be excluded, because it is
+    # pydantic-level: the column, the ORM read, and the pgvector
+    # `cosine_distance` predicates in `rag_pipeline` all go through SQLAlchemy
+    # and are unaffected. Every writer in the codebase assigns
+    # `mem.embedding = vector` as an attribute rather than reconstructing the row
+    # from a dump, so nothing loses a vector on the way in.
+    embedding: list[float] | None = Field(default=None, exclude=True, sa_column=Column(Vector(384)))
     tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     importance: int = Field(default=5, ge=1, le=10)
     last_accessed_at: datetime | None = Field(default=None)
@@ -1268,7 +1280,11 @@ class LorebookEntry(SQLModel, table=True):
     probability: int | None = Field(default=None)
 
     # 384 dimensions for all-MiniLM-L6-v2 (CPU optimized)
-    embedding: list[float] | None = Field(default=None, sa_column=Column(Vector(384)))
+    # Excluded from serialisation for the same reason as `CharacterMemory.embedding`:
+    # `lorebooks.py` declares `response_model=list[LorebookEntry]`, which does not
+    # help because the field was *in* the response model, so every entry listing
+    # shipped 384 floats per row.
+    embedding: list[float] | None = Field(default=None, exclude=True, sa_column=Column(Vector(384)))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

@@ -25,6 +25,34 @@ MEMORY_EXTRACTION_WINDOW = 20
 # extraction has something to connect — a single new turn is often small talk.
 MEMORY_EXTRACTION_MIN_NEW_TURNS = 2
 
+# Cosine-distance cutoff for treating a newly extracted memory as a near-duplicate
+# of one the character already has.
+#
+# Deliberately very tight. This is not a relevance filter — retrieval has its own
+# cutoff (`rag_pipeline.rag_max_distance`) and loosening this would start
+# discarding genuinely distinct facts. 0.06 on MiniLM sentence embeddings is
+# "the same sentence, lightly reworded", which is what regenerating a reply
+# produces. An exact normalised-content match is also checked, and is what
+# catches the common case at zero cost.
+MEMORY_DEDUP_MAX_DISTANCE = 0.06
+
+
+def memory_extraction_enabled() -> bool:
+    """Whether a chat reply may enqueue the memory-extraction LLM call.
+
+    Config `ai.memoryExtractionEnabled`, default true. There was no gate before,
+    so this ran as an unconditional billed call — and not only on real replies:
+    `generate_swipe` and `regenerate_reply` both default to `type_="chat_reply"`,
+    and the idle simulator fires one for a turn the user never wrote.
+    """
+    import config as app_config
+
+    try:
+        ai_block = app_config.get_config().get("ai") or {}
+    except Exception:  # pragma: no cover - config read failures default to on
+        return True
+    return bool(ai_block.get("memoryExtractionEnabled", True))
+
 EXTRACTION_PROMPT = """You are a memory extraction assistant. Given a conversation between a user and a character, extract durable, factual memories that the character should remember for future interactions.
 
 Rules:
@@ -102,6 +130,9 @@ async def enqueue_memory_extraction(
     job_service,
 ) -> bool:
     """Enqueue a background LLM job to extract memories from a chat."""
+    if not memory_extraction_enabled():
+        logger.debug("memory_extraction_disabled", chat_id=chat_id)
+        return False
     recent = _recent_messages(session, chat_id)
     if not should_extract_memories(recent):
         return False
@@ -151,6 +182,63 @@ def parse_extraction_result(text: str) -> list[str]:
     return []
 
 
+def _normalize_memory_text(text: str) -> str:
+    """Case- and whitespace-insensitive form of a memory, for exact dedup.
+
+    The extractor is an LLM, so the same fact comes back with different casing
+    and line breaks between runs. Normalising both is what makes exact matching
+    actually catch regeneration instead of only catching byte-identical output.
+    """
+    return " ".join(str(text or "").split()).strip().casefold()
+
+
+def _existing_normalized_contents(session: Session, character_id: str) -> set[str]:
+    """Normalised content of every memory the character already has.
+
+    `content` is a Text column with no index, so this is a sequential scan of
+    one character's memories. That is acceptable because it replaces an embedding
+    forward pass per candidate plus a pgvector query per candidate, and a
+    character has hundreds of memories, not millions. An index on a normalised
+    expression would need a migration and would only pay off at a scale this
+    table is not at.
+    """
+    rows = session.exec(
+        select(CharacterMemory.content).where(
+            CharacterMemory.character_id == character_id
+        )
+    ).all()
+    return {_normalize_memory_text(c) for c in rows if c}
+
+
+def _near_duplicate_ids(
+    session: Session, character_id: str, embedding: list[float]
+) -> set[str]:
+    """IDs of existing memories within `MEMORY_DEDUP_MAX_DISTANCE` of `embedding`.
+
+    Postgres only: the column is a `Vector(384)`, so on SQLite the query raises
+    and the caller falls back to exact matching alone. That is fine — the exact
+    pass is what handles the dominant regeneration case, and the embedding pass
+    only catches light rewording.
+    """
+    try:
+        rows = session.exec(
+            select(CharacterMemory.id, CharacterMemory.embedding.cosine_distance(embedding))
+            .where(
+                CharacterMemory.character_id == character_id,
+                CharacterMemory.embedding.is_not(None),
+            )
+            .where(
+                CharacterMemory.embedding.cosine_distance(embedding)
+                < MEMORY_DEDUP_MAX_DISTANCE
+            )
+            .limit(5)
+        ).all()
+    except Exception as exc:  # pragma: no cover - pgvector edge cases, or SQLite
+        logger.warning("memory_dedup_vector_query_failed", error=str(exc))
+        return set()
+    return {row[0] for row in rows if row[1] is not None}
+
+
 def create_memories_from_extraction(session: Session, character_id: str, memories: list[str]) -> int:
     """Persist extracted memories as CharacterMemory rows with embeddings.
 
@@ -174,6 +262,48 @@ def create_memories_from_extraction(session: Session, character_id: str, memorie
 
     from services.embedding_service import get_embedding_service
     emb_svc = get_embedding_service()
+
+    # Drop anything the character already has, BEFORE paying for embeddings.
+    #
+    # There was no dedup at all, and the extraction hook fires for more than real
+    # replies: `generate_swipe` and `regenerate_reply` both default to
+    # `type_="chat_reply"`, and the idle simulator fires one for a turn the user
+    # never wrote. `should_extract_memories` counts only USER messages, so a
+    # swipe leaves the count unchanged and re-opens the gate. Regenerating a reply
+    # therefore re-ran extraction over a near-identical 20-message window and
+    # inserted a second copy of the same 1-5 memories, permanently.
+    #
+    # That is not just table bloat. Duplicates are mutual nearest neighbours, so
+    # a fixed top-N retrieval returned the same copies for *every* query — the
+    # memory store's effective capacity was a handful of entries no matter how
+    # many turns had passed.
+    #
+    # Two passes, cheapest first: an exact normalised-content match catches the
+    # common regeneration case with no vector maths at all, and the embedding
+    # comparison only runs on what survives.
+    existing_contents = _existing_normalized_contents(session, character_id)
+    candidates = [m for m in memories if _normalize_memory_text(m) not in existing_contents]
+    # Also dedup within this batch: the extractor can return the same fact twice.
+    seen_in_batch: set[str] = set()
+    deduped: list[str] = []
+    for content in candidates:
+        key = _normalize_memory_text(content)
+        if key in seen_in_batch:
+            continue
+        seen_in_batch.add(key)
+        deduped.append(content)
+
+    duplicate_count = len(memories) - len(deduped)
+    if duplicate_count:
+        logger.info(
+            "memory_extraction_duplicates_dropped",
+            character_id=character_id,
+            dropped=duplicate_count,
+            kept=len(deduped),
+        )
+    if not deduped:
+        return 0
+    memories = deduped
 
     # One batched forward pass, not one per memory. The batched API already
     # exists and `rag_pipeline` already uses it; the per-item loop made this the
@@ -212,7 +342,21 @@ def create_memories_from_extraction(session: Session, character_id: str, memorie
 
     created = 0
     embedding_failures = 0
+    near_duplicates = 0
     for content, embedding, error in zip(memories, embeddings, errors, strict=True):
+        # Second dedup pass, now that vectors exist: the extractor can restate
+        # something the character has under slightly different wording, which the
+        # normalised exact match cannot see. Skipped when this memory has no
+        # vector (it failed to embed), and when the store is SQLite.
+        if embedding is not None:
+            if _near_duplicate_ids(session, character_id, embedding):
+                near_duplicates += 1
+                logger.info(
+                    "memory_extraction_near_duplicate_dropped",
+                    character_id=character_id,
+                    content_preview=content[:60],
+                )
+                continue
         now = datetime.now(timezone.utc)
         mem = CharacterMemory(
             character_id=character_id,
@@ -241,6 +385,8 @@ def create_memories_from_extraction(session: Session, character_id: str, memorie
         "memories_auto_created",
         character_id=character_id,
         count=created,
+        exact_duplicates_dropped=duplicate_count,
+        near_duplicates_dropped=near_duplicates,
         embedding_failures=embedding_failures,
     )
     return created

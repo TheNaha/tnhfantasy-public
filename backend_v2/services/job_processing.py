@@ -670,7 +670,14 @@ async def _finalize_llm_job(
     if job_type == "chat_reply":
         chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
         character_id = job.metadata_.get("character_id") if job.metadata_ else None
-        if chat_id and character_id:
+        # A swipe or a regeneration re-runs a turn the user already has. The
+        # extraction window is near-identical but not identical — a regeneration
+        # deletes the messages it was built from — so deduplication downstream
+        # cannot be relied on to catch every reworded duplicate. Set by
+        # `generate_swipe` and `regenerate_reply`.
+        if job.metadata_ and job.metadata_.get("suppress_memory_extraction"):
+            logger.debug("memory_extraction_suppressed", job_id=job_id, chat_id=chat_id)
+        elif chat_id and character_id:
             try:
                 from services.memory_extraction import enqueue_memory_extraction
                 await enqueue_memory_extraction(
