@@ -765,7 +765,14 @@ def _download_model_to_path_unlocked(
     validation_unknown_header_log_prefix: Optional[str] = None,
     chunk_size: int = 8 * 1024 * 1024,  # 8 MB — reduces Python iteration overhead for large files
     preview_timeout_seconds: float = 30.0,
-    request_timeout_seconds: Optional[float] = None,
+    # A real default, not None. `None` meant "omit the timeout kwarg entirely",
+    # and `requests` then blocks forever on a peer that accepts the connection
+    # and goes quiet. Every current caller passes a value so the unsafe branch
+    # was latent rather than live — but the function's entire job is multi-GB
+    # transfers, and a default that can hang forever is the wrong default for the
+    # next caller. 30 minutes is generous for a single chunked read and still
+    # bounds a stuck container.
+    request_timeout_seconds: Optional[float] = 1800.0,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     retry_backoff_base_seconds: float = RETRY_BACKOFF_BASE_SECONDS,
     retry_backoff_max_seconds: float = RETRY_BACKOFF_MAX_SECONDS,
@@ -867,8 +874,12 @@ def _download_model_to_path_unlocked(
         actual_size = int(validation.get("size", on_disk))
         logger(f"[{log_prefix}] Validation passed: {detected_format}")
 
-        if os.path.exists(full_path):
-            os.remove(full_path)
+        # `os.replace` is a single atomic `rename(2)` and already overwrites the
+        # destination. The `os.remove` in front of it opened a window in which
+        # the destination did not exist: a SIGKILL, an OOM-kill or a power loss
+        # between the two lines left neither the previously-good checkpoint nor
+        # the new one, and the resume slot had just been swept. Narrow window,
+        # total loss of a multi-GB artifact. `replace` is all that is needed.
         os.replace(temp_path, full_path)
         logger(f"[{log_prefix}] Moved to final path: {label}")
 

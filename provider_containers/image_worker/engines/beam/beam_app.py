@@ -578,10 +578,29 @@ async def validate_models(request: Request):
                     continue
                 full_path = entry.path
                 if is_transient_artifact(name):
-                    # A lock or an in-flight download is not a broken model.
-                    # Deleting it here also deleted the model's .json and
-                    # .preview.png sidecars (splitext("x.safetensors.lock") is
-                    # "x.safetensors") and unlinked a held flock.
+                    # Reported, never deleted. Unlinking an in-flight temp leaves
+                    # its writer holding a live descriptor: it finishes the
+                    # transfer and then fails at os.replace, which reconciliation
+                    # reports as a failed download. Unlinking a `.lock` is
+                    # worse — it removes the flock a concurrent downloader
+                    # holds, so a second downloader takes a *different* lock and
+                    # the interleaving corruption the lock exists to prevent
+                    # happens. See `provider_core/utils.py`.
+                    #
+                    # Classified before `is_model_file`, which excludes `.lock`
+                    # and `.downloading` by name — that ordering is why
+                    # `total_partial` was permanently 0 on this engine, so
+                    # reconciliation step 0 (the only step that reads it) ran
+                    # blind. The image Modal app and the LLM app both classify;
+                    # this third copy did not.
+                    if not entry.is_file():
+                        continue
+                    partial_downloads.append({
+                        "name": name,
+                        "size": entry.stat().st_size,
+                        "format": "partial",
+                        "issues": ["Incomplete download (temp file)"],
+                    })
                     continue
                 file_size = entry.stat().st_size
                 validation = validate_downloaded_file(full_path)

@@ -12,7 +12,16 @@ from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, TaskEvent
 )
-from provider_core.responses import failed, files_response, ok
+from provider_core.responses import failed, files_response, llm_healthy, llm_unhealthy, ok, retryable_for_exception, retryable_for_status
+
+
+# The backend's `_check_provider_health` (services/load_balancer.py) counts any
+# provider that answers within a couple of seconds, so the probe has to be
+# tighter than that or a dead endpoint is still counted as a usable target.
+# Each engine keeps its own copy and they are kept in step by hand — the drift
+# `provider_core/http_client.py` should eventually own.
+HEALTH_PROBE_TIMEOUT = float(os.getenv("ANTHROPIC_HEALTH_PROBE_TIMEOUT", "1.5"))
+
 
 
 def _parse_json(value: Any) -> Any:
@@ -107,11 +116,49 @@ class AnthropicProviderClient(BaseProviderClient):
         self.api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
     async def get_health(self) -> Dict[str, Any]:
-        return {
-            "status": "healthy",
-            "provider_id": self.provider_id,
-            "engine": "anthropic",
-        }
+        """Probe Anthropic's free `GET /v1/models` instead of asserting health.
+
+        This returned a hardcoded `{"status": "healthy"}` without touching the
+        network. The backend's `_check_provider_health`
+        (`services/load_balancer.py`) requires HTTP 200, so a provider with no
+        `ANTHROPIC_API_KEY`, or a dead network, counted as a usable target and
+        received paid LLM jobs that all failed. Because every error in this file
+        was also marked `retryable=True`, the balancer then re-dispatched across
+        every other provider.
+
+        `/v1/models` is free — it is not a completion — and is the same endpoint
+        `list_models` already calls, so health and capability can never disagree.
+        401/403 means the key is wrong and will stay wrong; 5xx means Anthropic
+        is having a moment. `retryable_for_status` draws that line.
+        """
+        if not self.api_key:
+            return llm_unhealthy(
+                "anthropic",
+                self.provider_id,
+                "no API key configured (ANTHROPIC_API_KEY)",
+            )
+        client = await get_http_client().get_client()
+        try:
+            response = await client.get(
+                "https://api.anthropic.com/v1/models",
+                headers={
+                    "x-api-key": self.api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+                timeout=HEALTH_PROBE_TIMEOUT,
+            )
+        except Exception as exc:
+            return llm_unhealthy(
+                "anthropic", self.provider_id, f"GET /v1/models failed: {exc}", retryable=True
+            )
+        if response.status_code >= 400:
+            return llm_unhealthy(
+                "anthropic",
+                self.provider_id,
+                f"GET /v1/models returned HTTP {response.status_code}",
+                retryable=retryable_for_status(response.status_code),
+            )
+        return llm_healthy("anthropic", self.provider_id)
 
     async def get_info(self) -> Dict[str, Any]:
         return {
@@ -248,7 +295,7 @@ class AnthropicProviderClient(BaseProviderClient):
                 ).to_ndjson()
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
-                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=True).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=retryable_for_exception(e)).to_ndjson()
             finally:
                 if job_id:
                     await self.job_tracker.end_job(job_id)

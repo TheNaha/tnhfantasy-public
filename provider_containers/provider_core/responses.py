@@ -65,7 +65,10 @@ __all__ = [
     "model_file_entries",
     "from_upstream",
     "retryable_for_status",
+    "retryable_for_exception",
     "config_fault_detail",
+    "llm_healthy",
+    "llm_unhealthy",
 ]
 
 # Keys the envelope owns. An adopted upstream body or an ``extra`` keyword can
@@ -274,11 +277,68 @@ def retryable_for_status(status_code: int, detail: Any = None) -> bool:
     5xx stays retryable by default — an unreachable upstream genuinely is
     transient — but a raiser that knows the fault is permanent says so by
     putting ``"retryable": False`` in a dict detail (see
-    :func:`config_fault_detail`). 4xx is never retryable.
+    :func:`config_fault_detail`).
+
+    4xx is otherwise permanent, with two deliberate exceptions: **429** and
+    **408**. Both are the server asking for a retry rather than reporting a
+    mistake — 429 is a rate limit and 408 is a request timeout — so failing the
+    job outright over either discards work the provider explicitly invited us to
+    repeat. Every other 4xx (400, 401, 403, 404, 409, 413, 422 …) means the
+    request itself is wrong, and re-dispatching it reproduces the failure
+    exactly, on every provider in the pool, for the same money.
     """
     if isinstance(detail, dict) and detail.get("retryable") is not None:
         return bool(detail["retryable"])
+    if status_code in (408, 429):
+        return True
     return status_code >= 500
+
+
+def retryable_for_exception(exc: BaseException) -> bool:
+    """Decide the ``retryable`` flag for a caught exception.
+
+    Every LLM engine used a hardcoded ``retryable=True`` on its failure event.
+    A malformed ``messages`` array or a 400 from the upstream cannot succeed on a
+    second attempt, so the flag made the backend's reducer raise
+    ``ProviderCallError(is_retryable=True)`` and the dispatcher re-ran the request
+    across every other provider — real GPU/token spend on a request that can
+    never work.
+
+    The rule, in order:
+
+    1. An explicit marker wins. ``httpx.HTTPStatusError`` carries the upstream
+       status, so 4xx is permanent and 5xx / 429 are transient.
+    2. ``TimeoutException`` and ``ConnectError`` are transient by nature.
+    3. Anything else (a parsing bug, a TypeError, a programming error) is
+       permanent: retrying it just spends the same money for the same failure.
+
+    The ComfyUI image path already gets this right by accident — its
+    ``_queue_prompt`` errors carry no ``retryable`` key, so
+    ``comfy_status_to_task_event`` leaves it ``None`` and the backend treats it
+    as ``False``.
+    """
+    marker = getattr(exc, "retryable", None)
+    if isinstance(marker, bool):
+        return marker
+
+    try:
+        import httpx
+    except Exception:  # pragma: no cover - httpx is a hard dependency
+        httpx = None  # type: ignore[assignment]
+
+    if httpx is not None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+        if isinstance(status, int):
+            return retryable_for_status(status)
+        # A bare status on the exception, for raisers that attach one directly.
+        status = getattr(exc, "status_code", None)
+        if isinstance(status, int):
+            return retryable_for_status(status)
+        if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError)):
+            return True
+
+    return False
 
 
 def config_fault_detail(message: str, **extra: Any) -> Dict[str, Any]:
@@ -292,3 +352,67 @@ def config_fault_detail(message: str, **extra: Any) -> Dict[str, Any]:
     detail: Dict[str, Any] = {"message": message, "retryable": False}
     detail.update(extra)
     return detail
+
+
+# ── LLM health ──────────────────────────────────────────────────────────────
+#
+# All four LLM engines used to return a hardcoded `{"status": "healthy"}` without
+# touching the network. The backend's `_check_provider_health`
+# (`services/load_balancer.py`) requires HTTP 200, so it counted a dead endpoint
+# as a usable target and dispatched paid LLM jobs at it; the first job then
+# failed, and because every error in those files was also marked
+# `retryable=True`, the balancer re-dispatched across every other provider.
+#
+# `direct_url` and `remote_comfy` were already fixed to do a real probe, with the
+# failure mode spelled out. The fix was never ported to the LLM side, and each
+# engine that got it separately grew its own response shape — which is how
+# `openai_compat` came to differ from its three siblings with nothing to explain
+# the difference. These two builders are the one shape all four use.
+#
+# A "healthy" verdict is never a constant: either something was actually
+# contacted, or a configuration prerequisite was checked. There is no third
+# option.
+
+
+def llm_healthy(engine: str, provider_id: str, **extra: Any) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "status": "healthy",
+        "provider_id": provider_id,
+        "engine": engine,
+        "ready": True,
+    }
+    payload.update(extra)
+    return payload
+
+
+def llm_unhealthy(
+    engine: str,
+    provider_id: str,
+    detail: str,
+    *,
+    retryable: bool = False,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """A health verdict the backend can act on.
+
+    `retryable` is the field that matters operationally. `False` — the default —
+    marks a fault that will not fix itself by waiting: a missing key, a name that
+    resolves to nothing, a 4xx. `True` is for a connection that failed or a 5xx,
+    which genuinely can come back.
+
+    The prefix is `config_fault:` when nothing about waiting will help and
+    `probe_failed:` when it might, so an operator reading a provider panel can
+    tell "this needs a person" from "this is having a moment" without cross-
+    referencing the status code.
+    """
+    prefix = "probe_failed:" if retryable else "config_fault:"
+    payload: Dict[str, Any] = {
+        "status": "unhealthy",
+        "provider_id": provider_id,
+        "engine": engine,
+        "ready": False,
+        "detail": f"{prefix} {detail}",
+        "retryable": retryable,
+    }
+    payload.update(extra)
+    return payload

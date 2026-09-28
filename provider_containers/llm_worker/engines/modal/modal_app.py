@@ -6,11 +6,10 @@ import time
 import asyncio
 from typing import List, Dict, Any, Optional
 
-from provider_core.utils import get_safe_path, is_model_file
+from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
 from provider_core.downloads import download_model_to_path, pending_download_paths
 from provider_core.validation import (
-    MIN_MODEL_SIZE,
-    VALID_FILE_HEADERS,
+    validate_downloaded_file,
 )
 
 logging.basicConfig(
@@ -59,8 +58,12 @@ VALIDATE_MAX_CONTAINERS = int(os.environ.get("MODAL_VALIDATE_MAX_CONTAINERS", "2
 
 async def list_models_with_metadata_internal(base_path: str, directory: str) -> list[Dict[str, Any]]:
     import aiofiles
+    # `get_safe_path` raises on an empty path and the router defaults
+    # `directory=""`, so a bodyless `GET /list-models` raised and a bare
+    # `except: return []` turned that into "no models". `models_utils.py`
+    # already handles it; the copies had drifted.
     try:
-        target_dir = get_safe_path(base_path, directory)
+        target_dir = get_safe_path(base_path, directory) if directory else base_path
     except Exception:
         return []
     if not os.path.exists(target_dir):
@@ -371,26 +374,41 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         "by_directory": {}
     }
 
-    VALID_HEADERS = VALID_FILE_HEADERS
-    MIN_SIZE = MIN_MODEL_SIZE
-
     def validate_single_file_in_dir(directory: str, name: str) -> Optional[Dict[str, Any]]:
+        """Classify one file via the shared validator.
+
+        This used to be a third hand-rolled copy of the magic-byte check, and it
+        unpacked `VALID_FILE_HEADERS` backwards: the table maps magic *bytes* to
+        a format *name*, so `for header_sig, expected in ...` bound `expected` to
+        a str and compared a bytes slice against it. `bytes != str` in Python 3,
+        so the branch never matched, every file over `MIN_MODEL_SIZE` was
+        reported "Unknown file format", and `validate_directory` deleted it —
+        and reconciliation calls this with `delete_invalid=True` on every tick.
+
+        `provider_core/validation.py` owns this rule and the image engine's twin
+        already calls it. See `tests/test_llm_modal_validate.py`.
+        """
         full_dir = get_safe_path("/mnt/data", directory) if directory else "/mnt/data"
         filepath = os.path.join(full_dir, name)
         if not os.path.exists(filepath):
             return None
-        size = os.path.getsize(filepath)
-        if size < MIN_SIZE:
-            return {"name": name, "path": f"{directory}/{name}" if directory else name, "status": "invalid", "reason": f"File too small ({size} bytes)"}
+        label = f"{directory}/{name}" if directory else name
         try:
-            with open(filepath, "rb") as f:
-                header = f.read(32)
-            for header_sig, expected in VALID_HEADERS.items():
-                if header[:len(expected)] == expected:
-                    return {"name": name, "path": f"{directory}/{name}" if directory else name, "status": "valid", "size": size}
-            return {"name": name, "path": f"{directory}/{name}" if directory else name, "status": "invalid", "reason": "Unknown file format"}
+            validation = validate_downloaded_file(
+                filepath, unknown_header_log_prefix="llm_modal/validate_models"
+            )
         except Exception as e:
-            return {"name": name, "path": f"{directory}/{name}" if directory else name, "status": "invalid", "reason": str(e)}
+            return {"name": name, "path": label, "status": "invalid", "reason": str(e)}
+        size = os.path.getsize(filepath)
+        if validation["valid"]:
+            return {"name": name, "path": label, "status": "valid", "size": size}
+        return {
+            "name": name,
+            "path": label,
+            "status": "invalid",
+            "size": size,
+            "reason": validation.get("error", "Invalid file"),
+        }
 
     def validate_directory(dir_path: str) -> Dict[str, Any]:
         result = {"valid": [], "invalid": [], "partial": []}
@@ -400,28 +418,52 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
             return result
         if not os.path.exists(full_dir):
             return result
-        names = []
-        for f in os.listdir(full_dir):
-            # is_model_file, for the same reason as list_models_with_metadata:
-            # a 0-byte `.lock` fails the size check and used to be reported as
-            # `partial`, which is why total_partial never reached zero.
-            if not is_model_file(f):
+        # Classify transient artifacts *before* the is_model_file filter, which
+        # excludes `.lock` and `.downloading` by name and returned first. That
+        # ordering is why `total_partial` was permanently 0 for this engine, so
+        # step 0 of reconciliation — the only step that reads it — could never
+        # see a partial download.
+        #
+        # Reported, never deleted. Reconciliation runs with delete_invalid=True,
+        # and unlinking an in-flight temp leaves its writer holding a live
+        # descriptor: it finishes the transfer and then fails at os.replace,
+        # which reconciliation reports as a failed download. Unlinking a `.lock`
+        # is worse — it removes the flock a concurrent downloader holds, so a
+        # second downloader takes a *different* lock and the interleaving
+        # corruption the lock exists to prevent happens again. provider_core/
+        # utils.py records that having happened. Abandoned partials are reclaimed
+        # by FileStorage.delete_file via pending_download_paths, which is the
+        # only place that can tell an in-flight attempt from a dead one.
+        for name in os.listdir(full_dir):
+            full_path = os.path.join(full_dir, name)
+            if is_transient_artifact(name):
+                if os.path.isfile(full_path):
+                    label = f"{dir_path}/{name}" if dir_path else name
+                    result["partial"].append({
+                        "name": name,
+                        "path": label,
+                        "size": os.path.getsize(full_path),
+                        "reason": "Incomplete download (temp file)",
+                    })
                 continue
-            names.append(f)
-        for name in names:
+            if not is_model_file(name):
+                continue
             info = validate_single_file_in_dir(dir_path, name)
             if info is None:
                 continue
             if info["status"] == "valid":
                 result["valid"].append(info)
             elif info["status"] == "invalid":
+                # A file under the size floor is a truncated transfer, not a
+                # corrupt model. It is classified and reported, and left on
+                # disk: deciding it is abandoned is pending_download_paths' job.
                 if "too small" in info.get("reason", "").lower():
                     result["partial"].append(info)
                 else:
                     result["invalid"].append(info)
                     if delete_invalid:
                         try:
-                            os.remove(os.path.join(full_dir, name))
+                            os.remove(full_path)
                         except Exception:
                             pass
         return result

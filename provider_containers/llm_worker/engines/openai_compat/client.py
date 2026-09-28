@@ -11,7 +11,23 @@ from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, TaskEvent
 )
-from provider_core.responses import failed, files_response, ok
+from provider_core.responses import (
+    failed,
+    files_response,
+    llm_healthy,
+    llm_unhealthy,
+    ok,
+    retryable_for_exception,
+    retryable_for_status,
+)
+
+
+# The backend's `_check_provider_health` (services/load_balancer.py) counts any
+# provider that answers within a couple of seconds, so the probe has to be
+# tighter than that or a dead endpoint is still counted as a usable target.
+# Sibling engines each define their own copy of this constant and keep them in
+# step by hand — the drift `provider_core/http_client.py` should eventually own.
+HEALTH_PROBE_TIMEOUT = float(os.getenv("OPENAI_COMPAT_HEALTH_PROBE_TIMEOUT", "1.5"))
 
 
 class OpenAICompatProviderClient(BaseProviderClient):
@@ -33,13 +49,63 @@ class OpenAICompatProviderClient(BaseProviderClient):
     # =========================================================================
 
     async def get_health(self) -> Dict[str, Any]:
-        """Return health status of this LLM worker."""
-        return {
-            "status": "healthy",
-            "provider_id": self.provider_id,
-            "engine": "openai_compat",
-            "api_base": self.api_base,
-        }
+        """Probe the OpenAI-compatible endpoint instead of asserting health.
+
+        This returned a hardcoded `{"status": "healthy"}` without touching the
+        network, and the backend's `_check_provider_health`
+        (`services/load_balancer.py`) requires HTTP 200, so it counted this
+        provider as a usable target and dispatched paid LLM jobs at it. With no
+        `OPENAI_API_KEY`, or a dead `OPENAI_API_BASE` (the default is
+        `http://localhost:11434/v1`), every job failed.
+
+        `GET /models` is free — it is not a completion — and every
+        OpenAI-compatible server implements it (vLLM, Ollama, llama.cpp,
+        LM Studio, OpenRouter, Together). It is the same endpoint
+        `list_models` already calls, so a probe here can never be a
+        configuration that works for one and not the other.
+
+        The response shape comes from `llm_healthy` / `llm_unhealthy` in
+        `provider_core/responses.py`, which the other three LLM engines use too:
+        each engine grew its own shape when the fix was applied piecemeal, and
+        `openai_compat` came to differ from its three siblings for no visible
+        reason.
+        """
+        if not self.api_key:
+            return llm_unhealthy(
+                "openai_compat",
+                self.provider_id,
+                "no API key configured (OPENAI_API_KEY)",
+                api_base=self.api_base,
+            )
+        client = await get_http_client().get_client()
+        try:
+            response = await client.get(
+                f"{self.api_base}/models",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=HEALTH_PROBE_TIMEOUT,
+            )
+        except Exception as exc:
+            # A refused or unanswered connection really can come back.
+            return llm_unhealthy(
+                "openai_compat",
+                self.provider_id,
+                f"GET /models failed: {exc}",
+                retryable=True,
+                api_base=self.api_base,
+            )
+
+        if response.status_code >= 400:
+            return llm_unhealthy(
+                "openai_compat",
+                self.provider_id,
+                f"GET /models returned HTTP {response.status_code}",
+                # 401/403 is a key the endpoint will never accept; 5xx is a
+                # server having a bad day. Only the second one is worth waiting
+                # for, and only the second one is worth re-dispatching.
+                retryable=retryable_for_status(response.status_code),
+                api_base=self.api_base,
+            )
+        return llm_healthy("openai_compat", self.provider_id, api_base=self.api_base)
 
     async def get_info(self) -> Dict[str, Any]:
         """Return static info about this worker."""
@@ -177,7 +243,7 @@ class OpenAICompatProviderClient(BaseProviderClient):
 
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
-                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=True).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=retryable_for_exception(e)).to_ndjson()
             finally:
                 if job_id:
                     await self.job_tracker.end_job(job_id)

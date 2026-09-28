@@ -358,8 +358,15 @@ def capture_stall_diagnostics(port: int, label: str, details: Optional[Dict[str,
 
 async def list_models_with_metadata_internal(base_path: str, directory: str) -> list[Dict[str, Any]]:
     import aiofiles
-    try: target_dir = get_safe_path(base_path, directory)
-    except: return []
+    # `get_safe_path` raises on an empty path, and the router defaults
+    # `directory=""` — so a `GET /list-models` with no body raised, was caught by
+    # a bare `except: return []`, and answered "no models" while Beam's identical
+    # route returned the full `/mnt/data` listing. `models_utils.py` already
+    # guards this; the three-way drift is what let it diverge.
+    try:
+        target_dir = get_safe_path(base_path, directory) if directory else base_path
+    except Exception:
+        return []
     if not os.path.exists(target_dir): return []
     
     def _scan():

@@ -12,7 +12,16 @@ from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, TaskEvent
 )
-from provider_core.responses import failed, files_response, ok
+from provider_core.responses import failed, files_response, llm_healthy, llm_unhealthy, ok, retryable_for_exception, retryable_for_status
+
+
+# The backend's `_check_provider_health` (services/load_balancer.py) counts any
+# provider that answers within a couple of seconds, so the probe has to be
+# tighter than that or a dead endpoint is still counted as a usable target.
+# Each engine keeps its own copy and they are kept in step by hand — the drift
+# `provider_core/http_client.py` should eventually own.
+HEALTH_PROBE_TIMEOUT = float(os.getenv("GOOGLE_HEALTH_PROBE_TIMEOUT", "1.5"))
+
 
 # The Gemini API accepts the key as an `x-goog-api-key` header, which is what
 # Google's own API-key guidance recommends; the `?key=` query form is the
@@ -137,11 +146,51 @@ class GoogleProviderClient(BaseProviderClient):
         self.api_key = os.environ.get("GOOGLE_API_KEY", "")
 
     async def get_health(self) -> Dict[str, Any]:
-        return {
-            "status": "healthy",
-            "provider_id": self.provider_id,
-            "engine": "google",
-        }
+        """Probe the Gemini `GET /v1beta/models` instead of asserting health.
+
+        This returned a hardcoded `{"status": "healthy"}` without touching the
+        network, so a provider with no `GOOGLE_API_KEY` — or one pointed at a
+        dead network — was counted by the backend's `_check_provider_health`
+        (`services/load_balancer.py`) as a usable target and dispatched paid
+        LLM jobs at it. Every one failed, and every one was marked
+        `retryable=True`, so the balancer re-dispatched across the whole pool.
+
+        `GET /models` is free and is the same endpoint `list_models` already
+        calls. The key goes in the `x-goog-api-key` **header**, not the query
+        string: a query string reaches proxy logs and httpx exception text, and
+        this module's failure path puts `str(e)` into a TaskEvent that is
+        streamed to the backend and persisted on the job. That is the exact leak
+        `redact_api_key` exists to contain, and the reason the header form is
+        used here too.
+        """
+        if not self.api_key:
+            return llm_unhealthy(
+                "google", self.provider_id, "no API key configured (GOOGLE_API_KEY)"
+            )
+        client = await get_http_client().get_client()
+        try:
+            response = await client.get(
+                f"{GOOGLE_API_BASE}/models",
+                headers={GOOGLE_API_KEY_HEADER: self.api_key},
+                timeout=HEALTH_PROBE_TIMEOUT,
+            )
+        except Exception as exc:
+            # Never let the raw exception text through: httpx embeds the URL,
+            # and a URL that carried the key would be persisted on the job.
+            return llm_unhealthy(
+                "google",
+                self.provider_id,
+                f"GET /models failed: {type(exc).__name__}",
+                retryable=True,
+            )
+        if response.status_code >= 400:
+            return llm_unhealthy(
+                "google",
+                self.provider_id,
+                f"GET /models returned HTTP {response.status_code}",
+                retryable=retryable_for_status(response.status_code),
+            )
+        return llm_healthy("google", self.provider_id)
 
     async def get_info(self) -> Dict[str, Any]:
         return {
@@ -280,7 +329,7 @@ class GoogleProviderClient(BaseProviderClient):
             except Exception as e:
                 message = redact_api_key(str(e), self.api_key)
                 self.logger.error(f"Error during inference: {message}")
-                yield TaskEvent(event="failed", job_id=job_id, message=message, retryable=True).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=message, retryable=retryable_for_exception(e)).to_ndjson()
             finally:
                 if job_id:
                     await self.job_tracker.end_job(job_id)

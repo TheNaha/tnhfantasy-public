@@ -147,9 +147,32 @@ class TestKeyIsRedactedFromMessages:
         event = json.loads(body.strip())
 
         assert event["event"] == "failed"
-        assert event["retryable"] is True
         assert KEY not in body
         assert "***REDACTED***" in event["message"]
+
+    @pytest.mark.asyncio
+    async def test_a_403_is_not_marked_retryable(self, client, monkeypatch):
+        """A rejected key is a permanent fault, not a transient one.
+
+        The failure event used to carry a hardcoded `retryable=True`, so the
+        backend's reducer raised `ProviderCallError(is_retryable=True)` and the
+        dispatcher re-ran the request against every other provider. A 403 from
+        Google's auth layer cannot succeed on a second attempt, so that spent
+        real money reproducing a guaranteed failure. 4xx is permanent; 5xx and
+        429 are not, and are covered by `retryable_for_status`.
+        """
+        _patch_client(monkeypatch, _FakeStream(status=403))
+
+        response = await client.inference(
+            InferenceRequest(messages=[{"role": "user", "content": "hi"}], model="gemini-2.5-flash")
+        )
+        body = "".join([chunk async for chunk in response.body_iterator])
+        event = json.loads(body.strip())
+
+        assert event["event"] == "failed"
+        assert event["retryable"] is False, (
+            "a 4xx cannot be fixed by re-dispatching to another provider"
+        )
 
     @pytest.mark.asyncio
     async def test_list_models_failure_does_not_log_the_key(self, client, monkeypatch, caplog):

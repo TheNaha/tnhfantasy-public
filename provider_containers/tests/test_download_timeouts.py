@@ -85,16 +85,33 @@ class TestEveryServerSideDownloadPathHasATimeout:
         assert "request_timeout_seconds=" in llm
 
 
-class TestTheSharedHelperStaysOptionalButEveryCallerOptsIn:
-    def test_the_default_is_still_none(self):
-        """`download_model_to_path` keeps its signature; the fix is at the call
-        sites, so an embedder that genuinely wants no timeout still can."""
+class TestTheDefaultIsSafe:
+    """The old strategy was "keep the parameter optional, and make every caller
+    pass a value". It worked only for the four callers that existed. The
+    parameter's default was `None`, which meant the `timeout` kwarg was omitted
+    from `requests.get` entirely — and `requests` blocks forever on a peer that
+    accepts the connection and then goes quiet.
+
+    That is the wrong default for a function whose entire job is multi-GB
+    transfers, running inside a billed Modal/Beam container. The mitigation was
+    a convention every future caller had to remember; the fix is a default that
+    cannot hang. Passing `None` explicitly still opts out, so an embedder that
+    genuinely wants no timeout still can."""
+
+    def test_the_default_is_a_real_timeout(self):
         import inspect as _inspect
 
         from provider_core.downloads import _download_model_to_path_unlocked
 
-        signature = _inspect.signature(_download_model_to_path_unlocked)
-        assert signature.parameters["request_timeout_seconds"].default is None
+        default = _inspect.signature(
+            _download_model_to_path_unlocked
+        ).parameters["request_timeout_seconds"].default
+
+        assert default is not None, (
+            "a None default omits the timeout kwarg and lets a stuck peer hold "
+            "a billed download container forever"
+        )
+        assert isinstance(default, (int, float)) and default > 0
 
     def test_the_helper_passes_the_timeout_to_requests_get(self, monkeypatch):
         """End to end: a non-None value really does reach `requests.get`."""
@@ -130,10 +147,10 @@ class TestTheSharedHelperStaysOptionalButEveryCallerOptsIn:
         assert result["status"] == "success"
         assert seen["timeout"] == 12.5
 
-    def test_no_timeout_key_when_the_caller_passes_none(self, monkeypatch):
-        """Documents the conditional at downloads.py:427-429: with None the kwarg
-        is absent entirely, not set to None. `requests` treats an explicit
-        `timeout=None` the same as omitting it, so both mean "block forever"."""
+    def test_the_default_reaches_requests_get_without_the_caller_asking(self, monkeypatch):
+        """The whole point of the change: a caller that says nothing still gets
+        a bounded read, so the next call site added to this module is safe
+        without anyone having to remember."""
         import provider_core.downloads as downloads
 
         seen = {}
@@ -158,6 +175,40 @@ class TestTheSharedHelperStaysOptionalButEveryCallerOptsIn:
             downloads.download_model_to_path(
                 url="https://example.invalid/model.ckpt",
                 full_path=f"{tmp}/model.ckpt",
+            )
+
+        assert seen.get("timeout"), "the default never reached requests.get"
+
+    def test_no_timeout_key_when_the_caller_passes_none(self, monkeypatch):
+        """Documents the conditional at downloads.py:427-429: with an explicit
+        None the kwarg is absent entirely, not set to None. `requests` treats an
+        explicit `timeout=None` the same as omitting it, so both mean "block
+        forever" — which is why None is now opt-in rather than the default."""
+        import provider_core.downloads as downloads
+
+        seen = {}
+        _BODY = b'PK' + b'\x00' * 20000  # over MIN_MODEL_SIZE (10 KiB), valid zip/ckpt header
+        class _Response:
+            status_code = 200
+            headers = {"content-length": str(len(_BODY))}
+
+            def iter_content(self, chunk_size=8192):
+                return iter([_BODY])
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            downloads.requests, "get", lambda url, **kw: (seen.update(kw), _Response())[1]
+        )
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            downloads.download_model_to_path(
+                url="https://example.invalid/model.ckpt",
+                full_path=f"{tmp}/model.ckpt",
+                request_timeout_seconds=None,
             )
 
         assert "timeout" not in seen

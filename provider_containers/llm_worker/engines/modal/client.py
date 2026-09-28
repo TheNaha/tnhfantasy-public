@@ -13,7 +13,15 @@ from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, TaskEvent,
 )
-from provider_core.responses import failed, from_upstream, ok, outcome
+from provider_core.responses import (
+    failed,
+    from_upstream,
+    llm_healthy,
+    llm_unhealthy,
+    ok,
+    outcome,
+    retryable_for_exception,
+)
 logger = logging.getLogger("provider_core.engines.vllm_modal")
 
 # One ranged slice per RPC. Large enough that a multi-GB model is not thousands
@@ -75,12 +83,44 @@ class VLLMModalProviderClient(BaseProviderClient):
         return self._func_cache[key]
 
     async def get_health(self) -> Dict[str, Any]:
-        return {
-            "status": "healthy",
-            "provider_id": self.provider_id,
-            "engine": "vllm_modal",
-            "modal_app": self.modal_app_name,
-        }
+        """Validate this engine's configuration — deliberately *not* a probe.
+
+        This returned a hardcoded `{"status": "healthy"}` unconditionally, so a
+        deployment pointed at an app that does not exist was counted by the
+        backend's `_check_provider_health` (`services/load_balancer.py`) as a
+        usable target and received paid LLM jobs that could not run.
+
+        Unlike `openai_compat`, `anthropic` and `google`, this engine cannot
+        probe: the only way to ask whether a Modal deployment is alive is to
+        instantiate it, and that bills. The image engine reaches the same
+        conclusion and documents it — "a probe costs money" — by checking
+        `MODAL_APP_NAME` is configured and nothing more. So that is what happens
+        here too, which is a real check rather than a constant, and the right
+        one for a serverless deployment.
+
+        A name that resolves to nothing is a configuration fault, not something
+        waiting will fix, so `retryable` stays False.
+        """
+        if not self.modal_app_name or not self.modal_app_name.strip():
+            return llm_unhealthy(
+                "vllm_modal",
+                self.provider_id,
+                "no Modal app name configured (MODAL_APP_NAME)",
+            )
+        if not self.modal_username:
+            # Without this the deployment cannot be addressed at all. Worth
+            # saying so here rather than letting every job fail at spawn.
+            return llm_unhealthy(
+                "vllm_modal",
+                self.provider_id,
+                "no Modal username configured (MODAL_USERNAME)",
+                modal_app=self.modal_app_name,
+            )
+        return llm_healthy(
+            "vllm_modal",
+            self.provider_id,
+            modal_app=self.modal_app_name,
+        )
 
     async def get_info(self) -> Dict[str, Any]:
         return {
@@ -180,7 +220,7 @@ class VLLMModalProviderClient(BaseProviderClient):
                 ).to_ndjson()
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
-                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=True).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=retryable_for_exception(e)).to_ndjson()
             finally:
                 if task is not None:
                     task.cancel()
