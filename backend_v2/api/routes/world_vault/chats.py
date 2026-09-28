@@ -107,6 +107,15 @@ def _chat_context_prep_sync(
 class UpdateChatRequest(BaseModel):
     name: str | None = None
     character_id: str | None = None
+    # The group-chat roster. This was missing, and pydantic's default
+    # `extra='ignore'` dropped it silently: `ChatContextPanel` PATCHed it and
+    # the mutation applied an optimistic cache update, so the add/remove buttons
+    # looked like they worked right up until the next refetch, then the roster
+    # vanished. Everything downstream read the permanently-`[]` column — the
+    # message list, the prompt context builder, the idle simulator, the
+    # SillyTavern `group_characters` export and the reference scrubber — so the
+    # whole group-chat feature was inert.
+    additional_character_ids: list[str] | None = None
     persona_name: str | None = None
     persona_description: str | None = None
     story_time: str | None = None
@@ -141,6 +150,7 @@ class NarrateRequest(BaseModel):
 class CreateChatRequest(BaseModel):
     name: str = "New Chat"
     character_id: str | None = None
+    additional_character_ids: list[str] = []
     chat_type: str = "chat"
     persona_name: str | None = None
     override_greeting: str | None = None
@@ -634,6 +644,19 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
     if not chat:
         raise NotFoundError("Chat", chat_id)
     update_fields = data.model_dump(exclude_unset=True)
+    # Validate the group roster: every id must resolve, and the primary
+    # character must not also sit in it. A dangling id here is not a rendering
+    # problem, it silently drops that speaker from the prompt context, so the
+    # failure would surface as "the character I added just never replies".
+    if "additional_character_ids" in update_fields and update_fields["additional_character_ids"] is not None:
+        roster = [cid for cid in update_fields["additional_character_ids"] if cid]
+        for cid in roster:
+            if not session.get(Character, cid):
+                raise NotFoundError("Character", cid)
+        if chat.character_id and chat.character_id in roster:
+            raise ValidationError("The primary character is already the speaker; it does not need to be in the group roster")
+        # Preserve the panel's order, drop duplicates, keep it deterministic.
+        update_fields["additional_character_ids"] = list(dict.fromkeys(roster))
     # Validate location_id if provided
     if "location_id" in update_fields and update_fields["location_id"] is not None:
         location = location_repo.get(update_fields["location_id"])

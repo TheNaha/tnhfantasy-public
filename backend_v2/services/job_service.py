@@ -653,9 +653,47 @@ class JobService:
         else:
             event_type = EventType.JOB_UPDATED
         
-        await emit_job_event(event_type, {**(self._job_to_dict(job)), **(event_extra or {})})
-        
+        await emit_job_event(event_type, self._build_event_payload(self._job_to_dict(job), event_extra))
+
         return job
+
+    @staticmethod
+    def _build_event_payload(job_dict: dict, event_extra: dict | None) -> dict:
+        """The job row plus the caller's event extras, with `metadata` merged.
+
+        The merge used to be shallow, so an `event_extra` carrying a `metadata`
+        key replaced the job's whole metadata dict rather than adding to it.
+        Several completion paths build `event_extra["metadata"]` from two or
+        three keys of their own (`chat_id`, `type`, `regenerated`), which meant
+        every other key the job actually carried was discarded on the way to
+        the event — and the world-integration handler downstream reads them
+        from there.
+
+        What that silently broke, all on the job-completion path:
+
+          - `character_id` never reached `Message`, so every AI reply in a
+            group chat was attributed to the primary character
+          - `is_swipe` / `target_message_id` never arrived, so the alternate
+            branch in the world-integration service was unreachable and
+            "generate an alternate reply" appended a new message instead
+          - `orchestrator_depth` was never stamped on the message
+          - `is_suggestion` was lost
+
+        The route-level tests could not see any of it: they exercise the route
+        directly, and the service tests hand-build a complete metadata dict,
+        bypassing the merge that drops it.
+
+        `event_extra` still wins on a per-key basis, so a caller can correct a
+        value; it just can no longer delete its neighbours.
+        """
+        payload = {**job_dict, **(event_extra or {})}
+        extra_metadata = (event_extra or {}).get("metadata")
+        if isinstance(extra_metadata, dict):
+            job_metadata = job_dict.get("metadata")
+            merged = dict(job_metadata) if isinstance(job_metadata, dict) else {}
+            merged.update(extra_metadata)
+            payload["metadata"] = merged
+        return payload
     
     async def delete_job(self, job_id: str) -> bool:
         """Delete a job."""

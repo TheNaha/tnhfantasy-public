@@ -702,6 +702,33 @@ class ChapterReorderRequest(BaseModel):
     chapter_ids: list[str]
 
 
+class ChapterUpdate(BaseModel):
+    """A partial chapter update.
+
+    This is deliberately a `BaseModel`, not the `StoryChapter` table model.
+    `StoryChapter.model_config` sets `table=True`, and FastAPI skips pydantic
+    validation for a SQLModel *table* class, so a PUT body of `{"content":
+    "..."}` deserialised into `StoryChapter` left every other field at its
+    column default. `beats` in particular defaulted to `[]`, and the guard
+    `if chapter_update.beats is not None` then took `[]` as an explicit
+    instruction to clear the beat list.
+
+    The story editor autosaves two seconds after every batch of keystrokes, so
+    that wiped the beats of any chapter that had them, repeatedly, while the
+    user was typing. Nothing errored and nothing was logged.
+
+    Every field is optional and absent means "leave it alone", which is the
+    semantics a PATCH/PUT-on-a-partial-resource needs and a table model cannot
+    express.
+    """
+
+    content: str | None = None
+    title: str | None = None
+    chapter_number: int | None = None
+    beats: list[dict] | None = None
+    image_paths: list[str] | None = None
+
+
 @router.post("/{story_id}/chapters/reorder")
 def reorder_chapters(story_id: str, req: ChapterReorderRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     story = story_repo.get(story_id)
@@ -767,24 +794,25 @@ def get_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_s
     return chapter
 
 @router.put("/{story_id}/chapters/{chapter_id}", response_model=StoryChapter)
-def update_chapter(story_id: str, chapter_id: str, chapter_update: StoryChapter, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def update_chapter(story_id: str, chapter_id: str, chapter_update: ChapterUpdate, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo), story_revision_repo: StoryChapterRevisionRepository = Depends(get_story_revision_repo)):
     chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
-        
+
     if chapter_update.content is not None and chapter_update.content != chapter.content:
-        session.add(StoryChapterRevision(
-            chapter_id=chapter.id,
-            story_id=story_id,
-            content=chapter.content or "",
-            source="manual",
-            word_count=len((chapter.content or "").split()),
-        ))
+        # Through the repository, before the overwrite, so the snapshot records
+        # the text the user is replacing. An inline `session.add` here bypassed
+        # `MAX_REVISIONS_PER_CHAPTER`, and this is the autosave path: a snapshot
+        # is a full copy of the prose and it fires every couple of seconds of
+        # typing, so an afternoon of editing accumulated hundreds of full-text
+        # snapshots with no cap. Two implementations of "snapshot", only one of
+        # which respected the limit.
+        story_revision_repo.create_snapshot(chapter, source="manual")
     if chapter_update.content is not None:
         chapter.content = chapter_update.content
     if chapter_update.beats is not None:
         chapter.beats = chapter_update.beats
-        
+
     chapter.updated_at = datetime.now(timezone.utc)
     session.add(chapter)
     session.commit()

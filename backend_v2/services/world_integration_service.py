@@ -188,10 +188,21 @@ async def _handle_scene_prompt(job_data: dict[str, Any]):
 
 
 async def _handle_narrator(job_data: dict[str, Any]):
-    chat_id = job_data.get("metadata", {}).get("chat_id")
+    """Persist one narrator message.
+
+    The single writer of narrator messages. The agentic `narrate_scene` tool
+    used to insert inline *and* emit `type: "narrator"`, so the same paragraph
+    landed twice; the button path came through here alone. Both now do.
+    """
+    metadata = job_data.get("metadata") or {}
+    chat_id = metadata.get("chat_id") or job_data.get("chat_id")
     content = _first_text(job_data)
     if not chat_id or not content:
         return
+
+    message_metadata: dict[str, Any] = {"source": "narrator"}
+    if metadata.get("narration_job_id"):
+        message_metadata["narration_job_id"] = metadata["narration_job_id"]
 
     async with get_session_context() as session:
         try:
@@ -200,7 +211,7 @@ async def _handle_narrator(job_data: dict[str, Any]):
                 kind=MessageKind.NARRATOR,
                 content=content,
                 chat_id=chat_id,
-                message_metadata={"source": "narrator"},
+                message_metadata=message_metadata,
             )
             session.add(msg)
             session.commit()

@@ -11,11 +11,10 @@ Works as a post-completion processor inside job_processing.py:
 import asyncio
 import json
 import os
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from core.entities import JobStatus, Message, MessageKind, MessageRole
+from core.entities import JobStatus, Message, MessageRole
 from infrastructure.logging import get_logger
 from services.chat_utils import insert_world_state_marker
 from services.job_service import JobService
@@ -585,25 +584,18 @@ async def _tool_narrate_scene(
                 if not content:
                     content = final_result.get("text", "")
 
-                # Persist narration as a visible narrator message so the user
-                # sees the scene being set, not just the final character reply.
-                if content:
-                    try:
-                        narration_msg = Message(
-                            id=str(uuid.uuid4()),
-                            chat_id=chat_id,
-                            role=MessageRole.SYSTEM,
-                            kind=MessageKind.NARRATOR,
-                            content=content,
-                            message_metadata={"source": "narrator", "narration_job_id": job.id},
-                            created_at=datetime.now(timezone.utc),
-                            updated_at=datetime.now(timezone.utc),
-                        )
-                        _session.add(narration_msg)
-                        _session.commit()
-                    except Exception as persist_exc:
-                        logger.warning("narrator_message_persist_failed", chat_id=chat_id, error=str(persist_exc))
-
+                # The narration is persisted by the completion event, not here.
+                # This used to also insert a Message inline, and then emit
+                # `type: "narrator"` — which routes to `_handle_narrator`,
+                # which inserts the same text again. So every agentic chat
+                # reply where the model called `narrate_scene` showed the
+                # paragraph twice, with no error anywhere.
+                #
+                # The button path (`narrate_message`) never persisted inline and
+                # relies on `_handle_narrator` alone, so removing the duplicate
+                # makes the two entry points one path instead of two. The job id
+                # is carried in the event so the handler can record which reply
+                # produced the narration.
                 from services.job_processing import complete_job
                 await complete_job(
                     job_service=_job_service,
@@ -615,6 +607,7 @@ async def _tool_narrate_scene(
                         "chat_id": chat_id,
                         "character_id": character_id,
                         "content": content,
+                        "metadata": {"narration_job_id": job.id},
                     },
                 )
                 return {"status": "success", "narration": content, "job_id": job.id}
@@ -788,9 +781,9 @@ async def _tool_recall_memory(
 
     async with get_session_context() as session:
         try:
-            from services.rag_pipeline import search_memories
+            from services.rag_pipeline import search_memories_async
 
-            memories = search_memories(
+            memories = await search_memories_async(
                 session,
                 character_id,
                 query,
@@ -847,10 +840,17 @@ async def _tool_store_memory(
                 updated_at=datetime.now(timezone.utc),
             )
 
-            # Generate embedding
+            # Generate embedding.
+            #
+            # `generate_embedding` is a synchronous sentence-transformers forward
+            # pass — seconds on the first call, tens of milliseconds after — and
+            # this is an `async def` tool handler. On the event loop that stalls
+            # every other in-flight request for the duration. The same call was
+            # already moved off the loop in `job_processing` for memory
+            # extraction; it was missed here.
             emb_svc = get_embedding_service()
             try:
-                mem.embedding = emb_svc.generate_embedding(content)
+                mem.embedding = await asyncio.to_thread(emb_svc.generate_embedding, content)
             except Exception as e:
                 logger.debug("embedding_generation_failed", error=str(e))  # Embedding is optional
 
