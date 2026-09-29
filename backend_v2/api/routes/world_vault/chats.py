@@ -28,10 +28,11 @@ from services.chat_utils import (
     resolve_voice_for_character,
     substitute_tavern_vars,
 )
-from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, chat_context_kwargs, prune_context
+from services.context_builder import build_chat_context_async, build_chat_context_with_sections_async, build_system_prompt_sections_async, chat_context_kwargs, prune_context
 from services.job_service import JobService
 from services.job_queue import QueueManager
 from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
+from services.world_ownership import link_chat_to_world, require_world
 from config import settings
 from infrastructure.logging import get_logger
 
@@ -50,6 +51,9 @@ MAX_CHAT_IMPORT_BYTES = MAX_CARD_SIZE_MB * 1024 * 1024
 # for more than a page; `list_messages` allows 1000, so the chat list allows
 # fewer — it is a navigation list, not a fetch.
 MAX_CHAT_PAGE_SIZE = 200
+
+# Distinguishes "no world_id in this PATCH" from "detach from the world".
+_WORLD_ID_UNSET = object()
 
 router = APIRouter()
 
@@ -110,6 +114,10 @@ def _chat_context_prep_sync(
 
 class UpdateChatRequest(BaseModel):
     name: str | None = None
+    # See `CreateChatRequest.world_id`. `None` here means "not supplied" (the
+    # field is `exclude_unset`), so a chat is only detached through an explicit
+    # empty string, which `update_chat` maps to `None`.
+    world_id: str | None = None
     character_id: str | None = None
     # The group-chat roster. This was missing, and pydantic's default
     # `extra='ignore'` dropped it silently: `ChatContextPanel` PATCHed it and
@@ -153,6 +161,10 @@ class NarrateRequest(BaseModel):
 
 class CreateChatRequest(BaseModel):
     name: str = "New Chat"
+    # Which World owns this chat. The column existed from the migration that
+    # introduced the World entity and nothing ever wrote it, so a World could
+    # not own a chat and the world page had no chats to show.
+    world_id: str | None = None
     character_id: str | None = None
     additional_character_ids: list[str] = []
     chat_type: str = "chat"
@@ -573,6 +585,7 @@ def create_chat(req: CreateChatRequest, session: Session = Depends(get_session),
         persona = session.get(Persona, req.persona_id)
         if not persona:
             raise NotFoundError("Persona", req.persona_id)
+    require_world(session, req.world_id)
 
     # A character card's embedded ("character_book") lorebook is active in every
     # chat with that character, so link it alongside any requested lorebooks.
@@ -593,6 +606,7 @@ def create_chat(req: CreateChatRequest, session: Session = Depends(get_session),
     )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
+    link_chat_to_world(session, chat, req.world_id)
     session.add(chat)
     session.commit()
     session.refresh(chat)
@@ -754,6 +768,15 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
         persona = session.get(Persona, update_fields["persona_id"])
         if not persona:
             raise NotFoundError("Persona", update_fields["persona_id"])
+    # An explicit empty string detaches; an unknown id is a 404 rather than a
+    # silent drop, so a typo is visible instead of leaving a chat that looks
+    # owned and is not. `_UNSET` rather than `None` because `None` is also the
+    # answer to "detach" — conflating the two would unlink every world's chat
+    # on any unrelated PATCH.
+    requested_world_id: str | None | object = _WORLD_ID_UNSET
+    if "world_id" in update_fields:
+        requested_world_id = (update_fields.pop("world_id") or "").strip() or None
+        require_world(session, requested_world_id)
     # Author's-note depth sanity: 0 pins the note to the very end
     if "authors_note_depth" in update_fields and update_fields["authors_note_depth"] is not None:
         if update_fields["authors_note_depth"] < 0 or update_fields["authors_note_depth"] > 100:
@@ -770,6 +793,8 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
         changed_state["old_location_id"] = chat.location_id
     for key, value in update_fields.items():
         setattr(chat, key, value)
+    if requested_world_id is not _WORLD_ID_UNSET:
+        link_chat_to_world(session, chat, requested_world_id)
     chat.updated_at = datetime.now(timezone.utc)
     session.add(chat)
     session.commit()

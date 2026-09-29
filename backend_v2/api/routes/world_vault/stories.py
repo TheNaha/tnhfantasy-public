@@ -23,7 +23,9 @@ from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow, s
 from services.rag_pipeline import search_lorebook_entries
 from services.job_service import JobService
 from services.job_queue import QueueManager, queue_manager
+from services.world_ownership import link_story_to_world, require_world
 from services.model_availability_service import ModelAvailabilityService
+from services.world_integration_service import TTS_BEAT_ROLE
 
 logger = get_logger("stories_route")
 router = APIRouter()
@@ -63,8 +65,13 @@ class StoryBranchRequest(BaseModel):
     prompt: str = ""
 
 
+# Distinguishes "no world_id in this PATCH" from "detach from the world".
+_WORLD_ID_UNSET = object()
+
 class CreateStoryRequest(BaseModel):
     title: str
+    # See `CreateChatRequest.world_id` in chats.py — same column, same reason.
+    world_id: str | None = None
     description: str | None = None
     genre: str | None = None
     character_ids: list[str] = []
@@ -80,6 +87,7 @@ class CreateStoryRequest(BaseModel):
 
 class UpdateStoryRequest(BaseModel):
     title: str | None = None
+    world_id: str | None = None
     description: str | None = None
     genre: str | None = None
     character_ids: list[str] | None = None
@@ -196,6 +204,7 @@ def list_stories(session: Session = Depends(get_session), story_repo: StoryRepos
 
 @router.post("", response_model=Story)
 def create_story(req: CreateStoryRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
+    require_world(session, req.world_id)
     story = Story(
         title=req.title,
         description=req.description,
@@ -212,6 +221,7 @@ def create_story(req: CreateStoryRequest, session: Session = Depends(get_session
     )
     story.created_at = datetime.now(timezone.utc)
     story.updated_at = story.created_at
+    link_story_to_world(session, story, req.world_id)
     session.add(story)
     session.commit()
     session.refresh(story)
@@ -690,7 +700,15 @@ def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depe
     for key, value in update_data.items():
         if key in allowed:
             setattr(story, key, value)
-            
+
+    # `world_id` is not in `allowed` because it is not a plain setattr: it owns a
+    # second column on the World side, and an empty string means detach.
+    requested_world_id: str | None | object = _WORLD_ID_UNSET
+    if "world_id" in update_data:
+        requested_world_id = (update_data.pop("world_id") or "").strip() or None
+        require_world(session, requested_world_id)
+        link_story_to_world(session, story, requested_world_id)
+
     story.updated_at = datetime.now(timezone.utc)
     session.add(story)
     session.commit()

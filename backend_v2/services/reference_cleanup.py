@@ -75,6 +75,20 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
     elif kind == "persona":
         for chat in session.exec(select(Chat).where(Chat.persona_id == entity_id)).all():
             chat.persona_id = None
+    elif kind == "world":
+        # `Chat.world_id` / `Story.world_id` are the ownership of record and
+        # `World.chat_ids` / `World.story_ids` are its denormalised index, so
+        # deleting a world has to clear both directions. `delete_world` calls
+        # `world_ownership.detach_world` for the FK columns; the index lives on
+        # the row being deleted and goes with it.
+        #
+        # This branch did not exist when the module was written, because
+        # nothing set `world_id` then — the World entity owned nothing, which is
+        # the defect the whole feature was added to fix.
+        for chat in session.exec(select(Chat).where(Chat.world_id == entity_id)).all():
+            chat.world_id = None
+        for story in session.exec(select(Story).where(Story.world_id == entity_id)).all():
+            story.world_id = None
     elif kind == "story":
         _scrub_worlds(session, "story_ids", entity_id)
     elif kind == "chat":

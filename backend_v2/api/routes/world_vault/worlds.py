@@ -7,6 +7,7 @@ from api.deps import get_session, get_world_repo
 from infrastructure.repositories.world_repo import WorldRepository
 from core.entities import World, Location, Character, Story, Chat
 from core.exceptions import NotFoundError
+from services.world_ownership import detach_world
 from sqlmodel import Session, select
 
 router = APIRouter()
@@ -83,6 +84,11 @@ def delete_world(world_id: str, session: Session = Depends(get_session), world_r
     world = world_repo.get(world_id)
     if not world:
         raise NotFoundError("World", world_id)
+    # `Chat.world_id` and `Story.world_id` are the ownership of record and have
+    # no ON DELETE clause, so deleting the world without clearing them left
+    # chats and stories pointing at a row that no longer existed. The world's
+    # own `chat_ids` / `story_ids` index goes with the row.
+    detach_world(session, world_id)
     session.delete(world)
     session.commit()
     return {"message": "World deleted"}
