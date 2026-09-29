@@ -9,7 +9,7 @@ const ENTITY_KINDS = {
   stories: 'story',
   locations: 'location',
   lorebooks: 'lorebook',
-  campaigns: 'campaign',
+  worlds: 'world',
   collections: 'collection',
   prompts: 'prompt',
   scenarios: 'scenario',
@@ -19,7 +19,7 @@ const ENTITY_KINDS = {
 };
 
 function trackCreatedEntity(page, path, data) {
-  const match = path.split('?')[0].match(/^\/(characters|chats|stories|locations|lorebooks|campaigns|collections|prompts|scenarios|voices|models|providers)$/);
+  const match = path.split('?')[0].match(/^\/(characters|chats|stories|locations|lorebooks|worlds|collections|prompts|scenarios|voices|models|providers)$/);
   if (match) {
     trackEntity(page, ENTITY_KINDS[match[1]], data?.id);
     return;
@@ -268,9 +268,9 @@ async function seedLocation(page, overrides = {}) {
   });
 }
 
-async function seedCampaign(page, overrides = {}) {
-  return apiPost(page, '/campaigns', {
-    name: overrides.name || uniqueName('e2e-campaign'),
+async function seedWorld(page, overrides = {}) {
+  return apiPost(page, '/worlds', {
+    name: overrides.name || uniqueName('e2e-world'),
     description: overrides.description || 'A chronicle of the e2e realm.',
     character_ids: overrides.character_ids || [],
     story_ids: overrides.story_ids || [],
@@ -367,7 +367,7 @@ const DELETE_PATHS = {
   job: (id) => `/jobs/${id}`,
   model: (id) => `/models/${id}`,
   location: (id) => `/locations/${id}`,
-  campaign: (id) => `/campaigns/${id}`,
+  world: (id) => `/worlds/${id}`,
   scenario: (id) => `/scenarios/${id}`,
   voice: (id) => `/voices/${id}`,
   provider: (id) => `/providers/${id}`,
@@ -498,7 +498,7 @@ export {
   seedStoryChapter,
   seedChatMessage,
   seedLocation,
-  seedCampaign,
+  seedWorld,
   seedScenario,
   seedVoice,
   seedPrompt,

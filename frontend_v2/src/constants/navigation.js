@@ -1,4 +1,4 @@
-import { Users, Contact, User, Calendar, Swords, GitBranch, MapPin, Sparkles, Mic, BookMarked } from 'lucide-react';
+import { Users, Contact, User, Calendar, Globe2, GitBranch, MapPin, Sparkles, Mic, BookMarked } from 'lucide-react';
 
 /**
  * Canonical navigation definitions.
@@ -9,7 +9,7 @@ import { Users, Contact, User, Calendar, Swords, GitBranch, MapPin, Sparkles, Mi
  *
  * Those two surfaces used to render the same concept from two hand-maintained
  * lists that had already drifted — Roleplay Home was missing Avatar Gallery and
- * Campaigns, and the labels had diverged ("Lorebook" vs "Lorebooks"). Anything
+ * Worlds, and the labels had diverged ("Lorebook" vs "Lorebooks"). Anything
  * added here appears on both, which is the point.
  *
  * It lives in `constants/` rather than in a component module for two reasons:
@@ -22,7 +22,7 @@ export const EXPERT_TOOLS = [
     { to: '/characters', label: 'Characters', icon: Users, description: 'Your cast, with appearances and voices', color: 'text-purple-300' },
     { to: '/personas', label: 'Personas', icon: Contact, description: 'Who you are — sets {{user}} and the system prompt', color: 'text-sky-300' },
     { to: '/activity', label: 'Activity', icon: Calendar, description: 'Recent conversations, chapters, and memories', color: 'text-rose-300' },
-    { to: '/campaigns', label: 'Campaigns', icon: Swords, description: 'Group characters, chats, and stories', color: 'text-red-300' },
+    { to: '/worlds', label: 'Worlds', icon: Globe2, description: 'Group characters, chats, and stories', color: 'text-cyan-300' },
     { to: '/world-graph', label: 'World Graph', icon: GitBranch, description: 'Explore relationships and connections', color: 'text-indigo-300' },
     { to: '/locations', label: 'Locations', icon: MapPin, description: 'Places, imagery, and atmosphere', color: 'text-amber-300' },
     { to: '/scenarios', label: 'Scenarios', icon: Sparkles, description: 'Reusable starting situations', color: 'text-cyan-300' },

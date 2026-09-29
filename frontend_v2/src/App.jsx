@@ -56,7 +56,7 @@ const WorldVaultHub = lazy(() => import('./pages/WorldVaultHub'));
 const Locations = lazy(() => import('./pages/Locations'));
 const BatchGenerate = lazy(() => import('./pages/BatchGenerate'));
 const Activity = lazy(() => import('./pages/Activity'));
-const Campaigns = lazy(() => import('./pages/Campaigns'));
+const Worlds = lazy(() => import('./pages/Worlds'));
 const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
 const Prompts = lazy(() => import('./pages/Prompts'));
 const NotFound = lazy(() => import('./pages/NotFound'));
@@ -135,7 +135,14 @@ function AnimatedRoutes() {
                 {/* Kept as an alias: the page was called "World Timeline" and is now
                     "Activity", and bookmarks should survive a rename. */}
                 <Route path="/world-timeline" element={<Navigate to="/activity" replace />} />
-                <Route path="/campaigns" element={<Boundary routeKey={routeKey}><Campaigns /></Boundary>} />
+                {/* Kept as an alias: `a338abc0` renamed the server-side Campaign
+                    resource to World, and this is the third redirect kept for a
+                    retired URL (see /avatar-gallery and /world-timeline). The
+                    page itself was rewritten, not just repointed — the old one had
+                    no `isError` branch, so the 404 behind `/api/v2/campaigns`
+                    rendered as a plausible empty vault. */}
+                <Route path="/campaigns" element={<Navigate to="/worlds" replace />} />
+                <Route path="/worlds" element={<Boundary routeKey={routeKey}><Worlds /></Boundary>} />
                 <Route path="/world-graph" element={<Boundary routeKey={routeKey}><RelationshipGraph /></Boundary>} />
                 <Route path="/prompts" element={<Boundary routeKey={routeKey}><Prompts /></Boundary>} />
                 <Route path="/read/story/:token" element={<Boundary routeKey={routeKey}><StoryReader /></Boundary>} />

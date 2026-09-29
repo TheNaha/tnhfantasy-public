@@ -4,24 +4,24 @@ import {
     ArrowRight,
     BookOpen,
     Compass,
+    Globe2,
     MapPin,
     MessageSquare,
     PenLine,
     ScrollText,
     Sparkles,
-    Swords,
     Users,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useChats } from '../hooks/useChats';
 import { useStories } from '../hooks/useStories';
-import { useCampaigns } from '../hooks/useCampaigns';
+import { useWorlds } from '../hooks/useWorlds';
 import { useWorldVaultDashboard } from '../hooks/useWorldVaultSearch';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 import { EXPERT_TOOLS } from '../constants/navigation';
 import { isSetupComplete } from '../utils/setupComplete';
 
-const asList = (value) => Array.isArray(value) ? value : (value?.chats || value?.stories || value?.campaigns || []);
+const asList = (value) => Array.isArray(value) ? value : (value?.chats || value?.stories || value?.worlds || []);
 
 const formatUpdated = (value) => {
     if (!value) return 'Recently';
@@ -41,12 +41,12 @@ export default function RoleplayWorkspace() {
     const [showOnboarding, setShowOnboarding] = useState(() => !isSetupComplete());
     const { data: chatData, isLoading: chatsLoading } = useChats({ limit: 8 });
     const { data: storyData, isLoading: storiesLoading } = useStories();
-    const { data: campaignData } = useCampaigns();
+    const { data: worldData } = useWorlds();
     const { data: vault } = useWorldVaultDashboard();
 
     const chats = asList(chatData);
     const stories = asList(storyData);
-    const campaigns = asList(campaignData);
+    const worlds = asList(worldData);
     const isLoading = chatsLoading || storiesLoading;
 
     const sessions = useMemo(() => {
@@ -133,12 +133,12 @@ export default function RoleplayWorkspace() {
                         color="text-amber-300"
                     />
                     <ShortcutCard
-                        icon={Swords}
-                        title="Run a campaign"
+                        icon={Globe2}
+                        title="Shape a world"
                         description="Group characters, locations, chats, and stories together."
-                        actionLabel="Open campaigns"
-                        onClick={() => navigate('/campaigns')}
-                        color="text-rose-300"
+                        actionLabel="Open worlds"
+                        onClick={() => navigate('/worlds')}
+                        color="text-cyan-300"
                     />
                 </div>
             </section>
@@ -211,7 +211,7 @@ export default function RoleplayWorkspace() {
                     <CountCard label="Stories" value={counts.stories || 0} icon={BookOpen} onClick={() => navigate('/story')} />
                     <CountCard label="Lorebooks" value={counts.lorebooks || 0} icon={ScrollText} onClick={() => navigate('/lorebooks')} />
                     <CountCard label="Locations" value={counts.locations || 0} icon={MapPin} onClick={() => navigate('/locations')} />
-                    <CountCard label="Campaigns" value={campaigns.length} icon={Swords} onClick={() => navigate('/campaigns')} />
+                    <CountCard label="Worlds" value={worlds.length} icon={Globe2} onClick={() => navigate('/worlds')} />
                 </div>
             </section>
 

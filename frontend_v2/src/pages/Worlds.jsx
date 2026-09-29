@@ -1,26 +1,27 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit3, Trash2, Search, Swords, X, MessageSquare, BookOpen, MapPin, Users, ChevronRight, Check } from 'lucide-react';
+import { Plus, Edit3, Trash2, Search, Globe2, X, MessageSquare, BookOpen, MapPin, Users, ChevronRight, Check, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import {
-    useCampaigns,
-    useCreateCampaign,
-    useUpdateCampaign,
-    useDeleteCampaign,
-    useCampaignDashboard,
-} from '../hooks/useCampaigns';
+    useWorlds,
+    useCreateWorld,
+    useUpdateWorld,
+    useDeleteWorld,
+    useWorldDashboard,
+} from '../hooks/useWorlds';
 import { useCharacters } from '../hooks/useCharacters';
 import { useStories } from '../hooks/useStories';
 import { useChats } from '../hooks/useChats';
 import { useLocations } from '../hooks/useLocations';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 import RoleplayPageShell from '../components/RoleplayPageShell';
 
 const FORM_FIELDS = [
-    { key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'Campaign name' },
-    { key: 'description', label: 'Description', type: 'textarea', placeholder: 'Overview of this campaign...' },
+    { key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'World name' },
+    { key: 'description', label: 'Description', type: 'textarea', placeholder: 'Overview of this world...' },
 ];
 
 const DEFAULT_FORM = {
@@ -32,32 +33,37 @@ const DEFAULT_FORM = {
     location_ids: [],
 };
 
-export default function Campaigns() {
+export default function Worlds() {
     const [searchQuery, setSearchQuery] = useState('');
     const [showForm, setShowForm] = useState(false);
-    const [editingCampaign, setEditingCampaign] = useState(null);
+    const [editingWorld, setEditingWorld] = useState(null);
     const [form, setForm] = useState(DEFAULT_FORM);
-    const [selectedCampaign, setSelectedCampaign] = useState(null);
+    const [selectedWorld, setSelectedWorld] = useState(null);
 
-    const { data: campaigns = [], isLoading } = useCampaigns();
-    const createMutation = useCreateCampaign();
-    const updateMutation = useUpdateCampaign();
-    const deleteMutation = useDeleteCampaign();
+    // `isError` is load-bearing, not decoration. The `/api/v2/campaigns` 404 that
+    // this page replaces had no error branch at all, so a failed fetch rendered
+    // "No campaigns yet" with a working "New Campaign" button — indistinguishable
+    // from a genuinely empty vault, and the reason the dead route survived three
+    // audits behind a green suite.
+    const { data: worlds = [], isLoading, isError, error, refetch } = useWorlds();
+    const createMutation = useCreateWorld();
+    const updateMutation = useUpdateWorld();
+    const deleteMutation = useDeleteWorld();
     const { confirm } = useConfirmation();
     const navigate = useNavigate();
 
-    const filteredCampaigns = useMemo(() => {
-        if (!searchQuery.trim()) return campaigns;
+    const filteredWorlds = useMemo(() => {
+        if (!searchQuery.trim()) return worlds;
         const q = searchQuery.toLowerCase();
-        return campaigns.filter(c =>
-            c.name?.toLowerCase().includes(q) ||
-            (c.description && c.description.toLowerCase().includes(q))
+        return worlds.filter(w =>
+            w.name?.toLowerCase().includes(q) ||
+            (w.description && w.description.toLowerCase().includes(q))
         );
-    }, [campaigns, searchQuery]);
+    }, [worlds, searchQuery]);
 
     const resetForm = () => {
         setForm(DEFAULT_FORM);
-        setEditingCampaign(null);
+        setEditingWorld(null);
         setShowForm(false);
     };
 
@@ -68,77 +74,94 @@ export default function Campaigns() {
         }
         try {
             const payload = { ...form, name: form.name.trim() };
-            if (editingCampaign) {
-                await updateMutation.mutateAsync({ id: editingCampaign.id, ...payload });
-                toast.success('Campaign updated');
+            if (editingWorld) {
+                await updateMutation.mutateAsync({ id: editingWorld.id, ...payload });
+                toast.success('World updated');
             } else {
                 await createMutation.mutateAsync(payload);
-                toast.success('Campaign created');
+                toast.success('World created');
             }
             resetForm();
         } catch {
-            toast.error('Failed to save campaign');
+            toast.error('Failed to save world');
         }
     };
 
-    const handleEdit = (campaign) => {
-        setEditingCampaign(campaign);
+    const handleEdit = (world) => {
+        setEditingWorld(world);
         setForm({
-            name: campaign.name || '',
-            description: campaign.description || '',
-            character_ids: campaign.character_ids || [],
-            story_ids: campaign.story_ids || [],
-            chat_ids: campaign.chat_ids || [],
-            location_ids: campaign.location_ids || [],
+            name: world.name || '',
+            description: world.description || '',
+            character_ids: world.character_ids || [],
+            story_ids: world.story_ids || [],
+            chat_ids: world.chat_ids || [],
+            location_ids: world.location_ids || [],
         });
         setShowForm(true);
     };
 
-    const handleDelete = async (campaign) => {
+    const handleDelete = async (world) => {
         const ok = await confirm({
-            title: 'Delete Campaign',
-            message: `Are you sure you want to delete "${campaign.name}"?`,
+            title: 'Delete World',
+            message: `Are you sure you want to delete "${world.name}"?`,
             confirmText: 'Delete',
             isDangerous: true,
         });
         if (!ok) return;
         try {
-            await deleteMutation.mutateAsync(campaign.id);
-            toast.success('Campaign deleted');
+            await deleteMutation.mutateAsync(world.id);
+            toast.success('World deleted');
         } catch {
-            toast.error('Failed to delete campaign');
+            toast.error('Failed to delete world');
         }
     };
 
     return (
         <RoleplayPageShell
-            title="Campaigns"
-            description="Organize your stories, characters, and locations into chronicles."
-            icon={Swords}
+            title="Worlds"
+            description="Organize your characters, chats, stories, and locations into worlds."
+            icon={Globe2}
             actions={
                 <button
                     onClick={() => { resetForm(); setShowForm(true); }}
                     className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-cyan-400"
                 >
-                    <Plus size={16} /> New Campaign
+                    <Plus size={16} /> New World
                 </button>
             }
         >
 
             <div className="mb-6">
                 <div className="relative max-w-md">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                    <Search className="absolute left-3 top-1/2 -translate-y-2xl -translate-y-1/2 text-gray-400" size={18} />
                     <input
                         type="text"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search campaigns..."
+                        placeholder="Search worlds..."
                         className="w-full pl-10 pr-4 py-2.5 bg-gray-800/60 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                     />
                 </div>
             </div>
 
-            {isLoading ? (
+            {isError ? (
+                <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-6 flex items-start gap-3">
+                    <AlertTriangle className="text-red-400 shrink-0 mt-0.5" size={20} />
+                    <div className="flex-1">
+                        <h3 className="font-semibold text-red-300">Could not load your worlds</h3>
+                        <p className="text-sm text-red-200/70 mt-1 break-words">
+                            {error?.message || 'The request failed.'} This is not the same as having no worlds —
+                            nothing below is a real list until this succeeds.
+                        </p>
+                        <button
+                            onClick={() => refetch()}
+                            className="mt-3 px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/40 text-red-200 text-sm font-medium hover:bg-red-500/30 transition-colors"
+                        >
+                            Try again
+                        </button>
+                    </div>
+                </div>
+            ) : isLoading ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {[1, 2, 3, 4].map(i => (
                         <div key={i} className="p-4 rounded-xl border border-white/10 bg-gray-800/40 animate-pulse">
@@ -156,24 +179,24 @@ export default function Campaigns() {
                         </div>
                     ))}
                 </div>
-            ) : filteredCampaigns.length === 0 ? (
+            ) : filteredWorlds.length === 0 ? (
                 <EmptyState
                     type="roleplay"
-                    icon={Swords}
-                    title="No campaigns yet"
-                    description="Create your first campaign to start organizing your world."
-                    primaryLabel="New Campaign"
+                    icon={Globe2}
+                    title="No worlds yet"
+                    description="Create your first world to start organizing your vault."
+                    primaryLabel="New World"
                     onAction={() => { resetForm(); setShowForm(true); }}
                 />
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {filteredCampaigns.map((campaign) => (
-                        <CampaignCard
-                            key={campaign.id}
-                            campaign={campaign}
+                    {filteredWorlds.map((world) => (
+                        <WorldCard
+                            key={world.id}
+                            world={world}
                             onEdit={handleEdit}
                             onDelete={handleDelete}
-                            onOpen={setSelectedCampaign}
+                            onOpen={setSelectedWorld}
                         />
                     ))}
                 </div>
@@ -181,8 +204,8 @@ export default function Campaigns() {
 
             <AnimatePresence>
                 {showForm && (
-                    <CampaignFormModal
-                        campaign={editingCampaign}
+                    <WorldFormModal
+                        world={editingWorld}
                         form={form}
                         setForm={setForm}
                         onSave={handleSave}
@@ -193,11 +216,11 @@ export default function Campaigns() {
             </AnimatePresence>
 
             <AnimatePresence>
-                {selectedCampaign && (
-                    <CampaignDashboardModal
-                        campaignId={selectedCampaign.id}
-                        onClose={() => setSelectedCampaign(null)}
-                        onNavigate={(path) => { setSelectedCampaign(null); navigate(path); }}
+                {selectedWorld && (
+                    <WorldDashboardModal
+                        worldId={selectedWorld.id}
+                        onClose={() => setSelectedWorld(null)}
+                        onNavigate={(path) => { setSelectedWorld(null); navigate(path); }}
                     />
                 )}
             </AnimatePresence>
@@ -205,7 +228,7 @@ export default function Campaigns() {
     );
 }
 
-function CampaignCard({ campaign, onEdit, onDelete, onOpen }) {
+function WorldCard({ world, onEdit, onDelete, onOpen }) {
     return (
         <motion.div
             layout
@@ -213,40 +236,40 @@ function CampaignCard({ campaign, onEdit, onDelete, onOpen }) {
         >
             <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-red-500/20 to-orange-500/20 border border-white/10 flex items-center justify-center shrink-0">
-                        <Swords size={20} className="text-orange-400" />
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-white/10 flex items-center justify-center shrink-0">
+                        <Globe2 size={20} className="text-cyan-400" />
                     </div>
                     <div className="min-w-0">
-                        <h3 className="font-semibold text-white truncate">{campaign.name}</h3>
-                        {campaign.description && (
-                            <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{campaign.description}</p>
+                        <h3 className="font-semibold text-white truncate">{world.name}</h3>
+                        {world.description && (
+                            <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{world.description}</p>
                         )}
                     </div>
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                    <button onClick={() => onOpen(campaign)} className="p-1 text-gray-400 hover:text-blue-400 rounded" title="Open">
+                    <button onClick={() => onOpen(world)} className="p-1 text-gray-400 hover:text-blue-400 rounded" title="Open">
                         <ChevronRight size={12} />
                     </button>
-                    <button onClick={() => onEdit(campaign)} className="p-1 text-gray-400 hover:text-white rounded" title="Edit">
+                    <button onClick={() => onEdit(world)} className="p-1 text-gray-400 hover:text-white rounded" title="Edit">
                         <Edit3 size={12} />
                     </button>
-                    <button onClick={() => onDelete(campaign)} className="p-1 text-gray-400 hover:text-red-400 rounded" title="Delete">
+                    <button onClick={() => onDelete(world)} className="p-1 text-gray-400 hover:text-red-400 rounded" title="Delete">
                         <Trash2 size={12} />
                     </button>
                 </div>
             </div>
             <div className="flex items-center gap-4 text-xs text-gray-500">
-                {(campaign.character_ids?.length || 0) > 0 && (
-                    <span className="flex items-center gap-1"><Users size={12} /> {campaign.character_ids.length}</span>
+                {(world.character_ids?.length || 0) > 0 && (
+                    <span className="flex items-center gap-1"><Users size={12} /> {world.character_ids.length}</span>
                 )}
-                {(campaign.story_ids?.length || 0) > 0 && (
-                    <span className="flex items-center gap-1"><BookOpen size={12} /> {campaign.story_ids.length}</span>
+                {(world.story_ids?.length || 0) > 0 && (
+                    <span className="flex items-center gap-1"><BookOpen size={12} /> {world.story_ids.length}</span>
                 )}
-                {(campaign.chat_ids?.length || 0) > 0 && (
-                    <span className="flex items-center gap-1"><MessageSquare size={12} /> {campaign.chat_ids.length}</span>
+                {(world.chat_ids?.length || 0) > 0 && (
+                    <span className="flex items-center gap-1"><MessageSquare size={12} /> {world.chat_ids.length}</span>
                 )}
-                {(campaign.location_ids?.length || 0) > 0 && (
-                    <span className="flex items-center gap-1"><MapPin size={12} /> {campaign.location_ids.length}</span>
+                {(world.location_ids?.length || 0) > 0 && (
+                    <span className="flex items-center gap-1"><MapPin size={12} /> {world.location_ids.length}</span>
                 )}
             </div>
         </motion.div>
@@ -292,11 +315,13 @@ function EntityPicker({ title, icon: Icon, items, selected, onChange, getLabel }
     );
 }
 
-function CampaignFormModal({ campaign, form, setForm, onSave, onClose, isSubmitting }) {
+function WorldFormModal({ world, form, setForm, onSave, onClose, isSubmitting }) {
     const { data: characters = [] } = useCharacters();
     const { data: stories = [] } = useStories();
     const { data: chats = [] } = useChats();
     const { data: locations = [] } = useLocations();
+
+    useEscapeKey(onClose, true);
 
     const toggle = (field, id) => {
         setForm(f => ({
@@ -314,6 +339,9 @@ function CampaignFormModal({ campaign, form, setForm, onSave, onClose, isSubmitt
             onClick={(e) => e.target === e.currentTarget && onClose()}
         >
             <motion.div
+                role="dialog"
+                aria-modal="true"
+                aria-label={world ? 'Edit World' : 'New World'}
                 initial={{ opacity: 0, scale: 0.95, y: 10 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -322,7 +350,7 @@ function CampaignFormModal({ campaign, form, setForm, onSave, onClose, isSubmitt
             >
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-lg font-semibold text-white">
-                        {campaign ? 'Edit Campaign' : 'New Campaign'}
+                        {world ? 'Edit World' : 'New World'}
                     </h2>
                     <button onClick={onClose} className="text-gray-400 hover:text-white">
                         <X size={20} />
@@ -393,7 +421,7 @@ function CampaignFormModal({ campaign, form, setForm, onSave, onClose, isSubmitt
                         disabled={isSubmitting}
                         className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                     >
-                        {campaign ? 'Update' : 'Create'}
+                        {world ? 'Update' : 'Create'}
                     </button>
                 </div>
             </motion.div>
@@ -401,8 +429,10 @@ function CampaignFormModal({ campaign, form, setForm, onSave, onClose, isSubmitt
     );
 }
 
-function CampaignDashboardModal({ campaignId, onClose, onNavigate }) {
-    const { data, isLoading } = useCampaignDashboard(campaignId);
+function WorldDashboardModal({ worldId, onClose, onNavigate }) {
+    const { data, isLoading, isError } = useWorldDashboard(worldId);
+
+    useEscapeKey(onClose, true);
 
     return (
         <motion.div
@@ -413,6 +443,9 @@ function CampaignDashboardModal({ campaignId, onClose, onNavigate }) {
             onClick={onClose}
         >
             <motion.div
+                role="dialog"
+                aria-modal="true"
+                aria-label="World dashboard"
                 initial={{ opacity: 0, scale: 0.95, y: 10 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -420,7 +453,7 @@ function CampaignDashboardModal({ campaignId, onClose, onNavigate }) {
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-semibold text-white">{data?.campaign?.name || 'Campaign Dashboard'}</h2>
+                    <h2 className="text-lg font-semibold text-white">{data?.world?.name || 'World Dashboard'}</h2>
                     <button onClick={onClose} className="text-gray-400 hover:text-white">
                         <X size={20} />
                     </button>
@@ -440,10 +473,14 @@ function CampaignDashboardModal({ campaignId, onClose, onNavigate }) {
                             ))}
                         </div>
                     </div>
+                ) : isError ? (
+                    <p role="alert" className="text-sm text-red-300">
+                        Could not load this world's contents. The counts below would be a guess, so they are not shown.
+                    </p>
                 ) : (
                     <div className="space-y-6">
-                        {data?.description && (
-                            <p className="text-sm text-gray-400">{data.description}</p>
+                        {data?.world?.description && (
+                            <p className="text-sm text-gray-400">{data.world.description}</p>
                         )}
                         <div className="grid grid-cols-2 gap-4">
                             <DashboardSection title="Characters" items={data?.characters || []} onNavigate={(cid) => onNavigate(`/characters#char-${cid}`)} icon={Users} />
