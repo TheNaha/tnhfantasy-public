@@ -347,6 +347,360 @@
   }
 }
 
+/* ============================================================================
+   Second restoration pass — the classes commit 10024929 deleted and the
+   previous fix did not reach, plus four that were never written in any revision
+   of this file. Each is named by a live `className`, so each was a silent
+   no-op: no build error, no lint error, no test failure, no visible element
+   until you looked for the surface that was supposed to be there.
+
+     .btn-primary / .btn-secondary  7 uses — the two header actions on
+                                       Characters and Settings, and every action
+                                       in CharacterCardImportReport. Tailwind v4
+                                       preflight sets
+                                       `button { background-color: transparent;
+                                       color: inherit }`, so "Create Character"
+                                       rendered as bare text with no surface.
+     .nav-active                    1 use  — the sidebar's active-route pill.
+     .kbd                           4 uses — the command palette's footer hints
+                                       and the sidebar's ⌘K badge.
+     .animate-spin-slow             1 use  — the auto-randomize-seed toggle.
+     .animate-in / .fade-in /       9 uses — the Settings sections and the two
+     .slide-in-from-bottom-2               slash-command popovers.
+     .scrollbar-thin & friends      6 uses — dark console and log panels that
+                                       were falling back to the browser's
+                                       default (light) scrollbar.
+     .shimmer                       1 use  — the image placeholder tile in
+                                       MessageTimeline. `@keyframes shimmer`
+                                       existed; the class that ran it never did.
+     .story-prose /                 2 uses — the Story editor's markdown preview
+     .story-editor-textarea                and its textarea, which toggle between
+                                           each other and so were visibly
+                                           mismatched.
+   ========================================================================= */
+@layer components {
+  /* Padding is declared as `padding-inline` only, and on purpose. The call sites
+     supply vertical padding (`px-4 py-2` on the Settings buttons) or nothing at
+     all (Characters, CharacterCardImportReport), so a `padding` shorthand here
+     would either be dead weight or — worse, unlayered as the pre-refactor rule
+     was — silently beat `px-4`. `padding-inline` still loses to `px-4` for free,
+     because the utilities layer sorts after components. */
+  .btn-primary,
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.25rem;
+    padding-inline: 0.75rem;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.25rem;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .btn-primary {
+    background-color: var(--color-action);
+    color: var(--color-primary);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--color-action-hover);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    background-color: color-mix(in oklab, var(--color-action-hover) 85%, var(--color-sunken));
+  }
+
+  .btn-secondary {
+    background-color: color-mix(in oklab, var(--color-overlay) 60%, transparent);
+    border-color: var(--color-edge);
+    color: var(--color-primary);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background-color: color-mix(in oklab, var(--color-overlay) 95%, transparent);
+    border-color: var(--color-edge-strong);
+  }
+
+  .btn-secondary:active:not(:disabled) {
+    background-color: color-mix(in oklab, var(--color-overlay) 40%, transparent);
+  }
+
+  /* Outline rather than a box-shadow ring: the fill is a solid colour, so a
+     ring drawn in the same box would be invisible against it. */
+  .btn-primary:focus-visible,
+  .btn-secondary:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  /* Matches the `disabled:opacity-50` the call sites already carry — the
+     component rule is here so a button that forgets it still reads as inert. */
+  .btn-primary:disabled,
+  .btn-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* The sidebar's active-route pill. No `box-shadow` here on purpose: the one
+     live call site carries `shadow-[0_0_15px_rgba(59,130,246,0.15)]` in the
+     utilities layer, which now beats components — so an inset highlight would
+     be silently dropped and the outer glow is the one that actually shows. */
+  .nav-active {
+    position: relative;
+    background-image: linear-gradient(
+      90deg,
+      var(--color-accent-muted) 0%,
+      color-mix(in oklab, var(--color-info) 6%, transparent) 100%
+    );
+    border: 1px solid color-mix(in oklab, var(--color-accent) 22%, transparent);
+    transition: background-color 0.3s ease, border-color 0.3s ease;
+  }
+
+  .nav-active::before {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 10%;
+    width: 3px;
+    height: 80%;
+    border-radius: 0 4px 4px 0;
+    background: linear-gradient(180deg, var(--color-accent) 0%, var(--color-info) 100%);
+    box-shadow: 0 0 10px color-mix(in oklab, var(--color-accent) 80%, transparent);
+  }
+
+  /* Matched to the `<kbd>` elements that spell their styling with utilities
+     (KeyboardShortcutsModal:96, ChatInputContainer:254), which render
+     correctly: monospace, a raised surface, a hairline border, muted text. */
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.5rem;
+    padding: 0.125rem 0.375rem;
+    border: 1px solid var(--color-edge);
+    border-radius: 0.375rem;
+    background-color: var(--color-raised);
+    color: var(--color-secondary);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    line-height: 1.125rem;
+    white-space: nowrap;
+  }
+
+  .story-editor-textarea {
+    caret-color: var(--color-accent);
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-edge-strong) transparent;
+  }
+
+  .story-editor-textarea::placeholder {
+    color: var(--color-tertiary);
+  }
+
+  /* The placeholder tile for an in-flight scene image. The host supplies
+     `animate-pulse` and the fill; this adds the sweep, which needs a positioned
+     clipping box the call site does not have. */
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in oklab, var(--color-primary) 8%, transparent) 50%,
+      transparent 100%
+    );
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+}
+
+/* Utilities whose plugins are not dependencies.
+
+   `tailwind-scrollbar` and `tailwindcss-animate` are both named by live markup
+   and neither is installed, so every class below was a no-op. They live in
+   `@layer utilities` because each one is meant to compose with, and lose to,
+   the Tailwind classes sitting next to it on the same element. */
+@layer utilities {
+  /* The Story editor toggles between a markdown preview and a raw textarea
+     without remounting either, so any property set on one and not the other
+     shows up as a jump on the switch. These pin the shared geometry: same
+     serif face, same measure, same leading, same scrollbar.
+
+     In the utilities layer and qualified with `.prose`, both required. The
+     typography plugin's `prose` is itself a utility in Tailwind v4, and layer
+     order is compared before specificity — so from `@layer components` this
+     rule lost to `.prose` no matter how specific it was, and the preview
+     rendered at the plugin's 16px/1.75 body defaults against a textarea set to
+     `text-lg`/`leading-relaxed`. The sizes are taken from the textarea rather
+     than from the blog defaults. */
+  .prose.story-prose {
+    min-height: 0;
+    overflow-y: auto;
+    max-width: none;
+    color: var(--color-secondary);
+    font-family: var(--font-serif);
+    font-size: var(--text-lg);
+    line-height: 1.625;
+    overflow-wrap: break-word;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-edge-strong) transparent;
+  }
+
+  .prose.story-prose > :first-child {
+    margin-top: 0;
+  }
+
+  .prose.story-prose > :last-child {
+    margin-bottom: 0;
+  }
+
+  /* Both scrollbar mechanisms are needed. `scrollbar-width`/`scrollbar-color`
+     are what Firefox honours; `::-webkit-scrollbar*` is what actually styles a
+     scrollbar in the browser this app runs in, and the standard properties are
+     ignored there once the pseudo-elements are present. */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-edge-strong) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: var(--color-edge-strong);
+    border-radius: 9999px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in oklab, var(--color-edge-strong) 160%, var(--color-primary));
+  }
+
+  /* The two `-thumb-gray-*` names come from the plugin's Tailwind palette.
+     Re-expressed on the token ramp so they follow the theme, keeping the
+     relative ordering the call sites chose: BatchAutopopulateModal's chip strip
+     wants the brighter thumb, NodeSidebar's node list the dimmer one. */
+  .scrollbar-thumb-gray-600 {
+    scrollbar-color: var(--color-disabled) transparent;
+  }
+
+  .scrollbar-thumb-gray-600::-webkit-scrollbar-thumb {
+    background-color: var(--color-disabled);
+  }
+
+  .scrollbar-thumb-gray-800 {
+    scrollbar-color: color-mix(in oklab, var(--color-disabled) 55%, var(--color-sunken)) transparent;
+  }
+
+  .scrollbar-thumb-gray-800::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklab, var(--color-disabled) 55%, var(--color-sunken));
+  }
+
+  /* `scrollbar-color` is a two-value shorthand with no track-only form, so this
+     class can only reach the pseudo-element. The standard property's track half
+     is already `transparent` from the rule above. */
+  .scrollbar-track-transparent::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Same motion as the stock `animate-spin`, three times round instead of one:
+     this drives a seed-randomise toggle that is a passive status indicator, not
+     a progress bar, and a full rotation per second next to a real spinner
+     reads as a second one. */
+  .animate-spin-slow {
+    animation: spin-slow 3s linear infinite;
+  }
+
+  /* tailwindcss-animate's mechanism, reimplemented. Three separate classes have
+     to contribute to a single `@keyframes` rule, and custom properties are the
+     only way a class can hand a value to a keyframe it does not own. The names
+     are the plugin's own, so installing it later is a delete rather than a
+     migration. */
+  .animate-in {
+    animation-name: tnh-enter;
+    animation-duration: var(--tw-enter-duration, 150ms);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    animation-fill-mode: both;
+  }
+
+  .fade-in {
+    --tw-enter-opacity: 0;
+  }
+
+  .slide-in-from-bottom-2 {
+    --tw-enter-translate-y: 0.5rem;
+  }
+
+  /* `duration-*` is a `transition-duration` utility. The plugin extends it to
+     `animation-duration` as well; without the plugin the seven `duration-500`
+     call sites would silently animate at the 150ms default above. Custom
+     properties cascade, so setting them from a same-named utility is enough. */
+  .duration-150 {
+    --tw-enter-duration: 150ms;
+  }
+
+  .duration-200 {
+    --tw-enter-duration: 200ms;
+  }
+
+  .duration-300 {
+    --tw-enter-duration: 300ms;
+  }
+
+  .duration-500 {
+    --tw-enter-duration: 500ms;
+  }
+
+  .duration-700 {
+    --tw-enter-duration: 700ms;
+  }
+
+  .duration-1000 {
+    --tw-enter-duration: 1000ms;
+  }
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes tnh-enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    translate: 0 var(--tw-enter-translate-y, 0);
+  }
+}
+
 /* Overrides that sit on top of `@tailwindcss/typography`, which now supplies the
    `prose` base. These were the only compensation while the plugin was missing
    and are kept deliberately: `max-w-none` and the app's own dark palette
@@ -432,5 +786,102 @@
   .opacity-0.group-hover\/chat-row\:opacity-100,
   .opacity-0.group-hover\/menu-item\:opacity-100 {
     opacity: 1;
+  }
+}
+
+/* ============================================================================
+   Touch-sized viewports
+
+   Deleted wholesale by 10024929. The tap-target rules are unlayered for the
+   same reason as the type floor above: a floor that a utility can outrank is
+   not a floor. The padding and gap rules are in `@layer base` behind `:where()`,
+   which is the opposite and equally deliberate — a bare `grid` or a button with
+   no padding class of its own picks the compaction up, while any element that
+   already states `gap-*` or `p-*` keeps what its component asked for. The
+   pre-refactor block set both unlayered, so on a phone it overrode every
+   `gap-4` in the app and turned `px-1 p-1` controls into 0.75rem blocks.
+   ========================================================================= */
+@media (max-width: 768px) {
+  button,
+  a {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* The 44px box belongs to the button; without this the SVG child swallows
+     taps aimed at the padding around it. */
+  button > svg:only-child,
+  a > svg:only-child {
+    pointer-events: none;
+  }
+
+  /* Markdown links are inline text inside a paragraph, so the floor above would
+     give every one of them a 44px line box and break the prose flow in the
+     Story preview. They are exempt, and the text in between them is what a
+     reader actually taps. */
+  .prose a,
+  .story-prose a {
+    min-height: auto;
+    min-width: auto;
+  }
+
+  /* Six live call sites opt out: the dice and aspect-ratio locks that set their
+     own `w-12`/`w-10 h-10` box, where a 44px minimum would not fit the row. */
+  button.no-touch-padding,
+  a.no-touch-padding {
+    min-height: auto;
+    min-width: auto;
+  }
+
+  @layer base {
+    button:where(:not(.no-touch-padding)) {
+      padding: 0.75rem;
+    }
+
+    :where(.grid) {
+      gap: 0.5rem;
+    }
+  }
+
+  /* Wide panes: `max-width: 100%` alone would be a no-op (that is what the
+     utility already resolves to on a narrow viewport), so the narrowing has to
+     come from the inline padding plus border-box. */
+  .max-w-6xl,
+  .max-w-7xl {
+    max-width: 100%;
+    padding-left: 1rem;
+    padding-right: 1rem;
+    box-sizing: border-box;
+  }
+
+  /* `main`'s own padding is NOT overridden here. `Layout.jsx:401` already gives
+     every non-full-bleed route `px-2 py-3 sm:p-4`, and the pre-refactor rule was
+     `!important`, so it also reached the two full-bleed routes (/chat, /story)
+     that deliberately take no padding — on a phone that put a 0.75rem gutter
+     around the chat pane and broke the edge-to-edge layout the sticky
+     BottomTabBar is positioned against. */
+
+  /* Backdrop blur is a full-screen composite on every frame. On the two routes
+     that stack a blurred popover over a blurred sidebar and chat pane it is the
+     single most expensive thing the compositor does on a phone GPU.
+
+     The unprefixed property is written last on purpose. The build's CSS
+     minifier folds a prefixed/unprefixed pair down to the one it prefers, and
+     it prefers the `-webkit-` spelling — which Blink treats as a lower-priority
+     alias, so a `-webkit-`-only `none` here would lose to the standard
+     `backdrop-filter: blur()` in the `backdrop-blur-*` utility it is meant to
+     cancel. Order is the whole fix. */
+  [class*="backdrop-blur"],
+  .glass,
+  .glass-panel {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  /* With the blur gone the panels need an opaque fill, or the text behind them
+     shows straight through. */
+  .glass,
+  .glass-panel {
+    background-color: var(--color-raised);
   }
 }
