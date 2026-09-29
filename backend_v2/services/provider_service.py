@@ -149,7 +149,7 @@ class ProviderService:
 
         raw_deploy_config = payload.get("deploy_config")
         if raw_deploy_config is None:
-            raw_deploy_config = extract_deploy_config(provider_type, merged_config)
+            raw_deploy_config = extract_deploy_config(provider_type, merged_config, worker_type)
         else:
             raw_deploy_config = clean_dict(raw_deploy_config)
 
@@ -159,6 +159,7 @@ class ProviderService:
                 **merged_config,
                 "deploy_config": raw_deploy_config,
             },
+            worker_type,
         )
 
         runtime_config = raw_runtime_config or None
@@ -179,6 +180,11 @@ class ProviderService:
             "credentials": clean_dict(payload.get("credentials", getattr(existing, "credentials", {}))),
             "container_config": runtime_config,
             "config": config,
+            # Column name, so `repo.create`/`repo.update` (which splat this
+            # dict into the model) persist it rather than dropping a kwarg it
+            # does not recognise. The wire name is `declared_capabilities`;
+            # the route maps between the two.
+            "capabilities": payload.get("capabilities"),
         }
 
     def _summarize_credentials(self, provider_type: str, credentials: dict[str, Any], deploy_config: dict[str, Any], runtime: Any) -> dict[str, Any]:
@@ -334,6 +340,7 @@ class ProviderService:
                 "credentials": normalized["credentials"],
                 "container_config": normalized["container_config"],
                 "config": normalized["config"],
+                "capabilities": normalized["capabilities"],
             },
         )
         if not provider:
@@ -531,7 +538,9 @@ class ProviderService:
         deploy_state = read_deploy_state(provider)
         reconciliation_state = read_reconciliation_state(provider)
         runtime_config = extract_runtime_config(provider.type, provider.container_config, provider.config or {})
-        deploy_config = extract_deploy_config(provider.type, provider.config or {})
+        deploy_config = extract_deploy_config(
+            provider.type, provider.config or {}, provider.worker_type or "image"
+        )
         capabilities, capability_reasons = self._build_capabilities(
             provider=provider,
             runtime=runtime,
@@ -571,6 +580,12 @@ class ProviderService:
             },
             "capabilities": capabilities,
             "capability_reasons": capability_reasons,
+            # The DB column the load balancer's `serves()` reads. Exposed under
+            # its own name because `capabilities` above is the unrelated UI
+            # action map the frontend has always consumed under that key — two
+            # different meanings on one field, where the one that answers "can
+            # this provider serve TTS" was the one missing.
+            "declared_capabilities": list(provider.capabilities or []),
             "credential_summary": self._summarize_credentials(provider.type, clean_dict(provider.credentials), deploy_config, runtime),
         }
     

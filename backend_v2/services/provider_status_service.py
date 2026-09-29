@@ -544,6 +544,11 @@ class ProviderStatusService:
             "model_sync": status_card.get("model_sync", {}),
             "storage": status_card.get("storage", {}),
             "capabilities": base_payload.get("capabilities", {}),
+            # The DB column the load balancer's `serves()` reads, under its own
+            # name. `capabilities` above is the UI action map; this list is what
+            # answers "which task types will this provider be offered", and it
+            # was the half that no code path could write or read.
+            "declared_capabilities": base_payload.get("declared_capabilities") or [],
             "capability_reasons": base_payload.get("capability_reasons", {}),
             # Whether a worker token exists, never the token itself. Lets the UI
             # show "external worker configured" and offer rotate/revoke without

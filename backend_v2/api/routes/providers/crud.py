@@ -10,7 +10,7 @@
 #   PUT    /api/v2/providers/load-balancing – Update LB strategy
 import asyncio
 import time
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -44,10 +44,19 @@ router = APIRouter()
 # ============================================================================
 
 
+# The task types a provider declares it can serve. Spelled `worker_type` +
+# `declared_capabilities` rather than reusing the name `capabilities`, which on
+# the read path is the unrelated UI action map (`container`, `deploy`, `setup`,
+# ...) that the frontend has always consumed under that key.
+WorkerType = Literal["image", "llm", "tts"]
+DeclaredCapability = Literal["image", "llm", "tts"]
+
+
 class ProviderRequest(BaseModel):
     id: str
     type: str = "modal"
-    worker_type: str | None = None
+    worker_type: WorkerType | None = None
+    declared_capabilities: list[DeclaredCapability] | None = None
     enabled: bool = True
     priority: int = 1
     credentials: dict[str, Any] = {}
@@ -60,7 +69,8 @@ class ProviderRequest(BaseModel):
 
 class ProviderUpdateRequest(BaseModel):
     type: str | None = None
-    worker_type: str | None = None
+    worker_type: WorkerType | None = None
+    declared_capabilities: list[DeclaredCapability] | None = None
     enabled: bool | None = None
     priority: int | None = None
     credentials: dict[str, Any] | None = None
@@ -383,7 +393,12 @@ async def create_provider(
 ):
     """Create a new provider."""
     service = get_provider_service(session)
-    provider = await service.create_provider(request.model_dump())
+    payload = request.model_dump()
+    # The wire field is `declared_capabilities`; the service's normalizer and
+    # the DB column both call it `capabilities`. Renamed here rather than in
+    # the service so the one place that owns the vocabulary is this one.
+    payload["capabilities"] = payload.pop("declared_capabilities", None)
+    provider = await service.create_provider(payload)
     await _republish_known_provider_hosts()
     status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider.id, provider=provider)
@@ -408,6 +423,8 @@ async def update_provider(
     """Update a provider."""
     service = get_provider_service(session)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
+    if "declared_capabilities" in updates:
+        updates["capabilities"] = updates.pop("declared_capabilities")
     provider = await service.update_provider(provider_id, updates)
     await _republish_known_provider_hosts()
     status_service = get_provider_status_service(session)
