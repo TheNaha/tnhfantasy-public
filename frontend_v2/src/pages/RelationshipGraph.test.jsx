@@ -8,11 +8,13 @@ const mockRelationships = vi.hoisted(() => vi.fn());
 const mockRefetch = vi.hoisted(() => vi.fn());
 const mockGraphLayout = vi.hoisted(() => vi.fn());
 const mockSaveLayout = vi.hoisted(() => vi.fn());
+const mockDeleteLayout = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useWorldVaultSearch', () => ({
     useWorldVaultRelationships: (...args) => mockRelationships(...args),
     useGraphLayout: (...args) => mockGraphLayout(...args),
     useSaveGraphLayout: () => ({ mutate: mockSaveLayout, isPending: false }),
+    useDeleteGraphLayout: () => ({ mutate: mockDeleteLayout, isPending: false }),
 }));
 
 const graphData = {

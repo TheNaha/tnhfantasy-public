@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw, Save, RotateCcw, X, Pencil, GitBranch } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useWorldVaultRelationships, useGraphLayout, useSaveGraphLayout } from '../hooks/useWorldVaultSearch';
+import { useWorldVaultRelationships, useGraphLayout, useSaveGraphLayout, useDeleteGraphLayout } from '../hooks/useWorldVaultSearch';
 import RoleplayPageShell from '../components/RoleplayPageShell';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
@@ -251,6 +251,7 @@ export default function RelationshipGraph() {
     const { data, isLoading, isError, refetch, isFetching } = useWorldVaultRelationships();
     const { data: savedLayout } = useGraphLayout('default');
     const saveLayout = useSaveGraphLayout();
+    const deleteLayout = useDeleteGraphLayout();
 
     const nodeRouteMap = useMemo(() => ({
         character: '/characters',
@@ -370,8 +371,15 @@ export default function RelationshipGraph() {
     }, [nodes, positions, saveLayout]);
 
     const handleResetLayout = useCallback(() => {
-        window.location.reload();
-    }, []);
+        // The button used to call `window.location.reload()`, which re-read the
+        // saved layout and restored exactly what the user was trying to discard.
+        // It now deletes it, and the layout re-runs force-directed because
+        // `savedPositions` becomes null.
+        deleteLayout.mutate(
+            { name: 'default' },
+            { onSuccess: () => { setHasUnsavedChanges(false); setSelectedNode(null); } },
+        );
+    }, [deleteLayout]);
 
     const handleMouseDown = useCallback((e, node) => {
         e.stopPropagation();

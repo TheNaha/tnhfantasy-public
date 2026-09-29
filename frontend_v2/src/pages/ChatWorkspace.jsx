@@ -18,6 +18,7 @@ import ChatContextPanel from '../components/chat/ChatContextPanel';
 import ChatTimeline from '../components/chat/ChatTimeline';
 import MessageTimeline from '../components/chat/MessageTimeline';
 import { ChatWorkspaceProvider, useChatWorkspace } from '../contexts/ChatWorkspaceContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 export default function ChatWorkspace() {
     return (
@@ -49,14 +50,18 @@ function ChatWorkspaceLayout() {
         mobileTab, setMobileTab,
         activeChatId, messages, setMessageSearch,
         setTimelineVisible, listContainerRef,
-        showNewChatModal, characters, lorebooks, personas: personasCtx = [], confirmCreateChat, setShowNewChatModal,
+        showNewChatModal, characters, lorebooks, worlds, personas: personasCtx = [], confirmCreateChat, setShowNewChatModal,
         showCharacterDetails, linkedCharacter, setShowCharacterDetails,
         greetingModal, setGreetingModal, hasCreatedChatRef,
         showScenesModal, setShowScenesModal, sceneTab, setSceneTab, chatImages,
         chatCollection, handleSaveImageToCollection, collectionsList,
         avatarModalSrc, setAvatarModalSrc, contextCollapsed,
-        timelineVisible, activeBranch, setActiveBranch
+        timelineVisible, activeBranch, setActiveBranch,
     } = context;
+
+    // Escape dismisses the Scenes gallery, matching the shared ModalOverlay
+    // dialogs and the "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(() => { if (showScenesModal) setShowScenesModal(false); }, showScenesModal);
 
     useEffect(() => {
         if (searchParams.get('new') === '1') {
@@ -225,6 +230,7 @@ function ChatWorkspaceLayout() {
                     <NewChatModal
                         characters={characters}
                         lorebooks={lorebooks}
+                        worlds={worlds}
                         personas={personasCtx}
                         onCreate={confirmCreateChat}
                         onClose={() => setShowNewChatModal(false)}

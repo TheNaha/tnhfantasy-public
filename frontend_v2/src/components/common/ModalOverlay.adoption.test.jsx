@@ -30,6 +30,15 @@ vi.mock('../../api', () => ({
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
+/**
+ * `ImageLightbox` renders `AssetTagEditor`, which is query-backed, so it needs a
+ * QueryClient the other dialogs in this file do not. Wrapping here rather than
+ * per-case keeps every `render` in the file uniform; no assertion changed.
+ */
+function renderWithQuery(ui) {
+    return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
+
 const character = {
     id: 'c1',
     name: 'Elara Moonwhisper',
@@ -82,7 +91,7 @@ const mountedOnlyWhileOpen = [
 describe('converted dialogs: mounted only while open', () => {
     it.each(mountedOnlyWhileOpen.map((d) => [d.name, d]))('%s closes on Escape', (name, dialog) => {
         const onClose = vi.fn();
-        render(dialog.open(onClose));
+        renderWithQuery(dialog.open(onClose));
         expect(screen.getByRole('dialog')).toBeInTheDocument();
 
         fireEvent.keyDown(window, { key: 'Escape' });
@@ -91,7 +100,7 @@ describe('converted dialogs: mounted only while open', () => {
 
     it.each(mountedOnlyWhileOpen.map((d) => [d.name, d]))('%s renders nothing and binds no listener when closed', (name, dialog) => {
         const onClose = vi.fn();
-        const { unmount } = render(dialog.open(onClose));
+        const { unmount } = renderWithQuery(dialog.open(onClose));
         unmount();
 
         fireEvent.keyDown(window, { key: 'Escape' });

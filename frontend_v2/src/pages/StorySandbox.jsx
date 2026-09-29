@@ -23,6 +23,8 @@ import StoryActionBar from '../components/story/StoryActionBar';
 import ExportModal from '../components/story/ExportModal';
 import StoryContextPanel from '../components/story/StoryContextPanel';
 import CreateStoryModal from '../components/story/CreateStoryModal';
+import { useWorlds } from '../hooks/useWorlds';
+import { warnIfWorldIgnored, WORLD_IGNORED_MESSAGE } from '../utils/worldLinkWarning';
 import IllustrateModal from '../components/story/IllustrateModal';
 import StoryActionModal from '../components/story/StoryActionModal';
 import ChapterRevisionsModal from '../components/story/ChapterRevisionsModal';
@@ -42,6 +44,7 @@ export default function StorySandbox() {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showParseModal, setShowParseModal] = useState(false);
     const [newStoryTitle, setNewStoryTitle] = useState('');
+    const [newStoryWorldId, setNewStoryWorldId] = useState('');
     const textareaRef = useRef(null);
     const isDirtyRef = useRef(false);
     const loadedChapterIdRef = useRef(null);
@@ -53,6 +56,7 @@ export default function StorySandbox() {
     const activeChapterId = urlChapterId || null;
 
     const { data: stories = [], isLoading: storiesLoading } = useStories();
+    const { data: worlds = [] } = useWorlds();
     const { data: activeStory } = useStory(activeStoryId);
     const { data: chapters = [], isLoading: chaptersLoading } = useStoryChapters(activeStoryId);
     const { data: lorebooks = [] } = useLorebooks();
@@ -768,8 +772,15 @@ export default function StorySandbox() {
         const title = newStoryTitle.trim();
         if (!title) return;
         try {
-            await handleCreateStory({ title });
+            // `world_id` is sent whenever a world was picked. `Story.world_id`
+            // is a real column and comes back on the created story, so the
+            // response is the capability check: a server that does not accept
+            // the field yet drops it, and the story is created regardless. The
+            // warning is what keeps that from being silent.
+            const story = await handleCreateStory(newStoryWorldId ? { title, world_id: newStoryWorldId } : { title });
+            if (warnIfWorldIgnored(story, newStoryWorldId, 'story')) toast(WORLD_IGNORED_MESSAGE('story'));
             setNewStoryTitle('');
+            setNewStoryWorldId('');
             setShowCreateModal(false);
         } catch {
             toast.error('Failed to create story');
@@ -1045,8 +1056,11 @@ export default function StorySandbox() {
                             <CreateStoryModal
                                 title={newStoryTitle}
                                 onTitleChange={setNewStoryTitle}
+                                worlds={worlds}
+                                worldId={newStoryWorldId}
+                                onWorldChange={setNewStoryWorldId}
                                 onConfirm={handleCreateStoryFromModal}
-                                onClose={() => { setShowCreateModal(false); setNewStoryTitle(''); }}
+                                onClose={() => { setShowCreateModal(false); setNewStoryTitle(''); setNewStoryWorldId(''); }}
                             />
                         )}
                     </>
