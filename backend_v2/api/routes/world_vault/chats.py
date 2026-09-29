@@ -799,6 +799,16 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
     if "authors_note_depth" in update_fields and update_fields["authors_note_depth"] is not None:
         if update_fields["authors_note_depth"] < 0 or update_fields["authors_note_depth"] > 100:
             raise ValidationError("authors_note_depth must be between 0 and 100")
+    # A per-chat context budget is a *paid prompt size*. The global setting is
+    # range-checked (config.py:767, 1024–32768) but this per-chat override
+    # bypassed that check entirely and was returned verbatim by
+    # `resolve_context_tokens`, so one PATCH could set it to 10**7 and every
+    # subsequent send would carry the full 200-message window plus the full
+    # system block. Same bounds, same numbers, so the two cannot disagree.
+    if "max_context_tokens" in update_fields and update_fields["max_context_tokens"] is not None:
+        _tokens = update_fields["max_context_tokens"]
+        if _tokens < 1024 or _tokens > 32768:
+            raise ValidationError("max_context_tokens must be between 1024 and 32768")
     changed_state = {}
     if "story_time" in update_fields and update_fields["story_time"] != chat.story_time:
         changed_state["time"] = update_fields["story_time"]
