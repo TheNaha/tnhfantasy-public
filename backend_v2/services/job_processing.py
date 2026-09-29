@@ -690,6 +690,194 @@ async def _finalize_llm_job(
                 logger.debug("memory_extraction_hook_failed", job_id=job_id, error=str(exc))
 
 
+_AUDIO_OUTPUT_SUFFIXES = (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac", ".opus")
+
+# A narration is tens of seconds of audio, not a 7 GB checkpoint, but the cap
+# still has to exist: the provider's `/get-file` returns the whole body and
+# there is nothing on this side refusing an unbounded one.
+_TTS_FETCH_MAX_BYTES = 128 * 1024 * 1024
+_TTS_FETCH_TIMEOUT_SECONDS = 120.0
+
+
+def _is_audio_path(value: str) -> bool:
+    return str(value).lower().endswith(_AUDIO_OUTPUT_SUFFIXES)
+
+
+def _resolve_tts_worker_base_sync(provider_id: str) -> str | None:
+    """The base URL a TTS provider's own `/get-file` is served from.
+
+    Resolved the way `resolve_provider_health_url` resolves the health URL: a
+    serverless deployment has no Docker-DNS name, so the provider's configured
+    `worker_url` wins and the container hostname is only the fallback. Runs
+    synchronously and is called through `asyncio.to_thread` — it reads the
+    database, and this is an `async def` caller on the event loop.
+    """
+    from infrastructure.providers.runtime import _publish_provider_host
+
+    base = None
+    try:
+        from infrastructure.database import get_session_context
+        from infrastructure.repositories.provider_repo import ProviderRepository
+        from infrastructure.providers.runtime import get_provider_worker_base_url
+
+        with get_session_context() as session:
+            provider = ProviderRepository(session).get(provider_id)
+            if provider is None:
+                return None
+            config = provider.config or {}
+            container_config = provider.container_config or {}
+            base = (
+                config.get("worker_url")
+                or config.get("discovery_url")
+                or container_config.get("internal_url")
+            )
+            base = base or get_provider_worker_base_url(provider.id)
+    except Exception as exc:  # pragma: no cover - resolution is best-effort
+        logger.warning("tts_worker_base_unresolved", provider_id=provider_id, error=str(exc))
+        return None
+
+    base = base.rstrip("/")
+    _publish_provider_host(base)
+    return base
+
+
+def _safe_output_subdir(subfolder: str) -> str:
+    """A provider-supplied subfolder, confined to the output directory.
+
+    The value comes from a remote worker, so it is untrusted input on a path we
+    are about to write to. Anything that could climb out is dropped rather than
+    sanitised into something surprising.
+    """
+    parts = [
+        p
+        for p in str(subfolder or "").replace("\\", "/").split("/")
+        if p not in ("", ".", "..") and not p.startswith("~")
+    ]
+    return "/".join(parts)
+
+
+async def _fetch_remote_tts_outputs(
+    *,
+    job,
+    provider_id: str,
+    final_result: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Pull a TTS provider's audio off its own volume and onto this filesystem.
+
+    A serverless TTS worker writes to a Modal volume and reports
+    ``{filename, subfolder, type}``. Nothing shared that path with this process,
+    so without this the job finalised with zero outputs and the audio stayed
+    where it was, with the job marked green.
+
+    The bytes are pulled before the record is handed to the normal finalization
+    path rather than lazily inside it, because every consumer downstream
+    (`_handle_chat_tts`, `_handle_story_tts`, `_handle_voice_preview`) reads a
+    path that must already exist on disk.
+
+    The provider's own subfolder is preserved rather than replaced: ComfyUI's
+    `SaveAudio` already namespaces by the `filename_prefix` the workflow asked
+    for (`voice_preview/<id>`, `chat_tts/<chat>/<msg>`), and rewriting it here
+    would lose the one piece of structure that makes the output findable.
+    """
+    from urllib.parse import quote
+
+    from infrastructure.http_client import get as http_get
+
+    artifacts = [
+        a
+        for a in ((final_result.get("outputs") or []) + (final_result.get("images") or []))
+        if isinstance(a, dict)
+    ]
+    if not artifacts:
+        return []
+
+    # A worker that already returned inline bytes needs no transport at all.
+    inline = [a for a in artifacts if a.get("data")]
+    if inline:
+        return await asyncio.to_thread(build_job_outputs, job, inline, provider_id)
+
+    base = await asyncio.to_thread(_resolve_tts_worker_base_sync, provider_id)
+    if not base:
+        return []
+
+    fetched: list[dict[str, Any]] = []
+    for artifact in artifacts:
+        filename = os.path.basename(str(artifact.get("filename") or "").replace("\\", "/"))
+        if not filename or filename in {".", ".."}:
+            continue
+        subfolder = _safe_output_subdir(artifact.get("subfolder") or "")
+        remote_path = f"{subfolder}/{filename}" if subfolder else filename
+
+        target_dir = (
+            os.path.join(settings.output_dir, *subfolder.split("/"))
+            if subfolder
+            else settings.output_dir
+        )
+        target_path = os.path.join(target_dir, filename)
+        remote_url = f"{base}/get-file/{quote(remote_path, safe='/')}"
+
+        try:
+            response = await http_get(remote_url, timeout=_TTS_FETCH_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            body = response.content
+        except Exception as exc:
+            # One unreadable artifact fails that artifact, not the job: the
+            # provider has already been paid and its work is not reproducible.
+            logger.warning(
+                "tts_output_fetch_failed",
+                provider_id=provider_id,
+                path=remote_path,
+                error=str(exc),
+            )
+            continue
+
+        if not body:
+            logger.warning("tts_output_empty", provider_id=provider_id, path=remote_path)
+            continue
+        if len(body) > _TTS_FETCH_MAX_BYTES:
+            logger.warning(
+                "tts_output_too_large",
+                provider_id=provider_id,
+                path=remote_path,
+                bytes=len(body),
+            )
+            continue
+
+        await asyncio.to_thread(_write_tts_output, target_path, body)
+        fetched.append(
+            {
+                "filename": filename,
+                "subfolder": subfolder,
+                "relative_path": remote_path,
+                "path": target_path,
+                "type": artifact.get("type") or "output",
+            }
+        )
+
+    return fetched
+
+
+def _write_tts_output(path: str, data: bytes) -> None:
+    """Write a fetched audio artifact, creating its directory first.
+
+    Written to a temp name in the same directory and moved into place, so a
+    reader that stats the path (reconciliation polls for it) never observes a
+    half-written file. Mirrors what the download path already does for models.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.partial"
+    try:
+        with open(tmp_path, "wb") as handle:
+            handle.write(data)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 async def _finalize_image_job(
     *,
     job,
@@ -711,7 +899,7 @@ async def _finalize_image_job(
 
     if image_path:
         chat_id = metadata.get("chat_id")
-        is_audio = str(image_path).endswith(('.wav', '.mp3', '.ogg', '.flac'))
+        is_audio = _is_audio_path(image_path)
         if metadata.get("type") == "voice_preview" and metadata.get("voice_id"):
             event_extra = {
                 "type": "voice_preview",
@@ -729,9 +917,15 @@ async def _finalize_image_job(
         story_id = metadata.get("story_id")
         chapter_id = metadata.get("chapter_id")
         if story_id and chapter_id:
+            # A chapter narration is a TTS job, not an image job, and the two
+            # dispatch to different handlers. This used to hardcode
+            # "story_image", which overwrote the "chat_tts" decided just above
+            # and sent every story narration to the image handler, so the audio
+            # was never attached to the chapter's beat list.
+            is_story_tts = metadata.get("source") == "story_tts" or is_audio
             event_extra = {
                 **(event_extra or {}),
-                "type": "story_image",
+                "type": "story_tts" if is_story_tts else "story_image",
                 "story_id": story_id,
                 "chapter_id": chapter_id,
                 "image_path": image_path,
@@ -766,6 +960,15 @@ async def finalize_successful_job(
     skip all filesystem/gallery logic — the assistant text is routed in-memory to
     the chat/story handlers in ``_finalize_llm_job`` instead of being written to
     an orphan ``.txt`` file and gallery-indexed.
+
+    TTS is a fourth case that did not exist here at all. A TTS provider writes
+    its audio to *its own* filesystem — a Modal volume, not a directory shared
+    with this process — and reports only ``{filename, subfolder, type}``. The
+    "already-persisted" branch below resolves such a path against
+    ``settings.output_dir``, which is correct for `direct_url` and wrong for
+    every serverless provider: the file is not there, the job finalised with
+    zero outputs, and the audio stayed on the volume with no user-visible signal
+    that anything had been produced.
     """
     if job.task_type == "llm":
         # Language-model providers emit {"outputs": [{"role": "assistant", "content": "..."}]}].
@@ -779,6 +982,23 @@ async def finalize_successful_job(
             provider_id=provider_id,
             final_result=final_result,
             outputs=outputs,
+        )
+        return
+
+    if job.task_type == "tts":
+        outputs = await _fetch_remote_tts_outputs(
+            job=job,
+            provider_id=provider_id,
+            final_result=final_result,
+        )
+        await _finalize_image_job(
+            job=job,
+            job_id=job_id,
+            job_service=job_service,
+            load_balancer=load_balancer,
+            provider_id=provider_id,
+            outputs=outputs,
+            process_image_background_fn=None,
         )
         return
 
