@@ -156,12 +156,27 @@ class JobQueue:
     Replaces the polling-based worker loop with a proper queue.
     """
     
-    def __init__(self, max_workers: int = 2, task_type: str = "image"):
+    def __init__(
+        self,
+        max_workers: int = 2,
+        task_type: str = "image",
+        claim_task_types: frozenset[str] | None = None,
+    ):
         self._queue: asyncio.Queue = asyncio.Queue()
         self._workers: list[asyncio.Task] = []
         self._running = False
         self.max_workers = max_workers
         self._task_type = task_type
+        # Which `jobs.task_type` values this pool is allowed to claim. A pool is
+        # a *physical* grouping — one worker loop, one `max_concurrent` budget,
+        # one advisory lock — so it can serve more than one task type. This was
+        # the bug behind TTS jobs hanging forever: `tts` routed to the image
+        # pool (`get_queue`), but the claim query bound the single
+        # `self._task_type == "image"`, so a `tts` row could never be a
+        # candidate. The wakeup on the in-process queue is only a hint; the
+        # worker re-claims from the DB by this predicate, so the job sat
+        # PENDING forever with no error written.
+        self._claim_task_types = frozenset(claim_task_types or (task_type,))
         # Postgres mode: workers claim PENDING rows from the DB instead of
         # popping an in-process deque. In-process queue is wakeup-only then.
         self._use_db_claims = _DB_CLAIMS_ENABLED
@@ -312,16 +327,30 @@ class JobQueue:
         makes the ceiling exact; without it the count can only ever be a snapshot.
         It is Postgres-only, which this whole statement already is.
 
-        Scope is per task_type, not global. The worker pool is already sized
+        Scope is per pool, not global. The worker pool is already sized
         from the enabled provider count, so a global cap could let image
         saturation starve a chat reply's LLM job — the count would be consumed
-        by whichever pool claimed first. Per-type means `max_concurrent` reads
-        as "at most N in-flight of each kind", and setting it above the
+        by whichever pool claimed first. Per-pool means `max_concurrent` reads
+        as "at most N in-flight of each pool", and setting it above the
         provider count is correctly a no-op.
+
+        A pool claims every task type in `self._claim_task_types`, not just its
+        own name, and counts them together in the ceiling: image and tts share
+        one Modal container budget, so an image job in flight has to count
+        against a tts job's cap or the container is oversubscribed.
+
+        The task-type predicate is rendered as an expanded `IN` list rather
+        than `= ANY(:param)`: `ANY` needs a driver-level array adapter, which
+        the SQLite path used by the test suite does not provide, and a claim
+        that only works on one dialect is a claim that only gets tested on one.
         """
         from sqlalchemy import text
 
         from infrastructure.database import engine
+
+        task_types = sorted(self._claim_task_types)
+        type_predicate = "task_type IN (" + ", ".join(f":tt_{i}" for i in range(len(task_types))) + ")"
+        type_params = {f"tt_{i}": value for i, value in enumerate(task_types)}
 
         claim_sql = text(
             """
@@ -331,11 +360,11 @@ class JobQueue:
             else "SELECT 1"
         )
         claim_job_sql = text(
-            """
+            f"""
             WITH in_flight AS (
                 SELECT count(*) AS n
                 FROM jobs
-                WHERE task_type = :task_type
+                WHERE {type_predicate}
                   AND (
                     status IN (
                       'SENT_TO_PROVIDER', 'CONNECTED', 'PRE_GENERATION',
@@ -349,7 +378,7 @@ class JobQueue:
             candidate AS (
                 SELECT id
                 FROM jobs
-                WHERE task_type = :task_type
+                WHERE {type_predicate}
                   AND status = 'PENDING'
                   AND claimed_at IS NULL
                   -- Only rows that were actually handed to the queue. A job row
@@ -377,7 +406,7 @@ class JobQueue:
             ).first()
             row = conn.execute(
                 claim_job_sql,
-                {"task_type": self._task_type, "max_concurrent": self._max_concurrent()},
+                {**type_params, "max_concurrent": self._max_concurrent()},
             ).first()
         if row is None:
             return None
@@ -668,7 +697,11 @@ class QueueManager:
     """
 
     def __init__(self) -> None:
-        self.image: JobQueue = JobQueue(max_workers=1, task_type="image")
+        self.image: JobQueue = JobQueue(
+            max_workers=1,
+            task_type="image",
+            claim_task_types=CONTAINER_TASK_TYPES,
+        )
         self.llm: JobQueue = JobQueue(max_workers=1, task_type="llm")
         self._processor: Callable[[str, str | None], Awaitable[None]] | None = None
         self._notify_listener: _PgNotifyListener | None = None
