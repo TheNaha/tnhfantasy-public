@@ -1,13 +1,13 @@
 # Every provider container MUST be named `tnhcomfy-{PROVIDER_ID}` so the
-# backend can detect it and attach the provider auth header. This constant is
-# the single source of truth: `provider_container_name` builds the name, and
-# `infrastructure/http_client.py` matches the hostname against this prefix.
-# Do not re-spell the literal.
-PROVIDER_CONTAINER_PREFIX = "tnhcomfy-"
-
-
-def provider_container_name(provider_id: str) -> str:
-    return f"{PROVIDER_CONTAINER_PREFIX}{provider_id}"
+# backend can detect it and attach the provider auth header. Re-exported from
+# `infrastructure.provider_naming`, which is a leaf module precisely so
+# `infrastructure/http_client.py` can import it without running this package's
+# `__init__` — which imports `beam_provider`, which imports `http_client` back,
+# so the order of the first import decided whether the process started.
+from infrastructure.provider_naming import (  # noqa: F401 - re-exported
+    PROVIDER_CONTAINER_PREFIX,
+    provider_container_name,
+)
 
 
 def _publish_provider_host(base: str) -> None:

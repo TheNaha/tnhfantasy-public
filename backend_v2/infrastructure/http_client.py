@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import httpx
 
 from infrastructure.logging import http_logger
-from infrastructure.providers.runtime import PROVIDER_CONTAINER_PREFIX
+from infrastructure.provider_naming import PROVIDER_CONTAINER_PREFIX
 
 logger = http_logger()
 
