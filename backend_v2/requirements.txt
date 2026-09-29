@@ -1,9 +1,21 @@
 # Backend V2 - FastAPI + SQLModel + AsyncIO
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
+# `starlette` is imported directly, not only used through FastAPI:
+# core/upload_validation.py (UploadFile), api/error_handlers.py (HTTPException),
+# api/routes/files.py (BackgroundTask). It was an undeclared transitive
+# dependency of fastapi, so a FastAPI release that moved its floor could have
+# left the backend importing a starlette it never asked for.
+starlette>=1.6.0
 
 # Database
 sqlmodel>=0.0.14
+# `sqlmodel` is a thin layer over SQLAlchemy and does not re-export it, but the
+# codebase imports `sqlalchemy` directly (core/entities.py:7-8,
+# scripts/migrate_sqlite_to_pg.py:7) and `sqlmodel`'s own version range has moved
+# across sqlalchemy majors. It was previously an undeclared transitive
+# dependency. Pinned to what backend_v2/.venv actually has.
+sqlalchemy>=2.0.52
 psycopg2-binary>=2.9.9
 pgvector>=0.2.5
 
@@ -57,7 +69,3 @@ pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0
 
 h2>=4.1.0
-
-# Export pipelines
-img2pdf>=0.5.0
-fpdf2>=2.7.0
