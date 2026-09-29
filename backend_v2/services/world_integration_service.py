@@ -103,6 +103,10 @@ async def _handle_impersonation(job_data: dict[str, Any]):
                     **chat_context_kwargs(
                         _chat,
                         characters=[_character] if _character else None,
+                        # Without `session` the persona library is not resolved,
+                        # so an impersonated reply was the one reply path that
+                        # dropped the user's persona and their World's lorebooks.
+                        session=session,
                         max_context_tokens=_resolve_context_tokens(_chat),
                     ),
                 )

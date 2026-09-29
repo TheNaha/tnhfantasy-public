@@ -469,20 +469,27 @@ async def _tool_narrate_scene(
         character_system_prompt = source_meta.get("character_system_prompt")
         if not character_system_prompt and chat_id:
             from core.entities import Chat as _Chat, Character as _Char
-            from services.context_builder import build_system_prompt_sections_async
+            from services.context_builder import (
+                build_system_prompt_sections_async,
+                chat_context_kwargs,
+            )
             try:
                 _chat = session.get(_Chat, chat_id)
                 if _chat:
                     _char = session.get(_Char, _chat.character_id) if _chat.character_id else None
                     _sections = await build_system_prompt_sections_async(
-                        character=_char,
-                        system_prompt_override=_chat.system_prompt_override,
-                        append_system_prompt=_chat.append_system_prompt,
-                        persona_name=_chat.persona_name,
-                        story_time=_chat.story_time,
-                        story_location=_chat.story_location,
-                        lorebook_ids=_chat.active_lorebook_ids or None,
-                        include_roleplay_default=False,
+                        # `chat_context_kwargs` rather than a hand-rolled dict.
+                        # This call site bypassed it entirely, so narrator turns
+                        # lost the character's own lorebooks, the owning World's
+                        # membership, and the persona library — while every other
+                        # reply path had them. It is the one place that rebuilt
+                        # the mapping by hand, which is how the maps drift.
+                        **chat_context_kwargs(
+                            _chat,
+                            characters=[_char] if _char else None,
+                            session=session,
+                            include_roleplay_default=False,
+                        ),
                     )
                     character_system_prompt = "\n\n".join(s["content"] for s in _sections) or None
             except Exception as _e:
