@@ -1,7 +1,7 @@
 import React from 'react';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 
-export default React.memo(function CreateStoryModal({ title, onTitleChange, onConfirm, onClose }) {
+export default React.memo(function CreateStoryModal({ title, onTitleChange, onConfirm, onClose, worlds = [], worldId = '', onWorldChange }) {
     // Escape dismisses, matching every other dialog expectation.
     useEscapeKey(onClose, true);
 
@@ -27,6 +27,17 @@ export default React.memo(function CreateStoryModal({ title, onTitleChange, onCo
                     placeholder="Story title..."
                     className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                 />
+                {worlds.length > 0 && (
+                    <select
+                        aria-label="World"
+                        value={worldId}
+                        onChange={(e) => onWorldChange?.(e.target.value)}
+                        className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500/50"
+                    >
+                        <option value="">No world</option>
+                        {worlds.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    </select>
+                )}
                 <div className="flex justify-end gap-2">
                     <button
                         onClick={onClose}

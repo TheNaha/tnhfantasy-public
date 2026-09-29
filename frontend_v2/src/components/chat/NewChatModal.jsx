@@ -3,12 +3,13 @@ import { motion } from 'framer-motion';
 import { X, Check } from 'lucide-react';
 import ModalOverlay from '../common/ModalOverlay';
 
-function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose }) {
+function NewChatModal({ characters, lorebooks, personas = [], worlds = [], onCreate, onClose }) {
     const [selectedCharacter, setSelectedCharacter] = useState(null);
     const [selectedLorebooks, setSelectedLorebooks] = useState([]);
     const [chatName, setChatName] = useState('New Chat');
     const [personaName, setPersonaName] = useState('');
     const [selectedPersonaId, setSelectedPersonaId] = useState('');
+    const [worldId, setWorldId] = useState('');
     const [storyTime, setStoryTime] = useState('');
     const [storyLocation, setStoryLocation] = useState('');
     const [isCreating, setIsCreating] = useState(false);
@@ -63,7 +64,7 @@ function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose 
         if (isCreating) return;
         setIsCreating(true);
         try {
-            await onCreate({ chatName: chatName.trim() || 'New Chat', characterId: selectedCharacter?.id || null, personaName: personaName.trim() || null, personaId: selectedPersonaId || null, storyTime, storyLocation, selectedLorebooks });
+            await onCreate({ chatName: chatName.trim() || 'New Chat', characterId: selectedCharacter?.id || null, personaName: personaName.trim() || null, personaId: selectedPersonaId || null, worldId: worldId || null, storyTime, storyLocation, selectedLorebooks });
         } finally {
             setIsCreating(false);
         }
@@ -125,6 +126,12 @@ function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose 
                                 <div className="space-y-2"><label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Time</label><input type="text" value={storyTime} onChange={(e) => setStoryTime(e.target.value)} className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200" placeholder="e.g. Day" /></div>
                                 <div className="space-y-2"><label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Location</label><input type="text" value={storyLocation} onChange={(e) => setStoryLocation(e.target.value)} className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200" placeholder="e.g. Tavern" /></div>
                             </div>
+                            {worlds.length > 0 && (
+                            <div className="space-y-2">
+                                <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">World (Optional)</label>
+                                <select aria-label="World" value={worldId} onChange={(e) => setWorldId(e.target.value)} className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 appearance-none"><option value="">No World</option>{worlds.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
+                            </div>
+                            )}
                         </>
                     )}
 
