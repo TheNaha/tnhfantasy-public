@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
-import { useCreateResource, useDeleteResource, useUpdateResource } from './useWorldVaultResource';
+import { useCreateResource, useDeleteResource, useUpdateResource, invalidateVaultAggregates } from './useWorldVaultResource';
 
 const STORY_LIST_KEY = buildQueryKey(QUERY_KEYS.STORIES);
 const STORY_DETAIL_KEY = (storyId) => buildQueryKey(QUERY_KEYS.STORIES, storyId);
@@ -52,6 +52,7 @@ export const useCreateChapter = () => {
         mutationFn: ({ storyId, data }) => api.post(`/api/v2/stories/${storyId}/chapters`, data),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -87,6 +88,7 @@ export const useContinueChapter = () => {
                 old?.map((ch) => ch.id === variables.chapterId ? { ...ch, _isStreaming: false } : ch)
             );
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
         },
     });
 };
@@ -98,6 +100,7 @@ export const useBranchChapter = () => {
             api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/branch`, { from_beat_id: fromBeatId, prompt: prompt || '' }),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -135,6 +138,7 @@ export const useAddStoryBeat = () => {
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -174,6 +178,7 @@ export const useUpdateStoryBeat = () => {
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -203,6 +208,7 @@ export const useDeleteStoryBeat = () => {
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -254,6 +260,7 @@ export const useRestoreChapterRevision = () => {
             api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/revisions/${revisionId}/restore`),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: revisionsKey(variables.storyId, variables.chapterId) });
         },
     });
@@ -283,6 +290,7 @@ export const useDeleteChapter = () => {
         mutationFn: ({ storyId, chapterId }) => api.delete(`/api/v2/stories/${storyId}/chapters/${chapterId}`),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -293,6 +301,7 @@ export const useUpdateChapter = () => {
         mutationFn: ({ storyId, chapterId, ...data }) => api.put(`/api/v2/stories/${storyId}/chapters/${chapterId}`, data),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -325,6 +334,7 @@ export const useReorderChapters = () => {
         },
         onSettled: (_, __, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
         },
     });
 };
@@ -397,6 +407,7 @@ export const useNarrateChapter = () => {
             // every chapter of the story; the list keeps the summary rows fresh.
             queryClient.invalidateQueries({ queryKey: STORY_DETAIL_KEY(variables.storyId), exact: true });
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: STORY_LIST_KEY });
         },
     });

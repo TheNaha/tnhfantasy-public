@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 const INPUT_CLASS = 'w-full rounded-lg border border-gray-700 bg-gray-800/80 px-4 py-3 text-white outline-none transition-colors focus:border-blue-500';
 const LLM_PROVIDER_TYPES = new Set(['ollama', 'openai_compat', 'anthropic', 'google', 'modal_llm']);
@@ -52,6 +53,9 @@ function sanitizeCredentials(credentials, preserveEmpty = false) {
 }
 
 export default function ProviderModal({ provider, onClose, onSave, saveProvider }) {
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(onClose);
     const initialType = provider?.type || 'modal';
     const [formData, setFormData] = useState({
         id: provider?.id || '',

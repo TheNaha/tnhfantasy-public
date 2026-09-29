@@ -10,6 +10,7 @@ import useProvidersPageData from '../../hooks/useProvidersPageData';
 import { useModelDirectories } from '../../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../../constants/modelDirectories';
 import { SETUP_COMPLETE_KEY, markSetupComplete } from '../../utils/setupComplete';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 const STEPS = [
     { id: 'welcome', icon: Sparkles, title: 'Welcome to your Fantasy Engine' },
@@ -19,6 +20,9 @@ const STEPS = [
 ];
 
 export default function OnboardingWizard({ onClose }) {
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(onClose);
     const navigate = useNavigate();
     const [stepIndex, setStepIndex] = useState(0);
     const [scanning, setScanning] = useState(false);

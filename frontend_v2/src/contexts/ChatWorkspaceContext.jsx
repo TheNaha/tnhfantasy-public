@@ -18,6 +18,7 @@ import { useChatStreaming } from '../hooks/useChatStreaming';
 import { CHAT_LIST_KEY } from '../hooks/useChats';
 import { setStreamingJob } from '../hooks/useStreamingJobs';
 import { COMMANDS } from '../components/chat/chatCommands';
+import { warnIfWorldIgnored, WORLD_IGNORED_MESSAGE } from '../utils/worldLinkWarning';
 
 const ChatWorkspaceContext = createContext(null);
 
@@ -234,7 +235,7 @@ export function ChatWorkspaceProvider({ children }) {
 
     const cwData = useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQuery: debouncedChatSearchQuery, messagePageCount, messageSearch, chatOffset });
     const {
-        chats, isChatsLoading, searchResults, messagesData, activeChat, lorebooks, characters,
+        chats, isChatsLoading, searchResults, messagesData, activeChat, lorebooks, characters, worlds,
         personas, availableModels, defaultLlmConfig, systemPromptData, chatCollection, chatImages,
         collectionsMap, voices, chatJobs, activeStreamEntries, activeStreams,
     } = cwData;
@@ -681,7 +682,7 @@ export function ChatWorkspaceProvider({ children }) {
     const confirmCreateChat = useCallback((config) => {
         if (createChatMutation.isPending) return;
         setShowNewChatModal(false);
-        const { chatName, characterId, personaName, personaId, storyTime, storyLocation, selectedLorebooks: newSelectedLorebooks } = config;
+        const { chatName, characterId, personaName, personaId, worldId, storyTime, storyLocation, selectedLorebooks: newSelectedLorebooks } = config;
 
         const character = characterId ? characters.find(c => c.id === characterId) : null;
         const hasMultipleGreetings = character && (character.alternate_greetings?.length > 0);
@@ -695,6 +696,13 @@ export function ChatWorkspaceProvider({ children }) {
             story_location: storyLocation,
             active_lorebook_ids: newSelectedLorebooks
         };
+        // Sent whenever a world was picked. `Chat.world_id` is a real column and
+        // comes back on the created chat, which is what makes the response the
+        // capability check: if the server does not accept the field on create
+        // yet, it is dropped and the chat is created without it. So this must
+        // never be able to fail the create — `warnIfWorldIgnored` tells the user
+        // afterwards instead.
+        if (worldId) payload.world_id = worldId;
 
         if (hasMultipleGreetings) {
             setGreetingModal({
@@ -705,6 +713,7 @@ export function ChatWorkspaceProvider({ children }) {
                         ...payload,
                         override_greeting: selectedGreeting 
                     });
+                    if (warnIfWorldIgnored(chat, worldId)) toast(WORLD_IGNORED_MESSAGE('chat'));
                     selectChat(chat.id);
                     setMobileTab('chat');
                     toast.success('New chat created');
@@ -715,6 +724,7 @@ export function ChatWorkspaceProvider({ children }) {
                 payload,
                 {
                     onSuccess: (chat) => {
+                        if (warnIfWorldIgnored(chat, worldId)) toast(WORLD_IGNORED_MESSAGE('chat'));
                         selectChat(chat.id);
                         setMobileTab('chat');
                         toast.success('New chat created');
@@ -1146,7 +1156,8 @@ export function ChatWorkspaceProvider({ children }) {
         triggerAutoTitle,
         updateChatMutation,
         urlChatId,
-        voices
+        voices,
+        worlds
     }), [
         CHAT_PAGE_SIZE, MAX_MESSAGE_PAGES, MESSAGE_PAGE_SIZE,
         activeBranch, activeChat, activeChatId, activeChatList,
@@ -1197,7 +1208,7 @@ export function ChatWorkspaceProvider({ children }) {
         suggestJobIdRef, suggestReplyMutation, suggestSafetyTimerRef,
         swipeMessageMutation, systemPromptData, targetCharacterId,
         textareaRef, timelineVisible, titlePollCancelledRef,
-        triggerAutoTitle, updateChatMutation, urlChatId, voices
+        triggerAutoTitle, updateChatMutation, urlChatId, voices, worlds
     ]);
 
     return (

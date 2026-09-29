@@ -4,7 +4,6 @@ import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { useCreateResource, useDeleteResource, useUpdateResource } from './useWorldVaultResource';
 
 const SCENARIOS_KEY = buildQueryKey(QUERY_KEYS.SCENARIOS);
-const SCENARIO_DETAIL_KEY = (id) => buildQueryKey(QUERY_KEYS.SCENARIOS, id);
 
 export const useScenarios = () => {
     return useQuery({
@@ -15,10 +14,11 @@ export const useScenarios = () => {
 
 export const useCreateScenario = () => useCreateResource({ basePath: '/api/v2/scenarios', listQueryKey: SCENARIOS_KEY });
 
+// No `detailQueryKey`: `useScenarios` declares only the list, so a key of
+// `['world_vault','scenarios',id]` prefix-matched nothing.
 export const useUpdateScenario = () => useUpdateResource({
     basePath: '/api/v2/scenarios',
     listQueryKey: SCENARIOS_KEY,
-    detailQueryKey: SCENARIO_DETAIL_KEY,
 });
 
 export const useDeleteScenario = () => useDeleteResource({ basePath: '/api/v2/scenarios', listQueryKey: SCENARIOS_KEY });

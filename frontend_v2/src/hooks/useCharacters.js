@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { invalidateVaultAggregates } from './useWorldVaultResource';
 import { getApiUrl } from '../api/config';
 import {
     DEFAULT_CARD_EXPORT_FORMAT,
@@ -39,6 +40,7 @@ export const useCreateCharacter = () => {
         mutationFn: (characterData) => api.post('/api/v2/characters', characterData),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -49,7 +51,9 @@ export const useUpdateCharacter = () => {
         mutationFn: ({ id, ...data }) => api.put(`/api/v2/characters/${id}`, data),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.id) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -60,7 +64,9 @@ export const usePatchCharacter = () => {
         mutationFn: ({ id, ...data }) => api.patch(`/api/v2/characters/${id}`, data),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.id) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -80,7 +86,9 @@ export const useUploadAvatar = () => {
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.characterId) });
+            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -91,6 +99,7 @@ export const useReorderCharacters = () => {
         mutationFn: (characterIds) => api.post('/api/v2/characters/reorder', { character_ids: characterIds }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -101,6 +110,7 @@ export const useDeleteCharacter = () => {
         mutationFn: (id) => api.delete(`/api/v2/characters/${id}`),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -129,8 +139,10 @@ export const useImportCharacterCard = () => {
         },
         onSuccess: (result) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            invalidateVaultAggregates(queryClient);
             if (result?.character?.id) {
                 queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, result.character.id) });
+                invalidateVaultAggregates(queryClient);
             }
         }
     });
@@ -160,6 +172,7 @@ export const useCloneCharacter = () => {
         mutationFn: (id) => api.post(`/api/v2/characters/${id}/clone`),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -196,7 +209,9 @@ export const useAnimateCharacterAvatar = () => {
         },
         onSuccess: (data, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.characterId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };

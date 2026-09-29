@@ -104,3 +104,23 @@ export const useSaveGraphLayout = () => {
         },
     });
 };
+
+/**
+ * Discard the saved layout.
+ *
+ * The route existed (`DELETE /api/v2/world-vault/graph-layout/?name=…`) and
+ * nothing in the frontend called it, so "Reset layout" could not be implemented
+ * honestly: it reloaded the page, which re-read the saved layout and restored
+ * exactly what the user was trying to discard.
+ */
+export const useDeleteGraphLayout = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ name = 'default' } = {}) =>
+            api.delete(`/api/v2/world-vault/graph-layout?name=${encodeURIComponent(name)}`),
+        onSuccess: (_, { name = 'default' }) => {
+            queryClient.setQueryData(buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name), null);
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name) });
+        },
+    });
+};

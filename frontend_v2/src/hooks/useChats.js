@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
-import { useCreateResource, useDeleteResource } from './useWorldVaultResource';
+import { useCreateResource, useDeleteResource, invalidateVaultAggregates } from './useWorldVaultResource';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { isActiveJobStatus } from '../utils/jobStatus';
 
@@ -100,6 +100,7 @@ export function useImportChat() {
         mutationFn: (formData) => api.post('/api/v2/chats/import', formData),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
+            invalidateVaultAggregates(queryClient);
         },
     });
 }
@@ -111,6 +112,7 @@ export const useRenameChat = () => {
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
             queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -121,6 +123,7 @@ export const useGenerateScene = () => {
         mutationFn: ({ chatId }) => api.post(`/api/v2/chats/${chatId}/scene`, {}),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -181,6 +184,7 @@ export const useUpdateChat = () => {
             // sub-queries, which is intended after a chat-level edit.
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
             queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -229,6 +233,7 @@ export const useSendMessage = () => {
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };

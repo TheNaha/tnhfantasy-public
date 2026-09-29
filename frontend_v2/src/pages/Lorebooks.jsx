@@ -19,6 +19,7 @@ import {
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 import RoleplayPageShell from '../components/RoleplayPageShell';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 export default function Lorebooks() {
     const [searchQuery, setSearchQuery] = useState('');
@@ -207,6 +208,9 @@ export default function Lorebooks() {
 }
 
 function LorebookFormModal({ editingId, form, setForm, onSave, onClose, isSubmitting }) {
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(onClose, true);
     return (
         <motion.div
             initial={{ opacity: 0 }}
@@ -270,6 +274,9 @@ function LorebookFormModal({ editingId, form, setForm, onSave, onClose, isSubmit
 }
 
 function EntryManagerModal({ lorebook, onClose }) {
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(onClose, true);
     const [showAdd, setShowAdd] = useState(false);
     const [editingEntry, setEditingEntry] = useState(null);
     const [entryForm, setEntryForm] = useState({ keys: '', content: '' });

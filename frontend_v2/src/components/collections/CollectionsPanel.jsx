@@ -12,8 +12,12 @@ import CreateCollectionModal from './CreateCollectionModal';
 import { useConfirmation } from '../../store/confirmationStore';
 import { assetUrl } from '../../utils/assetUrl';
 import EmptyState from '../EmptyState';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 const CollectionsPanel = ({ isOpen, onClose }) => {
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(() => { if (isOpen) onClose?.(); }, isOpen);
     const { data: collections = {} } = useCollections();
     const activeCollection = useStore((state) => state.activeCollection);
     const setActiveCollection = useStore((state) => state.setActiveCollection);

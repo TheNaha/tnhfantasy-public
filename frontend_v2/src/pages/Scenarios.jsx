@@ -16,6 +16,7 @@ import EmptyState from '../components/EmptyState';
 import FormInput from '../components/common/FormInput';
 import { useConfirmation } from '../store/confirmationStore';
 import RoleplayPageShell from '../components/RoleplayPageShell';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 const FORM_FIELDS = [
     { key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'Scenario name' },
@@ -272,6 +273,9 @@ export default function Scenarios() {
 }
 
 function ApplyScenarioModal({ scenario, targetType, setTargetType, targets, onApply, onClose }) {
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(onClose, true);
     const [selectedId, setSelectedId] = useState('');
     const label = targetType === 'chat' ? 'chat' : 'story';
 

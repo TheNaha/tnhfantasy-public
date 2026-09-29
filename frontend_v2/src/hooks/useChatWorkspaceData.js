@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import {
     useChats, useChat, useMessages, useSearchChats, useLorebooks, useCharacters, usePersonas,
     useLLMAvailableModels, useLLMDefaultProvider, useChatSystemPrompt,
-    useCharacterCollection, useChatImages, useChatJobs,
+    useCharacterCollection, useChatImages, useChatJobs, useWorlds,
 } from '../hooks/useWorldVault';
 import { useVoices } from '../hooks/useVoices';
 import { useCollections } from '../hooks/useCollections';
@@ -35,6 +35,10 @@ export function useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQue
     const { data: collectionsMap = {} } = useCollections('chat');
     const { data: voices = [] } = useVoices();
     const { data: chatJobs = [] } = useChatJobs(activeChatId);
+    // Only for the New Chat modal's world picker. Deliberately NOT in the
+    // contextValue memo below: that object has ~210 dependencies and feeds ~20
+    // consumers, and nothing in the chat reads the world list.
+    const { data: worlds = [] } = useWorlds();
 
     const activeStreamEntries = useActiveChatStreams(activeChatId);
     // Memoised: this array is a dependency of BOTH the listItems memo and the
@@ -68,10 +72,11 @@ export function useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQue
         chatJobs,
         activeStreamEntries,
         activeStreams,
+        worlds,
     }), [
         chats, isChatsLoading, searchResults, messagesData, activeChat,
         lorebooks, characters, personas, availableModels, defaultLlmConfig,
         systemPromptData, chatCollection, chatImages, collectionsMap,
-        voices, chatJobs, activeStreamEntries, activeStreams,
+        voices, chatJobs, activeStreamEntries, activeStreams, worlds,
     ]);
 }

@@ -1,9 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
-import { useCreateResource, useDeleteResource, useUpdateResource } from './useWorldVaultResource';
+import { useCreateResource, useDeleteResource, useUpdateResource, invalidateVaultAggregates } from './useWorldVaultResource';
 
 const LOREBOOKS_KEY = buildQueryKey(QUERY_KEYS.LOREBOOKS);
+// There is no lorebook *detail* query. This key is nevertheless not a no-op:
+// `LOREBOOK_ENTRIES_KEY` is `['world_vault','lorebooks',id,'entries']`, and
+// `invalidateQueries` prefix-matches, so invalidating
+// `['world_vault','lorebooks',id]` reaches the entries list. That is the only
+// query it has ever reached, and it is left in place under this name rather
+// than removed, but a reader should not take it for a detail query.
 const LOREBOOK_DETAIL_KEY = (id) => buildQueryKey(QUERY_KEYS.LOREBOOKS, id);
 // This was `(lorebookId) => LOREBOOK_ENTRIES_KEY(lorebookId)` — the factory
 // called itself, so every consumer raised `RangeError: Maximum call stack size
@@ -56,6 +62,7 @@ export const useCreateEntry = () => {
         mutationFn: ({ lorebookId, ...data }) => api.post(`/api/v2/lorebooks/${lorebookId}/entries`, data),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: LOREBOOK_ENTRIES_KEY(variables.lorebookId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -66,6 +73,7 @@ export const useUpdateEntry = () => {
         mutationFn: ({ lorebookId, id, ...data }) => api.put(`/api/v2/lorebooks/${lorebookId}/entries/${id}`, data),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: LOREBOOK_ENTRIES_KEY(variables.lorebookId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -76,6 +84,7 @@ export const useDeleteEntry = () => {
         mutationFn: ({ lorebookId, id }) => api.delete(`/api/v2/lorebooks/${lorebookId}/entries/${id}`),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: LOREBOOK_ENTRIES_KEY(variables.lorebookId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -108,6 +117,7 @@ export const useImportLorebookEntries = () => {
         mutationFn: ({ lorebookId, payload }) => api.post(`/api/v2/lorebooks/${lorebookId}/import`, payload),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: LOREBOOK_ENTRIES_KEY(variables.lorebookId) });
+            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: LOREBOOKS_KEY });
         }
     });
@@ -119,6 +129,7 @@ export const useBulkDeleteEntries = () => {
         mutationFn: ({ lorebookId, entryIds }) => api.post(`/api/v2/lorebooks/${lorebookId}/entries/bulk-delete`, { entry_ids: entryIds }),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: LOREBOOK_ENTRIES_KEY(variables.lorebookId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };

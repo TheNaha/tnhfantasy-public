@@ -11,7 +11,7 @@ export * from './useExpressions';
 export * from './useBranches';
 export * from './useLocations';
 export * from './useTimeline';
-export * from './useCampaigns';
+export * from './useWorlds';
 export * from './useWorldVaultSearch';
 
 export * from './useMemories';

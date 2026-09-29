@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { invalidateVaultAggregates } from './useWorldVaultResource';
 
 export const useMessages = (chatId, { limit = 100, offset = 0, branchId = null, search = null, tail = false } = {}, options = {}) => {
     return useQuery({
@@ -40,6 +41,7 @@ export const useEditMessage = () => {
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -64,11 +66,13 @@ export const useDeleteMessage = () => {
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
+            invalidateVaultAggregates(queryClient);
             // `exact: true`: the 3-element chat key prefix-matches the
             // system-prompt / jobs / images / branches sub-queries, so a plain
             // invalidation here refetched the whole system-prompt assembly for a
             // delete that only changes the message list.
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId], exact: true });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -81,9 +85,11 @@ export const useRollbackChat = () => {
             api.post(`/api/v2/chats/${chatId}/rollback`, { message_id: messageId }),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
+            invalidateVaultAggregates(queryClient);
             // See useDeleteMessage: exact, so the rollback does not drag the
             // system-prompt assembly along with it.
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId], exact: true });
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -100,6 +106,7 @@ export const useRegenerateReply = () => {
             if (variables?.chatId) {
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId], exact: true });
                 queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
+                invalidateVaultAggregates(queryClient);
             }
         }
     });
@@ -119,6 +126,7 @@ export const usePinMessage = () => {
             api.patch(`/api/v2/chats/${chatId}/messages/${msgId}/pin`, { pinned }),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
+            invalidateVaultAggregates(queryClient);
         },
     });
 };
@@ -130,6 +138,7 @@ export const useSwipeMessage = () => {
             api.post(`/api/v2/chats/${chatId}/messages/${msgId}/swipe`, { direction, index }),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
+            invalidateVaultAggregates(queryClient);
         },
     });
 };
@@ -141,6 +150,7 @@ export const useGenerateSwipe = () => {
             api.post(`/api/v2/chats/${chatId}/messages/${msgId}/generate-swipe`),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
+            invalidateVaultAggregates(queryClient);
         },
     });
 };
@@ -155,6 +165,7 @@ export const useNarrateMessage = () => {
             }),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
+            invalidateVaultAggregates(queryClient);
         },
     });
 };

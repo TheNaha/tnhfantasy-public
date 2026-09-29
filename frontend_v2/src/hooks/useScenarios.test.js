@@ -61,7 +61,13 @@ describe('useScenarios', () => {
         const update = renderHook(() => useUpdateScenario(), { wrapper });
         await act(async () => update.result.current.mutateAsync({ id: 'sc1', name: 'C' }));
         expect(apiMock.put).toHaveBeenCalledWith('/api/v2/scenarios/sc1', { name: 'C' });
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'scenarios', 'sc1'] });
+        // NOT `{ queryKey: ['world_vault','scenarios', id] }`. That key was
+        // asserted here for years and matched no query at all: `useScenarios`
+        // declares only the list, and react-query prefix-matches, so a longer
+        // key is unreachable. The list key is what an update can actually
+        // move, and it is asserted below.
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'scenarios'] });
+        expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['world_vault', 'scenarios', 'sc1'] });
 
         const del = renderHook(() => useDeleteScenario(), { wrapper });
         await act(async () => del.result.current.mutateAsync('sc1'));

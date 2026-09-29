@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { invalidateVaultAggregates } from './useWorldVaultResource';
 
 /**
  * @param {string} chatId
@@ -35,6 +36,9 @@ export const useCreateBranch = () => {
             // whole system-prompt assembly (character + lorebook + world state +
             // last N messages) for a branch insert that changes none of it.
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHATS, variables.chatId, 'branches') });
+            // A branch copies messages into new rows, and the Activity feed
+            // unions `Message`, so the timeline moved too.
+            invalidateVaultAggregates(queryClient);
         }
     });
 };

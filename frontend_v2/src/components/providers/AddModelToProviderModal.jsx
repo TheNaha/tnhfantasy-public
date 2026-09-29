@@ -4,8 +4,12 @@ import toast from 'react-hot-toast';
 import { useAddModelToProviders } from '../../hooks/useProviderModels';
 import { PROVIDER_MODEL_DIRECTORIES } from '../../constants/modelDirectories';
 import { createPortal } from 'react-dom';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export default function AddModelToProviderModal({ providers, onClose }) {
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(onClose);
     const [selectedProviders, setSelectedProviders] = useState([]);
     const [directory, setDirectory] = useState('models/checkpoints');
     const [modelUrl, setModelUrl] = useState('');

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { invalidateVaultAggregates } from './useWorldVaultResource';
 
 // List memories for a character, sorted by importance/accessed_at
 export const useCharacterMemories = (characterId) => {
@@ -19,6 +20,7 @@ export const useCreateMemory = () => {
             queryClient.invalidateQueries({
                 queryKey: buildQueryKey(QUERY_KEYS.MEMORIES, variables.character_id),
             });
+            invalidateVaultAggregates(queryClient);
         },
     });
 };
@@ -36,6 +38,7 @@ export const useUpdateMemory = () => {
             queryClient.invalidateQueries({
                 queryKey: buildQueryKey(QUERY_KEYS.MEMORIES, variables.characterId),
             });
+            invalidateVaultAggregates(queryClient);
         },
     });
 };
@@ -48,6 +51,7 @@ export const useDeleteMemory = () => {
             queryClient.invalidateQueries({
                 queryKey: buildQueryKey(QUERY_KEYS.MEMORIES, variables.characterId),
             });
+            invalidateVaultAggregates(queryClient);
         },
     });
 };

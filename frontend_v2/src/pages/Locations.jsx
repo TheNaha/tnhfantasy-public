@@ -43,6 +43,7 @@ const DEFAULT_FORM = {
 };
 
 import { useSearchParams } from 'react-router-dom';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 export default function Locations() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -86,6 +87,11 @@ export default function Locations() {
         setEditingLocation(null);
         setShowForm(false);
     };
+
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal. Placed after
+    // `resetForm` so the reference is not a use-before-define.
+    useEscapeKey(() => { if (showForm) resetForm(); }, showForm);
 
     const handleSave = async () => {
         if (!form.name.trim()) {

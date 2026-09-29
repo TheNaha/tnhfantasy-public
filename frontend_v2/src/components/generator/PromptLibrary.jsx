@@ -14,12 +14,16 @@ import PromptCard from './PromptCard';
 import PromptForm from './PromptForm';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../../store/confirmationStore';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 /**
  * Prompt Library Modal Component
  * Browse, search, and manage saved prompts
  */
 export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(() => { if (isOpen) onClose?.(); }, isOpen);
     const { data: prompts = [], isLoading } = usePrompts();
     const { data: categories = ['All', 'Portrait', 'Landscape', 'Anime', 'Abstract', 'Realistic', 'Custom'] } = usePromptCategories();
 
