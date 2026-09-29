@@ -6,6 +6,7 @@ import { assetUrl, assetPath } from '../../utils/assetUrl';
 
 import { memo } from 'react';
 import ModalOverlay from '../common/ModalOverlay';
+import AssetTagEditor from './AssetTagEditor';
 
 // ⚡ Bolt: Wrap ImageLightbox in React.memo to prevent unnecessary re-renders when parent Dashboard updates
 // A dot per image is fine for a 4-image job batch and absurd for a 16k-image
@@ -388,6 +389,8 @@ export default memo(function ImageLightbox({
                                 <Trash2 size={16} /> Delete
                             </button>
                         </div>
+
+                        <AssetTagEditor key={displayImage?.id || 'no-asset'} assetId={displayImage?.id} />
 
                         {loadingMeta ? (
                             <div className="flex justify-center py-4">

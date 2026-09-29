@@ -20,17 +20,37 @@ export function useAssetTags(assetId, options = {}) {
     });
 }
 
+/**
+ * The distinct tag vocabulary, for the editor's typeahead.
+ *
+ * `prefix` is the anchored mode (what the user has typed so far) and `q` the
+ * looser substring search; the backend returns entries in use-count order, which
+ * is what makes the dropdown usable. This hook had no query behind the
+ * `['gallery', 'tags']` key that `useInvalidateAssetTags` was already
+ * invalidating — the invalidation was aimed at nothing.
+ */
+export function useTagVocabulary({ prefix = '', q = '', limit = 12 } = {}, options = {}) {
+    return useQuery({
+        queryKey: ['gallery', 'tags', prefix, q],
+        queryFn: () => assetsApi.tagVocabulary({ prefix, q, limit }),
+        // A vocabulary fetch on every keystroke of the tag input is a request
+        // per character; 30s is short enough that a stale dropdown is never the
+        // thing the user notices.
+        staleTime: 30 * 1000,
+        ...options,
+    });
+}
+
 function useInvalidateAssetTags(assetId) {
     const queryClient = useQueryClient();
     return () => {
         queryClient.invalidateQueries({ queryKey: ['gallery', 'asset', assetId, 'tags'] });
-        // The tag counts and the vocabulary both move when a tag is added or
-        // removed, and the vocabulary is shared by every image picker, so it is
-        // invalidated in full rather than by prefix.
+        // The vocabulary is keyed per-prefix, so the two-element key is a prefix
+        // match and reaches every mounted variant. The comment that used to sit
+        // here claimed `['gallery']` was exact; it is not, and the whole gallery
+        // refetch is intended — a tag's facet count lives inside the facet page
+        // data, not in a separate query.
         queryClient.invalidateQueries({ queryKey: ['gallery', 'tags'] });
-        // `exact: true` on purpose: the gallery key is a PREFIX of this one, and
-        // the key this panel sits inside. The facet counts for `tag` are inside
-        // the gallery page data, not a separate query.
         queryClient.invalidateQueries({ queryKey: ['gallery'] });
     };
 }

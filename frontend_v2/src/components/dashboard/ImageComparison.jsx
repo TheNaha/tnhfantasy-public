@@ -2,8 +2,12 @@ import { useState } from 'react';
 import { X, ArrowLeftRight, ZoomIn, ZoomOut, Maximize2, Minimize2 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { assetUrl } from '../../utils/assetUrl';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export const ImageComparison = ({ images, onClose }) => {
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(onClose);
     const [sliderPosition, setSliderPosition] = useState(50);
     const [mode, setMode] = useState(images.length === 2 ? 'slider' : 'grid'); // 'slider' or 'grid'
 

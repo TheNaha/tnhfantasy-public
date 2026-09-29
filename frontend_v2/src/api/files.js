@@ -214,6 +214,19 @@ export const assetsApi = {
             `${API_V2_BASE}/asset/${encodeURIComponent(assetId)}/tags/${encodeURIComponent(tag)}`,
             options
         ),
+
+    /**
+     * The distinct tag vocabulary with use-counts, most-used first.
+     *
+     * Use-count order is the point: an alphabetical list of a few thousand booru
+     * tokens is a list nobody scrolls. `prefix` is the typeahead's anchored mode,
+     * `q` the looser substring search.
+     */
+    tagVocabulary: (params = {}, options = {}) =>
+        api.get(`${API_V2_BASE}/tags`, {
+            params: Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')),
+            ...options,
+        }),
 };
 
 export default filesApi;

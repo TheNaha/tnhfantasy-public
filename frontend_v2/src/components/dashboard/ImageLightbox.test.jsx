@@ -1,6 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render as rtlRender, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ImageLightbox from './ImageLightbox';
+// `ImageLightbox` renders `AssetTagEditor`, which reads and writes tags through
+// react-query, so the viewer now needs a QueryClient it did not need before.
+// Only the provider is added; no assertion in these files changed.
+
+function render(ui) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    return rtlRender(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
+
 
 // Mock ProgressiveImage to simplify testing
 vi.mock('../ProgressiveImage', () => ({
