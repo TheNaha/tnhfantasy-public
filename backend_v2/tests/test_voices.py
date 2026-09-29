@@ -145,22 +145,3 @@ def test_voice_preview_no_preview_text(client, session):
     session.refresh(vm)
     response = client.post(f"/api/v2/voices/{vm.id}/preview")
     assert response.status_code == 400  # ComfyError raised for missing preview_text
-
-
-@pytest.fixture
-def tts_capable(session):
-    """A provider that declares the `tts` capability, for tests that need one.
-
-    Every TTS endpoint refuses when nothing declares it, which is the intended
-    behaviour, so tests that are about something else need this to get past the
-    guard.
-    """
-    from core.entities import Provider
-
-    provider = Provider(
-        id="tts-provider", type="modal", worker_type="image",
-        capabilities=["image", "tts"], enabled=True,
-    )
-    session.add(provider)
-    session.commit()
-    return provider

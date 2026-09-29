@@ -435,14 +435,17 @@ async def _tool_narrate_scene(
 
         source_context: list[dict[str, Any]] = []
         source_meta: dict[str, Any] = {}
+        source_workflow: dict[str, Any] = {}
         if source_job_id:
             from core.entities import Job
             source_job = session.get(Job, source_job_id)
             if source_job:
                 source_meta = getattr(source_job, "metadata_", None) or {}
+                if isinstance(source_job.workflow, dict):
+                    source_workflow = source_job.workflow
                 source_context = source_meta.get("original_messages", []) or []
-                if not source_context and isinstance(source_job.workflow, dict):
-                    source_context = source_job.workflow.get("messages", [])
+                if not source_context:
+                    source_context = source_workflow.get("messages", [])
 
         if source_context:
             messages.extend(source_context[-12:])
@@ -503,7 +506,19 @@ async def _tool_narrate_scene(
             chat_id=chat_id,
             character_id=character_id,
             character_system_prompt=character_system_prompt,
-            model=source_meta.get("model"),
+            # The source job's model lives on its WORKFLOW, not its metadata:
+            # `build_llm_workflow` writes `workflow["model"]` and nothing in
+            # production writes `model` into the metadata dict at all — the
+            # worker dispatches on `workflow.get("model")`
+            # (`provider_client.call_llm_provider`). So `source_meta.get("model")`
+            # was always None, and every `narrate_scene` tool call ran on the
+            # provider default while the chat's own reply — from the same job —
+            # ran on the model the user pinned. Both are paid, and the narration
+            # sets the scene the next turn continues. The follow-up chain 500
+            # lines below already reads `prev_workflow.get("model")`; this is the
+            # same read, and the workflow is checked first because that is the
+            # field the provider actually honours.
+            model=source_workflow.get("model") or source_meta.get("model"),
             source="narrator",
             parent_job_id=source_job_id,
             samplers=narrator_samplers or None,
@@ -1043,6 +1058,12 @@ async def process_tool_calls_and_chain(
             "orchestrator_depth": depth + 1,
             "original_messages": context,
             "max_agentic_depth": metadata.get("max_agentic_depth"),
+            # Every hop of the chain writes its reply onto the thread the
+            # question was asked on. `metadata` is the PARENT job's, so the
+            # branch is inherited rather than re-derived — a chained reply that
+            # dropped it would land in the original thread and leave the fork
+            # the user is reading stuck mid-exchange.
+            "branch_id": metadata.get("branch_id"),
         },
     )
     tool_pool = story_agentic_tools() if is_story_chain else AGENTIC_TOOLS

@@ -825,6 +825,29 @@ def build_system_prompt_sections(
 def build_chat_context(
     session: Session,
     messages: list,
+    **kwargs: Any,
+) -> tuple[str, list[dict[str, Any]]]:
+    """
+    Build the complete chat context.
+    Returns: (system_prompt, messages_list)
+
+    Args:
+        system_prompt_override: Replaces the character card entirely.
+        append_system_prompt:   Extra instructions injected after the character
+                                block (sourced from chat.append_system_prompt).
+        persona_description:    Description of the user's persona — who they are
+                                in this roleplay (sourced from chat.persona_description).
+        max_context_tokens: Maximum token budget for the full context window.
+    """
+    system_prompt, all_msgs, _sections = build_chat_context_with_sections(
+        session, messages, **kwargs
+    )
+    return system_prompt, all_msgs
+
+
+def build_chat_context_with_sections(
+    session: Session,
+    messages: list,
     characters: list = None,
     lorebook_ids: list[str] = None,
     max_context_tokens: int = DEFAULT_MAX_TOKENS,
@@ -845,18 +868,18 @@ def build_chat_context(
     active_character_id: str | None = None,
     character_id: str | None = None,
     location_ids: list[str] | None = None,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     """
-    Build the complete chat context.
-    Returns: (system_prompt, messages_list)
+    Build the complete chat context AND the sections it was assembled from.
 
-    Args:
-        system_prompt_override: Replaces the character card entirely.
-        append_system_prompt:   Extra instructions injected after the character
-                                block (sourced from chat.append_system_prompt).
-        persona_description:    Description of the user's persona — who they are
-                                in this roleplay (sourced from chat.persona_description).
-        max_context_tokens: Maximum token budget for the full context window.
+    Same function as :func:`build_chat_context`, returning a third element: the
+    per-section breakdown. It exists because a caller that wanted both used to
+    pay for two assemblies — `build_system_prompt_sections` runs an embedding
+    forward pass and two pgvector queries, and `build_chat_context` runs it again
+    internally. `GET /chats/{id}/system-prompt` did exactly that, and the
+    breakdown it returned was the one built WITHOUT `messages` (so with a
+    lorebook query that had no conversation in it) and was then discarded, while
+    the prompt beside it came from the second pass. One pass, one answer.
     """
     # Build a lorebook query string from recent conversation for semantic matching
     _lorebook_query = ""
@@ -998,7 +1021,7 @@ def build_chat_context(
         m.pop("_kind", None)
         m.pop("_id", None)
 
-    return system_prompt, all_msgs
+    return system_prompt, all_msgs, sections
 
 
 async def build_chat_context_async(
@@ -1013,13 +1036,28 @@ async def build_chat_context_async(
     request-scoped session is ever touched from another thread — callers
     must NOT pass their own session here.
     """
+    system_prompt, msg_list, _sections = await build_chat_context_with_sections_async(
+        messages, **kwargs
+    )
+    return system_prompt, msg_list
+
+
+async def build_chat_context_with_sections_async(
+    messages: list,
+    **kwargs: Any,
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    """`build_chat_context` off the event loop, plus its section breakdown.
+
+    See :func:`build_chat_context_with_sections` for why the third element is
+    worth a separate entrypoint rather than a flag on `build_chat_context_async`.
+    """
     import asyncio
 
     from infrastructure.database import get_session_sync
 
-    def _run() -> tuple[str, list[dict[str, Any]]]:
+    def _run() -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
         with get_session_sync() as ctx_session:
-            return build_chat_context(ctx_session, messages, **kwargs)
+            return build_chat_context_with_sections(ctx_session, messages, **kwargs)
 
     return await asyncio.to_thread(_run)
 
@@ -1092,7 +1130,13 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
         # None)` therefore always returned None (the getattr default hid it) and
         # the per-character story block was never emitted for chats.
         "story_character_ids": _chat_story_character_ids(chat),
-        "location_ids": getattr(chat, "location_ids", None),
+        # The same mistake, in the same dict, one line down. `Chat` has
+        # `location_id` (singular) and no `location_ids`, so this was always None
+        # and the "[Active Locations]" block was unreachable from every chat
+        # path. It is read with `chat.location_id` and NOT defensively defaulted:
+        # a `getattr(..., None)` on a column that exists hides the next rename
+        # exactly the way the two above did.
+        "location_ids": [chat.location_id] if chat.location_id else None,
         "lorebook_ids": lorebook_ids,
         "persona_name": persona_name,
         "persona_description": persona_description,

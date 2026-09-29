@@ -142,6 +142,27 @@ def client_fixture(session: Session, engine):
 
 
 @pytest.fixture
+def tts_capable(session):
+    """A provider that declares the `tts` capability.
+
+    Every TTS endpoint refuses with a 400 when nothing declares it — that is the
+    intended behaviour, not a test obstacle — so a test that is about something
+    else needs one to get past the guard. Lives here rather than in
+    `test_voices.py` because the narrate routes (`chats` and `stories`) are
+    guarded by the same `_require_tts_capable`.
+    """
+    from core.entities import Provider
+
+    provider = Provider(
+        id="tts-provider", type="modal", worker_type="image",
+        capabilities=["image", "tts"], enabled=True,
+    )
+    session.add(provider)
+    session.commit()
+    return provider
+
+
+@pytest.fixture
 def sample_workflow():
     """Sample ComfyUI workflow for testing."""
     return {

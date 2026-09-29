@@ -44,6 +44,19 @@ WORLD_INTEGRATION_QUEUE_SIZE = 10_000
 # _handle_chat_reply on both the append and the swipe-alternate path.
 SOURCE_JOB_ID_METADATA_KEY = "source_job_id"
 
+# The beat role `_handle_story_tts` writes when a completed TTS job is filed
+# against its chapter: an audio attachment, not prose — empty `content`, an
+# `audio_path` beside it.
+#
+# Declared here, beside its only writer, because the service is the lower layer:
+# `api/routes/world_vault/stories.py` imports it to widen the set of roles the
+# beat routes accept, which is the direction this codebase already imports in
+# (routes import services). It was the literal `"system_tts"`, which was in no
+# allowed set at all — the beat routes refused to edit such a beat, and
+# "retry last continuation" refused to retry anything after it because the
+# trailing beat was not a narrator turn.
+TTS_BEAT_ROLE = "tts"
+
 
 async def _handle_impersonation(job_data: dict[str, Any]):
     imp_chat_id = job_data.get("metadata", {}).get("chat_id")
@@ -70,12 +83,19 @@ async def _handle_impersonation(job_data: dict[str, Any]):
             _chat = session.get(Chat, imp_chat_id)
             if _chat:
                 _character = session.get(Character, _chat.character_id) if _chat.character_id else None
-                _past = session.exec(
+                # Newest 200, not the oldest 200. `.order_by(created_at)` with a
+                # limit takes the FIRST 200, so past a 200-message chat the
+                # impersonation was generated from the opening of the
+                # conversation and asked to continue a scene the user had long
+                # since left. Every other reply path in the codebase takes the
+                # newest (limit, then reverse) — `chats.py` does it four times.
+                _past = list(session.exec(
                     select(Message)
                     .where(Message.chat_id == imp_chat_id)
-                    .order_by(Message.created_at)
+                    .order_by(Message.created_at.desc())
                     .limit(200)
-                ).all()
+                ).all())
+                _past.reverse()
                 from services.context_builder import chat_context_kwargs
 
                 _sp, _ctx = await build_chat_context_async(
@@ -211,6 +231,11 @@ async def _handle_narrator(job_data: dict[str, Any]):
                 kind=MessageKind.NARRATOR,
                 content=content,
                 chat_id=chat_id,
+                # The thread the narrated message lives on. Branch copies share
+                # their originals' `chat_id` and `created_at`, so a narrator row
+                # written without it interleaves into the original thread and the
+                # fork the user is reading never shows its own narration.
+                branch_id=metadata.get("branch_id"),
                 message_metadata=message_metadata,
             )
             session.add(msg)
@@ -309,6 +334,12 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
                 kind=MessageKind.CHAR,
                 content=content,
                 chat_id=chat_id,
+                # The thread the question was asked on, carried on the job
+                # metadata by the send/regenerate routes. A branch's copies share
+                # their originals' `chat_id` and `created_at`, so an answer written
+                # without it interleaves into the original thread and the fork the
+                # user is reading never advances.
+                branch_id=metadata.get("branch_id"),
                 character_id=metadata.get("character_id"),
                 tool_calls=tool_calls,
                 message_metadata=msg_metadata,
@@ -426,14 +457,14 @@ async def _handle_story_tts(job_data: dict[str, Any]):
                 # MutableList does NOT track in-place mutation of its dict members,
                 # so the beats list must be rebuilt (reassigned) to persist.
                 beats = list(chapter.beats or [])
-                if beats and isinstance(beats[-1], dict) and beats[-1].get("role") == "system_tts":
+                if beats and isinstance(beats[-1], dict) and beats[-1].get("role") == TTS_BEAT_ROLE:
                     beats[-1] = {**beats[-1], "audio_path": audio_path}
                 else:
                     beats.append(
                         {
                             "id": str(uuid4()),
                             "parent_beat_id": (beats[-1].get("id") if beats and isinstance(beats[-1], dict) else None),
-                            "role": "system_tts",
+                            "role": TTS_BEAT_ROLE,
                             "content": "",
                             "audio_path": audio_path,
                         }

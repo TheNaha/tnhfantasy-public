@@ -15,6 +15,22 @@ from core.entities import Chat, Message, StoryChapter, CharacterMemory, Asset
 MAX_TIMELINE_OFFSET = 10_000
 MAX_TIMELINE_FETCH = 5_000
 
+# What a client may put in `?types=`, mapped to the `type` the events below
+# actually carry.
+#
+# `image` and `asset` name the same stream. The Activity page sends `image`
+# (`showImages ? 'message,chapter,memory,image' : ...`) and the validation
+# message above only ever advertised `image`, but the events are emitted with
+# `type: "asset"` — so the filter at the end matched nothing and the "show
+# images" toggle silently did nothing at all.
+EVENT_TYPE_ALIASES = {
+    "message": "message",
+    "chapter": "chapter",
+    "memory": "memory",
+    "image": "asset",
+    "asset": "asset",
+}
+
 router = APIRouter()
 
 
@@ -53,7 +69,7 @@ def get_timeline(
     wanted: set[str] | None = None
     if types:
         wanted = {t.strip() for t in types.split(",") if t.strip()}
-        unknown = wanted - {"message", "chapter", "memory", "image"}
+        unknown = wanted - set(EVENT_TYPE_ALIASES)
         if unknown:
             # ValidationError, not ValueError: a bare ValueError escapes the
             # handler as a 500, so a typo in a query parameter read as a server
@@ -62,6 +78,7 @@ def get_timeline(
                 f"unknown event type(s) {sorted(unknown)}; valid types are "
                 "message, chapter, memory, image"
             )
+        wanted = {EVENT_TYPE_ALIASES[t] for t in wanted}
 
     events = []
     # `offset` was uncapped, and this is applied to FOUR independent queries
@@ -166,8 +183,28 @@ def get_timeline(
         })
 
     # Image generations (assets)
+    #
+    # Narrowed columns, for the same reason the gallery was: `assets` is ~99% of
+    # this feed and ~3.4 kB per row, almost all of it in the `metadata_` jsonb.
+    # `select(Asset)` materialised every column of up to `fetch_limit` (5000) rows
+    # on the event loop to build a title, a 200-character description and two ids.
+    # Only the columns the event below is built from are selected; the count query
+    # beside it already worked this way.
     asset_count_query = select(func.count(Asset.id))
-    asset_query = select(Asset).order_by(Asset.created_at.desc()).limit(fetch_limit)
+    asset_query = (
+        select(
+            Asset.id,
+            Asset.filename,
+            Asset.relative_path,
+            Asset.character_id,
+            Asset.story_id,
+            Asset.generated_at,
+            Asset.created_at,
+            Asset.metadata_["prompt"].as_string(),
+        )
+        .order_by(Asset.created_at.desc())
+        .limit(fetch_limit)
+    )
     if character_id:
         asset_count_query = asset_count_query.where(Asset.character_id == character_id)
         asset_query = asset_query.where(Asset.character_id == character_id)
@@ -175,18 +212,16 @@ def get_timeline(
         asset_count_query = asset_count_query.where(Asset.story_id == story_id)
         asset_query = asset_query.where(Asset.story_id == story_id)
     total_assets = session.exec(asset_count_query).one()
-    assets = session.exec(asset_query).all()
-    for a in assets:
-        created = a.generated_at or a.created_at
-        prompt = (a.metadata_ or {}).get("prompt") if a.metadata_ else None
+    for a_id, a_filename, a_relative_path, a_character_id, a_story_id, a_generated_at, a_created_at, a_prompt in session.exec(asset_query).all():
+        created = a_generated_at or a_created_at
         events.append({
             "type": "asset",
-            "id": a.id,
+            "id": a_id,
             "timestamp": created.isoformat() if created else None,
-            "title": f"Image: {a.filename}",
-            "description": (prompt or a.relative_path or "")[:200],
-            "character_id": a.character_id,
-            "story_id": a.story_id,
+            "title": f"Image: {a_filename}",
+            "description": (a_prompt or a_relative_path or "")[:200],
+            "character_id": a_character_id,
+            "story_id": a_story_id,
             "kind": "image",
         })
 

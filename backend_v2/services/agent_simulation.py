@@ -13,6 +13,7 @@ from sqlmodel import select
 
 from core.entities import Character, Chat, Job, JobStatus, Message
 from infrastructure.logging import get_logger
+from services.chat_utils import resolve_context_tokens as _resolve_context_tokens
 
 logger = get_logger("idle_simulation")
 
@@ -171,8 +172,14 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
             # here — a divergence visible only as the idle simulation replying
             # out of character.
             ctx_kwargs = chat_context_kwargs(chat, characters=characters, session=session)
-            if chat.max_context_tokens:
-                ctx_kwargs["max_context_tokens"] = chat.max_context_tokens
+            # `resolve_context_tokens`, not `chat.max_context_tokens`. The old form
+            # only set the per-chat override, so a chat that had not set one fell
+            # through to `build_chat_context`'s `DEFAULT_MAX_TOKENS` (4096) and
+            # ignored the global `ai.maxContextTokens` setting entirely — while all
+            # seven `chats.py` reply paths resolved the same value through this
+            # helper, which reads per-chat first and config second. The idle
+            # simulation is a paid generation like any other reply.
+            ctx_kwargs["max_context_tokens"] = _resolve_context_tokens(chat)
 
             system_prompt, context = await build_chat_context_async(
                 past_messages,

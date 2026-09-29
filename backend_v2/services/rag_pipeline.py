@@ -211,7 +211,12 @@ def search_lorebook_entries(
       always included, entries with keys must match a key substring; if nothing
       matches, the first N entries are returned so context never goes empty.
 
-    Returns a flat, deduplicated list ordered by lorebook order then rank.
+    Returns a flat, deduplicated list ordered by lorebook order then rank, and
+    NEVER more than `limit` entries. The limit is a hard ceiling on the whole
+    call, not a per-lorebook allowance: every returned entry is injected verbatim
+    into the paid system prompt by `context_builder`, so `limit` entries is the
+    budget the caller asked for. It used to be `limit * 3` across the call and up
+    to `2 * limit` from a single lorebook.
 
     Turning RAG off removes only the semantic step, not retrieval: the
     keyword / recency fallback below still runs, so an activated lorebook keeps
@@ -226,11 +231,10 @@ def search_lorebook_entries(
     q_vec = _try_embedding(query) if (rag_on and query and _is_postgres(session)) else None
 
     results: list[LorebookEntry] = []
-    global_limit = max(limit * 3, limit)
     seen: set[str] = set()
 
     for lb_id in lorebook_ids:
-        if len(results) >= global_limit:
+        if len(results) >= limit:
             break
         if q_vec:
             try:
@@ -251,7 +255,7 @@ def search_lorebook_entries(
                 ).all()
                 if top:
                     for e in top:
-                        if e.id not in seen:
+                        if e.id not in seen and len(results) < limit:
                             seen.add(e.id)
                             results.append(e)
                     continue
@@ -293,7 +297,7 @@ def search_lorebook_entries(
 
         if not query:
             for e in entries[:limit]:
-                if e.id not in seen:
+                if e.id not in seen and len(results) < limit:
                     seen.add(e.id)
                     results.append(e)
             _append_keyless(session, lb_id, seen, results, limit, len(results))
@@ -305,19 +309,19 @@ def search_lorebook_entries(
             # Keyless entries are "always on" — `context_builder` injects them
             # unconditionally — so they match whatever the query is.
             if not e.keys or any(k.lower() in query_lower for k in e.keys):
-                if e.id not in seen:
+                if e.id not in seen and len(results) + len(matched) < limit:
                     seen.add(e.id)
                     matched.append(e)
                 # The break belongs HERE, not only in the keyed branch below it.
                 # It used to be inside the keyed arm, so a lorebook with many
                 # keyless entries appended every one of them and blew through the
-                # caller's `limit` by 10x, then through `global_limit`.
-                if len(matched) >= limit:
+                # caller's `limit` by 10x.
+                if len(results) + len(matched) >= limit:
                     break
 
         if not matched:
             for e in entries[:limit]:
-                if e.id not in seen:
+                if e.id not in seen and len(results) + len(matched) < limit:
                     seen.add(e.id)
                     matched.append(e)
 
@@ -329,7 +333,7 @@ def search_lorebook_entries(
         # first so age does not decide visibility.
         _append_keyless(session, lb_id, seen, results, limit, len(results))
 
-    return results[:global_limit]
+    return results[:limit]
 
 
 def _append_keyless(
@@ -347,13 +351,22 @@ def _append_keyless(
     chat message, suggest, impersonate and story continue. The rows are bounded by
     `limit` regardless.
 
+    `already` is how many entries `results` already holds, across every lorebook
+    processed so far. The budget left is `limit - already`, and nothing else: the
+    old expression was `limit - (already - len(seen))`, but every append adds the
+    entry to both lists, so `len(seen) == len(results) == already`, the subtraction
+    cancelled, and `remaining` came out as the FULL `limit`. A lorebook with both
+    keyword matches and many keyless entries therefore returned up to `2 * limit`
+    from this one call, and `context_builder` injects every returned entry verbatim
+    into a paid system prompt.
+
     `keys == []` renders as `keys = %(keys_1)s::JSONB` on Postgres and
     `keys = ?` on SQLite — the same bound-parameter comparison, so no dialect
     branch is needed. The `not entry.keys` guard afterwards keeps this honest on
     any backend that stores the empty list differently: a row that slips through
     the predicate but is not actually keyless is skipped rather than injected.
     """
-    remaining = max(0, limit - (already - len(seen)))
+    remaining = max(0, limit - already)
     if remaining <= 0:
         return
     try:

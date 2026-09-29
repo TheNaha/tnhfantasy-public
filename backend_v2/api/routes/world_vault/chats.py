@@ -720,11 +720,21 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
         _chat_context_prep_sync, session, chat_repo, chat_id
     )
 
-    sections = await build_system_prompt_sections_async(
-        **ctx_kwargs,
-    )
-
-    system_prompt, context = await build_chat_context_async(
+    # One assembly, not two.
+    #
+    # This called `build_system_prompt_sections_async(**ctx_kwargs)` into
+    # `sections` and then `build_chat_context_async(past_messages, **ctx_kwargs)`,
+    # which calls `build_system_prompt_sections` again internally and threw the
+    # first result away. Each assembly runs an embedding forward pass and two
+    # pgvector queries, so the route paid for four of them and returned the
+    # second's, on the most-invalidated route in the app.
+    #
+    # `..._with_sections` is the same function plus the sections it already built
+    # on the way to the prompt, so `sections` and `system_prompt` now come from one
+    # pass. They did not before: the discarded call was made without `messages`, so
+    # its lorebook query had no conversation in it, and a chat with messages
+    # returned a section breakdown that did not match the prompt beside it.
+    system_prompt, context, sections = await build_chat_context_with_sections_async(
         past_messages,
         **ctx_kwargs,
     )
@@ -1078,8 +1088,9 @@ async def narrate_message(
     queue_manager: QueueManager = Depends(get_queue_manager),
 ):
     """Trigger a TTS job to narrate a specific message."""
-    # Voice resolution is synchronous session work; the job enqueue below is
-    # awaited, so the reads move to a worker thread.
+    # Voice resolution, the capability guard and the graph build are synchronous
+    # session work; the job enqueue below is awaited, so they move to a worker
+    # thread.
     message_id, workflow, metadata = await asyncio.to_thread(
         _narrate_message_prep_sync,
         session,
@@ -1135,8 +1146,6 @@ def _narrate_message_prep_sync(
 
     if not message.content:
         raise ComfyError("Message has no content to narrate")
-
-    from core.workflow_builder import build_tts_workflow
 
     # Resolve voice profile: explicit voice_id → chat override → character voice → default
     voice_profile = voice_model_id = language = None
@@ -1319,8 +1328,17 @@ def _swipe_prep_sync(
     if target_msg.role != MessageRole.CHAR:
         raise ValidationError("Only character messages can generate swipes")
 
+    # `_branch_scope(target_msg)`, so a swipe on a forked thread is answered from
+    # that thread only. Without it this read matched every branch's copies —
+    # they share the originals' `chat_id` and `created_at` — and the paid
+    # regeneration was conditioned on the conversation duplicated and
+    # interleaved. The message read route was already scoped this way; this is
+    # the same data on the paid path.
     all_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(CHAT_HISTORY_HARD_CAP)
+        select(Message).where(
+            Message.chat_id == chat_id,
+            *_branch_scope(target_msg),
+        ).order_by(Message.created_at.desc()).limit(CHAT_HISTORY_HARD_CAP)
     ).all()
     all_messages.reverse()
 
@@ -1607,7 +1625,7 @@ async def regenerate_reply(
 
 def _regenerate_prep_sync(
     session: Session, chat_repo: ChatRepository, chat_id: str, message_id: str | None
-) -> tuple[Chat, str | None, int, bool, object, list[Message], dict]:
+) -> tuple[Chat, str | None, str | None, int, bool, object, list[Message], dict]:
     """Drop everything after the anchor message and assemble its context.
 
     Synchronous on purpose: the context build and the job enqueue are awaited,

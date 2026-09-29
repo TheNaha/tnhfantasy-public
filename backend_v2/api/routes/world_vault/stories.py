@@ -1173,7 +1173,7 @@ def _retry_last_prep_sync(
     # Safety net: snapshot the prose before it is trimmed.
     story_revision_repo.create_snapshot(chapter, source="pre_retry")
 
-    chapter.beats = beats[:-1]
+    chapter.beats = beats[:last_index]
     chapter.content = new_content
 
     chapter.updated_at = datetime.now(timezone.utc)
@@ -1783,7 +1783,13 @@ def _narrate_chapter_prep_sync(
     if story.character_ids:
         char = session.get(Character, story.character_ids[0])
         voice_profile, voice_model_id, language = resolve_voice_for_character(session, char)
-    return text, voice_profile, voice_model_id, language
+    return (
+        text,
+        voice_profile,
+        voice_model_id,
+        language,
+        f"story_tts/{story_id}/{chapter_id}",
+    )
 
 
 def _resolve_default_checkpoint(session: Session, preferred: str | None = None) -> str:

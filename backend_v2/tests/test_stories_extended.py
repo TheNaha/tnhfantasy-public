@@ -147,15 +147,35 @@ def test_export_published_story_not_found(client):
     assert response.status_code == 404
 
 
-def test_narrate_chapter(client, session, story_with_character):
+def test_narrate_chapter(client, session, story_with_character, tts_capable):
+    from core.entities import Job
+
     story, chapter = story_with_character
     response = client.post(f"/api/v2/stories/{story.id}/chapters/{chapter.id}/narrate")
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     data = response.json()
     assert "job_id" in data
 
+    # Was `task_type="image"` with an `XTTS_v2` graph — node types no provider
+    # image has, submitted to a worker that could not build it. TTS is its own
+    # provider capability now; the task type has to say so.
+    job = session.get(Job, data["job_id"])
+    assert job.task_type == "tts"
+    assert job.metadata_["source"] == "story_tts"
+    assert job.metadata_["chapter_id"] == chapter.id
+    assert job.metadata_["story_id"] == story.id
+    node_types = {n["class_type"] for n in job.workflow["prompt"].values()}
+    assert node_types == {"QwenTTSSpeak", "SaveAudio"}
 
-def test_narrate_chapter_not_found(client):
+
+def test_narrate_chapter_refuses_without_tts_capability(client, session, story_with_character):
+    story, chapter = story_with_character
+    response = client.post(f"/api/v2/stories/{story.id}/chapters/{chapter.id}/narrate")
+    assert response.status_code == 400
+    assert "capabilit" in response.text.lower()
+
+
+def test_narrate_chapter_not_found(client, tts_capable):
     response = client.post("/api/v2/stories/nonexistent/chapters/nonexistent/narrate")
     assert response.status_code == 404
 

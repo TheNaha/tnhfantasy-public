@@ -373,7 +373,7 @@ class TestNarrateMessage:
         msg = _add_message(session, chat, MessageRole.CHAR, "Hello, adventurer.")
         return chat, msg
 
-    def test_narrate_with_voice_override(self, client, session, monkeypatch):
+    def test_narrate_with_voice_override(self, client, session, monkeypatch, tts_capable):
         from core.entities import VoiceModel
         voice = VoiceModel(name="Midnight", voice_profile="midnight_xtts", language="en")
         session.add(voice)
@@ -392,14 +392,36 @@ class TestNarrateMessage:
         body = resp.json()
         assert body["job_id"]
 
-        enqueue.assert_awaited_once_with(body["job_id"], task_type="image")
+        # Was `task_type="image"` with an `XTTS_v2` + `SaveAudio` graph — node
+        # types that exist in no provider image, submitted to a worker that
+        # therefore could not build it. The TTS worker is its own provider
+        # capability, so the task type has to say so, or the load balancer offers
+        # the job to a provider that cannot serve it.
+        enqueue.assert_awaited_once_with(body["job_id"], task_type="tts")
         job = session.get(Job, body["job_id"])
-        assert job.task_type == "image"
+        assert job.task_type == "tts"
         assert job.metadata_["type"] == "tts"
         assert job.metadata_["source"] == "chat_tts"
-        assert job.workflow["prompt"]["3"]["inputs"]["text"] == "Hello, adventurer."
+        assert job.workflow["type"] == "tts"
+        # The graph is the one the TTS worker can build: the dedicated Qwen nodes,
+        # never the XTTS pair.
+        node_types = {n["class_type"] for n in job.workflow["prompt"].values()}
+        assert node_types == {"QwenTTSSpeak", "SaveAudio"}
+        assert "XTTS_v2" not in node_types
+        speak = next(n for n in job.workflow["prompt"].values() if n["class_type"] == "QwenTTSSpeak")
+        assert speak["inputs"]["text"] == "Hello, adventurer."
 
-    def test_narrate_voice_override_404(self, client, session, monkeypatch):
+    def test_narrate_refuses_when_no_provider_can_serve_tts(self, client, session):
+        """A job accepted here died inside a container on a graph naming a node
+        that was never installed. It is refused before a job row exists."""
+        chat, msg = self._seed(session)
+        resp = client.post(f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate", json={})
+        assert resp.status_code == 400
+        body = resp.text.lower()
+        assert "tts" in body
+        assert "capabilit" in body, "the error should name the missing capability"
+
+    def test_narrate_voice_override_404(self, client, session, tts_capable):
         chat, msg = self._seed(session)
         resp = client.post(
             f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate",
@@ -407,7 +429,7 @@ class TestNarrateMessage:
         )
         assert resp.status_code == 404
 
-    def test_narrate_chat_override_fallback(self, client, session, monkeypatch):
+    def test_narrate_chat_override_fallback(self, client, session, monkeypatch, tts_capable):
         from core.entities import VoiceModel
         voice = VoiceModel(name="Echo", voice_profile="echo_xtts", language="en")
         session.add(voice)
@@ -425,7 +447,11 @@ class TestNarrateMessage:
         assert resp.status_code == 200, resp.text
         job = session.get(Job, resp.json()["job_id"])
         assert job.metadata_["voice_profile"] == "echo_xtts"
-        assert job.workflow["prompt"]["3"]["inputs"]["voice"] == "echo_xtts"
+        speak = next(
+            n for n in job.workflow["prompt"].values()
+            if n["class_type"] == "QwenTTSSpeak"
+        )
+        assert speak["inputs"]["voice"] == "echo_xtts"
 
 
 # ── list_chat_jobs ───────────────────────────────────────────────────────────
