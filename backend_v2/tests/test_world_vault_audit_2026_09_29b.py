@@ -986,8 +986,16 @@ class TestChatLocationBlock:
         assert chat_context_kwargs(chat, session=session)["location_ids"] is None
 
     def test_the_block_is_actually_emitted(self, session):
-        """Not just the kwarg: the section has to reach the prompt."""
-        from services.context_builder import build_system_prompt_sections
+        """Not just the kwarg: the location has to reach the prompt.
+
+        The single-id block is now the one that fires for a chat. Previously
+        both `location_detail` (from `location_id`) and `story_locations`
+        (from `location_ids`, which `chat_context_kwargs` populated from the
+        same column) rendered the same location, so a chat paid for its
+        location's prose twice on every turn. The list block is for the
+        *additional* locations a Story can have and a Chat cannot.
+        """
+        from services.context_builder import build_system_prompt_sections, chat_context_kwargs
 
         loc = __import__("core.entities", fromlist=["Location"]).Location(
             name="The Drowned Quay", description="Black water, green lamps."
@@ -997,13 +1005,29 @@ class TestChatLocationBlock:
         session.refresh(loc)
         chat = _seed_chat(session, location_id=loc.id)
 
-        from services.context_builder import chat_context_kwargs
-
         sections = build_system_prompt_sections(session, **chat_context_kwargs(chat, session=session))
         keys = {s["key"] for s in sections}
-        assert "story_locations" in keys
-        block = next(s for s in sections if s["key"] == "story_locations")
+        assert "location_detail" in keys
+        block = next(s for s in sections if s["key"] == "location_detail")
         assert "The Drowned Quay" in block["content"]
+
+    def test_a_linked_location_is_not_injected_twice(self, session):
+        """A chat's location used to appear as both `[Location: X]` and inside
+        `[Active Locations]`, on every turn, for every message."""
+        from services.context_builder import build_system_prompt_sections, chat_context_kwargs
+
+        loc = __import__("core.entities", fromlist=["Location"]).Location(
+            name="The Drowned Quay", description="Black water, green lamps."
+        )
+        session.add(loc)
+        session.commit()
+        session.refresh(loc)
+        chat = _seed_chat(session, location_id=loc.id)
+
+        sections = build_system_prompt_sections(session, **chat_context_kwargs(chat, session=session))
+        prompt = "\n\n".join(s["content"] for s in sections)
+        assert prompt.count("The Drowned Quay") == 1, [s["key"] for s in sections]
+        assert "story_locations" not in {s["key"] for s in sections}
 
 
 # ── D13: the idle simulator ignored the global context window ─────────────
