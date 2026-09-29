@@ -76,6 +76,22 @@ class ApplyScenarioRequest(BaseModel):
     target_id: str
 
 
+def _append_directive(existing: str | None, directive: str | None) -> str | None:
+    """Add a scenario directive to a chat's existing append block.
+
+    Re-applying the same scenario is a no-op rather than a duplicate, so a user
+    who clicks Apply twice does not pay for the same paragraph twice.
+    """
+    directive = (directive or "").strip()
+    if not directive:
+        return existing
+    if not existing or not existing.strip():
+        return directive
+    if directive in existing:
+        return existing
+    return f"{existing.rstrip()}\n\n{directive}"
+
+
 @router.post("/{scenario_id}/apply")
 def apply_scenario(scenario_id: str, req: ApplyScenarioRequest, session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
     """Apply a scenario's prompt_template and defaults to a chat or story."""
@@ -89,13 +105,29 @@ def apply_scenario(scenario_id: str, req: ApplyScenarioRequest, session: Session
         chat = session.get(Chat, req.target_id)
         if not chat:
             raise NotFoundError("Chat", req.target_id)
-        # Apply the prompt template as a system prompt override
-        chat.system_prompt_override = scenario.prompt_template
+        # `append_system_prompt`, NOT `system_prompt_override`.
+        #
+        # The override *replaces* everything character-related:
+        # `build_system_prompt_sections` breaks out of the character loop when
+        # it is set, and separately gates `mes_example` on its absence. So
+        # clicking "Apply" on this page — a button labelled as adding a
+        # directive — silently removed the character's description, personality,
+        # scenario, system_prompt, append_system_prompt and example dialogue
+        # from every subsequent turn of that chat, with nothing shown to the
+        # user and no log line. The chat simply started answering out of
+        # character.
+        #
+        # The override is still the right tool for its actual purpose, which is
+        # the explicit "Chat Prompt" tab, and its replace-semantics are
+        # documented in the builder. What was wrong was this button reaching
+        # for it.
+        chat.append_system_prompt = _append_directive(chat.append_system_prompt, scenario.prompt_template)
         session.add(chat)
         session.commit()
         session.refresh(chat)
         result["applied_to"] = "chat"
         result["chat_id"] = req.target_id
+        result["applied_via"] = "append_system_prompt"
     elif req.target_type == "story":
         story = session.get(Story, req.target_id)
         if not story:
