@@ -200,7 +200,13 @@ class TestVLLMModalRemoteEventTranslation:
         line = client._translate_remote_event({"type": "error", "message": "vllm exploded"}, "job-1")
         parsed = json.loads(line)
         assert parsed["event"] == "failed"
-        assert parsed["retryable"] is True
+        # Was `is True`, hardcoded, and that was the defect: the legacy dialect
+        # carries no `retryable` and no status, so every unclassifiable failure —
+        # a bad chat template, a missing model, a rejected request — was
+        # reported as transient and re-run on every provider in the pool. With
+        # nothing to classify it, the shared ladder's answer is permanent. An
+        # explicit `retryable` still wins; see the cases below.
+        assert parsed["retryable"] is False
 
     def test_malformed_input(self):
         client = self._client()
@@ -208,6 +214,38 @@ class TestVLLMModalRemoteEventTranslation:
             line = client._translate_remote_event(raw, "job-1")
             parsed = json.loads(line)
             assert parsed["event"] == "failed"
+
+    @pytest.mark.parametrize(
+        ("payload", "expected"),
+        [
+            # The remote's own verdict wins: it is the one that saw the exception.
+            ({"type": "error", "message": "cuBLAS OOM", "retryable": True}, True),
+            ({"type": "error", "message": "unknown model", "retryable": False}, False),
+            # A status, when the remote kept it, goes through the shared ladder.
+            ({"type": "error", "message": "overloaded", "status_code": 503}, True),
+            ({"type": "error", "message": "upstream 502", "status_code": 502}, True),
+            ({"type": "error", "message": "bad request", "status_code": 400}, False),
+            ({"type": "error", "message": "nope", "http_status": 429}, True),
+            # Unclassifiable, as in the legacy dialect.
+            ({"type": "error", "message": "boom"}, False),
+        ],
+    )
+    def test_a_remote_error_uses_the_shared_retryable_ladder(self, payload, expected):
+        """`openai_compat`, `anthropic` and `google` all route a failure through
+        `retryable_for_exception`; the vLLM Modal engine was the fourth copy and
+        hardcoded `True`, so a permanently-failing provider was retried across the
+        whole pool."""
+        client = self._client()
+        parsed = json.loads(client._translate_remote_event(payload, "job-1"))
+        assert parsed["event"] == "failed"
+        assert parsed["retryable"] is expected, payload
+
+    def test_a_malformed_event_is_not_retryable(self):
+        """A payload the worker cannot read is its own bug and repeating the
+        request reproduces it exactly. It was `True`."""
+        client = self._client()
+        parsed = json.loads(client._translate_remote_event("{{{", "job-1"))
+        assert parsed["retryable"] is False
 
 
 class TestAnthropicMessageHandling:

@@ -27,6 +27,7 @@ from fastapi import HTTPException
 from provider_core.base_client import BaseProviderClient
 from provider_core.logging import get_logger
 from provider_core.models import InferenceRequest, TaskEvent
+from provider_core.responses import outcome
 
 logger = get_logger("tts_worker.modal.client")
 
@@ -38,10 +39,82 @@ MODAL_TTS_APP_NAME = os.getenv("MODAL_TTS_APP_NAME", "comfy-modal-tts")
 # a rename on one side only fails at the first call, not at import.
 TTS_CLASS_NAME = os.getenv("MODAL_TTS_CLASS", "TTSWorker")
 
+# The app's volume read/write class. Same caveat: a rename on one side only fails
+# at the first file route, and a 404 that looks like a missing file is exactly
+# what that produced.
+TTS_STORAGE_CLASS_NAME = os.getenv("MODAL_TTS_STORAGE_CLASS", "TTSFileStorage")
+
 # Ceiling on a file this worker will read or accept. Speech is small; the point
 # is that the generic `/file` route cannot be pointed at a checkpoint, which the
 # image worker exists to stream.
 _MAX_AUDIO_BYTES = 64 * 1024 * 1024
+
+# An app event that ends the stream. Anything else is progress the backend
+# reducer places, and `event_stream` must not append a completion of its own once
+# one of these has been seen — that is exactly how a failure came to be reported
+# as a green job.
+_TERMINAL_EVENTS = frozenset({"completed", "failed", "cancelled"})
+
+
+def task_event_for_update(update: Any, job_id: Optional[str] = None) -> Optional[TaskEvent]:
+    """Translate one event from the TTS Modal app into the unified dialect.
+
+    The app's own vocabulary (`modal_app.py::_execute`) is `{"status": ...}`:
+    `success` with an `outputs` list of `{filename, subfolder, type}` — no
+    base64 bytes, because the audio stays on the volume and the backend fetches
+    it by path — `running` once per poll, and `error` with an explicit
+    `retryable` flag that the app already decided (a rejected graph is permanent,
+    a poll timeout is not).
+
+    `None` means "no event": `running` is a poll heartbeat carrying no progress,
+    and the backend reducer has no branch for it, so forwarding one would only
+    manufacture a `progress` with no value.
+    """
+    if isinstance(update, (bytes, bytearray)):
+        update = update.decode("utf-8", "replace")
+    if isinstance(update, str):
+        try:
+            update = json.loads(update)
+        except ValueError:
+            return TaskEvent(
+                event="failed",
+                job_id=job_id,
+                message=f"Malformed TTS app event: {update!r}",
+                # A payload the worker cannot read is our bug, not the app's, and
+                # repeating the request reproduces it exactly.
+                retryable=False,
+            )
+    if not isinstance(update, dict):
+        return TaskEvent(
+            event="failed",
+            job_id=job_id,
+            message=f"Malformed TTS app event: {update!r}",
+            retryable=False,
+        )
+
+    status = str(update.get("status") or "").lower()
+    if status == "success":
+        return TaskEvent(event="completed", job_id=job_id, outputs=update.get("outputs") or [])
+    if status == "error":
+        return TaskEvent(
+            event="failed",
+            job_id=job_id,
+            message=update.get("message") or "TTS generation failed",
+            retryable=bool(update.get("retryable")),
+        )
+    if status == "cancelled":
+        return TaskEvent(event="cancelled", job_id=job_id, message=update.get("message") or "cancelled")
+    if status == "running":
+        return None
+    if status in _TERMINAL_EVENTS:
+        return TaskEvent(
+            event=status,
+            job_id=job_id,
+            message=update.get("message"),
+            outputs=update.get("outputs"),
+            retryable=update.get("retryable"),
+        )
+    return None
 
 
 class ModalTTSProviderClient(BaseProviderClient):
@@ -116,18 +189,21 @@ class ModalTTSProviderClient(BaseProviderClient):
             await self.job_tracker.start_job(job_id)
 
         async def event_stream():
+            seen_terminal = False
             try:
                 cls = modal.Cls.from_name(MODAL_TTS_APP_NAME, TTS_CLASS_NAME)
                 instance = cls()
                 try:
                     async with asyncio.timeout(timeout):
                         async for event in instance.run.remote_gen.aio(request.workflow):
-                            if isinstance(event, str):
-                                event = json.loads(event)
-                            yield TaskEvent(
-                                event="running", job_id=job_id, message=json.dumps(event)
-                            ).to_ndjson()
+                            task_event = task_event_for_update(event, job_id)
+                            if task_event is None:
+                                continue
+                            if task_event.event in _TERMINAL_EVENTS:
+                                seen_terminal = True
+                            yield task_event.to_ndjson()
                 except asyncio.TimeoutError:
+                    seen_terminal = True
                     yield TaskEvent(
                         event="failed",
                         job_id=job_id,
@@ -135,11 +211,13 @@ class ModalTTSProviderClient(BaseProviderClient):
                         retryable=True,
                     ).to_ndjson()
                 except asyncio.CancelledError:
+                    seen_terminal = True
                     yield TaskEvent(
                         event="cancelled", job_id=job_id, message="cancelled"
                     ).to_ndjson()
                     raise
                 except Exception as exc:
+                    seen_terminal = True
                     # Not retryable, and a specific message. A TTS failure here is
                     # almost always the graph (a node the image lacks, a model
                     # that has not downloaded), and retrying it on every other
@@ -153,7 +231,19 @@ class ModalTTSProviderClient(BaseProviderClient):
             finally:
                 if job_id and self.job_tracker:
                     await self.job_tracker.end_job(job_id)
-            yield TaskEvent(event="completed", job_id=job_id).to_ndjson()
+            if not seen_terminal:
+                # The app's generator ended without saying how the job went. A
+                # completion asserted here would be a guess: the backend's reducer
+                # stores the terminal event it last saw and finalizes on it, so
+                # every audio file the app failed to report would be finalised as
+                # a green job with `outputs=[]` and no error. Same wording the
+                # backend uses for the identical condition.
+                yield TaskEvent(
+                    event="failed",
+                    job_id=job_id,
+                    message="TTS app stream ended without a terminal event",
+                    retryable=True,
+                ).to_ndjson()
 
         return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
@@ -164,10 +254,19 @@ class ModalTTSProviderClient(BaseProviderClient):
     # the worker then reads. Both go through the shared Modal volume, so they are
     # small and there is nothing image-specific about them.
 
-    def _volume(self):
-        return modal.Volume.from_name(
-            os.getenv("MODAL_VOLUME_NAME", "comfy-storage"), create_if_missing=True
-        )
+    def _storage(self):
+        """The deployed `TTSFileStorage` class, not a `modal.Volume` handle.
+
+        `Volume` only exposes container-local methods: it has no `stat` and no
+        `write_file` at all, and its `remove_file` has no `.remote`, so every
+        route built on the handle called something that does not exist. `get_file`
+        caught the resulting `AttributeError` as a 404 for files that exist,
+        `delete_file` reported `{"status": "missing"}` while leaving the file on
+        the volume, and `upload_file` had no handler at all. Same shape as
+        `image_worker/engines/modal/client.py`, which calls the app's own class.
+        """
+        storage_cls = modal.Cls.from_name(MODAL_TTS_APP_NAME, TTS_STORAGE_CLASS_NAME)
+        return storage_cls()
 
     async def get_file(self, path: str):
         """Read a file off the shared volume.
@@ -185,12 +284,12 @@ class ModalTTSProviderClient(BaseProviderClient):
         """
         from fastapi.responses import Response
 
-        volume = self._volume()
+        storage = self._storage()
         try:
-            size = await volume.stat.remote(path)
-        except Exception:
+            size = await storage.file_size.remote.aio(path)
+        except FileNotFoundError:
             raise HTTPException(status_code=404, detail=f"File not found: {path}")
-        size = int(getattr(size, "size", 0) or 0)
+        size = int(size or 0)
         if size > _MAX_AUDIO_BYTES:
             raise HTTPException(
                 status_code=413,
@@ -199,7 +298,10 @@ class ModalTTSProviderClient(BaseProviderClient):
                     f"{_MAX_AUDIO_BYTES}. Use the image worker for large files."
                 ),
             )
-        data = await volume.read_file.remote(path)
+        try:
+            data = await storage.read_file.remote.aio(path)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"File not found: {path}")
         return Response(content=data, media_type="application/octet-stream")
 
     async def upload_file(self, request: Any):
@@ -208,26 +310,31 @@ class ModalTTSProviderClient(BaseProviderClient):
         Used for a cloning reference: the user uploads audio, the worker reads it
         from the volume. Base64 because that is what `UploadFileRequest` carries
         on every engine, so the shape is not this worker's to change.
+
+        `path` is volume-root relative, which is what puts a `directory` of
+        `input` at `/mnt/data/input/<filename>` — the symlinked ComfyUI input
+        directory. See the namespace note on `TTSFileStorage`.
         """
         import base64
 
-        volume = self._volume()
-        path = f"{request.directory}/{request.filename}"
         content = base64.b64decode(request.content_base64)
         if len(content) > _MAX_AUDIO_BYTES:
             raise HTTPException(
                 status_code=413,
                 detail=f"reference is {len(content)} bytes; limit is {_MAX_AUDIO_BYTES}",
             )
-        await volume.write_file.remote(path, content)
-        return {"status": "ok", "path": path, "size": len(content)}
+        path = f"{request.directory}/{request.filename}"
+        written = await self._storage().put_file.remote.aio(path=path, content=content)
+        return {"status": "ok", "path": path, "size": int(written or len(content))}
 
     async def delete_file(self, path: str):
-        try:
-            await self._volume().remove_file.remote(path)
-            return {"status": "deleted", "path": path}
-        except Exception:
-            return {"status": "missing", "path": path}
+        deleted = await self._storage().delete_file.remote.aio(path)
+        return outcome(
+            bool(deleted),
+            f"Deleted {path}" if deleted else f"File not found: {path}",
+            provider=self.provider_id,
+            code=None if deleted else 404,
+        )
 
     # ------------------------------------------------- model management
     #
