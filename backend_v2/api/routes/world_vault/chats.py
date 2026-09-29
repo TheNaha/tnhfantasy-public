@@ -1030,11 +1030,11 @@ async def narrate_message(
     )
 
     job = await job_service.create_job(
-        task_type="image",  # Dispatch to the ComfyUI image_worker adapter
+        task_type="tts",
         workflow=workflow,
         metadata=metadata,
     )
-    await queue_manager.enqueue(job.id, task_type="image")
+    await queue_manager.enqueue(job.id, task_type="tts")
 
     return {"message_id": message_id, "job_id": job.id}
 
@@ -1052,6 +1052,18 @@ def _narrate_message_prep_sync(
     Synchronous on purpose: the enqueue is awaited, so the route stays
     `async def` and these queries would otherwise run on the event loop.
     """
+    from services.tts_workflow_builder import (
+        _require_tts_capable,
+        build_voice_speak_workflow,
+    )
+
+    # The same guard `voices.py` calls, first, before it reads anything or builds
+    # a graph. It runs here rather than in the route body because this function
+    # is already the route's off-loop prologue, and the guard is a session query.
+    # Fail now with a 400 naming the missing capability, instead of accepting a
+    # job that dies inside a container naming a node that is not installed.
+    _require_tts_capable(session)
+
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
@@ -1081,17 +1093,28 @@ def _narrate_message_prep_sync(
     if data and data.language:
         language = data.language
 
-    workflow, metadata = build_tts_workflow(
-        text=message.content,
+    # `build_tts_workflow` emitted `XTTS_v2` + `SaveAudio` node types that exist
+    # in no provider image, and the job went out as `task_type="image"`, so it
+    # was routed to a worker that could not build its graph. The dedicated TTS
+    # worker is a separate provider capability; the graph comes from the builder
+    # that targets it, and the metadata keys are unchanged so
+    # `_handle_chat_tts` still selects on `source == "chat_tts"`.
+    workflow, metadata = build_voice_speak_workflow(
+        message.content,
         voice_profile=voice_profile,
-        voice_model_id=voice_model_id,
         language=language,
-        chat_id=chat_id,
-        character_id=chat.character_id,
+        filename_prefix=f"chat_tts/{chat_id}/{message_id}",
         extra_metadata={
+            "chat_id": chat_id,
+            "character_id": chat.character_id,
+            "voice_model_id": voice_model_id,
             "source": "chat_tts",
             "message_id": message_id,
-        }
+            # `_handle_narrator` is the only writer of narrator messages; without
+            # this a narration of a forked thread is written to the original one,
+            # where the user reading the fork never sees it.
+            "branch_id": message.branch_id,
+        },
     )
     return message.id, workflow, metadata
 

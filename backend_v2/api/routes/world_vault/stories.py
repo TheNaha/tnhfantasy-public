@@ -1124,10 +1124,23 @@ def _retry_last_prep_sync(
 
     _ensure_beat_ids(session, chapter)
     beats = list(chapter.beats or [])
-    last = beats[-1] if beats else None
-    if not last or last.get("role") != StoryBeatRole.NARRATOR.value:
+    # The last *prose* beat, not simply the last beat. A narrated chapter ends in
+    # a `TTS_BEAT_ROLE` attachment, which is an audio file reference with empty
+    # `content` — retrying has to find the narrator turn under it, and dropping
+    # that turn has to drop the attachment with it (it describes the audio of the
+    # text being removed).
+    last_index = next(
+        (
+            i
+            for i in range(len(beats) - 1, -1, -1)
+            if isinstance(beats[i], dict) and beats[i].get("role") == StoryBeatRole.NARRATOR.value
+        ),
+        -1,
+    )
+    if last_index < 0:
         raise ValidationError("No AI continuation to retry — the latest beat is not an AI-generated one")
 
+    last = beats[last_index]
     removed_text = (last.get("content") or "").strip()
     content = chapter.content or ""
     marker = f"\n\n{removed_text}\n\n"
@@ -1288,7 +1301,15 @@ def _remove_beat_text(content: str, snippet: str) -> str | None:
     return None
 
 
-_ALLOWED_BEAT_ROLES = {r.value for r in StoryBeatRole}
+# The TTS beat role is declared beside its only writer, in
+# `world_integration_service.TTS_BEAT_ROLE`, and admitted here rather than reused
+# from `StoryBeatRole`: a TTS beat has empty `content` and carries `audio_path`,
+# so calling it `narrator` would make "retry the last continuation" try to trim
+# an empty string out of the chapter, and `system` means "scene break"
+# everywhere else. `StoryBeatRole` is the enum the beat request models are
+# validated against and it is not ours to widen, so the extra value is declared
+# beside the set that consumes it.
+_ALLOWED_BEAT_ROLES = {r.value for r in StoryBeatRole} | {TTS_BEAT_ROLE}
 
 
 @router.patch("/{story_id}/chapters/{chapter_id}/beats/{beat_id}", response_model=StoryChapter)
@@ -1667,11 +1688,13 @@ async def narrate_chapter(
     queue_manager: QueueManager = Depends(get_queue_manager),
 ):
     """Trigger TTS narration for an entire story chapter."""
-    from core.workflow_builder import build_tts_workflow
+    from services.tts_workflow_builder import build_voice_speak_workflow
 
-    # Story, chapter and voice resolution are synchronous session work; only
-    # the job creation below is awaited.
-    text, voice_profile, voice_model_id, language = await asyncio.to_thread(
+    # Story, chapter and voice resolution are synchronous session work; the job
+    # creation below is awaited, so it moves to a worker thread — along with the
+    # capability guard, which is a session query and must fail before a graph is
+    # built.
+    text, voice_profile, voice_model_id, language, filename_prefix = await asyncio.to_thread(
         _narrate_chapter_prep_sync,
         session,
         story_repo,
@@ -1680,24 +1703,30 @@ async def narrate_chapter(
         chapter_id,
     )
 
-    workflow, metadata = build_tts_workflow(
-        text=text,
+    # `build_tts_workflow` emitted `XTTS_v2` + `SaveAudio` node types that exist
+    # in no provider image, and the job went out as `task_type="image"`, so it
+    # was routed to a worker that could not build its graph. The dedicated TTS
+    # worker is a separate provider capability; the metadata keys are unchanged
+    # so `_handle_story_tts` still selects on `source == "story_tts"`.
+    workflow, metadata = build_voice_speak_workflow(
+        text,
         voice_profile=voice_profile,
-        voice_model_id=voice_model_id,
         language=language,
-        story_id=story_id,
-        chapter_id=chapter_id,
+        filename_prefix=filename_prefix,
         extra_metadata={
+            "story_id": story_id,
+            "chapter_id": chapter_id,
+            "voice_model_id": voice_model_id,
             "source": "story_tts",
-        }
+        },
     )
 
     job = await job_service.create_job(
-        task_type="image",
+        task_type="tts",
         workflow=workflow,
         metadata=metadata,
     )
-    await queue_manager.enqueue(job.id, task_type="image")
+    await queue_manager.enqueue(job.id, task_type="tts")
 
     return {"job_id": job.id, "chapter_id": chapter_id, "story_id": story_id}
 
@@ -1708,9 +1737,17 @@ def _narrate_chapter_prep_sync(
     story_chapter_repo: StoryChapterRepository,
     story_id: str,
     chapter_id: str,
-) -> tuple[str, str | None, str | None, str | None]:
+) -> tuple[str, str | None, str | None, str | None, str]:
     """Load the chapter text and resolve the voice to narrate it with."""
     from services.chat_utils import resolve_voice_for_character
+    from services.tts_workflow_builder import _require_tts_capable
+
+    # The same guard `voices.py` calls, first, before it reads anything or builds
+    # a graph. It runs here rather than in the route body because this function
+    # is already the route's off-loop prologue, and the guard is a session query.
+    # Fail now with a 400 naming the missing capability, instead of accepting a
+    # job that dies inside a container naming a node that is not installed.
+    _require_tts_capable(session)
 
     story = story_repo.get(story_id)
     if not story:
