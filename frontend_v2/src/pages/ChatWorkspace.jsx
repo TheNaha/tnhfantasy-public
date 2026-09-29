@@ -11,6 +11,9 @@ import BottomTabBar from '../components/BottomTabBar';
 import NewChatModal from '../components/chat/NewChatModal';
 import GreetingPickerModal from '../components/chat/GreetingPickerModal';
 import CharacterDetailsModal from '../components/chat/CharacterDetailsModal';
+import { CharacterModal } from './Characters';
+import { LorebookModal } from '../components/story/LorebookModal';
+import { LocationModal } from '../components/story/LocationModal';
 import ChatSidebar from '../components/chat/ChatSidebar';
 import ChatWorkspaceHeader from '../components/chat/ChatWorkspaceHeader';
 import ChatInputContainer from '../components/chat/ChatInputContainer';
@@ -19,6 +22,7 @@ import ChatTimeline from '../components/chat/ChatTimeline';
 import MessageTimeline from '../components/chat/MessageTimeline';
 import { ChatWorkspaceProvider, useChatWorkspace } from '../contexts/ChatWorkspaceContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useLocations } from '../hooks/useLocations';
 
 export default function ChatWorkspace() {
     return (
@@ -31,6 +35,10 @@ export default function ChatWorkspace() {
 function ChatWorkspaceLayout() {
     const context = useChatWorkspace();
     const [searchParams, setSearchParams] = useSearchParams();
+    // Only for the new-chat wizard's Location picker, like the world list it
+    // already takes as a prop. Deliberately not in the ~210-dependency context
+    // memo: nothing in the open chat reads it.
+    const { data: locations = [] } = useLocations();
     const { updateSetting } = useUpdateSettings();
     const ttsEnabled = useSettingsStore((s) => s.settings?.ai?.ttsEnabled);
     const [ttsBannerDismissed, setTtsBannerDismissed] = useState(false);
@@ -52,6 +60,9 @@ function ChatWorkspaceLayout() {
         setTimelineVisible, listContainerRef,
         showNewChatModal, characters, lorebooks, worlds, personas: personasCtx = [], confirmCreateChat, setShowNewChatModal,
         showCharacterDetails, linkedCharacter, setShowCharacterDetails,
+        editingCharacter, setEditingCharacter, handleSaveCharacter,
+        editingLorebook, showLorebookModal, closeLorebookModal,
+        editingLocation, showLocationModal, closeLocationModal,
         greetingModal, setGreetingModal, hasCreatedChatRef,
         showScenesModal, setShowScenesModal, sceneTab, setSceneTab, chatImages,
         chatCollection, handleSaveImageToCollection, collectionsList,
@@ -230,6 +241,7 @@ function ChatWorkspaceLayout() {
                     <NewChatModal
                         characters={characters}
                         lorebooks={lorebooks}
+                        locations={locations}
                         worlds={worlds}
                         personas={personasCtx}
                         onCreate={confirmCreateChat}
@@ -240,6 +252,31 @@ function ChatWorkspaceLayout() {
                     <CharacterDetailsModal
                         character={linkedCharacter}
                         onClose={() => setShowCharacterDetails(false)}
+                    />
+                )}
+                {/* The three editors the context panel's `+` and the shared
+                    entity inspector's pencils open. Mounted here, in the same
+                    place and the same way `StorySandbox` mounts its own, so the
+                    chat and story surfaces cannot drift apart again. */}
+                <LorebookModal
+                    isOpen={showLorebookModal}
+                    onClose={closeLorebookModal}
+                    lorebook={editingLorebook}
+                />
+                <LocationModal
+                    isOpen={showLocationModal}
+                    onClose={closeLocationModal}
+                    location={editingLocation}
+                />
+                {/* Must live outside the AnimatePresence block above: it is
+                    opened from the context panel, which renders on a different
+                    branch of the tree. */}
+                {editingCharacter && (
+                    <CharacterModal
+                        isOpen
+                        onClose={() => setEditingCharacter(null)}
+                        character={editingCharacter}
+                        onSave={handleSaveCharacter}
                     />
                 )}
                 {greetingModal && (

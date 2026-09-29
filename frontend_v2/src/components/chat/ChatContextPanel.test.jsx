@@ -8,18 +8,39 @@ vi.mock('../../contexts/ChatWorkspaceContext', () => ({
     useChatWorkspace: () => mockUseChatWorkspace(),
 }));
 
-vi.mock('../../hooks/useLocations', () => ({ useLocations: () => ({ data: [] }) }));
+const mockUseLocations = vi.hoisted(() => vi.fn(() => ({ data: [] })));
+vi.mock('../../hooks/useLocations', () => ({ useLocations: () => mockUseLocations() }));
 vi.mock('../../hooks/useWorldVault', () => ({ getAvatarUrl: (id) => `/avatars/${id}.png` }));
 
 // The panel's neighbours each own their own fetching; stub them so this test
-// exercises the panel's own structure and nothing else.
-vi.mock('../workspace/EntityContextInspector', () => ({ default: () => <div data-testid="entity-inspector" /> }));
+// exercises the panel's own structure and nothing else. The inspector stub
+// re-exposes the props it was handed, because "does the chat panel give the
+// shared inspector the two edit handlers the story panel gives it?" is the
+// regression these tests exist to catch.
+const inspectorProps = vi.hoisted(() => ({ current: {} }));
+vi.mock('../workspace/EntityContextInspector', () => ({
+    default: (props) => {
+        inspectorProps.current = props;
+        return <div data-testid="entity-inspector" />;
+    },
+}));
 vi.mock('../common/SamplingControls', () => ({ default: () => <div data-testid="sampling-controls" /> }));
 vi.mock('./SystemPromptPanel', () => ({ default: () => <div data-testid="system-prompt" /> }));
 vi.mock('./MemoriesPanel', () => ({ default: () => <div data-testid="memories" /> }));
 vi.mock('./ExpressionSelector', () => ({ default: () => <div data-testid="expressions" /> }));
 
 import ChatContextPanel from './ChatContextPanel';
+
+const LOCATIONS = [
+    { id: 'loc-1', name: 'The Docks', atmosphere: 'Salt and tar', description: '' },
+    { id: 'loc-2', name: 'The Rookery', description: 'Cliffside tenements' },
+];
+
+const LOREBOOKS = [{ id: 'lb-1', name: 'Harbour Law' }];
+
+const WORLDS = [
+    { id: 'w-1', name: 'Emberfall', description: 'A city inside a volcano.', lorebook_ids: ['lb-1'], location_ids: ['loc-1'], scenario_ids: [] },
+];
 
 function makeContext(overrides = {}) {
     return {
@@ -40,8 +61,12 @@ function makeContext(overrides = {}) {
         setShowScenesModal: vi.fn(),
         handleChatUpdate: vi.fn(),
         voices: [],
+        worlds: [],
         personas: [],
         messages: [],
+        onEditCharacter: vi.fn(),
+        onEditLorebook: vi.fn(),
+        onEditLocation: vi.fn(),
         ...overrides,
     };
 }
@@ -103,13 +128,26 @@ describe('ChatContextPanel — scene overrides disclosure', () => {
         expect(within(details).getByTestId('authors-note-input')).toBeInTheDocument();
         expect(within(details).getByTestId('authors-note-depth')).toBeInTheDocument();
         expect(within(details).getByRole('group', { name: 'Story Time' })).toBeInTheDocument();
-        expect(within(details).getByRole('group', { name: 'Location' })).toBeInTheDocument();
 
-        // Author's Note / Depth / Story Time / Location are all still labels
+        // Author's Note / Depth / Story Time are all still labels. "Location" is
+        // deliberately NOT one of them any more: the free-text field that used
+        // to live here wrote `story_location` and nothing, and it sat in the
+        // same column as the real, linked Location picker — the reason the two
+        // drifted apart. See the "no second, unlinked Location field" test below.
         const text = container.textContent;
-        for (const label of ["Author's Note", 'Depth', 'Story Time', 'Location']) {
+        for (const label of ["Author's Note", 'Depth', 'Story Time']) {
             expect(text).toContain(label);
         }
+    });
+
+    it('has no second, unlinked Location field beside the real one', () => {
+        renderPanel();
+        const details = screen.getByTestId('scene-overrides');
+        fireEvent.click(within(details).getByText(/Scene Overrides/));
+
+        // The real picker writes `location_id`, and lives outside this disclosure.
+        expect(within(details).queryByRole('group', { name: 'Location' })).not.toBeInTheDocument();
+        expect(screen.getByTestId('new-location')).toBeInTheDocument();
     });
 
     it('reports how much is configured while collapsed', () => {
@@ -161,5 +199,87 @@ describe('ChatContextPanel — author\'s note help text', () => {
         fireEvent.change(textarea, { target: { value: 'Stay in character.' } });
         fireEvent.blur(textarea);
         expect(ctx.handleChatUpdate).toHaveBeenCalledWith({ authors_note: 'Stay in character.' });
+    });
+});
+
+describe('ChatContextPanel — the editors the story panel already had', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUseLocations.mockReturnValue({ data: LOCATIONS });
+    });
+
+    it('links a chat to a real Location, writing the column nothing wrote before', () => {
+        const { ctx } = renderPanel({ activeChat: { id: 'chat-1' } });
+        fireEvent.click(screen.getByTestId('location-row-loc-1'));
+        expect(ctx.handleChatUpdate).toHaveBeenCalledWith({ location_id: 'loc-1' });
+    });
+
+    it('clears the link when the already-selected row is clicked again', () => {
+        const { ctx } = renderPanel({ activeChat: { id: 'chat-1', location_id: 'loc-1' } });
+        fireEvent.click(screen.getByTestId('location-row-loc-1'));
+        expect(ctx.handleChatUpdate).toHaveBeenCalledWith({ location_id: null });
+    });
+
+    it('opens LocationModal in place from the + and the row pencil', () => {
+        const { ctx } = renderPanel();
+        fireEvent.click(screen.getByTestId('new-location'));
+        expect(ctx.onEditLocation).toHaveBeenCalledWith(null);
+
+        fireEvent.click(screen.getByLabelText('Edit The Docks'));
+        expect(ctx.onEditLocation).toHaveBeenCalledWith(LOCATIONS[0]);
+    });
+
+    it('creates a lorebook in place from the +, and edits an existing one', () => {
+        const { ctx } = renderPanel({ lorebooks: LOREBOOKS });
+        fireEvent.click(screen.getByTestId('new-lorebook'));
+        expect(ctx.onEditLorebook).toHaveBeenCalledWith(null);
+
+        fireEvent.click(screen.getByLabelText('Edit Harbour Law'));
+        expect(ctx.onEditLorebook).toHaveBeenCalledWith(LOREBOOKS[0]);
+    });
+
+    it('hands the shared inspector the two edit handlers and the cross-links', () => {
+        const { ctx } = renderPanel();
+        expect(inspectorProps.current.onEditLocation).toBe(ctx.onEditLocation);
+        expect(inspectorProps.current.onEditLorebook).toBe(ctx.onEditLorebook);
+        // The inspector renders a pencil titled `Edit <name>`; opening the
+        // read-only details modal under that label is what made it a lie.
+        expect(inspectorProps.current.onEditCharacter).toBe(ctx.onEditCharacter);
+        expect(inspectorProps.current.extraLinks.map(l => l.to)).toEqual(['/activity', '/world-graph']);
+    });
+
+    it('points the inspector at the linked location, not the free-text one', () => {
+        renderPanel({ activeChat: { id: 'chat-1', location_id: 'loc-2', story_location: 'Somewhere' } });
+        expect(inspectorProps.current.locationIds).toEqual(['loc-2']);
+    });
+});
+
+describe('ChatContextPanel — world row', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUseLocations.mockReturnValue({ data: LOCATIONS });
+    });
+
+    it('writes world_id when a world is picked, and an empty value to detach', () => {
+        const { ctx } = renderPanel({ activeChat: { id: 'chat-1' }, worlds: WORLDS });
+        const select = screen.getByLabelText('World');
+        fireEvent.change(select, { target: { value: 'w-1' } });
+        expect(ctx.handleChatUpdate).toHaveBeenCalledWith({ world_id: 'w-1' });
+
+        fireEvent.change(select, { target: { value: '' } });
+        expect(ctx.handleChatUpdate).toHaveBeenCalledWith({ world_id: '' });
+    });
+
+    it('renders the panel the worldLinkWarning message tells users to come back to', () => {
+        renderPanel({ activeChat: { id: 'chat-1', world_id: 'w-1' }, worlds: WORLDS });
+        // WORLD_IGNORED_MESSAGE says "the chat's World panel" by name.
+        expect(screen.getByRole('heading', { name: 'World' })).toBeInTheDocument();
+    });
+
+    it('shows the current world and what it contributes', () => {
+        renderPanel({ activeChat: { id: 'chat-1', world_id: 'w-1' }, worlds: WORLDS });
+        expect(screen.getByLabelText('World')).toHaveValue('w-1');
+        expect(screen.getByText(/A city inside a volcano/)).toBeInTheDocument();
+        expect(screen.getByText(/Added to every reply: 1 lorebook · 1 location\./)).toBeInTheDocument();
     });
 });

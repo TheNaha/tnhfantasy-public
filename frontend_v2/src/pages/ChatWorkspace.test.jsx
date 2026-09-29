@@ -91,6 +91,17 @@ vi.mock('../hooks/useWorldVault', () => ({
     getAvatarUrl: () => '',
 }));
 
+// The new-chat wizard picks the chat's Location from the library, so the
+// create payload can finally carry `location_id` — the column the Locations
+// page and the prompt's [Location: …] block depend on. `LocationModal` is
+// mounted alongside it and calls the create/update hooks before its own
+// `isOpen` early return, so they have to exist on the mock too.
+vi.mock('../hooks/useLocations', () => ({
+    useLocations: () => ({ data: [{ id: 'loc-1', name: 'The Docks' }] }),
+    useCreateLocation: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
+    useUpdateLocation: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
+}));
+
 vi.mock('../api', () => ({
     filesApi: {
         uploadChatAttachment: vi.fn(),
@@ -141,10 +152,10 @@ function filterMotionProps(props) {
     return safe;
 }
 
-function renderWithProviders(ui) {
+function renderWithProviders(ui, routerProps = {}) {
     return render(
         <QueryClientProvider client={queryClient}>
-            <MemoryRouter>{ui}</MemoryRouter>
+            <MemoryRouter {...routerProps}>{ui}</MemoryRouter>
         </QueryClientProvider>
     );
 }
@@ -291,6 +302,29 @@ describe('ChatWorkspace page', () => {
         const destinations = mockNavigate.mock.calls.map((c) => String(c[0]));
         expect(destinations.some((d) => d.endsWith('/chat-1'))).toBe(false);
         expect(destinations).toContain('/chat/chat-survivor');
+    });
+
+    it('creates a chat with the location it was given, not just its name', async () => {
+        const createChat = vi.fn().mockResolvedValue({ id: 'chat-2', world_id: null });
+        // `confirmCreateChat` goes through `mutate` with an onSuccess callback
+        // when the character has no alternate greetings, so both are the same
+        // spy here rather than the call being recorded somewhere unasserted.
+        mockCreateChat.mockReturnValue({ mutate: createChat, mutateAsync: createChat, isPending: false });
+
+        renderWithProviders(<ChatWorkspace />, { initialEntries: ['/chat/chat-1?new=1'] });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+        fireEvent.change(screen.getByTestId('new-chat-location-select'), { target: { value: 'loc-1' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Create chat' }));
+
+        await waitFor(() => expect(createChat).toHaveBeenCalled());
+        expect(createChat.mock.calls[0][0]).toEqual(expect.objectContaining({
+            location_id: 'loc-1',
+            // the name still goes in, because it is the free-text column the
+            // prompt's "Current Location:" line and the Activity filter read
+            story_location: 'The Docks',
+        }));
     });
 
     it('enters rename mode and updates chat name', async () => {

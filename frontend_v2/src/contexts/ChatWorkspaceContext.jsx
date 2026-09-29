@@ -86,6 +86,17 @@ export function ChatWorkspaceProvider({ children }) {
     const [greetingModal, setGreetingModal] = useState(null);
     const [showNewChatModal, setShowNewChatModal] = useState(false);
     const [showCharacterDetails, setShowCharacterDetails] = useState(false);
+    // The chat workspace had no way to CREATE or EDIT a lorebook or a location.
+    // `ChatContextPanel` could only link a row that already existed, and the
+    // entity inspector's pencil — which every other surface renders with the
+    // tooltip "Edit <name>" — opened a read-only details modal. `StorySandbox`
+    // keeps this state and mounts the same three modals; the chat workspace
+    // mounts them in `ChatWorkspace.jsx` for the same reason.
+    const [editingCharacter, setEditingCharacter] = useState(null);
+    const [editingLorebook, setEditingLorebook] = useState(null);
+    const [showLorebookModal, setShowLorebookModal] = useState(false);
+    const [editingLocation, setEditingLocation] = useState(null);
+    const [showLocationModal, setShowLocationModal] = useState(false);
     const [showScenesModal, setShowScenesModal] = useState(false);
     const [sceneTab, setSceneTab] = useState('chat');
     const [showMoreTools, setShowMoreTools] = useState(false);
@@ -682,7 +693,7 @@ export function ChatWorkspaceProvider({ children }) {
     const confirmCreateChat = useCallback((config) => {
         if (createChatMutation.isPending) return;
         setShowNewChatModal(false);
-        const { chatName, characterId, personaName, personaId, worldId, storyTime, storyLocation, selectedLorebooks: newSelectedLorebooks } = config;
+        const { chatName, characterId, personaName, personaId, worldId, storyTime, locationId, storyLocation, selectedLorebooks: newSelectedLorebooks } = config;
 
         const character = characterId ? characters.find(c => c.id === characterId) : null;
         const hasMultipleGreetings = character && (character.alternate_greetings?.length > 0);
@@ -694,6 +705,14 @@ export function ChatWorkspaceProvider({ children }) {
             persona_id: personaId || null,
             story_time: storyTime,
             story_location: storyLocation,
+            // The wizard sends the location's NAME as `story_location` AND its id
+            // here. `story_location` is the free text that becomes the prompt's
+            // `Current Location:` line and the only thing the Activity page's
+            // location filter compares against; `location_id` is what injects the
+            // location's description, atmosphere and tags. Sending one without
+            // the other is how a chat ends up with a place named in one sentence
+            // and described in none.
+            location_id: locationId || null,
             active_lorebook_ids: newSelectedLorebooks
         };
         // Sent whenever a world was picked. `Chat.world_id` is a real column and
@@ -950,6 +969,38 @@ export function ChatWorkspaceProvider({ children }) {
 
     const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
 
+    const openLorebookModal = useCallback((lorebook) => {
+        setEditingLorebook(lorebook ?? null);
+        setShowLorebookModal(true);
+    }, []);
+
+    const closeLorebookModal = useCallback(() => {
+        setEditingLorebook(null);
+        setShowLorebookModal(false);
+    }, []);
+
+    const openLocationModal = useCallback((location) => {
+        setEditingLocation(location ?? null);
+        setShowLocationModal(true);
+    }, []);
+
+    const closeLocationModal = useCallback(() => {
+        setEditingLocation(null);
+        setShowLocationModal(false);
+    }, []);
+
+    const handleSaveCharacter = useCallback(async (form) => {
+        // `_avatarFile` is a local File handle the modal keeps on the form; it is
+        // not a field the character route accepts. `CharacterModal` passes the raw
+        // form to `onSave`, so stripping it is the caller's job — `Characters.jsx`
+        // and `StorySandbox` both do it, and a PATCH carrying it would 422.
+        const { _avatarFile, ...payload } = form;
+        if (!editingCharacter) return null;
+        const saved = await patchCharacterMutation.mutateAsync({ id: editingCharacter.id, ...payload });
+        setEditingCharacter(null);
+        return saved;
+    }, [editingCharacter, patchCharacterMutation]);
+
     const handleExportChat = useCallback(() => {
         if (!messages.length) { toast.error('No messages to export'); return; }
         const charName = linkedCharacter?.name || 'AI';
@@ -1025,12 +1076,17 @@ export function ChatWorkspaceProvider({ children }) {
         collectionsList,
         confirm,
         confirmCreateChat,
+        closeLocationModal,
+        closeLorebookModal,
         contextCollapsed,
         createChatMutation,
         defaultLlmConfig,
         deleteChatMutation,
         deleteMessageMutation,
         editMessageMutation,
+        editingCharacter,
+        editingLocation,
+        editingLorebook,
         emptyLorebooks,
         fileInputRef,
         finishRename,
@@ -1058,6 +1114,7 @@ export function ChatWorkspaceProvider({ children }) {
         handlePinMessage,
         handleRegenerate,
         handleRollback,
+        handleSaveCharacter,
         handleSaveImageToCollection,
         handleSendMessage,
         handleSuggestClick,
@@ -1089,6 +1146,8 @@ export function ChatWorkspaceProvider({ children }) {
         narrateMode,
         narrateMutation,
         navigate,
+        openLocationModal,
+        openLorebookModal,
         patchCharacterMutation,
         pendingAttachment,
         pinMessageMutation,
@@ -1130,6 +1189,7 @@ export function ChatWorkspaceProvider({ children }) {
         setRenamingChatId,
         setSceneJobId,
         setSceneTab,
+        setEditingCharacter,
         setShowCharacterDetails,
         setShowMoreTools,
         setShowNewChatModal,
@@ -1138,6 +1198,8 @@ export function ChatWorkspaceProvider({ children }) {
         setTargetCharacterId,
         setTimelineVisible,
         showCharacterDetails,
+        showLorebookModal,
+        showLocationModal,
         showMoreTools,
         showNewChatModal,
         showScenesModal,
@@ -1166,9 +1228,11 @@ export function ChatWorkspaceProvider({ children }) {
         canSend, characters, chatCollection, personas,
         chatImages, chatJobs, chatOffset, chatSearchQuery,
         chats, chatsCollapsed, collectionsList,
-        confirm, confirmCreateChat, contextCollapsed,
+        confirm, confirmCreateChat, closeLocationModal, closeLorebookModal,
+        contextCollapsed,
         createChatMutation, defaultLlmConfig,
         deleteChatMutation, deleteMessageMutation, editMessageMutation,
+        editingCharacter, editingLocation, editingLorebook,
         emptyLorebooks, fileInputRef, finishRename,
         generateSceneMutation, generateSwipeMutation,
         greetingModal, handleAttachmentChange, handleAvatarClick,
@@ -1178,7 +1242,8 @@ export function ChatWorkspaceProvider({ children }) {
         isImportingChat, handleGenerateScene, handleGenerateSwipe,
         handleGenerateTTS, handleIllustrate, handleImpersonate,
         handleKeyDown, handleMessageIllustrate, handlePinMessage,
-        handleRegenerate, handleRollback, handleSaveImageToCollection,
+        handleRegenerate, handleRollback, handleSaveCharacter,
+        handleSaveImageToCollection,
         handleSendMessage, handleSuggestClick, handleSwipe,
         handleTextChange, hasCreatedChatRef, hasMoreChats,
         hasMoreMessages, illustrateMutation, impersonateMutation,
@@ -1188,6 +1253,7 @@ export function ChatWorkspaceProvider({ children }) {
         location, lorebooks, message, messagePageCount,
         messageSearch, messages, messagesEndRef, messagesData,
         mobileTab, narrateMode, narrateMutation, navigate,
+        openLocationModal, openLorebookModal,
         patchCharacterMutation, pendingAttachment, pinMessageMutation,
         queryClient, regenerateMutation, renameChatMutation,
         renameValue, renamingChatId, rollbackMutation, rowVirtualizer,
@@ -1200,10 +1266,12 @@ export function ChatWorkspaceProvider({ children }) {
         setIsUploading, setMessage, setMessagePageCount, setMessageSearch,
         setMobileTab, setNarrateMode, setPendingAttachment,
         setRenameValue, setRenamingChatId, setSceneJobId,
-        setSceneTab, setShowCharacterDetails, setShowMoreTools,
+        setEditingCharacter, setSceneTab, setShowCharacterDetails,
+        setShowMoreTools,
         setShowNewChatModal, setShowScenesModal, setSuggestJobId,
         setTargetCharacterId, setTimelineVisible,
-        showCharacterDetails, showMoreTools, showNewChatModal,
+        showCharacterDetails, showLorebookModal, showLocationModal,
+        showMoreTools, showNewChatModal,
         showScenesModal, startRename, subscribe, suggestJobId,
         suggestJobIdRef, suggestReplyMutation, suggestSafetyTimerRef,
         swipeMessageMutation, systemPromptData, targetCharacterId,

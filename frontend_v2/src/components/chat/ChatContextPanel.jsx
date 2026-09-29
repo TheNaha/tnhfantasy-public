@@ -39,8 +39,12 @@ function ChatContextPanel() {
         setShowScenesModal,
         handleChatUpdate,
         voices,
+        worlds = [],
         personas = [],
         messages = [],
+        onEditCharacter,
+        onEditLorebook,
+        onEditLocation,
     } = useChatWorkspace();
     const { data: locations = [] } = useLocations();
 
@@ -569,16 +573,32 @@ function ChatContextPanel() {
 
             {/* Lorebooks */}
             <div className="glass-panel p-4 rounded-xl border border-white/5">
-                <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                <div className="flex items-center justify-between gap-2 mb-3">
+                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 min-w-0">
                         <BookOpen size={12} /> Lorebooks
                     </h4>
-                    <Link
-                        to="/lorebooks"
-                        className="inline-flex items-center min-h-[24px] px-2 text-xs text-blue-400 hover:text-blue-300 font-medium rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors"
-                    >
-                        Manage
-                    </Link>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                        {/* The story panel has had this create-in-place affordance
+                            since it was written; here it was a "Manage" link to
+                            another page and nothing else, so making a lorebook
+                            meant leaving the chat you were configuring. */}
+                        <button
+                            type="button"
+                            data-testid="new-lorebook"
+                            onClick={() => onEditLorebook?.(null)}
+                            className="p-1 rounded text-gray-500 hover:text-indigo-400 hover:bg-white/10 transition-colors inline-flex items-center justify-center"
+                            title="New Lorebook"
+                            aria-label="New Lorebook"
+                        >
+                            <Plus size={14} />
+                        </button>
+                        <Link
+                            to="/lorebooks"
+                            className="inline-flex items-center min-h-[24px] px-2 text-xs text-blue-400 hover:text-blue-300 font-medium rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors"
+                        >
+                            Manage
+                        </Link>
+                    </div>
                 </div>
                 {lorebooks.length === 0 ? (
                     <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
@@ -589,27 +609,42 @@ function ChatContextPanel() {
                         {lorebooks.map(lb => {
                             const isActive = selectedLorebooks.includes(lb.id);
                             return (
-                                <button
+                                <div
                                     key={lb.id}
-                                    onClick={() => {
-                                        const newLorebooks = isActive 
-                                            ? selectedLorebooks.filter(id => id !== lb.id)
-                                            : [...selectedLorebooks, lb.id];
-                                        onChatUpdate({ active_lorebook_ids: newLorebooks });
-                                    }}
                                     className={clsx(
-                                        "w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all",
+                                        "w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm transition-colors group",
                                         isActive
                                             ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
                                             : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
                                     )}
                                 >
-                                    {isActive
-                                        ? <Check size={13} className="text-indigo-400 shrink-0" />
-                                        : <div className="w-3 h-3 rounded border border-gray-600 shrink-0" />
-                                    }
-                                    <span className="truncate font-medium text-xs">{lb.name}</span>
-                                </button>
+                                    <button
+                                        type="button"
+                                        data-testid={`lorebook-row-${lb.id}`}
+                                        onClick={() => {
+                                            const newLorebooks = isActive
+                                                ? selectedLorebooks.filter(id => id !== lb.id)
+                                                : [...selectedLorebooks, lb.id];
+                                            onChatUpdate({ active_lorebook_ids: newLorebooks });
+                                        }}
+                                        className="flex-1 text-left flex items-center gap-2 min-w-0"
+                                    >
+                                        {isActive
+                                            ? <Check size={13} className="text-indigo-400 shrink-0" />
+                                            : <div className="w-3 h-3 rounded border border-gray-600 shrink-0" />
+                                        }
+                                        <span className="truncate font-medium text-xs">{lb.name}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); onEditLorebook?.(lb); }}
+                                        className="p-1 rounded text-gray-500 hover:text-indigo-400 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                        title="Edit Lorebook"
+                                        aria-label={`Edit ${lb.name}`}
+                                    >
+                                        <Edit2 size={12} />
+                                    </button>
+                                </div>
                             );
                         })}
                     </div>
@@ -617,6 +652,92 @@ function ChatContextPanel() {
                 {selectedLorebooks.length > 0 && (
                     <p className="text-xs text-gray-500 mt-2 px-1">
                         {selectedLorebooks.length} lorebook{selectedLorebooks.length !== 1 ? 's' : ''} active
+                    </p>
+                )}
+            </div>
+
+            {/* Locations
+                `Chat.location_id` had exactly one reader (the inspector above)
+                and no writer anywhere in the app: the new-chat wizard wrote free
+                text into `story_location` instead, so a chat's location image,
+                atmosphere and tags never reached the prompt and the Locations
+                page was unreachable from a chat. Unlike a story's
+                `location_ids`, this column is a single FK, so the row list is a
+                single choice — click to make it the chat's location, click again
+                to leave. */}
+            <div className="glass-panel p-4 rounded-xl border border-white/5">
+                <div className="flex items-center justify-between gap-2 mb-3">
+                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 min-w-0">
+                        <MapPin size={12} className="text-emerald-400 shrink-0" /> Location
+                    </h4>
+                    <button
+                        type="button"
+                        data-testid="new-location"
+                        onClick={() => onEditLocation?.(null)}
+                        className="p-1 rounded text-gray-500 hover:text-emerald-400 hover:bg-white/10 transition-colors inline-flex items-center justify-center"
+                        title="New Location"
+                        aria-label="New Location"
+                    >
+                        <Plus size={14} />
+                    </button>
+                </div>
+                {locations.length === 0 ? (
+                    <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
+                        No locations
+                    </p>
+                ) : (
+                    <div className="space-y-1.5" data-testid="chat-locations">
+                        {locations.map(loc => {
+                            const isActive = activeChat?.location_id === loc.id;
+                            return (
+                                <div
+                                    key={loc.id}
+                                    className={clsx(
+                                        "w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm transition-colors group",
+                                        isActive
+                                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                            : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
+                                    )}
+                                >
+                                    <button
+                                        type="button"
+                                        data-testid={`location-row-${loc.id}`}
+                                        aria-pressed={isActive}
+                                        onClick={() => onChatUpdate({ location_id: isActive ? null : loc.id })}
+                                        className="flex-1 text-left flex items-center gap-2 min-w-0"
+                                    >
+                                        {isActive
+                                            ? <Check size={13} className="text-emerald-400 shrink-0" />
+                                            : <div className="w-3 h-3 rounded border border-gray-600 shrink-0" />
+                                        }
+                                        <span className="min-w-0">
+                                            <span className="block truncate font-medium text-xs">{loc.name}</span>
+                                            {(loc.atmosphere || loc.description) && (
+                                                <span className="block truncate text-2xs text-gray-500">{loc.atmosphere || loc.description}</span>
+                                            )}
+                                        </span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); onEditLocation?.(loc); }}
+                                        className="p-1 rounded text-gray-500 hover:text-emerald-400 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                        title="Edit Location"
+                                        aria-label={`Edit ${loc.name}`}
+                                    >
+                                        <Edit2 size={12} />
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+                {activeChat?.location_id ? (
+                    <p className="text-xs text-gray-500 mt-2 px-1">
+                        Its description, atmosphere and tags are injected into the prompt. Click the row again to leave.
+                    </p>
+                ) : (
+                    <p className="text-xs text-gray-600 mt-2 px-1">
+                        Pick a location to inject its description, atmosphere and tags. A chat is in one location at a time.
                     </p>
                 )}
             </div>
