@@ -286,8 +286,19 @@ class ProviderRegistry:
         }
     
     @classmethod
-    def get_worker_image(cls, provider_type: str) -> str:
-        """Get the worker image name for a provider type."""
+    def get_worker_image(cls, provider_type: str, worker_type: str | None = None) -> str:
+        """Get the worker image name for a provider type.
+
+        `worker_type` overrides the type-derived image. A TTS provider is
+        `type="modal"`, so the type alone resolves to the *image* worker's image
+        — and a deploy built that Dockerfile, which does not copy `tts_worker/`
+        at all, so it produced an image whose entrypoint did not exist. The
+        worker kind is the thing that actually selects the Dockerfile
+        (`container_manager.build_worker_image`), so it has to select the image
+        tag here too or the two disagree.
+        """
+        if worker_type in {"tts"}:
+            return "tnhcomfy/tts-worker:latest"
         type_config = cls.get(provider_type)
         if type_config:
             worker_image = type_config.worker_image

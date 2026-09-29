@@ -146,18 +146,27 @@ class ContainerManager:
         except Exception:
             return "unknown"
     
-    def build_worker_image(self, provider_type: str) -> str:
+    def build_worker_image(self, provider_type: str, worker_type: str | None = None) -> str:
         """
         Build Docker image for provider worker.
-        
+
         Args:
             provider_type: Type of provider (modal, beam, direct_url, openai_compat, anthropic, google)
-            
+            worker_type: Which worker the image is for ("image", "llm", "tts").
+                Derived from the provider's image tag when omitted. A TTS
+                provider is `type="modal"`, so without this it built
+                `image_worker/Dockerfile`, which does not contain `tts_worker/`
+                at all — the deploy would have succeeded and produced an image
+                whose entrypoint did not exist.
+
         Returns:
             Image tag
         """
         worker_image = ProviderRegistry.get_worker_image(provider_type)
-        worker_kind = "llm" if "llm" in worker_image else "image"
+        if not worker_type:
+            worker_kind = "tts" if "tts" in worker_image else ("llm" if "llm" in worker_image else "image")
+        else:
+            worker_kind = worker_type
         worker_dir = self.containers_dir / f"{worker_kind}_worker"
         dockerfile_path = f"{worker_kind}_worker/Dockerfile"
         

@@ -76,7 +76,7 @@ class ProviderDeployService:
         config = compose_config(
             base_config=provider.config,
             runtime_config=extract_runtime_config(provider.type, provider.container_config, provider.config or {}),
-            deploy_config=extract_deploy_config(provider.type, provider.config or {}),
+            deploy_config=extract_deploy_config(provider.type, provider.config or {}, provider.worker_type or "image"),
             deploy_state=state,
             reconciliation_state=read_reconciliation_state(provider),
         )
@@ -301,7 +301,7 @@ class ProviderDeployService:
     async def _execute_provider_deploy(self, provider: Provider, container_manager: Any) -> dict[str, Any]:
         attempt_id = str(uuid4())
         started_at = utcnow_iso()
-        deploy_config = extract_deploy_config(provider.type, provider.config or {})
+        deploy_config = extract_deploy_config(provider.type, provider.config or {}, provider.worker_type or "image")
         deploy_mode = deploy_config.get("deploy_mode", default_deploy_mode(provider.type))
 
         if deploy_mode != "managed":
@@ -340,8 +340,11 @@ class ProviderDeployService:
                 provider_type=provider.type,
                 attempt_id=attempt_id,
                 env_vars=deploy_env_vars,
+                worker_type=provider.worker_type,
             )
-            deployments = deploy_config.get("targets") or default_deploy_targets(provider.type)
+            deployments = deploy_config.get("targets") or default_deploy_targets(
+                provider.type, provider.worker_type or "image"
+            )
             completed_steps = set(resumed_steps)
             results: list[dict[str, Any]] = []
 

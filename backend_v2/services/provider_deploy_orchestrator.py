@@ -61,9 +61,10 @@ class ProviderDeployOrchestrator:
         provider_type: str,
         attempt_id: str,
         env_vars: dict[str, str],
+        worker_type: str | None = None,
     ) -> Any:
-        image_tag = ProviderRegistry.get_worker_image(provider_type)
-        self._ensure_image(provider_type)
+        image_tag = ProviderRegistry.get_worker_image(provider_type, worker_type)
+        self._ensure_image(provider_type, worker_type)
 
         container_name = f"tnhcomfy-deploy-{provider_id}-{attempt_id[:8]}"
         volumes = self._build_volumes()
@@ -137,9 +138,9 @@ class ProviderDeployOrchestrator:
                 error=str(exc),
             )
 
-    def _ensure_image(self, provider_type: str) -> None:
+    def _ensure_image(self, provider_type: str, worker_type: str | None = None) -> None:
         if self.force_rebuild_image:
-            self.container_manager.build_worker_image(provider_type)
+            self.container_manager.build_worker_image(provider_type, worker_type)
             return
 
         images_client = getattr(self.container_manager.client, "images", None)
@@ -150,7 +151,7 @@ class ProviderDeployOrchestrator:
         try:
             images_client.get(image_tag)
         except Exception:
-            self.container_manager.build_worker_image(provider_type)
+            self.container_manager.build_worker_image(provider_type, worker_type)
 
     def _build_volumes(self) -> dict[str, dict[str, str]]:
         volumes: dict[str, dict[str, str]] = {}

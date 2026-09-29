@@ -70,7 +70,21 @@ def default_deploy_mode(provider_type: str) -> str:
     return "managed" if provider_type in _get_supported_managed_deploy_types() else "manual"
 
 
-def default_deploy_targets(provider_type: str) -> list[dict[str, Any]]:
+def default_deploy_targets(provider_type: str, worker_type: str = "image") -> list[dict[str, Any]]:
+    if provider_type == "modal" and worker_type == "tts":
+        # A TTS provider is `type="modal"` with `worker_type="tts"`: its own
+        # Dockerfile, its own Modal app, its own container. Routing on
+        # `provider_type` alone sent the Deploy button on a TTS provider to
+        # `image_worker/Dockerfile` and re-ran `modal deploy` on the *image*
+        # app, so `comfy-modal-tts` was never deployed by the product at all
+        # while the Providers page showed an active action for it.
+        return [
+            {
+                "name": "tts_app",
+                "entrypoint": "/app/tts_worker/engines/modal/modal_app.py",
+                "command": ["modal", "deploy", "/app/tts_worker/engines/modal/modal_app.py"],
+            },
+        ]
     if provider_type == "modal":
         # ONE target: the image app.
         #
@@ -290,7 +304,11 @@ def _repair_stored_targets(
     return merged if repaired else stored
 
 
-def extract_deploy_config(provider_type: str, config: dict[str, Any]) -> dict[str, Any]:
+def extract_deploy_config(
+    provider_type: str,
+    config: dict[str, Any],
+    worker_type: str = "image",
+) -> dict[str, Any]:
     deploy_config = clean_dict(config.get(DEPLOY_CONFIG_KEY))
 
     for key in LEGACY_DEPLOY_CONFIG_FIELDS:
@@ -302,7 +320,7 @@ def extract_deploy_config(provider_type: str, config: dict[str, Any]) -> dict[st
         deploy_config["functions"] = functions_config
 
     deploy_config.setdefault("deploy_mode", default_deploy_mode(provider_type))
-    defaults = default_deploy_targets(provider_type)
+    defaults = default_deploy_targets(provider_type, worker_type)
     stored = deploy_config.get("targets")
     if stored:
         deploy_config["targets"] = _repair_stored_targets(

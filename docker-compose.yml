@@ -296,6 +296,11 @@ services:
   # worker_type="tts"; anything else falls through to direct_url/image and the
   # provider is offered checkpoint jobs its container cannot run.
   provider-tts-modal-hp196:
+    # Named, not left to compose's auto-generated tag: the backend's deploy
+    # path resolves the image to build from `worker_type`, and
+    # `ProviderRegistry.get_worker_image` returns this name, so the two have to
+    # agree. Sibling of `build:`, which is where compose takes it from.
+    image: tnhcomfy/tts-worker:latest
     build:
       context: ./provider_containers
       dockerfile: tts_worker/Dockerfile

@@ -27,7 +27,7 @@ class ProviderReconciliationService:
         config = compose_config(
             base_config=provider.config,
             runtime_config=extract_runtime_config(provider.type, provider.container_config, provider.config or {}),
-            deploy_config=extract_deploy_config(provider.type, provider.config or {}),
+            deploy_config=extract_deploy_config(provider.type, provider.config or {}, provider.worker_type or "image"),
             deploy_state=read_deploy_state(provider),
             reconciliation_state=state,
         )

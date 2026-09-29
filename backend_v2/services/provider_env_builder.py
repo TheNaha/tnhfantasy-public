@@ -21,7 +21,7 @@ def build_provider_environment(provider: Provider) -> dict[str, str]:
     runtime_config = extract_runtime_config(
         provider.type, provider.container_config, provider.config or {}
     ) or {}
-    deploy_config = extract_deploy_config(provider.type, provider.config or {})
+    deploy_config = extract_deploy_config(provider.type, provider.config or {}, provider.worker_type or "image")
     credentials = clean_dict(provider.credentials)
 
     # ── Common env vars ──────────────────────────────────────────────
