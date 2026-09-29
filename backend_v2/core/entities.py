@@ -8,8 +8,11 @@ from sqlalchemy import JSON, Index, UniqueConstraint
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableList
+from sqlalchemy.orm import validates
 from sqlmodel import Column, Field, Relationship, SQLModel
 from pydantic import field_validator
+
+from core.exceptions import ValidationError
 
 # JSON stored as JSONB on PostgreSQL (indexable/queryable), plain JSON elsewhere.
 JSONColumn = JSON().with_variant(JSONB(), "postgresql")
@@ -1141,12 +1144,90 @@ class Character(SQLModel, table=True):
     # column above, so import -> export is lossless.
     card_metadata: dict | None = Field(default=None, sa_column=Column(JSONColumn))
     # Lorebook materialized from an embedded data.character_book (V2/V3).
+    # NOT the same thing as `lorebook_ids` below, even though both point at
+    # `lorebooks` and the confusion is the whole reason this comment exists:
+    #
+    #   embedded_lorebook_id — a SillyTavern `data.character_book` that arrived
+    #     INSIDE an imported card. It is an artifact of that card: it belongs to
+    #     the card, it is round-tripped back out on export, and it is
+    #     deliberately NOT editable here, because editing it would make the
+    #     export claim to be a card it is not. Written by card import only, and
+    #     the SillyTavern spec allows at most one per card — hence scalar.
     embedded_lorebook_id: str | None = Field(default=None, foreign_key="lorebooks.id", index=True)
+    #
+    #   lorebook_ids — the vault's OWN library books this character draws on.
+    #     Authored here, attached here, edited here, and the only relationship
+    #     that makes a lorebook follow a character into EVERY conversation with
+    #     them rather than being re-selected per chat.
+    #
+    # A card that has an embedded book may also have `lorebook_ids`: importing
+    # never sets them, and the two lists are independent.
+    lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
 
     avatar_path: str | None = Field(default=None)
     sort_order: int = Field(default=0, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("lorebook_ids")
+    @classmethod
+    def _validate_lorebook_ids(cls, value: list[str] | None) -> list[str]:
+        """Every entry must be a lorebook id.
+
+        Reject, not normalise. The list is consumed as a bare
+        `LorebookEntry.lorebook_id IN (...)`, so a dict or an int inside it
+        matches nothing: the character's facts silently stop loading and the
+        only symptom is that the model has forgotten who they are — which is
+        why this is worth a 422 rather than a shrug. The same reason
+        `Provider._validate_capabilities` refuses a misspelt value rather than
+        accepting a typo that filters the provider out of rotation.
+
+        Whether an id RESOLVES to a real lorebook is a separate check and cannot
+        live here — the entity has no session — so it belongs to the write path
+        (`api/routes/world_vault/characters.py`, alongside the identical
+        `additional_character_ids` check in `chats.py`).
+
+        `None` is refused rather than folded into `[]`. The field is a
+        non-nullable JSON list, so a NULL would be a third state that nothing
+        downstream handles: "no books" and "never set" would read identically
+        in the prompt and differently in every `or []` fallback. Empty is `[]`.
+        """
+        if value is None:
+            raise ValueError("lorebook_ids must be a list of lorebook ids, not null")
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(
+                    f"lorebook_ids entries must be lorebook ids, got {item!r}"
+                )
+        return list(value)
+
+    @validates("lorebook_ids")
+    def _check_lorebook_ids(self, _key, value):
+        """Enforce the same rule on the write path.
+
+        The pydantic validator above does NOT run under `Character(**kwargs)`:
+        SQLModel's `table=True` `__init__` goes through
+        `sqlmodel_table_construct`, which never calls the pydantic validator.
+        The `Provider` and `Job` validators in this file have the same property.
+        A rule that only fires on one of the two paths is worse than no rule,
+        because it reads as a guard.
+
+        `@validates` is SQLAlchemy's own attribute-set hook, so it fires on
+        `Character(lorebook_ids=...)` and on `character.lorebook_ids = ...` in
+        `update_character`/`patch_character`, and is skipped on ORM load — a
+        legacy row is read, not re-validated. Raising the domain
+        `ValidationError` rather than a bare `ValueError` is what makes it a 422
+        instead of a 500 when it fires inside a route.
+
+        It normalises nothing, and that is not an oversight: `SQLModel.
+        __setattr__` calls `set_attribute()` and then `super().__setattr__()`
+        with the ORIGINAL value, so the hook's return value is overwritten. A
+        claimed normalisation that never takes effect is worse than none.
+        """
+        try:
+            return self._validate_lorebook_ids(value)
+        except ValueError as exc:
+            raise ValidationError(str(exc), field="lorebook_ids") from exc
 
     collections: list["Collection"] = Relationship(
         back_populates="character",

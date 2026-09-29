@@ -56,6 +56,11 @@ class CharacterUpdateRequest(BaseModel):
     first_mes: str | None = None
     mes_example: str | None = None
     creator_notes: str | None = None
+    # The vault's own library books this character draws on — distinct from
+    # `embedded_lorebook_id`, the SillyTavern `character_book` that arrived
+    # inside an imported card and is not editable. Without this field the
+    # character's modal payload was dropped by pydantic and the UI was a no-op.
+    lorebook_ids: list[str] | None = None
     system_prompt: str | None = None
     append_system_prompt: str | None = None
     suggested_persona: str | None = None
@@ -379,6 +384,8 @@ def update_character(character_id: str, character_update: CharacterUpdateRequest
         raise NotFoundError("Character", character_id)
 
     update_data = character_update.model_dump(exclude_unset=True)
+    if "lorebook_ids" in update_data and update_data["lorebook_ids"] is not None:
+        update_data["lorebook_ids"] = _resolve_lorebook_ids(session, update_data["lorebook_ids"])
     for key, value in update_data.items():
         setattr(character, key, value)
 
@@ -389,6 +396,25 @@ def update_character(character_id: str, character_update: CharacterUpdateRequest
     return _character_to_dict(character)
 
 
+def _resolve_lorebook_ids(session: Session, lorebook_ids: list[str]) -> list[str]:
+    """Dedupe and verify a character's lorebook links.
+
+    An id that does not resolve is a 404 rather than a stored one: these are
+    read on every prompt build now, so a dangling id would become a per-turn
+    lookup that silently finds nothing.
+    """
+    from core.entities import Lorebook
+
+    resolved: list[str] = []
+    for lorebook_id in lorebook_ids:
+        if not lorebook_id or lorebook_id in resolved:
+            continue
+        if session.get(Lorebook, lorebook_id) is None:
+            raise NotFoundError("Lorebook", lorebook_id)
+        resolved.append(lorebook_id)
+    return resolved
+
+
 @router.patch("/{character_id}")
 def patch_character(character_id: str, character_update: CharacterUpdateRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
     """Partial update — only updates fields explicitly provided (non-None values)."""
@@ -397,6 +423,8 @@ def patch_character(character_id: str, character_update: CharacterUpdateRequest,
         raise NotFoundError("Character", character_id)
 
     update_data = character_update.model_dump(exclude_unset=True)
+    if "lorebook_ids" in update_data and update_data["lorebook_ids"] is not None:
+        update_data["lorebook_ids"] = _resolve_lorebook_ids(session, update_data["lorebook_ids"])
     # For PATCH, also skip None values so we never overwrite with null
     update_data = {k: v for k, v in update_data.items() if v is not None}
     for key, value in update_data.items():

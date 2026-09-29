@@ -1695,6 +1695,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Widen chk_providers_worker_type to allow tts; the CHECK constraint was the last place still restricted to image/llm and rejected every TTS worker at insert",
             apply_fn=_migration_078_provider_worker_type_tts,
         ),
+        MigrationStep(
+            version="079_character_lorebook_ids",
+            description="Add characters.lorebook_ids so a lorebook can be attached to a character and follow them into every chat, rather than being re-selected per conversation",
+            apply_fn=_migration_079_character_lorebook_ids,
+        ),
     ]
 
 
@@ -3383,4 +3388,46 @@ def _migration_078_provider_worker_type_tts(conn) -> bool:
         )
     )
     logger.info("provider_worker_type_constraint_widened", added="tts")
+    return True
+
+
+def _migration_079_character_lorebook_ids(conn) -> bool:
+    """Add `characters.lorebook_ids`, the vault's own book list for a character.
+
+    A lorebook could be attached to a `Chat` (`active_lorebook_ids`) and to a
+    `Story` (`lorebook_ids`), and a SillyTavern card could carry an embedded
+    `data.character_book` (`embedded_lorebook_id`, written by import only) — but
+    nothing in the product could attach a library lorebook to a character, so
+    the Lorebooks page's own promise ("character backgrounds") was kept by
+    nothing. This column is the relationship that makes a book follow a
+    character into every conversation instead of being re-selected per chat.
+
+    The type is chosen per dialect rather than converted later: `_migration_
+    json_to_jsonb` (version 021) already ran on every deployed database, so
+    adding this column to that step's list would be a no-op for them. Emitting
+    `JSONB` here directly is what `JSON().with_variant(JSONB(), "postgresql")`
+    produces on a fresh install, so the two paths cannot diverge.
+
+    Additive and idempotent: `ALTER TABLE ... ADD COLUMN` only when absent, and
+    the `DEFAULT '[]'` matches the entity's `default=[]`, so existing rows read
+    back as an empty list rather than NULL. A row cannot lose data here — there
+    is no data to lose, the column is new.
+
+    Returns True unconditionally so the runner records the step and stops
+    re-running it; see the note in `_migration_070_create_sessions` about
+    `if applied: _record_migration(...)`.
+    """
+    inspector = inspect(conn)
+    if "characters" not in set(inspector.get_table_names()):
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("characters")}
+    if "lorebook_ids" not in columns:
+        col_type = "JSONB" if conn.dialect.name == "postgresql" else "JSON"
+        conn.execute(text(
+            f"ALTER TABLE characters ADD COLUMN lorebook_ids {col_type} DEFAULT '[]'"
+        ))
+        logger.info("migration_column_added", table="characters", column="lorebook_ids")
+
+    _verify_required_columns(conn, "characters", {"lorebook_ids"})
     return True

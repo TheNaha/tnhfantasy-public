@@ -64,6 +64,17 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         _scrub_chats(session, "active_lorebook_ids", entity_id)
         for character in session.exec(select(Character).where(Character.embedded_lorebook_id == entity_id)).all():
             character.embedded_lorebook_id = None
+        # `Character.lorebook_ids` is the character's own link to the vault's
+        # library, distinct from `embedded_lorebook_id` — the SillyTavern
+        # `character_book` that arrived inside an imported card and is
+        # round-tripped on export. Only the explicit link is scrubbed. It is
+        # read on every prompt build, so a dangling id would be a per-turn
+        # lookup that silently finds nothing rather than a visible error.
+        for character in session.exec(select(Character)).all():
+            if entity_id in (character.lorebook_ids or []):
+                character.lorebook_ids = [
+                    lid for lid in character.lorebook_ids if lid != entity_id
+                ]
     elif kind == "voice":
         for character in session.exec(select(Character).where(Character.voice_model_id == entity_id)).all():
             character.voice_model_id = None
