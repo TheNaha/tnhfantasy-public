@@ -61,6 +61,9 @@ vi.mock('../hooks/useWorldVault', () => ({
     useChapterRevisions: () => ({ data: [], isLoading: false }),
     useCreateChapterRevision: () => ({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false }),
     useRestoreChapterRevision: () => ({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false }),
+    // The story context panel's Scenario row lists the library, so the panel
+    // can name what Apply attached instead of showing a bare id.
+    useScenarios: () => ({ data: [] }),
     useCharacters: () => ({ data: [] }),
     useLocations: () => ({ data: [] }),
     useLLMAvailableModels: () => ({ data: [] }),

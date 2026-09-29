@@ -100,8 +100,19 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
                 )}
             </div>
 
-            {/* Tab bar */}
-            <div className="flex gap-1 p-1 bg-black/30 rounded-lg">
+            {hasOverride && (
+                <p
+                    data-testid="override-provenance"
+                    className="text-2xs text-orange-300/90 bg-orange-500/10 border border-orange-500/20 rounded-lg px-2.5 py-2"
+                >
+                    This chat has a prompt override, and it <strong>replaces the character card entirely</strong> — the card is not sent at all.
+                    The only thing that writes this field is the <em>Chat Prompt</em> tab. A scenario applied from
+                    the Scenarios page now goes to the chat&rsquo;s <em>extra instructions</em> instead, so applying
+                    one no longer silently drops the character.
+                </p>
+            )}
+
+            {/* Tab bar */}            <div className="flex gap-1 p-1 bg-black/30 rounded-lg">
                 {TABS.map(t => (
                     <button
                         key={t.id}
@@ -145,8 +156,10 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
             {activeTab === 'override' && (
                 <div className="space-y-2">
                     <p className="text-xs text-gray-500 leading-relaxed">
-                        <span className="text-orange-400 font-semibold">Chat System Prompt</span> is applied only to this chat.
-                        It is appended after the character's core instructions.
+                        <span className="text-orange-400 font-semibold">Chat System Prompt</span> applies only to this chat,
+                        and it is <strong>not</strong> additive: while it is set, the character card and the
+                        character&rsquo;s extra instructions are left out of the prompt entirely.
+                        Lorebooks, world state and the global instructions still apply.
                     </p>
                     <textarea
                         value={overrideVal}

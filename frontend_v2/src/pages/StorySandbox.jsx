@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation, useUpdateStoryBeat, useDeleteStoryBeat, useChapterRevisions, useCreateChapterRevision, useRestoreChapterRevision } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation, useUpdateStoryBeat, useDeleteStoryBeat, useChapterRevisions, useCreateChapterRevision, useRestoreChapterRevision, useScenarios } from '../hooks/useWorldVault';
 import { useLLMJobResult, awaitJobText } from '../hooks/useLLMJobResult';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -62,6 +62,9 @@ export default function StorySandbox() {
     const { data: lorebooks = [] } = useLorebooks();
     const { data: characters = [] } = useCharacters();
     const { data: locations = [] } = useLocations();
+    // For the story context panel's Scenario row: Apply writes
+    // `Story.scenario_id`, and the panel needs the name to show what was applied.
+    const { data: scenarios = [] } = useScenarios();
     const { data: storyImages = [] } = useStoryImages(activeStoryId);
     const { data: collectionsMap = {} } = useCollections('story');
     // Memoised: this page re-renders on every streamed token.
@@ -1170,6 +1173,8 @@ export default function StorySandbox() {
                             characters={characters}
                             lorebooks={lorebooks}
                             locations={locations}
+                            worlds={worlds}
+                            scenarios={scenarios}
                             storyImages={storyImages}
                             chapters={chapters}
                             llmModels={llmModels}

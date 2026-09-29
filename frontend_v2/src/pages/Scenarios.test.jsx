@@ -27,8 +27,11 @@ vi.mock('../hooks/useWorldVault', () => ({
     useApplyScenario: () => ({ mutate: mockApplyMutate }),
 }));
 
+// Mutable so a test can put a realistic number of chats behind the Apply
+// target list without a second module mock.
+const chatsData = vi.hoisted(() => ({ list: [{ id: 'c-1', name: 'Test Chat' }] }));
 vi.mock('../hooks/useChats', () => ({
-    useChats: () => ({ data: [{ id: 'c-1', name: 'Test Chat' }] }),
+    useChats: () => ({ data: chatsData.list }),
 }));
 
 vi.mock('../hooks/useStories', () => ({
@@ -190,5 +193,57 @@ describe('Scenarios page', () => {
             { scenarioId: 's-1', targetType: 'story', targetId: 'st-1' },
             expect.any(Object)
         );
+    });
+});
+
+describe('Scenarios page — finding a target in 200 chats', () => {
+    const MANY = Array.from({ length: 30 }, (_, i) => ({
+        id: `ch-${i}`,
+        name: i === 17 ? 'The Salt Marsh Debrief' : `Chat number ${i}`,
+    }));
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUseScenarios.mockReturnValue({ data: SAMPLE, isLoading: false });
+        mockConfirm.mockResolvedValue(true);
+        chatsData.list = [{ id: 'c-1', name: 'Test Chat' }];
+    });
+
+    it('narrows the unfiltered target list to the typed query', () => {
+        chatsData.list = MANY;
+        renderWithProviders(<Scenarios />);
+        fireEvent.click(screen.getAllByTitle('Apply to chat or story')[0]);
+
+        // Before typing, the whole list is offered — that is the problem.
+        expect(screen.getByText('Chat number 0')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByTestId('apply-target-search'), {
+            target: { value: 'salt marsh' },
+        });
+        expect(screen.queryByText('Chat number 0')).not.toBeInTheDocument();
+        expect(screen.getByText('The Salt Marsh Debrief')).toBeInTheDocument();
+        expect(screen.getByText('1 of 30 chats shown.')).toBeInTheDocument();
+    });
+
+    it('says so when nothing matches, rather than showing an empty box', () => {
+        renderWithProviders(<Scenarios />);
+        fireEvent.click(screen.getAllByTitle('Apply to chat or story')[0]);
+        fireEvent.change(screen.getByTestId('apply-target-search'), {
+            target: { value: 'zzzz' },
+        });
+        expect(screen.getByText(/No chat matches/)).toBeInTheDocument();
+    });
+
+    it('clears the search when the target type flips, so a chat query cannot hide every story', () => {
+        renderWithProviders(<Scenarios />);
+        fireEvent.click(screen.getAllByTitle('Apply to chat or story')[0]);
+        fireEvent.change(screen.getByTestId('apply-target-search'), {
+            target: { value: 'salt' },
+        });
+        expect(screen.queryByText('Test Chat')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByTestId('target-type-story'));
+        expect(screen.getByTestId('apply-target-search')).toHaveValue('');
+        expect(screen.getByText('Test Story')).toBeInTheDocument();
     });
 });

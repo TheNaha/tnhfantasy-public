@@ -277,7 +277,15 @@ function ApplyScenarioModal({ scenario, targetType, setTargetType, targets, onAp
     // "Esc → Close modals" line in KeyboardShortcutsModal.
     useEscapeKey(onClose, true);
     const [selectedId, setSelectedId] = useState('');
+    // Every chat and every story, unfiltered. With 200 chats this was a
+    // 48px-tall scroller holding an unlabelled list, i.e. unusable.
+    const [search, setSearch] = useState('');
     const label = targetType === 'chat' ? 'chat' : 'story';
+
+    const name = (t) => t.name || t.title || t.id.slice(0, 8);
+    const visibleTargets = search.trim()
+        ? targets.filter(t => name(t).toLowerCase().includes(search.trim().toLowerCase()))
+        : targets;
 
     return (
         <motion.div
@@ -302,7 +310,7 @@ function ApplyScenarioModal({ scenario, targetType, setTargetType, targets, onAp
                 <div className="flex gap-2 mb-4">
                     <button
                         type="button"
-                        onClick={() => { setTargetType('chat'); setSelectedId(''); }}
+                        onClick={() => { setTargetType('chat'); setSelectedId(''); setSearch(''); }}
                         className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm transition-colors ${targetType === 'chat' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
                     >
                         <MessageSquare size={14} /> Chat
@@ -310,7 +318,7 @@ function ApplyScenarioModal({ scenario, targetType, setTargetType, targets, onAp
                     <button
                         type="button"
                         data-testid="target-type-story"
-                        onClick={() => { setTargetType('story'); setSelectedId(''); }}
+                        onClick={() => { setTargetType('story'); setSelectedId(''); setSearch(''); }}
                         className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm transition-colors ${targetType === 'story' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
                     >
                         <BookOpen size={14} /> Story
@@ -323,21 +331,43 @@ function ApplyScenarioModal({ scenario, targetType, setTargetType, targets, onAp
                         No {label}s available — create one first.
                     </p>
                 ) : (
-                    <div className="max-h-48 overflow-y-auto border border-gray-600 rounded-lg bg-gray-800/60 divide-y divide-white/5">
-                        {targets.map((t) => {
-                            const active = selectedId === t.id;
-                            return (
-                                <button
-                                    key={t.id}
-                                    type="button"
-                                    onClick={() => setSelectedId(t.id)}
-                                    className={'w-full text-left px-3 py-2 text-xs transition-colors ' + (active ? 'bg-indigo-500/20 text-indigo-300' : 'text-gray-400 hover:bg-white/5')}
-                                >
-                                    {t.name || t.title || t.id.slice(0, 8)}
-                                </button>
-                            );
-                        })}
-                    </div>
+                    <>
+                        <input
+                            type="search"
+                            data-testid="apply-target-search"
+                            aria-label={`Search ${label}s`}
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            placeholder={`Search all ${label}s…`}
+                            className="w-full mb-2 px-3 py-2 bg-gray-800/60 border border-white/10 rounded-lg text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+                        />
+                        {visibleTargets.length === 0 ? (
+                            <p className="text-xs text-gray-600 border border-gray-700/50 rounded-lg px-3 py-2">
+                                No {label} matches &ldquo;{search.trim()}&rdquo;.
+                            </p>
+                        ) : (
+                            <div className="max-h-48 overflow-y-auto border border-gray-600 rounded-lg bg-gray-800/60 divide-y divide-white/5">
+                                {visibleTargets.map((t) => {
+                                    const active = selectedId === t.id;
+                                    return (
+                                        <button
+                                            key={t.id}
+                                            type="button"
+                                            onClick={() => setSelectedId(t.id)}
+                                            className={'w-full text-left px-3 py-2 text-xs transition-colors ' + (active ? 'bg-indigo-500/20 text-indigo-300' : 'text-gray-400 hover:bg-white/5')}
+                                        >
+                                            {name(t)}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                        {visibleTargets.length < targets.length && (
+                            <p className="mt-1 text-2xs text-gray-600">
+                                {visibleTargets.length} of {targets.length} {label}s shown.
+                            </p>
+                        )}
+                    </>
                 )}
 
                 <div className="flex gap-2 justify-end mt-4">
