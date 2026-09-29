@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import ast
 import os
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -160,6 +160,80 @@ class TestValidateDir:
         assert result["total_valid"] == 1
 
 
+class TestAnUnreadableModelIsNeverDeleted:
+    """`validate_downloaded_file` has three outcomes, and the destructive one
+    must only ever act on a verdict.
+
+    A `read()` that raised (EIO, ENOMEM, a gcsfuse stall) is `valid: False,
+    indeterminate: True` — "we could not find out", not "it is bad". Three other
+    call sites honour the third state; this one did not, and it is the one that
+    touches the operator's real network volume, driven by reconciliation on a
+    2-hour tick with `delete_invalid=True`. One transient read error destroyed a
+    multi-GB checkpoint, unrecoverably and unattended.
+    """
+
+    @staticmethod
+    def _checkpoint(tmp_path, name="big.safetensors"):
+        import json as _json
+        import struct as _struct
+
+        header = _json.dumps({"__metadata__": {}, **{f"w{i}": {} for i in range(8)}}).encode()
+        path = tmp_path / name
+        path.write_bytes(_struct.pack("<Q", len(header)) + header + b"\x00" * 65536)
+        (tmp_path / f"{name}.json").write_text('{"name": "big"}')
+        return path
+
+    def test_a_read_oserror_leaves_the_model_its_sidecar_and_the_directory_alone(
+        self, tmp_path, monkeypatch
+    ):
+        target = self._checkpoint(tmp_path)
+        real_open = open
+
+        def exploding_open(path, *a, **k):
+            if str(path) == str(target):
+                raise OSError(5, "Input/output error")
+            return real_open(path, *a, **k)
+
+        monkeypatch.setattr("builtins.open", exploding_open)
+
+        result = server._validate_dir(str(tmp_path), True)
+
+        assert target.exists(), "an unreadable model was deleted on a guess"
+        assert (tmp_path / "big.safetensors.json").exists(), "its metadata went with it"
+        assert result["total_invalid"] == 1, "it must still be reported"
+        assert result["invalid"][0]["indeterminate"] is True, (
+            "reported as invalid without saying the read is what failed, so an "
+            "operator cannot tell this apart from real corruption"
+        )
+
+    def test_a_genuinely_corrupt_model_is_still_deleted(self, tmp_path):
+        """The distinction has to cut both ways, or a real 12-byte HTML error
+        page would sit in the model tree forever and reconciliation could never
+        reach zero."""
+        (tmp_path / "truncated.ckpt").write_bytes(b"PK" + b"\x00" * 64)
+
+        server._validate_dir(str(tmp_path), True)
+
+        assert not (tmp_path / "truncated.ckpt").exists()
+
+    def test_an_indeterminate_result_is_kept_even_with_delete_invalid_false(self, tmp_path):
+        """Both flags off: reporting must not change. Guards against a 'fix' that
+        only skips the delete when reconciliation is not in destructive mode."""
+        target = self._checkpoint(tmp_path)
+        real_open = open
+
+        def exploding_open(path, *a, **k):
+            if str(path) == str(target):
+                raise OSError(5, "Input/output error")
+            return real_open(path, *a, **k)
+
+        with patch("builtins.open", exploding_open):
+            result = server._validate_dir(str(tmp_path), False)
+
+        assert result["total_invalid"] == 1
+        assert target.exists()
+
+
 class TestVerifyToken:
     @staticmethod
     def _request(authorization=None):
@@ -193,6 +267,41 @@ class TestVerifyToken:
         monkeypatch.setattr(server, "TOKEN", "")
         assert await server.verify_token(self._request()) is True
         assert await server.verify_token(self._request("Bearer anything")) is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "presented",
+        ["Bearer \xe9", "Bearer \udce9", "Bearer ключ", "Bearer 🔑"],
+    )
+    async def test_a_non_ascii_bearer_is_a_401_and_not_a_500(self, presented, monkeypatch):
+        """`hmac.compare_digest` raises `TypeError` on a `str` holding a byte
+        >= 0x80, and Starlette decodes header bytes as latin-1 — so a single
+        non-ASCII character made this dependency raise.
+
+        Inside a FastAPI dependency an uncaught TypeError is an unmapped 500,
+        and `provider_core/http_client.py` retries the call three times before
+        giving up: one malformed header cost four round trips and reported a
+        server fault for what is plainly a wrong credential.
+
+        `provider_core/auth.py` documents the bug and exists to make it
+        impossible; this file was the sixth hand-written copy and sat outside
+        `provider_core`, so the unification never reached it.
+        """
+        monkeypatch.setattr(server, "TOKEN", "s3cret-token")
+        with pytest.raises(HTTPException) as exc:
+            await server.verify_token(self._request(presented))
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_a_non_ascii_token_still_authenticates(self, monkeypatch):
+        """Not merely 'does not raise'. Encoding to bytes before comparing must
+        still accept a legitimate non-ASCII secret, or the fix would lock a
+        deployment out of its own agent."""
+        secret = "clé-secrète-🔑"
+        monkeypatch.setattr(server, "TOKEN", secret)
+        assert await server.verify_token(self._request(f"Bearer {secret}")) is True
+        with pytest.raises(HTTPException):
+            await server.verify_token(self._request(f"Bearer {secret}x"))
 
 
 class TestTheInsecureFlagCannotExposeTheRig:

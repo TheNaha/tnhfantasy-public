@@ -1,7 +1,6 @@
 import os
 import asyncio
 import base64
-import hmac
 import json
 from typing import Any, Dict, List, Optional
 
@@ -9,10 +8,15 @@ from fastapi import FastAPI, HTTPException, Request, Query, Depends
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
+from provider_core.auth import bearer_from_header, token_matches
 from provider_core.http_client import get_file_size_cap
 from provider_core.responses import failed, from_upstream, ok
 from provider_core.utils import get_safe_path, is_transient_artifact
-from provider_core.downloads import download_model_to_path, pending_download_paths
+from provider_core.downloads import (
+    download_model_to_path,
+    pending_download_paths,
+    pipeline_artifacts,
+)
 from provider_core.reconciliation import determine_download_token
 from provider_core.validation import validate_downloaded_file
 from provider_core.models import MODEL_DIRECTORIES
@@ -129,12 +133,16 @@ def _ensure_data_dir() -> str:
 async def verify_token(request: Request):
     if TOKEN:
         auth_header = request.headers.get("Authorization")
-        provided = auth_header.split(" ", 1)[1] if auth_header and auth_header.startswith("Bearer ") else ""
-        # compare_digest, not `!=`: a plain string compare short-circuits on the
-        # first differing byte, which leaks the length of the shared prefix of a
-        # guessed token. Every other gate in this repo (provider_core/router.py)
-        # uses hmac.compare_digest.
-        if not provided or not hmac.compare_digest(provided, TOKEN):
+        provided = bearer_from_header(auth_header)
+        # `token_matches`, not a hand-rolled `hmac.compare_digest(provided, TOKEN)`
+        # here. `compare_digest` raises `TypeError` on a `str` holding a byte
+        # >= 0x80 and Starlette decodes header bytes as latin-1, so one non-ASCII
+        # character in `Authorization` raised INSIDE this dependency: an unmapped
+        # 500 the caller retried three times, for what is plainly a wrong
+        # credential. This file is the sixth copy of the check and the only one
+        # outside `provider_core`, which is why the unification missed it.
+        # `provider_core/auth.py` documents the bug and is the one comparison.
+        if not token_matches(provided, TOKEN):
             raise HTTPException(status_code=401, detail="Unauthorized")
     return True
 
@@ -351,8 +359,19 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
             model_info = {"name": name, "path": rel_path, "size": size, "size_mb": round(size / (1024 ** 2), 1), "format": validation.get("format", "unknown")}
             if not validation["valid"]:
                 model_info["issues"] = validation.get("errors", [validation.get("error", "validation failed")])
+                # `indeterminate` means the read FAILED (EIO, ENOMEM, a gcsfuse
+                # stall) — not that the file is bad. Reconciliation runs this
+                # every 2h with `delete_invalid=True` against the operator's
+                # real network volume, so deleting here destroyed a healthy 7 GB
+                # checkpoint on a transient read error, together with its .json
+                # and .preview.png sidecars. There is no way to recover a
+                # multi-GB download removed on a guess, so an unreadable file is
+                # reported and left alone; the next tick reads it again. Same
+                # guard as the Beam, Modal and LLM validators.
+                if validation.get("indeterminate"):
+                    model_info["indeterminate"] = True
                 invalid.append(model_info)
-                if delete_invalid:
+                if delete_invalid and not validation.get("indeterminate"):
                     try: os.remove(full_path)
                     except Exception: pass
                 # Was `else: continue` as the last statement of the loop body, so
@@ -407,17 +426,18 @@ async def delete_model(req: DeleteModelRequest):
         for ext in (".json", ".preview.png", ".sha256"):
             _do_remove(base + ext)
         _do_remove(full_path + ".sha256")
-        # pending_download_paths, not a fixed `.downloading` probe. The per-attempt
-        # temp is `<path>.<pid>.<hex>.downloading` and a parked resume slot is
+        # pipeline_artifacts, not a fixed `.downloading` probe. The per-attempt
+        # temp is `<path>.<pid>.<hex>.downloading`, a parked resume slot is
         # `<path>.resume.<identity>.downloading` (downloads.py _unique_temp_path /
-        # _resume_slot_path), so the old probe matched nothing: a crash-interrupted
-        # 7 GB download survived delete-model forever. It also never got cleaned up
-        # by /validate-*-models, which reports every `.downloading` as `partial` and
-        # deliberately does not delete one — so `total_partial` was permanently
+        # _resume_slot_path), and `exclusive_path_lock` leaves `<path>.lock` beside
+        # both, so the old probe matched none of them: a crash-interrupted 7 GB
+        # download survived delete-model forever. It also never got cleaned up by
+        # /validate-*-models, which reports every transient artifact as `partial`
+        # and deliberately does not delete one — so `total_partial` was permanently
         # non-zero, and step 0 of reconciliation (which runs with delete_invalid)
         # could never reach zero. Modal (modal_app.py) and Beam (beam_app.py) both
         # used the shared helper; this file never referenced it at all.
-        for stale in pending_download_paths(full_path):
+        for stale in pipeline_artifacts(full_path):
             _do_remove(stale)
     except OSError as exc:
         # Was unhandled: `_do_remove` called os.remove on a directory, which

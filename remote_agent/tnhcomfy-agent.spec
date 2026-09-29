@@ -2,8 +2,19 @@
 """
 PyInstaller spec for the TNHComfy Remote Agent standalone executable.
 
-Build (Linux):
-    pyinstaller --workpath /tmp/tnh-agent-build --distpath dist --specpath . remote_agent/tnhcomfy-agent.spec
+Build (Linux) — run it from ``remote_agent/``, not from the repository root:
+
+    cd remote_agent
+    pyinstaller --noconfirm --distpath ./dist --workpath ./build tnhcomfy-agent.spec
+
+The ``cd`` is load-bearing, not a convenience. ``Analysis(["server.py"])`` below
+resolves ``server.py`` against the *current working directory*, and there is no
+``server.py`` at the repository root — invoking this spec from there fails with a
+ModuleNotFoundError that reads like a broken spec rather than a wrong CWD. Every
+documented and automated build does the ``cd``: ``remote_agent/README.md`` and
+the ``working-directory: remote_agent`` in ``.github/workflows/
+build-agent-binaries.yml``. This header previously documented the repo-root form,
+which cannot work.
 
 The frozen binary runs ``remote_agent/server.py`` as ``__main__`` (its own
 ``if __name__ == "__main__": uvicorn.run(...)`` block), so the entry point is
@@ -82,7 +93,16 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX compression removed. It was `True` with nothing installing UPX:
+    # build-agent-binaries.yml installs only build-requirements.txt and
+    # requirements.txt on plain `ubuntu-22.04` / `windows-2022` runners, neither of
+    # which ships UPX, so PyInstaller warned and shipped uncompressed — the flag
+    # was a no-op on every published artifact. Worse, it made the artifact depend
+    # on whether the machine building it happened to have UPX installed, and UPX
+    # packing of PyInstaller bundles is a known source of binaries that build and
+    # then fail to start. If you want it back, install UPX on every builder first
+    # and say so here.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,          # shows uvicorn log lines — useful for a small agent daemon

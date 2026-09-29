@@ -165,13 +165,37 @@ class TestWiring:
 
     def test_every_destructive_validation_site_respects_indeterminate(self):
         """A guard that only exists inside `validation.py` is defeated by every
-        caller that reads `valid` and deletes, so all three call sites are pinned."""
+        caller that reads `valid` and deletes, so every call site is pinned.
+
+        The list is the pin: the four that existed when this test was written are
+        named, so a fifth cannot appear without somebody adding it here. The
+        remote agent is on it because it is the one that touches the operator's
+        real network volume — reconciliation drives it with `delete_invalid=True`
+        on a 2-hour tick, so a single transient read error destroyed a multi-GB
+        checkpoint there and nowhere else.
+        """
         for parts in (
             ("image_worker", "engines", "beam", "beam_app.py"),
             ("image_worker", "engines", "modal", "modal_app.py"),
             ("llm_worker", "engines", "modal", "modal_app.py"),
         ):
             assert "indeterminate" in _read(*parts), f"{parts[-2]} ignores indeterminate"
+
+    def test_the_remote_agent_guards_its_delete(self):
+        agent = os.path.join(PROVIDER_ROOT, "..", "remote_agent", "server.py")
+        with open(agent, encoding="utf-8") as fh:
+            src = fh.read()
+        assert "indeterminate" in src, (
+            "remote_agent/server.py deletes on `not validation['valid']` with no "
+            "indeterminate guard, which is the one call site that can destroy a "
+            "real model irrecoverably"
+        )
+        # The guard has to be on the delete itself, not merely mentioned: a
+        # `validation.get("indeterminate")` that only annotates the report is
+        # the shape that reads as fixed and is not.
+        assert "delete_invalid and not validation.get(\"indeterminate\")" in src, (
+            "the delete is not gated on an indeterminate verdict"
+        )
 
 
 # ------------------------------------------------- read failure vs corruption
