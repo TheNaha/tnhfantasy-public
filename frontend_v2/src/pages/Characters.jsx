@@ -14,10 +14,10 @@ import {
     sortableKeyboardCoordinates,
     arrayMove,
 } from '@dnd-kit/sortable';
-import { Users, Plus, Upload, Search, X, Loader2, User, Images, Sparkles, Brain, LayoutGrid, Rows3 } from 'lucide-react';
+import { Users, Plus, Upload, Search, X, Loader2, User, Images, Sparkles, Brain, LayoutGrid, Rows3, BookOpen } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, useExportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, useExportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter, useLorebooks } from '../hooks/useWorldVault';
 import { CARD_ACCEPT, cardExportFormatLabel } from '../api/characterCards';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
@@ -50,8 +50,13 @@ const DEFAULT_FORM = {
     name: '', description: '', personality: '', scenario: '',
     first_mes: '', mes_example: '', system_prompt: '', creator_notes: '',
     default_time: '', default_location: '',
-    visual_tags: [], lora_triggers: [], voice_profile: '',
+    visual_tags: [], lora_triggers: [], voice_profile: '', lorebook_ids: [],
 };
+
+// Above this many books the list stops being scannable and a filter earns its
+// space. Below it, a search box is one more control between the user and the
+// thing they came to do.
+const LOREBOOK_SEARCH_THRESHOLD = 6;
 
 export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: activeTabProp, onTabChange }) {
     // `activeTab`/`onTabChange` are optional: call sites that only need the
@@ -80,15 +85,18 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                 lora_triggers: character.lora_triggers || [],
                 voice_profile: character.voice_profile || '',
                 voice_model_id: character.voice_model_id || null,
+                lorebook_ids: Array.isArray(character.lorebook_ids) ? character.lorebook_ids : [],
             };
         }
         return { ...DEFAULT_FORM };
     });
     const [visualTagInput, setVisualTagInput] = useState('');
     const [loraTagInput, setLoraTagInput] = useState('');
+    const [lorebookSearch, setLorebookSearch] = useState('');
     const [saving, setSaving] = useState(false);
 
     const { data: voices = [] } = useVoices();
+    const { data: lorebooks = [] } = useLorebooks();
 
     const isEditing = !!character;
     
@@ -231,6 +239,58 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
     const removeTag = (field, idx) => {
         setForm(f => ({ ...f, [field]: f[field].filter((_, i) => i !== idx) }));
     };
+
+    const toggleLorebook = (lorebookId) => {
+        setForm(f => ({
+            ...f,
+            lorebook_ids: f.lorebook_ids.includes(lorebookId)
+                ? f.lorebook_ids.filter(id => id !== lorebookId)
+                : [...f.lorebook_ids, lorebookId],
+        }));
+    };
+
+    // A book attached to a character but no longer in the vault would otherwise
+    // be invisible: it has no row to show and no name to search for, so the
+    // count would read "1 attached" with nothing in the list. Shown by id so
+    // the user can un-attach the dangling reference.
+    const danglingLorebookIds = form.lorebook_ids.filter(
+        id => id !== character?.embedded_lorebook_id && !lorebooks.some(lb => lb.id === id)
+    );
+
+    // The card's embedded book is excluded from the attachable list rather
+    // than shown twice. It is ALREADY injected into every chat with this
+    // character (`chat_utils.link_embedded_lorebook`), so offering to attach
+    // it is redundant — and showing the same book once as an untouchable amber
+    // row and once as a checkbox is the exact confusion the row exists to
+    // prevent.
+    const embeddedId = character?.embedded_lorebook_id || null;
+    const editableLorebooks = useMemo(
+        () => lorebooks.filter(lb => lb.id !== embeddedId),
+        [lorebooks, embeddedId]
+    );
+
+    const visibleLorebooks = useMemo(() => {
+        const q = lorebookSearch.trim().toLowerCase();
+        // Attached books are never filtered out, only ranked below the matches.
+        // Hiding a book the character is already attached to would leave the
+        // count reading "2 attached" with one of them unreachable, and the only
+        // way to drop it would be to clear the search first.
+        const pool = q
+            ? editableLorebooks.filter(
+                lb => (lb.name || '').toLowerCase().includes(q) || form.lorebook_ids.includes(lb.id)
+            )
+            : editableLorebooks;
+        return [
+            ...pool.filter(lb => form.lorebook_ids.includes(lb.id)),
+            ...pool.filter(lb => !form.lorebook_ids.includes(lb.id)),
+        ];
+    }, [editableLorebooks, lorebookSearch, form.lorebook_ids]);
+
+    const showLorebookSearch = editableLorebooks.length > LOREBOOK_SEARCH_THRESHOLD;
+    const embeddedLorebook = useMemo(
+        () => lorebooks.find(lb => lb.id === embeddedId) || null,
+        [lorebooks, embeddedId]
+    );
 
     const settings = useSettingsStore(s => s.settings);
 
@@ -584,6 +644,102 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                                 />
                                 <button onClick={() => addTag('lora_triggers', loraTagInput, setLoraTagInput)} className="px-3 py-1.5 text-sm bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors">Add</button>
                             </div>
+                        </div>
+
+                        {/* Lorebooks */}
+                        <div data-testid="character-lorebooks">
+                            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Lorebooks</label>
+                            <p className="text-2xs text-gray-500 mb-2">
+                                Library books this character draws on. They are attached to every chat and story
+                                this character is in, so you set them once instead of per conversation.
+                            </p>
+
+                            {/* The embedded card book is a DIFFERENT relationship and the
+                                one place on this form a user is most likely to be confused,
+                                so it is named and excluded rather than silently omitted. */}
+                            {embeddedLorebook && (
+                                <div
+                                    className="flex items-center gap-2 px-2.5 py-2 mb-2 rounded-lg bg-amber-500/10 border border-amber-500/25"
+                                    data-testid="character-embedded-lorebook"
+                                >
+                                    <BookOpen size={12} className="text-amber-300 shrink-0" aria-hidden="true" />
+                                    <span className="text-2xs text-amber-200 truncate">{embeddedLorebook.name}</span>
+                                    <span className="text-2xs text-amber-300/70 ml-auto shrink-0">
+                                        Card lorebook — belongs to the imported card
+                                    </span>
+                                </div>
+                            )}
+
+                            {showLorebookSearch && (
+                                <div className="relative mb-2">
+                                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" aria-hidden="true" />
+                                    <input
+                                        type="text"
+                                        value={lorebookSearch}
+                                        onChange={e => setLorebookSearch(e.target.value)}
+                                        className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg pl-7 pr-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
+                                        placeholder="Search lorebooks..."
+                                        aria-label="Search lorebooks"
+                                    />
+                                </div>
+                            )}
+
+                            {editableLorebooks.length === 0 && danglingLorebookIds.length === 0 ? (
+                                <p className="text-2xs text-gray-600" data-testid="character-lorebooks-empty">
+                                    {embeddedLorebook
+                                        ? 'This character’s card is the only lorebook attached to it.'
+                                        : 'No lorebooks in the vault yet.'}
+                                </p>
+                            ) : (
+                                <ul className="max-h-40 overflow-y-auto custom-scrollbar rounded-lg border border-gray-700/40 divide-y divide-white/5">
+                                    {danglingLorebookIds.map(id => (
+                                        <li key={`dangling-${id}`}>
+                                            <label className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer hover:bg-white/5 transition-colors">
+                                                <input
+                                                    type="checkbox"
+                                                    checked
+                                                    onChange={() => toggleLorebook(id)}
+                                                    className="accent-indigo-500 shrink-0"
+                                                    aria-label={`Detach missing lorebook ${id}`}
+                                                />
+                                                <span className="text-xs text-gray-500 truncate flex-1">{id}</span>
+                                                <span className="text-2xs text-red-300/80 shrink-0">missing — untick to drop</span>
+                                            </label>
+                                        </li>
+                                    ))}
+                                    {visibleLorebooks.map(lb => {
+                                        const attached = form.lorebook_ids.includes(lb.id);
+                                        return (
+                                            <li key={lb.id}>
+                                                <label className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer hover:bg-white/5 transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={attached}
+                                                        onChange={() => toggleLorebook(lb.id)}
+                                                        className="accent-indigo-500 shrink-0"
+                                                        aria-label={`Attach ${lb.name}`}
+                                                    />
+                                                    <span className="text-xs text-gray-200 truncate flex-1">{lb.name}</span>
+                                                    {attached && (
+                                                        <span className="text-2xs text-indigo-300 shrink-0">attached</span>
+                                                    )}
+                                                </label>
+                                            </li>
+                                        );
+                                    })}
+                                    {visibleLorebooks.length === 0 && danglingLorebookIds.length === 0 && (
+                                        <li className="px-2.5 py-1.5 text-2xs text-gray-600">
+                                            No lorebook matches &quot;{lorebookSearch}&quot;.
+                                        </li>
+                                    )}
+                                </ul>
+                            )}
+
+                            {form.lorebook_ids.length > 0 && (
+                                <p className="text-2xs text-gray-500 mt-2" data-testid="character-lorebooks-count">
+                                    {form.lorebook_ids.length} {form.lorebook_ids.length === 1 ? 'lorebook' : 'lorebooks'} attached
+                                </p>
+                            )}
                         </div>
 
                         {/* Voice Profile */}

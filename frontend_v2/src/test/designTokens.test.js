@@ -161,6 +161,18 @@ describe('the typography plugin is actually loaded', () => {
 });
 
 describe('component classes resolve to a real rule', () => {
+    // The second group was restored by d48d80af and was UNGUARDED, which is
+    // how `10024929`'s deletions happened twice: the classes came back, the
+    // allowlist never learned their names, and the next tidy-up removed them
+    // again. `btn-primary` and `btn-secondary` are the sharpest case — they
+    // are defined in no commit, ever, and without them the two header actions
+    // on this very page render as bare text.
+    //
+    // The names that shadow a Tailwind utility (`duration-*`, `max-w-*`) are
+    // listed deliberately. The rule that matters is hand-written even though
+    // the utility exists: `.duration-500` only sets `--tw-enter-duration`, so
+    // deleting it does not break the transition, it silently drops seven
+    // `animate-in` call sites back to 150ms.
     const BESPOKE_CLASSES = [
         'glass',
         'glass-panel',
@@ -173,6 +185,31 @@ describe('component classes resolve to a real rule', () => {
         'provider-dot',
         'pb-safe',
         'custom-scrollbar',
+        'btn-primary',
+        'btn-secondary',
+        'nav-active',
+        'kbd',
+        'animate-spin-slow',
+        'animate-in',
+        'fade-in',
+        'slide-in-from-bottom-2',
+        'duration-150',
+        'duration-200',
+        'duration-300',
+        'duration-500',
+        'duration-700',
+        'duration-1000',
+        'scrollbar-thin',
+        'scrollbar-thumb-gray-600',
+        'scrollbar-thumb-gray-800',
+        'scrollbar-track-transparent',
+        'no-scrollbar',
+        'shimmer',
+        'story-prose',
+        'story-editor-textarea',
+        'no-touch-padding',
+        'max-w-6xl',
+        'max-w-7xl',
     ];
 
     const cssSources = FILES

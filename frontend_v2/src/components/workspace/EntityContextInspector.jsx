@@ -23,6 +23,23 @@ function pickById(collection, ids) {
     return list.filter(item => item && wanted.includes(item.id));
 }
 
+/**
+ * Groups `characterLorebookLinks` by the character that brought the book in,
+ * keeping first-seen order for both the owners and their books — the call site
+ * decides the order, and re-sorting here would make the panel disagree with
+ * the chat's `additional_character_ids`.
+ */
+function groupByOwner(links) {
+    const groups = new Map();
+    for (const link of links) {
+        if (!link || !link.lorebookId) continue;
+        const owner = link.characterName || '';
+        if (!groups.has(owner)) groups.set(owner, []);
+        groups.get(owner).push(link);
+    }
+    return [...groups.entries()].map(([owner, entries]) => ({ owner, entries }));
+}
+
 function EntryRow({ entry }) {
     return (
         <li className="px-2.5 py-2 rounded-lg bg-gray-900/40 border border-white/5">
@@ -86,6 +103,54 @@ function LorebookEntryList({ lorebookId, contextText }) {
     );
 }
 
+/**
+ * One lorebook row: a disclosure that fetches the book's entries and reports
+ * how many of them would be injected for the current context.
+ *
+ * Shared by the chat's own active lorebooks and by the books a character
+ * brings with them, so both report the same "N of M" through the same
+ * `LorebookEntryList`. A second implementation would be a second answer to
+ * "what does the model actually receive", which is the one question this
+ * panel exists to answer.
+ *
+ * `lorebook` may be omitted for a character-attached book whose row is not in
+ * the `lorebooks` collection; `name` then supplies the label.
+ */
+function LorebookRow({ lorebook, lorebookId, name, expanded, onToggle, contextText, onEditLorebook }) {
+    const id = lorebook?.id || lorebookId;
+    const label = name || lorebook?.name || id;
+    return (
+        <div className="rounded-lg border border-white/5 bg-gray-800/30">
+            <div className="flex items-center gap-1.5 px-2 py-1.5">
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    aria-expanded={expanded}
+                    className="flex-1 min-w-0 flex items-center gap-1.5 text-left"
+                >
+                    <ChevronDown size={11} className={clsx('text-gray-500 shrink-0 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />
+                    <span className="text-2xs text-gray-200 truncate">{label}</span>
+                </button>
+                {onEditLorebook && lorebook && (
+                    <button
+                        type="button"
+                        onClick={() => onEditLorebook(lorebook)}
+                        title={`Edit ${lorebook.name}`}
+                        className="p-1 rounded text-gray-500 hover:text-indigo-400 hover:bg-white/10 transition-colors"
+                    >
+                        <Edit2 size={11} />
+                    </button>
+                )}
+            </div>
+            {expanded && (
+                <div className="px-2 pb-2">
+                    <LorebookEntryList lorebookId={id} contextText={contextText} />
+                </div>
+            )}
+        </div>
+    );
+}
+
 function CollapsibleGroup({ icon: Icon, title, count, defaultOpen = false, children, testId }) {
     const [open, setOpen] = useState(defaultOpen);
     const contentId = useId();
@@ -136,6 +201,14 @@ export default function EntityContextInspector({
     primaryCharacterId = null,
     lorebooks = [],
     lorebookIds = [],
+    // Books a CHARACTER contributes, as `[{ lorebookId, characterName }]`.
+    // Separate from `lorebookIds` because they are a different relationship:
+    // the chat's own selection versus `Character.lorebook_ids`, the vault
+    // books attached to a character that follow them into every conversation.
+    // Optional, so a call site that has not wired it up renders exactly as
+    // before. Both chat and story panels can compute it from entities they
+    // already hold, which is why it lives here rather than on one of them.
+    characterLorebookLinks = [],
     locations = [],
     locationIds = [],
     freeformLocation = null,
@@ -161,7 +234,28 @@ export default function EntityContextInspector({
     const linkedLocations = useMemo(() => pickById(locations, locationIds), [locations, locationIds]);
     const [expandedLorebooks, setExpandedLorebooks] = useState({});
 
-    const totalLinked = linkedCharacters.length + linkedLocations.length + linkedLorebooks.length;
+    const lorebookNameById = useMemo(() => {
+        const map = new Map();
+        for (const lb of Array.isArray(lorebooks) ? lorebooks : []) {
+            if (lb && lb.id) map.set(lb.id, lb.name);
+        }
+        return map;
+    }, [lorebooks]);
+
+    const characterLorebookGroups = useMemo(
+        () => groupByOwner(characterLorebookLinks),
+        [characterLorebookLinks]
+    );
+    const characterLorebookCount = useMemo(
+        () => characterLorebookGroups.reduce((n, g) => n + g.entries.length, 0),
+        [characterLorebookGroups]
+    );
+
+    // A character-only link still feeds the model, so it must keep the panel
+    // out of the "Nothing linked yet" state — which is the one string on this
+    // panel that is flatly false when it appears.
+    const totalLinked =
+        linkedCharacters.length + linkedLocations.length + linkedLorebooks.length + characterLorebookCount;
 
     return (
         <div className={clsx('glass-panel rounded-xl border border-white/5', className)} data-testid="entity-context-inspector">
@@ -186,6 +280,7 @@ export default function EntityContextInspector({
                                     linkedCharacters.length && `${linkedCharacters.length} linked`,
                                     linkedLocations.length && `${linkedLocations.length} location${linkedLocations.length === 1 ? '' : 's'}`,
                                     linkedLorebooks.length && `${linkedLorebooks.length} lorebook${linkedLorebooks.length === 1 ? '' : 's'}`,
+                                    characterLorebookCount > 0 && `${characterLorebookCount} from character${characterLorebookCount === 1 ? '' : 's'}`,
                                 ].filter(Boolean).join(' · ')}
                         </span>
                     </span>
@@ -268,39 +363,55 @@ export default function EntityContextInspector({
 
                     {linkedLorebooks.length > 0 && (
                         <CollapsibleGroup icon={BookOpen} title="Active Lorebooks" count={linkedLorebooks.length} defaultOpen testId="inspector-lorebooks">
-                            {linkedLorebooks.map(lorebook => {
-                                const isExpanded = !!expandedLorebooks[lorebook.id];
-                                return (
-                                    <div key={lorebook.id} className="rounded-lg border border-white/5 bg-gray-800/30">
-                                        <div className="flex items-center gap-1.5 px-2 py-1.5">
-                                            <button
-                                                type="button"
-                                                onClick={() => setExpandedLorebooks(prev => ({ ...prev, [lorebook.id]: !prev[lorebook.id] }))}
-                                                aria-expanded={isExpanded}
-                                                className="flex-1 min-w-0 flex items-center gap-1.5 text-left"
-                                            >
-                                                <ChevronDown size={11} className={clsx('text-gray-500 shrink-0 transition-transform', isExpanded && 'rotate-180')} aria-hidden="true" />
-                                                <span className="text-2xs text-gray-200 truncate">{lorebook.name}</span>
-                                            </button>
-                                            {onEditLorebook && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => onEditLorebook(lorebook)}
-                                                    title={`Edit ${lorebook.name}`}
-                                                    className="p-1 rounded text-gray-500 hover:text-indigo-400 hover:bg-white/10 transition-colors"
-                                                >
-                                                    <Edit2 size={11} />
-                                                </button>
-                                            )}
-                                        </div>
-                                        {isExpanded && (
-                                            <div className="px-2 pb-2">
-                                                <LorebookEntryList lorebookId={lorebook.id} contextText={contextText} />
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                            {linkedLorebooks.map(lorebook => (
+                                <LorebookRow
+                                    key={lorebook.id}
+                                    lorebook={lorebook}
+                                    expanded={!!expandedLorebooks[lorebook.id]}
+                                    onToggle={() => setExpandedLorebooks(prev => ({ ...prev, [lorebook.id]: !prev[lorebook.id] }))}
+                                    contextText={contextText}
+                                    onEditLorebook={onEditLorebook}
+                                />
+                            ))}
+                        </CollapsibleGroup>
+                    )}
+
+                    {characterLorebookCount > 0 && (
+                        <CollapsibleGroup
+                            icon={BookOpen}
+                            title="Character Lorebooks"
+                            count={characterLorebookCount}
+                            defaultOpen
+                            testId="inspector-character-lorebooks"
+                        >
+                            <p className="text-2xs text-gray-500 px-1">
+                                Attached to the character, so they are injected in every chat and story they are in.
+                            </p>
+                            {characterLorebookGroups.map(group => (
+                                <div key={group.owner || 'unattributed'} className="space-y-1.5">
+                                    {group.owner && (
+                                        <p className="text-2xs font-semibold uppercase tracking-wider text-gray-400 px-1 pt-1">
+                                            via {group.owner}
+                                        </p>
+                                    )}
+                                    {group.entries.map(link => (
+                                        <LorebookRow
+                                            key={`${link.lorebookId}-${group.owner}`}
+                                            lorebookId={link.lorebookId}
+                                            name={lorebookNameById.get(link.lorebookId) || link.lorebookId}
+                                            expanded={!!expandedLorebooks[`char:${link.lorebookId}`]}
+                                            onToggle={() =>
+                                                setExpandedLorebooks(prev => ({
+                                                    ...prev,
+                                                    [`char:${link.lorebookId}`]: !prev[`char:${link.lorebookId}`],
+                                                }))
+                                            }
+                                            contextText={contextText}
+                                            onEditLorebook={onEditLorebook}
+                                        />
+                                    ))}
+                                </div>
+                            ))}
                         </CollapsibleGroup>
                     )}
 

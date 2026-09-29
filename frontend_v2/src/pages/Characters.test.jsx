@@ -14,6 +14,7 @@ const mockUpdateCharacter = vi.hoisted(() => vi.fn());
 const mockDeleteCharacter = vi.hoisted(() => vi.fn());
 const mockImportCharacterCard = vi.hoisted(() => vi.fn());
 const mockExportCharacterCard = vi.hoisted(() => vi.fn());
+const mockUseLorebooks = vi.hoisted(() => vi.fn());
 const mockSetActiveChat = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useVoices', () => ({
@@ -33,6 +34,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useReorderCharacters: () => ({ mutate: vi.fn(), isPending: false }),
     useAnimateCharacterAvatar: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useCloneCharacter: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useLorebooks: () => mockUseLorebooks(),
     getAvatarUrl: () => '',
 }));
 
@@ -75,6 +77,7 @@ describe('Characters page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockUseCharacters.mockReturnValue({ data: [buildCharacter()], isLoading: false });
+        mockUseLorebooks.mockReturnValue({ data: [] });
         mockCreateCharacter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ id: 'new-1' }) });
         mockUpdateCharacter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
         mockDeleteCharacter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });

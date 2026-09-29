@@ -173,3 +173,127 @@ describe('EntityContextInspector', () => {
         expect(screen.getByText('The Saltmarsh Inn')).toBeInTheDocument();
     });
 });
+
+describe('EntityContextInspector character lorebooks', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        useLorebookEntriesMock.mockReturnValue({ data: entries, isLoading: false, isError: false });
+    });
+
+    const characterLinks = [
+        { lorebookId: 'lb-2', characterName: 'Lyra Vane' },
+        { lorebookId: 'lb-1', characterName: 'Orrin' },
+    ];
+
+    it('renders nothing extra when no character brings a book', () => {
+        renderInspector();
+        openInspector();
+
+        expect(screen.queryByTestId('inspector-character-lorebooks')).not.toBeInTheDocument();
+        // The summary must not gain a clause either, or every chat reads as if
+        // it had a character-attached book.
+        expect(screen.getByText('1 linked · 1 location · 1 lorebook')).toBeInTheDocument();
+    });
+
+    it('shows a character-attached book with the character that brought it', () => {
+        renderInspector({ characterLorebookLinks: characterLinks });
+        openInspector();
+
+        expect(screen.getByRole('button', { name: /Character Lorebooks/ })).toBeInTheDocument();
+        // Scoped to the group: a book can be both a chat's own selection and
+        // attached to a character, and both rows are supposed to be there.
+        const group = screen.getByTestId('inspector-character-lorebooks');
+        expect(group).toHaveTextContent('Riverlands');
+        expect(group).toHaveTextContent('Ashfall Codex');
+        expect(group).toHaveTextContent('via Lyra Vane');
+        expect(group).toHaveTextContent('via Orrin');
+    });
+
+    it('counts them in the collapsed summary and out of the empty state', () => {
+        // A character-only link still feeds the model, so the panel must not
+        // claim nothing is linked.
+        renderInspector({
+            characterIds: [],
+            lorebookIds: [],
+            locationIds: [],
+            characterLorebookLinks: characterLinks,
+        });
+
+        expect(screen.getByText('2 from characters')).toBeInTheDocument();
+        expect(screen.queryByText('Nothing linked yet')).not.toBeInTheDocument();
+
+        openInspector();
+        expect(screen.queryByText(/Link characters, a location, or a lorebook/)).not.toBeInTheDocument();
+    });
+
+    it('is open by default, so the injection count is visible without a second click', () => {
+        renderInspector({ characterLorebookLinks: characterLinks });
+        openInspector();
+
+        // The panel's whole purpose is "what does the model actually receive",
+        // and this is the one group whose absence is invisible by construction:
+        // a book attached to a character is injected whether or not anybody
+        // looks for it. Every other group here is already `defaultOpen`, and
+        // the outer `defaultOpen={false}` is the one that costs the click.
+        expect(screen.getByTestId('inspector-character-lorebooks')).toBeInTheDocument();
+    });
+
+    it('reuses the same N-of-M injection count as the active-lorebook group', async () => {
+        renderInspector({ characterLorebookLinks: characterLinks });
+        openInspector();
+
+        fireEvent.click(screen.getByRole('button', { name: /Riverlands/ }));
+
+        await waitFor(() => expect(useLorebookEntriesMock).toHaveBeenCalledWith('lb-2'));
+        expect(await screen.findByText('2 of 3 entries would be injected now')).toBeInTheDocument();
+        expect(screen.getByText('The tide never returns what it takes.')).toBeInTheDocument();
+        expect(screen.getByText('always')).toBeInTheDocument();
+        expect(screen.getByText('triggered')).toBeInTheDocument();
+    });
+
+    it('does not fetch entries until one of its books is expanded', () => {
+        renderInspector({ characterLorebookLinks: characterLinks });
+        openInspector();
+
+        expect(useLorebookEntriesMock).not.toHaveBeenCalled();
+    });
+
+    it('labels a book by id when it is not in the lorebooks collection', () => {
+        renderInspector({
+            lorebooks: [],
+            lorebookIds: [],
+            characterLorebookLinks: [{ lorebookId: 'lb-unlisted', characterName: 'Orrin' }],
+        });
+        openInspector();
+
+        expect(screen.getByText('lb-unlisted')).toBeInTheDocument();
+    });
+
+    it('keeps first-seen order for owners and their books', () => {
+        renderInspector({
+            characterLorebookLinks: [
+                { lorebookId: 'lb-2', characterName: 'Lyra Vane' },
+                { lorebookId: 'lb-1', characterName: 'Orrin' },
+                { lorebookId: 'lb-1', characterName: 'Lyra Vane' },
+            ],
+        });
+        openInspector();
+
+        const headings = screen
+            .getAllByText(/^via /)
+            .map(node => node.textContent);
+        expect(headings).toEqual(['via Lyra Vane', 'via Orrin']);
+    });
+
+    it('skips malformed links and still shows the real one', () => {
+        renderInspector({
+            characterLorebookLinks: [null, { characterName: 'Nobody' }, { lorebookId: 'lb-1' }],
+        });
+        openInspector();
+
+        const group = screen.getByTestId('inspector-character-lorebooks');
+        // No `via` heading for a link with no owner, rather than a blank one.
+        expect(screen.queryByText(/^via /)).not.toBeInTheDocument();
+        expect(group).toHaveTextContent('Ashfall Codex');
+    });
+});

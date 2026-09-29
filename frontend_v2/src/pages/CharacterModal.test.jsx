@@ -19,6 +19,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useAnimateCharacterAvatar: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useUpdateCharacter: () => ({ mutateAsync: vi.fn() }),
     useCreateCharacter: () => ({ mutateAsync: vi.fn() }),
+    useLorebooks: () => ({ data: [] }),
 }));
 vi.mock('../components/chat/MemoriesPanel', () => ({
     default: () => <div data-testid="memories-panel">memories</div>,
