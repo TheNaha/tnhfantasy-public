@@ -48,6 +48,8 @@ from typing import Any, Dict, List, Optional
 
 import modal
 
+from provider_core.comfy_lifecycle import free_comfy_vram, restart_comfy_process
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
@@ -72,6 +74,12 @@ SCALEDOWN = int(os.getenv("MODAL_TTS_SCALEDOWN", "300"))
 # One by default, matching the image worker, because the cost is per
 # container-second. Raise it for concurrent narration.
 MAX_CONTAINERS = int(os.getenv("MODAL_TTS_MAX_CONTAINERS", "1"))
+
+# Runs before the ComfyUI process is replaced. 10 is the image worker's cadence
+# (`COMFYUI_MAX_RUNS_BEFORE_RESTART`); speech jobs are seconds long rather than
+# minutes, so the same count buys far more wall-clock per unit of accumulated
+# state here.
+MAX_RUNS_BEFORE_RESTART = int(os.getenv("MODAL_TTS_MAX_RUNS_BEFORE_RESTART", "10"))
 
 # A batched voice-design run and a long narration batch both legitimately take
 # minutes on a cold container, so this is generous relative to the image
@@ -140,6 +148,36 @@ def _start_comfy(port: int) -> None:
     _wait_for_ready(port, HEALTHCHECK_TIMEOUT, "ComfyUIStable")
 
 
+def safe_vol_reload():
+    try:
+        vol.reload()
+    except Exception as e:
+        logger.warning("vol.reload failed: %s", e)
+
+
+async def safe_vol_reload_aio():
+    try:
+        await vol.reload.aio()
+    except Exception as e:
+        logger.warning("vol.reload.aio failed: %s", e)
+
+
+def _resolve_provider_core_local_path():
+    """Resolve provider_core source path for the Modal image build."""
+    from pathlib import Path
+
+    here = Path(__file__).parent
+    for candidate in (
+        here / "provider_core",
+        here.parent / "provider_core",
+        here.parent.parent / "provider_core",
+        here.parent.parent.parent / "provider_core",
+    ):
+        if candidate.exists():
+            return candidate
+    raise RuntimeError("provider_core source directory not found for modal image build")
+
+
 # ----------------------------------------------------------------------- image
 
 # Modelled on the image worker's image so the two are recognisable, minus
@@ -172,6 +210,16 @@ tts_image = (
         "comfy --help",
         gpu=GPU_TYPE,
     )
+    # `get_safe_path` is the path-confinement gate every storage route in this
+    # repo uses, and it lives in provider_core. The deploy container ships that
+    # package (tts_worker/Dockerfile copies it), but the Modal image is a
+    # separate artifact built here, so it has to be packaged into it explicitly
+    # or the import below fails inside the remote container.
+    .add_local_dir(
+        local_path=_resolve_provider_core_local_path(),
+        remote_path="/root/provider_core",
+        copy=True,
+    )
 )
 
 tts_app = modal.App(TTS_APP_NAME, image=tts_image)
@@ -189,7 +237,7 @@ vol = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
     timeout=TIMEOUT,
     scaledown_window=SCALEDOWN,
     max_containers=MAX_CONTAINERS,
-    keep_warm=0,
+    min_containers=0,
 )
 class TTSWorker:
     """ComfyUI configured for speech.
@@ -234,7 +282,14 @@ class TTSWorker:
         it is why the provider's `capabilities` had to grow a list — this app is
         the same kind of machine serving a different task type.
         """
-        if MAX_CONTAINERS >= 1 and self._completed_runs >= 10:
+        # Refresh the volume replica, so an uploaded voice reference written by
+        # another container since this one started is visible to ComfyUI. The
+        # image worker has done this since the beginning; without it a cloned
+        # voice resolves against the state the container booted with and the
+        # graph fails on a file it can see is there.
+        await safe_vol_reload_aio()
+
+        if MAX_CONTAINERS >= 1 and self._completed_runs >= MAX_RUNS_BEFORE_RESTART:
             # Matches the image worker's restart cadence. A ComfyUI container
             # accumulates state across runs and eventually stalls; a restart is
             # cheaper than a timeout and cheaper than debugging a hung graph.
@@ -245,6 +300,11 @@ class TTSWorker:
         async for update in self._execute(workflow_json):
             yield update
         self._completed_runs += 1
+
+        # Per-run VRAM cleanup, on the same terms as the image worker: the
+        # request has to reach the ComfyUI subprocess, because the VRAM this
+        # container has to give back is the subprocess's, not this function's.
+        await asyncio.to_thread(free_comfy_vram, self.port, "TTSWorker", logger.info)
 
     async def _execute(self, workflow_json: Dict[str, Any]):
         import urllib.request
@@ -326,21 +386,100 @@ class TTSWorker:
         return collected
 
     def _restart(self) -> None:
-        import urllib.request
+        """Replace the ComfyUI process inside this container.
 
-        try:
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{self.port}/free", data=b'{}',
-                headers={"Content-Type": "application/json"}, timeout=30,
-            ):
-                pass
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[tts] /free failed during restart: %s", exc)
-        # The ComfyUI process is intentionally not retained across a restart —
-        # a fresh container is the only way to reclaim the GPU state that
-        # accumulates across runs, and the image worker reaches the same
-        # conclusion by PID rather than by handle.
-        logger.info("[tts] requesting container recycle")
+        The actual recycle mechanism is a process kill, not a Modal container
+        recycle: `MAX_CONTAINERS` is 1, so Modal has no second container to evict
+        and nothing to wait for. What previously stood here called `/free` and
+        logged "requesting container recycle" — it recycled nothing, and the
+        log line said otherwise, which is worse than having no function at all.
+        """
+        restart_comfy_process(
+            self.port,
+            "TTSWorker",
+            start=lambda: _start_comfy(self.port),
+            wait_for_ready=lambda: _wait_for_ready(
+                self.port, HEALTHCHECK_TIMEOUT, "ComfyUIStable"
+            ),
+            log=logger.info,
+            timeout_seconds=HEALTHCHECK_TIMEOUT,
+        )
+
+
+# -------------------------------------------------------------------- storage
+#
+# Namespace: every path here is relative to the volume root, `/mnt/data` — the
+# same convention the image worker's FileStorage uses, and the one the backend's
+# `provider_registry` assumes when it passes a path through to `/get-file`
+# unencoded. It is also the only choice that can round-trip: ComfyUI's
+# `output`/`input` directories are symlinks into `/mnt/data`, so an audio file
+# the app produced at `output/<subfolder>/x.wav` is addressable as exactly the
+# `{subfolder, filename}` the app reported, and an uploaded reference at
+# `input/<name>` lands where ComfyUI will look for it. Resolving against the
+# backend's own `settings.output_dir` instead (which is what a bare
+# `os.path.join("/mnt/data", path)` appeared to do) puts uploads in
+# `/mnt/data/<rel_path>` where no ComfyUI node will ever read them.
+
+
+@tts_app.cls(
+    image=tts_image,
+    volumes={"/mnt/data": vol},
+    cpu=1.0,
+    timeout=300,
+    scaledown_window=60,
+    max_containers=1,
+)
+class TTSFileStorage:
+    """Volume reads and writes for the TTS client.
+
+    A class rather than the `modal.Volume` handle because the client runs in a
+    different container: `Volume` exposes only container-local methods
+    (`read_file`, `remove_file`) and has no `stat` and no `write_file` at all, so
+    every route built on the handle was calling something that does not exist.
+    Modal methods, like the image worker's, do have `.remote`.
+    """
+
+    @staticmethod
+    def _resolve(path: str) -> str:
+        from provider_core.utils import get_safe_path
+
+        return get_safe_path("/mnt/data", path)
+
+    @modal.method()
+    def file_size(self, path: str) -> int:
+        safe_vol_reload()
+        full_path = self._resolve(path)
+        if not os.path.isfile(full_path):
+            raise FileNotFoundError(f"File not found: {path}")
+        return os.path.getsize(full_path)
+
+    @modal.method()
+    def read_file(self, path: str) -> bytes:
+        safe_vol_reload()
+        full_path = self._resolve(path)
+        if not os.path.isfile(full_path):
+            raise FileNotFoundError(f"File not found: {path}")
+        with open(full_path, "rb") as handle:
+            return handle.read()
+
+    @modal.method()
+    def put_file(self, path: str, content: bytes) -> int:
+        full_path = self._resolve(path)
+        os.makedirs(os.path.dirname(full_path) or "/mnt/data", exist_ok=True)
+        with open(full_path, "wb") as handle:
+            handle.write(content)
+        vol.commit()
+        return len(content)
+
+    @modal.method()
+    def delete_file(self, path: str) -> bool:
+        safe_vol_reload()
+        full_path = self._resolve(path)
+        if not os.path.isfile(full_path):
+            return False
+        os.remove(full_path)
+        vol.commit()
+        return True
 
 
 # -------------------------------------------------------------------- storage

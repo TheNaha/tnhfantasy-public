@@ -33,8 +33,7 @@ RUN pip install --no-cache-dir \
     websockets \
     aiofiles \
     tenacity \
-    requests \
- && ln -sf /usr/local/bin/beta9 /usr/local/bin/beam
+    requests
 
 # Shared utilities. `modal_app.py` imports `provider_core` for nothing today,
 # but the FileStorage helpers and the retryable-payload shapes live there and
