@@ -940,6 +940,23 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
         "(e.g. 'Sure, here is the continuation:'). Just output the next part of the prose."
     )
 
+    # The premise, the chapter title, and the chapters before this one.
+    #
+    # All three were absent. `Story.description` is the field the user types at
+    # creation and edits in the context panel, and it never reached the model;
+    # and there is no `select(StoryChapter).where(story_id == …)` anywhere on
+    # this path, so chapter 3 was written from chapter 3's text alone, with
+    # chapters 1 and 2 nowhere in the prompt. Earlier chapters are passed as
+    # prior assistant turns, which is both the correct role and cheaper than
+    # stuffing them into the system prompt.
+    story_premise = (story.description or "").strip() if story else ""
+    prior_chapters = await asyncio.to_thread(_prior_chapter_messages, session, story_id, chapter.id)
+
+    messages = [
+        *[{"role": "assistant", "content": text} for text in prior_chapters],
+        {"role": "user", "content": chapter.content.strip()},
+    ]
+
     story_scenario_template = None
     if story and story.scenario_id:
         # The scenario lookup is synchronous session work in an async helper.
@@ -947,16 +964,48 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
             _scenario_prompt_template, session, story.scenario_id
         )
 
+    world_name = world_description = None
+    world_lorebook_ids: list[str] = []
+    world_location_ids: list[str] = []
+    world_scenario: str | None = None
+    if story is not None and story.world_id:
+        world = await asyncio.to_thread(_world_prompt_parts, session, story)
+        if world is not None:
+            world_name, world_description = world["name"], world["description"]
+            world_lorebook_ids = world["lorebook_ids"]
+            world_location_ids = world["location_ids"]
+            world_scenario = world["scenario"]
+
+    if story_premise:
+        base_prompt = f"{base_prompt}\n\n[Story premise]\n{story_premise}"
+
     system_prompt, context = await build_chat_context_async(
-        [{"role": "user", "content": chapter.content.strip()}],
-        lorebook_ids=(story.lorebook_ids if story else None) or None,
+        messages,
+        # The chat-formatting block (put dialogue in quotes, actions in
+        # asterisks) was injected into prose continuations, where it
+        # contradicts the instruction above to "just output the next part of the
+        # prose". `build_chat_context_with_sections` had no
+        # `include_roleplay_default` parameter, so no caller could turn it off.
+        include_roleplay_default=False,
+        # Same bound every chat reply path uses. Unpassed, this fell through to
+        # `DEFAULT_MAX_TOKENS` (4096) regardless of `ai.maxContextTokens`, and
+        # `prune_context` then truncated the user's own prose — not the chat
+        # formatting block that had eaten the budget.
+        max_context_tokens=await asyncio.to_thread(_resolve_context_tokens),
+        lorebook_ids=list(dict.fromkeys(
+            [*(story.lorebook_ids if story else [] or []), *world_lorebook_ids]
+        )) or None,
         system_prompt_override=base_prompt,
         story_genre=story.genre if story else None,
         story_memory=story.memory if story else None,
         story_pov=story.pov if story else None,
-        story_scenario=story_scenario_template,
+        story_scenario=story_scenario_template or world_scenario,
         story_character_ids=(story.character_ids if story else None) or None,
-        location_ids=(story.location_ids if story else None) or None,
+        location_ids=list(dict.fromkeys(
+            [*(story.location_ids if story else [] or []), *world_location_ids]
+        )) or None,
+        world_name=world_name,
+        world_description=world_description,
     )
 
     job_service = JobService(session)
@@ -993,6 +1042,81 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
 
     await queue_manager.enqueue(job.id, task_type="llm")
     return job.id
+
+
+# How much of the preceding chapters to carry. Bounded because the whole thing
+# lands in a paid prompt: the builder's own `max_context_tokens` prunes after the
+# fact, but a chapter is potentially the user's most expensive input, so the
+# window is set here too and the budget argument still governs.
+PRIOR_CHAPTER_LIMIT = 4
+PRIOR_CHAPTER_CHARS = 4000
+
+
+def _prior_chapter_messages(
+    session: Session, story_id: str, before_chapter_id: str
+) -> list[str]:
+    """The chapters before `before_chapter_id`, oldest first.
+
+    Ordered by chapter number rather than `created_at` so a branched or
+    reordered chapter list still produces a coherent prior context, and bounded
+    in both count and length.
+    """
+    from sqlmodel import select
+
+    prior = session.exec(
+        select(StoryChapter)
+        .where(StoryChapter.story_id == story_id)
+        .order_by(StoryChapter.chapter_number)
+        .limit(PRIOR_CHAPTER_LIMIT)
+    ).all()
+    texts: list[str] = []
+    for prior_chapter in prior:
+        if prior_chapter.id == before_chapter_id:
+            break
+        text = (prior_chapter.content or "").strip()
+        if text:
+            texts.append(text[-PRIOR_CHAPTER_CHARS:])
+    return texts
+
+
+def _world_prompt_parts(session: Session, story) -> dict | None:
+    """The owning World's contribution to a story's prompt, read off the loop."""
+    from core.entities import World
+
+    world = session.get(World, story.world_id)
+    if world is None:
+        return None
+    scenario = None
+    for scenario_id in world.scenario_ids or []:
+        scenario = session.get(Scenario, scenario_id)
+        if scenario is not None:
+            break
+    return {
+        "name": world.name,
+        "description": world.description,
+        "lorebook_ids": list(world.lorebook_ids or []),
+        "location_ids": list(world.location_ids or []),
+        "scenario": (scenario.prompt_template if scenario is not None else None) or None,
+    }
+
+
+def _resolve_context_tokens() -> int:
+    """A story continuation's context budget.
+
+    `Story` has no per-story override (unlike `Chat.max_context_tokens`), so
+    this is the global `ai.maxContextTokens` — the same value every chat reply
+    path resolves. The important part is that it is resolved at all: unpassed,
+    `build_chat_context` fell back to `DEFAULT_MAX_TOKENS` (4096) and then
+    truncated the user's own prose to make room.
+    """
+    from config import get_config
+    from services.context_builder import DEFAULT_MAX_TOKENS
+
+    configured = (get_config() or {}).get("ai", {}).get("maxContextTokens")
+    try:
+        return int(configured) if configured else DEFAULT_MAX_TOKENS
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_TOKENS
 
 
 def _scenario_prompt_template(session: Session, scenario_id: str) -> str | None:
