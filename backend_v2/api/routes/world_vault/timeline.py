@@ -4,10 +4,11 @@ World Timeline — chronological aggregation of all events across entities.
 from fastapi import APIRouter, Depends, Query
 
 from core.exceptions import ValidationError
+from sqlalchemy import and_, or_
 from sqlmodel import Session, func, select
 
 from api.deps import get_session
-from core.entities import Chat, Message, StoryChapter, CharacterMemory, Asset
+from core.entities import Asset, Chat, CharacterMemory, Message, Story, StoryChapter
 
 # The four sources are merged and then sorted, so a page of the merged timeline
 # needs up to `limit + offset` rows from EACH of them — the multiplier that
@@ -40,6 +41,7 @@ def get_timeline(
     story_id: str | None = Query(default=None),
     chat_id: str | None = Query(default=None),
     location: str | None = Query(default=None),
+    world_id: str | None = Query(default=None),
     types: str | None = Query(default=None),
     limit: int = Query(default=100, le=500),
     offset: int = Query(default=0, ge=0, le=MAX_TIMELINE_OFFSET),
@@ -115,6 +117,15 @@ def get_timeline(
     if chat_id:
         msg_count_query = msg_count_query.where(Message.chat_id == chat_id)
         msg_query = msg_query.where(Message.chat_id == chat_id)
+    if world_id:
+        # The World is the one scoping relationship in this system, and this
+        # endpoint had no notion of one — its own docstring said so. Messages
+        # scope by the owning chat's world, chapters by the story's.
+        # The count query selects from `messages` only, so it needs its own
+        # join; without it the WHERE references an unrelated FROM element and
+        # SQLAlchemy warns about (and Postgres executes) a cartesian product.
+        msg_count_query = msg_count_query.join(Chat).where(Chat.world_id == world_id)
+        msg_query = msg_query.where(Chat.world_id == world_id)
     if character_id or location:
         # The filters below are on Chat. The main query already joins Chat, but
         # the count query does not select it, so it needs its own join —
@@ -122,8 +133,31 @@ def get_timeline(
         # SQLAlchemy warns about (and Postgres executes) a cartesian product.
         msg_count_query = msg_count_query.join(Chat)
         if character_id:
-            msg_count_query = msg_count_query.where(Chat.character_id == character_id)
-            msg_query = msg_query.where(Chat.character_id == character_id)
+            # On `Message.character_id` — who spoke — not `Chat.character_id`,
+            # which is the chat's *primary* character. The old form returned
+            # every line of every group chat a character was in, including the
+            # other characters' replies, and excluded any chat where the
+            # character was a secondary member. The event payload has always
+            # reported the speaker, so the filter now agrees with the thing it
+            # filters.
+            #
+            # The `IS NULL` arm is the same fallback the event payload already
+            # applies (`chat_character_id` below): a message with no recorded
+            # speaker belongs to whoever the chat is about. Without it, a
+            # character filter would return nothing at all for any message
+            # written before speaker attribution existed.
+            msg_count_query = msg_count_query.where(
+                or_(
+                    Message.character_id == character_id,
+                    and_(Message.character_id.is_(None), Chat.character_id == character_id),
+                )
+            )
+            msg_query = msg_query.where(
+                or_(
+                    Message.character_id == character_id,
+                    and_(Message.character_id.is_(None), Chat.character_id == character_id),
+                )
+            )
         if location:
             msg_count_query = msg_count_query.where(Chat.story_location == location)
             msg_query = msg_query.where(Chat.story_location == location)
@@ -151,6 +185,10 @@ def get_timeline(
     if story_id:
         chapter_count_query = chapter_count_query.where(StoryChapter.story_id == story_id)
         chapter_query = chapter_query.where(StoryChapter.story_id == story_id)
+    if world_id:
+        # Chapters carry no world of their own — the story owns it.
+        chapter_count_query = chapter_count_query.join(Story).where(Story.world_id == world_id)
+        chapter_query = chapter_query.join(Story).where(Story.world_id == world_id)
     total_chapters = session.exec(chapter_count_query).one()
     chapters = session.exec(chapter_query).all()
     for ch in chapters:

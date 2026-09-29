@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -32,6 +32,10 @@ vi.mock('../hooks/useChats', () => ({
 
 vi.mock('../hooks/useLocations', () => ({
     useLocations: () => ({ data: [{ id: 'l-1', name: 'Test Location' }] }),
+}));
+
+vi.mock('../hooks/useWorlds', () => ({
+    useWorlds: () => ({ data: [{ id: 'w-1', name: 'Emberfall' }] }),
 }));
 
 vi.mock('framer-motion', () => ({
@@ -166,5 +170,61 @@ describe('Activity page', () => {
         expect(mockTimeline).toHaveBeenLastCalledWith(
             expect.objectContaining({ limit: 200 })
         );
+    });
+});
+
+describe('Activity page — filters that could never match', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockNavigate.mockReset();
+        mockTimeline.mockReturnValue({ data: eventsData, isLoading: false });
+    });
+
+    const openFilters = () => {
+        renderWithProviders(<Activity />);
+        fireEvent.click(screen.getByRole('button', { name: /filters/i }));
+    };
+
+    it('sends the location NAME, because the route matches a free-text column', () => {
+        openFilters();
+        const select = screen.getByLabelText('Location');
+        const option = within(select).getByRole('option', { name: 'Test Location' });
+        // `timeline.py` compares `?location=` against `Chat.story_location`.
+        // It was being handed the Location's UUID, which no chat can hold.
+        expect(option).toHaveValue('Test Location');
+        expect(option).not.toHaveValue('l-1');
+
+        fireEvent.change(select, { target: { value: 'Test Location' } });
+        expect(mockTimeline).toHaveBeenLastCalledWith(
+            expect.objectContaining({ location: 'Test Location' })
+        );
+    });
+
+    it('offers a world filter and passes it as the worldId timeline option', () => {
+        openFilters();
+        const select = screen.getByLabelText('World');
+        expect(within(select).getByRole('option', { name: 'Emberfall' })).toHaveValue('w-1');
+
+        fireEvent.change(select, { target: { value: 'w-1' } });
+        expect(mockTimeline).toHaveBeenLastCalledWith(
+            expect.objectContaining({ worldId: 'w-1' })
+        );
+    });
+
+    it('says plainly that a story filter does not scope chat messages', () => {
+        openFilters();
+        expect(
+            screen.getByText(/Chat messages are not filtered by story/i)
+        ).toBeInTheDocument();
+        // and the caveat is also in the page's own description, not only behind
+        // the Filters disclosure
+        expect(screen.getByText(/never chat messages/i)).toBeInTheDocument();
+    });
+
+    it('flags that the character filter matches a chat main character, not a speaker', () => {
+        openFilters();
+        expect(
+            screen.getByText(/Matches a chat's main character, not who spoke/i)
+        ).toBeInTheDocument();
     });
 });

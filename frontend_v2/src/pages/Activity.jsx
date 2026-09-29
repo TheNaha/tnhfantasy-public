@@ -6,6 +6,7 @@ import { useCharacters } from '../hooks/useCharacters';
 import { useStories } from '../hooks/useStories';
 import { useChats } from '../hooks/useChats';
 import { useLocations } from '../hooks/useLocations';
+import { useWorlds } from '../hooks/useWorlds';
 import EmptyState from '../components/EmptyState';
 import RoleplayPageShell from '../components/RoleplayPageShell';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -60,6 +61,7 @@ export default function Activity() {
         story_id: searchParams.get('story_id') || '',
         chat_id: searchParams.get('chat_id') || '',
         location: searchParams.get('location') || '',
+        worldId: searchParams.get('world_id') || '',
     };
     const [filters, setFilters] = useState(initialFilters);
     const [limit, setLimit] = useState(100);
@@ -70,6 +72,7 @@ export default function Activity() {
         if (filters.story_id) next.story_id = filters.story_id;
         if (filters.chat_id) next.chat_id = filters.chat_id;
         if (filters.location) next.location = filters.location;
+        if (filters.worldId) next.world_id = filters.worldId;
         setSearchParams(next, { replace: true });
     }, [filters, setSearchParams]);
 
@@ -82,6 +85,7 @@ export default function Activity() {
     const { data: stories = [] } = useStories();
     const { data: chats = [] } = useChats();
     const { data: locations = [] } = useLocations();
+    const { data: worlds = [] } = useWorlds();
 
     const events = useMemo(() => data?.events || [], [data]);
 
@@ -122,7 +126,7 @@ export default function Activity() {
     return (
         <RoleplayPageShell
             title="Activity"
-            description="Everything that has happened in your vault, newest first — conversations, story chapters, and character memories."
+            description="Everything that has happened in your vault, newest first — conversations, story chapters, and character memories. Chat, character, location and world narrow every stream; a story narrows only its own chapters and images, never chat messages."
             icon={Calendar}
             actions={
                 <div className="flex items-center gap-2">
@@ -156,7 +160,7 @@ export default function Activity() {
                     animate={{ opacity: 1, height: 'auto' }}
                     className="mb-6 p-4 bg-gray-800/40 border border-white/10 rounded-xl"
                 >
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         <div>
                             <label htmlFor="filter-character" className="block text-xs text-gray-400 mb-1">Character</label>
                             <select
@@ -170,6 +174,15 @@ export default function Activity() {
                                     <option key={c.id} value={c.id}>{c.name}</option>
                                 ))}
                             </select>
+                            {/* The route filters messages on `Chat.character_id` —
+                                the chat's primary character — not on the speaker
+                                (`Message.character_id`), so in a group chat every
+                                turn matches, including the other members'. Said
+                                here rather than left for the user to discover
+                                against a result set that looks wrong. */}
+                            <p className="mt-1 text-2xs text-gray-600">
+                                Matches a chat's main character, not who spoke. In a group chat it matches every turn.
+                            </p>
                         </div>
                         <div>
                             <label htmlFor="filter-story" className="block text-xs text-gray-400 mb-1">Story</label>
@@ -184,6 +197,13 @@ export default function Activity() {
                                     <option key={s.id} value={s.id}>{s.title || s.id}</option>
                                 ))}
                             </select>
+                            {/* `story_id` is applied to the chapter and image
+                                queries only. The message query has no story
+                                column, so it is deliberately left alone — a chat
+                                message has no story to belong to. */}
+                            <p className="mt-1 text-2xs text-gray-600">
+                                Narrows this story's chapters and images. Chat messages are not filtered by story.
+                            </p>
                         </div>
                         <div>
                             <label htmlFor="filter-chat" className="block text-xs text-gray-400 mb-1">Chat</label>
@@ -201,6 +221,12 @@ export default function Activity() {
                         </div>
                         <div>
                             <label htmlFor="filter-location" className="block text-xs text-gray-400 mb-1">Location</label>
+                            {/* The option value is the location's NAME, not its id.
+                                `timeline.py` matches `?location=` against
+                                `Chat.story_location`, a free-text column — it was
+                                being sent the Location's UUID, so the filter could
+                                never match anything. The name is the only value
+                                that column can hold. */}
                             <select
                                 id="filter-location"
                                 value={filters.location}
@@ -209,7 +235,24 @@ export default function Activity() {
                             >
                                 <option value="">All locations</option>
                                 {locations.map(l => (
-                                    <option key={l.id} value={l.id}>{l.name}</option>
+                                    <option key={l.id} value={l.name}>{l.name}</option>
+                                ))}
+                            </select>
+                            <p className="mt-1 text-2xs text-gray-600">
+                                Matches the chat's free-text location, by name.
+                            </p>
+                        </div>
+                        <div>
+                            <label htmlFor="filter-world" className="block text-xs text-gray-400 mb-1">World</label>
+                            <select
+                                id="filter-world"
+                                value={filters.worldId}
+                                onChange={(e) => updateFilter('worldId', e.target.value)}
+                                className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                            >
+                                <option value="">All worlds</option>
+                                {worlds.map(w => (
+                                    <option key={w.id} value={w.id}>{w.name}</option>
                                 ))}
                             </select>
                         </div>
