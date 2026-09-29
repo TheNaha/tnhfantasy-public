@@ -58,15 +58,37 @@ class BaseProviderClient(abc.ABC):
             return {
                 "provider_id": self.provider_id,
                 "total": len(all_files),
-                "by_directory": by_directory
+                "by_directory": by_directory,
+                # The container-side root the directories above resolve against.
+                # It was in `runtime_config` and read by nothing, so the reported
+                # paths could not be mapped onto the filesystem even by an
+                # operator with shell access to the volume.
+                "storage_root": self.runtime_config.get("storage_dir"),
             }
         except Exception as e:
             logger.error(f"[{self.provider_id}] Failed to get storage stats: {e}")
-            return {"provider_id": self.provider_id, "total": 0, "by_directory": {}, "error": str(e)}
+            return {"provider_id": self.provider_id, "total": 0, "by_directory": {}, "storage_root": self.runtime_config.get("storage_dir"), "error": str(e)}
+
+    # Keys an authenticated `POST /config` may not change.
+    #
+    # `storage_dir` is `$COMFY_MODELS_PATH`, read once at import against a volume
+    # mount that the image built, and for every remote engine the models are not
+    # on this filesystem at all — they are on the provider's. So a config write
+    # could not move a byte, but `update_config` answered
+    # `{"status": "updated", "updated_keys": ["storage_dir"]}` and the value came
+    # straight back on the next `GET /config`, which is the worst of both: an
+    # operator reads that the change took and the container behaves as before.
+    # The key stays — it is part of the seven-key runtime_config contract every
+    # worker emits and every `/config` reader sees — it is simply not settable.
+    _READ_ONLY_CONFIG_KEYS = frozenset({"storage_dir"})
 
     def update_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         updated = []
+        rejected = {}
         for key, value in updates.items():
+            if key in self._READ_ONLY_CONFIG_KEYS:
+                rejected[key] = "fixed at container build; not settable at runtime"
+                continue
             if key in self.runtime_config:
                 self.runtime_config[key] = value
                 updated.append(key)
@@ -74,7 +96,12 @@ class BaseProviderClient(abc.ABC):
                     logger.info(f"[{self.provider_id}] Config updated: {key} = ✓ Set")
                 else:
                     logger.info(f"[{self.provider_id}] Config updated: {key} = {value}")
-        return {"status": "updated", "updated_keys": updated, "config": self.runtime_config}
+        return {
+            "status": "updated" if updated else "rejected",
+            "updated_keys": updated,
+            "rejected_keys": rejected,
+            "config": self.runtime_config,
+        }
 
     async def cancel_job(self, request: CancelJobRequest) -> Dict[str, Any]:
         job_id = request.job_id

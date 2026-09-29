@@ -2,6 +2,7 @@ import asyncio
 import os
 import json
 import time
+import urllib.parse
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -332,11 +333,17 @@ class RemoteComfyProviderClient(BaseProviderClient):
         instead, so peak memory here is one chunk on each side.
         """
         client = get_http_client()
+        # `quote(..., safe="/")`, exactly as the backend quotes the same path in
+        # `infrastructure/providers/provider_registry.py`. A model path is a path
+        # segment, and `#`, `?` and `%` are all legal in one: unquoted, a
+        # checkpoint called `flux#1.safetensors` requested everything up to the
+        # `#` and the agent answered 404 for a file it is holding.
+        url = f"{REMOTE_AGENT_URL}/get-file/{urllib.parse.quote(path, safe='/')}"
 
         async def _stream() -> AsyncIterator[bytes]:
             async with client.stream(
                 "GET",
-                f"{REMOTE_AGENT_URL}/get-file/{path}",
+                url,
                 headers=self.get_agent_headers(),
                 timeout=_GET_FILE_TIMEOUT_SECONDS,
             ) as response:

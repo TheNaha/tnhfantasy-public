@@ -21,6 +21,7 @@ from provider_core.responses import (
     ok,
     outcome,
     retryable_for_exception,
+    retryable_for_status,
 )
 logger = logging.getLogger("provider_core.engines.vllm_modal")
 
@@ -229,6 +230,28 @@ class VLLMModalProviderClient(BaseProviderClient):
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 
+    def _retryable_for_remote_error(self, data: Dict[str, Any]) -> bool:
+        """The shared ladder, applied to a failure the REMOTE reported.
+
+        `retryable_for_exception` takes the exception because that is where the
+        HTTP status and the httpx exception type live. Here the remote has
+        already turned its exception into a payload, so the ladder's inputs are
+        the same two facts wherever they survived the crossing: an explicit
+        `retryable`, then an HTTP status. With neither, the failure is permanent
+        — which is what `retryable_for_exception` answers for anything it cannot
+        classify as transient, and the opposite of the hardcoded `True` this
+        used, which re-ran a permanently-failing request across every provider
+        in the pool and spent real GPU time to arrive at the same answer.
+        """
+        marker = data.get("retryable")
+        if isinstance(marker, bool):
+            return marker
+        for key in ("status_code", "http_status"):
+            status = data.get(key)
+            if isinstance(status, int):
+                return retryable_for_status(status)
+        return False
+
     def _translate_remote_event(self, raw, job_id) -> str:
         """Translate a remote VLLMEngine dict into a unified TaskEvent line.
 
@@ -241,9 +264,9 @@ class VLLMModalProviderClient(BaseProviderClient):
         try:
             data = json.loads(raw) if isinstance(raw, str) else raw
         except (json.JSONDecodeError, TypeError):
-            return json.dumps({"event": "failed", "job_id": job_id, "message": f"Malformed remote event: {raw}", "retryable": True})
+            return json.dumps({"event": "failed", "job_id": job_id, "message": f"Malformed remote event: {raw}", "retryable": False})
         if not isinstance(data, dict):
-            return json.dumps({"event": "failed", "job_id": job_id, "message": f"Malformed remote event: {raw}", "retryable": True})
+            return json.dumps({"event": "failed", "job_id": job_id, "message": f"Malformed remote event: {raw}", "retryable": False})
 
         msg_type = data.get("type") or data.get("status")
         if msg_type == "progress":
@@ -254,7 +277,12 @@ class VLLMModalProviderClient(BaseProviderClient):
                 return TaskEvent(event="cancelled", job_id=job_id, outputs=data.get("outputs")).to_ndjson()
             return TaskEvent(event="completed", job_id=job_id, outputs=data.get("outputs")).to_ndjson()
         if msg_type == "error":
-            return TaskEvent(event="failed", job_id=job_id, message=data.get("message", "Unknown error"), retryable=True).to_ndjson()
+            return TaskEvent(
+                event="failed",
+                job_id=job_id,
+                message=data.get("message", "Unknown error"),
+                retryable=self._retryable_for_remote_error(data),
+            ).to_ndjson()
         return json.dumps(data)
 
     async def setup_models(self) -> Dict[str, Any]:
