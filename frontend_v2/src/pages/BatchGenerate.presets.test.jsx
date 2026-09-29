@@ -61,12 +61,23 @@ function seedPreset(name, preset) {
     }));
 }
 
-/** The model lists arrive from React Query, so a <select> has no options yet. */
+/**
+ * The model lists arrive from React Query, so a <select> has no options yet.
+ *
+ * The timeout is explicit because testing-library's 1 s default is a wall-clock
+ * assumption, not a correctness one: this file takes ~12 s in isolation, and
+ * under full-suite load the first render of a 129-file run crossed 1 s and the
+ * test failed on a page that was in fact correct. The assertion is unchanged —
+ * the options still have to arrive.
+ */
 async function waitForModelOptions() {
-    await waitFor(() => {
-        expect(screen.getByRole('option', { name: 'Dreamer' })).toBeInTheDocument();
-        expect(screen.getByRole('option', { name: 'extra_vae.safetensors' })).toBeInTheDocument();
-    });
+    await waitFor(
+        () => {
+            expect(screen.getByRole('option', { name: 'Dreamer' })).toBeInTheDocument();
+            expect(screen.getByRole('option', { name: 'extra_vae.safetensors' })).toBeInTheDocument();
+        },
+        { timeout: 10_000 }
+    );
 }
 
 describe('BatchGenerate presets and control parity', () => {
