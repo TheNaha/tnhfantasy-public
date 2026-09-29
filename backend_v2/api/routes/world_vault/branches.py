@@ -217,9 +217,31 @@ def create_branch(
             field="message_id",
         )
 
+    # Copies are walked in `(created_at, id)` order, so a message's predecessor
+    # in the copied prefix is always resolved before the message itself.
+    #
+    # `parent_id` was previously `old_to_new.get(msg.parent_id)`, which is
+    # always `None`: nothing in production ever WROTE `Message.parent_id`, so
+    # every source message's own parent was null and the copied branch came out
+    # with no edges — `get_branches` returned a flat list, and a client that
+    # renders the tree had nothing to render. Two rules, in order:
+    #
+    #   1. a source `parent_id` that is itself in the copied prefix, remapped to
+    #      its new id — this is what preserves a branch cut out of another branch;
+    #   2. otherwise the previous copied message, which is what a conversation
+    #      prefix actually is.
+    #
+    # Rule 2 is also what keeps the graph connected when the source's parent
+    # points outside the copied range (a parent older than the anchor, or in a
+    # different thread), where a bare `old_to_new.get(...)` would return None and
+    # silently re-create the same flat list.
+    previous_new_id: str | None = None
     for msg in branch_msgs:
         new_id = str(uuid4())
         old_to_new[msg.id] = new_id
+        parent_new_id = (
+            old_to_new.get(msg.parent_id) if msg.parent_id else None
+        ) or previous_new_id
         new_msg = Message(
             id=new_id,
             chat_id=chat_id,
@@ -231,13 +253,14 @@ def create_branch(
             tool_calls=dict(msg.tool_calls) if msg.tool_calls else None,
             message_metadata=dict(msg.message_metadata) if msg.message_metadata else None,
             pinned=msg.pinned,
-            parent_id=old_to_new.get(msg.parent_id) if msg.parent_id else None,
+            parent_id=parent_new_id,
             branch_id=new_branch_id,
             branch_name=branch_name,
             created_at=msg.created_at,
             updated_at=datetime.now(timezone.utc),
         )
         session.add(new_msg)
+        previous_new_id = new_id
 
     session.commit()
 

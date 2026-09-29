@@ -190,6 +190,14 @@ class SendMessageRequest(BaseModel):
     narrate: bool = False
     max_agentic_depth: int | None = None
     target_character_id: str | None = None
+    # Which thread to continue. Omitted means the original thread, which is the
+    # same `branch_id IS NULL` convention the message read and `create_branch`
+    # use. Without this field a forked thread could be read but never continued:
+    # `Message.branch_id` was written by nothing except `create_branch`, so every
+    # user message landed in the original thread and the branch stayed frozen at
+    # the moment it was cut. The frontend already sends the branch on reads
+    # (`useMessages`), so only the write side was missing.
+    branch_id: str | None = None
 
 
 @router.get("", response_model=list[Chat])
@@ -835,6 +843,16 @@ def _add_message_prep_sync(
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
+    if request.branch_id and not session.exec(
+        select(Message.id)
+        .where(Message.chat_id == chat_id, Message.branch_id == request.branch_id)
+        .limit(1)
+    ).first():
+        # A branch id from another chat, or one that was never created, would
+        # write the message into a thread no read path can reach and the reply it
+        # triggers would never be shown. Refuse instead of orphaning it.
+        raise NotFoundError("Message branch", request.branch_id)
+
     if request.image_path:
         output_root = os.path.realpath(settings.output_dir)
         image_candidate = os.path.realpath(
@@ -850,6 +868,7 @@ def _add_message_prep_sync(
         role=request.role,
         content=request.content,
         image_path=request.image_path,
+        branch_id=request.branch_id,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )
@@ -866,8 +885,17 @@ def _add_message_prep_sync(
         # limit — the whole transcript materialised and ORM-instantiated on every
         # send, then handed to `prune_context`, which keeps at most
         # MAX_CONTEXT_MESSAGES of it anyway.
+        #
+        # `branch_id=message.branch_id` — the thread this message was posted
+        # into, not "every message sharing its chat_id". Branch copies carry the
+        # originals' `created_at`, so an unfiltered read hands the model the same
+        # conversation duplicated and interleaved. The read route was fixed for
+        # this; this is the other read of the same data, on the paid path.
         past_messages = message_repo.list_by_chat(
-            chat_id, limit=MAX_CONTEXT_MESSAGES, newest_first=True
+            chat_id,
+            limit=MAX_CONTEXT_MESSAGES,
+            newest_first=True,
+            branch_id=message.branch_id,
         )
 
         characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
@@ -953,6 +981,14 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
 
             if request.generator_checkpoint:
                 metadata["generator_checkpoint"] = request.generator_checkpoint
+
+            if message.branch_id:
+                # Carried so the reply lands on the thread the question was asked
+                # on. `_handle_chat_reply` is the only writer of CHAR messages and
+                # it has no other way to know which fork this answer belongs to —
+                # without this the branch shows the question and the answer appears
+                # in the original thread, so the fork is still not continuable.
+                metadata["branch_id"] = message.branch_id
 
             job = await job_service.create_job(
                 task_type="llm",
@@ -1496,7 +1532,7 @@ async def regenerate_reply(
 
     # The delete + history load is synchronous session work and the context
     # build below is awaited, so the whole prologue runs in a worker thread.
-    chat, anchor_character_id, deleted, prev_agentic, prev_checkpoint, remaining, ctx_kwargs = await asyncio.to_thread(
+    chat, anchor_character_id, anchor_branch_id, deleted, prev_agentic, prev_checkpoint, remaining, ctx_kwargs = await asyncio.to_thread(
         _regenerate_prep_sync, session, chat_repo, chat_id, req.message_id
     )
 
@@ -1519,7 +1555,12 @@ async def regenerate_reply(
         system_prompt=system_prompt or None,
         model=chat.llm_model or _get_default_llm_model(),
         samplers=sampler_overrides(chat),
-        extra_metadata={"regenerated": True},
+        extra_metadata={
+            "regenerated": True,
+            # Same reason as the send path: `_handle_chat_reply` has no other way
+            # to know which fork the regenerated answer belongs to.
+            "branch_id": anchor_branch_id,
+        },
     )
     if prev_agentic:
         from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
@@ -1584,9 +1625,18 @@ def _regenerate_prep_sync(
             raise NotFoundError("Message", message_id)
     else:
         # Find the most recent user message without scanning full history.
+        # `branch_id IS NULL` for the same reason every other read in this file
+        # scopes by branch: without it a branch's copy of a user message — same
+        # `chat_id`, same `created_at` — can be chosen as the anchor, and the
+        # regeneration would then delete the ORIGINAL thread's tail. The request
+        # carries no branch, so "the conversation" means the original thread.
         anchor = session.exec(
             select(Message)
-            .where(Message.chat_id == chat_id, Message.role == MessageRole.USER)
+            .where(
+                Message.chat_id == chat_id,
+                Message.role == MessageRole.USER,
+                Message.branch_id.is_(None),
+            )
             .order_by(Message.created_at.desc())
             .limit(1)
         ).first()
@@ -1645,6 +1695,7 @@ def _regenerate_prep_sync(
     return (
         chat,
         getattr(anchor, "character_id", None),
+        getattr(anchor, "branch_id", None),
         deleted,
         prev_agentic,
         prev_checkpoint,
