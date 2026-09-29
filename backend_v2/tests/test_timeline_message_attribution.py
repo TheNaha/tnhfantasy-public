@@ -54,7 +54,7 @@ def _add_message(session: Session, chat: Chat, *, character_id, kind, content, r
 
 
 def _message_events(client, **params):
-    resp = client.get("/api/v2/timeline/timeline", params=params)
+    resp = client.get("/api/v2/timeline", params=params)
     assert resp.status_code == 200, resp.text
     return [e for e in resp.json()["events"] if e["type"] == "message"]
 
@@ -103,7 +103,16 @@ class TestMessageAttribution:
     def test_character_filter_does_not_relabel_every_message_in_the_chat(
         self, client, session
     ):
-        """`?character_id=X` used to make the whole chat's timeline read as X."""
+        """`?character_id=X` used to make the whole chat's timeline read as X.
+
+        The original fix here was attribution: the label. The filter stayed
+        coarse and returned every message in any chat the character was in, so
+        this test asserted that the *other* speaker's message came back correctly
+        labelled. It no longer comes back at all — the filter now matches
+        `Message.character_id`, so a group chat's replies are separated rather
+        than relabelled. Both halves are asserted below, because the first is
+        the old regression and the second is the newer one.
+        """
         chat, primary, other = _seed_group_chat(session)
         from_other = _add_message(
             session, chat, character_id=other, kind=MessageKind.CHAR, content="mine"
@@ -114,8 +123,29 @@ class TestMessageAttribution:
 
         events = {e["id"]: e for e in _message_events(client, character_id=primary.id)}
 
+        # Relabelled correctly...
         assert events[from_primary.id]["character_id"] == primary.id
-        assert events[from_other.id]["character_id"] == other.id
+        # ...and the other speaker's line is not attributed to them at all.
+        assert from_other.id not in events
+
+    def test_a_character_filter_still_returns_unattributed_messages(
+        self, client, session
+    ):
+        """A message with no recorded speaker belongs to whoever the chat is
+        about — the same fallback the event payload applies. Without it a
+        character filter returns nothing for anything written before speaker
+        attribution existed."""
+        from tests.test_timeline_route import _seed_chat_with_messages
+
+        char_a = Character(name="Alpha")
+        session.add(char_a)
+        session.commit()
+        session.refresh(char_a)
+        chat_a, _ = _seed_chat_with_messages(session, char_a, content="from alpha")
+
+        events = _message_events(client, character_id=char_a.id)
+        assert events
+        assert all(e["chat_id"] == chat_a.id for e in events)
 
 
 class TestNoNPlusOne:

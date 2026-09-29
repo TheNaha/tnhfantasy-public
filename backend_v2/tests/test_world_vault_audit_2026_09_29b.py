@@ -917,7 +917,7 @@ class TestTimelineAssetColumns:
             return real_exec(stmt)
 
         monkeypatch.setattr(session, "exec", _patched)
-        body = client.get("/api/v2/timeline/timeline?limit=10").json()
+        body = client.get("/api/v2/timeline?limit=10").json()
         assert any(e["type"] == "asset" for e in body["events"]), body
 
         main_path = [s for s in captured if "filename" in s]
@@ -941,7 +941,7 @@ class TestTimelineAssetColumns:
             )
         )
         session.commit()
-        events = client.get("/api/v2/timeline/timeline?types=image").json()["events"]
+        events = client.get("/api/v2/timeline?types=image").json()["events"]
         assert events, (
             "`?types=image` matched nothing: the Activity page sends that value "
             "for its \"show images\" toggle and the events are tagged `asset`"

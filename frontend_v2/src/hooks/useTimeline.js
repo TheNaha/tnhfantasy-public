@@ -10,15 +10,25 @@ import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
  */
 export const TIMELINE_KEY = buildQueryKey(QUERY_KEYS.TIMELINE);
 
+/**
+ * Callers may pass a filter in camelCase; the route spells it snake_case. Only
+ * the ones that differ are listed — everything else is already a valid query
+ * parameter and is forwarded verbatim, which is why the `location` filter stays
+ * `location` (it takes a location *name*, matching `Chat.story_location`).
+ */
+const PARAM_NAMES = {
+    worldId: 'world_id',
+};
+
 export const useTimeline = (filters = {}) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.TIMELINE, filters),
         queryFn: () => {
             const params = new URLSearchParams();
             Object.entries(filters).forEach(([key, value]) => {
-                if (value) params.set(key, value);
+                if (value) params.set(PARAM_NAMES[key] || key, value);
             });
-            return api.get(`/api/v2/timeline/timeline?${params.toString()}`);
+            return api.get(`/api/v2/timeline?${params.toString()}`);
         },
         enabled: true,
     });
