@@ -27,13 +27,13 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from api.deps import (
     get_job_service,
     get_job_submission_service,
 )
-from core.entities import JobStatus
+from core.entities import JobStatus, VALID_TASK_TYPES
 from core.exceptions import ValidationError
 from infrastructure.logging import api_logger
 from infrastructure.request_dedup import deduplicated, make_key
@@ -65,6 +65,22 @@ class CreateJobRequest(BaseModel):
     workflow: dict
     metadata: dict = {}
     task_type: str = "image"
+
+    @field_validator("task_type")
+    @classmethod
+    def _check_task_type(cls, value: str) -> str:
+        # Constrained here rather than left a bare `str` because SQLModel does
+        # not run `field_validator`s for table models, so
+        # `Job._validate_task_type` never fires. A typo then routed the job to
+        # whichever queue "isn't llm" and left it PENDING forever with
+        # `enqueued_at` set and no error written — the claim query's predicate
+        # could never match it. Resolved from `VALID_TASK_TYPES` so this and the
+        # entity's own check cannot drift apart.
+        if value not in VALID_TASK_TYPES:
+            raise ValueError(
+                f"task_type must be one of {sorted(VALID_TASK_TYPES)}, got {value!r}"
+            )
+        return value
 
 
 class RetryJobRequest(BaseModel):
