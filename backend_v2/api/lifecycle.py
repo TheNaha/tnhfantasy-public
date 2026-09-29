@@ -289,8 +289,24 @@ async def startup_application(process_job, ws_manager):
     )
 
     logger.info("startup_init", phase="job_recovery")
-    await recover_post_processing_jobs()
+    # Order is load-bearing, and it is the opposite of how it read.
+    #
+    # `recover_pending_jobs` calls `QueueManager.recover`, whose Postgres path runs
+    # `_reset_claims_and_requeue_sync`: an UPDATE that sets every job in
+    # SENT_TO_PROVIDER / CONNECTED / PRE_GENERATION / GENERATING /
+    # **POST_PROCESSING** / RETRYING back to PENDING and clears its claim markers
+    # (`services/job_queue.py`). PENDING-with-no-claim IS the claim predicate, so
+    # once that sweep has run, a live worker will pick the job up and re-run the
+    # entire PAID generation.
+    #
+    # So the jobs that were mid-finalisation must be finished or failed BEFORE the
+    # sweep. Run the other way round, a job that died part-way through
+    # post-processing — outputs already persisted on the provider, reconciliation
+    # not yet done — was first reset to PENDING and then queued, and the worker
+    # re-generated the images that were already paid for and overwrote the
+    # outputs the first finalization was in the middle of writing.
     await recover_pending_jobs()
+    await recover_post_processing_jobs()
 
     logger.info("startup_init", phase="scheduler")
     start_scheduler()
