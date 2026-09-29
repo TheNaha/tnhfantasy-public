@@ -239,16 +239,33 @@ class TestSchedulerGuard:
 
     def test_distinct_job_ids_get_distinct_locks(self):
         """Two jobs must not contend: the idle simulation holding its lock must
-        not stop memory extraction from running."""
-        from infrastructure.scheduler import _AdvisoryRunLock
+        not stop memory extraction from running.
 
-        def _key(job_id: str) -> int:
-            return abs(hash(job_id)) % 1_000_000_007
+        This used to re-implement the key expression here and assert on the
+        copy, plus check that `__enter__` mentioned the namespace constant. Both
+        halves could pass against a key derived from `str.__hash()` — the salt
+        that makes the whole guard inert across processes — because the copy was
+        not the code under test. It now calls the production function and
+        asserts the salt is gone.
+        """
+        from infrastructure.scheduler import (
+            _SCHEDULER_LOCK_NAMESPACE,
+            _AdvisoryRunLock,
+            _advisory_lock_key,
+        )
 
-        keys = {j: _key(j) for j in ("idle_sim", "memory_extraction", "civitai_sync")}
+        keys = {
+            j: _advisory_lock_key(j)
+            for j in ("idle_sim", "memory_extraction", "civitai_sync")
+        }
         assert len(set(keys.values())) == 3, f"lock keys collide: {keys}"
-        # And the class actually derives from that, rather than inventing its own.
-        assert "_SCHEDULER_LOCK_NAMESPACE" in _code_only(_AdvisoryRunLock.__enter__)
+        for key in keys.values():
+            assert _SCHEDULER_LOCK_NAMESPACE < key < 2**63
+        # And the class derives from that function rather than inventing its own,
+        # with no `str.__hash()` anywhere on the acquire or release path.
+        assert "self._key" in _code_only(_AdvisoryRunLock.__enter__)
+        for method in (_AdvisoryRunLock.__init__, _AdvisoryRunLock.__enter__, _AdvisoryRunLock.__exit__):
+            assert "hash(" not in _code_only(method)
 
 
 class TestEnvironmentContract:

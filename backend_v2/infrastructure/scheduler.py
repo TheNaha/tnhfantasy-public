@@ -3,6 +3,7 @@
 
 from collections.abc import Callable
 from datetime import datetime, timedelta
+import hashlib
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -28,6 +29,30 @@ _scheduler: AsyncIOScheduler | None = None
 _SCHEDULER_LOCK_NAMESPACE = 4_118_227_004_771_902_337
 
 
+def _advisory_lock_key(job_id: str) -> int:
+    """A lock key that is the SAME integer in every process that asks for it.
+
+    This was `namespace + abs(hash(job_id)) % 1_000_000_007`, and
+    `str.__hash__` is salted per process (PYTHONHASHSEED) — the salt is derived
+    from a per-process random value at interpreter start. So two processes
+    scheduling the same job id derived two different keys, `pg_try_advisory_lock`
+    was called with a key no other session held, it always returned true, and the
+    lock excluded nobody. Every process ran every tick, which is duplicated spend
+    for the two jobs that bill an LLM. `blake2b` is the fix: a cryptographic
+    digest has no per-process state, so the key is a pure function of the job id.
+
+    Truncated to the same 1,000,000,007 window the old expression used, so the
+    key range is unchanged and the sum with the namespace stays inside the
+    signed 64-bit range `pg_advisory_lock(bigint)` accepts — the namespace
+    already occupies most of it. The migration lock in the sibling module is a
+    hardcoded constant, which is the same guarantee by a different route.
+    """
+    digest = hashlib.blake2b(job_id.encode("utf-8"), digest_size=8).digest()
+    return _SCHEDULER_LOCK_NAMESPACE + (
+        int.from_bytes(digest, "big") % 1_000_000_007
+    )
+
+
 class _AdvisoryRunLock:
     """Context manager holding a per-run advisory lock for a scheduled job.
 
@@ -41,6 +66,8 @@ class _AdvisoryRunLock:
         self._session = None
         self._held = False
         self._granted = True
+        # Derived once, so the unlock below cannot disagree with the lock.
+        self._key = _advisory_lock_key(job_id)
 
     def __enter__(self) -> bool:
         from infrastructure.database import engine
@@ -52,12 +79,9 @@ class _AdvisoryRunLock:
 
         try:
             self._session = Session(engine)
-            key = _SCHEDULER_LOCK_NAMESPACE + (
-                abs(hash(self._job_id)) % 1_000_000_007
-            )
             self._held = bool(
                 self._session.exec(
-                    text("SELECT pg_try_advisory_lock(:key)"), params={"key": key}
+                    text("SELECT pg_try_advisory_lock(:key)"), params={"key": self._key}
                 ).scalar()
             )
             return self._held
@@ -77,10 +101,7 @@ class _AdvisoryRunLock:
 
             self._session.exec(
                 text("SELECT pg_advisory_unlock(:key)"),
-                params={
-                    "key": _SCHEDULER_LOCK_NAMESPACE
-                    + (abs(hash(self._job_id)) % 1_000_000_007)
-                },
+                params={"key": self._key},
             )
             self._session.commit()
         except Exception as exc:
