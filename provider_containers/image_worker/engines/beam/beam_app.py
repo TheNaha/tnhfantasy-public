@@ -27,7 +27,7 @@ import asyncio
 # source context. Deploying beam_app.py from only image_worker/engines/beam/ (without the
 # provider_containers root) can fail with ModuleNotFoundError: provider_core.
 from provider_core.auth import bearer_from_header, token_matches
-from provider_core.downloads import pending_download_paths
+from provider_core.downloads import pending_download_paths, pipeline_artifacts
 from provider_core.http_client import get_file_size_cap
 from provider_core.responses import failed, ok, outcome
 from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
@@ -437,8 +437,9 @@ async def delete_model(request: Request):
                     shutil.rmtree(full_path)
                 else:
                     os.remove(full_path)
-            for stale in pending_download_paths(full_path):
-                os.remove(stale)
+            for stale in pipeline_artifacts(full_path):
+                if os.path.exists(stale):
+                    os.remove(stale)
             if not path.endswith((".json", ".preview.png", ".sha256")):
                 base_path, _ = os.path.splitext(full_path)
                 for side_file in [base_path + ".json", base_path + ".preview.png", full_path + ".sha256"]:
@@ -514,8 +515,9 @@ async def delete_file(request: Request):
                     shutil.rmtree(full_path)
                 else:
                     os.remove(full_path)
-            for stale in pending_download_paths(full_path):
-                os.remove(stale)
+            for stale in pipeline_artifacts(full_path):
+                if os.path.exists(stale):
+                    os.remove(stale)
         except Exception as e:
             return False, str(e)
         return True, f"Deleted {path}"

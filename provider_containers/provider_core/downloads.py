@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 
-from .utils import DOWNLOADING_SUFFIX
+from .utils import DOWNLOADING_SUFFIX, LOCK_SUFFIX
 from .validation import validate_downloaded_file
 from .logging import get_logger
 
@@ -61,8 +61,38 @@ class _DownloadAttemptError(Exception):
         self.transient = transient
 
 
+class _HeldPathLock:
+    """The handle `exclusive_path_lock` yields.
+
+    `release_file()` is deliberately a separate call from leaving the `with`
+    block. Unlinking a flock file is unsafe in general — a process can be between
+    `open()` and `flock()` when the path disappears, and then it holds a lock on
+    an unlinked inode while a third `O_CREAT`s a fresh one and takes a different
+    lock — and the only party that can tell whether that is currently possible
+    is the one that just let go. The downloader knows: a *failed* attempt may be
+    resumed, and the resuming attempt must flock the same inode
+    (`tests/test_download_resume.py::test_lock_is_still_held_across_a_resume`
+    pins exactly that), whereas a *successful* one has published the model,
+    swapped every byte of it and left no resume slot, so a second downloader for
+    the same path has nothing to lose but the last `os.replace` — and
+    `_unique_temp_path` plus `_claim_resume_slot`'s `except OSError` already
+    make that race harmless.
+    """
+
+    __slots__ = ("_lock_path",)
+
+    def __init__(self, lock_path: str) -> None:
+        self._lock_path = lock_path
+
+    def release_file(self) -> None:
+        try:
+            os.remove(self._lock_path)
+        except OSError:
+            pass
+
+
 @contextlib.contextmanager
-def exclusive_path_lock(full_path: str) -> Iterator[None]:
+def exclusive_path_lock(full_path: str) -> Iterator[_HeldPathLock]:
     """Serialise downloads of the same destination across threads and processes.
 
     Without this, two concurrent downloads of one `full_path` shared the
@@ -77,6 +107,17 @@ def exclusive_path_lock(full_path: str) -> Iterator[None]:
     flock is used rather than an O_EXCL lock file because the kernel releases
     it if the process dies, so a crash mid-download cannot leave a lock that
     blocks every future attempt until someone deletes it by hand.
+
+    The lock *file* outlives the flock, because a 0-byte `.lock` is a transient
+    artifact that every validator counts as `partial` and nothing removed them:
+    `total_partial` grew by one for every model ever downloaded and stopped
+    meaning "a transfer is in flight", which is the only thing reconciliation
+    reads it for. A successful download unlinks its own lock
+    (`_HeldPathLock.release_file`) and a failed one deliberately does not, so
+    the resuming attempt flocks the same inode. The abandoned ones — a crashed
+    attempt, a lock with no model beside it — are reclaimed by the delete routes
+    via `pipeline_artifacts`, which is the only place that can tell an
+    in-flight attempt from a dead one.
     """
     lock_path = f"{full_path}.lock"
     os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
@@ -84,7 +125,7 @@ def exclusive_path_lock(full_path: str) -> Iterator[None]:
     try:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
-            yield
+            yield _HeldPathLock(lock_path)
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
     finally:
@@ -745,8 +786,14 @@ def download_model_to_path(**kwargs: Any) -> Dict[str, Any]:
     full_path = kwargs.get("full_path")
     if not full_path:
         raise ValueError("full_path is required")
-    with exclusive_path_lock(full_path):
-        return _download_model_to_path_unlocked(**kwargs)
+    with exclusive_path_lock(full_path) as held:
+        result = _download_model_to_path_unlocked(**kwargs)
+    # A published model has nothing left to resume, so its lock is dead weight
+    # that every validator would go on counting as a partial download. A failed
+    # or raised attempt keeps its lock, so the retry flocks the same inode.
+    if isinstance(result, dict) and result.get("status") == "success":
+        held.release_file()
+    return result
 
 
 def _download_model_to_path_unlocked(
@@ -977,3 +1024,24 @@ def pending_download_paths(full_path: str) -> Iterator[str]:
     for entry in entries:
         if entry.startswith(prefix) and entry.endswith(DOWNLOADING_SUFFIX):
             yield os.path.join(directory, entry)
+
+
+def pipeline_artifacts(full_path: str) -> Iterator[str]:
+    """Every pipeline-owned file belonging to `full_path`, lock included.
+
+    `pending_download_paths` deliberately does not name the lock: it is the
+    "is a transfer of this path in flight?" probe, and a `.lock` answers that
+    question wrongly — `exclusive_path_lock` creates one before it blocks, so a
+    lock exists for a *waiting* downloader as much as for a running one, and
+    treating it as a pending transfer would make `delete-model` claim a model
+    exists when only an abandoned lock does.
+
+    It is the operator-initiated delete routes that want all three, and only
+    they: there the user has asked for this model to go, so a lock beside it
+    belongs to it. Validation deliberately must not do this — a lock is 0 bytes,
+    reconciliation runs with `delete_invalid=True`, and unlinking one that is
+    held takes the model's `.json` and `.preview.png` with it, because
+    `os.path.splitext("x.safetensors.lock")[0]` is `"x.safetensors"`.
+    """
+    yield f"{full_path}{LOCK_SUFFIX}"
+    yield from pending_download_paths(full_path)
