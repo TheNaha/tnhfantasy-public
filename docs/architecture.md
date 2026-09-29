@@ -16,6 +16,15 @@ TNHComfy is designed around a decoupled, microservices-style architecture tailor
 - **Providers:** Serverless instances running on Modal or Beam.
 - **Role:** These remote environments execute the actual ComfyUI workflows (inferencing). By offloading heavy compute tasks to scalable serverless providers, the backend remains lightweight and responsive.
 
+## 4. PostgreSQL + pgvector
+- **Image:** `pgvector/pgvector:pg16`, the `db` service. Every other service waits on its healthcheck.
+- **Role:** The single indexer of application state — jobs, providers, characters, chats, lorebooks, stories, assets — across all three pillars. There is no second store to fall back to: the stack is Postgres-only, and `backend_v2/config.py`'s local-dev default is still `sqlite:///./data/db/comfy.db`, which this deployment cannot use because SQLite has no pgvector.
+- **Vector columns:** `LorebookEntry.embedding` is `Vector(384)`, which is what powers the semantic lorebook search the roleplay and story context builders rely on. The extension is the reason the database is not interchangeable with a plain Postgres.
+- **Schema management:** No Alembic. An ordered list of `MigrationStep(version=..., apply_fn=...)` entries in `backend_v2/infrastructure/migrations/steps.py` runs at backend startup, each recorded in `schema_migrations` and applied once.
+- **DSN:** Compose passes discrete `POSTGRES_HOST/PORT/USER/PASSWORD/DB` to the backend and the backend assembles the URL from them. It does so in compose, not in an interpolated string, because the URL is the only place a password can be percent-encoded — interpolating it there produced an unparseable DSN whenever `POSTGRES_PASSWORD` contained `@ : / #`, the backend failed its healthcheck, and nothing behind it started.
+- **Migrations and scheduled jobs** are advisory-locked, which is what makes it safe for more than one process to hold the schema.
+- **Persistence:** `data/pgdata` is a bind mount, so the World Vault survives `docker compose down -v`. Nothing in this repo takes a backup; `pg_dump` on a schedule is the operator's responsibility.
+
 ## High-Level Flow
 1. **User Request:** A user submits a generation request via the Frontend.
 2. **Job Queue:** The Frontend sends an API request to the Backend, which queues the job in PostgreSQL and dispatches it to an available provider worker.

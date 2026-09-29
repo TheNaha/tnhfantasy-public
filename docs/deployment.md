@@ -18,16 +18,22 @@ cp .env.example.provider.engines .env.modal-hp196
 provider with no `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` that cannot start. The engines
 file is the canonical reference and says so at its own line 5.
 
-With `--profile providers`, compose needs **all five** provider env files present
-(`.env.modal-zetsuke`, `.env.modal-hp196`, `.env.modal-stepmania`, `.env.llm-local`,
-`.env.direct-url`) plus `.env`, and refuses to start if any is missing —
-`scripts/preflight.sh` hard-fails on exactly these. There is no
-`.env.example.llm-local`; the LLM worker's variables are the provider ones.
+With `--profile providers`, compose needs **all six** provider env files present
+(`.env.modal-zetsuke`, `.env.modal-hp196`, `.env.modal-stepmania`,
+`.env.tts-modal-hp196`, `.env.llm-local`, `.env.direct-url`) plus `.env`, and
+refuses to start if any is missing — `scripts/preflight.sh` hard-fails on exactly
+these, deriving the list from the compose file's own `env_file:` entries. There is
+no `.env.example.llm-local`; the LLM worker's variables are the provider ones.
+`.env.tts-modal-hp196` is the sixth and has its own example: the TTS provider is a
+separate container with its own Modal app name, model directory, scale-down
+window and timeout. It is the same Modal workspace as the image providers, so its
+`MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` are the same credentials, not a new account.
 
 ```bash
 cp .env.example.provider.engines .env.modal-zetsuke
 cp .env.example.provider.engines .env.modal-stepmania
 cp .env.example.provider.engines .env.llm-local
+cp .env.example.tts           .env.tts-modal-hp196
 cp .env.example.direct-url     .env.direct-url
 ```
 
@@ -42,9 +48,10 @@ Key variables:
 The provided `docker-compose.yml` orchestrates the backend, frontend, and provider containers.
 
 ### Architecture
-- **backend_v2**: FastAPI server on port 8002. Runs as `user: "1000:1000"`. Readiness check hits `/api/ready`.
+- **db**: PostgreSQL 16 with the `pgvector` extension. Everything else waits on its healthcheck. Published on `127.0.0.1:5432` by the dev override only.
+- **backend_v2**: FastAPI server on port 8002. Runs as `user: "1000:1000"`. Readiness check hits `/api/ready`. Assembles its own DSN from the `POSTGRES_*` variables compose passes it — compose does not set `COMFY_DATABASE_URL`.
 - **frontend_v2**: React/Vite dev server or Nginx (prod). Depends on backend health. Proxied via Traefik.
-- **provider-modal** (and other providers): Serverless worker containers. Container names must be `tnhcomfy-{PROVIDER_ID}` for backend auto-detection. Depends on backend health.
+- **providers** (one service per provider, all in the `providers` profile): `provider-modal-zetsuke`, `provider-modal-hp196`, `provider-modal-stepmania`, `provider-tts-modal-hp196`, `provider-llm-local`, `provider-direct-url`. Each is a long-running worker container that self-registers with the backend by heartbeat and holds its own credentials; `provider-tts-modal-hp196` additionally serves as the deploy container for the `comfy-modal-tts` Modal app. Container names must be `tnhcomfy-{PROVIDER_ID}` — the backend derives the name it looks for from the provider id — and they depend on backend health.
 
 ### Data Volumes
 The `./data` directory is mounted into all containers at `/data`. This shared volume contains:
@@ -81,16 +88,64 @@ The application should now be accessible.
    - **Backend:** Port 8002, published on `0.0.0.0` by the base compose in both modes. It has no authentication, so on a reachable host it is open to anyone who can route to it. Restrict it at the firewall, or bind it to loopback and reach the backend through the frontend's `/api/` proxy.
 
 ### Adding a Provider
-1. Copy the `provider-modal` block in `docker-compose.yml`.
-2. Set a unique `PROVIDER_ID` environment variable.
-3. Set `container_name` to `tnhcomfy-{PROVIDER_ID}` (required for backend detection).
+`ProviderDeployOrchestrator.start_attempt_container` builds its deploy container
+from `dockerfile=f"{worker_kind}_worker/Dockerfile"` against `provider_containers`
+as the build context, and `backend_v2/infrastructure/providers/runtime.py` looks the
+runtime container up by the name `tnhcomfy-{PROVIDER_ID}`. So a new provider is a
+block in `docker-compose.yml`, an env example, and the two names inside it that
+have to agree:
+
+1. Copy the `provider-llm-local` block — it has no Modal- or Beam-specific
+   settings, so it is the one to start from — and paste it into the `providers`
+   profile.
+2. Set a unique `PROVIDER_ID`. `_infer_discovery_type` in
+   `backend_v2/api/routes/providers/crud.py` reads the name, not the image or the
+   environment, and falls through to `direct_url`/`image` for anything it does not
+   recognise — which registers the provider as an image worker and offers it
+   checkpoint jobs its container cannot run. It matches `modal-`, `beam-`, the
+   exact string `direct-url`, and the substrings `llm` and `tts`. `tts` is checked
+   first, deliberately: `tts-modal-<name>` would otherwise be read as `modal-`.
+3. Set `container_name` to `tnhcomfy-{PROVIDER_ID}`, **verbatim** — the underscore
+   in `direct_url` is part of the id, not a typo to normalise — and point
+   `env_file:` at a `.env.<PROVIDER_ID>` you also add as `.env.example.<PROVIDER_ID>`
+   so `scripts/preflight.sh` and the CI compose check can find it.
+4. If it needs a credential, copy `.env.example.provider.engines` (never
+   `.env.example.provider`, which is an all-commented stub) to
+   `.env.<PROVIDER_ID>`.
+5. `bash scripts/preflight.sh` and
+   `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers config --quiet`
+   both read compose's `env_file:` entries, so a new service with no env file fails
+   both. CI does the second one on every change to `docker-compose*.yml`,
+   `scripts/**` or `.env.example*`.
 
 ### Remote Agent
-The optional remote ComfyUI agent has its own environment file:
+The optional remote ComfyUI agent is a **separate stack** with its own compose
+file, its own env file, and its own required variable:
 ```bash
-cp remote_agent/.env.agent.example remote_agent/.env.agent
+cd remote_agent
+cp .env.agent.example .env.agent
+# edit .env.agent and set a real REMOTE_AGENT_TOKEN
 ```
-Replace the example model path in `remote_agent/docker-compose.yml` before starting that stack.
+
+`DATA_DIR` — the GPU rig's storage root for the agent — must be in **compose's own
+environment**, because compose interpolates `${DATA_DIR}` at parse time to build the
+bind mount, before any `env_file:` is read. Putting it in `.env.agent` has no
+effect: `env_file:` only populates the container environment, and by then the
+mount is already resolved. The file makes this a hard requirement (`:?`) rather
+than shipping a placeholder path that `up` would create as a literal directory on
+the host:
+
+```bash
+DATA_DIR=/home/user/ComfyUI/models docker compose up -d
+```
+
+The same applies to an exported `DATA_DIR` or a `.env` file *next to* that compose
+file. See [`remote_agent/README.md`](../remote_agent/README.md) for the binary
+build, the Windows path, and what `DATA_DIR` is expected to point at — note that
+`remote_agent/README.md`'s variable table calls it the storage root containing
+`models/`, `output/` and `input/`, while the comments in
+`remote_agent/docker-compose.yml` still describe it as the models directory. The
+two disagree and only the agent's behaviour on the rig can settle it.
 
 To gracefully shut down the application:
 ```bash

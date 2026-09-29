@@ -2,11 +2,25 @@
 
 TNHComfy exposes REST and WebSocket APIs for job lifecycle, model management, providers, and runtime state.
 
+> **This document is partial, and the OpenAPI schema is the source of truth.**
+> It documents 201 of the **329** live operations on the main router, chosen for
+> the endpoints a caller needs to know about by name. The remaining ~128 are not
+> listed here rather than listed wrongly. Read `/openapi.json` (or `/docs`) for
+> the whole surface.
+>
+> Every entry below was checked against `app.openapi()["paths"]` on 2026-09-29,
+> after this file was found to carry 26 endpoints that do not exist — two whole
+> sections under the wrong URL prefix, plus invented model routes. A green test
+> suite says nothing about whether a document matches the code; that check is
+> this line, and it is the reason the note is here.
+
 ## Base URL
 Typically `http://localhost:8002`.
 
 ## Authentication
 TNHComfy is designed for trusted/self-hosted environments. If exposed publicly, enforce authentication at the reverse-proxy layer.
+
+Note that the production compose publishes the backend on `0.0.0.0:8002` and there is no Traefik router on that port, so that mitigation is not in effect until you add one.
 
 ## Idempotency-Key
 
@@ -49,25 +63,32 @@ Behavior:
 - `POST /api/v2/models`: Import a model/version selection.
 - `PUT /api/v2/models/{model_id}/default-version`: Set model default version.
 - `DELETE /api/v2/models/{model_id}`: Delete model and associated status rows.
-- `GET /api/v2/models/all-storage-paths`: All expected storage paths from the database.
-- `POST /api/v2/models/cleanup-orphans`: Remove models with no versions.
-- `GET /api/v2/models/{model_id}/tags`: List tags for a model.
-- `POST /api/v2/models/{model_id}/tags`: Add tags to a model.
-- `DELETE /api/v2/models/{model_id}/tags/{tag_id}`: Remove a tag.
 - `GET /api/v2/models/{model_id}/versions`: List versions for a model.
-- `POST /api/v2/models/{model_id}/versions`: Create a version.
-- `PUT /api/v2/models/versions/{version_id}`: Update a version.
-- `DELETE /api/v2/models/versions/{version_id}`: Delete a version.
-- `GET /api/v2/models/versions/{version_id}/files`: List files for a version.
-- `POST /api/v2/models/versions/{version_id}/files`: Add a file to a version.
-- `DELETE /api/v2/models/files/{file_id}`: Delete a model file.
-- `GET /api/v2/models/{model_id}/preview`: Get model preview image.
-- `POST /api/v2/models/provider-sync`: Sync models from a provider.
+- `GET /api/v2/models/all-storage-paths`: All expected storage paths from the database.
+- `GET /api/v2/models/preview/{model_id}`: Get the model preview image. The `preview` segment comes **before** the id — it is a static prefix, not a sub-resource of the model.
+- `PUT /api/v2/models/files/{file_id}/providers/{provider_id}/status`: Report one file's status on one provider.
+- `PUT /api/v2/models/versions/{version_id}/toggle`: Enable/disable a version. There is no `PUT /api/v2/models/versions/{version_id}` and no `DELETE` on a version.
+
+Maintenance (`/api/v2/models/maintenance`) — separate verbs on the same models, not a versioned resource:
+
+- `POST /api/v2/models/maintenance/cleanup-orphans`: Remove models that have **no versions** (left behind by a failed import).
+- `POST /api/v2/models/cleanup-orphaned`: Remove models whose files have **no active provider status** — the reverse-reconciliation direction, and a different set. Two similarly named endpoints, two different questions.
+- `POST /api/v2/models/maintenance/{model_id}/resync`: Re-reconcile one model.
+- `POST /api/v2/models/maintenance/{model_id}/check-dependencies`: Report dependents before a delete.
+- `POST /api/v2/models/maintenance/resync-all` / `POST /api/v2/models/maintenance/backfill-statuses`: Bulk reconciliation.
+- `GET /api/v2/models/maintenance/{model_id}/tags`: List tags for a model.
+- `POST /api/v2/models/maintenance/{model_id}/tags`: Add tags to a model.
+- `DELETE /api/v2/models/maintenance/{model_id}/tags/{tag}`: Remove a tag. The path parameter is the tag **string**, not a tag id.
+
+Not endpoints, despite having been documented as such here: `POST /api/v2/models/{model_id}/versions`, `POST /api/v2/models/provider-sync`, and any `GET`/`POST` on `/api/v2/models/versions/{version_id}/files`. Versions are created by import and by provider sync, not by an explicit create call.
 
 ### External Models (`/api/v2/models/external`)
 
 - `POST /api/v2/models/external/parse`: Parse a model URL from CivitAI or HuggingFace.
 - `GET /api/v2/models/external/civitai`: Search CivitAI.
+- `GET /api/v2/models/external/civitai/enums`: CivitAI model-type / base-model enums for the search UI.
+- `GET /api/v2/models/external/civitai/tags`: CivitAI tag list.
+- `GET /api/v2/models/external/huggingface`: Search HuggingFace.
 
 ## World Vault v2 (`/api/v2`)
 
@@ -86,6 +107,7 @@ DB-backed gallery index (replaces the old in-memory `GalleryIndexer`). The asset
 - `GET /api/v2/chats` — List chats. Query: `workspace=roleplay` selects roleplay chats (`chat_type == workspace`).
 - `POST /api/v2/chats` — Create a chat. Body: `{character_id, title?, chat_type?}`; auto-creates a root message.
 - `GET /api/v2/chats/{chat_id}` — Fetch a chat + its character.
+- `PATCH /api/v2/chats/{chat_id}` — Update chat-level fields (title, chat type).
 - `DELETE /api/v2/chats/{chat_id}` — Delete a chat (cascades messages).
 - `GET /api/v2/chats/{chat_id}/messages` — All messages (DB-backed conversation; `metadata_` JSON + `tool_calls` columns).
 - `POST /api/v2/chats/{chat_id}/messages` — Append a user message; server-side context assembled by `context_builder` (backend-owned, per VISION #7) → enqueues an LLM task and returns the created message.
@@ -119,6 +141,7 @@ DB-backed gallery index (replaces the old in-memory `GalleryIndexer`). The asset
 - `POST /api/v2/stories/{story_id}/chapters/{chapter_id}/beats` — Add a story beat.
 - `POST /api/v2/stories/{story_id}/chapters/{chapter_id}/branch` — Branch the chapter from a message index (returns the new `StoryChapter`).
 - `GET /api/v2/stories/{story_id}/images` — Gallery of images across the story's chapters (workspace-scoped).
+- `POST /api/v2/stories/{story_id}/chapters/{chapter_id}/illustrate` — Generate a chapter illustration (queues an image-generation task).
 
 ### Lorebooks (`/api/v2/lorebooks`)
 
@@ -156,13 +179,54 @@ pgvector-backed semantic knowledge entries (`LorebookEntry.embedding` is `Vector
 - `PUT /api/v2/scenarios/{scenario_id}` — Update a scenario.
 - `DELETE /api/v2/scenarios/{scenario_id}` — Delete a scenario.
 
-### LLM Config (`/api/v2/llm-config`)
+### LLM Config (`/api/v2/llm`)
 
-- `GET /api/v2/llm-config/default-provider` — Currently configured default LLM provider for roleplay/story.
-- `PUT /api/v2/llm-config/default-provider` — Set the default LLM provider.
-- `GET /api/v2/llm-config/available-models` — Models exposed by the configured LLM provider.
-- `GET /api/v2/llm-config/providers` — Available LLM providers for chat/story narration.
-- `POST /api/v2/llm-config/providers/{provider_id}/test` — **Test Connection**: pings the provider worker's local health endpoint (Vision #4: checks the LOCAL worker `worker_url`, never a remote engine) and returns health + available models.
+The prefix is `/llm`, not `/llm-config`; this file used to document both, and the wrong one.
+
+- `GET /api/v2/llm/default-provider` — Currently configured default LLM provider for roleplay/story.
+- `PUT /api/v2/llm/default-provider` — Set the default LLM provider.
+- `GET /api/v2/llm/available-models` — Models exposed by the configured LLM provider.
+- `GET /api/v2/llm/providers` — Available LLM providers for chat/story narration.
+- `POST /api/v2/llm/providers/{provider_id}/test` — **Test Connection**: pings the provider worker's local health endpoint (Vision #4: checks the LOCAL worker `worker_url`, never a remote engine) and returns health + available models.
+
+### Worlds (`/api/v2/worlds`)
+
+- `GET /api/v2/worlds` — List worlds.
+- `POST /api/v2/worlds` — Create a world.
+- `GET /api/v2/worlds/{world_id}` — Fetch a world.
+- `PUT /api/v2/worlds/{world_id}` — Update a world.
+- `DELETE /api/v2/worlds/{world_id}` — Delete a world.
+- `GET /api/v2/worlds/{world_id}/dashboard` — Aggregate dashboard payload for one world (counts and recent activity across the pillars it contains).
+
+### Personas (`/api/v2/personas`)
+
+- `GET /api/v2/personas` — List personas.
+- `POST /api/v2/personas` — Create a persona.
+- `GET /api/v2/personas/{persona_id}` — Fetch a persona.
+- `PUT /api/v2/personas/{persona_id}` — Update a persona.
+- `DELETE /api/v2/personas/{persona_id}` — Delete a persona.
+
+### Voices (`/api/v2/voices`)
+
+TTS voices. Synthesis and voice design are `task_type="tts"` jobs routed to the `tts-*` provider; the CRUD here is the catalogue they are chosen from.
+
+- `GET /api/v2/voices` — List voices.
+- `POST /api/v2/voices` — Create a voice record.
+- `GET /api/v2/voices/{voice_id}` — Fetch a voice.
+- `PUT /api/v2/voices/{voice_id}` — Update a voice.
+- `PATCH /api/v2/voices/{voice_id}` — Partial update.
+- `DELETE /api/v2/voices/{voice_id}` — Delete a voice.
+- `POST /api/v2/voices/{voice_id}/preview` — Get a voice preview clip.
+- `POST /api/v2/voices/design` — Generate new voice designs (enqueues a TTS job).
+- `POST /api/v2/voices/speak` — Synthesise speech with a voice (enqueues a TTS job).
+
+### Timeline (`/api/v2/timeline`)
+
+- `GET /api/v2/timeline/timeline` — Chronological events across the World Vault. Note the doubled segment: the router mounts at `/api/v2/timeline` and the route itself is `/timeline`.
+
+### Gallery (`/api/v2/gallery`)
+
+- `GET /api/v2/gallery` — The v2 gallery index. The paginated, filterable, DB-backed listing is `GET /api/v2/assets`; this is the gallery-shaped view over it.
 
 ## Files & Media
 
@@ -177,7 +241,6 @@ Real-time job lifecycle, downloads, reconciliation, and provider status (replace
 - `provider.status` — live provider-worker alive checks (worker-only, per Vision #4).
 - `reconciliation.update` — asset-reconciliation progress.
 - `download.progress` — file download progress.
-- `GET /api/v2/models/external/huggingface`: Search HuggingFace.
 
 ### Providers (`/api/v2/providers`)
 
@@ -215,83 +278,24 @@ Real-time job lifecycle, downloads, reconciliation, and provider status (replace
 
 - `POST /api/v2/providers/discovery`: Self-discovery endpoint for provider containers to register themselves.
 
-### Characters (`/api/v2/characters`)
+### Collections (`/api/v2/collections`)
 
-- `GET /api/v2/characters`: List all characters.
-- `POST /api/v2/characters`: Create a character.
-- `POST /api/v2/characters/import`: Import a SillyTavern PNG character card (V2/V3).
-- `GET /api/v2/characters/{id}`: Get a character.
-- `PUT /api/v2/characters/{id}`: Update a character.
-- `DELETE /api/v2/characters/{id}`: Delete a character.
-- `POST /api/v2/characters/{id}/avatar`: Upload character avatar.
-- `GET /api/v2/characters/{id}/avatar`: Get character avatar.
+The prefix is `/api/v2/collections`. This file previously documented `/api/collections`, which does not exist — every entry in the section 404'd.
 
-### Chats (`/api/v2/chats`)
+- `GET /api/v2/collections`: List all collections.
+- `POST /api/v2/collections`: Create a new collection.
+- `GET /api/v2/collections/{collection_id}`: Get collection details.
+- `PUT /api/v2/collections/{collection_id}`: Update a collection.
+- `DELETE /api/v2/collections/{collection_id}`: Delete a collection.
+- `POST /api/v2/collections/{collection_id}/images`: Add images to a collection.
+- `DELETE /api/v2/collections/{collection_id}/images`: Remove images from a collection.
+- `POST /api/v2/collections/move`: Move images between collections.
+- `GET /api/v2/collections/by-character/{character_id}`: Get the collection for one character.
+- `GET /api/v2/collections/by-characters`: Batch lookup for several characters at once.
+- `POST /api/v2/collections/import`: Import collections.
+- `GET /api/v2/collections/export`: Export collections.
 
-- `GET /api/v2/chats`: List all chats.
-- `POST /api/v2/chats`: Create a chat session.
-- `GET /api/v2/chats/{id}`: Get a chat.
-- `PATCH /api/v2/chats/{id}`: Update a chat.
-- `DELETE /api/v2/chats/{id}`: Delete a chat (cascades messages).
-- `GET /api/v2/chats/{id}/messages`: List messages for a chat.
-- `POST /api/v2/chats/{id}/messages`: Send a message (triggers LLM reply if role=user).
-- `DELETE /api/v2/chats/{id}/messages/{msg_id}`: Delete a message.
-- `POST /api/v2/chats/{id}/scene`: Generate a scene image from chat context.
-
-### Lorebooks (`/api/v2/lorebooks`)
-
-- `GET /api/v2/lorebooks`: List all lorebooks.
-- `POST /api/v2/lorebooks`: Create a lorebook.
-- `GET /api/v2/lorebooks/{id}`: Get a lorebook.
-- `PUT /api/v2/lorebooks/{id}`: Update a lorebook.
-- `DELETE /api/v2/lorebooks/{id}`: Delete a lorebook (cascades entries).
-- `GET /api/v2/lorebooks/{id}/search?q=`: Semantic search lorebook entries.
-- `GET /api/v2/lorebooks/{id}/entries`: List entries.
-- `POST /api/v2/lorebooks/{id}/entries`: Create an entry (auto-embeds).
-- `PUT /api/v2/lorebooks/{id}/entries/{eid}`: Update an entry.
-- `DELETE /api/v2/lorebooks/{id}/entries/{eid}`: Delete an entry.
-
-### Scenarios (`/api/v2/scenarios`)
-
-- `GET /api/v2/scenarios`: List all scenarios.
-- `POST /api/v2/scenarios`: Create a scenario.
-- `GET /api/v2/scenarios/{id}`: Get a scenario.
-- `PUT /api/v2/scenarios/{id}`: Update a scenario.
-- `DELETE /api/v2/scenarios/{id}`: Delete a scenario.
-
-### Stories (`/api/v2/stories`)
-
-- `GET /api/v2/stories`: List all stories.
-- `POST /api/v2/stories`: Create a story.
-- `GET /api/v2/stories/{id}`: Get a story.
-- `PUT /api/v2/stories/{id}`: Update a story.
-- `DELETE /api/v2/stories/{id}`: Delete a story (cascades chapters).
-- `GET /api/v2/stories/{id}/chapters`: List chapters.
-- `POST /api/v2/stories/{id}/chapters`: Create a chapter.
-- `GET /api/v2/stories/{id}/chapters/{cid}`: Get a chapter.
-- `PUT /api/v2/stories/{id}/chapters/{cid}`: Update a chapter.
-- `DELETE /api/v2/stories/{id}/chapters/{cid}`: Delete a chapter.
-- `POST /api/v2/stories/{id}/chapters/{cid}/continue`: AI continues the story.
-- `POST /api/v2/stories/{id}/chapters/{cid}/beats`: Add a story beat.
-- `POST /api/v2/stories/{id}/chapters/{cid}/illustrate`: Generate chapter illustration.
-
-### LLM Config (`/api/v2/llm`)
-
-- `GET /api/v2/llm/default-provider`: Get the default LLM provider.
-- `PUT /api/v2/llm/default-provider`: Set the default LLM provider.
-- `GET /api/v2/llm/available-models`: List available LLM models.
-
-### Collections (`/api/collections`)
-
-- `GET /api/collections`: List all collections.
-- `POST /api/collections`: Create a new collection.
-- `GET /api/collections/{collection_id}`: Get collection details.
-- `PUT /api/collections/{collection_id}`: Update a collection.
-- `DELETE /api/collections/{collection_id}`: Delete a collection.
-- `POST /api/collections/{collection_id}/images`: Add images to a collection.
-- `DELETE /api/collections/{collection_id}/images`: Remove images from a collection.
-- `POST /api/collections/import`: Import collections.
-- `GET /api/collections/export`: Export collections.
+The Characters, Chats, Lorebooks, Scenarios, Stories and LLM Config sections above cover those families; this file used to carry a second, thinner copy of each one further down, with a different prefix for two of them. The duplicates were removed and their three unique entries folded into the sections above (`PATCH /api/v2/chats/{chat_id}`, `POST …/chapters/{chapter_id}/illustrate`, and the fourth LLM endpoint).
 
 ### Prompts (`/api/prompts`)
 
@@ -327,14 +331,17 @@ Real-time job lifecycle, downloads, reconciliation, and provider status (replace
 ### Files
 
 - `GET /api/files`: List files in output directory.
+- `DELETE /api/files/{filename}`: Delete one file.
 - `GET /api/view/{path}`: Serve an output image by relative path.
 - `GET /api/thumbnail/{size}/{filename}`: Serve a thumbnail by size and filename.
 - `POST /api/upload`: Upload an image file.
 - `POST /api/upload/input`: Upload an input file.
 - `POST /api/upload/mask`: Upload a mask file.
 - `POST /api/batch/delete`: Batch delete files.
-- `GET /api/files/proxy/{provider_id}/{path}`: Proxy file access from a provider.
+- `POST /api/files/batch-download`: Batch download as an archive.
 - `POST /api/files/metadata/batch`: Get metadata for multiple files in batch.
+
+There is no `GET /api/files/proxy/{provider_id}/{path}`. This file documented one; no such route exists, and provider files are reached through `GET /api/v2/assets/{asset_id}/file` instead.
 
 
 

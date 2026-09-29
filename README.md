@@ -23,7 +23,16 @@ This project serves as a dynamic, containerized wrapper around ComfyUI that inte
 1. Copy `.env.example` to `.env` and configure the backend settings.
 2. **On a new host, run `scripts/preflight.sh` first.** Compose declares the `metrics` and `proxy` networks as external, so without it every `up` fails at network creation — for every service, with an error that does not name the cause. It also reports the config that silently disables features.
 3. Configure the providers you actually want. Each provider is opt-in via a Compose profile, so there is no one file to copy:
-   - `--profile providers` enables `modal-hp196`, `modal-stepmania`, `modal-zetsuke`, `llm-local` and `direct_url`.
+   - `--profile providers` enables six services: `modal-hp196`, `modal-stepmania`, `modal-zetsuke`, `tts-modal-hp196`, `llm-local` and `direct_url`. Compose reads **all six** `env_file`s when the profile is on, so all six must exist:
+     ```bash
+     cp .env.example.provider.engines .env.modal-hp196
+     cp .env.example.provider.engines .env.modal-stepmania
+     cp .env.example.provider.engines .env.modal-zetsuke
+     cp .env.example.tts           .env.tts-modal-hp196
+     cp .env.example.provider.engines .env.llm-local
+     cp .env.example.direct-url     .env.direct-url
+     ```
+     `tts-modal-hp196` has its own example because it has its own app name, model directory, scale-down window and timeout. It is not a second Modal account — copy the `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` from `.env.modal-hp196`, same workspace.
    - **Do not copy `.env.example.provider`.** It is an all-commented stub with zero assignments — it is a reference, not a template. It is also missing `.env.llm-local` and `.env.direct-url`, so a copy-driven setup silently ends up with two required `env_file`s absent. Create the per-provider files you need from `.env.example.provider.engines` and fill in only the keys for the providers you enabled.
 4. Start the project with the development Compose override and provider profile:
    ```bash

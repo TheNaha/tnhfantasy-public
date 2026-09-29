@@ -1,7 +1,7 @@
 # TNHComfy — Project Status
 
 **The single authoritative status document.** Everything here was verified
-against the code on 2026-09-28, not carried over from an earlier plan.
+against the code on 2026-09-29, not carried over from an earlier plan.
 
 If you are about to make a decision about what to work on next, read this file
 and then the **most recent** audit, which is `docs/audit-2026-09-29.md`. Each
@@ -29,7 +29,7 @@ one-account-one-container policy. Three pillars over one World Vault data layer
 |---|---|---|
 | Backend | `backend_v2/` | FastAPI + SQLModel. Services take a request-scoped `Session` and build repositories internally; routes resolve via `api/deps.py`. |
 | Frontend | `frontend_v2/` | React + Zustand (UI state only) + React Query (all server data). |
-| Providers | `provider_containers/` | `provider_core` is the shared library; `image_worker` and `llm_worker` are the two entrypoints. |
+| Providers | `provider_containers/` | `provider_core` is the shared library; `image_worker`, `llm_worker` and `tts_worker` are the three entrypoints. A new worker kind is "a directory with a Dockerfile in it" — the deploy orchestrator builds it by name, so TTS needed no new provider type and no new credentials. |
 | Agents | `remote_agent/` | Optional remote GPU rig, driven over HTTP by the backend. |
 | Migrations | `backend_v2/infrastructure/migrations/steps.py` | Ordered `MigrationStep` list, run at startup. No Alembic. |
 
@@ -40,27 +40,64 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of **2026-09-27**:
+All three suites green as of **2026-09-29**:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **2473 passed, 7 skipped** (248 s) | `cd backend_v2 && .venv/bin/pytest` |
-| Frontend | **1143 passed across 122 files** (~110 s) | `cd frontend_v2 && npm test` |
-| Providers | **634 passed, 4 skipped** (77 s) | `cd provider_containers && venv/bin/python -m pytest` |
+| Backend | **2657 passed, 7 skipped** (352 s) | `cd backend_v2 && .venv/bin/pytest` |
+| Frontend | **1159 passed across 123 files** (229 s) | `cd frontend_v2 && npm test` |
+| Providers | **694 passed, 4 skipped** (76-81 s) | `cd provider_containers && venv/bin/python -m pytest` |
+
+Every figure in that table was re-measured on **2026-09-29**, not carried over
+from a previous run. The previous revision (dated 2026-09-27) claimed backend 2473
+/ frontend 1143 across 122 files / providers 634 — all three were low, and the
+real backend count was 184 tests higher than the table said.
+
+**A green suite says nothing about whether the container is serving the code under
+test.** The 2026-09-27 backend count was wrong precisely because the documented
+state had drifted from the measured state while both kept looking authoritative.
+The compose defect in the next paragraph is the same failure in a different place:
+CI had been green — or red — about a file the suites never read.
 
 Lint: `ruff check .` clean in the backend **and** in `provider_containers` (which
-now has its own `ruff.toml` selecting `F`, with F401 on and zero blanket
-ignores). `npm run lint` reports 0 errors and 7 warnings. `npm run build` is
-clean.
+now has its own `ruff.toml` selecting `F`, with F401 on and zero blanket ignores).
+`npm run lint` reports **0 errors and 12 warnings**: eleven
+`react-hooks/exhaustive-deps` in `src/contexts/ChatWorkspaceContext.jsx` and
+`src/pages/BatchGenerate.jsx`, plus one `react-hooks/incompatible-library` each in
+`src/hooks/useScrollRoot.js` (TanStack Virtual's `useVirtualizer()`) and
+`src/pages/StorySandbox.jsx`. `npm run build` is clean.
 
 Compose: `docker compose -f docker-compose.yml -f docker-compose.dev.yml
---profile providers config --quiet` exits 0, and a CI job now runs it plus a
-build of all three provider Dockerfiles. That job was **red at its first step
-on every clean checkout** until 2026-09-28 — compose refuses to render while an
-`env_file:` is missing, and every `.env*` is gitignored, so the step exited 1 and
-the three `docker build`s below it never ran. It now seeds the required env
-files first. `backend_v2/Dockerfile` and `frontend_v2/Dockerfile` are still built
-by no workflow.
+--profile providers config --quiet` exits 0 once the env files exist, and the
+`build` job in `.github/workflows/provider-tests.yml` runs it plus a build of
+**four** provider Dockerfiles — `image_worker`, `llm_worker`, `tts_worker` and the
+remote agent's. That job went red at its first step on every clean checkout
+**twice, for the same reason** — a compose `env_file:` with no file seeded next to
+it — and on two different occasions:
+
+- First (2026-09-28, fixed): compose refuses to render while an `env_file:` is
+  missing, and every `.env*` is gitignored, so the step exited 1 and the
+  `docker build`s below it never ran.
+- Second (until 2026-09-29): `provider-tts-modal-hp196` was added to the
+  `providers` profile with `env_file: - .env.tts-modal-hp196` and the seeding list
+  was not updated, so the step exited 1 again.
+
+Both times the job was the *only* thing that could have caught the change it
+tripped on, and it was not triggered at all by a change to `docker-compose.yml`,
+because no workflow watched that path. That is now fixed on both sides: the job
+seeds from the compose file's own `env_file:` entries and fails with the missing
+name if one is unseeded, and `docker-compose*.yml`, `scripts/**`, `.env.example*`
+and `.github/workflows/**` are in its `paths:` filter.
+
+`tts_worker/Dockerfile` was built by no workflow until 2026-09-29, and it is the
+image `ProviderDeployOrchestrator` uses for every `task_type="tts"` deploy — so a
+broken `COPY` in it broke TTS deployment on every host while every job stayed
+green. `backend_v2/Dockerfile` and `frontend_v2/Dockerfile` are still built by no
+workflow.
+
+`docs/api.md` covers 201 of the **329** live operations and had 26 endpoints that
+do not exist until 2026-09-29, including two whole sections under the wrong URL
+prefix. It is checked against `app.openapi()["paths"]`, not against itself.
 
 Running the suites is the point. 128 provider tests, 11 frontend tests and 10
 backend tests were added by the 2026-09-27 pass alone, and the counts above are
@@ -195,8 +232,12 @@ rather than tidying:
   desktop visit. It survived a green suite because being bound to `window` meant
   it always had a height, so it always rendered *something*.
 
-The heaviest frontend chunk also went from 1281.92 kB to 252.86 kB: the story
-editor was shipping all 594 of `refractor`'s syntax grammars to render prose.
+The heaviest frontend chunk also went from 1281.92 kB to 311.46 kB (`index-*.js`),
+with `StorySandbox` at 253.17 kB: the story editor was shipping all 594 of
+`refractor`'s syntax grammars to render prose. The bundle is not split into one
+small set of chunks — a 290 kB `LineChart` and a 311 kB entry chunk sit alongside
+25 kB route chunks — so "the heaviest chunk" is now a fact about a different file
+each time the router moves.
 
 ### Dropped after investigation, not overlooked
 
