@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
-import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2, Plus, MapPin, Eye, Target } from 'lucide-react';
+import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2, Plus, MapPin, Eye, Target, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 import { assetUrl } from '../../utils/assetUrl';
 import SamplingControls from '../common/SamplingControls';
 import EntityContextInspector from '../workspace/EntityContextInspector';
+import WorldLinkRow from '../workspace/WorldLinkRow';
 import StoryOutlinePanel from './StoryOutlinePanel';
 
 export default React.memo(function StoryContextPanel({
@@ -12,6 +13,8 @@ export default React.memo(function StoryContextPanel({
     characters,
     lorebooks,
     locations,
+    worlds = [],
+    scenarios = [],
     storyImages,
     chapters,
     llmModels,
@@ -52,6 +55,7 @@ export default React.memo(function StoryContextPanel({
                     characters={characters}
                     characterIds={activeStory?.character_ids || []}
                     lorebooks={lorebooks}
+                characterLorebookLinks={characters.flatMap(c => (c.lorebook_ids || []).map(lorebookId => ({ lorebookId, characterName: c.name })))}
                     lorebookIds={activeStory?.lorebook_ids || []}
                     locations={locations}
                     locationIds={activeStory?.location_ids || []}
@@ -64,6 +68,71 @@ export default React.memo(function StoryContextPanel({
                         { to: '/world-graph', label: 'Relationships', icon: Layers },
                     ]}
                 />
+
+                <WorldLinkRow
+                    worldId={activeStory?.world_id}
+                    worlds={worlds}
+                    onChange={(next) => onUpdateStory({ world_id: next })}
+                />
+
+                {/* `Story.scenario_id` is written by Scenarios → Apply and was
+                    read by nothing in the UI, so a scenario applied to a story
+                    was a write into a void the user could not see or undo. It
+                    is not a void server-side — `stories.py` injects the
+                    scenario's `prompt_template` into every continuation — which
+                    is exactly why it needed a row: the user has to be able to
+                    see it and take it off. */}
+                <div className="glass-panel p-4 rounded-xl border border-white/5" data-testid="story-scenario-row">
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 min-w-0">
+                            <Sparkles size={12} className="text-purple-400 shrink-0" /> Scenario
+                        </h4>
+                        {scenarios.length > 0 ? (
+                            <select
+                                aria-label="Scenario"
+                                data-testid="story-scenario-select"
+                                value={activeStory?.scenario_id || ''}
+                                onChange={(e) => onUpdateStory({ scenario_id: e.target.value || null })}
+                                className={clsx(
+                                    'bg-gray-800 border text-xs rounded px-2 py-1 text-gray-300 focus:outline-none min-w-0 truncate max-w-[60%]',
+                                    activeStory?.scenario_id ? 'border-purple-500/30' : 'border-gray-700'
+                                )}
+                            >
+                                <option value="">No scenario</option>
+                                {scenarios.map(s => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                ))}
+                            </select>
+                        ) : null}
+                    </div>
+                    {(() => {
+                        const applied = scenarios.find(s => s.id === activeStory?.scenario_id);
+                        if (!activeStory?.scenario_id) {
+                            return (
+                                <p className="text-xs text-gray-500">
+                                    {scenarios.length === 0
+                                        ? 'No scenarios yet. A scenario supplies the prompt template used for every continuation.'
+                                        : "A scenario's prompt template is injected into every continuation. Applied ones show here."}
+                                </p>
+                            );
+                        }
+                        return (
+                            <div className="space-y-1.5">
+                                <p className="text-xs text-purple-300">
+                                    Injected into every continuation of this story.
+                                </p>
+                                {applied?.description && (
+                                    <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">{applied.description}</p>
+                                )}
+                                {!applied && (
+                                    <p className="text-2xs text-gray-500">
+                                        Applied scenario <code className="text-gray-600">{activeStory.scenario_id.slice(0, 8)}</code> is no longer in the library.
+                                    </p>
+                                )}
+                            </div>
+                        );
+                    })()}
+                </div>
 
                 <StoryOutlinePanel
                     storyId={activeStory?.id}

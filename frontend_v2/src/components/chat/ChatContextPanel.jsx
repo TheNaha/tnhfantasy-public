@@ -2,7 +2,8 @@ import clsx from 'clsx';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-    User, Clock, MapPin, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown, NotebookPen,
+    User, Clock, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown, NotebookPen,
+    MapPin, Plus, Edit2, Calendar, Layers,
 } from 'lucide-react';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 import { useLocations } from '../../hooks/useLocations';
@@ -14,6 +15,7 @@ import SystemPromptPanel from './SystemPromptPanel';
 import ExpressionSelector from './ExpressionSelector';
 import MemoriesPanel from './MemoriesPanel';
 import EntityContextInspector from '../workspace/EntityContextInspector';
+import WorldLinkRow from '../workspace/WorldLinkRow';
 import { useChatWorkspace } from '../../contexts/ChatWorkspaceContext';
 
 const LOREBOOK_CONTEXT_TAIL = 12;
@@ -69,13 +71,26 @@ function ChatContextPanel() {
                 characters={characters}
                 characterIds={[activeChat?.character_id, ...(activeChat?.additional_character_ids || [])].filter(Boolean)}
                 primaryCharacterId={activeChat?.character_id || null}
+                characterLorebookLinks={characters.flatMap(c => (c.lorebook_ids || []).map(lorebookId => ({ lorebookId, characterName: c.name })))}
                 lorebooks={lorebooks}
                 lorebookIds={selectedLorebooks}
                 locations={locations}
                 locationIds={activeChat?.location_id ? [activeChat.location_id] : []}
                 freeformLocation={activeChat?.story_location || null}
                 contextText={lorebookContextText}
-                onEditCharacter={() => setShowCharacterDetails(true)}
+                onEditCharacter={onEditCharacter}
+                onEditLorebook={onEditLorebook}
+                onEditLocation={onEditLocation}
+                extraLinks={[
+                    { to: '/activity', label: 'Activity', icon: Calendar },
+                    { to: '/world-graph', label: 'Relationships', icon: Layers },
+                ]}
+            />
+
+            <WorldLinkRow
+                worldId={activeChat?.world_id}
+                worlds={worlds}
+                onChange={(next) => onChatUpdate({ world_id: next })}
             />
 
             {/* Persona Name */}
@@ -719,15 +734,14 @@ function SceneOverridesSection({ chat, onSave }) {
                     placeholder="Not set"
                     onSave={val => onSave({ story_time: val })}
                 />
-                <ContextField
-                    inline
-                    showLabel
-                    label="Location"
-                    icon={MapPin}
-                    value={chat?.story_location}
-                    placeholder="Not set"
-                    onSave={val => onSave({ story_location: val })}
-                />
+                {/* The free-text Location field that used to live here is gone.
+                    It was the only thing this panel ever offered, it wrote
+                    `story_location` and nothing read it back as a location, and
+                    a second "Location" control next to the real, linked Location
+                    picker above is how the two drifted apart in the first place.
+                    The real picker also mirrors its choice into
+                    `story_location`, so this text is still what reaches the
+                    prompt's `Current Location:` line. */}
             </div>
         </details>
     );
