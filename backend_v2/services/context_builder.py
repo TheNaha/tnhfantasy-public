@@ -499,6 +499,8 @@ def build_system_prompt_sections(
     character_id: str | None = None,
     _memory_query: str | None = None,
     location_ids: list[str] | None = None,
+    world_name: str | None = None,
+    world_description: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build the ordered list of system-prompt sections that make up a chat context.
@@ -526,6 +528,16 @@ def build_system_prompt_sections(
 
     Each section dict: {"key", "label", "content", "source"}
     source ∈ "override" | "character" | "char_append" | "chat_append" | "config" | "lorebook" | "world_state" | "story_genre" | "story_memory" | "story_scenario" | "story_characters"
+
+    `world_name` / `world_description` carry the owning World. The World
+    entity is the one grouping in this system that used to reach none of this:
+    `Chat.world_id` and `Story.world_id` were written and maintained by
+    `world_ownership.py` and read by nothing, so filing a cast under a World
+    changed nothing about what the model was told. Its membership is merged into
+    `lorebook_ids` / `location_ids` / `story_scenario` by the *caller*
+    (`chat_context_kwargs`), which is where the ids are resolved; the World only
+    contributes its own prose here, so a World with an empty description still
+    behaves exactly as before.
     """
     sections: list[dict[str, Any]] = []
 
@@ -547,6 +559,23 @@ def build_system_prompt_sections(
             "source": "active_character"
         })
 
+    if world_name or world_description:
+        world_parts = [f"[Setting: {world_name}]" if world_name else "[Setting]"]
+        if world_description:
+            world_parts.append(world_description.strip())
+        sections.append({
+            "key": "world",
+            "label": f"World — {world_name or 'setting'}",
+            "content": "\n".join(world_parts),
+            "source": "world",
+        })
+
+    # Character ids already emitted as a `character_<id>` card. `story_characters`
+    # re-renders name/description/personality/scenario for the same characters,
+    # so on a chat with a primary card both fired and the same prose was paid
+    # for twice on every single turn.
+    emitted_character_ids: set[str] = set()
+
     for char in chars_to_process:
         if system_prompt_override and system_prompt_override.strip():
             # Override replaces the character card + append blocks entirely
@@ -560,6 +589,7 @@ def build_system_prompt_sections(
                 "content": char_prompt,
                 "source": "character"
             })
+            emitted_character_ids.add(char.id)
         if char.append_system_prompt:
             sections.append({
                 "key": f"char_append_{char.id}",
@@ -605,27 +635,6 @@ def build_system_prompt_sections(
                 "content": roleplay_default,
                 "source": "config",
             })
-
-    if sections:
-        # Apply SillyTavern template variable substitution to character/override blocks
-        from services.chat_utils import substitute_tavern_vars
-
-        # {{original}} is ST's "prompt an override would replace" macro, so it
-        # resolves to the primary character's assembled prompt.
-        original_prompt = ""
-        if primary_char is not None:
-            original_prompt = primary_char.system_prompt or build_character_system_prompt(primary_char) or ""
-
-        substitutable = {"character", "override", "char_append", "chat_append", "persona"}
-        for section in sections:
-            if section["source"] in substitutable:
-                section["content"] = substitute_tavern_vars(
-                    section["content"],
-                    char=(primary_char.name if primary_char else "") or "",
-                    user=persona_name or "User",
-                    persona_description=persona_description or "",
-                    original=original_prompt,
-                )
 
     if lorebook_ids:
         # Build a query string from the most recent context for semantic matching.
@@ -720,25 +729,33 @@ def build_system_prompt_sections(
 
     # Inject multiple Location entities (for story continuation context)
     if location_ids:
-        locations = session.exec(
-            select(Location).where(Location.id.in_(location_ids))
-        ).all()
-        if locations:
-            loc_parts = ["[Active Locations]"]
-            for loc in locations:
-                loc_parts.append(f"Location: {loc.name}")
-                if loc.description:
-                    loc_parts.append(f"  {loc.description}")
-                if loc.atmosphere:
-                    loc_parts.append(f"  Atmosphere: {loc.atmosphere}")
-                if loc.tags:
-                    loc_parts.append(f"  Tags: {', '.join(loc.tags)}")
-            sections.append({
-                "key": "story_locations",
-                "label": f"Story locations ({len(locations)})",
-                "content": "\n".join(loc_parts),
-                "source": "lorebook",  # treated as world information
-            })
+        # `chat_context_kwargs` sets BOTH `location_id` and `location_ids` from
+        # the single `Chat.location_id` column, so a chat with a linked location
+        # rendered the same description twice — once as `[Location: X]` and again
+        # inside `[Active Locations]` — on every turn, for every message. The
+        # single-id block above is the richer one, so the list block is the
+        # right place to drop the overlap.
+        extra_ids = [lid for lid in location_ids if lid != location_id]
+        if extra_ids:
+            locations = session.exec(
+                select(Location).where(Location.id.in_(extra_ids))
+            ).all()
+            if locations:
+                loc_parts = ["[Active Locations]"]
+                for loc in locations:
+                    loc_parts.append(f"Location: {loc.name}")
+                    if loc.description:
+                        loc_parts.append(f"  {loc.description}")
+                    if loc.atmosphere:
+                        loc_parts.append(f"  Atmosphere: {loc.atmosphere}")
+                    if loc.tags:
+                        loc_parts.append(f"  Tags: {', '.join(loc.tags)}")
+                sections.append({
+                    "key": "story_locations",
+                    "label": f"Story locations ({len(locations)})",
+                    "content": "\n".join(loc_parts),
+                    "source": "lorebook",  # treated as world information
+                })
 
     if story_genre:
         sections.append({
@@ -780,15 +797,21 @@ def build_system_prompt_sections(
         char_map = {c.id: c for c in chars}
         for char_id in story_character_ids:
             char = char_map.get(char_id)
-            if char:
-                char_text = f"Character: {char.name}\n"
-                if char.description:
-                    char_text += f"Description: {char.description}\n"
-                if char.personality:
-                    char_text += f"Personality: {char.personality}\n"
-                if char.scenario:
-                    char_text += f"Scenario: {char.scenario}\n"
-                characters_content.append(char_text)
+            # Skip anyone already emitted as a full card above. This block
+            # re-renders the same four fields, so on any chat with a primary
+            # character it was duplicating that character's prose in the paid
+            # system prompt. The card is the richer rendering (it honours
+            # `system_prompt`), so it wins.
+            if not char or char.id in emitted_character_ids:
+                continue
+            char_text = f"Character: {char.name}\n"
+            if char.description:
+                char_text += f"Description: {char.description}\n"
+            if char.personality:
+                char_text += f"Personality: {char.personality}\n"
+            if char.scenario:
+                char_text += f"Scenario: {char.scenario}\n"
+            characters_content.append(char_text)
         if characters_content:
             sections.append({
                 "key": "story_characters",
@@ -818,6 +841,30 @@ def build_system_prompt_sections(
                 })
         except Exception as _mem_err:
             logger.warning("character_memory_injection_failed: %s", str(_mem_err))
+
+    # Template substitution runs LAST, over every section. It used to run right
+    # after the character/override blocks — before the lorebook, world-state,
+    # location, scenario and character sections were appended — and to be limited
+    # to a five-`source` allowlist. So twelve of the seventeen sections, and in
+    # particular `story_scenario` (the one template that is *written* with
+    # `{{user}}`), reached the model with its macros unexpanded.
+    if sections:
+        from services.chat_utils import substitute_tavern_vars
+
+        # {{original}} is ST's "prompt an override would replace" macro, so it
+        # resolves to the primary character's assembled prompt.
+        original_prompt = ""
+        if primary_char is not None:
+            original_prompt = primary_char.system_prompt or build_character_system_prompt(primary_char) or ""
+
+        for section in sections:
+            section["content"] = substitute_tavern_vars(
+                section["content"],
+                char=(primary_char.name if primary_char else "") or "",
+                user=persona_name or "User",
+                persona_description=persona_description or "",
+                original=original_prompt,
+            )
 
     return sections
 
@@ -868,6 +915,9 @@ def build_chat_context_with_sections(
     active_character_id: str | None = None,
     character_id: str | None = None,
     location_ids: list[str] | None = None,
+    world_name: str | None = None,
+    world_description: str | None = None,
+    include_roleplay_default: bool = True,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Build the complete chat context AND the sections it was assembled from.
@@ -900,8 +950,18 @@ def build_chat_context_with_sections(
             m for m in messages[-6:]
             if _msg_field(m, "role") in (MessageRole.USER, MessageRole.CHAR)
         ]
+        # Newest FIRST, joined with a separator the embedding model actually
+        # tokenises. This looks like a cosmetic change and is not: the six
+        # message tails total ~3 KB, `EmbeddingService` calls `model.encode`
+        # with no `max_seq_length`, and sentence-transformers silently truncates
+        # to 512 tokens. Ordered oldest-first — as this was — the embedding was
+        # of the *oldest* of the last six messages and never contained the
+        # user's actual turn, so on a long chat lorebook activation keyed on
+        # stale context.
         _lorebook_query += " ".join(
-            text for text in (_lorebook_query_text(m) for m in recent) if text
+            text
+            for text in (_lorebook_query_text(m) for m in reversed(recent))
+            if text
         )
 
     sections = build_system_prompt_sections(
@@ -925,6 +985,9 @@ def build_chat_context_with_sections(
         character_id=character_id,
         _memory_query=_lorebook_query or None,
         location_ids=location_ids,
+        world_name=world_name,
+        world_description=world_description,
+        include_roleplay_default=include_roleplay_default,
     )
     system_prompt = "\n\n".join(s["content"] for s in sections)
 
@@ -1095,6 +1158,58 @@ def _chat_story_character_ids(chat) -> list[str] | None:
     return ids or None
 
 
+def _merge_ordered(*groups) -> list[str]:
+    """Union of id lists, first occurrence wins, order preserved.
+
+    Membership is additive everywhere it is merged — a chat's own picks, then
+    its characters', then the World's — so a user who attached a lorebook
+    explicitly always gets it first and nothing is ever silently reordered.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for value in group or []:
+            if value and value not in seen:
+                seen.add(value)
+                out.append(value)
+    return out
+
+
+def _character_lorebook_ids(characters) -> list[str]:
+    out: list[str] = []
+    for character in characters or []:
+        for lid in getattr(character, "lorebook_ids", None) or []:
+            if lid and lid not in out:
+                out.append(lid)
+    return out
+
+
+def _resolve_world(chat, session):
+    """The World that owns this chat, or `None`.
+
+    Needs a session because the id lives on the row. Callers that cannot pass
+    one (the impersonation path, historically) get the chat's own context
+    unchanged rather than an error — a missing World must never be worse than
+    the behaviour before Worlds existed.
+    """
+    world_id = getattr(chat, "world_id", None)
+    if not world_id or session is None:
+        return None
+    from core.entities import World
+
+    return session.get(World, world_id)
+
+
+def _first_scenario(session, scenario_ids: list[str]):
+    from core.entities import Scenario
+
+    for scenario_id in scenario_ids:
+        scenario = session.get(Scenario, scenario_id)
+        if scenario is not None:
+            return scenario
+    return None
+
+
 def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> dict[str, Any]:
     """Build common kwargs for build_chat_context_async / build_system_prompt_sections_async
     from a Chat entity.
@@ -1118,9 +1233,48 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
     # A None override means "caller had no opinion" (e.g. the optional
     # lorebook_ids field on a send-message request) and must not shadow the
     # chat's own active lorebooks, or their context silently never loads.
-    lorebook_ids = overrides.get("lorebook_ids")
+    # An explicit `[]` is a deliberate clear, so it is tracked separately —
+    # `or None` at the end would erase it and make "clear them" identical to
+    # "I had no opinion".
+    explicit_lorebooks = overrides.get("lorebook_ids")
+    lorebook_ids = explicit_lorebooks
     if lorebook_ids is None:
         lorebook_ids = getattr(chat, "active_lorebook_ids", None) or None
+
+    # `Character.lorebook_ids` are the vault's own library books that character
+    # draws on, as opposed to `embedded_lorebook_id` — the SillyTavern
+    # `character_book` that arrived inside an imported card. Resolved on every
+    # prompt build rather than snapshotted at chat creation, so the link is true
+    # for conversations that already exist. Without this the column is one more
+    # write-only field, which is the defect class this schema has too many of.
+    lorebook_ids = _merge_ordered(lorebook_ids, _character_lorebook_ids(characters))
+
+    # The World is the owning container, so its membership is additive on top
+    # of whatever the chat picked for itself. It was the one grouping in this
+    # system that reached nothing at all: `chat.world_id` was written and
+    # maintained and read by no prompt path, so filing a cast under a World
+    # changed nothing about what the model was told.
+    world = overrides.get("world") if "world" in overrides else _resolve_world(chat, session)
+    world_lorebook_ids: list[str] = []
+    world_location_ids: list[str] = []
+    world_scenario: str | None = None
+    if world is not None:
+        world_lorebook_ids = list(world.lorebook_ids or [])
+        world_location_ids = list(world.location_ids or [])
+        if world.scenario_ids:
+            scenario = _first_scenario(session, world.scenario_ids)
+            if scenario is not None and scenario.prompt_template:
+                # A chat's own scenario already wins; the World's is the
+                # fallback, so applying one to the World and then to the chat
+                # behaves the way the precedence reads.
+                world_scenario = scenario.prompt_template
+
+    merged_lorebook_ids = _merge_ordered(lorebook_ids, world_lorebook_ids)
+
+    chat_location_id = getattr(chat, "location_id", None)
+    location_ids = _merge_ordered(
+        [chat_location_id] if chat_location_id else None, world_location_ids
+    )
 
     kwargs: dict[str, Any] = {
         "characters": characters,
@@ -1130,24 +1284,28 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
         # None)` therefore always returned None (the getattr default hid it) and
         # the per-character story block was never emitted for chats.
         "story_character_ids": _chat_story_character_ids(chat),
-        # The same mistake, in the same dict, one line down. `Chat` has
-        # `location_id` (singular) and no `location_ids`, so this was always None
-        # and the "[Active Locations]" block was unreachable from every chat
-        # path. It is read with `chat.location_id` and NOT defensively defaulted:
-        # a `getattr(..., None)` on a column that exists hides the next rename
-        # exactly the way the two above did.
-        "location_ids": [chat.location_id] if chat.location_id else None,
-        "lorebook_ids": lorebook_ids,
+        "location_ids": location_ids or None,
+        "lorebook_ids": merged_lorebook_ids if (merged_lorebook_ids or explicit_lorebooks is not None) else None,
         "persona_name": persona_name,
         "persona_description": persona_description,
         "story_time": getattr(chat, "story_time", None),
         "story_location": getattr(chat, "story_location", None),
-        "location_id": getattr(chat, "location_id", None),
+        "location_id": chat_location_id,
+        "world_name": world.name if world is not None else None,
+        "world_description": world.description if world is not None else None,
         "system_prompt_override": getattr(chat, "system_prompt_override", None),
         "append_system_prompt": getattr(chat, "append_system_prompt", None),
         "authors_note": getattr(chat, "authors_note", None),
         "authors_note_depth": getattr(chat, "authors_note_depth", None),
     }
+    if world_scenario and not kwargs.get("story_scenario"):
+        kwargs["story_scenario"] = world_scenario
+    # A caller's own `story_scenario` must survive. It was silently dropped
+    # unless a World happened to supply one — so on every World-less chat, the
+    # scenario a caller resolved itself never reached the prompt. Same shape of
+    # bug as the `None`-override-shadowing case above.
+    if overrides.get("story_scenario") is not None:
+        kwargs["story_scenario"] = overrides["story_scenario"]
     if "max_context_tokens" in overrides:
         kwargs["max_context_tokens"] = overrides["max_context_tokens"]
     if "include_roleplay_default" in overrides:
