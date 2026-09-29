@@ -11,13 +11,33 @@ on:
       # was a `/health` curl. So "did it boot" was the only thing standing between
       # an inverted traversal gate and main.
       - 'remote_agent/**'
-      - '.github/workflows/provider-tests.yml'
+      # The `build` job below is the only thing in CI that renders
+      # `docker-compose.yml` or builds the provider images, and these four globs
+      # are what it reads. Nothing watched them: adding `provider-tts-modal-hp196`
+      # with `env_file: - .env.tts-modal-hp196` made compose refuse to render on
+      # every clean checkout and no job noticed, because a change to the compose
+      # file triggered no job at all except the secret scan.
+      #
+      # GitHub has no job-level `paths:` — `on.<event>.paths` filters the whole
+      # workflow. So the `test` job above also runs on a compose-only change. It
+      # is a minute of Python and it is the cheaper mistake.
+      #
+      # No other workflow gets these: `backend-tests.yml` and `frontend-e2e.yml`
+      # bring up their own `pgvector` service and never read compose or `.env`,
+      # and `build-agent-binaries.yml` runs PyInstaller from `remote_agent/`.
+      - 'docker-compose*.yml'
+      - 'scripts/**'
+      - '.env.example*'
+      - '.github/workflows/**'
   pull_request:
     branches: [ "main", "master" ]
     paths:
       - 'provider_containers/**'
       - 'remote_agent/**'
-      - '.github/workflows/provider-tests.yml'
+      - 'docker-compose*.yml'
+      - 'scripts/**'
+      - '.env.example*'
+      - '.github/workflows/**'
 
 jobs:
   test:
@@ -69,9 +89,17 @@ jobs:
         pytest tests -v
 
   # ── the images and the compose file, which nothing validated ────────────────
-  # No job built either provider image or rendered the compose file, so a broken
+  # No job built any provider image or rendered the compose file, so a broken
   # Dockerfile (a bad COPY, a missing system package, a CMD that cannot start)
   # shipped green, and so did a compose `depends_on` cycle.
+  #
+  # Four provider Dockerfiles now exist and all four are built here. `tts_worker`
+  # was the fourth and was built by nothing at all — it is the image
+  # `ProviderDeployOrchestrator` uses for every `task_type="tts"` deploy, so a
+  # broken COPY in it broke TTS deployment on every host while every job stayed
+  # green. The `test` job above compiles `provider_core`, `image_worker` and
+  # `llm_worker`; `tts_worker` is not in that list either, which is why the build
+  # step, not the compile step, is the only thing that would have caught it.
   build:
     runs-on: ubuntu-latest
     steps:
@@ -80,10 +108,19 @@ jobs:
     - name: Create the env files compose requires
       # `.env` and every `.env.*` are gitignored, so a clean checkout has none of
       # them — and compose refuses to render while an `env_file:` is missing. That
-      # made this job exit 1 at its first step, so the three `docker build`s below
+      # made this job exit 1 at its first step, so the `docker build`s below
       # never ran and a broken provider Dockerfile shipped green, which is the
       # exact thing this job exists to prevent. `docs/STATUS.md` claimed CI ran
       # these builds; it did not, and could not.
+      #
+      # It then stopped working a second time: `provider-tts-modal-hp196` was
+      # added to the `providers` profile with `env_file: - .env.tts-modal-hp196`,
+      # and this list was not updated with it. The step exited 1 again, on the
+      # same clean checkout, for the same reason. The list below is now derived
+      # from the compose file's own `env_file:` entries rather than written by
+      # hand — `scripts/preflight.sh` already does this, stripping YAML comments
+      # first because grep cannot see them — so a new provider cannot be missed
+      # here either.
       #
       # Compose only needs the files to *exist* for `config --quiet`; it does not
       # read their values. Seed each one from the example it mirrors so the tree
@@ -101,7 +138,25 @@ jobs:
         # is the wrong source — that mistake is what `docs/deployment.md` used to
         # tell people to copy.
         cp .env.example.provider.engines .env.llm-local
+        # The TTS provider is its own container with its own env file, on the
+        # same Modal workspace as the image providers (so MODAL_TOKEN_* are
+        # literally the same credentials, not new ones) but its own app name,
+        # model directory, scale-down and timeout. Its own example exists because
+        # those are the values it ships with.
+        cp .env.example.tts .env.tts-modal-hp196
         echo "seeded: $(ls -1 .env .env.* | tr '\n' ' ')"
+
+        # Fail here rather than at `config --quiet`, so the message names the
+        # omission. This is the check that was missing both times this job went
+        # red: the seeded list drifted from compose's `env_file:` entries.
+        missing=""
+        for f in $(sed -e 's/#.*//' docker-compose.yml | grep -oE '\.env\.[a-z0-9-]+' | sort -u); do
+          [[ -f "$f" ]] || missing="$missing $f"
+        done
+        if [[ -n "$missing" ]]; then
+          echo "compose declares env_file entries that were not seeded:$missing" >&2
+          exit 1
+        fi
 
     - name: Validate the compose file
       # Free once the env files exist. It stops it from *not* passing later,
@@ -116,6 +171,12 @@ jobs:
 
     - name: Build the LLM worker image
       run: docker build -f provider_containers/llm_worker/Dockerfile -t tnhcomfy-provider-test-llm:latest provider_containers
+
+    - name: Build the TTS worker image
+      # Was the fourth Dockerfile with no job building it. Same build context as
+      # the other two: the orchestrator's deploy container builds it with
+      # `context=provider_containers`, so a context that works here works there.
+      run: docker build -f provider_containers/tts_worker/Dockerfile -t tnhcomfy-provider-test-tts:latest provider_containers
 
     - name: Build the remote agent image
       run: docker build -f remote_agent/Dockerfile -t tnhcomfy-provider-test-agent:latest .
