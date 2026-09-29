@@ -690,7 +690,7 @@ export default function SessionPanel({ isOpen, onClose }) {
                     onClick={(event) => event.stopPropagation()}
                     className="h-full w-full max-w-md bg-gray-900 border-l border-gray-800 flex flex-col shadow-2xl"
                     role="dialog"
-                    aria-label="Sessions"
+                    aria-label="Collections"
                 >
                     {isSplitSession && splitSession && (
                         <SessionSplitPicker
@@ -722,7 +722,7 @@ export default function SessionPanel({ isOpen, onClose }) {
                                 <div className="flex items-center justify-between mb-4">
                                     <div className="flex items-center gap-2">
                                         <Layers className="text-purple-400" size={24} aria-hidden="true" />
-                                        <h2 className="text-xl font-bold text-white">Sessions</h2>
+                                        <h2 className="text-xl font-bold text-white">Collections</h2>
                                     </div>
                                     <button
                                         onClick={onClose}

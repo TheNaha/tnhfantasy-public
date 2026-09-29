@@ -55,7 +55,7 @@ export function DashboardToolbar({
             >
                 <Layers size={16} aria-hidden="true" />
                 <span className="hidden sm:inline">Manage sessions</span>
-                <span className="sm:hidden">Sessions</span>
+                <span className="sm:hidden">Collections</span>
             </button>
 
             <button

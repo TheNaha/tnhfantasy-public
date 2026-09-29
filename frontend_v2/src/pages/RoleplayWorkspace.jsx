@@ -92,10 +92,10 @@ export default function RoleplayWorkspace() {
                         </button>
                         <button
                             type="button"
-                            onClick={() => navigate('/world-vault')}
+                            onClick={() => navigate('/worlds')}
                             className="inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-slate-300 transition hover:text-white"
                         >
-                            Browse your world <ArrowRight size={16} aria-hidden="true" />
+                            Open your worlds <ArrowRight size={16} aria-hidden="true" />
                         </button>
                     </div>
                 </div>
@@ -202,7 +202,7 @@ export default function RoleplayWorkspace() {
                         <h2 id="roleplay-world-heading" className="mt-1 text-xl font-semibold text-white">Your world</h2>
                     </div>
                     <button type="button" onClick={() => navigate('/world-vault')} className="py-1 text-sm text-cyan-300 hover:text-cyan-200">
-                        Open World Vault <ArrowRight size={14} className="inline" aria-hidden="true" />
+                        Search everything <ArrowRight size={14} className="inline" aria-hidden="true" />
                     </button>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">

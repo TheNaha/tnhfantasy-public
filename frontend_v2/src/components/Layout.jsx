@@ -321,7 +321,12 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/roleplay" icon={Home} label="Home" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Play" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Stories" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-vault" icon={Globe} label="World" />
+                    {/* `/worlds`, not `/world-vault`. Both exist, they are different
+                        pages, and the roleplay front door's "Shape a world" already
+                        linked here — so the one nav item named "World" landed on the
+                        vault search page and read as a broken "Worlds" link. The route
+                        stays: it is still the search hub, just not what "World" means. */}
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/worlds" icon={Globe} label="World" />
                     <button
                         type="button"
                         onClick={() => setShowRoleplayTools((open) => !open)}
