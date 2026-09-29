@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { providersApi } from '../api';
 import * as ws from '../api/websocket';
+import { QUERY_KEYS } from '../constants/queryKeys';
 import { extractProviderId, unwrapPayload as unwrapEventData } from '../utils/providerUtils';
 import { mergeProviderSyncStatus, normalizeProviderSyncStatus } from './useProviderModels';
 
@@ -200,7 +201,10 @@ async function ensureProvidersRealtime(queryClient) {
             );
 
             if (isBatchUpdate) {
-                queryClient.invalidateQueries({ queryKey: ['installed-models'] });
+                // `['installed-models']` matched no query — the installed-model
+                // list is `modelListKey(...)` = `['models', 'list', …]`. A batch
+                // status update changed it, and nothing refetched it.
+                queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
                 queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
             }
 
@@ -367,7 +371,10 @@ export function useProviderMutations() {
         await Promise.all([
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers }),
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.loadBalancer }),
-            queryClient.invalidateQueries({ queryKey: ['installed-models'] }),
+            // `['installed-models']` here matched no query, so after any provider
+            // action (deploy, wake, sync, delete) the installed-model list stayed
+            // stale. The list's real key is `modelListKey(...)` under `['models']`.
+            queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] }),
         ]);
     };
 

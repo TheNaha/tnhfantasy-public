@@ -69,13 +69,12 @@ vi.mock('../api', () => ({
     filesApi: { uploadMask: (...args) => mocks.uploadMask(...args) },
 }));
 vi.mock('../api/config', () => ({ getApiUrl: () => '/api' }));
-vi.mock('../utils/workflowBuilder', () => ({
-    WorkflowBuilder: class {
-        build() { return { id: 'wf-simple' }; }
-        buildImg2Img() { return { id: 'wf-img2img' }; }
-        buildInpaint() { return { id: 'wf-inpaint' }; }
-    },
-}));
+/* `../utils/workflowBuilder` used to be mocked here with a `WorkflowBuilder`
+ * class. No such module and no such class: the pages import
+ * `useWorkflowBuilder` from `../hooks/useWorkflowBuilder` and
+ * `compileReactFlowToComfy` from `../utils/WorkflowCompiler`. The mock
+ * protected nothing, and while it was here a class that did not exist could
+ * have been "verified" by the suite. */
 vi.mock('../utils/modelType', () => ({
     isUnetModel: () => false, isFluxModel: () => false,
     isAuraFlowModel: () => false, isPonyModel: () => false,

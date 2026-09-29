@@ -119,9 +119,25 @@ export function useAutopopulateCandidates(modelId) {
     });
 }
 
+/**
+ * The one query in the `['model', …]` namespace, and the only consumer of the
+ * endpoint it hits (`GET /api/v2/models/check-installed/{civitai_model_id}`).
+ *
+ * Three mutation sites tried to invalidate it as `{ queryKey: ['model',
+ * modelId] }` — a two-element key under a namespace whose only query is
+ * three-element, so it matched nothing at all and the Discover tab's
+ * "already installed" ticks stayed whatever they were before the write. Note
+ * the id spaces differ and are not interchangeable: this key is keyed by
+ * *CivitAI* model id (`ModelImportCard` passes the search result's `model.id`),
+ * while the mutating components mostly have a *local* model id. Invalidating is
+ * still correct for the autopopulate path, which is handed the civitai id it
+ * just matched.
+ */
+export const installedVersionsKey = (civitaiModelId) => ['model', 'installed', civitaiModelId];
+
 export function useCheckInstalledVersions(modelId) {
     return useQuery({
-        queryKey: ['model', 'installed', modelId],
+        queryKey: installedVersionsKey(modelId),
         queryFn: async () => {
             if (!modelId) return [];
             const data = await api.get(`/api/v2/models/check-installed/${modelId}`);

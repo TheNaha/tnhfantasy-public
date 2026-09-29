@@ -37,7 +37,9 @@ vi.mock('../hooks/useProvidersPageData', () => ({
     useProvidersPageData: () => ({ providers: [], containers: {}, loading: false, refresh: vi.fn() }),
 }));
 
-vi.mock('../hooks/useModels', () => ({ useModels: () => ({ models: [], loading: false }) }));
+/* `../hooks/useModels` does not exist — there is no such module and no such
+ * hook, so this mock protected nothing. The model list comes from
+ * `useModelMetadata` / `modelListKey`. */
 vi.mock('../hooks/useDebounce', () => ({ useDebounce: (v) => v }));
 
 vi.mock('react-hot-toast', () => {

@@ -8,6 +8,8 @@ import { getProviderDisplayName } from '../utils/providerUtils';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import CivitaiSearchModal from './model-manager/CivitaiSearchModal';
 import ModalOverlay from './common/ModalOverlay';
+import { installedVersionsKey } from '../hooks/useCivitaiSearch';
+import { QUERY_KEYS } from '../constants/queryKeys';
 import {
     ONLINE_RUNTIME_STATES,
     AVAILABLE_MODEL_STATES,
@@ -81,11 +83,21 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
             const res = await api.post(`/api/v2/models/${modelId}/autopopulate`, payload);
             return res.data;
         },
-        onSuccess: () => {
-            const modelId = metadata.id || metadata.model_id;
+        onSuccess: (result, civitaiId) => {
             toast.success("Model details autopopulated!");
-            queryClient.invalidateQueries(['models']);
-            queryClient.invalidateQueries({ queryKey: ['model', modelId] });
+            // Object form. The positional `invalidateQueries(['models'])` this
+            // replaced is the react-query **v4** signature: in v5 the array is
+            // spread into the filters object, `queryKey` ends up `undefined`, and
+            // it matches every query in the cache — so one autopopulate refetched
+            // every mounted query in the app.
+            queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
+            // `civitaiId` is the id the write matched against, which is the id
+            // space this query is keyed by. The old `{ queryKey: ['model',
+            // modelId] }` was two elements under a three-element key and matched
+            // nothing.
+            if (civitaiId) {
+                queryClient.invalidateQueries({ queryKey: installedVersionsKey(civitaiId) });
+            }
             setShowSearchModal(false);
         },
         onError: (err) => {

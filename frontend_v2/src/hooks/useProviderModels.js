@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { QUERY_KEYS } from '../constants/queryKeys';
 import { normalizeReconciliationStatus as normalizeRealtimeReconciliationStatus } from '../utils/providerStatus';
 import { unwrapPayload, normalizeObject } from '../utils/providerUtils';
 
@@ -108,14 +109,15 @@ export function useAddModelToProviders() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['providers-page', 'providers'] });
-            // These three keys did not exist, so nothing was ever refetched and
-            // the generator's model dropdowns kept showing a stale list after a
-            // model was added to a provider. Real keys are
-            // ['installed-models', ...] (InstalledTab.jsx) and
-            // ['model-directory', directory] (useModelDirectories.js);
-            // both are invalidated by prefix. There is no ['provider-models']
-            // query.
-            queryClient.invalidateQueries({ queryKey: ['installed-models'] });
+            // `['installed-models', …]` was invalidated here and matched no
+            // query: the Model Manager's Installed tab and the generator's
+            // `ModelSelector` both use `modelListKey(...)`, which is
+            // `['models', 'list', …]`. The prefix `['models']` covers both, plus
+            // every other filter combination of the same list, which is what
+            // "the list changed" means. `['model-directory', directory]`
+            // (useModelDirectories.js) is real and still needed. There is no
+            // `['provider-models']` query.
+            queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
             queryClient.invalidateQueries({ queryKey: ['model-directory'] });
         },
     });

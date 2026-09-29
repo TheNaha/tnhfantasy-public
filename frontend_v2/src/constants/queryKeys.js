@@ -11,6 +11,7 @@ export const QUERY_KEYS = {
     EXPRESSIONS: 'expressions',
     BRANCHES: 'branches',
     LOCATIONS: 'locations',
+    WORLDS: 'worlds',
     SEARCH: 'search',
     GALLERY: 'gallery',
     MODELS: 'models',
@@ -22,6 +23,7 @@ export const QUERY_KEYS = {
     DASHBOARD: 'dashboard',
     RELATIONSHIPS: 'relationships',
     GRAPH_LAYOUT: 'graph-layout',
+    TIMELINE: 'timeline',
 };
 
 export const buildQueryKey = (...parts) => {

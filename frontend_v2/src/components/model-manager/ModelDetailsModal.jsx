@@ -9,6 +9,7 @@ import CivitaiSearchModal from './CivitaiSearchModal';
 import AutopopulateSelector from './AutopopulateSelector';
 import { copyToClipboard } from '../../utils/clipboard';
 import { QUERY_KEYS } from '../../constants/queryKeys';
+import { installedVersionsKey } from '../../hooks/useCivitaiSearch';
 
 /**
  * Query keys whose pages carry a model's tag list. A new tag is only useful if
@@ -312,7 +313,14 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
             await api.post(`/api/v2/models/${file.model_id}/autopopulate`, payload);
             toast.success(isAutoDiscovered ? "Model details autopopulated!" : "Model metadata refetched!");
             queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
-            queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });
+            // `installedVersionsKey` is `['model','installed',<civitai id>]`, the
+            // only query in that namespace and the one `ModelImportCard` reads.
+            // This was `{ queryKey: ['model', file.model_id] }` — two elements
+            // under a three-element key, and a *local* id where the query is
+            // keyed by a civitai id, so it matched nothing on both counts.
+            if (civitaiId) {
+                queryClient.invalidateQueries({ queryKey: installedVersionsKey(civitaiId) });
+            }
             setShowSearchModal(false);
             onClose();
         } catch (e) {
@@ -330,7 +338,11 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
             await api.post(`/api/v2/models/maintenance/${file.model_id}/resync`);
             toast.success("Model metadata refreshed from CivitAI!");
             queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
-            queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });
+            // A resync re-derives this model's versions, so the installed-versions
+            // query for the civitai model it belongs to is the one that moved.
+            if (civitaiId) {
+                queryClient.invalidateQueries({ queryKey: installedVersionsKey(civitaiId) });
+            }
             onClose();
         } catch (e) {
             toast.error("Failed to refresh metadata: " + (e.message || "Unknown error"));
@@ -643,9 +655,11 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                     modelType={modelType}
                     modelDirectory={file.directory}
                     onClose={() => setShowAutopopulateSelector(false)}
-                    onComplete={() => {
+                    onComplete={(selectedCivitaiId) => {
                         queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
-                        queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });
+                        if (selectedCivitaiId) {
+                            queryClient.invalidateQueries({ queryKey: installedVersionsKey(selectedCivitaiId) });
+                        }
                     }}
                 />
             )}

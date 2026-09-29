@@ -5,8 +5,12 @@ import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import { api } from '../../api';
 import { useCheckInstalledVersions } from '../../hooks/useCivitaiSearch';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export default function ModelImportCard({ model, onCancel }) {
+    // Escape dismisses, matching the shared ModalOverlay dialogs and the
+    // "Esc → Close modals" line in KeyboardShortcutsModal.
+    useEscapeKey(onCancel);
     const [selectedVersionId, setSelectedVersionId] = useState(model.modelVersions?.[0]?.id);
     const [activeImageIndex, setActiveImageIndex] = useState(0);
     const [installing, setInstalling] = useState(false);

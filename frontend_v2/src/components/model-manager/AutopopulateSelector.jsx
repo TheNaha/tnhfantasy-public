@@ -42,7 +42,10 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
         try {
             await api.post(`/api/v2/models/${modelId}/autopopulate`, { civitai_id: selectedCivitaiId });
             toast.success('Model metadata updated!');
-            if (onComplete) onComplete();
+            // The matched civitai id is passed up: it is the id space the
+            // installed-versions query is keyed by, and it is the one value
+            // changed by this write.
+            if (onComplete) onComplete(selectedCivitaiId);
             onClose();
         } catch (err) {
             toast.error('Failed to autopopulate: ' + (err.message || 'Unknown error'));
