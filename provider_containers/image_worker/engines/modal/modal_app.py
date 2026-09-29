@@ -1,7 +1,6 @@
 import modal
 import asyncio
 import subprocess
-import signal
 import time
 import logging
 
@@ -15,17 +14,37 @@ from pathlib import Path
 # IMPORTANT: provider_core is a sibling package. Modal cloud functions can fail
 # to import this module unless provider_core is explicitly packaged into the
 # image (see image_base.add_local_dir below).
-from provider_core.downloads import pending_download_paths
+from provider_core.comfy_lifecycle import (
+    find_pids_on_port,
+    free_comfy_vram,
+    restart_comfy_process,
+    wait_for_pids_gone,
+    wait_for_port_closed,
+)
+from provider_core.downloads import pending_download_paths, pipeline_artifacts
 from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
 from provider_core.downloads import download_model_to_path
 from provider_core.http_client import get_http_client
+
+def _remove_if_present(path: str) -> None:
+    """Unlink `path` if it is still there.
+
+    The pipeline artifacts are enumerated first and removed second, so a `.lock`
+    released by the download that just finished is gone by the time the sweep
+    reaches it. An unlink that raises here aborted the whole delete — model
+    included — for an artifact nobody asked to keep.
+    """
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
 
 def safe_vol_reload():
     try:
         vol.reload()
     except Exception as e:
         logger.warning(f"vol.reload failed: {e}")
-
 async def safe_vol_reload_aio():
     try:
         await vol.reload.aio()
@@ -221,90 +240,26 @@ def _wait_for_comfy_ready(port: int, timeout_seconds: float, label: str):
     return False
 
 def _find_comfy_pids(port: int, label: str = "") -> list[int]:
-    """PIDs actually bound to the ComfyUI port, found via the socket table
-    (not cmdline pattern matching, which was silently matching nothing --
-    comfy-cli's --background launch likely daemonizes under a cmdline that
-    doesn't contain "ComfyUI/main.py" or "comfy launch", so pgrep -f was
-    finding zero pids and every 'restart' was skipping the kill entirely)."""
-    import psutil
-    pids = set()
-    try:
-        for conn in psutil.net_connections(kind="inet"):
-            if conn.laddr and conn.laddr.port == port and conn.pid:
-                pids.add(conn.pid)
-    except Exception as e:
-        logger.warning(f"[{label}] psutil.net_connections failed: {e}")
-    logger.info(f"[{label}] pids bound to port {port}: {sorted(pids)}")
-    return list(pids)
+    return find_pids_on_port(port, label, log=logger.info)
 
 def _wait_for_pids_gone(pids: list[int], timeout_seconds: float = 15.0) -> bool:
-    deadline = time.time() + timeout_seconds
-    remaining = set(pids)
-    while remaining and time.time() < deadline:
-        remaining = {p for p in remaining if os.path.exists(f"/proc/{p}")}
-        if remaining:
-            time.sleep(0.5)
-    return not remaining
+    return wait_for_pids_gone(pids, timeout_seconds=timeout_seconds)
 
 def _wait_for_port_closed(port: int, timeout_seconds: float = 15.0) -> bool:
-    import socket
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(0.5)
-            if sock.connect_ex(("127.0.0.1", port)) != 0:
-                return True  # nothing listening -> port is free
-        time.sleep(0.5)
-    return False
+    return wait_for_port_closed(port, timeout_seconds=timeout_seconds)
 
 def _restart_comfy_server(port: int, label: str, timeout_seconds: float = 180.0):
-    # Kill by PID with a confirmed-dead wait, instead of fire-and-forget pkill.
-    # The old bug: pkill sent SIGTERM and we immediately started a new server
-    # + polled readiness; the readiness probe frequently caught the OLD
-    # (still-dying) process still answering 200, so the "restart" silently
-    # kept running the same long-lived process while the freshly spawned one
-    # failed with "port already in use" and was discarded.
-    pids = _find_comfy_pids(port, label)
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except Exception as e:
-            logger.warning(f"[{label}] SIGTERM failed for pid {pid}: {e}")
-
-    if not _wait_for_pids_gone(pids, timeout_seconds=15.0):
-        still_alive = [p for p in pids if os.path.exists(f"/proc/{p}")]
-        logger.warning(f"[{label}] pids {still_alive} still alive after SIGTERM, sending SIGKILL")
-        for pid in still_alive:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        _wait_for_pids_gone(still_alive, timeout_seconds=10.0)
-
-    if not _wait_for_port_closed(port, timeout_seconds=15.0):
-        logger.warning(f"[{label}] port {port} still bound after killing known pids — new launch may collide")
-
-    _start_comfy_server(port)
-    _wait_for_comfy_ready(port, timeout_seconds, label)
+    restart_comfy_process(
+        port,
+        label,
+        start=lambda: _start_comfy_server(port),
+        wait_for_ready=lambda: _wait_for_comfy_ready(port, timeout_seconds, label),
+        log=logger.info,
+        timeout_seconds=timeout_seconds,
+    )
 
 def _free_comfy_memory(port: int, label: str) -> None:
-    """Ask the ComfyUI subprocess itself to unload models and free VRAM.
-    Must be an HTTP call: ComfyUI runs in a separate OS process from this
-    Modal function, so torch.cuda.* calls here operate on the wrong
-    process's CUDA context and never touch ComfyUI's actual VRAM."""
-    import requests
-    try:
-        resp = requests.post(
-            f"http://127.0.0.1:{port}/free",
-            json={"unload_models": True, "free_memory": True},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        logger.info(f"[{label}] /free succeeded ({resp.status_code})")
-    except Exception as e:
-        logger.warning(f"[{label}] /free call failed: {e}")
+    free_comfy_vram(port, label, log=logger.info)
 
 def _commit_within(commit_fn, timeout_seconds: float) -> None:
     """Run `commit_fn` under a ceiling, abandoning the thread if it overruns.
@@ -1324,8 +1279,8 @@ class FileStorage:
                 else:
                     await asyncio.to_thread(os.remove, full_path)
                 
-            for stale in pending_download_paths(full_path):
-                await asyncio.to_thread(os.remove, stale)
+            for stale in pipeline_artifacts(full_path):
+                await asyncio.to_thread(_remove_if_present, stale)
                 
             if not path.endswith((".json", ".preview.png", ".sha256")):
                 base_path, _ = os.path.splitext(full_path)

@@ -7,7 +7,11 @@ import asyncio
 from typing import List, Dict, Any, Optional
 
 from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
-from provider_core.downloads import download_model_to_path, pending_download_paths
+from provider_core.downloads import (
+    download_model_to_path,
+    pending_download_paths,
+    pipeline_artifacts,
+)
 from provider_core.validation import (
     validate_downloaded_file,
 )
@@ -616,7 +620,7 @@ class FileStorage:
             # probe matched nothing and a crash-interrupted download survived
             # delete-model forever. image_worker/engines/modal/modal_app.py had
             # the sweep; this twin did not.
-            for stale in pending_download_paths(full_path):
+            for stale in pipeline_artifacts(full_path):
                 await asyncio.to_thread(os.remove, stale)
 
             if not path.endswith((".json", ".preview.png", ".sha256")):
