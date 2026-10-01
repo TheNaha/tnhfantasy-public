@@ -55,7 +55,7 @@ const ResolutionSettings = memo(function ResolutionSettings() {
     const renderLockIcon = (param) => (
         <button
             onClick={() => toggleParamLock(param)}
-            className={`ml-2 no-touch-padding p-1 rounded-md border transition-all flex items-center justify-center ${lockedParams[param] ? 'bg-red-500/20 text-red-400 border-red-500/50' : 'bg-transparent text-gray-600 hover:text-gray-400 border-transparent hover:bg-white/5'}`}
+            className={`ml-2 no-touch-padding shrink-0 h-10 w-10 p-1 rounded-md border transition-all flex items-center justify-center ${lockedParams[param]} ? 'bg-red-500/20 text-red-400 border-red-500/50' : 'bg-transparent text-gray-600 hover:text-gray-400 border-transparent hover:bg-white/5'}`}
             title={lockedParams[param] ? "Unlock parameter" : "Lock parameter (prevent auto-change)"}
             aria-label={lockedParams[param] ? "Unlock parameter" : "Lock parameter"}
         >

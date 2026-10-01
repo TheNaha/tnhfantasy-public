@@ -235,7 +235,14 @@ export default function UnifiedGeneratorLayout({
 
             <button
                 onClick={() => navigate('/gallery')}
-                className="fixed bottom-6 right-6 z-40 md:hidden bg-purple-600 hover:bg-purple-500 text-white p-4 rounded-full shadow-lg transition-all transform hover:scale-110 flex items-center gap-2"
+                // `bottom-28`, not `bottom-6`: the mobile action bar is a
+                // `fixed bottom-0` element 81px tall at z-30, and this FAB was
+                // sitting *inside* it at z-40. Measured over a 24x24 grid at
+                // 360x800, the FAB covered 22% of the Generate button's area on
+                // /generate and 16% on /img2img and /inpaint — the primary
+                // action, under the thumb, partly dead. 112px clears the 81px
+                // bar with room to spare.
+                className="fixed bottom-28 right-6 z-40 md:hidden bg-purple-600 hover:bg-purple-500 text-white p-4 rounded-full shadow-lg transition-all transform hover:scale-110 flex items-center gap-2"
                 title="Go to Gallery"
             >
                 <FolderOpen size={24} />

@@ -30,7 +30,7 @@ const SamplingSettings = memo(function SamplingSettings() {
     const renderLockIcon = (param) => (
         <button
             onClick={() => toggleParamLock(param)}
-            className={`ml-2 no-touch-padding p-1 rounded-md border transition-all flex items-center justify-center ${lockedParams[param] ? 'bg-red-500/20 text-red-400 border-red-500/50' : 'bg-transparent text-gray-600 hover:text-gray-400 border-transparent hover:bg-white/5'}`}
+            className={`ml-2 no-touch-padding shrink-0 h-10 w-10 p-1 rounded-md border transition-all flex items-center justify-center ${lockedParams[param] ? 'bg-red-500/20 text-red-400 border-red-500/50' : 'bg-transparent text-gray-600 hover:text-gray-400 border-transparent hover:bg-white/5'}`}
             title={lockedParams[param] ? "Unlock parameter" : "Lock parameter (prevent auto-change)"}
             aria-label={lockedParams[param] ? "Unlock parameter" : "Lock parameter"}
         >
@@ -129,12 +129,19 @@ const SamplingSettings = memo(function SamplingSettings() {
                     </label>
                 </div>
 
-                <div className="flex gap-2">
+                {/* `min-w-0` on the input: with the two dice now `shrink-0` at
+                    48px each, the row's fixed total is 96px plus the gaps, and
+                    the input's automatic minimum was its intrinsic size, so the
+                    row overflowed a 360px viewport by 8px and the app root
+                    clipped the last dice. `min-w-0` lets the input give way
+                    instead, which is the only element here that can. */}
+                <div className="flex gap-2 min-w-0">
                     <input
                         type="number"
                         value={seed}
+                        aria-label="Seed"
                         onChange={(e) => setSeed(Number(e.target.value))}
-                        className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:ring-2 focus:ring-blue-500/50 outline-none font-mono transition-all glow-focus"
+                        className="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:ring-2 focus:ring-blue-500/50 outline-none font-mono transition-all glow-focus"
                     />
                     <button
                         onClick={() => {
@@ -144,14 +151,14 @@ const SamplingSettings = memo(function SamplingSettings() {
                                 toast.success('Auto-randomize enabled!', { icon: '🎲' });
                             }
                         }}
-                        className="no-touch-padding w-12 flex items-center justify-center bg-black/40 hover:bg-black/60 border border-white/10 hover:border-white/20 rounded-xl transition-all shadow-lg hover:-translate-y-0.5 text-lg"
+                        className="no-touch-padding w-12 shrink-0 flex items-center justify-center bg-black/40 hover:bg-black/60 border border-white/10 hover:border-white/20 rounded-xl transition-all shadow-lg hover:-translate-y-0.5 text-lg"
                         title="Randomize seed"
                     >
                         🎲
                     </button>
                     <button
                         onClick={() => updateSetting('generator', 'autoRandomizeSeed', !autoRandomizeSeed)}
-                        className={`no-touch-padding w-12 flex items-center justify-center border rounded-xl transition-all shadow-lg hover:-translate-y-0.5 ${
+                        className={`no-touch-padding w-12 shrink-0 flex items-center justify-center border rounded-xl transition-all shadow-lg hover:-translate-y-0.5 ${
                             autoRandomizeSeed
                                 ? 'bg-blue-500/20 text-blue-400 border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.3)]'
                                 : 'bg-black/40 text-gray-500 hover:text-white border-white/10 hover:bg-black/60 hover:border-white/20'
