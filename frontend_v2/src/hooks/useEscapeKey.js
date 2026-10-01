@@ -30,6 +30,26 @@ const liveRegistrations = new Set();
  * structure. Adopting a whole component's markup to gain one behaviour is a
  * bad trade; calling a hook is not.
  */
+/**
+ * Is any close-on-Escape dialog currently open?
+ *
+ * The global keyboard shortcuts (`useKeyboardShortcuts`, and the Dashboard's own
+ * listener) guard against modifier keys and against typing in a field, but not
+ * against a dialog being open. So `d`/`g`/`m` navigated away from under a modal
+ * and discarded its state, `?` opened the shortcuts help *over* the modal, and
+ * on the Dashboard `Delete`/`Backspace` called `handleDelete` — deleting an
+ * image while a confirmation dialog was open, bypassing the confirmation the
+ * pointer path asks for.
+ *
+ * This is the same registry `useEscapeKey` already maintains, so the answer is
+ * known rather than guessed from the DOM: a dialog can close itself on a button
+ * without ever registering an Escape handler, and counting DOM overlays would
+ * get that wrong.
+ */
+export function hasOpenEscapeDialog() {
+    return liveRegistrations.size > 0;
+}
+
 export function useEscapeKey(onEscape, active = true) {
     useEffect(() => {
         if (!active || !onEscape) return undefined;

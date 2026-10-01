@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useEscapeKey } from './useEscapeKey';
+import { useEscapeKey, hasOpenEscapeDialog } from './useEscapeKey';
 
 const NAVIGATION_TARGETS = {
     g: '/generate',
@@ -52,6 +52,11 @@ function handleGlobalKeyDown(event) {
     // Ignore if the user is typing in an input/textarea. Escape is exempt: it
     // has to keep working there, which is why it is handled elsewhere.
     if (isTypingTarget(event.target)) return;
+    // Ignore while any dialog is open. A single-letter shortcut navigating away
+    // from under an open modal discards whatever the user had typed into it, and
+    // `?` opened the shortcuts help *over* the modal. The registry that
+    // `useEscapeKey` maintains already knows the answer, so no DOM guessing.
+    if (hasOpenEscapeDialog()) return;
 
     const key = event.key.toLowerCase();
     const route = NAVIGATION_TARGETS[key];

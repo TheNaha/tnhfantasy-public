@@ -25,6 +25,7 @@ import {
     useMoveImagesBetweenCollections
 } from '../hooks/useCollections';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import { hasOpenEscapeDialog } from '../hooks/useEscapeKey';
 import { useDashboardModals } from '../hooks/useDashboardModals';
 import { useDashboardSelection } from '../hooks/useDashboardSelection';
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
@@ -501,6 +502,13 @@ export default function Dashboard() {
             }
 
             if (e.altKey) return;
+
+            // Same guard as the global shortcut registry: while any dialog is
+            // open, these keys belong to the dialog. `Delete`/`Backspace`
+            // reached `handleDelete` with a confirmation dialog already on
+            // screen, which is exactly the action the pointer path asks
+            // confirmation for.
+            if (hasOpenEscapeDialog()) return;
 
             if (key === 's') {
                 e.preventDefault();
