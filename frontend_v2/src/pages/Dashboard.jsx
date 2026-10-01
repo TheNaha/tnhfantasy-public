@@ -41,7 +41,6 @@ import useStore from '../store/useStore';
 // Components
 import QueueVisualization from '../components/QueueVisualization';
 import FailedJobsPanel from '../components/dashboard/FailedJobsPanel';
-import GeneratorFloatingButton from '../components/dashboard/GeneratorFloatingButton';
 import DashboardOverlays from '../components/dashboard/DashboardOverlays';
 import DashboardGalleryGrid from '../components/dashboard/DashboardGalleryGrid';
 import GalleryDateRail from '../components/dashboard/GalleryDateRail';
@@ -678,7 +677,6 @@ export default function Dashboard() {
                 onSelectCollection={handleSelectCollection}
             />
 
-            <GeneratorFloatingButton onClick={() => navigate('/generate')} />
         </motion.div>
     );
 }

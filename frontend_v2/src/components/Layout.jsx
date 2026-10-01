@@ -1,5 +1,5 @@
-import { Link, useLocation } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, BookOpen, Images, Sparkles, ChevronDown, Layers3, Command, HelpCircle, FileText, ImagePlus, Paintbrush } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, BookOpen, Images, Sparkles, ChevronDown, Layers3, Command, HelpCircle, FileText, ImagePlus, Paintbrush, Image as ImageIcon } from 'lucide-react';
 import { useMemo, useState, memo, useEffect, useRef } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -169,6 +169,10 @@ export default function Layout({ children }) {
     const { data: branding } = useBranding();
     const safeBranding = branding || { appName: 'TNH-Comfy', logoUrl: '/logo.png', faviconUrl: '/favicon.ico' };
     const location = useLocation();
+    const navigate = useNavigate();
+    // Only on the gallery, which is where the floating button used to live. The
+    // button itself is gone: see the header markup below.
+    const showGeneratorShortcut = location.pathname === '/gallery' || location.pathname === '/';
     const isFullBleed = /^\/(chat|story|characters)/.test(location.pathname);
     const mainScrollRef = useRef(null);
 
@@ -231,13 +235,38 @@ export default function Layout({ children }) {
                 >
                     <Menu size={24} aria-hidden="true" />
                 </button>
-                <div className="ml-4 flex items-center gap-2">
-                    <img src={safeBranding.logoUrl} alt="Logo" className="w-6 h-6" />
-                    <h1 className="text-lg font-bold text-gradient-primary">
+                {/* `min-w-0` + `truncate` on the title block. Three icon buttons
+                    plus a long app name no longer fit a 360px header, and without
+                    a zero minimum the `<h1>` wrapped to two lines — "TNH-" /
+                    "Comfy" — which made the header twice as tall and visibly
+                    broken. The name is branding, not content, so it gives way
+                    before the controls do. */}
+                <div className="ml-4 flex items-center gap-2 min-w-0 flex-1">
+                    <img src={safeBranding.logoUrl} alt="Logo" className="w-6 h-6 shrink-0" />
+                    <h1 className="text-lg font-bold text-gradient-primary truncate">
                         {safeBranding.appName}
                     </h1>
                 </div>
                 <div className="ml-auto flex items-center gap-1">
+                    {/* The generator shortcut lives here rather than floating over
+                        the gallery. As a `fixed` circle at `bottom-6 right-6` it
+                        sat on top of scrolling content, and measured across a full
+                        scroll of /gallery at 360px it covered "Add to favorites"
+                        **100%** — the control was completely unreachable — plus 18%
+                        of "Sort images", 15% of the date rail and 13% of the LoRA
+                        filter. A FAB over a scrolling page is always over
+                        something; the header is not. Shown on mobile only, because
+                        the sidebar already carries it on desktop. */}
+                    {showGeneratorShortcut && (
+                        <button
+                            onClick={() => navigate('/generate')}
+                            className="lg:hidden p-2 text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500 outline-none rounded-lg"
+                            aria-label="Go to Generator"
+                            title="Go to Generator"
+                        >
+                            <ImageIcon size={20} aria-hidden="true" />
+                        </button>
+                    )}
                     <button
                         onClick={() => setShowCommandPalette(true)}
                         className="p-2 text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500 outline-none rounded-lg"

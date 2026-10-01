@@ -218,10 +218,41 @@ export default function UnifiedGeneratorLayout({
                 )}
             />
 
-            <div className="h-20 md:hidden"></div>
+            {/* The action bar is `fixed` and 81px tall (`p-3` + 56px button), so
+                the document scroller needs room for it — `/generate` scrolls the
+                document, not `#main-scroll-container`, which grows with it. This
+                was `h-20` (80px), one pixel short of the bar, which left the last
+                control of every section 14-30px underneath it: a control you can
+                see and cannot tap. Measured at the bottom of the scroll on a
+                phone — the checkpoint select 16px under on /generate, /img2img
+                and /inpaint, the two file pickers 30px under on /batch-generate.
+                112px clears the bar with room for `pb-safe`. */}
+            <div className="h-28 md:hidden" aria-hidden="true" />
+            {/* The action bar, with the gallery shortcut docked into it as a
+                fourth control. It used to be a `fixed` circle floating over the
+                form, which meant no bottom offset was ever right: measured across
+                the whole scroll at `bottom-6` it covered Generate 22% and the
+                aspect-ratio row 44%; moved to `bottom-28` it still covered a lock
+                button 51% and the checkpoint select 24%, because the form scrolls
+                and the FAB does not, so it is always over something.
 
+                Docking it removes the overlap entirely, keeps it one tap from the
+                gallery mid-generation, and puts it under the thumb beside the
+                other actions. `md:hidden` because the sidebar already has it. */}
             <div className="fixed bottom-0 left-0 right-0 p-3 bg-gray-900/95 backdrop-blur-xl border-t border-gray-800 md:hidden z-30 pb-safe">
-                {mobileActionBar || rightColumnBottom}
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => navigate('/gallery')}
+                        className="shrink-0 h-14 w-12 rounded-xl bg-purple-600 hover:bg-purple-500 active:scale-95 text-white flex items-center justify-center transition-all"
+                        title="Go to Gallery"
+                        aria-label="Go to Gallery"
+                    >
+                        <FolderOpen size={20} />
+                    </button>
+                    <div className="flex-1 min-w-0">
+                        {mobileActionBar || rightColumnBottom}
+                    </div>
+                </div>
             </div>
 
             {viewingMetadata && (
@@ -232,21 +263,6 @@ export default function UnifiedGeneratorLayout({
                     onClose={() => setViewingMetadata(null)}
                 />
             )}
-
-            <button
-                onClick={() => navigate('/gallery')}
-                // `bottom-28`, not `bottom-6`: the mobile action bar is a
-                // `fixed bottom-0` element 81px tall at z-30, and this FAB was
-                // sitting *inside* it at z-40. Measured over a 24x24 grid at
-                // 360x800, the FAB covered 22% of the Generate button's area on
-                // /generate and 16% on /img2img and /inpaint — the primary
-                // action, under the thumb, partly dead. 112px clears the 81px
-                // bar with room to spare.
-                className="fixed bottom-28 right-6 z-40 md:hidden bg-purple-600 hover:bg-purple-500 text-white p-4 rounded-full shadow-lg transition-all transform hover:scale-110 flex items-center gap-2"
-                title="Go to Gallery"
-            >
-                <FolderOpen size={24} />
-            </button>
         </>
     );
 }

@@ -19,7 +19,7 @@
  * overlay that sat on top of the primary action.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -27,6 +27,33 @@ const here = dirname(fileURLToPath(import.meta.url));
 // Paths are relative to `src/`, not to this file's directory.
 const SRC = join(here, '..');
 const read = (p) => readFileSync(join(SRC, p), 'utf8');
+
+/** Every .jsx under a src/ subdirectory, so a sweep cannot miss a new file. */
+function walk(dir) {
+  const out = [];
+  for (const entry of readdirSync(join(SRC, dir), { withFileTypes: true })) {
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...walk(rel));
+    else if (entry.name.endsWith('.jsx')) out.push(rel);
+  }
+  return out;
+}
+
+/**
+ * The literal contents of every `className` attribute in a source file.
+ *
+ * A whole-file regex is not good enough for assertions about CSS classes: these
+ * files are full of comments that *name* the buggy classes they fixed, and a
+ * sweep happily matches the prose instead of the code. Reading attribute values
+ * means a test fails only when a component really renders the class.
+ */
+function classNamesOf(src) {
+  const out = [];
+  const re = /className\s*=\s*(?:"([^"]*)"|\{`([^`]*)`|'([^']*)')/g;
+  let m;
+  while ((m = re.exec(src)) !== null) out.push(m[1] ?? m[2] ?? m[3] ?? '');
+  return out;
+}
 
 describe('horizontal overflow cannot be measured on the document element', () => {
     it('the app root clips overflow-x, so scrollWidth on <html> is not a signal', () => {
@@ -86,17 +113,46 @@ describe('the tap-target floor cannot be allowed to overflow a dense chart', () 
     });
 });
 
-describe('a fixed overlay must not sit on the primary action', () => {
-    it('the gallery FAB clears the mobile action bar', () => {
-        // The bar is `fixed bottom-0` at z-30, 81px tall. The FAB was
-        // `bottom-6` (24px) at z-40, i.e. inside it: measured over a 24x24
-        // grid, 22% of the Generate button's area on /generate and 16% on
-        // /img2img and /inpaint.
+describe('a floating overlay must not sit on top of page content', () => {
+    // Superseded by "no floating action buttons at all" below. Kept as a
+    // reminder of what the offsets could and could not achieve: `bottom-6`
+    // covered Generate 22% and the aspect-ratio row 44%; `bottom-28` cleared
+    // Generate and then covered a lock button 51% and the checkpoint select 24%.
+    // No bottom offset is the answer, because the page scrolls and the button
+    // does not, so it is always over something.
+    it('the generator gallery shortcut is docked, not floating', () => {
         const layout = read('components/generator/UnifiedGeneratorLayout.jsx');
-        const fab = layout.match(/className="fixed bottom-\S+ right-6[^"]*"/);
-        expect(fab).toBeTruthy();
-        expect(fab[0]).not.toContain('bottom-6 ');
-        expect(fab[0]).toContain('bottom-28');
+        expect(layout).not.toMatch(/fixed bottom-\d+ right-\d+[^"]*Go to Gallery/s);
+        expect(layout).toMatch(/aria-label="Go to Gallery"/);
+    });
+
+    it('no component renders a fixed bottom-right circular button on mobile', () => {
+        // The gallery had the same bug in a different component: a `fixed
+        // bottom-6 right-6` circle that covered "Add to favorites" 100% of its
+        // area, measured across a full scroll at 360px, plus 18% of "Sort
+        // images" and 15% of the date rail. It now lives in the mobile header.
+        //
+        // Only className *values* are inspected. A whole-file regex matches the
+        // explanatory comments that record these bugs — which is exactly what
+        // happened the first time this test ran.
+        const offenders = [];
+        for (const file of walk('components')) {
+            for (const classes of classNamesOf(read(file))) {
+                if (/fixed\b[^"']*\bbottom-[2-9][^"']*\bright-[2-9]/.test(classes)) {
+                    offenders.push(`${file}: ${classes.slice(0, 60)}`);
+                }
+            }
+        }
+        expect(offenders).toEqual([]);
+    });
+
+    it('the mobile header can afford a third icon without wrapping the title', () => {
+        // Adding the gallery shortcut overflowed a 360px header and the <h1>
+        // wrapped to "TNH-" / "Comfy", doubling the header height. Measured after
+        // the fix: 1 line and a 64px header at 320, 360 and 393px.
+        const layout = read('components/Layout.jsx');
+        expect(layout).toMatch(/flex items-center gap-2 min-w-0 flex-1/);
+        expect(layout).toMatch(/text-gradient-primary truncate/);
     });
 });
 
