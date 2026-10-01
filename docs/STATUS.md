@@ -1,10 +1,10 @@
 # TNHComfy — Project Status
 
 **The single authoritative status document.** Everything here was verified
-against the code on 2026-09-29, not carried over from an earlier plan.
+against the code on 2026-10-01, not carried over from an earlier plan.
 
 If you are about to make a decision about what to work on next, read this file
-and then the **most recent** audit, which is `docs/audit-2026-09-29.md`. Each
+and then the **most recent** audit, which is `docs/audit-2026-10-01.md`. Each
 audit supersedes its predecessors for everything it marks fixed; reading an
 older one tells you about defects that no longer exist. The other planning
 documents that used to sit at the repo root are historical and live in
@@ -40,18 +40,23 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of **2026-09-29**:
+All three suites green as of **2026-10-01**:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **2657 passed, 7 skipped** (352 s) | `cd backend_v2 && .venv/bin/pytest` |
-| Frontend | **1159 passed across 123 files** (229 s) | `cd frontend_v2 && npm test` |
-| Providers | **694 passed, 4 skipped** (76-81 s) | `cd provider_containers && venv/bin/python -m pytest` |
+| Backend | **2817 passed, 7 skipped** (306 s) | `cd backend_v2 && .venv/bin/pytest` |
+| Frontend | **1312 passed across 139 files** | `cd frontend_v2 && npm test` |
+| Providers | **793 passed, 4 skipped** (76-81 s) | `cd provider_containers && venv/bin/python -m pytest` |
 
-Every figure in that table was re-measured on **2026-09-29**, not carried over
-from a previous run. The previous revision (dated 2026-09-27) claimed backend 2473
-/ frontend 1143 across 122 files / providers 634 — all three were low, and the
-real backend count was 184 tests higher than the table said.
+All three figures were re-measured on **2026-10-01**, not carried over. The
+backend grew by 29 tests and, unlike the 2026-09-29 run, is **fully green** — the
+`test_app_boot_smoke.py::test_lifespan_runs_every_declared_startup_phase` flake
+that failed on 2026-09-29 passed here. It is still a flake (it has now failed 1
+run in 4) and is not fixed.
+
+> **The stack was rebuilt and redeployed during the 2026-10-01 audit and
+> verified reachable afterwards:** `http://localhost:5174` → 200,
+> `http://localhost:8002/api/health` → 200, all 9 containers healthy.
 
 **A green suite says nothing about whether the container is serving the code under
 test.** The 2026-09-27 backend count was wrong precisely because the documented
@@ -181,6 +186,12 @@ Items 1-6 of the previous list were fixed — see §1b of the follow-up. What re
    authentication at the reverse-proxy layer") has no Traefik router for 8002 —
    the only router is for 5174. The dev override restricts `db` to `127.0.0.1`,
    which makes the omission look accidental rather than intended.
+   **This stopped being theoretical on 2026-10-01:** an audit sub-agent's
+   in-process probe called `DELETE /api/jobs` and deleted all 154 rows of job
+   history. Assets (16,677 rows, 16,342 PNGs) were verified intact, because
+   `assets.job_id` is an un-FK'd soft reference nothing joins on — but the loss
+   is real and it happened from an ordinary probe. Nothing destructive should be
+   pointed at this stack until auth exists.
 2. **A 7 GB checkpoint is now servable, but slowly on Modal.** All four engines
    stream instead of buffering, and the backend has a `stream_file` path. Modal is
    the exception: a modal method serialises its return value across RPC, so the
@@ -278,5 +289,5 @@ The frontend serves on **:5174** (not 5173) and proxies `/api` and
 | Understand the code | `AGENTS.md`, then the module itself |
 | Understand the product intent | `VISION.md` |
 | Understand a past decision | `docs/archive/` (historical; may be wrong) |
-| See what the last audit found | `docs/audit-2026-09-29.md` |
-| See earlier audits | `docs/audit-2026-09-28.md`, then `docs/audit-2026-09-27.md` (each superseded by the next) |
+| See what the last audit found | `docs/audit-2026-10-01.md` |
+| See earlier audits | `docs/audit-2026-09-29b.md`, then `docs/audit-2026-09-29.md` (each superseded by the next) |

@@ -158,11 +158,12 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 ## Docs
 
 - `docs/` has architecture, backend, frontend, deployment, and API reference.
-- `docs/STATUS.md` is the authoritative project status and what-is-still-open list.
-  `docs/audit-2026-09-28.md` is the most recent code audit, and it supersedes
-  `docs/audit-2026-09-27.md`, `docs/audit-2026-09-26.md` and
-  `docs/audit-2026-09-26-followup.md` for everything it marks fixed. Read
-  STATUS.md and the 2026-09-28 audit before large-scale changes.
-  `docs/archive/` holds superseded planning docs —
-  historical only, and they contradict each other.
+ - `docs/STATUS.md` is the authoritative project status and what-is-still-open list.
+   `docs/audit-2026-10-01.md` is the most recent code audit, and it supersedes
+   `docs/audit-2026-09-29b.md`, `docs/audit-2026-09-29.md`, `docs/audit-2026-09-28.md`,
+   `docs/audit-2026-09-27.md`, `docs/audit-2026-09-26.md` and
+   `docs/audit-2026-09-26-followup.md` for everything it marks fixed. Read
+   STATUS.md and the 2026-10-01 audit before large-scale changes.
+   `docs/archive/` holds superseded planning docs —
+   historical only, and they contradict each other.
 - `.github/instructions/backend.instructions.md` has backend-specific rules scoped to `backend_v2/**`.
