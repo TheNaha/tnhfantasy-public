@@ -186,6 +186,7 @@ export default function InpaintGenerator() {
                                 max="1"
                                 step="0.05"
                                 value={denoise}
+                                aria-label="Inpaint strength"
                                 onChange={(e) => setDenoise(parseFloat(e.target.value))}
                                 className="w-full accent-purple-500"
                             />
@@ -207,6 +208,7 @@ export default function InpaintGenerator() {
                                 min="0"
                                 max="20"
                                 value={maskBlur}
+                                aria-label="Mask blur"
                                 onChange={(e) => setMaskBlur(parseInt(e.target.value))}
                                 className="flex-1"
                             />

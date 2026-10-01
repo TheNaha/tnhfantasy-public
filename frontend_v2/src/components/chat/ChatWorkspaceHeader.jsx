@@ -47,8 +47,11 @@ export default function ChatWorkspaceHeader({
                 >
                     {chatsCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
                 </button>
-                <button 
+                <button
                     type="button"
+                    aria-label={linkedCharacter?.name
+                        ? `View ${linkedCharacter.name}'s avatar`
+                        : 'View avatar'}
                     onClick={() => linkedCharacter?.avatar_path && handleAvatarClick(getAvatarUrl(linkedCharacter.id))}
                     className={clsx(
                         "w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden",
