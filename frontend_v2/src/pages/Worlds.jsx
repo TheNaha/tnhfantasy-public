@@ -239,14 +239,28 @@ function WorldCard({ world, onEdit, onDelete, onOpen }) {
                     <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-white/10 flex items-center justify-center shrink-0">
                         <Globe2 size={20} className="text-cyan-400" />
                     </div>
-                    <div className="min-w-0">
-                        <h3 className="font-semibold text-white truncate">{world.name}</h3>
+                    <div className="min-w-0 flex-1">
+                        {/* `line-clamp-2 sm:truncate`, not `truncate`: a world's
+                            name is how you tell two worlds apart, and `truncate`
+                            gave it 78px of a 312px card on a phone — "Coherence
+                            smoke" lost 44% of itself. Truncation is only
+                            acceptable from `sm:` up, where the card is wide
+                            enough to show the name in full. */}
+                        <h3 className="font-semibold text-white line-clamp-2 sm:truncate">{world.name}</h3>
                         {world.description && (
                             <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{world.description}</p>
                         )}
                     </div>
                 </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                {/* `opacity-100 sm:opacity-0 sm:group-hover:opacity-100`: a
+                    hover-revealed control is unreachable on touch — there is no
+                    hover, so the row was permanently invisible while still
+                    occupying ~80px of the title's row. The card itself is not
+                    clickable (`onOpen` is only on the first button here), so
+                    hiding it on mobile would remove the only way into the world
+                    rather than tidy the layout. Visible on phones, hover-revealed
+                    on desktop. */}
+                <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0">
                     <button onClick={() => onOpen(world)} className="p-1 text-gray-400 hover:text-blue-400 rounded" title="Open">
                         <ChevronRight size={12} />
                     </button>

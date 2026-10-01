@@ -147,12 +147,20 @@ export default function Lorebooks() {
                             className="bg-gray-900 border border-gray-700 rounded-xl p-4 flex items-center justify-between group"
                         >
                             <div className="flex-1 min-w-0">
-                                <h3 className="font-medium text-white truncate">{lb.name}</h3>
+                                {/* `line-clamp-2 sm:truncate`: the name is the
+                                    only thing identifying a lorebook, and
+                                    `truncate` left it 90px of a 344px card on a
+                                    phone — "Vel Varren World Book" lost 47%. */}
+                                <h3 className="font-medium text-white line-clamp-2 sm:truncate">{lb.name}</h3>
                                 {lb.description && (
                                     <p className="text-sm text-gray-400 mt-0.5 line-clamp-2">{lb.description}</p>
                                 )}
                             </div>
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                            {/* Visible on touch: a hover-revealed row is
+                                permanently invisible on a phone while still
+                                taking its width out of the title, and these
+                                buttons are the only route into a lorebook. */}
+                            <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0">
                                 <button onClick={() => setActiveLorebookId(lb.id)} className="p-1 text-gray-400 hover:text-blue-400 rounded" title="Manage entries">
                                     <ChevronRight size={14} />
                                 </button>
@@ -569,7 +577,11 @@ function EntryManagerModal({ lorebook, onClose }) {
                                         )}
                                         <p className="text-xs text-gray-200 whitespace-pre-wrap break-words">{entry.content}</p>
                                     </div>
-                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 shrink-0">
+                                    {/* Same defect as the lorebook card: a
+                                        hover-revealed row is invisible on touch
+                                        while still taking width, and Edit/Delete
+                                        are the only route to an entry. */}
+                                    <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 shrink-0">
                                         <button onClick={() => openEdit(entry)} className="p-1 text-gray-400 hover:text-blue-400 rounded" title="Edit">
                                             <Edit3 size={12} />
                                         </button>

@@ -255,9 +255,18 @@ export default function Locations() {
                             <div className="flex items-start justify-between mb-2">
                                 <div className="flex items-center gap-2 min-w-0">
                                     <MapPin size={16} className="text-blue-400 shrink-0" />
-                                    <h3 className="font-semibold text-white truncate">{location.name}</h3>
+                                    {/* `line-clamp-2 sm:truncate`: the name is the
+                                        only thing identifying a location, and the
+                                        hover-revealed action row beside it is
+                                        `shrink-0`, so `truncate` left the name
+                                        with the leftovers. */}
+                                    <h3 className="font-semibold text-white line-clamp-2 sm:truncate">{location.name}</h3>
                                 </div>
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                {/* Visible on touch — a hover-revealed row is
+                                    permanently invisible on a phone while still
+                                    taking width from the title, and Edit is the
+                                    only route to a location. */}
+                                <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0">
                                     <button
                                         onClick={() => handleEdit(location)}
                                         className="p-1 text-gray-400 hover:text-white rounded"

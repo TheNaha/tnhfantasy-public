@@ -314,7 +314,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             </div>
 
             {loading && filteredFiles.length === 0 ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
                     {Array.from({ length: 10 }).map((_, i) => (
                         <div key={i} className="aspect-[2/3] bg-white/5 rounded-2xl animate-pulse shadow-inner" />
                     ))}
@@ -326,7 +326,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                     <p className="text-sm opacity-70 mt-2">Try adjusting your search or filters</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
                     {filteredFiles.map(file => {
                         const availability = getModelAvailabilitySummary(
                             file.provider_statuses,
@@ -364,7 +364,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                 </div>
 
                                 <div className="absolute bottom-0 left-0 right-0 p-4">
-                                    <h3 className="text-sm font-bold text-white line-clamp-2 mb-2 drop-shadow-md tracking-wide" title={file.display_name || file.name}>
+                                    <h3 className="text-sm font-bold text-white line-clamp-2 break-words hyphens-auto mb-2 drop-shadow-md tracking-wide" title={file.display_name || file.name}>
                                         {file.display_name || file.name}
                                     </h3>
                                     {file.description?.includes("Auto-discovered") && (
