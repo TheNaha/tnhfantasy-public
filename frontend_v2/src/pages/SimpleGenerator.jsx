@@ -14,7 +14,7 @@ import GenerateButtonBar from '../components/generator/GenerateButtonBar';
 
 export default function SimpleGenerator() {
     const navigate = useNavigate();
-    const { store: { prompt, randomizeSeed } } = useGeneratorCore();
+    const { store: { prompt, randomizeSeed, selectedCheckpoint } } = useGeneratorCore();
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
     
     const { buildPayload, runSubmission, runWithPreflight } = useWorkflowBuilder('t2i');
@@ -80,6 +80,15 @@ export default function SimpleGenerator() {
                     generating={generating}
                     progress={progress}
                     prompt={prompt}
+                    // Nothing selects a checkpoint for you — `selectedCheckpoint`
+                    // is null in the store until you pick one — so the form used
+                    // to submit `ckpt_name: ""` and fail on the provider a
+                    // minute later with a message that named the provider. On a
+                    // phone this is likelier still: the model picker sits well
+                    // below the fold of a 3-screen form.
+                    blockingReason={!selectedCheckpoint?.name
+                        ? 'Select a checkpoint first'
+                        : null}
                     onGenerate={() => handleGenerate({ trackQueuedJob: true })}
                     onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
                     onGenerateVariations={handleGenerateVariations}
