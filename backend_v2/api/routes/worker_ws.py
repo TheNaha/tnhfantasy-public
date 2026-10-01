@@ -446,8 +446,12 @@ async def worker_websocket(
 # HTTP Endpoints for Worker Status
 # ============================================================================
 
+# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
+# so as `async def` it ran on the event loop and its DB/disk work blocked
+# every other request for the duration. FastAPI runs a plain `def` handler in
+# a worker thread, which is what the work actually needs.
 @router.get("/api/workers/connected")
-async def list_connected_workers():
+def list_connected_workers():
     """List all connected external workers."""
     workers = get_connected_workers()
     return {

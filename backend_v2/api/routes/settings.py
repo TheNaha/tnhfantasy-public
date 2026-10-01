@@ -33,8 +33,12 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 # APPLICATION SETTINGS (from v1 config management)
 # ============================================================================
 
+# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
+# so as `async def` it ran on the event loop and its DB/disk work blocked
+# every other request for the duration. FastAPI runs a plain `def` handler in
+# a worker thread, which is what the work actually needs.
 @router.get("")
-async def get_settings() -> dict[str, Any]:
+def get_settings() -> dict[str, Any]:
     """
     Get current application settings.
     
@@ -77,8 +81,12 @@ def _default(path: str) -> Any:
 RESTART_REQUIRED_PATHS = frozenset({"api.cors_origins", "api.gzip_minimum_size"})
 
 
+# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
+# so as `async def` it ran on the event loop and its DB/disk work blocked
+# every other request for the duration. FastAPI runs a plain `def` handler in
+# a worker thread, which is what the work actually needs.
 @router.get("/schema")
-async def get_settings_schema() -> dict[str, Any]:
+def get_settings_schema() -> dict[str, Any]:
     """
     Get settings schema with descriptions and types.
     Useful for building dynamic UI.
@@ -556,8 +564,12 @@ class SystemPromptsRequest(BaseModel):
     """Update the configurable system-prompt blocks."""
     blocks: dict[str, str]
 
+# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
+# so as `async def` it ran on the event loop and its DB/disk work blocked
+# every other request for the duration. FastAPI runs a plain `def` handler in
+# a worker thread, which is what the work actually needs.
 @router.get("/system-prompts")
-async def get_system_prompts() -> dict[str, Any]:
+def get_system_prompts() -> dict[str, Any]:
     """Return all configurable system-prompt blocks (roleplay, narrator, suggest)."""
     return {"blocks": app_config.get_system_prompt_blocks()}
 
@@ -692,13 +704,21 @@ async def update_favorites(request: FavoritesRequest):
     await asyncio.to_thread(save_favorites_list, request.favorites)
     return {"status": "success", "favorites": request.favorites}
 
+# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
+# so as `async def` it ran on the event loop and its DB/disk work blocked
+# every other request for the duration. FastAPI runs a plain `def` handler in
+# a worker thread, which is what the work actually needs.
 @router.post("/session")
-async def start_session():
+def start_session():
     """Start a session (for compatibility)."""
     return {"status": "ready"}
 
+# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
+# so as `async def` it ran on the event loop and its DB/disk work blocked
+# every other request for the duration. FastAPI runs a plain `def` handler in
+# a worker thread, which is what the work actually needs.
 @router.get("/session")
-async def get_session_status():
+def get_session_status():
     """Get session status."""
     return {"status": "active"}
 

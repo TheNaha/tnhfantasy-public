@@ -240,8 +240,12 @@ async def get_provider_live_metrics(
         }
 
 
+# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
+# so as `async def` it ran on the event loop and its DB/disk work blocked
+# every other request for the duration. FastAPI runs a plain `def` handler in
+# a worker thread, which is what the work actually needs.
 @router.get("/{provider_id}/logs")
-async def get_provider_logs(
+def get_provider_logs(
     provider_id: str,
     tail: int = 500,
     lifecycle: ProviderLifecycleService = Depends(get_provider_lifecycle_service)

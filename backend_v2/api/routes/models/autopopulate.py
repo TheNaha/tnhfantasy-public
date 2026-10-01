@@ -29,8 +29,12 @@ class BatchAutopopulateCandidatesRequest(BaseModel):
 def _get_models_needing_population(repo: ModelRepositoryV2) -> list:
     return repo.get_models_needing_population()
 
+# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
+# so as `async def` it ran on the event loop and its DB/disk work blocked
+# every other request for the duration. FastAPI runs a plain `def` handler in
+# a worker thread, which is what the work actually needs.
 @router.get("/autopopulate-pending")
-async def get_autopopulate_pending(repo: ModelRepositoryV2 = Depends(get_model_repo_v2)):
+def get_autopopulate_pending(repo: ModelRepositoryV2 = Depends(get_model_repo_v2)):
     """Return a list of models that need autopopulation."""
     models = _get_models_needing_population(repo)
     return {
@@ -225,8 +229,12 @@ async def autopopulate_all_models(
         }
 
 
+# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
+# so as `async def` it ran on the event loop and its DB/disk work blocked
+# every other request for the duration. FastAPI runs a plain `def` handler in
+# a worker thread, which is what the work actually needs.
 @router.get("/autopopulate-status")
-async def get_autopopulate_status(
+def get_autopopulate_status(
     repo: ModelRepositoryV2 = Depends(get_model_repo_v2)
 ):
     needs_population = _get_models_needing_population(repo)

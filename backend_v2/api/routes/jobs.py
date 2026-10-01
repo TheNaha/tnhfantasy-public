@@ -108,8 +108,12 @@ class ValidateWorkflowResponse(BaseModel):
     required_models: dict[str, list[str]]  # What models were found in workflow
 
 
+# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
+# so as `async def` it ran on the event loop and its DB/disk work blocked
+# every other request for the duration. FastAPI runs a plain `def` handler in
+# a worker thread, which is what the work actually needs.
 @router.post("/validate")
-async def validate_workflow(
+def validate_workflow(
     request: ValidateWorkflowRequest,
     submission_service: JobSubmissionService = Depends(get_job_submission_service)
 ):
