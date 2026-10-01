@@ -68,7 +68,14 @@ describe('a completed image job must refresh the library it appears in', () => {
         const src = read('hooks/useJobsRealtime.jsx');
         const termination = src.slice(src.indexOf('handleTermination'));
         expect(termination).toMatch(/type === 'completed' && isImageJob/);
-        expect(termination).toMatch(/invalidateIfMounted\(\['gallery'\]\)/);
+        // Newest page only. `useGallery` is a `useInfiniteQuery`, so a bare
+        // invalidation refetches *every* loaded page in sequence — five pages
+        // means five requests for one finished job, and the list height churns
+        // as each lands, which moves the sentinel and made a job update look
+        // like it was driving the infinite scroll.
+        expect(termination).toMatch(
+            /invalidateIfMounted\(\['gallery'\], \{ refetchPage: \(.*\) => .*allPages\[0\] \}\);/
+        );
         // Counts move with every new asset too.
         expect(termination).toMatch(/invalidateIfMounted\(\['collections'\]\)/);
     });

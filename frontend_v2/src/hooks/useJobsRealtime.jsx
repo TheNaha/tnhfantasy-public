@@ -27,11 +27,14 @@ export function useJobsRealtime() {
     // with no job UI at all, and an unobserved cache refetch buys nothing: the
     // query is stale either way, so the next mount of its consumer refetches
     // it (these keys have staleTime 0).
-    const invalidateIfMounted = useCallback((queryKey) => {
+    // `options` is passed through so a caller can narrow what is refetched — see
+    // the `refetchPage` use on the gallery, where invalidating every loaded page
+    // of an infinite query is a multi-request answer to a single question.
+    const invalidateIfMounted = useCallback((queryKey, options = {}) => {
         const isMounted = queryClient.getQueryCache()
             .findAll({ queryKey })
             .some((query) => query.getObserversCount() > 0);
-        if (isMounted) queryClient.invalidateQueries({ queryKey });
+        if (isMounted) queryClient.invalidateQueries({ queryKey, ...options });
     }, [queryClient]);
 
     // Full refresh of the server-backed state after reconnect / refocus. The
@@ -40,7 +43,9 @@ export function useJobsRealtime() {
     const refreshServerState = useCallback(() => {
         invalidateIfMounted(['jobs', 'active']);
         invalidateIfMounted(['jobs', 'failed']);
-        invalidateIfMounted(['gallery']);
+        // Newest page only — see the note on the job.completed handler for why a
+        // bare invalidation of an infinite query is the wrong shape here.
+        invalidateIfMounted(['gallery'], { refetchPage: (page, allPages) => page === allPages[0] });
         invalidateIfMounted(['statistics']);
     }, [invalidateIfMounted]);
 
@@ -154,11 +159,22 @@ export function useJobsRealtime() {
                 // and the grid does not change. It is a missing invalidation,
                 // not polling.
                 //
-                // `['gallery']` is a prefix of `['gallery', filters, limit]`, so
-                // this refetches the paginated list the user is on, whatever its
-                // filters. Guarded by `invalidateIfMounted` so a route with no
-                // gallery mounted buys no refetch.
-                invalidateIfMounted(['gallery']);
+                /* Refetch ONLY the newest page.
+
+                   `useGallery` is a `useInfiniteQuery`, so a bare
+                   `invalidateQueries({ queryKey: ['gallery'] })` refetches
+                   *every page already loaded, sequentially*. With five pages
+                   loaded that is five requests for one finished job, and the list
+                   height changes as each one lands — which moves the sentinel,
+                   which is what made a job update appear to drive the infinite
+                   scroll.
+
+                   The new image is on page 0 (the cursor runs newest-first), so
+                   refetching only that page keeps the original fix — the grid
+                   shows the new image — without the tail churn. Guarded by
+                   `invalidateIfMounted` so a route with no gallery mounted buys
+                   no refetch at all. */
+                invalidateIfMounted(['gallery'], { refetchPage: (_page, allPages) => _page === allPages[0] });
                 // Collection and world counts change with every new asset.
                 invalidateIfMounted(['collections']);
                 invalidateIfMounted(['statistics']);
@@ -270,7 +286,7 @@ export function useJobsRealtime() {
             document.removeEventListener('visibilitychange', onVisibilityChange);
             window.removeEventListener('online', onOnline);
         };
-    }, [queryClient, replayMissedEvents, dismissConnectionToast, markEventReceived, refreshServerState]);
+    }, [queryClient, invalidateIfMounted, replayMissedEvents, dismissConnectionToast, markEventReceived, refreshServerState]);
 }
 
 export default useJobsRealtime;
