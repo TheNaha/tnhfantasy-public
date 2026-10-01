@@ -47,18 +47,23 @@ def get_all_storage_paths(repo: ModelRepositoryV2 = Depends(get_model_repo_v2)):
 
 @router.get("/check-installed/{civitai_model_id}")
 def check_installed_versions(
-    civitai_model_id: str,
+    civitai_model_id: int,
     repo: ModelRepositoryV2 = Depends(get_model_repo_v2)
 ):
     """
     Check if a CivitAI model and its versions are already installed.
-    
+
     Returns:
     - model_installed: bool - whether any version of this model is installed
     - installed_versions: list of installed civitai_version_ids
     - model_id: local model ID if installed
-    
+
     Use this before showing the import dialog to mark installed versions.
+
+    `civitai_model_id` is declared `int`, not `str`, so pydantic rejects a
+    non-numeric path segment with a 422 instead of letting a bare string reach
+    `ModelV2.civitai_model_id == <str>`, which is a comparison against an
+    integer column and therefore an unmapped `InvalidTextRepresentation` 500.
     """
     # Check if model exists
     model = repo.get_model_by_civitai_id(civitai_model_id)
