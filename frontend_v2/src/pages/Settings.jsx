@@ -735,7 +735,8 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                     <select
                         value={settings.defaultViewMode}
                         onChange={(e) => onUpdate('defaultViewMode', e.target.value)}
-                        className="w-full md:w-64 bg-[#0B0E14]/80 border border-white/10 rounded-xl p-3 text-white font-medium focus:ring-2 focus:ring-blue-500/50 shadow-inner glow-focus outline-none"
+                        aria-label="Default view mode"
+                        className="w-full lg:w-64 max-w-full min-w-0 bg-[#0B0E14]/80 border border-white/10 rounded-xl p-3 text-white font-medium focus:ring-2 focus:ring-blue-500/50 shadow-inner glow-focus outline-none"
                     >
                         <option value="grid">Grid</option>
                         <option value="list">List</option>
@@ -748,6 +749,7 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
+                            aria-label="Default gallery grid columns"
                             min="2"
                             max="8"
                             value={settings.defaultGridColumns}
@@ -774,6 +776,7 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
+                            aria-label="Success toast duration"
                             min="1000"
                             max="10000"
                             step="500"
@@ -800,6 +803,7 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
+                            aria-label="Error toast duration"
                             min="1000"
                             max="10000"
                             step="500"
@@ -816,6 +820,7 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
+                            aria-label="Animation duration"
                             min="0"
                             max="500"
                             step="50"
@@ -832,6 +837,7 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
+                            aria-label="Query stale time"
                             min="1"
                             max="30"
                             value={settings.queryStaleTime / 60000}
@@ -846,6 +852,7 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
+                            aria-label="Query cache time"
                             min="1"
                             max="60"
                             value={settings.queryCacheTime / 60000}
@@ -876,6 +883,7 @@ function GallerySettings({ settings, onUpdate, onReset }) {
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
+                            aria-label="Items per page"
                             min="10"
                             max="100"
                             step="10"
@@ -937,6 +945,7 @@ function ModelsSettings({ settings, onUpdate, onReset }) {
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
+                            aria-label="Items per page"
                             min="10"
                             max="100"
                             step="10"
@@ -1096,6 +1105,7 @@ function GeneratorSettings({ settings, onUpdate, onReset, onMirrorDefaultCheckpo
                         <div className="flex items-center gap-5">
                             <input
                                 type="range"
+                            aria-label="Post-generation redirect delay"
                                 min="0"
                                 max="5000"
                                 step="500"
@@ -1115,15 +1125,23 @@ function GeneratorSettings({ settings, onUpdate, onReset, onMirrorDefaultCheckpo
 // Reusable Setting Group Component
 function SettingGroup({ title, description, children, action }) {
     return (
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6 pb-6 border-b border-white/5 last:border-0 last:pb-0">
-            <div className="flex-1">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 pb-6 border-b border-white/5 last:border-0 last:pb-0">
+            {/* `lg:` not `md:` on the parent, and `min-w-0` on both halves, are
+                both load-bearing. A <select>'s automatic minimum width is its
+                longest option, so flex-shrink cannot bring a 256px control
+                inside a 768px tablet row however much `min-w-0` is added, and
+                the label block's own automatic minimum is its longest word. The
+                app root clips the excess with `overflow-x-hidden`, so the
+                control was 11px outside the viewport and unreachable. Stacking
+                below `lg` also reads better on a tablet. */}
+            <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3">
                     <h3 className="font-bold text-white tracking-wide">{title}</h3>
                     {action}
                 </div>
                 <p className="text-sm font-medium text-gray-400 mt-1">{description}</p>
             </div>
-            <div className="shrink-0">
+            <div className="lg:shrink-0 min-w-0 max-w-full w-full lg:w-auto">
                 {children}
             </div>
         </div>
@@ -1331,6 +1349,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
+                            aria-label="Maximum context tokens"
                             min="1024"
                             max="32768"
                             step="1024"
@@ -1346,6 +1365,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                     <div className="flex items-center gap-5">
                         <input
                             type="range"
+                            aria-label="Temperature"
                             min="0"
                             max="2"
                             step="0.1"

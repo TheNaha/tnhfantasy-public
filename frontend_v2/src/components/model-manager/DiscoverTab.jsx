@@ -42,7 +42,7 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
                                         }}
                                         className="rounded border-white/10 bg-black/40 text-blue-500 focus:ring-blue-500/50 w-4 h-4"
                                     />
-                                    <span className="text-sm font-medium text-gray-300 truncate">{text}</span>
+                                    <span className="text-sm font-medium text-gray-300 line-clamp-2 sm:truncate break-words">{text}</span>
                                 </label>
                             );
                         })}
@@ -225,14 +225,20 @@ export default function DiscoverTab() {
                     </button>
                 </form>
 
-                {/* URL Import */}
-                <div className="flex gap-3">
+                {/* URL Import — `min-w-0` on the row and the input. The import
+                    button is a 50px `px-6` control that cannot shrink, and the
+                    input's automatic minimum is its intrinsic width, so at 360px
+                    the pair overflowed by 11px and the app root's
+                    `overflow-x-hidden` put the whole button outside the viewport:
+                    the only way to import a model by URL was unreachable on a
+                    phone. */}
+                <div className="flex gap-3 min-w-0">
                     <input
                         type="text"
                         placeholder="Paste CivitAI or HuggingFace URL..."
                         value={urlInput}
                         onChange={(e) => setUrlInput(e.target.value)}
-                        className="flex-1 bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-3.5 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 shadow-inner glow-focus placeholder-gray-600 font-medium transition-all"
+                        className="flex-1 min-w-0 bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-3.5 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 shadow-inner glow-focus placeholder-gray-600 font-medium transition-all"
                     />
                     <button
                         onClick={handleUrlImport}

@@ -402,7 +402,15 @@ export default function Layout({ children }) {
                     className={clsx(
                         "flex-1 relative z-10",
                         isFullBleed
-                            ? "flex flex-col overflow-hidden"
+                            // `overflow-x-auto` is not optional here. This was
+                            // `overflow-hidden` on both axes, so the story beats
+                            // toolbar — which is a `flex gap-2 shrink-0` row of
+                            // Narrate / Export / Publish / Add — was clipped at
+                            // the viewport edge with no way to reach it. Measured
+                            // at 768x1024: 220px clipped, 6 controls entirely
+                            // outside the viewport, "Narrate" cut mid-word.
+                            // Vertical scroll stays exactly as it was.
+                            ? "flex flex-col overflow-y-auto overflow-x-auto"
                             : "lg:overflow-y-auto px-2 py-3 sm:p-4 lg:p-8"
                     )}
                 >

@@ -216,7 +216,7 @@ export function GalleryDateRail({ filters = {}, onChange }) {
 
             {columns.length > 0 && (
                 <>
-                    <div data-testid="date-rail-bars" className="flex h-16 items-end gap-px">
+                    <div data-testid="date-rail-bars" className="flex h-16 items-end gap-px overflow-x-auto">
                         {columns.map((column) => {
                             const isSelected = hasRange && column.from === selectedFrom && column.to === selectedTo;
                             // A non-zero day keeps a 3% floor so a single image is
@@ -235,8 +235,26 @@ export function GalleryDateRail({ filters = {}, onChange }) {
                                     data-day={column.from}
                                     data-to={column.to}
                                     onClick={() => handleSelect(column)}
+                                    // `no-touch-padding` is load-bearing here, not
+                                    // cosmetic. The rail packs up to 48 columns
+                                    // into a ~320px sidebar, so the app-wide 44px
+                                    // tap-target floor at <=768px would floor every
+                                    // bar at 44px — 48 x 44 = 2112px inside a 360px
+                                    // rail, which the app root clips with
+                                    // `overflow-x-hidden`, leaving 43 of 48 bars
+                                    // permanently unreachable. A histogram bar is a
+                                    // data mark, not a button you aim at; each one
+                                    // carries an `aria-label` and `title`, and the
+                                    // range it selects is echoed in the filter panel.
+                                    //
+                                    // `min-w-2` (8px) is the floor that keeps a bar
+                                    // hittable: `flex-1` alone divides 320px by 48
+                                    // and lands on 5px, which is below what a finger
+                                    // can reliably hit. With the rail's `overflow-x-auto`
+                                    // the row scrolls by ~64px rather than clipping,
+                                    // so the whole year is still reachable.
                                     className={[
-                                        'flex h-full min-w-0 flex-1 cursor-pointer items-end justify-center p-0',
+                                        'no-touch-padding chart-mark flex h-full flex-1 cursor-pointer items-end justify-center p-0',
                                         isSelected ? 'bg-accent-muted' : 'hover:bg-hover',
                                     ].join(' ')}
                                 >

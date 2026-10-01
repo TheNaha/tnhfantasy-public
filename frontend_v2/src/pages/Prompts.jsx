@@ -130,14 +130,19 @@ export default function Prompts() {
 
     return (
         <div className="max-w-6xl mx-auto p-6 space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div>
                     <h1 className="text-2xl font-bold text-white">Prompt Library</h1>
                     <p className="text-sm text-gray-400 mt-1">
                         {prompts.length} saved prompt{prompts.length !== 1 ? 's' : ''}
                     </p>
                 </div>
-                <div className="flex gap-2">
+                {/* `flex-wrap` on the row, and the title block may shrink: three
+                    buttons in a `flex gap-2` row with `shrink-0` children cannot
+                    fit a 360px viewport once the H1 is laid out beside them, and
+                    the app root clips the excess with `overflow-x-hidden`, so
+                    "New Prompt" was 48px past the edge and unreachable. */}
+                <div className="flex gap-2 flex-wrap justify-end shrink">
                     <button
                         onClick={handleImport}
                         className="flex items-center gap-2 px-3 py-2 bg-gray-800 text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"

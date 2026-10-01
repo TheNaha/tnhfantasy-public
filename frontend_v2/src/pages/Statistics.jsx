@@ -308,7 +308,11 @@ const Statistics = () => {
                         </p>
                     </div>
                     
-                    <div className="flex flex-col sm:flex-row gap-3">
+                    {/* `flex-wrap`: two `w-fit` tab groups (4 + 4 buttons) side by
+                        side exceed 768px, and the app root clips the excess with
+                        `overflow-x-hidden`, so "30D" and "ALL TIME" were outside
+                        the viewport and unreachable on every tablet. */}
+                    <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
                         <div className="flex bg-[#0B0E14]/80 backdrop-blur-md border border-white/10 p-1.5 rounded-2xl w-fit shadow-inner">
                             {[
                                 { value: 'all', label: 'ALL' },

@@ -109,7 +109,15 @@ function ProviderListItem({
             onKeyDown={(e) => e.key === 'Enter' && onSelect?.(provider.id)}
         >
             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                <div className="flex items-center gap-4 w-full sm:w-auto flex-1 min-w-0">
+                {/* `sm:min-w-[14rem]` is load-bearing. `min-w-0` alone sets this
+                    column's automatic minimum to 0, so in the `sm:flex-row` card
+                    the sibling row of `flex-shrink-0` status badges (~662px)
+                    takes the entire 704px card and the provider's name and
+                    description render at **0px** — the card shows a badge and no
+                    title at all from 640px upward, which is every tablet. The
+                    floor is below the badge row's worst case, so the name keeps a
+                    readable width instead of collapsing. */}
+                <div className="flex items-center gap-4 w-full sm:w-auto sm:min-w-[14rem] flex-1 min-w-0">
                     {/* Status indicator + icon */}
                     <div className="relative flex-shrink-0">
                         <div className={`flex h-12 w-12 items-center justify-center rounded-2xl border shadow-inner ${
@@ -233,7 +241,14 @@ function ProviderListItem({
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-2 mt-3 sm:mt-0 sm:pl-4 justify-end w-full sm:w-auto border-t sm:border-none border-white/5 pt-3 sm:pt-0" onClick={(e) => e.stopPropagation()}>
+                {/* `flex-wrap` + `min-w-0`: this action row is three
+                    `flex-shrink-0` buttons and the name column now has a
+                    14rem floor (see above), which together exceed a 704px card
+                    at 768px. Without wrapping the app root clipped them with
+                    `overflow-x-hidden` and Enable / Edit / Delete were entirely
+                    outside the viewport. Wrapping puts them on their own line
+                    instead. */}
+                <div className="flex items-center gap-2 mt-3 sm:mt-0 sm:pl-4 justify-end w-full sm:w-auto min-w-0 flex-wrap border-t sm:border-none border-white/5 pt-3 sm:pt-0" onClick={(e) => e.stopPropagation()}>
                     <button
                         type="button"
                         onClick={(e) => {
