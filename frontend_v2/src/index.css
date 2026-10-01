@@ -826,11 +826,136 @@
   }
 
   /* Six live call sites opt out: the dice and aspect-ratio locks that set their
-     own `w-12`/`w-10 h-10` box, where a 44px minimum would not fit the row. */
+     own `w-12`/`w-10 h-10` box, where a 44px minimum would not fit the row.
+     This opt-out must keep working: it is also what a *data mark* uses, see
+     `.chart-mark` below. A control that is genuinely both small and a button
+     now carries its own explicit size instead — `SamplingSettings`'s dice and
+     lock, `ResolutionSettings`'s lock, `BatchGenerate`'s randomize. */
   button.no-touch-padding,
   a.no-touch-padding {
     min-height: auto;
     min-width: auto;
+  }
+
+  /* A dense chart mark that must still be hittable. It cannot be a Tailwind
+     `min-w-*` utility: the rule above is unlayered, so its `min-width: auto`
+     outranks any utility in `@layer utilities` and the computed value comes
+     back `auto` whatever the class says. A utility applied to a chart is the
+     documented anti-pattern in this file; the floor belongs here, beside the
+     contract it modifies.
+
+     Used by the GalleryDateRail histogram, where `flex-1` spread across 48
+     columns otherwise lands on 5px — reachable but not reliably hittable.
+
+     The selector is `button.chart-mark`, not `.chart-mark`, to *match* the
+     specificity of the `button.no-touch-padding` rule above; at equal
+     specificity the later rule wins, which is what makes the floor apply at
+     all. A bare `.chart-mark` is (0,1,0) and loses outright. */
+  button.chart-mark,
+  a.chart-mark {
+    min-width: 0.5rem;
+  }
+
+  /* ---- Form controls (2026-10-01) --------------------------------------
+     The floor above covers `button` and `a` only. Measured at 360px, every
+     other kind of control was still far below a usable touch size:
+
+         input[type=range]        123 x 6     steps / cfg / samplers / seed
+         input[type=checkbox]      14 x 14    auto-randomize, NSFW, tag filters
+         button.no-touch-padding    20 x 20   "Lock parameter", the dice
+         input.w-16 (number)       64 x 30    Steps / CFG / Clip Skip
+         textarea (chat composer) 198 x 24    the one field you type in most
+         input[type=checkbox]     170 x 16    the Settings toggles
+
+     A 6px-tall slider and a 20px button are not tappable on a phone; they are
+     the controls a user reaches for most. These rules are unlayered, like the
+     floors above, so a component utility cannot outrank them.
+     ---------------------------------------------------------------------- */
+
+  /* Text-ish inputs and textareas. `type=checkbox`, `type=radio` and
+     `type=range` are excluded: they get their own geometry below, because
+     giving a checkbox a 44px *box* would mean a 44px checkbox. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  select,
+  textarea {
+    min-height: 44px;
+  }
+
+  /* Checkboxes and radios keep a small visual box but become tappable.
+     The size is set on the element itself rather than via `outline`: an outline
+     paints outside the box and does expand the hit region in most engines, but
+     that is not something to rely on for a control someone has to hit on a
+     phone. The negative margin gives the row back the space, so the layout is
+     unchanged and only the target grows. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 22px;
+    height: 22px;
+    /* `min-*` as well as `*`: a flex or grid parent can shrink a replaced
+       element below its set width, and one of these measured 16px wide for
+       exactly that reason. */
+    min-width: 22px;
+    min-height: 22px;
+    flex-shrink: 0;
+    margin: -5px;
+  }
+
+  /* Anything that set its own smaller box explicitly (the `w-3.5 h-3.5`
+     auto-randomize and NSFW toggles) is overridden here on purpose: 14px is
+     below the floor of both platforms. */
+  input[type="checkbox"].w-3\.5,
+  input[type="checkbox"].h-3\.5,
+  input[type="radio"].w-3\.5,
+  input[type="radio"].h-3\.5 {
+    width: 22px;
+    height: 22px;
+    margin: -5px;
+  }
+
+  /* Range inputs were the worst offenders at 6px tall. Give the track a real
+     height and an oversized thumb; `touch-action` stops the browser from
+     claiming the vertical drag for scrolling, which is what makes a thin
+     horizontal slider impossible to grab on a phone. */
+  input[type="range"] {
+    min-height: 44px;
+    height: 44px;
+    background: transparent;
+    touch-action: none;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 9999px;
+    background: rgb(55 65 81);
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 26px;
+    height: 26px;
+    margin-top: -10px;
+    border-radius: 9999px;
+    background: rgb(96 165 250);
+    border: 2px solid rgb(11 14 20);
+    cursor: pointer;
+  }
+
+  input[type="range"]::-moz-range-track {
+    height: 6px;
+    border-radius: 9999px;
+    background: rgb(55 65 81);
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 26px;
+    height: 26px;
+    border-radius: 9999px;
+    background: rgb(96 165 250);
+    border: 2px solid rgb(11 14 20);
+    cursor: pointer;
   }
 
   @layer base {
