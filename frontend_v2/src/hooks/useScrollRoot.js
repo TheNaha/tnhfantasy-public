@@ -1,5 +1,9 @@
-import { useCallback } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { useCallback, useLayoutEffect, useState } from 'react';
+import {
+    useVirtualizer,
+    observeElementOffset,
+    observeWindowOffset,
+} from '@tanstack/react-virtual';
 
 /**
  * Virtualizing a list inside this app's layout.
@@ -97,10 +101,30 @@ function observeElementRect(instance, cb) {
 /**
  * `useVirtualizer` bound to the element that actually scrolls this list.
  *
- * Replaces `useWindowVirtualizer` at the gallery and the timeline. The
- * `scrollMargin` option is deliberately not accepted: with a real scroll
- * element, `virtualItem.start` is already relative to that element's content
- * box, and subtracting a document-level margin double-counted it.
+ * Replaces `useWindowVirtualizer` at the gallery and the timeline.
+ *
+ * On `scrollMargin`: the previous version of this comment claimed it was
+ * "deliberately not accepted", because with a real scroll element
+ * `virtualItem.start` is already relative to that element's content box, and
+ * subtracting a document-level margin double-counted it. The first half is right
+ * and the conclusion was wrong. Those are two different things:
+ *
+ *   - `virtualItem.start` is container-relative, so it must NOT be adjusted.
+ *   - `scrollMargin` tells the virtualizer where the container *begins* inside
+ *     the scroll element, which it needs to turn a scroll offset into a visible
+ *     range of indices. Without it, the range is computed against the wrong
+ *     origin.
+ *
+ * The gallery list does not start at the top of its scroll element — on desktop
+ * the chrome above it is ~630px, and below `lg` the scroller is `window` and the
+ * list is preceded by the header, toolbar, date rail and filter panel. The
+ * measured consequence below `lg` was that the virtualizer gave up and rendered
+ * **every** row: 200 of them, 36,759px of list, against 10 rows and 14,146px on
+ * desktop for the same data. That defeats the point of virtualizing a 16k-image
+ * library, and it is the other half of the "infinite scroll is jumpy" report.
+ *
+ * So it is supplied, measured from the DOM, and deliberately never subtracted
+ * from `start`.
  *
  * The options object is built fresh on every render on purpose. `count`,
  * `estimateSize` and `getItemKey` are all closures over live render state, and
@@ -110,7 +134,74 @@ function observeElementRect(instance, cb) {
  * *does* have to be stable — the one the library uses to decide whether to
  * unsubscribe and resubscribe — is.
  */
+/**
+ * `observeElementOffset` that is correct for a window scroll element.
+ *
+ * `useVirtualizer`'s default offset observer reads `el.scrollTop`. On `window`
+ * that property does not exist, so the scroll offset is `undefined`, the
+ * visible-range maths degenerates, and the virtualizer falls back to rendering
+ * **every** row.
+ *
+ * That is not theoretical. Below `lg` the app shell does not make a pane the
+ * scroller — `Layout.jsx` applies `lg:overflow-y-auto`, so on a phone the
+ * document scrolls and `resolveScrollRoot` correctly returns `window`. Measured
+ * on the session view at 390px: **200 rows in the DOM, 36,759px of list**,
+ * against 10 rows and 14,146px on desktop for the same data. So on a phone the
+ * gallery was not virtualizing at all, which is the other half of the
+ * "infinite scroll is jumpy" report and a real cost on a 16k-image library.
+ *
+ * The matching rect observer was already supplied (see `observeElementRect`
+ * above); this supplies its counterpart, so the pair is chosen from the same
+ * element rather than one being right and the other not.
+ */
+function observeListOffset(instance, cb) {
+    const el = instance.scrollElement;
+    if (!el) return undefined;
+    const targetWindow = instance.targetWindow;
+    const isWindowScroll = el === targetWindow || el === targetWindow?.document;
+    return isWindowScroll
+        ? observeWindowOffset(instance, cb)
+        : observeElementOffset(instance, cb);
+}
+
 export function useListVirtualizer(ref, options) {
     const getScrollElement = useScrollElement(ref, options.scrollRoot ?? null);
-    return useVirtualizer({ ...options, getScrollElement, observeElementRect });
+    const [scrollMargin, setScrollMargin] = useState(0);
+
+    // Where the list begins inside whatever scrolls it. Re-measured when the
+    // scroll element changes, on resize, and once more after layout settles —
+    // the chrome above the gallery reflows when filters collapse, which moves
+    // the list without resizing the window.
+    useLayoutEffect(() => {
+        const el = getScrollElement();
+        const measure = () => {
+            const node = ref.current;
+            if (!node) return;
+            // For an element scroller, the offset is the container's own
+            // distance from the scroller's content top. For `window`, it is the
+            // container's document offset.
+            const next = el === window
+                ? node.getBoundingClientRect().top + window.scrollY
+                : node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+            setScrollMargin((prev) => (Math.abs(prev - next) < 1 ? prev : Math.round(next)));
+        };
+        measure();
+        const target = el === window ? window : el;
+        target.addEventListener('resize', measure);
+        // A collapsed filter panel or a rotated phone changes it without a resize.
+        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+        if (ro && ref.current) ro.observe(ref.current);
+        return () => {
+            target.removeEventListener('resize', measure);
+            ro?.disconnect();
+        };
+    }, [getScrollElement, ref, options.scrollRoot]);
+
+    return useVirtualizer({
+        ...options,
+        scrollMargin,
+        getScrollElement,
+        observeElementRect,
+        observeElementOffset: observeListOffset,
+    });
 }
