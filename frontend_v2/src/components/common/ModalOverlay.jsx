@@ -22,6 +22,14 @@ import { useEscapeKey } from '../../hooks/useEscapeKey';
  * `centered={false}` drops the flex/centering/padding defaults for the rare
  * dialog that scrolls its own full-bleed layout (e.g. the model metadata
  * sheet); the backdrop click and Escape still come from this component.
+ *
+ * `role="dialog"` deliberately is NOT set here. This is the backdrop layer; the
+ * panel inside it is the dialog. 22 of the dialog components already declare
+ * `role="dialog"` on that panel, and putting the role here as well nests a
+ * dialog inside a dialog — which testing-library rejects outright, and which
+ * assistive tech resolves arbitrarily. The components that genuinely lack the
+ * role need it on their panel; adding it to the shared backdrop is the wrong
+ * layer and breaks the ones that are already right.
  */
 export function ModalOverlay({
     isOpen = true,
