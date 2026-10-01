@@ -55,7 +55,12 @@ export function DashboardToolbar({
             >
                 <Layers size={16} aria-hidden="true" />
                 <span className="hidden sm:inline">Manage sessions</span>
-                <span className="sm:hidden">Collections</span>
+                {/* Was "Collections" — a copy-paste from the button above, whose
+                    mobile label is also "Collections". On a phone the gallery
+                    toolbar showed two adjacent buttons with identical labels
+                    opening different panels (browse collections vs. detect,
+                    curate, merge and split sessions). */}
+                <span className="sm:hidden">Sessions</span>
             </button>
 
             <button
