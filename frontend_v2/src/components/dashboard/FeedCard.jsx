@@ -295,7 +295,7 @@ const FeedCard = memo(function FeedCard({
       try {
         await api.post(`/api/v2/assets/${assetId}/move`, {
           workspace: workspace || item.workspace || 'main',
-          copy: false,
+          copy_file: false,
         });
         toast.success("Asset moved", { icon: "📁" });
         queryClient.invalidateQueries({ queryKey: ['gallery'] });
@@ -317,7 +317,7 @@ const FeedCard = memo(function FeedCard({
       try {
         await api.post(`/api/v2/assets/${assetId}/move`, {
           workspace: workspace || item.workspace || 'main',
-          copy: true,
+          copy_file: true,
         });
         toast.success("Asset copied", { icon: "📋" });
         queryClient.invalidateQueries({ queryKey: ['gallery'] });

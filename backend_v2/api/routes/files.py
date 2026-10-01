@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlmodel import Session, select
 from starlette.background import BackgroundTask
 
@@ -1073,7 +1073,19 @@ class MoveAssetRequest(BaseModel):
     workspace: str | None = None
     character_id: str | None = None
     story_id: str | None = None
-    copy_file: bool = False
+    copy_file: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("copy_file", "copy"),
+    )
+
+    # `copy` was what the dashboard's Copy Asset button sent, and pydantic
+    # dropped it silently, so `copy_file` fell back to False and the request
+    # took the `os.rename` branch: the "copy" moved the original and the UI
+    # toasted "Asset copied". The frontend is fixed, but a stale cached bundle
+    # would still send `copy`, and the failure is asymmetric — asking for a copy
+    # and losing the original. Accepting the old spelling costs one line and
+    # makes that impossible.
+    model_config = ConfigDict(populate_by_name=True)
 
 
 def _move_asset_sync(asset_id: str, body: MoveAssetRequest) -> dict:
