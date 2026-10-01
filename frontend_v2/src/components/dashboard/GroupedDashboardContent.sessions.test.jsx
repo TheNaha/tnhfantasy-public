@@ -114,7 +114,18 @@ describe('GroupedDashboardContent in session view mode', () => {
         expect(await screen.findByText('Untitled session')).toBeInTheDocument();
     });
 
-    it('does not fetch members until a session is expanded', async () => {
+    /* This used to assert `listSessionAssets` was NOT called until a session was
+       expanded, which was correct when the collapsed card showed a single 56px
+       thumbnail. It does not hold now: the card renders a two-row filmstrip of
+       the session's images, which cannot be built from `item.thumbnail` alone, so
+       the members are fetched for collapsed sessions too.
+
+       The cost is bounded on purpose. The virtualizer keeps roughly a dozen rows
+       mounted, so this is a dozen small cached requests (`staleTime` 5 minutes)
+       rather than one per session in a 1,400-session library — and it is the
+       difference between a media-oriented view and one that shows a thumbnail
+       and hides everything else behind a click. */
+    it('fetches members for a collapsed session so the filmstrip has images', async () => {
         apiMock.listSessionAssets.mockResolvedValue({
             session_id: 's1',
             assets: [
@@ -128,12 +139,11 @@ describe('GroupedDashboardContent in session view mode', () => {
 
         renderContent(buildSessionGroupedEntries([makeSession()]));
         await screen.findByText('Autumn portraits');
-        expect(apiMock.listSessionAssets).not.toHaveBeenCalled();
+        await waitFor(() => expect(apiMock.listSessionAssets).toHaveBeenCalled());
 
-        fireEvent.click(screen.getByRole('button', { expanded: false }));
-
-        await waitFor(() => expect(apiMock.listSessionAssets).toHaveBeenCalledWith('s1'));
-        expect(await screen.findByAltText('main/a1.png')).toBeInTheDocument();
+        // And the tiles reach the DOM, which is the point of fetching them.
+        expect(document.querySelectorAll('img[src*="a1.png"], img[src*="a2.png"]').length)
+            .toBeGreaterThan(0);
     });
 
     it('reports a members failure inside the expanded card', async () => {

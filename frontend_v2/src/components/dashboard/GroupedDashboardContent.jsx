@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { motion } from 'framer-motion';
 import { Calendar, Check, ChevronDown, Layers, Loader2, Star } from 'lucide-react';
 
@@ -26,8 +26,29 @@ import { useListVirtualizer } from '../../hooks/useScrollRoot';
 // Keep these as named parts so the relationship stays visible and the constant
 // cannot drift from the markup again. If `glass-panel p-4` or the padding
 // changes, these are the numbers to re-measure.
+/* Filmstrip geometry.
+
+   Two rows of fixed-size tiles. The tile size and the row count are both fixed
+   so the strip's height never depends on how many images a session holds — which
+   is the whole reason the list used to shrink under the scroll position. Only the
+   *count* of tiles varies with the card's width, and that is measured rather than
+   guessed, so a narrow phone gets fewer, larger tiles instead of eight squished
+   slivers.
+*/
+const SESSION_STRIP_TILE = 104;   // px, square
+const SESSION_STRIP_GAP = 6;
+const SESSION_STRIP_ROWS = 2;
+// Fallback before the first measurement lands, so the first paint is not a
+// single over-wide row.
+const SESSION_STRIP_FALLBACK_COLS = 6;
+
 const SESSION_ITEM_PADDING = 32;   // paddingBottom: 2rem on every virtual item
-const SESSION_CARD_HEIGHT = 103;   // measured: p-4 (32) + content row (71)
+// Measured with the two-row filmstrip: 329px = p-4 (32) + strip (2x104 + 6 gap)
+// + 12 margin + name row (20) + meta row (16) + badge row (18) + chevron row.
+// Re-measure this if the strip geometry, the tile size or the padding changes —
+// an estimate that does not match the rendered item is what made this list
+// shrink under the scroll position.
+const SESSION_CARD_HEIGHT = 329;
 const SESSION_HEADER_HEIGHT = SESSION_CARD_HEIGHT + SESSION_ITEM_PADDING;
 const SESSION_MEMBER_ROW_HEIGHT = 116;
 const SESSION_MEMBER_COLUMNS = 6;
@@ -79,7 +100,41 @@ const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onTogg
     // The loaded assets, shaped once. Both the click target and the
     // lightbox's navigation list come from here, so they can never disagree
     // about what "this session" contains.
-    const { data, isLoading, error } = useSessionAssets(item.sessionId, { enabled: expanded });
+    /* Fetched for collapsed sessions as well, not only when expanded: the
+       filmstrip is the reason this view is media-oriented, and it cannot render
+       from `item.thumbnail` alone. The virtualizer keeps ~a dozen rows mounted,
+       so this is a dozen small cached requests (`staleTime` 5 min) rather than
+       one per session in a 1,400-session library. */
+    const { data, isLoading, error } = useSessionAssets(item.sessionId, { enabled: true });
+    const stripAssets = data?.assets;
+
+    /* Tile count from the measured width, so the two-row strip is always two
+       rows. `ResizeObserver` rather than a one-shot read: the card is full-width
+       on desktop and a fraction of it on a phone, and the sidebar collapses on
+       rotation. */
+    const stripRef = useRef(null);
+    const [stripCols, setStripCols] = useState(SESSION_STRIP_FALLBACK_COLS);
+    useLayoutEffect(() => {
+        const node = stripRef.current;
+        if (!node) return undefined;
+        const measure = () => {
+            const w = node.clientWidth;
+            if (!w) return;
+            const cols = Math.max(2, Math.floor((w + SESSION_STRIP_GAP) / (SESSION_STRIP_TILE + SESSION_STRIP_GAP)));
+            setStripCols((prev) => (prev === cols ? prev : cols));
+        };
+        measure();
+        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+        ro?.observe(node);
+        return () => ro?.disconnect();
+    }, []);
+
+    // One slot is spent on the "+N" tile whenever there is an overflow.
+    const total = stripAssets?.length ?? item.imageCount ?? 0;
+    const capacity = stripCols * SESSION_STRIP_ROWS;
+    const hasOverflow = total > capacity;
+    const stripSlots = hasOverflow ? capacity - 1 : capacity;
+    const stripOverflow = Math.max(0, total - stripSlots);
 
     /* Note on the `AUTO-DETECTED` badge: it does look like noise in a library
        where most sessions are auto-detected, and removing it was tried. It is
@@ -103,25 +158,89 @@ const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onTogg
             className="glass-panel rounded-2xl border border-white/5 p-4"
             aria-label={`Session ${item.name}`}
         >
+            {/* The filmstrip.
+
+                A session is a *group of images*, and the collapsed card used to
+                show one 56px thumbnail of it — so the media-oriented view showed
+                almost no media and you had to expand every session to see what it
+                held. The strip puts the images first and the metadata second,
+                which is the order you scan a session in.
+
+                Two rows of fixed 104px tiles rather than one row of eight: eight
+                slivers across a card is neither previewable nor tappable, and the
+                tiles were also too short to read as images. The tile count is
+                measured from the card's width (`stripCols`), so a narrow phone
+                gets fewer and larger tiles rather than the same eight squeezed
+                harder — and the row count stays at two, which is what keeps the
+                card height independent of the image count and `estimateSize`
+                exact.
+
+                Each tile opens the same lightbox the grid opens, with the session's
+                images as the swipable siblings, so the media here is navigable
+                rather than decorative. */}
+            <div
+                ref={stripRef}
+                className="grid gap-1.5 mb-3"
+                style={{
+                    gridTemplateColumns: `repeat(${stripCols}, minmax(0, 1fr))`,
+                    height: SESSION_STRIP_ROWS * SESSION_STRIP_TILE + (SESSION_STRIP_ROWS - 1) * SESSION_STRIP_GAP,
+                }}
+            >
+                {isLoading && Array.from({ length: Math.min(capacity, Math.max(2, item.imageCount || 2)) }).map((_, i) => (
+                    <span
+                        key={`ph-${i}`}
+                        className="rounded-lg bg-gray-800/60 animate-pulse"
+                        style={{ height: SESSION_STRIP_TILE }}
+                    />
+                ))}
+
+                {!isLoading && (stripAssets || []).slice(0, stripSlots).map((asset) => (
+                    <button
+                        type="button"
+                        key={asset.id}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (selectionMode) {
+                                toggleSelection?.(asset.relative_path);
+                                return;
+                            }
+                            onImageClick?.(
+                                toLightboxImage(asset),
+                                (stripAssets || []).map(toLightboxImage).filter(Boolean),
+                            );
+                        }}
+                        className="relative rounded-lg overflow-hidden bg-gray-800 focus-visible:ring-2 focus-visible:ring-blue-500"
+                        style={{ height: SESSION_STRIP_TILE }}
+                    >
+                        <ProgressiveImage
+                            blurhash={asset.blurhash}
+                            src={assetUrl(assetPath(asset))}
+                            medium={asset.thumbnail_medium || thumbUrl(assetPath(asset))}
+                            alt=""
+                            size="medium"
+                            aspectRatio="1 / 1"
+                            objectFit="cover"
+                            className="w-full h-full"
+                        />
+                    </button>
+                ))}
+
+                {stripOverflow > 0 && (
+                    <span
+                        className="rounded-lg bg-gray-800/80 flex items-center justify-center text-sm font-semibold text-gray-300"
+                        style={{ height: SESSION_STRIP_TILE }}
+                    >
+                        +{stripOverflow}
+                    </span>
+                )}
+            </div>
+
             <button
                 type="button"
                 onClick={onToggleExpand}
                 aria-expanded={expanded}
-                className="w-full flex items-center gap-4 text-left"
+                className="w-full flex items-center gap-3 text-left"
             >
-                {item.thumbnail ? (
-                    <img
-                        src={thumbUrl(item.thumbnail)}
-                        alt=""
-                        loading="lazy"
-                        className="w-14 h-14 rounded-xl object-cover bg-gray-800 flex-shrink-0"
-                    />
-                ) : (
-                    <span className="w-14 h-14 rounded-xl bg-gray-800 flex items-center justify-center flex-shrink-0">
-                        <Layers size={22} className="text-gray-600" aria-hidden="true" />
-                    </span>
-                )}
-
                 <span className="flex-1 min-w-0">
                     <span className="flex items-center gap-2">
                         <span
