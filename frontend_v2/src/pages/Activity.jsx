@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Filter, MessageSquare, BookOpen, Brain, Image, Calendar } from 'lucide-react';
+import { Filter, MessageSquare, BookOpen, Brain, Image, Calendar, AlertTriangle } from 'lucide-react';
 import { useTimeline } from '../hooks/useTimeline';
 import { useCharacters } from '../hooks/useCharacters';
 import { useStories } from '../hooks/useStories';
@@ -79,7 +79,7 @@ export default function Activity() {
     // `showImages` is opt-in. See the module comment: unfiltered, the first page
     // was 196 images against 3 messages, and the Gallery is one click away.
     const types = showImages ? 'message,chapter,memory,image' : DEFAULT_TYPES;
-    const { data, isLoading } = useTimeline({ ...filters, limit, types });
+    const { data, isLoading, isError, error } = useTimeline({ ...filters, limit, types });
 
     const { data: characters = [] } = useCharacters();
     const { data: stories = [] } = useStories();
@@ -273,6 +273,17 @@ export default function Activity() {
                             </div>
                         </div>
                     ))}
+                </div>
+            ) : isError ? (
+                // A failed fetch and an empty feed look identical otherwise, so
+                // "No events yet" was telling the user their world was empty
+                // when the request had simply failed.
+                <div role="alert" className="text-center py-12">
+                    <EmptyState
+                        icon={AlertTriangle}
+                        title="Couldn't load activity"
+                        description={error?.message || 'The timeline request failed. Check the backend is reachable, then retry.'}
+                    />
                 </div>
             ) : events.length === 0 ? (
                 <EmptyState

@@ -116,6 +116,25 @@ describe('Activity page', () => {
         expect(screen.getByText(/Start chatting, writing stories/i)).toBeInTheDocument();
     });
 
+    it('shows an error, not an empty feed, when the timeline request fails', () => {
+        // The defect this pins: the page had no `isError` branch at all, so a
+        // failed fetch rendered "No events yet" — telling the user their whole
+        // world was empty when the request had simply failed. Same class as the
+        // `Worlds.jsx` P0 from the 2026-09-29b audit, in the next page over.
+        mockTimeline.mockReturnValue({
+            data: undefined,
+            isLoading: false,
+            isError: true,
+            error: new Error('timeline exploded'),
+        });
+        renderWithProviders(<Activity />);
+
+        expect(screen.getByRole('alert')).toBeInTheDocument();
+        expect(screen.getByText(/Couldn't load activity/i)).toBeInTheDocument();
+        expect(screen.getByText('timeline exploded')).toBeInTheDocument();
+        expect(screen.queryByText('No events yet')).not.toBeInTheDocument();
+    });
+
     it('renders events grouped by date with titles, type labels, and timestamps', () => {
         renderWithProviders(<Activity />);
         expect(screen.getByText('2026-08-11')).toBeInTheDocument();
