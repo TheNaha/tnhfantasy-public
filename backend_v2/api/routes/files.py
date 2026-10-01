@@ -1033,13 +1033,13 @@ def _serve_asset_file_sync(asset_id: str):
     with _sync_session() as session:
         asset = session.get(Asset, asset_id)
         if not asset or asset.deleted_at is not None:
-            raise NotFoundError("Asset not found")
+            raise NotFoundError("Asset", asset_id)
         path = get_safe_path(OUTPUT_DIR, asset.relative_path)
         if not os.path.exists(path):
             path = get_safe_path(OUTPUT_DIR, asset.filename)
         if not os.path.exists(path):
             _soft_delete_assets(asset.relative_path)
-            raise NotFoundError("Asset file missing on disk")
+            raise NotFoundError("Asset file", asset.relative_path)
         return FileResponse(path)
 
 
@@ -1054,13 +1054,13 @@ def _serve_asset_thumb_sync(asset_id: str):
     with _sync_session() as session:
         asset = session.get(Asset, asset_id)
         if not asset or asset.deleted_at is not None or not asset.thumbnail_relative_path:
-            raise NotFoundError("Thumbnail not found")
+            raise NotFoundError("Thumbnail", asset_id)
         path = get_safe_path(OUTPUT_DIR, asset.thumbnail_relative_path)
         if not os.path.exists(path):
             orig_path = get_safe_path(OUTPUT_DIR, asset.relative_path)
             if not os.path.exists(orig_path):
                 _soft_delete_assets(asset.relative_path)
-            raise NotFoundError("Thumbnail missing on disk")
+            raise NotFoundError("Thumbnail file", asset.thumbnail_relative_path)
         return FileResponse(path)
 
 
@@ -1090,7 +1090,7 @@ def _move_asset_sync(asset_id: str, body: MoveAssetRequest) -> dict:
     with _sync_session() as session:
         asset = session.get(Asset, asset_id)
         if not asset or asset.deleted_at is not None:
-            raise NotFoundError("Asset not found")
+            raise NotFoundError("Asset", asset_id)
 
         if not any([body.workspace, body.character_id, body.story_id]):
             raise ValidationError("Provide at least one of workspace, character_id, or story_id")
@@ -1100,7 +1100,7 @@ def _move_asset_sync(asset_id: str, body: MoveAssetRequest) -> dict:
             # Same session, so the row is marked deleted atomically with the 404
             # rather than through a second uncommitted session.
             _soft_delete_assets(asset.relative_path, session)
-            raise NotFoundError("Asset file missing on disk")
+            raise NotFoundError("Asset file", asset.relative_path)
 
         target_workspace = body.workspace or asset.workspace
         target_character_id = body.character_id if body.character_id is not None else asset.character_id
