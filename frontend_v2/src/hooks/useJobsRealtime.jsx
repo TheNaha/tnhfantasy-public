@@ -141,6 +141,28 @@ export function useJobsRealtime() {
             queryClient.invalidateQueries({ queryKey: ['jobs', 'queue'] });
 
             if (type === 'completed' && isImageJob) {
+                // The asset list is what the user is looking at when a job
+                // finishes, and nothing was refreshing it: the job caches were
+                // updated, the queue was invalidated, a toast fired — and the
+                // grid stayed exactly as it was. The new image only appeared on
+                // a tab refocus or a websocket reconnect, because
+                // `refreshServerState` is the only other thing that touches
+                // `['gallery']`.
+                //
+                // That is also why the gallery *feels* un-live even though the
+                // job card genuinely is live: you watch the card say completed
+                // and the grid does not change. It is a missing invalidation,
+                // not polling.
+                //
+                // `['gallery']` is a prefix of `['gallery', filters, limit]`, so
+                // this refetches the paginated list the user is on, whatever its
+                // filters. Guarded by `invalidateIfMounted` so a route with no
+                // gallery mounted buys no refetch.
+                invalidateIfMounted(['gallery']);
+                // Collection and world counts change with every new asset.
+                invalidateIfMounted(['collections']);
+                invalidateIfMounted(['statistics']);
+
                 toast.success(
                     <div>
                         <strong>Image generated!</strong>
