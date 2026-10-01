@@ -45,7 +45,7 @@ All three suites green as of **2026-10-01**:
 | Suite | Count | Command |
 |---|---|---|
 | Backend | **2817 passed, 7 skipped** (306 s) | `cd backend_v2 && .venv/bin/pytest` |
-| Frontend | **1319 passed across 140 files** | `cd frontend_v2 && npm test` |
+| Frontend | **1326 passed across 141 files** | `cd frontend_v2 && npm test` |
 | Providers | **793 passed, 4 skipped** (76-81 s) | `cd provider_containers && venv/bin/python -m pytest` |
 
 All three figures were re-measured on **2026-10-01**, not carried over. The
