@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { clearStreamingJob } from './useStreamingJobs';
+import { jobMetadata } from '../utils/jobStatus';
 
 export function useStoryStreaming({
     activeStoryId,
@@ -55,7 +56,7 @@ export function useStoryStreaming({
 
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
             const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
+            const meta = jobMetadata(job);
             if (meta.story_id === activeStoryId && meta.chapter_id === activeChapterId && meta.type === 'story_continue') {
                 const streamText = job.text ?? job.message ?? null;
                 if (streamText) {
@@ -71,7 +72,7 @@ export function useStoryStreaming({
 
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, async (event) => {
             const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
+            const meta = jobMetadata(job);
             
             if (meta.type === 'story_parse' && meta.story_id === activeStoryId) {
                 // A parse creates characters, locations and lorebooks (one
@@ -122,7 +123,7 @@ export function useStoryStreaming({
 
         const unsubFailed = subscribe(EventTypes.JOB_FAILED, (event) => {
             const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
+            const meta = jobMetadata(job);
             if (meta.story_id === activeStoryId && meta.chapter_id === activeChapterId) {
                 setIsStreaming(false);
                 setIsIllustrating(false);
@@ -134,7 +135,7 @@ export function useStoryStreaming({
 
         const unsubCancelled = subscribe(EventTypes.JOB_CANCELLED, (event) => {
             const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
+            const meta = jobMetadata(job);
             if (meta.story_id === activeStoryId && meta.chapter_id === activeChapterId) {
                 setIsStreaming(false);
                 setIsIllustrating(false);

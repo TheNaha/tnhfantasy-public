@@ -11,6 +11,7 @@ import {
     isJobCancelled,
     isJobComplete,
     isJobFailed,
+    jobMetadata,
 } from '../../utils/jobStatus';
 
 /**
@@ -70,7 +71,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const phaseIndex = PHASE_ORDER.indexOf(status);
 
     // Extract metadata
-    const meta = job.metadata || job.metadata_ || {};
+    const meta = jobMetadata(job);
     const checkpoint = typeof meta.checkpoint === 'object' ? meta.checkpoint?.name : meta.checkpoint;
     const checkpointShort = checkpoint ? checkpoint.replace('.safetensors', '').slice(0, 20) : null;
     const loraCount = (meta.loras || []).length;

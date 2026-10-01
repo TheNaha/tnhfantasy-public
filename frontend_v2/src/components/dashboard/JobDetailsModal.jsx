@@ -3,7 +3,7 @@ import toast from 'react-hot-toast';
 import { useConfirmation } from '../../store/confirmationStore';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed, formatTimestamp } from '../../utils/dateTime';
-import { JOB_STATUS, isJobCancelled, isJobComplete, isJobFailed, isJobRunning } from '../../utils/jobStatus';
+import { JOB_STATUS, isJobCancelled, isJobComplete, isJobFailed, isJobRunning, jobMetadata } from '../../utils/jobStatus';
 
 import { memo } from 'react';
 import ModalOverlay from '../common/ModalOverlay';
@@ -14,7 +14,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
 
     if (!job) return null;
 
-    const meta = job.metadata || job.metadata_ || {};
+    const meta = jobMetadata(job);
     const diagnostics = job.diagnostics || null;
     const checkpoint = typeof meta.checkpoint === 'object' ? meta.checkpoint?.name : meta.checkpoint;
     // The previous hand-written lists here carried four phantom statuses

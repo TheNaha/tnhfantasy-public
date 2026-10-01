@@ -93,3 +93,22 @@ export function isJobCancelled(status) {
 export function isJobComplete(status) {
     return status === JOB_STATUS.COMPLETED;
 }
+
+/**
+ * A job's metadata object, whichever spelling it arrived under.
+ *
+ * Python models the field as `metadata_` and every serializer aliases it back to
+ * `metadata` on the wire, so in practice only `metadata` is ever present — but
+ * the two spellings have coexisted in the frontend long enough that call sites
+ * defensively write `job.metadata || job.metadata_ || {}`.
+ *
+ * That defensive pattern was hand-copied to 17 sites and had already drifted
+ * into two orders (`||` and `??`), and `useJobsRealtime.jsx` shipped a copy
+ * with NO fallback at all, so the completed-image toast always fell back to the
+ * literal "Job completed" and never showed the prompt. One function, used
+ * everywhere, retires the whole class.
+ */
+export function jobMetadata(job) {
+    if (!job) return {};
+    return job.metadata ?? job.metadata_ ?? {};
+}

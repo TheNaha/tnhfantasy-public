@@ -15,6 +15,7 @@ import { useJobRecovery } from '../../hooks/useJobRecovery';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatTimestamp } from '../../utils/dateTime';
 import { describeErrorType, describeGroupSize, formatDuration, groupFailedJobs } from '../gallery/groupFailedJobs';
+import { jobMetadata } from '../../utils/jobStatus';
 
 /**
  * The expanded group list is capped so no number of failures can push the
@@ -438,7 +439,7 @@ function FailedJobCard({
     const isExpanded = expandedJobId === job.id;
     const canRetry = diagnostics.is_retryable !== false && diagnostics.failure_kind !== 'cancelled';
     const isThisRetrying = isRetrying && retryingJobId === job.id;
-    const prompt = (job.metadata || job.metadata_ || {}).prompt;
+    const prompt = (jobMetadata(job)).prompt;
 
     return (
         <li className="rounded-lg border border-red-500/15 bg-gray-900/40 p-3 space-y-2">

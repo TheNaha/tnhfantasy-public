@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { getStreamingJob, setStreamingJob, clearStreamingJob } from './useStreamingJobs';
+import { jobMetadata } from '../utils/jobStatus';
 
 export function useChatStreaming({
     activeChatId,
@@ -24,7 +25,7 @@ export function useChatStreaming({
 
         const applyStreamUpdate = (job) => {
             const streamText = job.text ?? job.message ?? null;
-            const meta = job.metadata_ ?? job.metadata ?? {};
+            const meta = jobMetadata(job);
             const eventId = job.id ?? null;
 
             const isSuggestion = eventId === suggestJobIdRef.current || !!meta.is_suggestion;
@@ -65,7 +66,7 @@ export function useChatStreaming({
 
         const unsubCreated = subscribe(EventTypes.JOB_CREATED, (event) => {
             const job = getJob(event);
-            const meta = job.metadata ?? job.metadata_ ?? {};
+            const meta = jobMetadata(job);
             const eventId = job.id ?? null;
             if (!eventId) return;
 
@@ -85,7 +86,7 @@ export function useChatStreaming({
 
         const unsubUpdated = subscribe(EventTypes.JOB_UPDATED, (event) => {
             const job = getJob(event);
-            const meta = job.metadata ?? job.metadata_ ?? {};
+            const meta = jobMetadata(job);
             const eventId = job.id ?? null;
             if (!eventId) return;
 
@@ -104,7 +105,7 @@ export function useChatStreaming({
 
         const unsubPostProcessing = subscribe(EventTypes.JOB_POST_PROCESSING, (event) => {
             const job = getJob(event);
-            const meta = job.metadata ?? job.metadata_ ?? {};
+            const meta = jobMetadata(job);
             const eventId = job.id ?? null;
             if (!eventId) return;
 
@@ -129,7 +130,7 @@ export function useChatStreaming({
 
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
             const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
+            const meta = jobMetadata(job);
             const eventId = job.id ?? null;
 
             if (eventId) pendingStream.delete(eventId);
@@ -184,7 +185,7 @@ export function useChatStreaming({
 
         const unsubError = subscribe(EventTypes.JOB_FAILED, (event) => {
             const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
+            const meta = jobMetadata(job);
             const eventId = job.id ?? null;
             if (eventId) pendingStream.delete(eventId);
             const existingJob = getStreamingJob(queryClient, eventId);
@@ -206,7 +207,7 @@ export function useChatStreaming({
 
         const unsubCancelled = subscribe(EventTypes.JOB_CANCELLED, (event) => {
             const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
+            const meta = jobMetadata(job);
             const eventId = job.id ?? null;
             if (eventId) pendingStream.delete(eventId);
             const existingJob = getStreamingJob(queryClient, eventId);

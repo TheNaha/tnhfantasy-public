@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as ws from '../api/websocket';
+import { jobMetadata } from '../utils/jobStatus';
 import toast from 'react-hot-toast';
 
 export function useJobsRealtime() {
@@ -145,8 +146,8 @@ export function useJobsRealtime() {
                         <strong>Image generated!</strong>
                         <br />
                         <span className="text-sm opacity-80">
-                            {job.metadata_?.prompt?.substring(0, 50) || 'Job completed'}
-                            {job.metadata_?.prompt?.length > 50 ? '...' : ''}
+                            {jobMetadata(job).prompt?.substring(0, 50) || 'Job completed'}
+                            {jobMetadata(job).prompt?.length > 50 ? '...' : ''}
                         </span>
                     </div>,
                     { icon: '✨' }
