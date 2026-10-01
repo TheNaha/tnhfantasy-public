@@ -15,10 +15,57 @@ import { useSessionAssets } from '../../hooks/useSessions';
 import { toLightboxImage } from '../../utils/lightboxImage';
 import { useListVirtualizer } from '../../hooks/useScrollRoot';
 
-const SESSION_HEADER_HEIGHT = 148;
+// Every virtual item is rendered with `paddingBottom: '2rem'`, so the estimate
+// has to include it. It did not: a collapsed session item measured 135px
+// (103px card + 32px padding) against an estimate of 148px, so every row was
+// over-estimated by 13px and the list got *shorter* as you scrolled — measured
+// `scrollHeight` falling 15380 -> 15198 across 2000px of scrolling. That is the
+// jump: the total length of the list changed under the scroll position, so
+// everything below the viewport moved.
+//
+// Keep these as named parts so the relationship stays visible and the constant
+// cannot drift from the markup again. If `glass-panel p-4` or the padding
+// changes, these are the numbers to re-measure.
+const SESSION_ITEM_PADDING = 32;   // paddingBottom: 2rem on every virtual item
+const SESSION_CARD_HEIGHT = 103;   // measured: p-4 (32) + content row (71)
+const SESSION_HEADER_HEIGHT = SESSION_CARD_HEIGHT + SESSION_ITEM_PADDING;
 const SESSION_MEMBER_ROW_HEIGHT = 116;
 const SESSION_MEMBER_COLUMNS = 6;
 const SESSION_MEMBER_ROW_CAP = 6;
+
+/**
+ * The image's real aspect ratio, as a CSS value.
+ *
+ * The list and grid views hard-coded `aspectRatio="auto"` on
+ * `ProgressiveImage`, which is the one setting that reserves NO space: the box
+ * is a flat `h-32` until the bytes arrive and then snaps to the image's natural
+ * height. Every thumbnail that decoded moved everything below it, and since a
+ * whole day is one virtual item the shifts compounded — measured, a single day
+ * group going 1676px -> 3296px as its second page of images loaded, with
+ * `scrollHeight` jumping 2386 -> 4134. That is the "infinite scroll is jumpy"
+ * symptom: the total length of the list changing under the scroll position.
+ *
+ * The assets carry `width`/`height` (and the same under `metadata`), so the box
+ * can be reserved exactly. That also stops the grid cropping: with a real ratio
+ * `ProgressiveImage` fills the box with `object-cover`, and because the box now
+ * matches the image there is nothing to crop. Previously the portrait images in
+ * this library were letterboxed into a 128px column at wildly varying heights.
+ */
+function aspectRatioFor(item) {
+    const w = Number(item?.width) || Number(item?.metadata?.width) || 0;
+    const h = Number(item?.height) || Number(item?.metadata?.height) || 0;
+    if (!(w > 0) || !(h > 0)) return LIBRARY_DEFAULT_ASPECT;
+    // Reduce, so 1024x1024 becomes "1 / 1" rather than a pair of four-digit ints.
+    const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+    const g = gcd(w, h);
+    return `${Math.round(w / g)} / ${Math.round(h / g)}`;
+}
+
+// Most of this library is SDXL portrait (832x1216 is 2:3), so an unknown
+// dimension gets the common shape rather than a square, which would over- or
+// under-shoot for most rows.
+const LIBRARY_DEFAULT_ASPECT = '2 / 3';
+
 
 function estimateSessionUnitSize(item, expanded, gridCols) {
     const collapsed = SESSION_HEADER_HEIGHT;
@@ -33,6 +80,23 @@ const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onTogg
     // lightbox's navigation list come from here, so they can never disagree
     // about what "this session" contains.
     const { data, isLoading, error } = useSessionAssets(item.sessionId, { enabled: expanded });
+
+    /* Note on the `AUTO-DETECTED` badge: it does look like noise in a library
+       where most sessions are auto-detected, and removing it was tried. It is
+       load-bearing — `SessionBadges` pairs it with a `Curated` badge and
+       `GroupedDashboardContent.sessions.test.jsx` pins that a detected session
+       shows "Auto-detected" and a hand-made one shows "Curated". It answers
+       "can I rename and re-group this freely, or is the grouping machine-made",
+       which is not the same question as "is this a session".
+
+       The seed-based names (`Seed 2557611075753025`) are the weaker half of this
+       view, and they are not fixable here either: the grouping item is built from
+       the session record alone (`utils/dashboardItems.js` — no asset metadata), so
+       the first image's prompt is not on the client, and the detector deliberately
+       never reads `assets.metadata_` (~70 MB on this deployment). The name is
+       `Seed <n>` because the seed is the column it groups on. Fixing that means
+       returning a prompt from the sessions endpoint — a real change, not a
+       cosmetic one. */
 
     return (
         <section
@@ -60,7 +124,12 @@ const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onTogg
 
                 <span className="flex-1 min-w-0">
                     <span className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-white truncate">{item.name}</span>
+                        <span
+                            className="text-sm font-semibold text-white truncate"
+                            title={item.name}
+                        >
+                            {item.name}
+                        </span>
                     </span>
                     <span className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400 font-medium">
                         <span>{item.imageCount} image{item.imageCount === 1 ? '' : 's'}</span>
@@ -241,29 +310,36 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
                         )}
                     </div>
                 </div>
-
-                {isFavorite && (
-                    <div className="absolute top-3 right-3 text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.6)]">
-                        <Star size={20} fill="currentColor" />
-                    </div>
-                )}
             </div>
             {selectionMode && (
-                <div className={`absolute top-3 left-3 p-1.5 rounded-full backdrop-blur-md shadow-lg transition-colors ${selected ? 'bg-blue-500 text-white' : 'bg-black/50 border border-white/20 text-white/70 hover:bg-black/70'}`}>
+                <div className={`absolute top-3 left-3 flex h-8 w-8 items-center justify-center rounded-full backdrop-blur-md shadow-lg transition-colors ${selected ? 'bg-blue-500 text-white' : 'bg-black/50 border border-white/20 text-white/70 hover:bg-black/70'}`}>
                     <Check size={14} strokeWidth={3} />
                 </div>
             )}
 
             {!selectionMode && (
+                /* This is the only favourite control on the card now. There used
+                   to be a second, bare `<Star size={20}>` at this same
+                   `top-3 right-3`, shown when `isFavorite` — so a favourited card
+                   rendered two stars of different sizes in one corner,
+                   overlapping. The button fills its own star when favourited, so
+                   the indicator was pure duplication.
+
+                   Also `opacity-100 sm:opacity-0 sm:group-hover:opacity-100`: a
+                   `group-hover:` control does not appear on a device with no
+                   hover, so on a phone the favourite control was simply absent
+                   and a favourited card showed a star that did nothing when
+                   tapped. Fixed 32px box with a 14px star, matching the
+                   selection chip opposite so the two corners line up. */
                 <button
                     onClick={onFavoriteClick}
-                    className="absolute top-3 right-3 p-2 rounded-full bg-black/40 hover:bg-black/70 border border-white/10 backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110 active:scale-95"
+                    className="absolute top-3 right-3 flex h-8 w-8 items-center justify-center rounded-full bg-black/40 hover:bg-black/70 border border-white/10 backdrop-blur-md opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity duration-200 active:scale-95"
                     title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                     aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                     aria-pressed={isFavorite}
                 >
                     <Star
-                        size={16}
+                        size={14}
                         className={`transition-colors ${isFavorite ? 'fill-yellow-400 text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.6)]' : 'text-white/80 hover:text-white'}`}
                     />
                 </button>
@@ -303,7 +379,7 @@ const ListImageGroupCard = memo(function ListImageGroupCard({ item, selected, se
                         medium={item.images[0].thumbnail_medium || thumbUrl(assetPath(item.images[0]))}
                         alt={item.images[0].name}
                         size="medium"
-                        aspectRatio="auto"
+                        aspectRatio={aspectRatioFor(item.images[0])}
                         className="w-full object-cover transition-transform duration-500 group-hover:scale-105"
                     />
                 </div>
@@ -363,7 +439,7 @@ const ListSingleImageCard = memo(function ListSingleImageCard({ item, selected, 
                     medium={item.thumbnail_medium || thumbUrl(assetPath(item))}
                     alt={item.name}
                     size="medium"
-                    aspectRatio="auto"
+                    aspectRatio={aspectRatioFor(item)}
                     className="w-full object-cover transition-transform duration-500 group-hover:scale-105"
                 />
             </button>
