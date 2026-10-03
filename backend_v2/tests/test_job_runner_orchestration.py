@@ -74,7 +74,12 @@ async def test_maybe_retry_current_provider_updates_job_and_returns_true(monkeyp
 
     assert should_retry is True
     assert next_retry_count == 1
-    assert sleep_calls == [1]
+    # Equal jitter: the first retry lands in [0.5x, 1.0x] of the 1s ceiling, so
+    # a fleet of jobs failing against the same provider spreads out instead of
+    # retrying in lockstep. Asserted as a range, not a value — the point is that
+    # it is no longer a deterministic 1.0.
+    assert len(sleep_calls) == 1
+    assert 0.5 <= sleep_calls[0] <= 1.0
     assert job_service.calls == [
         (
             "job-2",

@@ -1,4 +1,5 @@
 import asyncio
+import random
 from datetime import datetime, timezone
 
 from core.entities import JobStatus, Provider
@@ -134,11 +135,20 @@ async def maybe_retry_current_provider(
     if next_retry_count > max_retries:
         return False, next_retry_count
 
-    delay = min(base_delay * (2 ** (next_retry_count - 1)), max_delay)
+    # Full jitter. The exponential term alone is deterministic, so every job
+    # that fails against the same unhealthy provider retries at exactly 1s, 2s,
+    # 4s — they synchronise into a thundering herd on the provider's recovery
+    # moment, which is the worst possible time. Equal jitter (half fixed, half
+    # random) is used rather than full jitter so the first retry still happens
+    # promptly: `delay * (0.5 + random.random() / 2)` keeps the schedule inside
+    # [0.5x, 1.0x] of the intended backoff and the cap still holds.
+    ceiling = min(base_delay * (2 ** (next_retry_count - 1)), max_delay)
+    delay = ceiling * (0.5 + random.random() / 2)
     logger.info(
         "job_retry",
         job_id=job_id,
-        delay=delay,
+        delay=round(delay, 3),
+        ceiling=ceiling,
         attempt=next_retry_count,
         provider=provider_id,
     )
