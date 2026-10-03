@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from io import BytesIO
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from api.deps import get_session, get_character_repo
@@ -45,6 +45,57 @@ MAX_CARD_BYTES = MAX_CARD_SIZE_MB * 1024 * 1024
 
 CARD_FILE_SUFFIXES = (".png", ".json", ".charx")
 CARD_EXPORT_FORMATS = ("default", "v2", "v3", "json", "charx")
+
+
+class CharacterCreateRequest(BaseModel):
+    """Create body for POST /characters.
+
+    This route used to take the `Character` SQLModel table class as its request
+    body, which has two defects at once:
+
+      * `id` is a client-writable field, so `POST {"name":"x","id":"..."}`
+        persisted the caller's primary key — and propagated it into the second
+        row the route creates, the character's `Collection`.
+      * the body was never validated. A missing NOT NULL column reached
+        `session.add()` and came back as a 500 instead of a 422, so a malformed
+        client request read as a server fault.
+
+    `id`, `created_at`, `updated_at`, `avatar_path`, `card_spec*`,
+    `card_metadata` and `embedded_lorebook_id` are server-owned and are
+    deliberately absent: `avatar_path` has its own upload endpoint, and the
+    SillyTavern card provenance fields are only ever set by card import.
+    `extra="forbid"` so a typo'd field is a 422 instead of a silent drop — the
+    failure mode that made `ScenarioUpdate` look like it worked.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    description: str | None = None
+    personality: str | None = None
+    scenario: str | None = None
+    first_mes: str | None = None
+    mes_example: str | None = None
+    creator_notes: str | None = None
+    system_prompt: str | None = None
+    append_system_prompt: str | None = None
+    suggested_persona: str | None = None
+    visual_tags: list[str] = Field(default_factory=list)
+    lora_triggers: list[str] | None = None
+    voice_profile: str | None = None
+    voice_model_id: str | None = None
+    alternate_greetings: list[str] | None = None
+    expressions: dict[str, str] | None = None
+    expressions_lora: list[str] | None = None
+    checkpoint: str | None = None
+    lora: str | None = None
+    default_time: str | None = None
+    default_location: str | None = None
+    lorebook_ids: list[str] = Field(default_factory=list)
+    group_greetings: list[str] | None = None
+    creator: str | None = None
+    character_version: str | None = None
+    sort_order: int = 0
 
 
 class CharacterUpdateRequest(BaseModel):
@@ -159,9 +210,8 @@ def list_characters(session: Session = Depends(get_session), character_repo: Cha
     return [_character_to_dict(c) for c in characters]
 
 @router.post("")
-def create_character(character: Character, session: Session = Depends(get_session)):
-    if character.avatar_path:
-        raise ValidationError("Use the avatar upload endpoint to set avatar_path")
+def create_character(payload: CharacterCreateRequest, session: Session = Depends(get_session)):
+    character = Character(**payload.model_dump())
     character.created_at = datetime.now(timezone.utc)
     character.updated_at = character.created_at
     session.add(character)

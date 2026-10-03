@@ -25,6 +25,15 @@ class PersonaUpdate(BaseModel):
         return v
 
 
+class PersonaCreate(BaseModel):
+    """Create body for POST /personas. See `CharacterCreateRequest`."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    description: str | None = None
+
+
 @router.get("", response_model=list[Persona])
 def list_personas(persona_repo: PersonaRepository = Depends(get_persona_repo)):
     return persona_repo.list()
@@ -32,13 +41,13 @@ def list_personas(persona_repo: PersonaRepository = Depends(get_persona_repo)):
 
 @router.post("", response_model=Persona)
 def create_persona(
-    persona: Persona,
+    payload: PersonaCreate,
     session: Session = Depends(get_session),
     persona_repo: PersonaRepository = Depends(get_persona_repo),
 ):
-    if not (persona.name or "").strip():
+    if not (payload.name or "").strip():
         raise ValidationError("Persona name is required")
-    persona.name = persona.name.strip()
+    persona = Persona(**{**payload.model_dump(), "name": payload.name.strip()})
     now = datetime.now(timezone.utc)
     persona.created_at = now
     persona.updated_at = now

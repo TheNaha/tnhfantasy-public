@@ -14,17 +14,45 @@ from core.exceptions import NotFoundError
 router = APIRouter()
 
 
+class ScenarioCreate(BaseModel):
+    """Create body for POST /scenarios. See `CharacterCreateRequest`."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    description: str | None = None
+    prompt_template: str
+    default_checkpoint: str | None = None
+    default_voice_profile: str | None = None
+
+
 class ScenarioUpdate(BaseModel):
+    """Strict optional-field update model for PUT/PATCH /scenarios/{id}.
+
+    `default_checkpoint` and `default_voice_profile` were missing here even
+    though `Scenario` declares them and the Scenarios page renders both in its
+    edit form. Pydantic's default `extra='ignore'` dropped them, the route
+    returned 200, the UI toasted "Scenario updated", and the values never
+    changed — every field in the form after the third was uneditable from the
+    moment the scenario was created. `extra="forbid"` so the next missing field
+    is a 422 instead of another silent no-op.
+    """
+
+    model_config = {"extra": "forbid"}
+
     name: str | None = None
     description: str | None = None
     prompt_template: str | None = None
+    default_checkpoint: str | None = None
+    default_voice_profile: str | None = None
 
 @router.get("", response_model=list[Scenario])
 def list_scenarios(session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
     return scenario_repo.list()
 
 @router.post("", response_model=Scenario)
-def create_scenario(scenario: Scenario, session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
+def create_scenario(payload: ScenarioCreate, session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
+    scenario = Scenario(**payload.model_dump())
     scenario.created_at = datetime.now(timezone.utc)
     scenario.updated_at = scenario.created_at
     session.add(scenario)

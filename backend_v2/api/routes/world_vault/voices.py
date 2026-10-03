@@ -48,8 +48,29 @@ def list_voices(
     return session.exec(query).all()
 
 
+class VoiceModelCreate(BaseModel):
+    """Create body for POST /voices. See `CharacterCreateRequest`.
+
+    `preview_path` is server-owned: it is written by the preview TTS job that
+    completes asynchronously, so accepting it here would let a client point the
+    player at a file that does not exist.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    description: str | None = None
+    type: str = "xtts"
+    voice_profile: str | None = None
+    model_path: str | None = None
+    language: str | None = None
+    preview_text: str | None = None
+    character_id: str | None = None
+
+
 @router.post("")
-def create_voice(voice: VoiceModel, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
+def create_voice(payload: VoiceModelCreate, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
+    voice = VoiceModel(**payload.model_dump())
     voice.created_at = datetime.now(timezone.utc)
     voice.updated_at = voice.created_at
     session.add(voice)

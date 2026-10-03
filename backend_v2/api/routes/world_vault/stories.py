@@ -2,10 +2,11 @@ import asyncio
 import os
 from datetime import datetime, timezone
 from io import BytesIO
+from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, delete, select
 
@@ -793,12 +794,30 @@ def list_chapters(story_id: str, session: Session = Depends(get_session), story_
     chapters = story_chapter_repo.list_by_story(story_id)
     return chapters
 
+class ChapterCreate(BaseModel):
+    """Create body for POST /stories/{id}/chapters.
+
+    `chapter_number` is assigned by the route from the current maximum and
+    `story_id` comes from the path, so neither is accepted from the client; the
+    route used to take the `StoryChapter` table class and let a caller pin
+    either.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    title: str | None = None
+    content: str
+    beats: list[dict[str, Any]] = Field(default_factory=list)
+    image_paths: list[str] = Field(default_factory=list)
+
+
 @router.post("/{story_id}/chapters", response_model=StoryChapter)
-def create_chapter(story_id: str, chapter: StoryChapter, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def create_chapter(story_id: str, payload: ChapterCreate, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
     story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
-        
+
+    chapter = StoryChapter(**payload.model_dump())
     max_chapter = story_chapter_repo.get_max_chapter_number(story_id)
     chapter.chapter_number = max_chapter.chapter_number + 1 if max_chapter else 1
     chapter.story_id = story_id

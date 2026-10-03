@@ -4,7 +4,7 @@ import re
 
 from fastapi import APIRouter, Depends, Body, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from api.deps import get_embedding_service, get_session, get_lorebook_repo, get_lorebook_entry_repo
@@ -42,12 +42,45 @@ class EntryUpdate(BaseModel):
 class BulkEntryDelete(BaseModel):
     entry_ids: list[str]
 
+class LorebookCreateRequest(BaseModel):
+    """Create body for POST /lorebooks — see `CharacterCreateRequest` for why a
+    table class is not a request body (client-writable `id`, unvalidated 500s)."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    description: str | None = None
+
+
+class LorebookEntryCreateRequest(BaseModel):
+    """Create body for POST /lorebooks/{id}/entries.
+
+    `embedding` is excluded on purpose: it is `exclude=True` on the model and is
+    generated server-side from `keys` + `content`, so accepting it would let a
+    caller pin an embedding that no longer matches its own text.
+    `case_sensitive`, `selective_logic` and `probability` are accepted because
+    the columns and the card importer already populate them.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    keys: list[str] = Field(default_factory=list)
+    content: str
+    category: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    depth: int = 4
+    case_sensitive: bool = False
+    selective_logic: str | None = None
+    probability: int | None = None
+
+
 @router.get("", response_model=list[Lorebook])
 def list_lorebooks(session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo)):
     return lorebook_repo.list()
 
 @router.post("", response_model=Lorebook)
-def create_lorebook(lorebook: Lorebook, session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo)):
+def create_lorebook(payload: LorebookCreateRequest, session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo)):
+    lorebook = Lorebook(**payload.model_dump())
     lorebook.created_at = datetime.now(timezone.utc)
     lorebook.updated_at = lorebook.created_at
     session.add(lorebook)
@@ -155,7 +188,7 @@ def list_entries(
 @router.post("/{lorebook_id}/entries", response_model=LorebookEntry)
 def create_entry(
     lorebook_id: str, 
-    entry: LorebookEntry, 
+    payload: LorebookEntryCreateRequest,
     session: Session = Depends(get_session),
     lorebook_repo: LorebookRepository = Depends(get_lorebook_repo),
     embedding_service: EmbeddingService = Depends(get_embedding_service)
@@ -163,7 +196,8 @@ def create_entry(
     lorebook = lorebook_repo.get(lorebook_id)
     if not lorebook:
         raise NotFoundError("Lorebook", lorebook_id)
-        
+
+    entry = LorebookEntry(**payload.model_dump())
     entry.lorebook_id = lorebook_id
     
     # Generate embedding for semantic search
