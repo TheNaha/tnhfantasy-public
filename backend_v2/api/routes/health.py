@@ -6,13 +6,17 @@ from api.deps import get_session
 router = APIRouter(tags=["health"])
 
 
-# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
-# so as `async def` it ran on the event loop and its DB/disk work blocked
-# every other request for the duration. FastAPI runs a plain `def` handler in
-# a worker thread, which is what the work actually needs.
-@router.get("/api/health")
-def health():
-    """Health check endpoint."""
+# Liveness, and deliberately the *only* thing it claims: the process is up and
+# serving. It checks nothing — no database, no disk — which is the point of a
+# liveness probe, and also why it is not what the compose healthcheck uses.
+#
+# This was `/api/health`, which returned this same constant and had no callers
+# outside a test and some docs: not the compose healthcheck, not the frontend,
+# not the providers. Three names for two concepts across the stack — `/live` on
+# the provider workers, `/api/ready` here, and a redundant third. It is now
+# `/api/live`, which matches what the provider containers already expose.
+@router.get("/api/live")
+def live():
     return {"status": "ok", "version": "2.0.0"}
 
 

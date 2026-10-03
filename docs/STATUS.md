@@ -56,7 +56,7 @@ run in 4) and is not fixed.
 
 > **The stack was rebuilt and redeployed during the 2026-10-01 audit and
 > verified reachable afterwards:** `http://localhost:5174` → 200,
-> `http://localhost:8002/api/health` → 200, all 9 containers healthy.
+> `http://localhost:8002/api/live` → 200, all 9 containers healthy.
 
 **A green suite says nothing about whether the container is serving the code under
 test.** The 2026-09-27 backend count was wrong precisely because the documented
@@ -158,9 +158,18 @@ notable ones:
   every API route until the frontend was also restarted. Now re-resolved per
   request, and verified by moving the backend to a new IP with the frontend
   untouched.
-- **Provider auth failed open** when `PROVIDER_WORKER_TOKEN` was empty, which
+- **Provider auth failed open** when the shared provider token was empty, which
   was the shipped default — leaving `/inference` and `/deploy` (which shells
   out to `modal deploy`) open. Now fails closed with 503.
+
+  This was two variables (`PROVIDER_WORKER_TOKEN` for backend → container,
+  `COMFY_DISCOVERY_TOKEN` for container → backend) and is now one,
+  `COMFY_PROVIDER_TOKEN`, used in both directions as `X-Provider-Token`. Both
+  ends still fail closed. Having two is what caused a real outage on
+  2026-10-02: the discovery one was empty while the management one was set, so
+  every provider failed to register and the only symptom was
+  `discovery_token_not_configured` in the container logs. `scripts/preflight.sh`
+  now reports it before `compose up`.
 - **The test suite ran with foreign keys disabled**, so dangling references
   Postgres would reject passed CI. Enabling the pragma exposed 15 tests
   seeding rows against parent rows that do not exist.

@@ -80,7 +80,7 @@ def configure_app(app: FastAPI):
         # `/api/files/events` was a server-sent-events endpoint that no longer
         # exists. Left in the list it did nothing except look like `/api/files`
         # requests were being skipped when they are not.
-        skip_paths = ["/api/health", "/metrics"]
+        skip_paths = ["/api/live", "/metrics"]
 
         if not any(path.startswith(skip) for skip in skip_paths):
             route = request.scope.get("route")

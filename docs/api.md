@@ -347,8 +347,13 @@ There is no `GET /api/files/proxy/{provider_id}/{path}`. This file documented on
 
 ### Health
 
-- `GET /api/health`: Liveness check endpoint.
-- `GET /api/ready`: Readiness check, including a database query.
+- `GET /api/live`: Liveness — the process is up. Checks nothing else, by design.
+- `GET /api/ready`: Readiness — includes a database query (`SELECT 1`).
+
+This was three endpoints: `/api/health` was a second name for the constant that
+`/api/live` returns, with no callers outside a test, while the provider workers
+exposed `/live` and the compose healthcheck used `/api/ready`. The provider
+containers' `/live` and the backend's are now the same name for the same idea.
 
 ### Metrics
 
