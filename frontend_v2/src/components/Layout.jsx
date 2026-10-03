@@ -220,6 +220,21 @@ export default function Layout({ children }) {
 
     return (
         <div className="flex min-h-screen lg:h-screen bg-[#0B0E14] text-gray-100 lg:overflow-hidden overflow-x-hidden font-sans selection:bg-blue-500/30 relative">
+            {/* Skip link. The sidebar is 17 nav items in a scrollable column
+                that sits *before* <main> in the DOM, so on every one of the 25
+                routes a keyboard or switch user had to tab through the whole
+                navigation — and past the provider status panel and the ⌘K
+                footer — to reach the page they navigated to. It is the first
+                element in the tab order, invisible until focused, and the
+                target is the scroll container every page already renders into
+                (`mainScrollRef`), so the focus lands where the content is. */}
+            <a
+                href="#main-scroll-container"
+                className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:inline-flex focus:items-center focus:rounded-lg focus:bg-blue-600 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white focus:shadow-lg"
+            >
+                Skip to main content
+            </a>
+
             {/* Global Ambient Background Gradients */}
             <div className="hidden md:block fixed top-[-20%] right-[-10%] w-[800px] h-[800px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none z-0" />
             <div className="hidden md:block fixed bottom-[-20%] left-[-10%] w-[800px] h-[800px] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none z-0" />
@@ -428,6 +443,13 @@ export default function Layout({ children }) {
                 <main
                     id="main-scroll-container"
                     ref={mainScrollRef}
+                    // `tabIndex={-1}` is what makes the skip link work. A
+                    // fragment link scrolls to the target but leaves focus on
+                    // the link itself unless the target can take focus, so the
+                    // next Tab would carry on from the top of the nav. -1 puts
+                    // <main> in the tab order without adding a stop for
+                    // everyone else.
+                    tabIndex={-1}
                     className={clsx(
                         "flex-1 relative z-10",
                         isFullBleed
