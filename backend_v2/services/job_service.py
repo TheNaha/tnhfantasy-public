@@ -358,10 +358,15 @@ class JobService:
         """
         return self.repo.set_acknowledged(job_ids, acknowledged)
 
-    async def acknowledge_all(
+    def acknowledge_all(
         self, *, acknowledged: bool = True, task_type: str | None = None
     ) -> int:
-        """Acknowledge (or restore) every failed job matching the filter."""
+        """Acknowledge (or restore) every failed job matching the filter.
+
+        Synchronous on purpose: this was `async def` around one synchronous
+        UPDATE, so the route awaiting it blocked the event loop for the whole
+        filtered write across every failed job.
+        """
         return self.repo.set_acknowledged_filtered(
             acknowledged=acknowledged, task_type=task_type
         )
@@ -743,8 +748,12 @@ class JobService:
         logger.info("job_deleted", job_id=job_id)
         return True
     
-    async def clear_all_jobs(self) -> int:
-        """Clear terminal jobs while preserving active work."""
+    def clear_all_jobs(self) -> int:
+        """Clear terminal jobs while preserving active work.
+
+        Synchronous on purpose: `async def` around a synchronous DELETE, so the
+        route awaiting it blocked the event loop for the duration of the wipe.
+        """
         if self.get_running_jobs():
             raise ValidationError("Cannot clear jobs while active jobs exist")
         count = self.repo.delete_all()

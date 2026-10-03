@@ -21,10 +21,19 @@ router = APIRouter()
 # MODEL ENDPOINTS
 # ============================================================================
 
+# Plain `def` on purpose, not `async def`, for this and the two routes below.
+# Each awaited a service method that was itself a decorative `async def` around a
+# synchronous SQLModel query, so the handler ran the whole query on the event
+# loop. Measured on the live stack 2026-10-03 for `GET /api/v2/models/` (the
+# 1.5 MB listing this route returns): 761 ms per request at concurrency 1 and
+# 778 ms at concurrency 16 — flat, i.e. fully serialised, throughput pinned at
+# ~1.3 req/s. The control route one file over, which uses `asyncio.to_thread`,
+# went 360 -> 59 -> 31 ms over the same sweep. FastAPI runs a plain `def` handler
+# in a worker thread, which is what this work is.
 @router.get("/")
-async def list_models(service: ModelServiceV2 = Depends(get_model_service_v2)):
+def list_models(service: ModelServiceV2 = Depends(get_model_service_v2)):
     """List all models grouped by directory."""
-    return {"models": await service.get_models_grouped()}
+    return {"models": service.get_models_grouped()}
 
 
 @router.get("/all")
@@ -323,7 +332,7 @@ async def toggle_version_enabled(
 
 
 @router.get("/{model_id}/generation-info")
-async def get_generation_info(
+def get_generation_info(
     model_id: str,
     version_id: int | None = None,
     service: ModelServiceV2 = Depends(get_model_service_v2)
@@ -332,6 +341,6 @@ async def get_generation_info(
     Get model/version info needed for generation.
     Returns storage path and other generation params.
     """
-    return await service.get_version_for_generation(model_id, version_id)
+    return service.get_version_for_generation(model_id, version_id)
 
 

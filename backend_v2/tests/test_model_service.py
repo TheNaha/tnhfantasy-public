@@ -149,7 +149,7 @@ class TestModelServiceV2GetModel:
         with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
             with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 await service.add_model_from_civitai(civitai_data, [67890])
-        result = await service.get_models_grouped()
+        result = service.get_models_grouped()
         assert "checkpoints" in result
 
 

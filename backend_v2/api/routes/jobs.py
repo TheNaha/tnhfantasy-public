@@ -624,7 +624,7 @@ class AcknowledgeAllRequest(BaseModel):
 
 
 @router.post("/acknowledge-all")
-async def acknowledge_all_failed_jobs(
+def acknowledge_all_failed_jobs(
     request: AcknowledgeAllRequest,
     service: JobService = Depends(get_job_service),
 ):
@@ -639,7 +639,7 @@ async def acknowledge_all_failed_jobs(
     twice is a no-op the second time and `acknowledged: false` restores the full
     set rather than only the part still visible.
     """
-    updated = await service.acknowledge_all(
+    updated = service.acknowledge_all(
         acknowledged=request.acknowledged, task_type=request.task_type
     )
     return {
@@ -767,7 +767,7 @@ async def delete_job(
 
 
 @router.delete("")
-async def delete_all_jobs(service: JobService = Depends(get_job_service)):
+def delete_all_jobs(service: JobService = Depends(get_job_service)):
     """Delete all jobs."""
-    count = await service.clear_all_jobs()
+    count = service.clear_all_jobs()
     return {"status": "success", "deleted": count}

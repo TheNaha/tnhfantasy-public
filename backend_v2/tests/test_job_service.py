@@ -400,14 +400,14 @@ class TestJobServiceClear:
         service = JobService(session)
         await service.create_job(workflow=sample_workflow, metadata={})
         await service.create_job(workflow=sample_workflow, metadata={})
-        count = await service.clear_all_jobs()
+        count = service.clear_all_jobs()
         assert count == 2
 
     @pytest.mark.asyncio
     async def test_clear_empty_returns_zero(self, session: Session):
         """Clearing when no jobs returns 0."""
         service = JobService(session)
-        count = await service.clear_all_jobs()
+        count = service.clear_all_jobs()
         assert count == 0
 
 

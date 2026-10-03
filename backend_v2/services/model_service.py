@@ -63,8 +63,16 @@ class ModelServiceV2:
         models = self.repo.get_models_by_directory(directory)
         return self.repo.models_to_dict(models, include_versions=True)
 
-    async def get_models_grouped(self) -> dict[str, list[dict[str, Any]]]:
-        """Get all models grouped by directory."""
+    def get_models_grouped(self) -> dict[str, list[dict[str, Any]]]:
+        """Get all models grouped by directory.
+
+        Synchronous on purpose. This was `async def` around one synchronous
+        SQLModel query, so every caller awaited a function that never yielded —
+        which read as "off the loop" and was not. Its only caller is
+        `GET /api/v2/models/`, the 1.5 MB listing that measured flat at 778 ms
+        per request from concurrency 1 to 16: fully serialised behind the event
+        loop, because the query really did run there.
+        """
         return self.repo.get_grouped_by_directory()
 
     async def delete_model(self, model_id: int) -> bool:
@@ -153,14 +161,18 @@ class ModelServiceV2:
             return self.repo._version_to_dict(version)
         return None
 
-    async def get_version_for_generation(
-        self, 
-        model_id: int, 
+    def get_version_for_generation(
+        self,
+        model_id: int,
         version_id: int | None = None
     ) -> dict[str, Any]:
-        """
-        Get version info for generation.
+        """Get version info for generation.
+
         If version_id is not specified, returns the default version.
+
+        Synchronous on purpose: this was `async def` around four synchronous
+        session/repo reads, so `GET /api/v2/models/{id}/generation-info` — which
+        the generator calls before every submission — ran them on the event loop.
         """
         if version_id:
             version = self.session.get(ModelVersion, version_id)
