@@ -139,7 +139,7 @@ async def test_call_image_provider_formats_http_error_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_image_provider_invalid_completed_payload_is_retryable(monkeypatch):
+async def test_call_image_provider_invalid_completed_payload_is_not_retryable(monkeypatch):
     response = FakeResponse(chunks=[ev({"event": "started"}),
                                 ev({"event": "completed", "outputs": [{"type": "image", "_base64_encoded": True}]})])
     install_streaming_client(monkeypatch, response)
@@ -148,7 +148,12 @@ async def test_call_image_provider_invalid_completed_payload_is_retryable(monkey
         await call_image_provider(worker_url="http://worker", workflow={"nodes": {}}, job_id="job-invalid",
                               job_service=job_service, total_nodes=1, timeout=5.0, provider_id="provider-invalid")
     assert "Invalid success payload" in str(exc_info.value)
-    assert exc_info.value.is_retryable is True
+    # Not retryable: the provider already ran the graph and answered with a
+    # shape this client cannot use. Re-sending the identical request produces
+    # the identical unusable answer, so `is_retryable=True` here cost up to
+    # four paid inferences per provider plus one per remaining provider before
+    # failing anyway (max_retries 3, base 1.0s, cap 60s).
+    assert exc_info.value.is_retryable is False
 
 
 @pytest.mark.asyncio

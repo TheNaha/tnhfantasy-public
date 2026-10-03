@@ -256,7 +256,21 @@ class _ImageReducer:
             try:
                 validate_image_outputs(ev)
             except ValueError as error:
-                raise ProviderCallError(f"Invalid success payload: {error}", provider_id=self.provider_id, is_retryable=True) from error
+                # Not retryable. A malformed *success* payload is deterministic:
+                # the provider already ran the graph and answered with a shape
+                # this client cannot use, and re-sending the identical request
+                # produces the identical unusable answer. `is_retryable=True`
+                # here routed straight into `maybe_retry_current_provider`
+                # (max_retries 3, base_delay 1.0, max_delay 60.0) and then into
+                # failover, so one bad response cost up to four paid inferences
+                # per provider plus one per remaining provider. Fail the job
+                # instead — the operator needs to see the bad payload, not a
+                # bill for it.
+                raise ProviderCallError(
+                    f"Invalid success payload: {error}",
+                    provider_id=self.provider_id,
+                    is_retryable=False,
+                ) from error
             artifacts = ev.get("outputs") or []
             # Split artifacts: base64 payloads must be decoded and written to disk
             # by build_job_outputs (legacy ``images`` shape); already-persisted
