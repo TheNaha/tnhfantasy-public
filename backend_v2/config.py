@@ -93,10 +93,24 @@ DEFAULT_CONFIG = {
         },
     "api": {
         "gzip_minimum_size": 1000,
+        # Every origin this stack is actually reached on. The port is not
+        # optional: `https://100.150.0.4` is Traefik on 443, and
+        # `http://100.150.0.4:5174` is the Vite dev server directly — a different
+        # scheme *and* a different port, so the first is not a match for the
+        # second.
+        #
+        # Measured: browsing `http://100.150.0.4:5174` made the socket.io
+        # handshake return 400 `"http://100.150.0.4:5174 is not an accepted
+        # origin."`, which the client retries forever, which is the permanent
+        # "Disconnected from server. Trying to reconnect" toast. Nothing in the
+        # HTTP surface fails, so the app looks fine while realtime is dead.
         "cors_origins": [
             "http://localhost:5174",
+            "http://localhost:8002",
+            "http://127.0.0.1:5174",
             "https://comfy.lan.thenaha.my.id",
-            "https://100.150.0.4"
+            "https://100.150.0.4",
+            "http://100.150.0.4:5174",
         ]
     },
     "jobs_cleanup": {
@@ -209,10 +223,16 @@ class Settings(BaseSettings):
     
     # API
     # Default to frontend dev server origin. Override via COMFY_CORS_ORIGINS for production.
+    # Same list as DEFAULT_CONFIG above, and it has to stay in step with it —
+    # which is why the reasoning lives on the DEFAULT_CONFIG copy rather than
+    # here twice.
     cors_origins: list[str] = [
         "http://localhost:5174",
+        "http://localhost:8002",
+        "http://127.0.0.1:5174",
         "https://comfy.lan.thenaha.my.id",
-        "https://100.150.0.4"
+        "https://100.150.0.4",
+        "http://100.150.0.4:5174",
     ]
     gzip_minimum_size: int = 1000
     worker_backend_url: str = "http://backend_v2:8002"
