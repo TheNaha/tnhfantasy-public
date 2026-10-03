@@ -99,7 +99,7 @@ class TestTransientFailures:
 class TestTheStatusHelperItself:
     """`retryable_for_status` predates this and is used by the HTTP router.
 
-    It has a 503-specific history: a provider with no `PROVIDER_WORKER_TOKEN`
+    It has a 503-specific history: a provider with no `COMFY_PROVIDER_TOKEN`
     answers 503 on every protected route, and a blanket `>= 500` made the
     dispatcher read that as "try this elsewhere".
     """

@@ -43,16 +43,16 @@ async def _require_worker_token(request: Request) -> None:
     """Auth gate for every state-touching provider endpoint.
 
     Fails CLOSED. The previous form was `if expected and header != expected`,
-    which meant an unset PROVIDER_WORKER_TOKEN disabled authentication
+    which meant an unset COMFY_PROVIDER_TOKEN disabled authentication
     entirely — and empty is what .env.example ships, so /inference,
     /download-model, /delete-model, /delete-file, /get-file, /upload-file,
     /config and (worst of all) /deploy were all open by default. /deploy shells
     out to `modal deploy` / `beam deploy`.
     """
-    expected = os.getenv("PROVIDER_WORKER_TOKEN", "").strip()
+    expected = os.getenv("COMFY_PROVIDER_TOKEN", "").strip()
     if not expected:
         logger.error(
-            "provider_token_not_configured: set PROVIDER_WORKER_TOKEN in .env; "
+            "provider_token_not_configured: set COMFY_PROVIDER_TOKEN in .env; "
             "refusing to serve an unauthenticated management API"
         )
         raise HTTPException(
@@ -62,7 +62,7 @@ async def _require_worker_token(request: Request) -> None:
             # the dispatcher fail the job over to a second provider and spend
             # real GPU money on a request that cannot succeed.
             detail=config_fault_detail(
-                "PROVIDER_WORKER_TOKEN is not configured on this provider container"
+                "COMFY_PROVIDER_TOKEN is not configured on this provider container"
             ),
         )
     # `provider_core/auth.py` owns the comparison. It encodes to bytes first

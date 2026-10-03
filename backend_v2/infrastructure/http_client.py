@@ -192,7 +192,7 @@ def _provider_token_headers(url: str, headers: dict[str, str] | None) -> dict[st
     Shared by the pooled and streaming paths — see the note on the class for why
     this cannot live in `request()`.
     """
-    token = os.getenv("PROVIDER_WORKER_TOKEN", "").strip()
+    token = os.getenv("COMFY_PROVIDER_TOKEN", "").strip()
     merged = dict(headers or {})
     is_management = _is_provider_management_path(str(url))
 
@@ -201,7 +201,7 @@ def _provider_token_headers(url: str, headers: dict[str, str] | None) -> dict[st
             logger.error(
                 "provider_token_unset",
                 url=str(url),
-                hint="PROVIDER_WORKER_TOKEN is empty; the provider will answer 401",
+                hint="COMFY_PROVIDER_TOKEN is empty; the provider will answer 401",
             )
         return merged
 

@@ -13,7 +13,7 @@ def _provider_token(monkeypatch):
     present a valid token to get past the auth gate and reach the code under
     test. See tests/test_provider_auth.py for the gate's own coverage.
     """
-    monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "router-test-token")
+    monkeypatch.setenv("COMFY_PROVIDER_TOKEN", "router-test-token")
     return "router-test-token"
 
 def test_router_exception_handlers(_provider_token):

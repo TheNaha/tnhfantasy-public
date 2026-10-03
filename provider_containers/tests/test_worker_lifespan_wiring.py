@@ -59,7 +59,7 @@ def test_worker_loop_factories_pass_only_real_parameters(worker_module, monkeypa
     monkeypatch.setenv("ENGINE", "modal")
     monkeypatch.setenv("PROVIDER_ID", "probe-provider")
     monkeypatch.setenv("BACKEND_URL", "http://backend_v2:8002")
-    monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "token")
+    monkeypatch.setenv("COMFY_PROVIDER_TOKEN", "token")
 
     module = __import__(worker_module, fromlist=["*"])
     recorded = _call_factories(monkeypatch, vars(module))
@@ -98,7 +98,7 @@ def test_auto_discovery_receives_the_shared_http_client(worker_module, monkeypat
     monkeypatch.setenv("ENGINE", "modal")
     monkeypatch.setenv("PROVIDER_ID", "probe-provider")
     monkeypatch.setenv("BACKEND_URL", "http://backend_v2:8002")
-    monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "token")
+    monkeypatch.setenv("COMFY_PROVIDER_TOKEN", "token")
 
     module = __import__(worker_module, fromlist=["*"])
     recorded = _call_factories(monkeypatch, vars(module))
@@ -128,7 +128,7 @@ def test_both_loops_are_started_and_the_lifespan_exits_cleanly(worker_module, mo
     monkeypatch.setenv("ENGINE", "modal")
     monkeypatch.setenv("PROVIDER_ID", "probe-provider")
     monkeypatch.setenv("BACKEND_URL", "http://backend_v2:8002")
-    monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "token")
+    monkeypatch.setenv("COMFY_PROVIDER_TOKEN", "token")
 
     module = __import__(worker_module, fromlist=["*"])
     _call_factories(monkeypatch, vars(module))

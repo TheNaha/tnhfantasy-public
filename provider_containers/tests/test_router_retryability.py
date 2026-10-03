@@ -3,7 +3,7 @@ provider for a fault that cannot fix itself.
 
 `provider_core/router.py` used to compute `retryable = exc.status_code >= 500`
 for every error body. That made the 503 a provider answers when
-PROVIDER_WORKER_TOKEN is unset look retryable, and the backend reads exactly
+COMFY_PROVIDER_TOKEN is unset look retryable, and the backend reads exactly
 that field: `services/provider_client.py` does
 
     is_retryable = response.status_code >= 500
@@ -38,9 +38,9 @@ class TestRetryableForStatus:
             assert retryable_for_status(code) is True
 
     def test_config_fault_detail_forces_non_retryable(self):
-        detail = config_fault_detail("PROVIDER_WORKER_TOKEN is not configured")
+        detail = config_fault_detail("COMFY_PROVIDER_TOKEN is not configured")
         assert detail["retryable"] is False
-        assert detail["message"] == "PROVIDER_WORKER_TOKEN is not configured"
+        assert detail["message"] == "COMFY_PROVIDER_TOKEN is not configured"
         assert retryable_for_status(503, detail) is False
 
     def test_config_fault_detail_carries_extra_keys(self):
@@ -68,8 +68,8 @@ def _app_with_health(status_code: int, detail):
 
 class TestRouterRetryableBody:
     def test_unset_token_503_is_not_retryable(self, monkeypatch):
-        """The efb2837 case: no PROVIDER_WORKER_TOKEN -> 503 on protected routes."""
-        monkeypatch.delenv("PROVIDER_WORKER_TOKEN", raising=False)
+        """The efb2837 case: no COMFY_PROVIDER_TOKEN -> 503 on protected routes."""
+        monkeypatch.delenv("COMFY_PROVIDER_TOKEN", raising=False)
         app = FastAPI()
         attach_provider_routes(app, MagicMock())
         client = TestClient(app, raise_server_exceptions=False)
@@ -97,7 +97,7 @@ class TestRouterRetryableBody:
 
     def test_inference_stream_carries_the_same_flag(self, monkeypatch):
         """The /inference NDJSON branch must classify identically."""
-        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", TOKEN)
+        monkeypatch.setenv("COMFY_PROVIDER_TOKEN", TOKEN)
         app = FastAPI()
         client = MagicMock()
 
@@ -133,7 +133,7 @@ class TestGeneralHandlerLogsTraceback:
         """
         import logging
 
-        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", TOKEN)
+        monkeypatch.setenv("COMFY_PROVIDER_TOKEN", TOKEN)
         app = FastAPI()
         client = MagicMock()
 

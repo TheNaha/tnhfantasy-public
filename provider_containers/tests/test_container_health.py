@@ -105,7 +105,7 @@ class TestLiveIsASeparateRoute:
 
     @pytest.mark.asyncio
     async def test_live_is_unauthenticated(self):
-        """The healthcheck sends no headers, and PROVIDER_WORKER_TOKEN gates
+        """The healthcheck sends no headers, and COMFY_PROVIDER_TOKEN gates
         everything else. A gated /live would make every container unhealthy."""
         client = _StubClient()
         app = _app(client)
@@ -116,7 +116,7 @@ class TestLiveIsASeparateRoute:
 
     @pytest.mark.asyncio
     async def test_live_still_answers_when_the_token_is_unset(self, monkeypatch):
-        monkeypatch.delenv("PROVIDER_WORKER_TOKEN", raising=False)
+        monkeypatch.delenv("COMFY_PROVIDER_TOKEN", raising=False)
         client = _StubClient()
         async with AsyncClient(transport=ASGITransport(app=_app(client)), base_url="http://w") as http:
             assert (await http.get("/live")).status_code == 200

@@ -44,7 +44,7 @@ async def handle_provider_discovery(
     containers are automatically registered. Providers that are never
     discovered are excluded from the active provider list.
     """
-    discovery_token = os.getenv("COMFY_DISCOVERY_TOKEN", "").strip()
+    discovery_token = os.getenv("COMFY_PROVIDER_TOKEN", "").strip()
     if not discovery_token:
         # Fails closed. The previous form was `if discovery_token and ...`,
         # which meant an unset token allowed ANY container on the bridge
@@ -53,13 +53,13 @@ async def handle_provider_discovery(
         # internal-network-fetch primitive.
         logger.error(
             "discovery_token_not_configured",
-            hint="set COMFY_DISCOVERY_TOKEN in .env; refusing unauthenticated provider registration",
+            hint="set COMFY_PROVIDER_TOKEN in .env; refusing unauthenticated provider registration",
         )
         raise HTTPException(
             status_code=503,
-            detail="COMFY_DISCOVERY_TOKEN is not configured on the backend",
+            detail="COMFY_PROVIDER_TOKEN is not configured on the backend",
         )
-    provided = request.headers.get("X-Discovery-Token", "")
+    provided = request.headers.get("X-Provider-Token", "")
     if not provided or not hmac.compare_digest(provided, discovery_token):
         raise HTTPException(status_code=401, detail="invalid discovery token")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", payload.provider_id):

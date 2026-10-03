@@ -119,9 +119,9 @@ async def auto_discovery_loop(
             }
             
             discovery_headers = {}
-            discovery_token = os.getenv("COMFY_DISCOVERY_TOKEN", "").strip()
+            discovery_token = os.getenv("COMFY_PROVIDER_TOKEN", "").strip()
             if discovery_token:
-                discovery_headers["X-Discovery-Token"] = discovery_token
+                discovery_headers["X-Provider-Token"] = discovery_token
             if http_client:
                 response = await http_client.post(discovery_url, json=payload, headers=discovery_headers, timeout=30.0)
             else:

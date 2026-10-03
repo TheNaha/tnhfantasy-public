@@ -5,7 +5,7 @@ Docker bridge network and a management API that includes `/deploy` (which shells
 out to `modal deploy` / `beam deploy`), `/delete-model`, and `/delete-file`.
 
 The original gate was `if expected and header != expected`, so an unset
-PROVIDER_WORKER_TOKEN disabled authentication entirely — and empty is what
+COMFY_PROVIDER_TOKEN disabled authentication entirely — and empty is what
 .env.example shipped. Every protected route was therefore open by default.
 """
 from unittest.mock import MagicMock
@@ -41,14 +41,14 @@ def _app() -> TestClient:
 
 @pytest.fixture
 def token_env(monkeypatch):
-    monkeypatch.setenv("PROVIDER_WORKER_TOKEN", TOKEN)
+    monkeypatch.setenv("COMFY_PROVIDER_TOKEN", TOKEN)
     return TOKEN
 
 
 class TestProviderAuthFailsClosed:
     def test_unset_token_refuses_protected_routes(self, monkeypatch):
         """An unset token must NOT mean "no authentication required"."""
-        monkeypatch.delenv("PROVIDER_WORKER_TOKEN", raising=False)
+        monkeypatch.delenv("COMFY_PROVIDER_TOKEN", raising=False)
         client = _app()
 
         for path, method in (
@@ -60,16 +60,16 @@ class TestProviderAuthFailsClosed:
             assert response.status_code == 503, (
                 f"{method.upper()} {path} was reachable with no token configured"
             )
-            assert "PROVIDER_WORKER_TOKEN" in response.text
+            assert "COMFY_PROVIDER_TOKEN" in response.text
 
     def test_unset_token_still_allows_healthcheck(self, monkeypatch):
         """The compose healthcheck sends no token, so /health must stay open."""
-        monkeypatch.delenv("PROVIDER_WORKER_TOKEN", raising=False)
+        monkeypatch.delenv("COMFY_PROVIDER_TOKEN", raising=False)
         client = _app()
         assert client.get("/health").status_code == 200
 
     def test_blank_token_is_treated_as_unset(self, monkeypatch):
-        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "   ")
+        monkeypatch.setenv("COMFY_PROVIDER_TOKEN", "   ")
         client = _app()
         assert client.get("/list-models").status_code == 503
 
@@ -130,7 +130,7 @@ class TestStateReadingRoutesAreGated:
         ).json() == {"total_models": 0}
 
     def test_state_routes_fail_closed_without_a_configured_token(self, monkeypatch):
-        monkeypatch.delenv("PROVIDER_WORKER_TOKEN", raising=False)
+        monkeypatch.delenv("COMFY_PROVIDER_TOKEN", raising=False)
         client = _app()
         assert client.get("/info").status_code == 503
         assert client.get("/provider-stats").status_code == 503

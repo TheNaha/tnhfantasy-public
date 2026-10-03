@@ -269,7 +269,7 @@ def retryable_for_status(status_code: int, detail: Any = None) -> bool:
     """Decide the ``retryable`` flag for an HTTP status.
 
     A blanket ``status_code >= 500`` is what made a 503 advertise itself as
-    retryable, and a provider with no ``PROVIDER_WORKER_TOKEN`` answers 503 on
+    retryable, and a provider with no ``COMFY_PROVIDER_TOKEN`` answers 503 on
     every protected route: the dispatcher read that as "try this elsewhere",
     failed the job over to a second provider, and spent real money on a request
     that could not succeed.

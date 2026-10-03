@@ -137,7 +137,7 @@ class TestProviderTokenOnStreamingRequests:
 
         from infrastructure import http_client
 
-        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
+        monkeypatch.setenv("COMFY_PROVIDER_TOKEN", "secret-token")
         monkeypatch.setenv("COMFY_WORKER_HOSTS", "")
 
         seen: dict[str, str | None] = {}
@@ -166,7 +166,7 @@ class TestProviderTokenOnStreamingRequests:
 
         from infrastructure import http_client
 
-        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
+        monkeypatch.setenv("COMFY_PROVIDER_TOKEN", "secret-token")
         monkeypatch.setenv("COMFY_WORKER_HOSTS", "")
 
         seen: dict[str, str | None] = {}
@@ -191,7 +191,7 @@ class TestProviderTokenOnStreamingRequests:
         transient DB failure silently sent unauthenticated requests."""
         from infrastructure import http_client
 
-        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
+        monkeypatch.setenv("COMFY_PROVIDER_TOKEN", "secret-token")
         monkeypatch.setattr(http_client, "published_known_provider_hosts", lambda: None)
 
         headers = http_client._provider_token_headers(
@@ -202,7 +202,7 @@ class TestProviderTokenOnStreamingRequests:
     def test_explicit_external_host_is_never_given_the_token(self, monkeypatch):
         from infrastructure import http_client
 
-        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
+        monkeypatch.setenv("COMFY_PROVIDER_TOKEN", "secret-token")
         monkeypatch.setattr(http_client, "published_known_provider_hosts", lambda: frozenset())
 
         headers = http_client._provider_token_headers(
@@ -235,7 +235,7 @@ class TestProviderHostLookupDoesNotTouchTheDatabase:
             )
 
         monkeypatch.setattr(database, "get_session_sync", _explode)
-        monkeypatch.setenv("PROVIDER_WORKER_TOKEN", "secret-token")
+        monkeypatch.setenv("COMFY_PROVIDER_TOKEN", "secret-token")
         monkeypatch.setattr(
             http_client, "published_known_provider_hosts", lambda: frozenset()
         )
