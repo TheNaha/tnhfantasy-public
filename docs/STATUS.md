@@ -1,10 +1,10 @@
 # TNHComfy — Project Status
 
 **The single authoritative status document.** Everything here was verified
-against the code on 2026-10-01, not carried over from an earlier plan.
+against the code on 2026-10-03, not carried over from an earlier plan.
 
 If you are about to make a decision about what to work on next, read this file
-and then the **most recent** audit, which is `docs/audit-2026-10-01.md`. Each
+and then the **most recent** audit, which is `docs/audit-2026-10-03.md`. Each
 audit supersedes its predecessors for everything it marks fixed; reading an
 older one tells you about defects that no longer exist. The other planning
 documents that used to sit at the repo root are historical and live in
@@ -40,23 +40,29 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of **2026-10-01**:
+All three suites green as of **2026-10-03**:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **2817 passed, 7 skipped** (306 s) | `cd backend_v2 && .venv/bin/pytest` |
-| Frontend | **1326 passed across 141 files** | `cd frontend_v2 && npm test` |
+| Backend | **2823 passed, 7 skipped** (244 s) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Frontend | **1346 passed across 145 files** (96 s) | `cd frontend_v2 && npm test` |
 | Providers | **793 passed, 4 skipped** (76-81 s) | `cd provider_containers && venv/bin/python -m pytest` |
 
-All three figures were re-measured on **2026-10-01**, not carried over. The
-backend grew by 29 tests and, unlike the 2026-09-29 run, is **fully green** — the
-`test_app_boot_smoke.py::test_lifespan_runs_every_declared_startup_phase` flake
-that failed on 2026-09-29 passed here. It is still a flake (it has now failed 1
-run in 4) and is not fixed.
+The frontend figures were re-measured on **2026-10-03**. Both counts grew by
+exactly what the 2026-10-03 audit added: four new invariant test files
+(`queryErrorInvariants`, `settingsKeysHaveReaders` on the frontend;
+`no_table_class_request_bodies`, plus a cross-module await-chain resolver added
+to `test_event_loop_invariant` on the backend). Each was confirmed to **fail**
+when its fix is reverted, which is the only property that makes an invariant test
+worth more than the list it replaces.
 
-> **The stack was rebuilt and redeployed during the 2026-10-01 audit and
-> verified reachable afterwards:** `http://localhost:5174` → 200,
-> `http://localhost:8002/api/live` → 200, all 9 containers healthy.
+> **The stack was verified reachable after the 2026-10-03 changes**, which is
+> worth stating explicitly because both tiers hot-reload in this dev stack —
+> `frontend_v2/src` is bind-mounted into a Vite dev server with `usePolling`, and
+> `backend_v2` is bind-mounted with `COMFY_UVICORN_RELOAD=1` — so no rebuild is
+> needed for a source change, and a stale-container class of defect cannot occur
+> here: `http://localhost:5174` → 200, `http://localhost:8002/api/live` → 200,
+> all 9 containers running.
 
 **A green suite says nothing about whether the container is serving the code under
 test.** The 2026-09-27 backend count was wrong precisely because the documented
@@ -150,6 +156,74 @@ themselves. See the audit.
 
 ## What was actually wrong, and is now fixed
 
+### The 2026-10-03 pass
+
+The headline is that **the consolidation was not the problem and there were no
+stubs**. Grep for `TODO`/`FIXME`/`onClick={() => {}}`/`console.log`/`alert`
+across all non-test frontend source returns zero hits, and every route in the
+intended roleplay information architecture exists and is wired. What was real:
+
+- **Seven pages — including `/roleplay`, the front door — rendered a failed fetch
+  as a genuinely empty vault.** `/characters` showed *"You haven't created any
+  characters yet. **Create one** to start roleplaying."* with a working Create
+  button, next to a vault holding three characters; clicking it makes a duplicate.
+  Confirmed by force-500 on the live stack. Fixed with a shared
+  `QueryState` primitive, verified 8/8 live, and pinned by an invariant test that
+  a page shipping empty-state copy must handle the error state.
+- **`models.autoRemoveDownloads` was a labelled switch that could not do
+  anything** — four references, all of them the UI and the store default, zero
+  readers, backend included. Deleted, and pinned by a test that walks every
+  settings key and fails on any key nothing reads.
+- **Seven routes took a SQLModel table class as their request body**, which made
+  the primary key client-writable and turned a missing required field into a
+  **500** instead of a 422 (verified on the live stack for all five that lacked
+  a hand guard). Fixed with seven `extra="forbid"` DTOs and pinned by a
+  structural test over `api/routes`.
+- **iOS auto-zoom on 21 fields.** Every generator's prompt box computed at 14px,
+  so Safari zoomed the viewport on focus and never zoomed back — the first thing
+  anyone does on this app. The existing 44px tap-target pass could not have
+  caught it: the fix had to be unlayered, because `text-sm` lives in
+  `@layer utilities` and beats `@layer base`.
+- **`image_processing.embed_metadata_in_png`** was an editable toggle in Settings
+  that the PNG writer never consulted, and **`ipAdapters[].stopAt`** was a live
+  slider whose value pydantic discarded — both success toasts, no behaviour.
+- **A malformed provider *success* payload was declared retryable**, costing up
+  to four paid inferences per provider plus one per failover to fail with the
+  same error.
+- **Five of six providers are registered disabled**, so the load balancer has
+  one, the free local GPU path is off, the local LLM is off, and five Modal apps
+  are billed as idle. See §1a — this one is yours to decide.
+- **Six control groups were invisible *and still swallowed taps*** on any touch
+  device at ≥640px. The `@media (hover: none)` rescue in `index.css` listed only
+  the unprefixed `.opacity-0.group-hover:opacity-100`, and six sites emit the
+  `sm:`-prefixed pair — different class names, so the rule never matched. They
+  computed to `opacity: 0; pointer-events: auto`, and a real CDP touch tap in a
+  gallery thumbnail's corner was delivered to the invisible favourite button
+  instead of opening the image.
+- **`/story` collapsed its "story beat" input to 0px at 640–900px** (34px measured,
+  7 sibling overlaps, 9 controls off-screen; a tap 125px outside the viewport
+  delivered no event). **`/advanced` had a 54px graph canvas at 360px** against
+  240px nodes. **`/statistics` had 17px of its active tab permanently
+  off-screen** behind a mobile gutter that double-counted one `Layout.jsx`
+  already provides. All three measured before and after.
+- **iOS auto-zoomed the viewport on 21 fields** under 16px — the prompt box on
+  every generator. Plus **~40 WCAG AA contrast failures across 15 routes** from
+  one shared hex, and no skip link on any of the 25 routes, and 24 controls with
+  a `placeholder` as their only accessible name (the previous audit's "4" was a
+  viewport-scope artifact, not a fix).
+
+Re-measured across 25 routes at 360/390/768 after the fixes: **0 dead controls,
+0 invisible-but-tappable controls, 0 text inputs under 16px, 0 sibling
+overlaps.** What is left is in §1b of the audit — the biggest is the 81px
+transient occlusion of the aspect-ratio presets by the fixed action bar on
+`/generate`, which is real but recoverable by scrolling.
+
+`docs/audit-2026-10-03.md` has the full register with `file:line` on every item,
+the measured numbers, and the corrections to the previous audit — including two
+claims from this pass's own sub-agents that did not survive verification.
+
+### The 2026-09-26 hardening pass
+
 The 2026-09-26 hardening pass (24 commits, `83ad704..97271ba`, branched from
 `ae3a010`) fixed the classes of bug that make a system untrustworthy. The
 notable ones:
@@ -184,7 +258,52 @@ notable ones:
 Verified as real and not yet fixed. Ordered by how much they cost you.
 The most recent audit has the full list with file:line detail.
 
-Items 1-6 of the previous list were fixed — see §1b of the follow-up. What remains:
+Items 1-6 of the previous list were fixed — see §1b of the follow-up.
+
+### 1a. Five of six providers are disabled and the flag that did it was not a security control
+
+> **Resolved 2026-10-03, later the same day.** `COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS`
+> is **deleted**, from the code, both compose files, `.env.example` and
+> `preflight.sh`. A new provider registers enabled. All six providers share one
+> bearer token, so the token is the entire boundary and cannot tell an impostor
+> from `modal-zetsuke`; the flag only ever set `enabled` on *new* rows and was
+> never consulted on the update path, which overwrites `discovery_url`
+> unconditionally — and dispatch prefers `discovery_url`. So it protected nothing
+> the token did not already protect, and a default of `0` only produced a silent
+> capacity and billing surprise.
+>
+> What remains true: `enabled` is sticky by design, so the five registered
+> providers each need a one-time toggle on the Providers page. `preflight.sh` now
+> reports that count unconditionally.
+>
+> **The real hole is closed.** The backend published `8002:8002` on `0.0.0.0`
+> with no authentication, so `PATCH /api/v2/providers/{id}` was open to anyone on
+> the network. It now publishes **no host port**; Traefik reaches it over the
+> `proxy` network, verified from inside the Traefik container. Measured on the
+> host's LAN IP: **200 → 000.** Reachability is now governed by the NetBird ACL
+> on the reverse proxy. See the audit for the two compose traps found on the way.
+
+Every registered provider reports discovered, connected and healthy, heartbeating
+within the same second. Five are `enabled=false` because
+`COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS=0` when they registered, so
+`/api/v2/providers/load-balancer/stats` reports `total_providers: 1`.
+
+Consequences: no failover for image jobs; `direct_url` (the free local GPU path)
+is off; `llm-local` is off, so every chat turn bills a remote model while five
+Modal apps sit idle and are billed for it.
+
+**Setting the flag to `1` will not bring them back.** The discovery *update*
+branch deliberately never re-asserts `enabled`, because an operator who turned a
+provider off in the UI means it. Each provider needs the Providers-page toggle or
+`PATCH /api/v2/providers/{id} {"enabled": true}`.
+
+What was fixed is the invisibility: `scripts/preflight.sh` now reports the flag
+*and* how many registered providers it is currently keeping off the balancer,
+and the heartbeat logs the exact PATCH the first time it sees the flag turned on.
+Your `.env` was deliberately left alone — this is a capacity and billing
+decision, not a bug fix.
+
+### 1b. The rest
 
 1. **The app has no authentication.** Deliberate — `DEMO_GAPS_PLAN.md` records
    the decision as out of scope for a local single-user studio — but it means
@@ -219,10 +338,13 @@ Items 1-6 of the previous list were fixed — see §1b of the follow-up. What re
    `offset` (>=0) and windows every sub-query; its docstring records the fix, and
    `tests/test_world_hub_relationship_pagination.py` pins it.
 5. **Remaining hand-rolled overlays.** The highest-value conversions are done and
-   `Modal` is built on `ModalOverlay`; the rest is mechanical and wide. A
-   one-line `@media (hover: none)` rule now also makes all 30 hover-revealed
-   action rows reachable on touch, which had made nine roleplay dialogs and every
-   per-message action unusable on a phone.
+   `Modal` is built on `ModalOverlay`; **16 of 33 overlay declarations** still
+   hand-roll their backdrop and sit outside the `useEscapeKey` registry, so
+   stacked dialogs close together — the exact defect `common/Modal.jsx:24-27`
+   records. Mechanical, but it needs a per-route screenshot pass, and
+   `ModalOverlay` still has no focus trap (⚠️ do not touch its `role`: a previous
+   attempt broke 8 tests and was reverted). A one-line `@media (hover: none)`
+   rule already makes all 30 hover-revealed action rows reachable on touch.
 6. **The embedding model still loads inside the reindex request** — seconds on
    first call. Moving it to startup needs `services/embedding_service.py`. (The
    two *inference* call sites are now off the event loop; this one is not.)
@@ -231,6 +353,21 @@ Items 1-6 of the previous list were fixed — see §1b of the follow-up. What re
    it. Residual duplication is ~35 lines of env-parsing preamble in each, plus
    the four "method not supported" tails and the four hand-rolled SSE parsers on
    the LLM side.
+8. **33 inline empty states against one shared `EmptyState`.** The shared
+   component has no error slot, which is *why* all 33 hand-rolled ones had to
+   decide where errors go — and all 33 chose nowhere, which is how seven pages
+   ended up reporting an outage as an empty vault. Adding an error slot and
+   migrating them is the largest line-count reduction available and structurally
+   prevents that class from recurring. This is the **first** thing to do next.
+9. **32 more routes block the event loop**, the same shape as the four converted
+   on 2026-10-03, now enumerated in `SYNC_CHAINED` in
+   `tests/test_event_loop_invariant.py` with each one's service method named. A
+   new test now resolves awaited callees across modules and fails on any *new*
+   offender, so the list can only shrink deliberately.
+10. **65 backend routes have no frontend caller**, four of them returning the same
+    1.5 MB model dump (`/api/v2/models/cache`, `/api/v2/models/all`,
+    `/api/v2/providers/model-cache`, `/api/v2/gallery`) in four separate
+    implementations. Removing them is an API-surface decision, not a cleanup.
 
 ### Added by the 2026-09-28 audit
 
@@ -298,5 +435,7 @@ The frontend serves on **:5174** (not 5173) and proxies `/api` and
 | Understand the code | `AGENTS.md`, then the module itself |
 | Understand the product intent | `VISION.md` |
 | Understand a past decision | `docs/archive/` (historical; may be wrong) |
-| See what the last audit found | `docs/audit-2026-10-01.md` |
+| See what the last audit found | `docs/audit-2026-10-03.md` |
+| Rebuild the frontend | `cd frontend_v2 && npm run build` |
+| Re-measure mobile after a layout change | `cd frontend_v2 && npx playwright test e2e/mobile-responsive.spec.js` |
 | See earlier audits | `docs/audit-2026-09-29b.md`, then `docs/audit-2026-09-29.md` (each superseded by the next) |
