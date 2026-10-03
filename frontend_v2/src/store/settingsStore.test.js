@@ -25,8 +25,7 @@ const DEFAULT_SETTINGS = {
         silentRefresh: true
     },
     models: {
-        itemsPerPage: 20,
-        autoRemoveDownloads: true
+        itemsPerPage: 20
     },
     generator: {
         autoRandomizeSeed: true,
@@ -63,7 +62,15 @@ describe('useSettingsStore', () => {
         it('has default models settings', () => {
             const { settings } = useSettingsStore.getState();
             expect(settings.models.itemsPerPage).toBe(20);
-            expect(settings.models.autoRemoveDownloads).toBe(true);
+        });
+
+        // The switch and the key are both gone. This asserts the absence on
+        // purpose: a reader-counting test (src/test/settingsKeysHaveReaders.test.js)
+        // can only catch a key nothing reads, and this is the shape of the
+        // regression it exists to prevent coming back.
+        it('does not resurrect the unread autoRemoveDownloads key', () => {
+            const { settings } = useSettingsStore.getState();
+            expect(settings.models).not.toHaveProperty('autoRemoveDownloads');
         });
 
         it('has default generator settings', () => {

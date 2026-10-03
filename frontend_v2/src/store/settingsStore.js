@@ -36,8 +36,11 @@ const DEFAULT_SETTINGS = {
         silentRefresh: true          // refresh without showing a loading spinner
     },
     models: {
-        itemsPerPage: 20,            // models shown per page in Model Manager
-        autoRemoveDownloads: true    // remove download records after they complete
+        itemsPerPage: 20             // models shown per page in Model Manager
+        // `autoRemoveDownloads` was removed with its Settings switch. It had no
+        // reader anywhere; the backend's equivalent is
+        // `downloads.auto_remove_delay` in config.json. See
+        // src/test/settingsKeysHaveReaders.test.js for the guard.
     },
     generator: {
         autoRandomizeSeed: true,     // randomise seed before each generation

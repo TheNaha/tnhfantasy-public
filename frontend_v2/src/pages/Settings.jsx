@@ -957,20 +957,15 @@ function ModelsSettings({ settings, onUpdate, onReset }) {
                     </div>
                 </SettingGroup>
 
-                <SettingGroup title="Auto-Remove Downloads" description="Automatically remove download status after completion">
-                    <label className="flex items-center gap-4 cursor-pointer group">
-                        <div className="relative">
-                            <input
-                                type="checkbox"
-                                checked={settings.autoRemoveDownloads}
-                                onChange={(e) => onUpdate('autoRemoveDownloads', e.target.checked)}
-                                className="sr-only peer"
-                            />
-                            <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-                        </div>
-                        <span className="text-sm font-bold uppercase tracking-widest text-gray-400 group-hover:text-white transition-colors">{settings.autoRemoveDownloads ? 'Enabled' : 'Disabled'}</span>
-                    </label>
-                </SettingGroup>
+                {/* "Auto-Remove Downloads" lived here and was removed. It was the
+                    one literally non-functional control in the codebase: a
+                    labelled switch bound to `settings.autoRemoveDownloads`,
+                    which persisted to localStorage and was read by nothing —
+                    not here, not in any hook, not in the backend. The real
+                    control is `downloads.auto_remove_delay` in config.json,
+                    surfaced on the Providers tab, and it is a different
+                    behaviour with a different name. Shipping a switch that
+                    cannot do anything is worse than shipping no switch. */}
             </div>
         </div>
     );
