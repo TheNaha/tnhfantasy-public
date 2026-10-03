@@ -55,14 +55,23 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
-      # Same router as the frontend, so one hostname serves the app and its API
-      # and there is no second origin to reason about. `PathPrefix` rather than a
-      # second Host rule: the frontend's Vite proxy already forwards `/api` to
-      # the backend in-process, so a same-origin rule is all this needs.
-      - traefik.http.routers.comfyui.rule=Host(`comfy.lan.thenaha.my.id`) || Host(`100.150.0.4`)
-      - traefik.http.routers.comfyui.entrypoints=websecure
-      - traefik.http.routers.comfyui.tls=true
-      - traefik.http.services.comfyui.loadbalancer.server.port=8002
+      # A dedicated hostname for the API, and deliberately NOT the Tailscale IP.
+      #
+      # Both rules originally claimed `Host(100.150.0.4)` alongside their own
+      # hostname, so two routers matched the same request and Traefik logged
+      # `Router comfyui cannot be linked automatically with multiple Services`
+      # every few seconds while picking one of them — which is how the whole app
+      # started serving JSON at its own address. Two rules, one host each: no
+      # overlap, no priority to get wrong.
+      #
+      # `comfy.lan.thenaha.my.id` serves the frontend, and the frontend's Vite dev
+      # server already proxies `/api` to here in-process, so the browser never
+      # needs this hostname. It exists for curl, Postman and anything else talking
+      # to the API directly.
+      - traefik.http.routers.comfyui-api.rule=Host(`comfy-backend.lan.thenaha.my.id`)
+      - traefik.http.routers.comfyui-api.entrypoints=websecure
+      - traefik.http.routers.comfyui-api.tls=true
+      - traefik.http.services.comfyui-api.loadbalancer.server.port=8002
     user: "1000:1000"
     volumes:
       - ./data:/data
@@ -95,7 +104,20 @@ services:
       - COMFY_CONFIG_PATH=/data/config.json
       - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
       - COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS=${COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS:-1}
-      - COMFY_CORS_ORIGINS=${COMFY_CORS_ORIGINS:-["http://localhost:5174","https://comfy.lan.thenaha.my.id","https://100.150.0.4"]}
+      # Every origin the stack is reached on. The port is not optional:
+      # `https://100.150.0.4` is Traefik on 443 and `http://100.150.0.4:5174` is
+      # the Vite dev server directly — different scheme, different port, so the
+      # first does not match the second.
+      #
+      # Measured on the omission: browsing `http://100.150.0.4:5174` made the
+      # socket.io handshake return 400 `"... is not an accepted origin."`, which
+      # the client retries forever, which is a permanent "Disconnected from
+      # server. Trying to reconnect" toast. Every HTTP request still succeeded,
+      # so the app looks healthy while realtime is dead.
+      #
+      # This default outranks config.json (`COMFY_*` > config.json >
+      # DEFAULT_CONFIG), so it is the line that actually governs the policy.
+      - COMFY_CORS_ORIGINS=${COMFY_CORS_ORIGINS:-["http://localhost:5174","http://localhost:8002","http://127.0.0.1:5174","https://comfy.lan.thenaha.my.id","https://100.150.0.4","http://100.150.0.4:5174"]}
       - COMFY_UVICORN_RELOAD=0
     networks:
       - tnhcomfy
@@ -137,10 +159,10 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
-      - traefik.http.routers.comfyui-app.rule=Host(`comfy.lan.thenaha.my.id`) || Host(`100.150.0.4`)
-      - traefik.http.routers.comfyui-app.entrypoints=websecure
-      - traefik.http.routers.comfyui-app.tls=true
-      - traefik.http.services.comfyui-app.loadbalancer.server.port=5174
+      - traefik.http.routers.comfyui-frontend.rule=Host(`comfy.lan.thenaha.my.id`) || Host(`100.150.0.4`)
+      - traefik.http.routers.comfyui-frontend.entrypoints=websecure
+      - traefik.http.routers.comfyui-frontend.tls=true
+      - traefik.http.services.comfyui-frontend.loadbalancer.server.port=5174
       - homepage.group=Projects
       - homepage.name=ComfyUI
       - homepage.icon=https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/comfyui.svg
