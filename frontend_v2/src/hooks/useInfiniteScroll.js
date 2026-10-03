@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { resolveScrollRoot } from './useScrollRoot';
+import { resolveScrollableRoot } from './useScrollRoot';
 
 const SCROLL_IDLE_MS = 180;
 
@@ -112,14 +112,43 @@ export function useInfiniteScroll({
         load();
     }, [debounceMs, hasMore, load, loading, scheduleRetry]);
 
+    /* Is the sentinel within the load margin of the box that scrolls?
+
+       Extracted because two different moments need the same answer, and they are
+       not the same moment: a load settling, and a scroll gesture ending. */
+
+    const isNearEnd = useCallback(() => {
+        const sentinel = sentinelRef.current;
+        if (!sentinel) return false;
+        // `resolveScrollableRoot`, not `resolveScrollRoot`: see the comment there.
+        // Below `lg` the declared scroller is `main`, which is content-sized and
+        // has no scroll range, so its bounds move down with every appended page and
+        // "the end is near" is true for as long as the gallery is open.
+        const root = resolveScrollableRoot(sentinel, scrollRoot) ?? window;
+        const rect = sentinel.getBoundingClientRect();
+        const bounds = root === window
+            ? { top: 0, bottom: window.innerHeight }
+            : (() => { const r = root.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; })();
+        /* Within the load margin, not merely on screen.
+
+           The IntersectionObserver is configured with `rootMargin` (200px by
+           default), so it fires when the sentinel is still 200px *below* the
+           fold. This check originally asked only "is any part of the sentinel
+           visible", which is a much weaker condition and fired sooner than the
+           observer does — a slow scroll lingering near the bottom could pull a
+           page before the observer would have. Same margin, same threshold, so the
+           two paths agree on when "the end is near" means. */
+        const margin = parseFloat(rootMargin) || 0;
+        return rect.top < bounds.bottom + margin && rect.bottom > bounds.top - margin;
+    }, [rootMargin, scrollRoot]);
+
     /* Re-check when a load settles.
 
-       An IntersectionObserver reports threshold *crossings*. If the page that
-       just loaded is shorter than the remaining space, the sentinel is still
+       An IntersectionObserver reports threshold *crossings*. If the page that just
+       loaded is shorter than the remaining space, the sentinel is still
        intersecting when the request finishes, so no new crossing occurs and
-       nothing asks for the page after it — the gallery stops early even though
-       `hasMore` is true. Re-checking on the `loading` edge covers that, and is
-       also the safety net for any other dropped request.
+       nothing asks for the page after it. Re-checking on the `loading` edge covers
+       that.
     */
     useEffect(() => {
         if (loading) return;
@@ -129,42 +158,49 @@ export function useInfiniteScroll({
         // to ask anyway — and it made the timing of everything downstream depend
         // on whether the view had mounted yet.
         if (!lastCallTimeRef.current) return;
-        const sentinel = sentinelRef.current;
-        if (!sentinel) return;
-        const root = resolveScrollRoot(sentinel, scrollRoot) ?? window;
-        const rect = sentinel.getBoundingClientRect();
-        const bounds = root === window
-            ? { top: 0, bottom: window.innerHeight }
-            : (() => { const r = root.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; })();
-        /* Within the load margin, not merely on screen.
-
-           The IntersectionObserver is configured with `rootMargin` (200px by
-           default), so it fires when the sentinel is still 200px *below* the
-           fold. This re-check originally asked only "is any part of the sentinel
-           visible", which is a much weaker condition and fired sooner than the
-           observer does — a slow scroll lingering near the bottom could pull a
-           page before the observer would have. Same margin, same threshold, so
-           the two paths agree on when "the end is near" means.
-        */
-        const margin = parseFloat(rootMargin) || 0;
-        const visible = rect.top < bounds.bottom + margin && rect.bottom > bounds.top - margin;
-        if (visible) {
-            pendingLoadRef.current = true;
-            // Consume the latch: this is a deliberate request, so the sentinel
-            // must be allowed to cross again afterwards.
-            wasIntersectingRef.current = false;
-            scheduleRetry(0, load);
-        }
-    }, [load, loading, hasMore, rootMargin, scrollRoot, scheduleRetry]);
+        if (!isNearEnd()) return;
+        pendingLoadRef.current = true;
+        // Consume the latch: this is a deliberate request, so the sentinel must be
+        // allowed to cross again afterwards.
+        wasIntersectingRef.current = false;
+        scheduleRetry(0, load);
+    }, [isNearEnd, load, loading, hasMore, scheduleRetry]);
 
     const scheduleIdleLoad = useCallback(() => {
         if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
         idleTimerRef.current = setTimeout(() => {
             idleTimerRef.current = null;
             isUserScrollingRef.current = false;
-            if (pendingLoadRef.current) requestLoad();
+            if (pendingLoadRef.current) {
+                requestLoad();
+                return;
+            }
+            /* Re-check on gesture end, not only on settle.
+
+               This is the "scroll to the end and it stops" case, and the settle
+               re-check above cannot cover it. Measured on the gallery at 1280px: a
+               wheel gesture to the bottom loads exactly one more page and then
+               stalls forever, at `scrollTop` 2680 of 2680.
+
+               The sequence: the page loads, the settle effect runs, and at that
+               moment the newly appended `<img>` elements have no height yet — so the
+               sentinel is far below the fold and the check correctly declines. The
+               images then take their height, the sentinel comes back into view, and
+               the observer does not fire, because the sentinel was never *out* of
+               the viewport — it was inside it the whole time, so there was no
+               threshold crossing to report. Nothing else changes, so the settle
+               effect does not run again. And the user is already at the bottom of
+               the scroll range, so no further gesture arrives either.
+
+               Ending a gesture at the end of the list is exactly the moment where
+               "am I near the end?" is the right question, and it is the one moment
+               the idle timer already exists to observe. */
+            if (isNearEnd()) {
+                wasIntersectingRef.current = false;
+                requestLoad();
+            }
         }, SCROLL_IDLE_MS);
-    }, [requestLoad]);
+    }, [isNearEnd, requestLoad]);
 
     const markUserActivity = useCallback(() => {
         isUserScrollingRef.current = true;
@@ -202,7 +238,7 @@ export function useInfiniteScroll({
         //
         // Falls back to the viewport when the sentinel has no scrollable
         // ancestor, so a sentinel in normal document flow behaves as before.
-        const root = resolveScrollRoot(currentSentinel, scrollRoot) ?? window;
+        const root = resolveScrollableRoot(currentSentinel, scrollRoot) ?? window;
 
         // Gesture listeners belong on the same root as the observer. They were
         // bound to `window` unconditionally, so on the gallery the wheel and
@@ -248,7 +284,7 @@ export function useInfiniteScroll({
                     requestLoad();
                 },
                 {
-                    root: resolveScrollRoot(currentSentinel, scrollRoot),
+                    root: resolveScrollableRoot(currentSentinel, scrollRoot),
                     rootMargin,
                     threshold: 0.1,
                 },

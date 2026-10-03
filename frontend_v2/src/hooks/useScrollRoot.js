@@ -31,6 +31,65 @@ export function resolveScrollRoot(element, explicitRoot = null) {
 }
 
 /**
+ * The ancestor that actually scrolls, as opposed to one that merely declares it.
+ *
+ * `resolveScrollRoot` answers "which element has `overflow-y: auto`", which below
+ * `lg` is `main` — and below `lg` `main` does not scroll. `Layout.jsx` gives it
+ * `overflow-y-auto` unconditionally so the `lg` pane behaviour exists, but under
+ * `lg` the element is content-height and the *window* is what moves. Measured at
+ * 390px: `main.clientHeight === main.scrollHeight` at 3697, so it has no scroll
+ * range at all, and it never will — appending children grows both numbers
+ * together.
+ *
+ * That makes it a trap for anything that compares a sentinel's position to its
+ * bounds. `bounds.bottom` moves down by exactly as much as the sentinel does, so
+ * `rect.top < bounds.bottom + margin` is true forever, and a "the end is near, load
+ * another page" check re-fires on every settle with no user input. Measured on the
+ * gallery at 390px: **27 pages — 540 items — requested in 24 seconds with zero
+ * interaction**, against 10 images in the DOM.
+ *
+ * ## Why "can it scroll right now?" is the wrong test
+ *
+ * The obvious predicate is `scrollHeight > clientHeight`, and it breaks desktop:
+ * before enough pages have loaded, `main` has no overflow either, so the resolver
+ * falls through to `window` — which never scrolls at `lg`, because the app shell is
+ * `lg:h-screen lg:overflow-hidden`. Nothing loads, nothing grows, nothing scrolls:
+ * infinite scroll deadlocks at the top of the page. Measured before this was
+ * corrected: 12 deliberate scroll gestures on a 1280px viewport fetched 0 pages.
+ *
+ * The distinction is not about content, it is about *layout mode*, and it is
+ * decided by height: a scroll pane is bounded by its parent, a content-sized box is
+ * not. So the test is whether the element is taller than the viewport — if it is, it
+ * is content-sized and the window is the scroller; if it is not, it is a pane.
+ *
+ *   390px:  main 3697 > innerHeight 844  -> content-sized -> window
+ *   1280px: main  900 <= innerHeight 900 -> bounded pane  -> main
+ *
+ * Both are stable across load state, which is the property that matters: the answer
+ * does not change as pages arrive, so it cannot oscillate.
+ *
+ * Not used by the virtualizers: `useScrollElement` wants the *declared* scroller,
+ * because a virtualizer needs a stable element to measure against even in the
+ * frame before it has any overflow. This is for the trigger decision only.
+ */
+export function resolveScrollableRoot(element, explicitRoot = null) {
+    let el = explicitRoot || element?.parentElement || null;
+    const first = Boolean(explicitRoot);
+    while (el && (first || el !== document.body)) {
+        const overflowY = getComputedStyle(el).overflowY;
+        const declaresScroller = overflowY === 'auto' || overflowY === 'scroll';
+        if (declaresScroller) {
+            // Taller than the viewport means content-sized: it has no scroll range
+            // and never will, because appending children grows it as well. The
+            // window is what moves, so stop here and let the caller use it.
+            return el.clientHeight <= window.innerHeight ? el : null;
+        }
+        el = el.parentElement;
+    }
+    return null;
+}
+
+/**
  * `getScrollElement` for `@tanstack/react-virtual`.
  *
  * An element that cannot be *measured* falls back to the viewport.
