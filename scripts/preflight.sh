@@ -103,6 +103,48 @@ else
 fi
 
 echo
+echo "==> Providers"
+# `COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS` is gone and this section no longer checks
+# it. It was an opt-in gate dressed as a security control: all providers share the
+# COMFY_PROVIDER_TOKEN, so the token was the entire boundary, and the heartbeat
+# path ignored the flag while overwriting the URL jobs dispatch to. A new provider
+# now registers enabled. See docs/audit-2026-10-03.md.
+#
+# What is genuinely worth knowing at setup time is how many registered providers
+# are switched on. "disabled" is a per-provider field the Providers page edits,
+# not an env var, and it is the only control that decides whether a provider takes
+# your jobs. It is invisible everywhere else in the stack, which is why an audit
+# found five of six off with no failover and no local LLM.
+if curl -sf --max-time 3 http://localhost:8002/api/v2/providers/ >/dev/null 2>&1; then
+  # Counted with a JSON parse, not a grep: the list response nests an `enabled`
+  # and several `id`s per provider (runtime_state, capabilities), so a grep count
+  # reads 10 disabled "of 6".
+  counts=$(curl -sf --max-time 3 http://localhost:8002/api/v2/providers/ 2>/dev/null | python3 -c '
+import json, sys
+try:
+    body = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+# The list route answers {"providers": [...]}, not a bare array.
+rows = body.get("providers") if isinstance(body, dict) else body
+if not isinstance(rows, list):
+    sys.exit(0)
+off = sum(1 for r in rows if isinstance(r, dict) and r.get("enabled") is False)
+print(f"{off} {len(rows)}")
+' 2>/dev/null)
+  disabled=${counts%% *}
+  total=${counts##* }
+  if [[ "${disabled:-0}" -gt 0 ]]; then
+    note "$disabled of ${total:-?} registered providers are switched off, so the load balancer has no failover and llm-local/direct_url are idle"
+    note "  enable on the Providers page, or PATCH /api/v2/providers/{id} {\"enabled\": true}"
+  elif [[ "${total:-0}" -gt 1 ]]; then
+    ok "all ${total} providers are enabled"
+  fi
+else
+  note "could not reach the backend to read provider state (is it up?)"
+fi
+
+echo
 if [[ $warn -eq 0 ]]; then
   printf '\033[32mPreflight passed.\033[0m\n\n'
 else

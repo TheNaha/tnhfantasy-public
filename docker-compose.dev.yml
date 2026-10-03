@@ -27,9 +27,12 @@ services:
     environment:
       - COMFY_UVICORN_RELOAD=1
       - PYTHONUNBUFFERED=1
-    # Expose backend directly for API testing / curl / Postman
-    ports:
-      - "8002:8002"
+    # No `ports:` — same as the base compose, and this override was silently
+    # re-adding the one that got removed. That is worth noting on its own: a
+    # dev override re-publishing a port is how a hardening change in the base
+    # file gets undone without anybody editing the base file.
+    #
+    # For a shell: docker compose exec backend_v2 curl -s localhost:8002/api/live
     # Mount source code — uvicorn --reload watches /app for changes
     # pip packages live in system site-packages, not /app, so this is safe
     volumes:

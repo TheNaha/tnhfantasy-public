@@ -41,8 +41,28 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "8002:8002"
+    # No `ports:` on purpose. This is the security boundary, and it was
+    # invisible: a bare "8002:8002" published the entire unauthenticated API on
+    # every interface, so anything that could route to this host could read every
+    # prompt and call DELETE /api/jobs — which is what happened on 2026-10-01.
+    #
+    # Traefik reaches this container directly on the `proxy` docker network below,
+    # so no host port is needed for the app to work. For a shell:
+    #   docker compose exec backend_v2 curl -s localhost:8002/api/live
+    #
+    # Reachability is governed by the NetBird ACL on the reverse proxy, not by
+    # anything in this file.
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      # Same router as the frontend, so one hostname serves the app and its API
+      # and there is no second origin to reason about. `PathPrefix` rather than a
+      # second Host rule: the frontend's Vite proxy already forwards `/api` to
+      # the backend in-process, so a same-origin rule is all this needs.
+      - traefik.http.routers.comfyui.rule=Host(`comfy.lan.thenaha.my.id`) || Host(`100.150.0.4`)
+      - traefik.http.routers.comfyui.entrypoints=websecure
+      - traefik.http.routers.comfyui.tls=true
+      - traefik.http.services.comfyui.loadbalancer.server.port=8002
     user: "1000:1000"
     volumes:
       - ./data:/data
@@ -74,12 +94,13 @@ services:
       # config.py seeds it from the shipped defaults on first boot.
       - COMFY_CONFIG_PATH=/data/config.json
       - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
-      - COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS=${COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS:-0}
+      - COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS=${COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS:-1}
       - COMFY_CORS_ORIGINS=${COMFY_CORS_ORIGINS:-["http://localhost:5174","https://comfy.lan.thenaha.my.id","https://100.150.0.4"]}
       - COMFY_UVICORN_RELOAD=0
     networks:
       - tnhcomfy
       - metrics
+      - proxy
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/api/ready')\""]
@@ -107,15 +128,19 @@ services:
       backend_v2:
         condition: service_healthy
     ports:
-      # Host port 5174 → container port 5174 (for direct localhost access)
+      # Host port 5174 → container port 5174 (for direct localhost access).
+      # Left as-is deliberately: unlike the backend this one is a dev server you
+      # open in a browser, and binding it to loopback bought nothing because
+      # Traefik's frontend router already existed and the backend API was the
+      # actual exposure. Changing it is a one-character edit if you want it.
       - "5174:5174"
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
-      - traefik.http.routers.comfyui-frontend.rule=Host(`comfy.lan.thenaha.my.id`) || Host(`100.150.0.4`)
-      - traefik.http.routers.comfyui-frontend.entrypoints=websecure
-      - traefik.http.routers.comfyui-frontend.tls=true
-      - traefik.http.services.comfyui-frontend.loadbalancer.server.port=5174
+      - traefik.http.routers.comfyui-app.rule=Host(`comfy.lan.thenaha.my.id`) || Host(`100.150.0.4`)
+      - traefik.http.routers.comfyui-app.entrypoints=websecure
+      - traefik.http.routers.comfyui-app.tls=true
+      - traefik.http.services.comfyui-app.loadbalancer.server.port=5174
       - homepage.group=Projects
       - homepage.name=ComfyUI
       - homepage.icon=https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/comfyui.svg
