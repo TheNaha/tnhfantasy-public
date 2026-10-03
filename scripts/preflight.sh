@@ -72,14 +72,22 @@ done
 
 echo
 echo "==> Auth tokens"
-# Both provider containers and the backend now fail CLOSED without these.
+# One secret, both directions. Both ends fail CLOSED without it: a container
+# answers 503 on every protected route, and the backend refuses unauthenticated
+# provider registration. This check exists because that failure is otherwise
+# only visible as `discovery_token_not_configured` in the container logs.
 if [[ -f .env ]]; then
-  for key in PROVIDER_WORKER_TOKEN COMFY_DISCOVERY_TOKEN; do
-    value=$(grep -E "^${key}=." .env | head -1 | cut -d= -f2-)
-    if [[ -n "$value" ]]; then
-      ok "$key is set"
-    else
-      bad "$key is empty — provider management routes and provider self-registration will refuse to work"
+  value=$(grep -E "^COMFY_PROVIDER_TOKEN=." .env | head -1 | cut -d= -f2-)
+  if [[ -n "$value" ]]; then
+    ok "COMFY_PROVIDER_TOKEN is set"
+  else
+    bad "COMFY_PROVIDER_TOKEN is empty — provider management routes AND provider self-registration will refuse to work (generate one: python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+  fi
+  # A leftover from the two-token era is silently ignored by compose now, so it
+  # reads as configured while the real variable is empty.
+  for stale in PROVIDER_WORKER_TOKEN COMFY_DISCOVERY_TOKEN; do
+    if grep -qE "^${stale}=" .env; then
+      note ".env still declares $stale, which nothing reads any more — remove it"
     fi
   done
 else

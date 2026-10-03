@@ -73,8 +73,7 @@ services:
       # bind mount as the Postgres cluster and the generated images, and
       # config.py seeds it from the shipped defaults on first boot.
       - COMFY_CONFIG_PATH=/data/config.json
-      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
-      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
+      - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
       - COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS=${COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS:-0}
       - COMFY_CORS_ORIGINS=${COMFY_CORS_ORIGINS:-["http://localhost:5174","https://comfy.lan.thenaha.my.id","https://100.150.0.4"]}
       - COMFY_UVICORN_RELOAD=0
@@ -163,8 +162,7 @@ services:
       - PROVIDER_ID=modal-zetsuke
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
-      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
-      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
+      - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
     user: "1000:1000"
     logging: *bounded-logging
     # Mount /data so provider workers can access models, input, output
@@ -206,8 +204,7 @@ services:
       - PROVIDER_ID=modal-hp196
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
-      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
-      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
+      - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
     user: "1000:1000"
     logging: *bounded-logging
     # Mount /data so provider workers can access models, input, output
@@ -249,8 +246,7 @@ services:
       - PROVIDER_ID=modal-stepmania
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
-      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
-      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
+      - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
     user: "1000:1000"
     logging: *bounded-logging
     # Mount /data so provider workers can access models, input, output
@@ -316,8 +312,7 @@ services:
       - PROVIDER_ID=tts-modal-hp196
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
-      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
-      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
+      - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
       - ENGINE=modal
     user: "1000:1000"
     logging: *bounded-logging
@@ -358,8 +353,7 @@ services:
       - PROVIDER_ID=llm-local
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
-      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
-      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
+      - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
       - ENGINE=openai_compat
     user: "1000:1000"
     volumes:
@@ -417,10 +411,10 @@ services:
     env_file:
       - .env.direct-url
     environment:
-      # This block used to be missing entirely, so this provider received
-      # neither PROVIDER_WORKER_TOKEN (it answers 503 on every protected
-      # route when that is empty) nor COMFY_DISCOVERY_TOKEN (it then
-      # self-registered against a backend that fails closed without one).
+      # This block used to be missing entirely, so this provider received no
+      # shared secret at all: it answered 503 on every protected route when the
+      # management token was empty, and could not self-register when the
+      # discovery token was empty. One name covers both now.
       # The engine has no default baked into the image, so state it here.
       - ENGINE=direct_url
       # These three were absent, so the worker fell back to
@@ -433,8 +427,7 @@ services:
       - PROVIDER_ID=direct_url
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
-      - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
-      - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
+      - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
     user: "1000:1000"
     volumes:
       - ./data:/data
@@ -480,9 +473,8 @@ services:
   #     # block exactly as .env.example.remote-comfy:70-77 documents ("Injected by
   #     # compose from the root .env") produced a provider that answered 503 on
   #     # every protected route and could not self-register: env_file cannot
-  #     # supply a variable the backend and the worker must agree on.
-  #     - PROVIDER_WORKER_TOKEN=${PROVIDER_WORKER_TOKEN:-}
-  #     - COMFY_DISCOVERY_TOKEN=${COMFY_DISCOVERY_TOKEN:-}
+  #     # supply the one variable the backend and the worker must agree on.
+  #     - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
   #   user: "1000:1000"
   #   volumes:
   #     - ./data:/data

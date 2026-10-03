@@ -55,15 +55,23 @@ def build_provider_environment(provider: Provider) -> dict[str, str]:
     if "civitai_token" in credentials:
         env_vars["CIVITAI_TOKEN"] = credentials["civitai_token"]
 
-    # Shared auth tokens.  The provider container FAILS CLOSED without
-    # PROVIDER_WORKER_TOKEN (every management route answers 503), and
-    # COMFY_DISCOVERY_TOKEN is what the container presents when it
-    # self-registers.  Both were previously omitted here, so a
-    # backend-autostarted provider came up with no way to authenticate.
-    for env_name in ("PROVIDER_WORKER_TOKEN", "COMFY_DISCOVERY_TOKEN"):
-        value = os.getenv(env_name, "").strip()
-        if value:
-            env_vars[env_name] = value
+    # The shared auth token, forwarded under a single name.
+    #
+    # This used to be two variables — `PROVIDER_WORKER_TOKEN`, which the backend
+    # presents to the container, and `COMFY_DISCOVERY_TOKEN`, which the container
+    # presents back when it self-registers. Two directions of one relationship
+    # between containers in the same compose project, sharing one database and one
+    # docker network. The real trust boundary is that network, and one secret
+    # already covers it, so the second bought no isolation and cost real
+    # confusion: with one of the two left empty, provider registration failed
+    # closed with a 503 while the rest of the stack looked correctly configured.
+    #
+    # It is still forwarded when set, and its absence still fails closed at both
+    # ends — the container answers 503 on every management route, and the backend
+    # refuses unauthenticated registration.
+    value = os.getenv("COMFY_PROVIDER_TOKEN", "").strip()
+    if value:
+        env_vars["COMFY_PROVIDER_TOKEN"] = value
 
     # ── Provider-type-specific env vars (via registry) ───────────────
     type_config = ProviderRegistry.get(provider.type)
