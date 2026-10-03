@@ -36,6 +36,14 @@ class IPAdapterOption(BaseModel):
     image: Union[str, dict[str, Any]]
     clipVision: str
     weight: float = 1.0
+    # The generator UI renders a "Stop At" slider per adapter and the store
+    # ships it as `stopAt`, but this model declared only the four fields above,
+    # so pydantic discarded it and `IPAdapterApply` was never given an
+    # `end_at` — a control that looked live and did nothing. Aliased rather than
+    # renamed so the existing store payload keeps working; `populate_by_name`
+    # means `stop_at` is accepted too.
+    stopAt: float = Field(default=1.0, ge=0.0, le=1.0, alias="stop_at")
+    model_config = {"populate_by_name": True}
 
 
 class GeneratorOptions(BaseModel):
@@ -221,12 +229,20 @@ class WorkflowBuilder:
                 "image": img_str
             })
 
-            ip_apply = self.add_node("IPAdapterApply", {
+            # `end_at` is ComfyUI's "Stop At" — the fraction of the diffusion
+            # schedule over which this adapter applies. Omitted when it is the
+            # default 1.0 so the generated workflow keeps matching what the node
+            # produces for an unconfigured adapter.
+            apply_inputs: dict[str, Any] = {
                 "ipadapter": [ip_loader, 0],
                 "model": model,
                 "weight": ip.weight,
-                "image": [image_loader, 0]
-            })
+                "image": [image_loader, 0],
+            }
+            if ip.stopAt < 1.0:
+                apply_inputs["end_at"] = ip.stopAt
+
+            ip_apply = self.add_node("IPAdapterApply", apply_inputs)
 
             model = [ip_apply, 0]
         return model
