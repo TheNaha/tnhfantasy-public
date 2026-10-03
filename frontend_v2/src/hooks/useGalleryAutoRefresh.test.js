@@ -22,7 +22,16 @@ describe('useGalleryAutoRefresh', () => {
 
         expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
             queryKey: ['gallery'],
+            // Scoped to the newest page. A bare invalidation refetches every
+            // loaded page of the infinite query, sequentially, and each one
+            // changes the list height — which moves the sentinel, which is most of
+            // what people mean by "a job update sets off the infinite scroll".
+            refetchPage: expect.any(Function),
         });
+
+        const [{ refetchPage }] = queryClient.invalidateQueries.mock.calls[0];
+        const pages = [{ n: 'newest' }, { n: 'middle' }, { n: 'oldest' }];
+        expect(pages.filter((p) => refetchPage(p, pages)).map((p) => p.n)).toEqual(['newest']);
     });
 
     it('does not invalidate for completed jobs without persisted outputs', () => {
@@ -102,6 +111,9 @@ describe('useGalleryAutoRefresh', () => {
             queryClient,
         });
 
-        expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['gallery'] });
+        expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+            queryKey: ['gallery'],
+            refetchPage: expect.any(Function),
+        });
     });
 });
