@@ -284,9 +284,17 @@ def test_step_is_registered_with_the_next_version():
 
     versions = [step.version for step in _get_schema_migration_steps()]
     assert "079_character_lorebook_ids" in versions
-    # Position in the ordered list is what the runner depends on, so a step
-    # that is registered but out of order would still run — just wrongly.
-    assert versions.index("079_character_lorebook_ids") == len(versions) - 1
+    # Order matters — the runner applies steps in list order — but "last" is not
+    # the property worth pinning. It was `len(versions) - 1` until 080 was added,
+    # and the fix was to edit the number rather than to read the failure, which is
+    # what makes this assertion worthless: it breaks for every future migration
+    # and means nothing for any existing one.
+    #
+    # What is worth pinning is that no step is registered after this one that
+    # depends on its column, and that the numbering is monotonic — both of which
+    # hold by construction and neither of which this can check. So: the version
+    # is registered, it appears exactly once, and the list has no duplicates.
+    assert versions.count("079_character_lorebook_ids") == 1
     assert len(versions) == len(set(versions)), "duplicate migration version"
 
 

@@ -103,7 +103,19 @@ class TestSchemaMatchesDefaultConfig:
         assert fields["blurhash_resize_max"]["default"] == 64
         assert fields["thumbnail_sizes"]["default"] == {"medium": 512}
         assert "thumb" not in fields["thumbnail_sizes"]["default"]
-        assert len(schema["schema"]["api"]["fields"]["cors_origins"]["default"]) == 3
+        # Not a count. `== 3` broke when the list grew from three origins to six,
+        # and the fix would have been to type 6 — which asserts that nobody ever
+        # needs to add an origin, on the tab that says where the stack is reached
+        # from. What matters is that every entry is a real origin and that the
+        # two the app is actually served on are present.
+        cors = schema["schema"]["api"]["fields"]["cors_origins"]["default"]
+        assert "http://localhost:5174" in cors
+        assert "https://comfy.lan.thenaha.my.id" in cors
+        # The origin that was missing and produced a permanent "Disconnected from
+        # server" toast: the dev server on the Tailscale IP, which is a different
+        # scheme and a different port from the Traefik entry above.
+        assert "http://100.150.0.4:5174" in cors
+        assert all(origin.startswith(("http://", "https://")) for origin in cors)
 
     def test_jobs_lifecycle_fields_are_documented(self, schema):
         fields = schema["schema"]["jobs"]["fields"]
