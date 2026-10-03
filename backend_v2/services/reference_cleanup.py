@@ -70,11 +70,11 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         # round-tripped on export. Only the explicit link is scrubbed. It is
         # read on every prompt build, so a dangling id would be a per-turn
         # lookup that silently finds nothing rather than a visible error.
-        for character in session.exec(select(Character)).all():
-            if entity_id in (character.lorebook_ids or []):
-                character.lorebook_ids = [
-                    lid for lid in character.lorebook_ids if lid != entity_id
-                ]
+        #
+        # `_scrub_json_array` rather than `select(Character)`: this loop loaded
+        # every character row in the vault to test one JSON array, on the delete
+        # path, three lines below the helper that already does this correctly.
+        _scrub_json_array(session, Character, "lorebook_ids", entity_id)
     elif kind == "voice":
         for character in session.exec(select(Character).where(Character.voice_model_id == entity_id)).all():
             character.voice_model_id = None
