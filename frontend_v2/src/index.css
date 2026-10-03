@@ -53,12 +53,39 @@
   --color-hover: rgb(255 255 255 / 0.05);
 
   /* Text. Four steps, and the ramp is monotonic in contrast so "one step
-     quieter" is a real choice rather than a slightly different grey. */
+     quieter" is a real choice rather than a slightly different grey.
+
+     `--color-tertiary` was `#6b7280`, which is stock Tailwind `gray-500`. On
+     this app's own surfaces that measures **3.9:1** against `--color-raised`
+     (#0f172a, L=0.0084) and 3.9:1 against `gray-900` (#111827, L=0.0090) —
+     below WCAG AA's 4.5:1 for the 11-14px text it is actually used for. It
+     failed on ~15 routes: `/story` "0 words" and "1 min read", `/statistics`
+     panel titles, `/characters` descriptions, `/activity` timestamps,
+     `/batch-generate` step numbers, `/rolesplay` roleplay subcopy,
+     `/models/discover` filter labels, `/providers` type badges.
+
+     Lifted to `#7d8798` (L=0.243), which measures **5.0:1** against
+     `--color-raised` and 5.0:1 against `gray-900` — clears AA with margin,
+     and stays visibly a step below `--color-secondary` (#9ca3af, 7.2:1) so the
+     ramp is still monotonic. This is the same colour family, one step up, not
+     a redesign; anything using `text-tertiary` gets it for free.
+
+     Stock `text-gray-500` / `text-slate-500` are the same hex and were
+     measured failing identically wherever they appear. They are overridden
+     below so the two spellings cannot disagree again. */
   --color-primary: #f3f4f6;
   --color-secondary: #9ca3af;
-  --color-tertiary: #6b7280;
+  --color-tertiary: #7d8798;
   --color-disabled: #4b5563;
   --color-inverse: #111827;
+
+  /* Stock Tailwind greys that measured below AA on this app's dark surfaces.
+     Overriding the scale token moves every `text-gray-500` / `text-slate-500`
+     at once; `gray-600` (2.6:1) is left alone because it is only ever used
+     where the text is explicitly decorative, and lifting it would flatten the
+     hierarchy everywhere at once. */
+  --color-gray-500: #7d8798;
+  --color-slate-500: #7d8798;
 
   /* Hairlines. Two weights only — the app was using eight greys for borders. */
   --color-hairline: rgb(255 255 255 / 0.05);
@@ -779,13 +806,74 @@
    Tailwind's `opacity-0` utility, which lives inside `@layer utilities`.
 
    Written against the escaped utility names so a newly added hover-reveal is
-   covered by the same rule instead of needing to be remembered here. */
+   covered by the same rule instead of needing to be remembered here.
+
+   The `sm:` variants below are here because six call sites emit
+   `sm:opacity-0 sm:group-hover:opacity-100` rather than the unprefixed pair —
+   `GroupedDashboardContent.jsx:455`, `CharacterCard.jsx:244`, `Worlds.jsx:263`,
+   `Lorebooks.jsx:168` and `:589`, `Locations.jsx:274` — and those are different
+   class names, so the unprefixed selector never matched them. Measured on a
+   768px touch viewport: every one of those groups computed to
+   `opacity: 0; pointer-events: auto; visibility: visible`, which is the worst
+   of all three states. A real CDP touch tap in the top-right 44x44 corner of a
+   gallery thumbnail was delivered to the *invisible* favourite button instead of
+   opening the image: no state change, no visual feedback, no error. On
+   `/characters` the whole per-card action row (Chat / Edit / Export) was laid
+   out, hit-testable and completely invisible.
+
+   So the rule is duplicated per breakpoint rather than relaxed: a hover-reveal
+   that only appears from `sm:` up is exactly as wrong on a tablet as one that
+   only appears from zero. */
 @media (hover: none) {
   .opacity-0.group-hover\:opacity-100,
   .opacity-0.group-hover\/message\:opacity-100,
   .opacity-0.group-hover\/chat-row\:opacity-100,
-  .opacity-0.group-hover\/menu-item\:opacity-100 {
+  .opacity-0.group-hover\/menu-item\:opacity-100,
+  .sm\:opacity-0.sm\:group-hover\:opacity-100,
+  .sm\:opacity-0.sm\:group-hover\/message\:opacity-100,
+  .sm\:opacity-0.sm\:group-hover\/chat-row\:opacity-100,
+  .sm\:opacity-0.sm\:group-hover\/menu-item\:opacity-100,
+  .md\:opacity-0.md\:group-hover\:opacity-100,
+  .lg\:opacity-0.lg\:group-hover\:opacity-100,
+  .xl\:opacity-0.xl\:group-hover\:opacity-100 {
     opacity: 1;
+  }
+}
+
+/* ============================================================================
+   The iOS zoom floor
+
+   OUTSIDE the `max-width: 768px` block below, and that placement is the point.
+
+   Safari on iOS zooms the *viewport* when a text field is focused and its
+   computed font-size is under 16px, and it does not zoom back out on blur.
+   Measured at 390px: /generate 12 controls at 14px, /chat 15, /batch-generate
+   14, /img2img 9, /inpaint 9, /models/discover 5, /models/installed 4, /story 4,
+   /prompts 2. Tapping the prompt box — the first thing anyone does on this app —
+   magnified the page with the composer under the keyboard and the fixed action
+   bar over the form, recoverable only by a manual pinch-zoom.
+
+   `(hover: none)`, not a width query. A phone in landscape is 844px wide and an
+   iPad is 1024px, so a `max-width: 768px` rule skips precisely the devices where
+   zooming is most disruptive, and it would also fire on a narrow desktop window
+   where zooming does not happen. The capability query is the same reasoning the
+   hover-reveal rescue above uses: ask what the pointer can do, not how wide the
+   screen is.
+
+   Unlayered. `font-size` on a `text-sm`/`text-xs` utility lives in
+   `@layer utilities`, so a rule inside `@layer base` loses to it — which is how
+   27 of these controls were still at 14px after the 44px pass had floored their
+   height. Two properties, unrelated; one floor did nothing for the other.
+
+   `select` is included because iOS zooms on a focused `<select>` the same way,
+   and 22 of the 24 controls in this app with no accessible name are selects.
+   `option` is left alone: it is not focusable, and enlarging the options only
+   makes the dropdown list overflow. */
+@media (hover: none) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px;
   }
 }
 
@@ -881,6 +969,8 @@
     min-height: 44px;
   }
 
+  }
+
   /* Checkboxes and radios keep a small visual box but become tappable.
      The size is set on the element itself rather than via `outline`: an outline
      paints outside the box and does expand the hit region in most engines, but
@@ -970,12 +1060,25 @@
 
   /* Wide panes: `max-width: 100%` alone would be a no-op (that is what the
      utility already resolves to on a narrow viewport), so the narrowing has to
-     come from the inline padding plus border-box. */
+     come from `max-width` plus border-box.
+
+     The `padding-inline: 1rem` this used to carry was removed. It double-counted
+     a gutter: `Layout.jsx` gives `main` `px-2 sm:px-4`, and each page wraps
+     itself in its own `p-4`. At 360px that was three nested gutters —
+     8 + 16 + 16 = 40px per side, 280px of a 360px screen — and then each
+     `glass-panel p-8` took another 32px per side, leaving 216px inside a 328px
+     card. On `/statistics` that starved the "ALL TIME" tab to 95.9px wide at
+     x=281 with the viewport at 360: 17px of the *active* selection permanently
+     outside, with `overflow-x: visible` the whole way up to `main`'s
+     `overflow-x-hidden` and zero scroll room at any level. Dead, not scrollable.
+
+     Measured after: `main` clientW 360 -> `max-w-7xl` 360 (no padding) -> card
+     328 -> panel content 296. */
   .max-w-6xl,
   .max-w-7xl {
     max-width: 100%;
-    padding-left: 1rem;
-    padding-right: 1rem;
+    padding-left: 0;
+    padding-right: 0;
     box-sizing: border-box;
   }
 
@@ -1009,4 +1112,3 @@
   .glass-panel {
     background-color: var(--color-raised);
   }
-}
