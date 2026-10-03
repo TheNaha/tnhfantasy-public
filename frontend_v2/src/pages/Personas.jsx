@@ -12,13 +12,16 @@ import EmptyState from '../components/EmptyState';
 import FormInput from '../components/common/FormInput';
 import { useConfirmation } from '../store/confirmationStore';
 import RoleplayPageShell from '../components/RoleplayPageShell';
+import { QueryErrorState } from '../components/common/QueryState';
 
 export default function Personas() {
     const [editingId, setEditingId] = useState(null);
     const [showCreate, setShowCreate] = useState(false);
     const [formData, setFormData] = useState({});
 
-    const { data: personas = [], isLoading } = usePersonas();
+    // See components/common/QueryState.jsx — a failed fetch used to render
+    // "No personas yet" next to a vault that already had one.
+    const { data: personas = [], isLoading, isError, error, refetch } = usePersonas();
     const { mutate: createPersona } = useCreatePersona();
     const { mutate: updatePersona } = useUpdatePersona();
     const { mutate: deletePersona } = useDeletePersona();
@@ -141,6 +144,8 @@ export default function Personas() {
                         </div>
                     ))}
                 </div>
+            ) : isError ? (
+                <QueryErrorState noun="personas" error={error} onRetry={refetch} />
             ) : personas.length === 0 ? (
                 <EmptyState
                     icon={UserRound}

@@ -18,6 +18,7 @@ import { useStories } from '../hooks/useStories';
 import { useWorlds } from '../hooks/useWorlds';
 import { useWorldVaultDashboard } from '../hooks/useWorldVaultSearch';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
+import { QueryErrorState } from '../components/common/QueryState';
 import { EXPERT_TOOLS } from '../constants/navigation';
 import { isSetupComplete } from '../utils/setupComplete';
 
@@ -39,10 +40,30 @@ export default function RoleplayWorkspace() {
     // wizard's own X and Skip both call markSetupComplete() before onClose(),
     // so dismissing it persists and it does not reappear on the next visit.
     const [showOnboarding, setShowOnboarding] = useState(() => !isSetupComplete());
-    const { data: chatData, isLoading: chatsLoading } = useChats({ limit: 8 });
-    const { data: storyData, isLoading: storiesLoading } = useStories();
-    const { data: worldData } = useWorlds();
-    const { data: vault } = useWorldVaultDashboard();
+    const chatsQuery = useChats({ limit: 8 });
+    const storiesQuery = useStories();
+    const worldsQuery = useWorlds();
+    const vaultQuery = useWorldVaultDashboard();
+    const { data: chatData, isLoading: chatsLoading } = chatsQuery;
+    const { data: storyData, isLoading: storiesLoading } = storiesQuery;
+    const { data: worldData } = worldsQuery;
+    const { data: vault } = vaultQuery;
+
+    // This is the app's only front door (`/` redirects here), and it had no
+    // `isError` branch on any of its four queries. A failed fetch rendered
+    // "Your next session will appear here — start with a chat or a story, no
+    // setup required" and six count cards all reading `0`, next to a vault that
+    // already held characters, chats and a story. It also popped the first-run
+    // onboarding wizard at someone whose work already existed, because the
+    // wizard is gated on localStorage rather than on the data having loaded.
+    // See components/common/QueryState.jsx.
+    const sessionsError = chatsQuery.isError || storiesQuery.isError;
+    const worldError = vaultQuery.isError || worldsQuery.isError;
+    const anyError = sessionsError || worldError;
+    const retryAll = () => {
+        if (sessionsError) { chatsQuery.refetch?.(); storiesQuery.refetch?.(); }
+        if (worldError) { vaultQuery.refetch?.(); worldsQuery.refetch?.(); }
+    };
 
     const chats = asList(chatData);
     const stories = asList(storyData);
@@ -159,6 +180,8 @@ export default function RoleplayWorkspace() {
                     <div className="grid gap-3 md:grid-cols-2">
                         {[1, 2, 3, 4].map((item) => <div key={item} className="h-24 animate-pulse rounded-2xl border border-white/10 bg-white/5" />)}
                     </div>
+                ) : sessionsError ? (
+                    <QueryErrorState noun="sessions" onRetry={retryAll} className="border-slate-500/30 bg-slate-500/10" />
                 ) : sessions.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-white/15 bg-white/5 p-6 text-center">
                         <Sparkles className="mx-auto text-cyan-300" size={24} />
@@ -205,14 +228,23 @@ export default function RoleplayWorkspace() {
                         Search everything <ArrowRight size={14} className="inline" aria-hidden="true" />
                     </button>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                    <CountCard label="Characters" value={counts.characters || 0} icon={Users} onClick={() => navigate('/characters')} />
-                    <CountCard label="Chats" value={counts.chats || 0} icon={MessageSquare} onClick={() => navigate('/chat')} />
-                    <CountCard label="Stories" value={counts.stories || 0} icon={BookOpen} onClick={() => navigate('/story')} />
-                    <CountCard label="Lorebooks" value={counts.lorebooks || 0} icon={ScrollText} onClick={() => navigate('/lorebooks')} />
-                    <CountCard label="Locations" value={counts.locations || 0} icon={MapPin} onClick={() => navigate('/locations')} />
-                    <CountCard label="Worlds" value={worlds.length} icon={Globe2} onClick={() => navigate('/worlds')} />
-                </div>
+                {worldError ? (
+                    <QueryErrorState
+                        noun="world"
+                        error={vaultQuery.error || worldsQuery.error}
+                        onRetry={retryAll}
+                        className="border-slate-500/30 bg-slate-500/10"
+                    />
+                ) : (
+                    <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                        <CountCard label="Characters" value={counts.characters || 0} icon={Users} onClick={() => navigate('/characters')} />
+                        <CountCard label="Chats" value={counts.chats || 0} icon={MessageSquare} onClick={() => navigate('/chat')} />
+                        <CountCard label="Stories" value={counts.stories || 0} icon={BookOpen} onClick={() => navigate('/story')} />
+                        <CountCard label="Lorebooks" value={counts.lorebooks || 0} icon={ScrollText} onClick={() => navigate('/lorebooks')} />
+                        <CountCard label="Locations" value={counts.locations || 0} icon={MapPin} onClick={() => navigate('/locations')} />
+                        <CountCard label="Worlds" value={worlds.length} icon={Globe2} onClick={() => navigate('/worlds')} />
+                    </div>
+                )}
             </section>
 
             <section aria-labelledby="roleplay-expert-heading" className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
@@ -248,7 +280,10 @@ export default function RoleplayWorkspace() {
                     </div>
                 )}
             </section>
-            {showOnboarding && <OnboardingWizard onClose={() => setShowOnboarding(false)} />}
+            {/* Gated on `!anyError` as well as on the flag: the wizard is the
+                "you have nothing yet" flow, so showing it over a failed fetch
+                tells a returning user their work does not exist. */}
+            {showOnboarding && !anyError && <OnboardingWizard onClose={() => setShowOnboarding(false)} />}
         </div>
     );
 }

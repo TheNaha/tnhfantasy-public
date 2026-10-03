@@ -44,6 +44,7 @@ const DEFAULT_FORM = {
 
 import { useSearchParams } from 'react-router-dom';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { QueryErrorState } from '../components/common/QueryState';
 
 export default function Locations() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -64,7 +65,9 @@ export default function Locations() {
     const [tagInput, setTagInput] = useState('');
 
     const queryClient = useQueryClient();
-    const { data: locations = [], isLoading } = useLocations();
+    // See components/common/QueryState.jsx — a failed fetch used to render
+    // "No locations yet" next to a vault that already had one.
+    const { data: locations = [], isLoading, isError, error, refetch } = useLocations();
     const createMutation = useCreateLocation();
     const updateMutation = useUpdateLocation();
     const deleteMutation = useDeleteLocation();
@@ -203,7 +206,7 @@ export default function Locations() {
                         type="text"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search locations..."
+                        aria-label="Search locations" placeholder="Search locations..."
                         className="w-full pl-10 pr-4 py-2.5 bg-gray-800 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                     />
                 </div>
@@ -228,6 +231,8 @@ export default function Locations() {
                         </div>
                     ))}
                 </div>
+            ) : isError ? (
+                <QueryErrorState noun="locations" error={error} onRetry={refetch} />
             ) : filteredLocations.length === 0 ? (
                 <EmptyState
                     type="roleplay"

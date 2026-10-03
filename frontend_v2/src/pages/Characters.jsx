@@ -31,6 +31,7 @@ import { useConfirmation } from '../store/confirmationStore';
 import filesApi from '../api/files';
 import MemoriesPanel from '../components/chat/MemoriesPanel';
 import RoleplayPageShell from '../components/RoleplayPageShell';
+import { QueryErrorState } from '../components/common/QueryState';
 
 
 const CHARACTER_FIELDS = [
@@ -507,7 +508,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                                     <Upload size={20} className="text-white" />
                                 </div>
                             </div>
-                            <input type="file" ref={avatarInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
+                            <input type="file" ref={avatarInputRef} aria-label="Character avatar image" className="hidden" accept="image/*" onChange={handleFileChange} />
                             
                             <div className="flex-1 space-y-3">
                                 <div>
@@ -842,7 +843,11 @@ export default function Characters() {
     const setActiveChat = useWorldVaultStore(state => state.setActiveChat);
     const { confirm } = useConfirmation();
 
-    const { data: characters = [], isLoading } = useCharacters();
+    // `isError` is load-bearing. Without it a failed fetch rendered
+    // "You haven't created any characters yet" with a working Create button,
+    // next to a vault that already had characters — and clicking it made a
+    // duplicate. See components/common/QueryState.jsx.
+    const { data: characters = [], isLoading, isError, error, refetch } = useCharacters();
     const { data: characterCollections } = useCharacterCollections(characters.map(c => c.id));
     const createCharacter = useCreateCharacter();
     const updateCharacter = useUpdateCharacter();
@@ -1020,7 +1025,7 @@ export default function Characters() {
                         type="text" 
                         value={searchQuery}
                         onChange={e => setSearchQuery(e.target.value)}
-                        placeholder="Search characters by name, tags, or description..." 
+                        aria-label="Search characters" placeholder="Search characters by name, tags, or description..." 
                         className="w-full bg-gray-900/50 border border-gray-700/50 rounded-lg pl-10 pr-4 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all"
                     />
                 </div>
@@ -1056,6 +1061,8 @@ export default function Characters() {
                     <div className="flex items-center justify-center p-12">
                         <Loader2 className="animate-spin text-gray-500" size={32} />
                     </div>
+                ) : isError ? (
+                    <QueryErrorState noun="characters" error={error} onRetry={refetch} className="m-2" />
                 ) : filteredCharacters.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-gray-700/50 flex flex-col items-center justify-center p-8 text-center bg-gray-900/20 h-full min-h-[300px]">
                         <EmptyState

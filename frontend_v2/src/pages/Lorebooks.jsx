@@ -20,6 +20,7 @@ import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 import RoleplayPageShell from '../components/RoleplayPageShell';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { QueryErrorState } from '../components/common/QueryState';
 
 export default function Lorebooks() {
     const [searchQuery, setSearchQuery] = useState('');
@@ -28,7 +29,9 @@ export default function Lorebooks() {
     const [form, setForm] = useState({ name: '', description: '' });
     const [activeLorebookId, setActiveLorebookId] = useState(null);
 
-    const { data: lorebooks = [], isLoading } = useLorebooks();
+    // See components/common/QueryState.jsx — a failed fetch used to render
+    // "No lorebooks yet" next to a vault that already had one.
+    const { data: lorebooks = [], isLoading, isError, error, refetch } = useLorebooks();
     const createMutation = useCreateLorebook();
     const updateMutation = useUpdateLorebook();
     const deleteMutation = useDeleteLorebook();
@@ -115,7 +118,7 @@ export default function Lorebooks() {
                         type="text"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search lorebooks..."
+                        aria-label="Search lorebooks" placeholder="Search lorebooks..."
                         className="w-full pl-10 pr-4 py-2.5 bg-gray-800/60 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                     />
                 </div>
@@ -130,6 +133,8 @@ export default function Lorebooks() {
                         </div>
                     ))}
                 </div>
+            ) : isError ? (
+                <QueryErrorState noun="lorebooks" error={error} onRetry={refetch} />
             ) : filtered.length === 0 ? (
                 <EmptyState
                     icon={BookOpen}

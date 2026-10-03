@@ -16,6 +16,7 @@ import EmptyState from '../components/EmptyState';
 import FormInput from '../components/common/FormInput';
 import { useConfirmation } from '../store/confirmationStore';
 import RoleplayPageShell from '../components/RoleplayPageShell';
+import { QueryErrorState } from '../components/common/QueryState';
 
 const TYPE_OPTIONS = [
     { value: 'xtts', label: 'XTTS v2' },
@@ -33,7 +34,9 @@ export default function Voices() {
     const [previewJobId, setPreviewJobId] = useState(null);
     const queryClient = useQueryClient();
 
-    const { data: voices = [], isLoading } = useVoices();
+    // See components/common/QueryState.jsx — a failed fetch used to render
+    // "No voice models yet" next to a vault that already had one.
+    const { data: voices = [], isLoading, isError, error, refetch } = useVoices();
     const { mutate: createVoice } = useCreateVoice();
     const { mutate: updateVoice } = useUpdateVoice();
     const { mutate: deleteVoice } = useDeleteVoice();
@@ -130,6 +133,17 @@ export default function Voices() {
         return (
             <RoleplayPageShell title="Voice Models" description="Reusable voices for narration and text-to-speech." icon={Volume2}>
                 <div className="py-12 text-center text-slate-400">Loading voices…</div>
+            </RoleplayPageShell>
+        );
+    }
+
+    // Before the error branch below this page fell through to
+    // "No voice models yet — Create a voice model", next to a vault that
+    // already had voices. See components/common/QueryState.jsx.
+    if (isError) {
+        return (
+            <RoleplayPageShell title="Voice Models" description="Reusable voices for narration and text-to-speech." icon={Volume2}>
+                <QueryErrorState noun="voices" error={error} onRetry={refetch} />
             </RoleplayPageShell>
         );
     }

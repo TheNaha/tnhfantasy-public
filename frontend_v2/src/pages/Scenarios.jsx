@@ -17,6 +17,7 @@ import FormInput from '../components/common/FormInput';
 import { useConfirmation } from '../store/confirmationStore';
 import RoleplayPageShell from '../components/RoleplayPageShell';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { QueryErrorState } from '../components/common/QueryState';
 
 const FORM_FIELDS = [
     { key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'Scenario name' },
@@ -33,7 +34,9 @@ export default function Scenarios() {
     const [applyingScenario, setApplyingScenario] = useState(null);
     const [applyTargetType, setApplyTargetType] = useState('chat');
 
-    const { data: scenarios = [], isLoading } = useScenarios();
+    // See components/common/QueryState.jsx — a failed fetch used to render
+    // "No scenarios yet" next to a vault that already had one.
+    const { data: scenarios = [], isLoading, isError, error, refetch } = useScenarios();
     const { mutate: createScenario } = useCreateScenario();
     const { mutate: updateScenario } = useUpdateScenario();
     const { mutate: deleteScenario } = useDeleteScenario();
@@ -204,6 +207,8 @@ export default function Scenarios() {
                         </div>
                     ))}
                 </div>
+            ) : isError ? (
+                <QueryErrorState noun="scenarios" error={error} onRetry={refetch} />
             ) : scenarios.length === 0 ? (
                 <EmptyState
                     icon={Tag}
