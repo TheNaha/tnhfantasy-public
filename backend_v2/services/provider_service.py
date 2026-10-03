@@ -1,5 +1,4 @@
 # Provider Service - Business logic for provider management
-import os
 import secrets
 from copy import deepcopy
 from typing import Any
@@ -507,6 +506,11 @@ class ProviderService:
                 updates["container_config"] = container_config
             updated = self.repo.update(provider_id, updates)
             logger.info("provider_discovery_updated", provider_id=provider_id, url=internal_url)
+            # `enabled` is deliberately not re-asserted here, so a heartbeat
+            # never undoes an operator's decision on the Providers page. The
+            # flip side is that a provider registered disabled stays disabled
+            # until someone enables it by hand — which is the correct direction
+            # for a control that exists to be seen.
             return updated or existing
 
         provider = self.repo.create({
@@ -514,7 +518,32 @@ class ProviderService:
             "type": provider_type,
             "worker_type": worker_type,
             "capabilities": declared,
-            "enabled": os.getenv("COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS", "0") == "1",
+            # Enabled on registration. There was a
+            # `COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS` gate here, defaulting to 0, and
+            # it was not a security control:
+            #
+            #   * All providers authenticate to this endpoint with the same bearer
+            #     token (`discovery.py` -> `hmac.compare_digest`), and every
+            #     provider container already holds it. The token is the whole
+            #     boundary and cannot tell `modal-zetsuke` from an impostor, so
+            #     anything the flag withheld was already reachable to a token
+            #     holder by other means.
+            #   * The update path above never consulted it, and that path
+            #     overwrites `discovery_url` unconditionally — which is the
+            #     *first-priority* dispatch base URL (`job_processing.py`). One
+            #     authenticated heartbeat could redirect every subsequent job's
+            #     full workflow wherever it liked with the flag set to either
+            #     value.
+            #   * The only thing it actually prevented was a provider container
+            #     restarting on its own quietly starting to take paid inference
+            #     traffic.
+            #
+            # So it cost a silent capacity-and-billing surprise, and a variable
+            # whose name demanded a security argument it could not survive. It is
+            # gone rather than defaulted: "should this provider take my jobs" is
+            # a real question with a real answer, and it lives on the provider row
+            # where you can see it and change it, not in an env var nobody reads.
+            "enabled": True,
 
             "priority": 1,
             "container_config": container_config,
