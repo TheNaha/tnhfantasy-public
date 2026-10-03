@@ -203,7 +203,7 @@ function MemoriesPanelBody({ characterId }) {
                         type="text"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Semantic search…"
+                        aria-label="Search messages in this chat" placeholder="Semantic search…"
                         className="w-full bg-gray-800/60 border border-white/5 text-xs rounded-lg pl-7 pr-7 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/40"
                     />
                     {searchQuery && (

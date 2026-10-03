@@ -834,7 +834,7 @@ export default function BatchGenerate() {
                                         type="text"
                                         value={charName}
                                         onChange={(event) => setCharName(event.target.value)}
-                                        placeholder="e.g. Elara Moonwhisper"
+                                        aria-label="Character name" placeholder="e.g. Elara Moonwhisper"
                                         className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                                     />
                                 </div>

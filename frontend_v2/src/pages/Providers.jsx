@@ -246,7 +246,7 @@ export default function Providers() {
                         type="text"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search providers..."
+                        aria-label="Search providers" placeholder="Search providers..."
                         className="w-full bg-[#0B0E14]/80 border border-white/10 rounded-xl pl-12 pr-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 shadow-inner glow-focus placeholder-gray-600 font-medium"
                     />
                 </label>

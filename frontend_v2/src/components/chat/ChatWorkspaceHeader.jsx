@@ -90,7 +90,7 @@ export default function ChatWorkspaceHeader({
                             type="text"
                             value={searchQuery}
                             onChange={handleSearchInput}
-                            placeholder="Search messages..."
+                            aria-label="Search messages" placeholder="Search messages..."
                             className="w-40 lg:w-56 px-3 py-1.5 pl-8 bg-gray-800/80 border border-white/10 rounded-lg text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                             autoFocus
                         />

@@ -194,7 +194,7 @@ export default React.memo(function StoryEditor({ isPreviewMode, editorContent, o
                                     value={editorContent}
                                     onChange={(e) => onEditorChange(e.target.value)}
                                     disabled={isStreaming}
-                                    placeholder="Begin your story here (Markdown supported)..."
+                                    aria-label="Chapter content" placeholder="Begin your story here (Markdown supported)..."
                                     className="w-full flex-1 bg-transparent px-6 py-4 text-gray-100 font-serif text-lg leading-relaxed resize-none outline-none story-editor-textarea"
                                 />
                             </>

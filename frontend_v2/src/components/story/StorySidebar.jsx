@@ -32,7 +32,7 @@ export default React.memo(function StorySidebar({ stories, activeStoryId, onSele
                         value={newTitle}
                         onChange={e => setNewTitle(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
-                        placeholder="New story title..."
+                        aria-label="Story title" placeholder="New story title..."
                         className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                         disabled={creating}
                     />

@@ -249,7 +249,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={20} />
                         <input
                             type="text"
-                            placeholder="Search models..."
+                            aria-label="Search models" placeholder="Search models..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             onKeyDown={(e) => {

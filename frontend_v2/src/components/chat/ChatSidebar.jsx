@@ -76,7 +76,7 @@ export default function ChatSidebar({
                     type="text"
                     value={chatSearchQuery}
                     onChange={(e) => { setChatSearchQuery(e.target.value); setChatOffset(0); }}
-                    placeholder="Search chats..."
+                    aria-label="Search chats" placeholder="Search chats..."
                     className="w-full bg-gray-800/60 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/40"
                 />
             </div>

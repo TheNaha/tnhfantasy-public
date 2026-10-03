@@ -428,6 +428,7 @@ function ChatContextPanel() {
                     </div>
                     <button
                         role="switch"
+                        aria-label="Allow image generation"
                         aria-checked={activeChat?.allow_image_generation !== false}
                         onClick={() => onChatUpdate({ allow_image_generation: activeChat?.allow_image_generation === false })}
                         className={clsx(
@@ -450,6 +451,7 @@ function ChatContextPanel() {
                     </div>
                     <button
                         role="switch"
+                        aria-label="Allow narration"
                         aria-checked={activeChat?.allow_narration !== false}
                         onClick={() => onChatUpdate({ allow_narration: activeChat?.allow_narration === false })}
                         className={clsx(
@@ -488,6 +490,7 @@ function ChatContextPanel() {
                     </div>
                     <button
                         role="switch"
+                        aria-label="Idle simulation"
                         aria-checked={activeChat?.idle_sim_enabled === true}
                         onClick={() => onChatUpdate({ idle_sim_enabled: !activeChat?.idle_sim_enabled })}
                         className={clsx(

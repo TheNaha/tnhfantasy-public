@@ -172,7 +172,7 @@ export default function Prompts() {
                         type="text"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search prompts..."
+                        aria-label="Search prompts" placeholder="Search prompts..."
                         className="w-full pl-9 pr-4 py-2 bg-gray-800/60 border border-white/10 rounded-lg text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                     />
                 </div>

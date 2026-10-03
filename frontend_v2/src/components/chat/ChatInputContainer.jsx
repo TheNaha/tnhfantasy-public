@@ -63,7 +63,7 @@ export default function ChatInputContainer({
                             }
                         }}
                     />
-                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAttachmentChange} className="sr-only" />
+                    <input ref={fileInputRef} type="file" aria-label="Attach image" accept="image/*" onChange={handleAttachmentChange} className="sr-only" />
                     
                     <StreamingInput
                         textareaRef={textareaRef}

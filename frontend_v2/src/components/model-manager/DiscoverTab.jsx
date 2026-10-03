@@ -202,7 +202,7 @@ export default function DiscoverTab() {
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={20} />
                         <input
                             type="text"
-                            placeholder="Search models..."
+                            aria-label="Search models" placeholder="Search models..."
                             value={query}
                             onChange={(e) => setQuery(e.target.value)}
                             enterKeyHint="search"
@@ -235,7 +235,7 @@ export default function DiscoverTab() {
                 <div className="flex gap-3 min-w-0">
                     <input
                         type="text"
-                        placeholder="Paste CivitAI or HuggingFace URL..."
+                        aria-label="Model URL to import" placeholder="Paste CivitAI or HuggingFace URL..."
                         value={urlInput}
                         onChange={(e) => setUrlInput(e.target.value)}
                         className="flex-1 min-w-0 bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-3.5 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 shadow-inner glow-focus placeholder-gray-600 font-medium transition-all"
@@ -335,7 +335,7 @@ export default function DiscoverTab() {
                         <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Creator</label>
                         <input 
                             type="text" 
-                            placeholder="@username"
+                            aria-label="CivitAI username" placeholder="@username"
                             value={filterUsername}
                             onChange={e => setFilterUsername(e.target.value)}
                             className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white h-10 w-[140px] shadow-inner glow-focus focus:ring-2 focus:ring-blue-500/50 outline-none placeholder-gray-600"
@@ -345,7 +345,7 @@ export default function DiscoverTab() {
                         <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Tag</label>
                         <input 
                             type="text" 
-                            placeholder="#tag"
+                            aria-label="Model tag" placeholder="#tag"
                             value={filterTag}
                             onChange={e => setFilterTag(e.target.value)}
                             className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white h-10 w-[140px] shadow-inner glow-focus focus:ring-2 focus:ring-purple-500/50 outline-none placeholder-gray-600"

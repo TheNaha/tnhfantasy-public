@@ -490,7 +490,7 @@ export default React.memo(function StoryContextPanel({
                                 onUpdateStory({ description: value });
                             }
                         }}
-                        placeholder="A brief description of this story world..."
+                        aria-label="Story description" placeholder="A brief description of this story world..."
                         rows={3}
                         className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 resize-none"
                     />
@@ -510,7 +510,7 @@ export default React.memo(function StoryContextPanel({
                                 onUpdateStory({ memory: value });
                             }
                         }}
-                        placeholder="Persistent facts the AI should always remember (e.g. the protagonist is cursed to turn to stone at midnight)..."
+                        aria-label="Persistent facts the AI should always remember" placeholder="Persistent facts the AI should always remember (e.g. the protagonist is cursed to turn to stone at midnight)..."
                         rows={3}
                         className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-amber-500/50 resize-none"
                     />
