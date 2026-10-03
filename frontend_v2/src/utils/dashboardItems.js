@@ -209,20 +209,40 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
     }
 
     Array.from(mergedJobs.values()).forEach((job) => {
-        if (job.status === 'completed' && job.outputs && job.outputs.length > 0) {
-            const groupedImages = imagesByJobId.get(job.id);
-            const anchoredTimelineDate = resolveTimelineDate(
-                job.id,
-                [
-                    job.created_at,
-                    getPersistedJobTimelineAnchor(groupedImages?.[0]),
-                    groupedImages?.[0]?.timelineDate,
-                    groupedImages?.[0]?.date,
-                    groupedImages?.[0]?.mtime,
-                    0,
-                ],
-                jobTimelineOverrides
-            );
+        const groupedImages = imagesByJobId.get(job.id);
+        const anchoredTimelineDate = resolveTimelineDate(
+            job.id,
+            [
+                job.created_at,
+                getPersistedJobTimelineAnchor(groupedImages?.[0]),
+                groupedImages?.[0]?.timelineDate,
+                groupedImages?.[0]?.date,
+                groupedImages?.[0]?.mtime,
+                0,
+            ],
+            jobTimelineOverrides
+        );
+
+        /* A finished job is replaced by its images — and "finished" is decided by
+           the images existing, not by a status string.
+
+           It used to be `job.status === 'completed'` AND `outputs.length > 0`, read
+           from whichever list the row came from, and those two lists disagree for a
+           while after a job finishes. The completion event removes the job from
+           `['jobs','active']` synchronously, but the jobs list fetched alongside
+           gallery page 1 still describes it as `processing` until something
+           refetches it — and a processing row has `outputs: []`, so it failed that
+           branch twice over. The merge takes the active list as authoritative only
+           for ids it *has*, so the stale historical row survived, its status was
+           non-terminal, and it was pushed as a card: a finished job sitting in the
+           timeline claiming it was still running. That is the "the job card isn't
+           getting replaced by the image" report.
+
+           Asking the asset index cannot go stale. If the image for this job is in
+           the loaded pages, the job is done, whatever any status says. */
+        const isFinished = job.status === 'completed' || (groupedImages && groupedImages.length > 0);
+
+        if (isFinished) {
 
             if (groupedImages && groupedImages.length > 1) {
                 combined.push({
@@ -253,9 +273,19 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
                 return;
             }
 
-            const outputFilename = job.outputs[0];
+            // Output filename, for an asset the indexer did not stamp with a job
+            // id (a re-index, an import, an output written outside a job).
+            //
+            // `job.outputs[0]` is an OBJECT from `/api/jobs` —
+            // `{path, type, filename, subfolder}` — not a filename. It used to be
+            // passed straight into a Map keyed by `image.name`, so the lookup was
+            // always `undefined` and this fallback was dead. The image still
+            // appeared via the pass below, but with no `_replacedJobId` and no job
+            // attached, so it lost its link to the job that made it.
+            const firstOutput = (job.outputs || [])[0];
+            const outputFilename = typeof firstOutput === 'string' ? firstOutput : firstOutput?.filename;
             // ⚡ Bolt: Use O(1) hash map lookup instead of O(N) array find
-            const matchingImage = imagesByName.get(outputFilename);
+            const matchingImage = outputFilename ? imagesByName.get(outputFilename) : undefined;
             if (matchingImage && !usedImages.has(matchingImage.name)) {
                 combined.push({
                     ...matchingImage,
@@ -270,8 +300,10 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
             return;
         }
 
-        // Only surface in-progress jobs as cards — failed/cancelled jobs
-        // (e.g. LLM failures) must not linger in the timeline.
+        // No image in the loaded pages and not certainly finished. Only genuinely
+        // in-progress jobs get a card — a completed job whose asset is not
+        // queryable yet, and failed or cancelled ones (e.g. LLM failures), must not
+        // linger in the timeline.
         if (job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {
             combined.push(job);
         }
