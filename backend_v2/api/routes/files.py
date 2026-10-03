@@ -1406,18 +1406,33 @@ async def list_files_endpoint(
             return {"files": paginated, "total": total}
             
         except Exception as e:
+            # A DB failure here used to fall through to a filesystem scan and
+            # answer 200 with a *different, smaller* result set — the model list
+            # silently changed shape depending on whether Postgres was reachable.
+            # The `output` branch above this one already rejected exactly this
+            # ("a 200 with an empty list is the one response shape that cannot be
+            # told apart from 'there is nothing here'"); the models branch kept
+            # the lying fallback. A local scan is still attempted, but only as a
+            # *declared* degradation: the response says it came from the
+            # filesystem, so the UI can say so too.
             logger.warning("model_service_query_failed", error=str(e), exc_info=True)
-        
-        # Fallback: try to read from local cache directory
-        # Run in thread pool to avoid blocking I/O
-        return await asyncio.to_thread(
-            _scan_local_model_directory,
-            model_dir_type,
-            search,
-            sort,
-            limit,
-            offset
-        )
+            try:
+                scanned = await asyncio.to_thread(
+                    _scan_local_model_directory,
+                    model_dir_type,
+                    search,
+                    sort,
+                    limit,
+                    offset,
+                )
+            except Exception as scan_error:
+                logger.error("model_directory_scan_failed", error=str(scan_error), exc_info=True)
+                raise ServiceUnavailableError(
+                    "Model listing is unavailable", service="model_listing"
+                ) from scan_error
+            scanned["source"] = "filesystem_fallback"
+            scanned["degraded"] = True
+            return scanned
     
     return {"files": [], "total": 0}
 
