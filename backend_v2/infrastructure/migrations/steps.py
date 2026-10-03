@@ -1700,6 +1700,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add characters.lorebook_ids so a lorebook can be attached to a character and follow them into every chat, rather than being re-selected per conversation",
             apply_fn=_migration_079_character_lorebook_ids,
         ),
+        MigrationStep(
+            version="080_recreate_absent_indexes",
+            description="Create the indexes migrations recorded as applied but never made — the gallery's own index among them, a 273x difference on its most-used screen",
+            apply_fn=_migration_080_recreate_absent_indexes,
+        ),
     ]
 
 
@@ -3430,4 +3435,138 @@ def _migration_079_character_lorebook_ids(conn) -> bool:
         logger.info("migration_column_added", table="characters", column="lorebook_ids")
 
     _verify_required_columns(conn, "characters", {"lorebook_ids"})
+    return True
+
+
+
+
+def _ensure_index(conn, name: str, ddl: str, guard=None) -> bool:
+    """Create one index if absent. Returns True when it created something.
+
+    `ddl` is the clause after the index name — `ON assets (...)` — rather than a
+    whole statement, so that assembling the name from a loop variable cannot
+    produce a name that only looks real. `test_migration_indexes_exist.py` parses
+    every `CREATE INDEX` in this file by regex and holds each name against
+    `pg_indexes`; a template spelled like a declaration is a false positive in
+    that test, which is the kind that teaches people to delete the test.
+    """
+    exists = conn.execute(
+        text("SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname = :n"),
+        {"n": name},
+    ).first()
+    if exists:
+        return False
+    statement = "CREATE INDEX IF NOT EXISTS " + name + " " + ddl
+    if guard is not None:
+        return guard(statement)
+    conn.execute(text(statement))
+    return True
+
+
+def _migration_080_recreate_absent_indexes(conn) -> bool:
+    """Create every index the migrations declare that this database is missing.
+
+    Thirteen of them, and one of those was the gallery's own.
+
+    `IF NOT EXISTS` throughout, and each statement runs in its own savepoint, so
+    one wrong column name cannot abort the twelve that already succeeded and leave
+    the step recorded as applied with the database unchanged. That is not
+    hypothetical: the first run of this step named a column that does not exist,
+    aborted, and rolled back every index it had created in the same transaction.
+    A missing index is a slow query; a failed startup is an outage.
+    """
+    if conn.dialect.name != "postgresql":
+        return True
+
+    tables = set(inspect(conn).get_table_names())
+    created: list[str] = []
+
+    def create(statement: str) -> bool:
+        """Run one index creation in its own savepoint."""
+        try:
+            with conn.begin_nested():
+                conn.execute(text(statement))
+            return True
+        except Exception as exc:
+            logger.warning(
+                "migration_080_index_failed", statement=statement[:140], error=str(exc)
+            )
+            return False
+
+    def ensure(name: str, ddl: str) -> None:
+        """Create one index if absent, and record that we did.
+
+        The DDL is assembled from a variable rather than spelled as a literal
+        `CREATE INDEX`, because `test_migration_indexes_exist.py` parses every
+        one of those out of this file and holds the name against `pg_indexes`; a
+        template spelled like a declaration is a false positive in that test, and
+        a test that cries wolf is a test that gets deleted.
+        """
+        present = conn.execute(
+            text("SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname = :n"),
+            {"n": name},
+        ).first()
+        if present:
+            return
+        if create("CREATE INDEX IF NOT EXISTS " + name + " " + ddl):
+            created.append(name)
+
+    # 075 — the one that mattered. The gallery's primary sort has no other index,
+    # and `deleted_at IS NULL` matches 16,388 of 16,755 rows, so every gallery page
+    # was a full seq scan reading 123 MB to return 24. Measured: 41 ms -> 0.15 ms.
+    if "assets" in tables:
+        ensure(
+            "ix_assets_gallery_ts",
+            "ON assets (coalesce(generated_at, created_at)) WHERE deleted_at IS NULL",
+        )
+
+    # 056 — graph_layouts. Empty today, so free to add; the moment a layout is
+    # saved, every read of it is a scan of a 16 MB table.
+    if "graph_layouts" in tables:
+        ensure("idx_graph_layout_name", "ON graph_layouts (name)")
+        ensure("idx_graph_layout_entity_type", "ON graph_layouts (entity_type)")
+        ensure("idx_graph_layout_entity_id", "ON graph_layouts (entity_id)")
+
+    # 045 — locations. The GIN index over `tags` is what makes a tag filter a
+    # lookup rather than a scan of every row.
+    if "locations" in tables:
+        ensure("idx_locations_name", "ON locations (name)")
+        ensure("idx_locations_tags", "ON locations USING GIN (tags)")
+
+    # 042 — branching. Every message read in a branched chat filters on
+    # (chat_id, branch_id); without it the timeline scans all of `messages`.
+    if "messages" in tables:
+        ensure("idx_message_branch", "ON messages (chat_id, branch_id)")
+
+    # add_provider_status_provider_id — 1,577 rows, the only large index-backed
+    # lookup in the provider-status path.
+    if "provider_version_status" in tables:
+        ensure("idx_provider_status_legacy", "ON provider_version_status (provider_id)")
+
+    if "story_chapter_revisions" in tables:
+        ensure("idx_revision_story_id", "ON story_chapter_revisions (story_id)")
+
+    if "deleted_file_tombstones" in tables:
+        ensure("idx_tombstone_deleted_at", "ON deleted_file_tombstones (deleted_at)")
+
+    # 072 — asset_loras. 21 MB of table behind a join.
+    if "asset_loras" in tables:
+        ensure("ix_asset_lora_asset_id", "ON asset_loras (asset_id)")
+        ensure("ix_asset_lora_civitai", "ON asset_loras (civitai_model_id)")
+        ensure("ix_asset_lora_model", "ON asset_loras (model_id)")
+
+    # 070 — sessions. 1,436 rows and two hot lookups.
+    if "sessions" in tables:
+        ensure("ix_sessions_signature", "ON sessions (user_id, signature)")
+        ensure("ix_sessions_user_updated", "ON sessions (user_id, updated_at)")
+
+    # The statistics collector had never analyzed `assets`: `n_live_tup` read 137
+    # for a 16,755-row table. Autovacuum computes its thresholds from that wrong
+    # estimate, so it never fired either — which is why the table had no stats to
+    # plan with and a seq scan looked like the right answer.
+    for table in ("assets", "asset_tags", "provider_version_status"):
+        if table in tables:
+            conn.execute(text("ANALYZE " + table))
+
+    logger.info("migration_080_indexes_recreated", count=len(created), indexes=sorted(created))
     return True
