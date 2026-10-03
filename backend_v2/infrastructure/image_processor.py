@@ -74,31 +74,42 @@ def get_thumb_output_path(base_dir: str = None, user_id: str = "default_user", w
 def save_image_with_metadata(image: Image.Image, path: str, metadata: dict) -> str:
     """
     Save PNG with embedded JSON metadata in text chunks.
-    
+
     Args:
         image: PIL Image to save
         path: Output path for the image
         metadata: Dict containing workflow, prompt, and other metadata
-    
+
     Returns:
         Path to saved image
+
+    `image_processing.embed_metadata_in_png` is honoured here. It was rendered
+    as an editable toggle in Settings and written to config.json, but the chunks
+    were added unconditionally and nothing consulted the config — so turning it
+    off produced a success toast and identical files. The sidecar fallback is
+    what keeps the metadata readable when the chunks are off; see
+    `write_metadata_sidecar`, which the callers below already write.
     """
     pnginfo = PngInfo()
-    
-    # Embed individual fields for compatibility with other tools
-    if "workflow" in metadata:
-        pnginfo.add_text("workflow", json.dumps(metadata["workflow"]))
-    if "prompt" in metadata:
-        pnginfo.add_text("prompt", json.dumps(metadata["prompt"]))
-    
-    # Embed full metadata as compressed JSON for our use
-    full_metadata_str = json.dumps(metadata)
-    pnginfo.add_text("comfy_metadata", full_metadata_str)
-    
-    # Save with embedded metadata
-    image.save(path, pnginfo=pnginfo)
-    logger.info("image_saved_with_metadata", path=path)
-    
+    embed = app_config.get_embed_metadata_in_png()
+
+    if embed:
+        # Embed individual fields for compatibility with other tools
+        if "workflow" in metadata:
+            pnginfo.add_text("workflow", json.dumps(metadata["workflow"]))
+        if "prompt" in metadata:
+            pnginfo.add_text("prompt", json.dumps(metadata["prompt"]))
+
+        # Embed full metadata as compressed JSON for our use
+        full_metadata_str = json.dumps(metadata)
+        pnginfo.add_text("comfy_metadata", full_metadata_str)
+
+        image.save(path, pnginfo=pnginfo)
+        logger.info("image_saved_with_metadata", path=path)
+    else:
+        image.save(path)
+        logger.info("image_saved_without_metadata", path=path)
+
     return path
 
 

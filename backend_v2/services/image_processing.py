@@ -16,6 +16,7 @@ from typing import Any
 
 from PIL import Image
 
+import config
 from config import settings
 from infrastructure.logging import get_logger
 
@@ -148,6 +149,13 @@ def build_job_outputs(
                 with Image.open(io.BytesIO(image_data)) as img_obj:
                     save_image_with_metadata(img_obj, output_path, full_metadata)
                 logger.debug("image_saved_with_metadata", path=output_path, bytes=len(image_data))
+                # `embed_metadata_in_png` off means the PNG carries no text
+                # chunks, so the sidecar is the only copy of the metadata.
+                # Written here rather than inside `save_image_with_metadata`
+                # because that helper's contract is "one PNG, one path" and
+                # three other callers use it without wanting a sidecar.
+                if not config.get_embed_metadata_in_png():
+                    write_metadata_sidecar(output_path, full_metadata)
             except Exception as exc:
                 logger.error(
                     "image_save_with_metadata_failed",
