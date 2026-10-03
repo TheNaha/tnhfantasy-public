@@ -13,6 +13,7 @@ from api.deps import (
 )
 from api.routes.websocket import broadcast_to_all
 from core.exceptions import ComfyError, NotFoundError, ValidationError
+from infrastructure.background_tasks import start_background_task
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from services.model_civitai_sync import ModelCivitaiSyncService
 
@@ -72,7 +73,6 @@ async def batch_get_autopopulate_candidates(
     service: ModelCivitaiSyncService = Depends(get_model_civitai_sync_service)
 ):
     """Batch fetch CivitAI search candidates for multiple models."""
-    import asyncio
     semaphore = asyncio.Semaphore(3)
     
     async def fetch_one(model_id: str):
@@ -221,7 +221,18 @@ async def autopopulate_all_models(
                 except Exception as exc:
                     logger.error("background_autopopulate_failed", error=str(exc))
 
-        asyncio.create_task(_background_autopopulate())
+        # `start_background_task`, not a bare `asyncio.create_task`. CPython
+        # holds only a weak reference to a running task, so an unreferenced one
+        # can be garbage-collected mid-flight — this handler returns
+        # immediately, leaving nothing else pointing at it. It is also absent
+        # from `_background_tasks`, so `cancel_background_tasks()` misses it at
+        # shutdown. The helper is used in nine other places, including the
+        # sibling route that does the identical "kick off work, return 200"
+        # shape (`providers/crud.py` -> ping_containers).
+        start_background_task(
+            _background_autopopulate(),
+            task_name=f"autopopulate-{len(models_to_process)}",
+        )
         return {
             "status": "processing",
             "message": f"Started autopopulation of {len(models_to_process)} models in background",
