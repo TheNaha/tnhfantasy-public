@@ -124,11 +124,23 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
 
   return (
     <RegistryContext.Provider value={registry}>
-      <div className="w-full h-full relative flex rounded-2xl overflow-hidden border border-white/10 shadow-2xl glass-panel">
+      {/* `flex-col` below `sm`, not `flex`. This is the actual cause of the
+          54px canvas at 360: the sidebar is `w-full`, and inside a *row* a
+          `w-full` flex item's basis is the whole container, so the canvas's
+          `basis-0 grow` had zero free space to grow into and measured 0px wide.
+          Stacking the palette above the graph on a phone gives the canvas the
+          full width, which is the only arrangement that works when the two
+          cannot both be side by side. */}
+      <div className="w-full h-full relative flex flex-col sm:flex-row rounded-2xl overflow-hidden border border-white/10 shadow-2xl glass-panel">
         {/* Sidebar for Node Palette */}
         <NodeSidebar registry={registry} />
 
-        <div className="flex-1 h-full relative" onDrop={onDrop} onDragOver={onDragOver}>
+        {/* `min-w-0` so the canvas keeps a floor the sidebar cannot eat, and
+            `basis-0 grow` so it claims the remaining row rather than being
+            measured against its content. Without it the flex item's automatic
+            minimum size is the widest node, which is how a 54px canvas
+            happened. */}
+        <div className="flex-1 min-w-0 basis-0 grow h-full relative" onDrop={onDrop} onDragOver={onDragOver}>
           <ReactFlow
             nodes={nodes}
             edges={edges}

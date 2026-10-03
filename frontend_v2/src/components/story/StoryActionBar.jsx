@@ -33,7 +33,20 @@ export default React.memo(function StoryActionBar({
     hasIllustration,
 }) {
     return (
-        <div className="max-w-3xl mx-auto flex flex-col sm:flex-row gap-2 sm:gap-3">
+        // Stacked until `2xl`, not `sm`. At >=640px this was
+        // `flex-direction: row` with three children that all carry `shrink-0`:
+        // the left group needed 649px, the right group 299px, and the
+        // `flex-1 min-w-0` beat input in between was squeezed to exactly 0px.
+        // Its children then overflowed *on top of* the right group — 7 sibling
+        // overlaps and up to 9 controls off-screen, measured at 640, 768 and
+        // 900. Sibling overlaps rather than clipping, so panning did not help:
+        // a real touch tap at the centre of "Publish story to web", 125px
+        // outside the viewport, delivered no event at all.
+        //
+        // `sm:overflow-x-auto` was what hid this: it turns "unreachable" into
+        // "the whole page pans sideways", so the editor placeholder lost its left
+        // half instead. `2xl` is where 649 + 299 + a usable input actually fit.
+        <div className="max-w-3xl mx-auto flex flex-col 2xl:flex-row gap-2 2xl:gap-3">
             <div className="grid grid-cols-2 sm:flex gap-2 shrink-0">
                 <button
                     onClick={onToggleBeats}
@@ -105,7 +118,7 @@ export default React.memo(function StoryActionBar({
                         "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all text-sm",
                         isIllustrating
                             ? "bg-amber-500/50 text-white/50 cursor-not-allowed"
-                            : "bg-amber-600 text-white hover:bg-amber-500"
+                            : "bg-amber-700 text-white hover:bg-amber-600"  // white on amber-600 is 3.19:1; -700 is 5.02:1
                     )}
                 >
                     {isIllustrating ? (
@@ -158,7 +171,7 @@ export default React.memo(function StoryActionBar({
                         value={beatInput}
                         onChange={(e) => onBeatInputChange(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && onAddBeat()}
-                        placeholder="Add a story beat..."
+                        aria-label="Story beat" placeholder="Add a story beat..."
                         className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 sm:px-4 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 min-w-0"
                     />
                     <button
@@ -203,7 +216,7 @@ export default React.memo(function StoryActionBar({
                 {onPublish && !isPublished && (
                     <button
                         onClick={onPublish}
-                        className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-all text-sm"
+                        className="flex items-center gap-2 px-3 py-2 bg-green-700 text-white rounded-lg font-medium hover:bg-green-600 transition-all text-sm"
                         title="Publish story to web"
                     >
                         <BookOpen size={14} /> <span className="hidden sm:inline">Publish</span>

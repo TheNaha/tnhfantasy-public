@@ -312,6 +312,14 @@ const Statistics = () => {
                         side exceed 768px, and the app root clips the excess with
                         `overflow-x-hidden`, so "30D" and "ALL TIME" were outside
                         the viewport and unreachable on every tablet. */}
+                    {/* `flex-wrap` on every width, not from `sm:` up. Below
+                        640px each `w-fit` group was a `flex-col` of two
+                        non-wrapping rows inside a panel whose content box was
+                        216px, so the second group's last tab ("ALL TIME",
+                        95.9px) ran to x=377 with the viewport at 360 and no
+                        ancestor could scroll to it. Wrapping from the first
+                        pixel is what makes the two groups share the row
+                        honestly at 360. */}
                     <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
                         <div className="flex bg-[#0B0E14]/80 backdrop-blur-md border border-white/10 p-1.5 rounded-2xl w-fit shadow-inner">
                             {[

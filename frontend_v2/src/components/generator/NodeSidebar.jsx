@@ -31,13 +31,21 @@ export default function NodeSidebar({ registry }) {
   });
 
   return (
-    <div className="w-64 h-full bg-[#0B0E14] border-r border-white/10 flex flex-col z-10">
+    // `w-64 sm:w-64`, not a bare `w-64`. This sidebar has no responsive
+    // variant, so inside the `flex` shell at `ReactFlowEditor.jsx:127` it took a
+    // fixed 256px of a 312px row and left the graph canvas 54px wide at 360
+    // (84px at 390, 124px at 430) — against `ComfyNode.jsx`'s `min-w-[240px]`,
+    // so every node was 4.4x wider than the canvas meant to hold it. The 202px
+    // minimap was wider than that canvas and painted over the palette. Full
+    // width below `sm`, which stacks the palette above the graph instead of
+    // beside it.
+    <div className="w-full sm:w-64 h-full max-h-56 sm:max-h-none bg-[#0B0E14] border-r sm:border-b border-white/10 flex flex-col z-10">
       <div className="p-3 border-b border-white/10">
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 text-gray-500" size={16} />
           <input
             type="text"
-            placeholder="Search nodes..."
+            aria-label="Search nodes" placeholder="Search nodes..."
             className="w-full bg-[#111827] border border-white/10 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-blue-500 transition-colors"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}

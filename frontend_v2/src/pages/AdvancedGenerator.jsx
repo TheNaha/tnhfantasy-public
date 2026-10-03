@@ -116,7 +116,9 @@ export default function AdvancedGenerator() {
                             <button
                                 onClick={onRunWorkflow}
                                 disabled={generating || (editorMode === 'json' && !workflowJson)}
-                                className="px-6 py-2 bg-green-600 rounded-lg font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                /* green-600, not green-700: white on green-600 measures 3.30:1, below WCAG
+                                   AA's 4.5:1 for this 14px label. -700 is 5.02:1. */
+                                className="px-6 py-2 bg-green-700 rounded-lg font-medium text-white hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
                                 {generating ? <Loader2 className="animate-spin" size={18} /> : <Play size={18} />}
                                 Run Workflow
