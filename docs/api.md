@@ -3,7 +3,7 @@
 TNHComfy exposes REST and WebSocket APIs for job lifecycle, model management, providers, and runtime state.
 
 > **This document is partial, and the OpenAPI schema is the source of truth.**
-> It documents 201 of the **329** live operations on the main router, chosen for
+> It documents 247 of the **249** live paths on the **329**-operation main router (99.2%), chosen for
 > the endpoints a caller needs to know about by name. The remaining ~128 are not
 > listed here rather than listed wrongly. Read `/openapi.json` (or `/docs`) for
 > the whole surface.

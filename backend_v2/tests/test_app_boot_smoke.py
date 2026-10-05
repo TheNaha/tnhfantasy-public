@@ -366,8 +366,16 @@ async def test_lifespan_runs_every_declared_startup_phase(boot, session):
     _args, kwargs = calls["cleanup_provider_state_artifacts"][0]
     assert kwargs == {"skip_orphan_cleanup": True}
     assert calls["configure_worker_pool"], "worker pool was never configured"
-    assert await _await_until(lambda: bool(calls["asset_migration"])), (
-        "asset migration task never started"
+    # 20s, not the default 5s, and for the same reason the provider-consumer
+    # assertion below uses it: the phase is dispatched to a worker thread, so
+    # "started" is only observable once the OS has scheduled it. Under a full
+    # suite run — 2550 other tests having just hammered the same event loop —
+    # 5s is tight enough to fail intermittently, and the failure message
+    # ("task never started") misattributes a scheduling delay to a missing
+    # startup phase. Measured: one failure in a 995s full-suite run, 3/3 passes
+    # in isolation at ~2.5s each.
+    assert await _await_until(lambda: bool(calls["asset_migration"]), timeout=20.0), (
+        "asset migration task never started within 20s of startup"
     )
     _args, kwargs = calls["load_known_provider_hosts"][0]
     assert kwargs == {"force": True}, "provider-host cache was primed from a stale read"

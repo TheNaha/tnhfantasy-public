@@ -105,7 +105,17 @@ echo "==> Network exposure"
 #
 # This was measured, not assumed: `curl http://192.168.1.28:5174/api/ready`
 # answered 200 while the backend answered nothing on any host port.
-frontend_bind=$(grep -E "^COMFY_FRONTEND_BIND=" .env 2>/dev/null | head -1 | cut -d= -f2-)
+# The SHELL wins over `.env` in compose interpolation, so a value exported in the
+# environment overrides the file and this check has to read both or it cannot
+# report the binding that will actually be published. Demonstrated:
+#
+#   COMFY_FRONTEND_BIND=0.0.0.0 docker compose config
+#     frontend_v2 ports -> 127.0.0.1:5174, 0.0.0.0:5174
+#
+# while reading `.env` alone still reported 100.150.0.4 and downgraded to a note —
+# i.e. exactly the condition this check exists to catch was unreachable when set
+# the way an operator would actually set it.
+frontend_bind=${COMFY_FRONTEND_BIND:-$(grep -E "^COMFY_FRONTEND_BIND=" .env 2>/dev/null | head -1 | cut -d= -f2-)}
 # 127.0.0.2 is the compose default for the second binding. The whole of
 # 127.0.0.0/8 is loopback and unroutable, so it is a safe default rather than a
 # wildcard — see the comment in docker-compose.yml.

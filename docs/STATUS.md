@@ -170,9 +170,13 @@ two Dockerfiles (plus `backend_v2/requirements.txt` and
 there because GitHub has no job-level `paths:` — `on.<event>.paths` filters the
 whole workflow — and it is a few minutes on a Dockerfile change.
 
-`docs/api.md` covers 201 of the **329** live operations and had 26 endpoints that
-do not exist until 2026-09-29, including two whole sections under the wrong URL
-prefix. It is checked against `app.openapi()["paths"]`, not against itself.
+`docs/api.md` documents **247 of 249** live paths (99.2%) on the 329-operation
+router. It had 26 endpoints that did not exist until 2026-09-29, including two
+whole sections under the wrong URL prefix. It is checked against
+`app.openapi()["paths"]`, not against itself — but the check's assertion is
+`pair & {real_paths, real_ops}`, so one of the two matching is enough for it to
+pass; a stale figure in the prose survived a passing guard. See
+`docs/audit-2026-10-05.md` item 17.
 
 Running the suites is the point. 128 provider tests, 11 frontend tests and 10
 backend tests were added by the 2026-09-27 pass alone, and the counts above are
@@ -353,9 +357,11 @@ and reports success while the value goes nowhere.*
   switched off."*
 - **`docs/deployment.md` told the operator to bind 8002 to `0.0.0.0`** — advice
   that would have reopened the exact hole the previous pass closed.
-- `/providers` route closure **−86 kB gzip** (a 290 kB charting library replaced
-  with an 8-line SVG for a sparkline), and `socket.io-client` moved out of the
-  eager entry chunk.
+- `/providers` route closure **−86 kB gzip** (a charting library replaced with an
+  8-line SVG for a sparkline), and `socket.io-client` moved out of the eager
+  entry chunk. The charting library itself is still there, correctly lazy: it is
+  `vendor-charts`, 361.61 kB raw / 107.16 kB gzip, and absent from
+  `dist/index.html`'s eager set.
 
 Four claims of the previous audit did not survive re-measurement and are
 corrected in its §6 — including that its `job_service.py` naive-datetime example
@@ -629,12 +635,27 @@ rather than tidying:
   desktop visit. It survived a green suite because being bound to `window` meant
   it always had a height, so it always rendered *something*.
 
-The heaviest frontend chunk also went from 1281.92 kB to 311.46 kB (`index-*.js`),
-with `StorySandbox` at 253.17 kB: the story editor was shipping all 594 of
-`refractor`'s syntax grammars to render prose. The bundle is not split into one
-small set of chunks — a 290 kB `LineChart` and a 311 kB entry chunk sit alongside
-25 kB route chunks — so "the heaviest chunk" is now a fact about a different file
-each time the router moves.
+The story editor was shipping all 594 of `refractor`'s syntax grammars to render
+prose; `refractor` is now absent from the `StorySandbox` chunk and
+`StorySandbox` is at 242.36 kB raw / 70.89 kB gzip.
+
+Current build, 2026-10-05 (re-measured, because the figures in the previous
+revision of this paragraph were wrong in both directions):
+
+| chunk | raw | gzip |
+|---|---|---|
+| `vendor-charts` (recharts, lazy) | 361.61 kB | 107.16 kB |
+| `index-*.js` (entry) | 273.92 kB | 85.88 kB |
+| `StorySandbox` | 242.36 kB | 70.89 kB |
+| `index-*.css` | 237.26 kB | 30.43 kB |
+| `AdvancedGenerator` | 180.69 kB | 58.00 kB |
+| **eager total** (8 files in `dist/index.html`) | **756.2 kB** | **198.0 kB** |
+| **all JS + CSS** (79 files) | **2782.5 kB** | **790.1 kB** |
+
+The bundle is split and every route is `React.lazy`; "the heaviest chunk" is a
+fact about a different file each time the router moves. `vendor-motion`
+(framer-motion, 113.1 kB raw / 37.3 kB gzip) is eagerly preloaded and is 19% of
+the gzip eager payload — it is not removable, 60 source files import it.
 
 ### Dropped after investigation, not overlooked
 

@@ -159,7 +159,6 @@ jobs:
       run: |
         cp .env.example .env
         cp .env.example.direct-url .env.direct-url
-        cp .env.example.remote-comfy .env.remote-comfy
         cp .env.example.provider.engines .env.modal-hp196
         cp .env.example.provider.engines .env.modal-stepmania
         cp .env.example.provider.engines .env.modal-zetsuke

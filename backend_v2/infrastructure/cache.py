@@ -3,6 +3,7 @@
 
 import asyncio
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from functools import wraps
 
 from cachetools import LRUCache, TTLCache
@@ -42,6 +43,47 @@ _CACHE_REGISTRY: dict[str, object] = {
     "lru": _lru_cache,
     "provider_stats": _provider_stats_cache,
 }
+
+# In-flight computations, keyed the same way as the cache.
+#
+# A TTL cache without single-flight is a stampede waiting for a cold key. The
+# wrapper used to be check-then-compute-then-store with nothing in between, so N
+# concurrent misses all missed and all ran the whole aggregation. Measured on
+# `/api/statistics/detailed` against live Postgres:
+#
+#   one cold request                       10.9 s
+#   eight concurrent cold requests         58-71 s EACH
+#   the same key afterwards                0.0008 s
+#
+# So the stampede did not make eight answers cheaper, it made every one of them
+# about six times slower than the single request that would have populated the
+# key — and the handler is `async def` calling `asyncio.to_thread`, so they all
+# land in the thread pool together and compete for the same connections.
+#
+# One `asyncio.Lock` per (cache, key), held across the computation. Waiters
+# block on the lock and then find the key in the cache, so exactly one
+# computation runs per key. The lock is removed once the result is stored, so
+# the map does not grow with the keyspace; the removal is guarded because two
+# waiters can observe the same lock object and the second `pop` would raise.
+_INFLIGHT: dict[tuple[str, str], asyncio.Lock] = {}
+
+
+@asynccontextmanager
+async def _single_flight(cache_name: str, key: str):
+    """Async context manager yielding `True` for the one caller that computes."""
+    slot = (cache_name, key)
+    lock = _INFLIGHT.get(slot)
+    owner = lock is None
+    if owner:
+        lock = asyncio.Lock()
+        _INFLIGHT[slot] = lock
+    await lock.acquire()
+    try:
+        yield owner
+    finally:
+        lock.release()
+        if owner:
+            _INFLIGHT.pop(slot, None)
 
 # Names `cached()` accepts, documented so a typo is obvious at the call site.
 KNOWN_CACHE_NAMES = frozenset(_CACHE_REGISTRY)
@@ -96,17 +138,27 @@ def cached(cache_name: str = "stats", ttl: int | None = None):
                 logger.debug("cache_hit", cache_name=cache_name, func=func.__name__)
                 metrics.track_cache_hit(cache_name)
                 return target_cache[key]
-            
-            logger.debug("cache_miss", cache_name=cache_name, func=func.__name__)
-            metrics.track_cache_miss(cache_name)
-            
-            # Execute function
-            result = await func(*args, **kwargs)
-            
-            # Store in cache
-            target_cache[key] = result
-            metrics.set_cache_size(cache_name, len(target_cache))
-            return result
+
+            async with _single_flight(cache_name, key) as owner:
+                # Re-check inside the lock: the caller we waited behind has
+                # already stored it.
+                if not owner and key in target_cache:
+                    logger.debug(
+                        "cache_hit_after_wait", cache_name=cache_name, func=func.__name__
+                    )
+                    metrics.track_cache_hit(cache_name)
+                    return target_cache[key]
+
+                logger.debug("cache_miss", cache_name=cache_name, func=func.__name__)
+                metrics.track_cache_miss(cache_name)
+
+                # Execute function
+                result = await func(*args, **kwargs)
+
+                # Store in cache
+                target_cache[key] = result
+                metrics.set_cache_size(cache_name, len(target_cache))
+                return result
         
         @wraps(func)
         def sync_wrapper(*args, **kwargs):

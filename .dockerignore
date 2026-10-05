@@ -33,6 +33,18 @@ venv/
 # Build/test artifacts
 dist/
 **/dist/
+# PyInstaller output from a local `build-agent-binaries` run, and Vite's dep
+# pre-bundle. Neither is an input to any image: the agent image *produces* the
+# binary, and the frontend image runs `npm run build` inside the container.
+#
+# Measured with these absent: 57.9 MB build context, of which 22.2 MB was
+# `remote_agent/build/.../tnhcomfy-agent.pkg`, 6.6 MB `PYZ-00.pyz` and 3.1 MB
+# `frontend_v2/.vite/deps/*.map` — 44 MB of 58 MB shipped to the daemon on every
+# remote-agent build so it could be discarded at the first instruction.
+remote_agent/build/
+**/build/
+.vite/
+**/.vite/
 test-results/
 **/test-results/
 .pytest_cache/
