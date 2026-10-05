@@ -85,11 +85,12 @@ DEFAULT_CONFIG = {
             "timeout": 300,
             "max_containers": 1,
             "scaledown_window": 5,
-            "vllm": {
-                "gpu_type": "A100",
-                "timeout_seconds": 3600,
-                "max_model_len": 8192,
-            },
+            # No `vllm` block. It held gpu_type / timeout_seconds /
+            # max_model_len and nothing ever read it — not
+            # `infrastructure/providers/modal_config.py`, not the validator
+            # below, not any route — so an operator could set it in `config.json`
+            # and see no effect. The LLM Modal engine reads its own
+            # `MODAL_VLLM_*` environment variables instead.
         },
     "api": {
         "gzip_minimum_size": 1000,
@@ -217,9 +218,10 @@ class Settings(BaseSettings):
     modal_timeout: int = 300
     modal_max_containers: int = 1
     modal_scaledown_window: int = 5
-    modal_vllm_gpu_type: str = "A100"
-    modal_vllm_timeout: int = 3600
-    modal_vllm_max_model_len: int = 8192
+    # `modal_vllm_gpu_type` / `modal_vllm_timeout` / `modal_vllm_max_model_len`
+    # were removed: three settings that nothing read, so the Settings API
+    # accepted them and returned them as if they governed the vLLM provider.
+    # The engine is configured through `MODAL_VLLM_*` in the provider's env.
     
     # API
     # Default to frontend dev server origin. Override via COMFY_CORS_ORIGINS for production.
@@ -405,6 +407,38 @@ def get_config() -> dict[str, Any]:
     return _config
 
 
+# Leaves for which a blank string means "unset", not "invalid".
+#
+# The Settings UI offers "(unset — backend falls back to its compiled-in
+# default)" for the default checkpoint, and sent `""` for it. `_check_str`
+# rejects a blank string by default, so the only way to express "unset" was a
+# 400 — the option could not be selected at all. Blank now means *remove the
+# key*, which is what the label claims: `resolve_default_checkpoint()` then
+# returns `DEFAULT_CHECKPOINT` because the key is genuinely absent, rather than
+# because it holds an empty string that happens to be treated as absent.
+BLANK_MEANS_UNSET = frozenset({("generator", "default_checkpoint")})
+
+
+def _split_unset(updates: dict[str, Any]) -> tuple[dict[str, Any], set[tuple[str, str]]]:
+    """Pull blank-valued unsettable leaves out of `updates`.
+
+    Returns the updates with those leaves removed, plus the set of
+    `(section, key)` pairs that were blank, for the caller to delete after the
+    merge. Sections that become empty are dropped so a deep merge cannot
+    re-create them.
+    """
+    unset: set[tuple[str, str]] = set()
+    remaining = {section: dict(body) for section, body in updates.items() if isinstance(body, dict)}
+    for section, body in list(remaining.items()):
+        for key, value in list(body.items()):
+            if (section, key) in BLANK_MEANS_UNSET and isinstance(value, str) and not value.strip():
+                unset.add((section, key))
+                body.pop(key)
+        if not body:
+            remaining.pop(section)
+    return remaining, unset
+
+
 def update_config(updates: dict[str, Any], persist: bool = True) -> dict[str, Any]:
     """
     Update configuration with new values.
@@ -425,8 +459,12 @@ def update_config(updates: dict[str, Any], persist: bool = True) -> dict[str, An
         load_config()
     
     # Validate updates before applying
-    _validate_config(updates)
-    
+    # Split out the blank-means-unset leaves BEFORE validating, so "unset" is not
+    # rejected by the very validator that guards against a typo'd blank.
+    unset_updates, unset_leaves = _split_unset(updates)
+
+    _validate_config(unset_updates)
+
     # Deep merge updates into current config.
     #
     # This is a read-modify-write of a module global, and `settings.py` calls it
@@ -435,7 +473,14 @@ def update_config(updates: dict[str, Any], persist: bool = True) -> dict[str, An
     # the merge and the write atomic with respect to each other; it is not
     # reentrant, so nothing inside may re-enter.
     with _config_lock:
-        _config = _deep_merge(_config, updates)
+        _config = _deep_merge(_config, unset_updates)
+
+        # Delete after the merge, inside the same lock, so a concurrent writer
+        # cannot observe (or re-persist) a half-applied unset.
+        for section, key in unset_leaves:
+            body = _config.get(section)
+            if isinstance(body, dict):
+                body.pop(key, None)
 
         # Persist to file if requested
         if not persist:

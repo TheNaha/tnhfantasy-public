@@ -1710,6 +1710,21 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Create the pgvector operator-class indexes on a fresh install, where create_all makes the table and the migration that would have indexed it skips",
             apply_fn=_migration_081_operator_class_indexes,
         ),
+        MigrationStep(
+            version="082_drop_redundant_message_chat_id_indexes",
+            description="Drop two single-column messages(chat_id) indexes that the composite (chat_id, created_at) index already serves",
+            apply_fn=_migration_082_drop_redundant_message_chat_id_indexes,
+        ),
+        MigrationStep(
+            version="083_drop_duplicate_entity_indexes",
+            description="Drop eight indexes that duplicate one the entity already declares, so writes maintain one btree per column instead of two",
+            apply_fn=_migration_083_drop_duplicate_entity_indexes,
+        ),
+        MigrationStep(
+            version="084_restore_model_files_civitai_file_id_index",
+            description="Undo one over-eager drop in 083: ix_model_files_civitai_file_id was the only index on that column, not a duplicate",
+            apply_fn=_migration_084_restore_model_files_civitai_file_id_index,
+        ),
     ]
 
 
@@ -3468,6 +3483,72 @@ def _ensure_index(conn, name: str, ddl: str, guard=None) -> bool:
     return True
 
 
+def _index_signature(definition: str) -> str | None:
+    """Reduce a `pg_get_indexdef` string to `table:col,col:unique|nonunique`.
+
+    Returns `None` when the definition mentions anything this comparison must not
+    silently ignore — an opclass, a partial predicate, an expression, a method.
+    Two indexes are only interchangeable when every one of those matches too.
+    """
+    normalised = " ".join(definition.split()).lower()
+    if not (normalised.startswith("create index") or normalised.startswith("create unique index")):
+        return None
+    if " where " in normalised or " using " in normalised.replace(" using btree ", ""):
+        return None
+    if "(" not in normalised:
+        return None
+
+    head, _, rest = normalised.partition(" on ")
+    table = rest.split(" ")[0].strip('"')
+    # `pg_indexes.indexdef` is always schema-qualified ("public.sessions") while
+    # the migration's DDL strings are not ("sessions"), so the schema is dropped
+    # from both sides or nothing ever compares equal.
+    if "." in table:
+        table = table.split(".", 1)[1].strip('"')
+    unique = "unique" if "create unique index" in head else "nonunique"
+
+    columns_part = rest[rest.index("(") + 1 : rest.rindex(")")]
+    columns = []
+    for raw in columns_part.split(","):
+        col = raw.strip().strip('"')
+        # `col DESC`, `col NULLS FIRST`, an expression, a function call — none of
+        # which this comparison is entitled to treat as a plain column.
+        if not col or not col.replace("_", "").isalnum():
+            return None
+        columns.append(col)
+    if not columns:
+        return None
+
+    return f"{table}:{','.join(columns)}:{unique}"
+
+
+def _equivalent_index_exists(conn, ddl: str) -> bool:
+    """Is there already an index on these columns, under any name?
+
+    Used by migration 080's `ensure()` so a fresh install does not end up with
+    two identical btrees on the same column — which is what the entity's
+    `__table_args__` plus the migration's own list produced.
+    """
+    if conn.dialect.name != "postgresql":
+        return False
+
+    candidate = _index_signature(f"create index X {ddl}")
+    if candidate is None:
+        return False
+
+    rows = conn.execute(
+        text(
+            "SELECT indexdef FROM pg_indexes "
+            "WHERE schemaname = 'public' AND tablename = :t"
+        ),
+        {"t": candidate.split(":", 1)[0]},
+    ).all()
+    for (definition,) in rows:
+        if _index_signature(definition) == candidate:
+            return True
+    return False
+
+
 def _migration_080_recreate_absent_indexes(conn) -> bool:
     """Create every index the migrations declare that this database is missing.
 
@@ -3506,12 +3587,28 @@ def _migration_080_recreate_absent_indexes(conn) -> bool:
         one of those out of this file and holds the name against `pg_indexes`; a
         template spelled like a declaration is a false positive in that test, and
         a test that cries wolf is a test that gets deleted.
+
+        Also skips when an *equivalent* index already exists on the same table —
+        same columns, same order, same uniqueness — even under a different name.
+        `SQLModel.metadata.create_all` runs immediately before this steps runner
+        on a fresh install, so the entity's own `__table_args__` indexes are
+        already there by the time this runs. Several of the names below
+        (`ix_sessions_signature`, `ix_sessions_user_updated`,
+        `ix_session_assets_asset_id`, `ix_asset_lora_*`) duplicate an
+        entity-declared index that `create_all` made, and creating the twin meant
+        every write to those tables maintained two identical btrees and the
+        planner was choosing between two indexes with identical definitions.
+        Measured on the live database before this check: 8 such pairs, ~2.7 MB
+        of index that no plan can prefer.
         """
         present = conn.execute(
             text("SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname = :n"),
             {"n": name},
         ).first()
         if present:
+            return
+        if _equivalent_index_exists(conn, ddl):
+            logger.info("migration_080_equivalent_index_present", skipped=name, ddl=ddl)
             return
         if create("CREATE INDEX IF NOT EXISTS " + name + " " + ddl):
             created.append(name)
@@ -3627,4 +3724,230 @@ def _migration_081_operator_class_indexes(conn) -> bool:
 
     conn.execute(text("ANALYZE character_memories"))
     logger.info("migration_081_vector_index_created", index=name)
+    return True
+
+
+def _migration_082_drop_redundant_message_chat_id_indexes(conn) -> bool:
+    """Drop two indexes a composite index already serves.
+
+    `messages` carried three btree indexes whose leftmost column is `chat_id`:
+
+        idx_message_chat_id    (chat_id)
+        ix_messages_chat_id    (chat_id)          -- byte-identical to the above
+        idx_message_chat_created (chat_id, created_at)
+
+    A btree on `(chat_id, created_at)` can answer any query that filters or sorts
+    on `chat_id`, so both single-column indexes are redundant for lookups. They
+    are not free: every insert and every soft-delete of a message maintained two
+    extra index entries, and the planner was left choosing between two indexes
+    that return identical rows in identical order.
+
+    The two single-column indexes came from two different declarations —
+    `core/entities.py` asks for `idx_message_chat_id`, and an earlier migration
+    added `ix_messages_chat_id` for the same column — which is why the pair
+    survived four audits: nothing was wrong with either on its own.
+
+    The composite index is kept and is the one every hot read uses
+    (`message_repo.list_by_chat` orders by `created_at`). Idempotent, and
+    Postgres-only, since SQLite index DDL is a no-op here.
+    """
+    if conn.dialect.name != "postgresql":
+        return True
+
+    tables = set(inspect(conn).get_table_names())
+    if "messages" not in tables:
+        return True
+
+    # Refuse to drop anything that is not a single-column `(chat_id)` btree, so a
+    # future rename that lands on one of these names cannot silently delete a
+    # different index.
+    redundant = []
+    for name in ("idx_message_chat_id", "ix_messages_chat_id"):
+        row = conn.execute(
+            text("SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname = :n"),
+            {"n": name},
+        ).first()
+        if row is None:
+            continue
+        definition = " ".join(row[0].split()).lower()
+        if "using btree (chat_id)" not in definition:
+            logger.warning(
+                "migration_082_index_shape_unexpected",
+                index=name,
+                definition=definition,
+            )
+            continue
+        redundant.append(name)
+
+    if not redundant:
+        return False
+
+    dropped = []
+    for name in redundant:
+        try:
+            with conn.begin_nested():
+                conn.execute(text(f"DROP INDEX IF EXISTS {name}"))
+            dropped.append(name)
+        except Exception as exc:
+            # A drop that fails leaves a redundant index, not a broken table.
+            # Failing startup over it would be worse than the redundancy.
+            logger.warning("migration_082_index_drop_failed", index=name, error=str(exc))
+
+    if dropped:
+        logger.info("migration_082_redundant_indexes_dropped", indexes=dropped)
+    return bool(dropped)
+
+
+# The indexes this drops, and the one each duplicates. The *kept* index is the
+# entity-declared one in every case: `SQLModel.metadata.create_all` makes it on
+# a fresh install, so dropping the migration-created twin is stable, whereas
+# dropping the entity's would just be undone by the next `create_all`.
+_DUPLICATE_INDEX_TWINS = (
+    # (table, index to drop, index kept, columns)
+    ("model_files", "ix_model_files_version_id", "idx_file_version", ("version_id",)),
+    ("model_versions", "ix_model_versions_model_id", "idx_version_model", ("model_id",)),
+    # The unique constraint's index already serves every lookup on this column.
+    ("model_versions", "ix_model_versions_civitai_version_id", "uq_civitai_version_id", ("civitai_version_id",)),
+    ("session_assets", "ix_session_assets_asset_id", "idx_session_asset_asset", ("asset_id",)),
+    ("sessions", "ix_sessions_signature", "idx_session_signature", ("user_id", "signature")),
+    ("sessions", "ix_sessions_user_updated", "idx_session_user_updated", ("user_id", "updated_at")),
+    # Superseded by the composite that leads with the same column.
+    ("provider_version_status", "ix_provider_version_status_file_id", "idx_file_provider_id_unique", ("file_id",)),
+    ("provider_version_status", "ix_provider_version_status_provider_id", "idx_provider_status_provider_id", ("provider_id",)),
+    ("provider_version_status", "idx_provider_status_legacy", "idx_provider_status_provider_id", ("provider_id",)),
+)
+
+
+def _migration_083_drop_duplicate_entity_indexes(conn) -> bool:
+    """Drop indexes that duplicate one the entity already declares.
+
+    `SQLModel.metadata.create_all` runs immediately before the steps runner on a
+    fresh install, so every `Index(...)` in an entity's `__table_args__` and every
+    `Field(index=True)` is already an index by the time a migration runs. Several
+    migrations then created a *second* index on the same column under a different
+    name, and nothing flagged it: each index is individually correct, which is
+    why the pair survived four audits.
+
+    The cost is real and measured on this deployment:
+
+      * every insert, update and soft-delete on those tables maintained two
+        identical btrees;
+      * the planner was choosing between two indexes with identical definitions;
+      * `idx_provider_status_legacy` showed `idx_tup_read = 1,867,540` against
+        `idx_tup_fetch = 34` — 1.8 million index entries read to produce 34 rows.
+
+    Migration 080's `ensure()` now skips a create when an equivalent index
+    already exists, which is what stops the twin coming back on a fresh install;
+    this step is what removes the ones already present.
+
+    Every drop is guarded by a shape check: the index must be a plain single- or
+    multi-column btree on exactly the columns listed, so a future rename that lands
+    on one of these names cannot silently delete something else.
+    """
+    if conn.dialect.name != "postgresql":
+        return True
+
+    tables = set(inspect(conn).get_table_names())
+    if not tables:
+        return True
+
+    dropped: list[str] = []
+    for table, name, kept, columns in _DUPLICATE_INDEX_TWINS:
+        if table not in tables:
+            continue
+
+        row = conn.execute(
+            text("SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname = :n"),
+            {"n": name},
+        ).first()
+        if row is None:
+            continue
+
+        definition = " ".join(row[0].split())
+        signature = _index_signature(definition)
+        expected = f"{table}:{','.join(columns)}:nonunique"
+        if signature != expected:
+            logger.warning(
+                "migration_083_index_shape_unexpected",
+                index=name,
+                signature=signature,
+                expected=expected,
+            )
+            continue
+
+        if kept is not None:
+            keeper = conn.execute(
+                text("SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname = :n"),
+                {"n": kept},
+            ).first()
+            if keeper is None:
+                # Refuse to drop the only copy of an index.
+                logger.warning("migration_083_keeper_absent", index=name, keeper=kept)
+                continue
+            if _index_signature(" ".join(keeper[0].split())) == signature:
+                logger.warning(
+                    "migration_083_keeper_is_identical_not_a_superset",
+                    index=name,
+                    keeper=kept,
+                )
+
+        try:
+            with conn.begin_nested():
+                conn.execute(text(f"DROP INDEX IF EXISTS {name}"))
+            dropped.append(name)
+        except Exception as exc:
+            # A failed drop leaves a redundant index, not a broken table. Failing
+            # startup over it would be strictly worse than the redundancy.
+            logger.warning("migration_083_index_drop_failed", index=name, error=str(exc))
+
+    if dropped:
+        logger.info("migration_083_duplicate_indexes_dropped", indexes=dropped)
+        for table in sorted({t for t, *_ in _DUPLICATE_INDEX_TWINS}):
+            if table in tables:
+                conn.execute(text(f"ANALYZE {table}"))
+    return bool(dropped)
+
+
+def _migration_084_restore_model_files_civitai_file_id_index(conn) -> bool:
+    """Recreate `ix_model_files_civitai_file_id`.
+
+    Migration 083's list wrongly included this index. Every other entry there
+    named a column the entity indexes twice; `model_files.civitai_file_id` is
+    indexed exactly once, by `Field(index=True)`, so 083 removed the only index
+    on it. Reconcile looks that column up when matching a downloaded file to its
+    CivitAI record, so this is a live query path, not a cosmetic one.
+
+    Kept as its own numbered step rather than an edit to 083, because 083 has
+    already run on this deployment and editing a recorded migration would only
+    change what a *fresh* install does — leaving this one broken everywhere else.
+    083's list has also been corrected, so a fresh install neither drops it nor
+    needs this step.
+    """
+    if conn.dialect.name != "postgresql":
+        return True
+
+    if "model_files" not in set(inspect(conn).get_table_names()):
+        return True
+
+    name = "ix_model_files_civitai_file_id"
+    present = conn.execute(
+        text("SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname = :n"),
+        {"n": name},
+    ).first()
+    if present:
+        return False
+
+    try:
+        with conn.begin_nested():
+            conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS {name} ON model_files (civitai_file_id)"
+            ))
+    except Exception as exc:
+        # Leaving the column un-indexed degrades one lookup. Failing startup over
+        # it would be worse.
+        logger.warning("migration_084_index_create_failed", index=name, error=str(exc))
+        return False
+
+    conn.execute(text("ANALYZE model_files"))
+    logger.info("migration_084_index_restored", index=name)
     return True

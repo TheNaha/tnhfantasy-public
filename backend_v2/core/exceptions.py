@@ -107,13 +107,6 @@ class ProviderError(ComfyError):
         self.provider_id = provider_id
 
 
-class ProviderConnectionError(ProviderError):
-    """Failed to connect to the provider."""
-    def __init__(self, provider_id: str, message: str):
-        super().__init__(provider_id, message)
-        self.code = "PROVIDER_CONNECTION_ERROR"
-
-
 class ProviderTimeoutError(ProviderError):
     """Provider operation timed out."""
     def __init__(self, provider_id: str, message: str):

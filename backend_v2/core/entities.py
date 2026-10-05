@@ -644,15 +644,6 @@ class ModelType(str, Enum):
     OTHER = "Other"
 
 
-class ProviderFileStatus(str, Enum):
-    """Download status for a file on a provider."""
-    PENDING = "pending"
-    DOWNLOADING = "downloading"
-    READY = "ready"
-    FAILED = "failed"
-    DELETING = "deleting"
-
-
 # ============================================================================
 # BASE MODEL
 # ============================================================================

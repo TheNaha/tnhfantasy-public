@@ -52,9 +52,15 @@ def publish_provider_host(host: str) -> None:
     """
     global _known_provider_hosts
     host = (host or "").strip().lower()
-    if not host or host in _known_provider_hosts:
+    # `None` is the published "could not tell" state (see line 40), and
+    # `host in None` raises. The only caller sits in a bare
+    # `except Exception: pass`, so after any failed read every publish raised and
+    # was silently discarded — the host was never learned and the token decision
+    # fell back to "could not tell, attach anyway" on every request.
+    known = _known_provider_hosts or frozenset()
+    if not host or host in known:
         return
-    _known_provider_hosts = frozenset({*_known_provider_hosts, host})
+    _known_provider_hosts = frozenset({*known, host})
 
 
 def _is_provider_management_path(url: str) -> bool:
