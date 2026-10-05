@@ -51,10 +51,25 @@ export function useGalleryAutoRefresh({
            happened. `refetchNewestGalleryPage` does the work for real; see its
            docblock. `useJobsRealtime.jsx` used to make the same call with the same
            no-op, and now shares this one rule. */
-        // Only the bare root is the whole library, which is the case worth
-        // scoping. A caller that narrowed the key to one listing is asking about
-        // that listing alone, and a plain invalidation is the right answer.
-        if (galleryQueryKey?.length === 1 && galleryQueryKey[0] === 'gallery') {
+        // Scoped to the newest page of every mounted gallery listing.
+        //
+        // There is deliberately no `length === 1` guard here any more. It read as
+        // "only the bare root is the whole library", which is true of
+        // `invalidateQueries` — and irrelevant here, because
+        // `refetchNewestGalleryPage` takes the `['gallery']` PREFIX and
+        // destructures `const [, filters, limit] = query.queryKey`, so it was
+        // written for the filtered key all along.
+        //
+        // The guard made the scoped branch unreachable: the only production
+        // caller builds `['gallery', filters]` (length 2), and a reader sweep
+        // found zero bare-root call sites. So every finished job fell through to
+        // `invalidateQueries({ queryKey: ['gallery', filters] })` — the exact
+        // full-library page walk this hook exists to prevent. With three pages
+        // loaded that is three requests for one job instead of one.
+        //
+        // The existing test passed throughout, because it exercised the branch
+        // with a narrowed one-element key, i.e. the shape production never uses.
+        if (galleryQueryKey?.[0] === 'gallery') {
             void refetchNewestGalleryPage(queryClient);
             return;
         }

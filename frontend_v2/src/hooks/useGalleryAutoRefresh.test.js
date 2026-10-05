@@ -127,7 +127,20 @@ describe('useGalleryAutoRefresh', () => {
         expect(refreshMock).toHaveBeenCalledTimes(1);
     });
 
-    it('falls back to an ordinary invalidation for a narrowed, non-listing key', () => {
+    it('scopes to the newest page for a FILTERED listing too', () => {
+        // This test used to assert the opposite, and in doing so it pinned the
+        // defect. `['gallery', { tag: 'x' }, 20]` is the shape
+        // `useGallery` builds for a listing and the shape `Dashboard.jsx`
+        // passes, and the guard it was written against — `length === 1` — meant
+        // the scoped branch could only ever be reached with a bare `['gallery']`,
+        // which no caller passes. So every finished job in production took the
+        // `invalidateQueries` branch below, refetching every loaded page.
+        //
+        // `refetchNewestGalleryPage` takes the `['gallery']` prefix and
+        // destructures `const [, filters, limit] = query.queryKey`, so the
+        // filtered key is what it was written for. The behavioural counterpart,
+        // exercising the real function against a live QueryClient, is
+        // `test/__tests__/galleryAutoRefreshReachesProduction.test.jsx`.
         renderHook(() => useGalleryAutoRefresh({
             lastCompletedJob: { id: 'job-8', outputs: [{ filename: 'x.png' }] },
             autoRefreshOnJobComplete: true,
@@ -135,7 +148,19 @@ describe('useGalleryAutoRefresh', () => {
             galleryQueryKey: ['gallery', { tag: 'x' }, 20],
         }));
 
+        expect(refreshMock).toHaveBeenCalledTimes(1);
+        expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
+    });
+
+    it('falls back to an ordinary invalidation for a key outside the gallery namespace', () => {
+        renderHook(() => useGalleryAutoRefresh({
+            lastCompletedJob: { id: 'job-9', outputs: [{ filename: 'x.png' }] },
+            autoRefreshOnJobComplete: true,
+            queryClient,
+            galleryQueryKey: ['jobs', { status: 'done' }],
+        }));
+
         expect(refreshMock).not.toHaveBeenCalled();
-        expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['gallery', { tag: 'x' }, 20] });
+        expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['jobs', { status: 'done' }] });
     });
 });
