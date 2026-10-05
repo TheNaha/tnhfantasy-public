@@ -312,3 +312,29 @@ class TestProviderHostLookupDoesNotTouchTheDatabase:
 
         assert http_client.load_known_provider_hosts(force=True) is None
         assert http_client.published_known_provider_hosts() is None
+
+    def test_publishing_still_works_after_a_failed_load(self, monkeypatch):
+        """The `None` state must not make `publish_provider_host` raise.
+
+        `host in None` is a `TypeError`, and the only production caller sits in
+        a bare `except Exception: pass` (`infrastructure/providers/runtime.py`),
+        so after any failed read every publish was raised and discarded: the
+        resolved host was never learned, and the token decision kept falling
+        back to "could not tell, attach anyway" — re-logging an ERROR per
+        request instead of converging.
+        """
+        from infrastructure import http_client
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr("infrastructure.database.get_session_sync", _boom)
+        monkeypatch.setattr(http_client, "_known_provider_hosts", None, raising=False)
+
+        assert http_client.load_known_provider_hosts(force=True) is None
+
+        http_client.publish_provider_host("tnhcomfy-Modal-Zetsuke:8000")
+
+        published = http_client.published_known_provider_hosts()
+        assert published is not None
+        assert "tnhcomfy-modal-zetsuke:8000" in published

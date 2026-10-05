@@ -428,3 +428,63 @@ class TestEmitProviderFunctions:
         await emit_model_status_update(
             "modal-primary", file_id=42, status="downloading", extra=None
         )
+
+
+@pytest.mark.asyncio
+async def test_model_status_update_carries_the_failure_reason():
+    """`error_message` must reach the browser, not just the row.
+
+    `POST /provider-sync/{file_id}/status` wrote `error_message` onto the
+    `ProviderVersionStatus` row but emitted `model.status_update` with only
+    `storage_path` and `size_bytes`. The event exists to replace polling, so the
+    one field explaining *why* a download failed stopped at the database and the
+    UI had to re-poll the row it had just been told about.
+    """
+    from core.events import EventType, emit_model_status_update
+
+    captured: list = []
+
+    class _Bus:
+        async def publish(self, event):
+            captured.append(event)
+
+    from core import events as events_module
+
+    original = events_module.event_bus
+    events_module.event_bus = _Bus()
+    try:
+        await emit_model_status_update(
+            provider_id="modal-zetsuke",
+            file_id=42,
+            status="failed",
+            extra={
+                "storage_path": None,
+                "size_bytes": None,
+                "error_message": "HTTP 503 from provider storage",
+            },
+        )
+    finally:
+        events_module.event_bus = original
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.type == EventType.MODEL_STATUS_UPDATE
+    assert event.data["status"] == "failed"
+    assert event.data["error_message"] == "HTTP 503 from provider storage"
+    assert event.data["provider_id"] == "modal-zetsuke"
+    assert event.data["file_id"] == 42
+
+
+def test_the_provider_sync_route_passes_error_message_into_the_event():
+    """Structural: the extra dict at the emit site must name the field.
+
+    A behavioural test would have to stand up the route, its dependency overrides
+    and a captured event bus; asserting on the call site keeps the pin honest for
+    a fraction of the cost, and the field name is the whole contract.
+    """
+    from api.routes.models import provider_sync
+
+    source = open(provider_sync.__file__).read()
+    emit_index = source.index("await emit_model_status_update(")
+    call = source[emit_index : source.index(")", emit_index) + 1]
+    assert '"error_message"' in call, f"the emit does not carry the failure reason: {call}"

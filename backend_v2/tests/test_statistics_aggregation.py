@@ -512,3 +512,145 @@ def test_derive_stat_columns_resolves_the_job_completion_time():
 def test_derive_stat_columns_ignores_an_unparseable_completion_time():
     for junk in ({"job": {"completed_at": "not a date"}}, {"job": {"completed_at": ""}}, {"job": {}}, {}):
         assert derive_stat_columns(junk)["job_completed_at"] is None
+
+
+# ── the gallery day histogram: bucketed in SQL, and cached ───────────────────
+#
+# This endpoint used to ship 16,518 timestamps out of the database and count them
+# in Python. Measured on this deployment, the scan was 80-109 ms of a 296 ms
+# request, so ~two thirds of it was the row pass — and because each request opens
+# its own session, sixteen of them inverted throughput (c=1 3.35 rps → c=16
+# 2.53 rps). So both halves are pinned here: the day bucket has to reach the
+# statement, and the unfiltered form has to be cached.
+
+
+def histogram_sql(engine, call) -> list[str]:
+    """Every statement `call` sends to `engine`."""
+    from sqlalchemy import event
+
+    seen: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _record(_conn, _cursor, statement, _params, _ctx, _many):
+        seen.append(" ".join(str(statement).split()))
+
+    try:
+        call()
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+    return seen
+
+
+class TestDayBucket:
+    def test_postgres_buckets_the_day_in_sql(self):
+        """The production dialect has to do its own bucketing. `date_trunc` on a
+        `timestamp without time zone` truncates the stored wall clock, which is
+        UTC — the same assumption `gallery_day_key` makes when it reads a naive
+        value, so the two agree by construction and not by coincidence."""
+        from sqlalchemy.dialects import postgresql
+
+        bucket = statistics_service._day_bucket(
+            "postgresql", statistics_service.ASSET_GALLERY_TIMESTAMP
+        )
+        assert bucket is not None
+        sql = " ".join(
+            str(
+                bucket.compile(
+                    dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+                )
+            ).split()
+        )
+        assert sql.lower().startswith("date_trunc('day', coalesce(assets.generated_at"), sql
+
+    def test_a_dialect_without_date_trunc_buckets_in_python(self):
+        """SQLite is the dialect the suite runs on, and it has no `date_trunc`."""
+        assert statistics_service._day_bucket("sqlite", statistics_service.ASSET_GALLERY_TIMESTAMP) is None
+
+    def test_the_bucket_reaches_the_statement(self, session, engine, monkeypatch):
+        """Structural, and the only honest assertion for "the grouping moved into
+        SQL": stand a SQLite-valid bucket in for `date_trunc` and read the SQL off
+        the wire. Reverting to the Python pass drops the expression from the
+        statement and this fails."""
+        from sqlalchemy import func
+
+        monkeypatch.setattr(
+            statistics_service,
+            "_day_bucket",
+            lambda dialect_name, moment: func.strftime("%Y-%m-%d", moment),
+        )
+        sql = histogram_sql(engine, statistics_service.get_asset_date_histogram)
+        assert sql, "the histogram issued no statement at all"
+        assert any("strftime" in statement and "GROUP BY" in statement.upper() for statement in sql), sql
+        # The row pass is gone: no statement selects the bare timestamp column.
+        assert not any(
+            statement.startswith("SELECT assets.generated_at") for statement in sql
+        ), sql
+
+    def test_both_branches_produce_the_same_day_keys(self, session, engine, monkeypatch):
+        """A dialect branch that changes the answer is a bug, not an optimisation.
+        Seeded across three UTC days, then compared key for key."""
+        base = NOW.replace(tzinfo=None)
+        for offset, count in ((0, 2), (1, 1), (40, 3)):
+            for index in range(count):
+                session.add(
+                    Asset(
+                        filename=f"h{offset}-{index}.png",
+                        relative_path=f"default_user/main/x/h{offset}-{index}.png",
+                        workspace="main",
+                        created_at=base + timedelta(days=offset),
+                        generated_at=base + timedelta(days=offset),
+                        metadata_={"prompt": "p"},
+                    )
+                )
+        session.commit()
+
+        python_side = statistics_service.get_asset_date_histogram()
+
+        from sqlalchemy import func
+
+        monkeypatch.setattr(
+            statistics_service,
+            "_day_bucket",
+            lambda dialect_name, moment: func.strftime("%Y-%m-%d", moment),
+        )
+        sql_side = statistics_service.get_asset_date_histogram()
+        assert sql_side == python_side, (python_side, sql_side)
+        assert sql_side["total"] == 6
+        assert [day["count"] for day in sql_side["days"]] == [2, 1, 3]
+
+
+class TestUnfilteredHistogramCache:
+    def _seed(self, session, filename="c.png"):
+        session.add(
+            Asset(
+                filename=filename,
+                relative_path=f"default_user/main/x/{filename}",
+                workspace="main",
+                created_at=NOW.replace(tzinfo=None),
+                generated_at=NOW.replace(tzinfo=None),
+                metadata_={"prompt": "p"},
+            )
+        )
+        session.commit()
+
+    def test_the_second_unfiltered_request_does_not_query(self, engine):
+        """One statement for the first request, none for the second. Counting
+        statements rather than timing: the defect being pinned is 'the scan runs
+        again', which is a fact about the code path, not about this machine."""
+        first = len(histogram_sql(engine, statistics_service.get_asset_date_histogram))
+        assert first == 1, first
+        second = histogram_sql(engine, statistics_service.get_asset_date_histogram)
+        assert second == [], second
+
+    def test_a_scoped_request_never_reads_the_unfiltered_cache(self, engine):
+        """A character-scoped rail must not be served the whole-library one."""
+        histogram_sql(engine, statistics_service.get_asset_date_histogram)
+        scoped = histogram_sql(
+            engine, lambda: statistics_service.get_asset_date_histogram(workspace="chat")
+        )
+        assert len(scoped) == 1, scoped
+
+    def test_an_expired_entry_is_recomputed(self, engine, monkeypatch):
+        monkeypatch.setattr(statistics_service, "_HISTOGRAM_CACHE_TTL_SECONDS", -1.0)
+        histogram_sql(engine, statistics_service.get_asset_date_histogram)
+        assert histogram_sql(engine, statistics_service.get_asset_date_histogram), "expired"

@@ -141,6 +141,30 @@ def _redirect_sync_sessions(engine):
             module.get_session_sync = original
 
 
+@pytest.fixture(autouse=True)
+def _reset_service_caches():
+    """Clear the module-level caches in `services.statistics_service` per test.
+
+    `_PROMPT_CACHE` and `_HISTOGRAM_CACHE` are process-global and outlive the
+    database: every test gets a fresh in-memory SQLite engine, so a histogram
+    cached by one test is a histogram computed against a *different* dataset.
+    Nothing in the suite failed from that at random before the histogram cache
+    existed because `_PROMPT_CACHE` is keyed on a content signature that differs
+    per fixture; `_HISTOGRAM_CACHE` is keyed on the filter tuple, and the
+    unfiltered tuple is the same string for every test in the run. Two existing
+    assertions depend on it — `/api/v2/assets/dates` answering `total == 1` in
+    one test and `total == 0` in another — so the reset has to be automatic
+    rather than something each test remembers to ask for.
+    """
+    from services import statistics_service
+
+    statistics_service._PROMPT_CACHE.clear()
+    statistics_service._HISTOGRAM_CACHE.clear()
+    yield
+    statistics_service._PROMPT_CACHE.clear()
+    statistics_service._HISTOGRAM_CACHE.clear()
+
+
 @pytest.fixture(name="client")
 def client_fixture(session: Session, engine):
     """Create test client with overridden database session."""

@@ -300,7 +300,13 @@ class TestUnvalidatedSectionsRejectJunk:
         ({"ai": {"idleSimIntervalSeconds": -600}}, "idleSimIntervalSeconds"),
         ({"ai": {"ragEnabled": "yes"}}, "ragEnabled"),
         ({"ai": {"temperature": "hot"}}, "temperature"),
-        ({"generator": {"default_checkpoint": ""}}, "default_checkpoint"),
+        # `{"generator": {"default_checkpoint": ""}}` used to be here, pinning
+        # the behaviour that made the Settings page's "(unset — backend falls
+        # back to its compiled-in default)" option impossible to select: it
+        # could only ever be a 400. Blank is now "unset" (see
+        # `TestBlankMeansUnset` in test_config_update.py and
+        # `test_blank_default_checkpoint_means_unset`). A wrong *type* is still
+        # refused.
         ({"generator": {"default_checkpoint": 7}}, "default_checkpoint"),
         ({"jobs": {"llm": {"timeout": 0}}}, "timeout"),
         ({"jobs": {"llm": {"stagger_delay": -1}}}, "stagger_delay"),
@@ -428,3 +434,24 @@ class TestResetEndpoint:
         response = client.post("/api/settings/reset")
         assert response.status_code == 200
         assert cfg.get_config()["generator"]["default_checkpoint"] == DEFAULT_CONFIG["generator"]["default_checkpoint"]
+
+
+class TestBlankDefaultCheckpointMeansUnset:
+    """The Settings page offers "(unset — backend falls back to its compiled-in
+    default)" for `generator.default_checkpoint`, and sends `""`. That could
+    never be selected: the route answered 400 because a blank string is not a
+    checkpoint. It now deletes the key, so the label is true.
+    """
+
+    def test_blank_default_checkpoint_means_unset(self, client):
+        cfg.update_config({"generator": {"default_checkpoint": "mine.safetensors"}}, persist=False)
+
+        response = client.put("/api/settings", json={"generator": {"default_checkpoint": ""}})
+
+        assert response.status_code == 200, response.text
+        assert "default_checkpoint" not in cfg.get_config().get("generator", {})
+        assert cfg.resolve_default_checkpoint() == cfg.DEFAULT_CHECKPOINT
+
+    def test_a_non_string_checkpoint_is_still_refused(self, client):
+        response = client.put("/api/settings", json={"generator": {"default_checkpoint": 7}})
+        assert response.status_code == 400

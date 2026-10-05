@@ -937,3 +937,196 @@ class TestFacetCursorIsCompatibleWithTheGalleryCursor:
             if not page.get("has_more") or not cursor:
                 break
         assert len(seen) == len({*seen})
+
+
+# ── the liveness predicate is planned, not just correct ───────────────────────
+#
+# `Asset.deleted_at IS NULL` and `Asset.id NOT IN (<tombstoned ids>)` return the
+# same rows, so a test that only checks the rows cannot tell which one is
+# running — and on this deployment the difference is the whole cost of the query.
+# These tests pin the *plan-facing* property as well as the rows: PostgreSQL
+# costs an `IS NULL` test at a hard-coded 0.5% selectivity, so on a table that is
+# 97.8% live it budgets ~85 rows, decides the live set is tiny, and answers
+# "is this asset live?" with a memoized btree descent into `assets_pkey` once per
+# distinct id — 16,514 of them for `/api/v2/tags`, measured at 390-548 ms. The
+# negated form makes the *tombstoned* side the one the planner must budget, which
+# is a few hundred rows that `ix_assets_deleted_at` already covers, so the join
+# hashes (measured 202-236 ms, `Index Scan using ix_assets_deleted_at rows=389`).
+
+
+def compiled(statement, dialect=None) -> str:
+    """A dialect's SQL for `statement`, as one string."""
+    from sqlalchemy.dialects import postgresql
+
+    return " ".join(str(statement.compile(dialect=dialect or postgresql.dialect())).split())
+
+
+def captured_sql(engine, call) -> list[str]:
+    """Every statement `call` sends to `engine`, as one string each."""
+    from sqlalchemy import event
+
+    seen: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _record(_conn, _cursor, statement, _params, _ctx, _many):
+        seen.append(" ".join(str(statement).split()))
+
+    try:
+        call()
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+    return seen
+
+
+class TestTagVocabularyPlansAgainstTheTombstoneSide:
+    def test_vocabulary_does_not_join_assets_for_liveness(self, session, engine):
+        """Reverting to `JOIN assets ... WHERE deleted_at IS NULL` puts this
+        assertion back on the failing side. The statement is read off the wire
+        rather than rebuilt, so the test cannot drift from what runs."""
+        sql = captured_sql(
+            engine, lambda: tag_service.list_tag_vocabulary(session, limit=50)
+        )[0]
+        assert "JOIN assets" not in sql, sql
+        assert "deleted_at IS NOT NULL" in sql, sql
+
+    def test_vocabulary_sql_excludes_tombstones_by_negation(self, session, engine):
+        sql = captured_sql(
+            engine, lambda: tag_service.list_tag_vocabulary(session, prefix="bl", limit=50)
+        )[0]
+        assert "NOT IN" in sql, sql
+        assert "assets.deleted_at IS NOT NULL" in sql, sql
+        assert "LIKE" in sql, sql
+
+    def test_the_live_set_is_the_complement_of_the_tombstones(self, session, faceted):
+        """The rows still have to be right: a tombstoned image must not keep a tag
+        alive in the picker, which is what the picker exists to avoid."""
+        faceted["c"].deleted_at = datetime.now(timezone.utc)
+        session.add(faceted["c"])
+        session.commit()
+
+        counts = {r["tag"]: r["count"] for r in tag_service.list_tag_vocabulary(session)}
+        assert counts == {"blonde hair": 2, "pose: kneeling": 1}
+
+
+class TestFacetLivenessSpelling:
+    def _filters(self, **kwargs):
+        from api.routes.world_vault.tags import AssetFacetFilters
+
+        return AssetFacetFilters(**kwargs)
+
+    def test_matched_ids_use_the_anti_join_spelling(self):
+        """`_matched_ids` is embedded in every facet count, so it is the one that
+        has to be hashed rather than index-probed."""
+        from api.routes.world_vault.tags import _matched_ids
+
+        sql = compiled(_matched_ids(self._filters()))
+        assert "deleted_at IS NOT NULL" in sql, sql
+        assert "NOT IN" in sql, sql
+        assert "assets.deleted_at IS NULL" not in sql, sql
+
+    def test_the_paged_query_keeps_the_spelling_that_ix_assets_gallery_ts_covers(self):
+        """`ix_assets_gallery_ts` is a *partial* index whose predicate is exactly
+        `deleted_at IS NULL`. The anti-join form cannot be proven to imply that
+        predicate, so switching the paged query over would cost the page its
+        index. The two spellings have to stay side by side."""
+        from api.routes.world_vault.tags import build_asset_query
+
+        assert "assets.deleted_at IS NULL" in compiled(
+            build_asset_query(self._filters())
+        )
+        assert "deleted_at IS NOT NULL" in compiled(
+            build_asset_query(self._filters(), anti_join=True)
+        )
+
+    def test_both_spellings_return_the_same_rows(self, session, faceted):
+        """The anti-join is a plan hint expressed in SQL; it must not be a second
+        definition of "live"."""
+        from sqlmodel import select
+
+        from api.routes.world_vault.tags import build_asset_query
+
+        faceted["c"].deleted_at = datetime.now(timezone.utc)
+        session.add(faceted["c"])
+        session.commit()
+
+        direct = session.exec(
+            select(build_asset_query(self._filters()).subquery().c.id)
+        ).all()
+        negated = session.exec(
+            select(
+                build_asset_query(self._filters(), anti_join=True).subquery().c.id
+            )
+        ).all()
+        assert sorted(direct) == sorted(negated)
+        # And the tombstoned asset really is gone from both.
+        assert faceted["c"].id not in {row[0] for row in direct}
+
+
+class TestFacetFilterDerivationIsSharedPerRequest:
+    def _filters(self, **kwargs):
+        from api.routes.world_vault.tags import AssetFacetFilters
+
+        return AssetFacetFilters(**kwargs)
+
+    def test_exclude_is_dropped_when_it_cannot_change_the_set(self):
+        """`build_asset_query` honours `exclude` for four dimensions and only
+        while that dimension is filtered. Everything else must collapse to the
+        un-excluded set, or the sharing below is wrong rather than faster."""
+        from api.routes.world_vault.tags import _facet_exclusion
+
+        bare = self._filters()
+        assert _facet_exclusion(bare, "tag") is None
+        assert _facet_exclusion(bare, "lora") is None
+        assert _facet_exclusion(bare, "checkpoint") is None
+        assert _facet_exclusion(bare, "session") is None
+        # `exclude` is not even read for these two.
+        assert _facet_exclusion(bare, "character") is None
+        assert _facet_exclusion(bare, "workspace") is None
+
+        tagged = self._filters(tags=["blonde hair"])
+        assert _facet_exclusion(tagged, "tag") == "tag"
+        assert _facet_exclusion(tagged, "checkpoint") is None
+
+    def test_a_request_derives_one_filtered_subquery_not_one_per_dimension(
+        self, client, faceted, monkeypatch
+    ):
+        """The measured request — `group_by=lora,tag,checkpoint`, no filters —
+        used to build the filtered asset query four times (three dimensions plus
+        `total_matched`) for three identical results. Spy on the derivation
+        rather than the timing: this is about how many subqueries exist."""
+        from api.routes.world_vault import tags as tags_routes
+
+        calls: list[str | None] = []
+        real = tags_routes._matched_ids
+
+        def counting(filters, exclude=None):
+            calls.append(exclude)
+            return real(filters, exclude=exclude)
+
+        monkeypatch.setattr(tags_routes, "_matched_ids", counting)
+        payload = facet(client, group_by="lora,tag,checkpoint", include_sessions=False)
+
+        assert set(payload["facets"]) == {"lora", "tag", "checkpoint"}
+        assert len(calls) == 1, f"expected one shared derivation, got {calls}"
+
+    def test_an_active_dimension_still_gets_its_own_derivation(
+        self, client, faceted, monkeypatch
+    ):
+        from api.routes.world_vault import tags as tags_routes
+
+        calls: list[str | None] = []
+        real = tags_routes._matched_ids
+
+        def counting(filters, exclude=None):
+            calls.append(exclude)
+            return real(filters, exclude=exclude)
+
+        monkeypatch.setattr(tags_routes, "_matched_ids", counting)
+        payload = facet(
+            client, tag="cat ears", group_by="lora,tag,checkpoint", include_sessions=False
+        )
+
+        assert filenames(payload) == {"f3.png"}
+        # `exclude="tag"` for the tag dimension's counts, plus the shared
+        # un-excluded set for lora/checkpoint/total.
+        assert sorted(calls, key=str) == sorted([None, "tag"], key=str), calls

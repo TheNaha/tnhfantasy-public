@@ -12,7 +12,7 @@ Covers routes that were previously untested:
 from unittest.mock import AsyncMock
 from datetime import datetime, timezone, timedelta
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from core.entities import Chat, Character, Message, MessageRole, Job, JobStatus
 
@@ -531,3 +531,60 @@ class TestMessageSearch:
         resp = client.get(f"/api/v2/chats/{chat.id}/messages")
         assert resp.status_code == 200
         assert len(resp.json()) == 2
+
+
+# ── POST chat/messages with narration disabled ───────────────────────────────
+
+class TestNarrationDisabledDoesNotOrphanTheMessage:
+    """The 500 that also left the user's message behind.
+
+    `allow_narration` was checked in the route, *after* `_add_message_prep_sync`
+    had already committed the user's message. So asking for narration on a chat
+    that has it disabled returned a failure and persisted the message anyway:
+    the frontend reads the error as "send failed", the user sends it again, and
+    the transcript holds the question twice. The error was also re-wrapped as a
+    bare `ComfyError`, which turned a 400 into a 500.
+    """
+
+    def _seed_chat_without_narration(self, session: Session) -> Chat:
+        chat = Chat(name="No narration", character_id=None, allow_narration=False)
+        session.add(chat)
+        session.commit()
+        session.refresh(chat)
+        return chat
+
+    def test_it_is_a_client_error_not_a_500(self, client, session):
+        chat = self._seed_chat_without_narration(session)
+
+        resp = client.post(
+            f"/api/v2/chats/{chat.id}/messages",
+            json={"role": "user", "content": "The door creaks open.", "narrate": True},
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert "narration" in resp.text.lower()
+
+    def test_the_user_message_is_not_persisted(self, client, session):
+        chat = self._seed_chat_without_narration(session)
+
+        client.post(
+            f"/api/v2/chats/{chat.id}/messages",
+            json={"role": "user", "content": "The door creaks open.", "narrate": True},
+        )
+
+        stored = session.exec(
+            select(Message).where(Message.chat_id == chat.id)
+        ).all()
+        assert stored == [], f"the refused message was persisted anyway: {[m.content for m in stored]}"
+
+    def test_a_message_without_narration_still_works(self, client, session):
+        """The guard must not swallow ordinary sends."""
+        chat = self._seed_chat_without_narration(session)
+
+        resp = client.post(
+            f"/api/v2/chats/{chat.id}/messages",
+            json={"role": "user", "content": "Hello", "no_reply": True},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["user_message_id"]
