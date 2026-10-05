@@ -24,14 +24,6 @@ export const useWorlds = () => {
     });
 };
 
-export const useWorld = (worldId) => {
-    return useQuery({
-        queryKey: WORLD_DETAIL_KEY(worldId),
-        queryFn: () => api.get(`/api/v2/worlds/${worldId}`),
-        enabled: !!worldId,
-    });
-};
-
 /**
  * The world's membership index, resolved to real rows.
  *

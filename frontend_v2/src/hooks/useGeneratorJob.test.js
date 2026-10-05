@@ -1,5 +1,5 @@
-import { renderHook, act } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useGeneratorJob } from './useGeneratorJob';
 
 vi.mock('./useJobStatus', () => ({
@@ -76,7 +76,7 @@ describe('useGeneratorJob', () => {
             await result.current.handleGenerate();
         });
 
-        expect(mockNavigate).toHaveBeenCalledWith('/gallery');
+        await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/gallery'));
     });
 
     it('silently queues (no progress, no job tracking) when setGeneratingOnQueue=false', async () => {
@@ -156,5 +156,206 @@ describe('useGeneratorJob', () => {
 
         expect(mockRunSubmission).not.toHaveBeenCalled();
         expect(toast.error).toHaveBeenCalledWith('Please upload a source image first');
+    });
+});
+
+/*
+ * `settings.generator.redirectDelay` was unreachable.
+ *
+ * The completion effect armed a timer behind a `redirectAfterGenerate` gate, and
+ * `handleGenerate` navigated SYNCHRONOUSLY on submit. So the navigation that
+ * actually ran had no delay, it unmounted the generator page, and the unmount
+ * cleanup cleared the pending timer together with the job subscription that
+ * would have fired it. No route reached the effect's gate, and the Settings
+ * slider — a live, persisted, persisted-to-the-server setting — changed nothing.
+ */
+describe('redirectDelay', () => {
+    let mockRunSubmission;
+
+    const settings = (delay) => {
+        mockUseSettingsStore.mockImplementation((sel) =>
+            sel({ settings: { generator: { redirectAfterGenerate: true, redirectDelay: delay } } })
+        );
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockRunSubmission = vi.fn().mockResolvedValue({
+            ok: true,
+            submissionResult: { id: 'job-1' },
+        });
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const mount = () => renderHook(() =>
+        useGeneratorJob({
+            runSubmission: mockRunSubmission,
+            type: 'simple',
+            setGeneratingOnQueue: false,
+        })
+    );
+
+    it('does NOT navigate synchronously on submit', async () => {
+        vi.useFakeTimers();
+        settings(1500);
+        const { result } = mount();
+
+        await act(async () => {
+            await result.current.handleGenerate();
+        });
+
+        // The pre-fix line was `if (shouldRedirect) navigate('/gallery')` right
+        // here: no delay, so the setting was decorative.
+        expect(mockRunSubmission).toHaveBeenCalledTimes(1);
+        expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('navigates once, exactly one delay later', async () => {
+        vi.useFakeTimers();
+        settings(1500);
+        const { result } = mount();
+
+        await act(async () => {
+            await result.current.handleGenerate();
+        });
+
+        act(() => { vi.advanceTimersByTime(1499); });
+        expect(mockNavigate).not.toHaveBeenCalled();
+
+        act(() => { vi.advanceTimersByTime(1); });
+        expect(mockNavigate).toHaveBeenCalledTimes(1);
+        expect(mockNavigate).toHaveBeenCalledWith('/gallery');
+
+        // Once. The completion effect used to be a second redirect site.
+        act(() => { vi.advanceTimersByTime(60_000); });
+        expect(mockNavigate).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits the full slider value, not a hardcoded delay', async () => {
+        vi.useFakeTimers();
+        settings(4000);
+        const { result } = mount();
+
+        await act(async () => {
+            await result.current.handleGenerate();
+        });
+
+        act(() => { vi.advanceTimersByTime(1000); });
+        expect(mockNavigate).not.toHaveBeenCalled();
+
+        act(() => { vi.advanceTimersByTime(3000); });
+        expect(mockNavigate).toHaveBeenCalledWith('/gallery');
+    });
+
+    it('redirects on a zero delay too, rather than treating it as off', async () => {
+        vi.useFakeTimers();
+        settings(0);
+        const { result } = mount();
+
+        await act(async () => {
+            await result.current.handleGenerate();
+        });
+
+        expect(mockNavigate).not.toHaveBeenCalled();
+        act(() => { vi.advanceTimersByTime(0); });
+        expect(mockNavigate).toHaveBeenCalledWith('/gallery');
+    });
+
+    it('falls back to no delay when the stored value is not a number', async () => {
+        vi.useFakeTimers();
+        settings('soon');
+        const { result } = mount();
+
+        await act(async () => {
+            await result.current.handleGenerate();
+        });
+
+        act(() => { vi.advanceTimersByTime(0); });
+        expect(mockNavigate).toHaveBeenCalledWith('/gallery');
+    });
+
+    it('clamps a negative delay rather than arming an already-expired timer', async () => {
+        vi.useFakeTimers();
+        settings(-2500);
+        const { result } = mount();
+
+        await act(async () => {
+            await result.current.handleGenerate();
+        });
+
+        act(() => { vi.advanceTimersByTime(0); });
+        expect(mockNavigate).toHaveBeenCalledWith('/gallery');
+    });
+
+    it('never redirects when the setting is off', async () => {
+        vi.useFakeTimers();
+        mockUseSettingsStore.mockImplementation((sel) =>
+            sel({ settings: { generator: { redirectAfterGenerate: false, redirectDelay: 0 } } })
+        );
+        const { result } = mount();
+
+        await act(async () => {
+            await result.current.handleGenerate();
+        });
+
+        act(() => { vi.advanceTimersByTime(60_000); });
+        expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('drops the pending redirect if the page unmounts during the delay', async () => {
+        // The cleanup that made the old timer unreachable is load-bearing: a user
+        // who navigates away inside the delay window must not be yanked to the
+        // gallery afterwards.
+        vi.useFakeTimers();
+        settings(3000);
+        const { result, unmount } = mount();
+
+        await act(async () => {
+            await result.current.handleGenerate();
+        });
+
+        act(() => { vi.advanceTimersByTime(500); });
+        unmount();
+
+        act(() => { vi.advanceTimersByTime(60_000); });
+        expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('is skipped when the caller passes shouldRedirect: false', async () => {
+        vi.useFakeTimers();
+        settings(0);
+        const { result } = mount();
+
+        await act(async () => {
+            await result.current.handleGenerate({ shouldRedirect: false });
+        });
+
+        act(() => { vi.advanceTimersByTime(60_000); });
+        expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('leaves the hook override authoritative over the setting', async () => {
+        // AdvancedGenerator passes `redirectAfterGenerate: false` so a run does
+        // not tear the graph out from under the user.
+        vi.useFakeTimers();
+        settings(0);
+        const { result } = renderHook(() =>
+            useGeneratorJob({
+                runSubmission: mockRunSubmission,
+                type: 'advanced',
+                setGeneratingOnQueue: true,
+                redirectAfterGenerate: false,
+            })
+        );
+
+        await act(async () => {
+            await result.current.handleGenerate();
+        });
+
+        act(() => { vi.advanceTimersByTime(60_000); });
+        expect(mockNavigate).not.toHaveBeenCalled();
     });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import useSettingsStore from '../store/settingsStore';
@@ -65,6 +65,29 @@ export function useGeneratorJob(opts = {}) {
     const { data: jobData } = useJobStatus(currentJobId);
     const redirectTimerRef = useRef(null);
 
+    // The delay is the ONLY redirect path. It used to gate a timer armed in the
+    // completion effect, while `handleGenerate` navigated synchronously right
+    // after submit — so the navigation that actually happened had no delay at
+    // all, it unmounted the page, and the unmount cleanup cleared the pending
+    // timer along with the job subscription that would have fired it. The
+    // Settings slider therefore controlled nothing: every path through the
+    // completion effect was unreachable. What the setting is documented to do
+    // is "redirect to gallery after starting generation", with the delay there to
+    // let the queued job appear first — so it is armed at submit.
+    const redirectDelayMs = Number.isFinite(Number(redirectDelay))
+        ? Math.max(0, Number(redirectDelay))
+        : 0;
+
+    const scheduleRedirect = useCallback(() => {
+        if (redirectTimerRef.current) {
+            clearTimeout(redirectTimerRef.current);
+        }
+        redirectTimerRef.current = setTimeout(() => {
+            redirectTimerRef.current = null;
+            navigate(GENERATOR_REDIRECT_TARGET);
+        }, redirectDelayMs);
+    }, [navigate, redirectDelayMs]);
+
     // ---- WebSocket / REST job subscription -> toast + state (verbatim port) ----
     useEffect(() => {
         return () => {
@@ -86,12 +109,10 @@ export function useGeneratorJob(opts = {}) {
             setProgress(null);
             setCurrentJobId(null);
             toast.success('Generation complete!', { icon: '✨' });
-            if (redirectAfterGenerate) {
-                redirectTimerRef.current = setTimeout(
-                    () => navigate(GENERATOR_REDIRECT_TARGET),
-                    Number.isFinite(Number(redirectDelay)) ? Number(redirectDelay) : 0,
-                );
-            }
+            // No redirect here: `handleGenerate` already armed it at submit, and
+            // this branch only runs for a page that stayed mounted through the
+            // whole delay — in which case there is nothing left to redirect away
+            // from mid-generation.
             return;
         }
 
@@ -118,7 +139,7 @@ export function useGeneratorJob(opts = {}) {
             status: isQueued ? 'queued' : jobData.status,
             node: jobData.message || (isQueued ? 'Job queued...' : `${progressValue}%`),
         });
-    }, [jobData, currentJobId, navigate, redirectAfterGenerate, redirectDelay]);
+    }, [jobData, currentJobId]);
 
     // ---- Shared generate handler (port of Simple/Img2Img/Inpaint handleGenerate) ----
     const handleGenerate = async ({ shouldRedirect = redirectAfterGenerate, trackQueuedJob = true } = {}) => {
@@ -162,7 +183,7 @@ export function useGeneratorJob(opts = {}) {
                     toast.success('Added to queue!', { icon: '➕' });
                 }
 
-                if (shouldRedirect) navigate(GENERATOR_REDIRECT_TARGET);
+                if (shouldRedirect) scheduleRedirect();
                 if (autoRandomizeSeed) randomizeSeed?.();
             }
         } catch (e) {

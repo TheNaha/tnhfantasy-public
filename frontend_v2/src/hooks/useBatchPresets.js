@@ -33,6 +33,7 @@
 
 import { useCallback, useMemo } from 'react';
 import useSettingsStore from '../store/settingsStore';
+import { triggerFile } from '../utils/download';
 
 /**
  * Hard ceiling on submitted workflows. Mirrors the backend's
@@ -324,17 +325,18 @@ export function parsePresetPayload(text) {
 }
 
 /**
- * Trigger a browser download, matching the export convention already used by
- * PromptLibrary and StoryReader (Blob → object URL → anchor click → revoke).
+ * Trigger a browser download through the shared helper.
+ *
+ * This used to build the anchor and revoke the object URL inline, in the same
+ * tick as `click()` — which aborts the download in Firefox and older Safari, so
+ * the preset saved nothing there — and it never attached the anchor to the
+ * document at all.
  */
 export function downloadPresetJson(name, preset) {
-    const blob = new Blob([serializePreset(name, preset)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `batch-preset-${name.replace(/[^\w.-]+/g, '_')}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    triggerFile(
+        serializePreset(name, preset),
+        `batch-preset-${name.replace(/[^\w.-]+/g, '_')}.json`,
+    );
 }
 
 function uniqueName(base, taken) {

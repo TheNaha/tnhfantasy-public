@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { downloadJson, downloadText, triggerFile } from '../utils/download';
 import { useCreateResource, useDeleteResource, useUpdateResource, invalidateVaultAggregates } from './useWorldVaultResource';
 
 const STORY_LIST_KEY = buildQueryKey(QUERY_KEYS.STORIES);
@@ -358,24 +359,22 @@ const FORMAT_EXT = { md: 'md', markdown: 'md', json: 'json', epub: 'epub', comic
 async function downloadFromExport(data, { storyId, format }) {
     const ext = FORMAT_EXT[format] || format;
     const filename = storyId ? `story-${storyId}.${ext}` : `story.${ext}`;
-    let blob;
-    if (data && typeof data.blob === 'function' && typeof data.arrayBuffer === 'function') {
-        blob = await data.blob();
-    } else if (data && typeof data.headers !== 'undefined') {
-        blob = await new Response(data).blob();
-    } else if (format === 'md' || format === 'markdown') {
-        blob = new Blob([data.content || ''], { type: 'text/markdown' });
-    } else if (format === 'json') {
-        blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    } else {
-        blob = new Blob([data?.content || ''], { type: 'application/octet-stream' });
+    // `responseType: 'blob'` already resolves to a Blob; handing that to
+    // `new Blob([data.content])` produced a 0-byte file for every binary format.
+    if (data instanceof Blob) {
+        triggerFile(data, filename);
+        return;
     }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    if (typeof Response !== 'undefined' && data instanceof Response) {
+        triggerFile(await data.blob(), filename);
+        return;
+    }
+    if (format === 'json') {
+        downloadJson(data, filename);
+        return;
+    }
+    const text = typeof data === 'string' ? data : (data?.content ?? '');
+    downloadText(text, filename, format === 'md' || format === 'markdown' ? 'text/markdown' : 'application/octet-stream');
 }
 
 export const useExportStoryFormatted = () => {

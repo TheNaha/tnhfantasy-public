@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import {
     listCollections, getCollection, createCollection, deleteCollection,
     updateCollection, addImagesToCollection, removeImagesFromCollection,
@@ -156,7 +157,18 @@ export function useRemoveImagesFromCollection() {
         onSuccess: (_, { collectionId }) => {
             invalidateAllCollections(queryClient);
             queryClient.invalidateQueries({ queryKey: ['collections', collectionId, 'images'] });
-        }
+        },
+        // One error path for every caller. There was only `onSuccess`, so the
+        // only way a failed removal was ever seen was a caller remembering to
+        // wrap `mutateAsync` — and a caller that did not got a rejected promise
+        // with nothing attached: the collection list stayed stale, the selected
+        // images stayed selected, and the user saw a button do nothing. React
+        // Query runs this for `mutate` as well as `mutateAsync`, so a
+        // fire-and-forget call site can no longer fail silently.
+        onError: (error) => {
+            console.error('[Collections] remove images failed:', error);
+            toast.error('Failed to remove images from collection');
+        },
     });
 }
 

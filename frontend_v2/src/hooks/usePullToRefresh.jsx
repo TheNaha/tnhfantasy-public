@@ -38,10 +38,37 @@ export function usePullToRefresh({
     const containerRef = useRef(null);
     const startY = useRef(0);
     const currentY = useRef(0);
-    
+
+    // The gesture's own state, mirrored into refs.
+    //
+    // The four touch listeners used to be `useCallback`s closing over
+    // `isPulling` and `pullDistance`, which made them change identity on every
+    // frame of the gesture — and the attach effect listed them as dependencies.
+    // So every `touchmove` tore down and re-added all four listeners, including
+    // the `{passive: false}` `touchmove` that carries the `preventDefault`,
+    // while a finger was still down. Tearing down a listener the browser is
+    // mid-dispatch of loses that event, and re-adding a `passive: false`
+    // listener to cancel a scroll that has already started does not stop it, so
+    // the page scrolled out from under the pull. Four binds and four unbinds
+    // per frame is also the reason this was slow on a long pull.
+    //
+    // Mirrored synchronously inside the handlers rather than from an effect:
+    // these are native listeners, so the state update they make is batched and
+    // flushed around the end of the task, and a `touchmove` can be dispatched
+    // before the commit that would have republished it.
+    const isPullingRef = useRef(false);
+    const pullDistanceRef = useRef(0);
+
+    // Latest values for everything else the handlers read, so they can stay
+    // stable for the life of the container. Same shape as `useDebounce`'s
+    // `latest` ref.
+    const latest = useRef(null);
+    latest.current = { disabled, isRefreshing, threshold, maxPull, onRefresh };
+
     const handleTouchStart = useCallback((e) => {
-        if (disabled || isRefreshing) return;
-        
+        const { disabled: isDisabled, isRefreshing: busy } = latest.current;
+        if (isDisabled || busy) return;
+
         const target = e.target;
         if (target && ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName?.toUpperCase())) return;
 
@@ -63,76 +90,88 @@ export function usePullToRefresh({
         };
 
         const scrollTop = getScrollTop();
-        
+
         // Strict top check with small buffer
         if (scrollTop > 0) return;
-        
+
         startY.current = e.touches[0].clientY;
         currentY.current = startY.current;
+        isPullingRef.current = true;
+        pullDistanceRef.current = 0;
         setIsPulling(true);
-    }, [disabled, isRefreshing]);
-    
+    }, []);
+
     const handleTouchMove = useCallback((e) => {
-        if (!isPulling || disabled || isRefreshing) return;
-        
+        const { disabled: isDisabled, isRefreshing: busy, maxPull: cap } = latest.current;
+        if (!isPullingRef.current || isDisabled || busy) return;
+
         currentY.current = e.touches[0].clientY;
         const diff = currentY.current - startY.current;
-        
+
         // Only pull down, not up
         if (diff < 0) {
+            pullDistanceRef.current = 0;
             setPullDistance(0);
             return;
         }
-        
+
         // Apply resistance - pull slows down as you go further
         const resistance = 0.5;
-        const resistedDiff = Math.min(diff * resistance, maxPull);
+        const resistedDiff = Math.min(diff * resistance, cap);
+        pullDistanceRef.current = resistedDiff;
         setPullDistance(resistedDiff);
-        
+
         // Prevent default scroll behavior when pulling
         if (resistedDiff > 10) {
             e.preventDefault();
         }
-    }, [isPulling, disabled, isRefreshing, maxPull]);
-    
+    }, []);
+
     const handleTouchEnd = useCallback(async () => {
-        if (!isPulling || disabled) return;
-        
+        const { disabled: isDisabled, threshold: minimum, onRefresh: refresh } = latest.current;
+        if (!isPullingRef.current || isDisabled) return;
+
+        const reached = pullDistanceRef.current;
+        isPullingRef.current = false;
+        pullDistanceRef.current = 0;
         setIsPulling(false);
-        
-        if (pullDistance >= threshold && onRefresh) {
+
+        if (reached >= minimum && refresh) {
             // Haptic feedback
             if (navigator.vibrate) {
                 navigator.vibrate(50);
             }
-            
+
             setIsRefreshing(true);
-            setPullDistance(threshold); // Keep indicator visible during refresh
-            
+            pullDistanceRef.current = minimum;
+            setPullDistance(minimum); // Keep indicator visible during refresh
+
             try {
-                await onRefresh();
+                await refresh();
             } catch (error) {
                 console.error('Pull-to-refresh error:', error);
             } finally {
                 setIsRefreshing(false);
+                pullDistanceRef.current = 0;
                 setPullDistance(0);
             }
         } else {
             // Snap back
             setPullDistance(0);
         }
-    }, [isPulling, pullDistance, threshold, onRefresh, disabled]);
-    
-    // Attach event listeners
+    }, []);
+
+    // Attach event listeners. The three handlers are stable for the life of the
+    // container, so this binds exactly once instead of four times per frame.
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return;
-        
+
         container.addEventListener('touchstart', handleTouchStart, { passive: true });
         container.addEventListener('touchmove', handleTouchMove, { passive: false });
         container.addEventListener('touchend', handleTouchEnd, { passive: true });
         container.addEventListener('touchcancel', handleTouchEnd, { passive: true });
-        
+
         return () => {
             container.removeEventListener('touchstart', handleTouchStart);
             container.removeEventListener('touchmove', handleTouchMove);

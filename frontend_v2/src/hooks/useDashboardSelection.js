@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { filesApi } from '../api';
+import { triggerFile } from '../utils/download';
 
 export function useDashboardSelection({
     favorites,
@@ -35,14 +36,12 @@ export function useDashboardSelection({
         toast.promise(
             (async () => {
                 const { blob, missingCount } = await filesApi.batchDownload(filesToDownload);
-                const url = window.URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `comfyui_batch_${Date.now()}.zip`;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                window.URL.revokeObjectURL(url);
+                // `triggerFile` hands the zip Blob over untouched and revokes the
+                // object URL a tick later. This used to do it inline, and
+                // revoked in the same tick as `link.click()` — which aborts the
+                // download in Firefox and older Safari, so the batch silently
+                // saved nothing there.
+                triggerFile(blob, `comfyui_batch_${Date.now()}.zip`);
                 return missingCount;
             })(),
             {
@@ -88,14 +87,25 @@ export function useDashboardSelection({
         // fired and forgotten with an unconditional success toast, so a rejected
         // PATCH reported a removal that never happened and left the selection
         // looking done.
+        //
+        // One `removeFromCollection` call carrying the whole selection, not a
+        // `Promise.all` over per-image calls. The endpoint takes an `images`
+        // array and `Dashboard.jsx` re-wraps whatever it is handed, so the loop
+        // was N parallel DELETEs of one element each — 50 selected images meant
+        // 50 requests — all sharing one `useMutation` instance, so `isPending`
+        // and `error` described whichever of them happened to land last rather
+        // than the batch. Same reason as the favorites handler above.
         try {
-            await Promise.all(
-                Array.from(selectedFiles).map(filename => removeFromCollection(activeCollection, filename))
-            );
+            await removeFromCollection(activeCollection, Array.from(selectedFiles));
             toast.success(`Removed ${count} image${count !== 1 ? 's' : ''} from collection`);
             setSelectedFiles(new Set());
         } catch {
-            toast.error('Failed to remove images from collection');
+            // Deliberately silent. The injected `removeFromCollection` is the
+            // `useRemoveImagesFromCollection` mutation, whose `onError` reports
+            // the failure — so toasting here too showed the user the same error
+            // twice for one failure. What this branch owes the user is that the
+            // selection survives it: the images are still in the collection, and
+            // the selection still says so.
         }
     }, [activeCollection, removeFromCollection, selectedFiles]);
 
