@@ -152,8 +152,9 @@ export default function Scenarios() {
                         {FORM_FIELDS.map((field) => (
                             field.key === 'default_checkpoint' ? (
                                 <div key={field.key}>
-                                    <label className="block text-xs text-gray-400 mb-1">{field.label}</label>
+                                    <label htmlFor="scenario-default-checkpoint" className="block text-xs text-gray-400 mb-1">{field.label}</label>
                                     <select
+                                        id="scenario-default-checkpoint"
                                         value={formData[field.key] || ''}
                                         onChange={(e) => setFormData({ ...formData, [field.key]: e.target.value })}
                                         className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3"
@@ -330,7 +331,11 @@ function ApplyScenarioModal({ scenario, targetType, setTargetType, targets, onAp
                     </button>
                 </div>
 
-                <label className="block text-sm font-medium text-gray-300 mb-1">Select {label}</label>
+                {/* A heading, not a label: the control it introduces is the target
+                    list below, which is not a labelable element, and the search
+                    input carries its own `aria-label`. A bare <label> here told
+                    assistive tech a control was missing. */}
+                    <div className="block text-sm font-medium text-gray-300 mb-1">Select {label}</div>
                 {targets.length === 0 ? (
                     <p className="text-xs text-gray-600 border border-gray-700/50 rounded-lg px-3 py-2">
                         No {label}s available — create one first.

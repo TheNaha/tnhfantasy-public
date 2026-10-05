@@ -57,7 +57,7 @@ export default function StorySandbox() {
     const activeStoryId = urlStoryId || null;
     const activeChapterId = urlChapterId || null;
 
-    const { data: stories = [], isLoading: storiesLoading } = useStories();
+    const { data: stories = [], isLoading: storiesLoading, isError: isStoriesError, error: storiesError, refetch: refetchStories } = useStories();
     // `isError`/`error`/`refetch` below are load-bearing, and this is the story
     // surface's copy of the defect fixed in `useChatWorkspaceData.js`: each of
     // these six queries destructured `data` with a `= []` default and no
@@ -68,7 +68,7 @@ export default function StorySandbox() {
     // five different arrays and each needs its own noun.
     const { data: worlds = [], isError: isWorldsError, error: worldsError, refetch: refetchWorlds } = useWorlds();
     const { data: activeStory } = useStory(activeStoryId);
-    const { data: chapters = [], isLoading: chaptersLoading } = useStoryChapters(activeStoryId);
+    const { data: chapters = [], isLoading: chaptersLoading, isError: isChaptersError, error: chaptersError, refetch: refetchChapters } = useStoryChapters(activeStoryId);
     const { data: lorebooks = [], isError: isLorebooksError, error: lorebooksError, refetch: refetchLorebooks } = useLorebooks();
     const { data: characters = [], isError: isCharactersError, error: charactersError, refetch: refetchCharacters } = useCharacters();
     const {
@@ -79,7 +79,7 @@ export default function StorySandbox() {
     const {
         data: scenarios = [], isError: isScenariosError, error: scenariosError, refetch: refetchScenarios,
     } = useScenarios();
-    const { data: storyImages = [] } = useStoryImages(activeStoryId);
+    const { data: storyImages = [], isError: isStoryImagesError, error: storyImagesError, refetch: refetchStoryImages } = useStoryImages(activeStoryId);
     const { data: collectionsMap = {} } = useCollections('story');
     // Memoised: this page re-renders on every streamed token.
     const collectionsList = useMemo(
@@ -100,6 +100,14 @@ export default function StorySandbox() {
             ['characters', 'characters', isCharactersError, charactersError, refetchCharacters],
             ['locations', 'locations', isLocationsError, locationsError, refetchLocations],
             ['scenarios', 'scenarios', isScenariosError, scenariosError, refetchScenarios],
+            // The three that build a LIST an empty state is written against.
+            // `stories`, `chapters` and the story's images had the same `= []`
+            // default and no `isError`, so a 503 rendered "No stories yet" /
+            // "No chapters yet" / "No scenes generated yet" — each beside a
+            // working Create button.
+            ['stories', 'stories', isStoriesError, storiesError, refetchStories],
+            ['chapters', 'chapters', isChaptersError, chaptersError, refetchChapters],
+            ['storyImages', 'images', isStoryImagesError, storyImagesError, refetchStoryImages],
         ];
         for (const [key, noun, isError, error, refetch] of failures) {
             if (isError) map[key] = { error, refetch, noun };
@@ -111,6 +119,9 @@ export default function StorySandbox() {
         isCharactersError, charactersError, refetchCharacters,
         isLocationsError, locationsError, refetchLocations,
         isScenariosError, scenariosError, refetchScenarios,
+        isStoriesError, storiesError, refetchStories,
+        isChaptersError, chaptersError, refetchChapters,
+        isStoryImagesError, storyImagesError, refetchStoryImages,
     ]);
 
     const createStory = useCreateStory();
@@ -1090,6 +1101,9 @@ export default function StorySandbox() {
                     onCreateStory={handleCreateStory}
                     onDeleteStory={handleDeleteStory}
                     isLoading={storiesLoading}
+                    isError={queryErrors.stories != null}
+                    error={queryErrors.stories?.error}
+                    onRetry={queryErrors.stories?.refetch}
                 />
                 {activeStoryId && (
                     <ChapterSidebar
@@ -1100,6 +1114,9 @@ export default function StorySandbox() {
                         onDeleteChapter={handleDeleteChapter}
                         onReorder={handleReorderChapters}
                         isLoading={chaptersLoading}
+                        isError={queryErrors.chapters != null}
+                        error={queryErrors.chapters?.error}
+                        onRetry={queryErrors.chapters?.refetch}
                     />
                 )}
             </div>
@@ -1176,6 +1193,8 @@ export default function StorySandbox() {
                                                 onUpdateBeat={handleEditBeat}
                                                 onDeleteBeat={handleDeleteBeat}
                                                 onClose={() => setShowBeatsPanel(false)}
+                                                beatsError={queryErrors.chapters?.error}
+                                                onRetryBeats={queryErrors.chapters?.refetch}
                                             />
                                         )}
                                         <StoryActionBar
@@ -1305,6 +1324,9 @@ export default function StorySandbox() {
                 chapterTitle={activeChapter?.title || 'Untitled chapter'}
                 revisions={chapterRevisions.data || []}
                 isLoading={chapterRevisions.isLoading}
+                isError={chapterRevisions.isError}
+                error={chapterRevisions.error}
+                onRetry={chapterRevisions.refetch}
                 isRestoring={restoreRevision.isPending}
                 onRestore={handleRestoreRevision}
                 onSnapshot={handleSaveRevision}
@@ -1315,6 +1337,8 @@ export default function StorySandbox() {
                 isOpen={showGallery}
                 storyTitle={activeStory?.title}
                 images={storyImages.map(img => img.path)}
+                imagesError={queryErrors.storyImages?.error}
+                onRetryImages={queryErrors.storyImages?.refetch}
                 collectionsList={collectionsList}
                 onSaveToCollection={handleSaveImageToCollection}
                 onClose={() => setShowGallery(false)}

@@ -19,6 +19,7 @@ import { useWorlds } from '../hooks/useWorlds';
 import { useWorldVaultDashboard } from '../hooks/useWorldVaultSearch';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 import { QueryErrorState } from '../components/common/QueryState';
+import { parseGalleryDate } from '../utils/dateTime';
 import { EXPERT_TOOLS } from '../constants/navigation';
 import { isSetupComplete } from '../utils/setupComplete';
 
@@ -26,7 +27,11 @@ const asList = (value) => Array.isArray(value) ? value : (value?.chats || value?
 
 const formatUpdated = (value) => {
     if (!value) return 'Recently';
-    const date = new Date(value);
+    // `parseGalleryDate`, not `new Date(...)`: a backend timestamp with no
+    // timezone is UTC, and the bare constructor reads it as local time — which
+    // renders the previous day for every user west of Greenwich, on the one
+    // line that says when their last chat was.
+    const date = parseGalleryDate(value);
     if (Number.isNaN(date.getTime())) return 'Recently';
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };

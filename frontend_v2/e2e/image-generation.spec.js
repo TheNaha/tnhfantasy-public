@@ -382,9 +382,17 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
     await firstCard.click();
     await expect(page.getByLabel('Close lightbox')).toBeVisible();
 
-    const reuse = page.getByRole('button', { name: 'Reuse Parameters' });
+const reuse = page.getByRole('button', { name: 'Reuse Parameters' });
     if (!(await reuse.isVisible({ timeout: 3000 }).catch(() => false))) {
-      test.skip(true, 'image has no metadata to reuse');
+        // A generated image can legitimately carry no reusable metadata (no
+        // prompt, no checkpoint). But skipping here also disables the reuse
+        // assertions, so a regression that stopped *writing* metadata would turn
+        // this test green-by-skip instead of red. Fail with the diagnosis and
+        // let a maintainer skip it deliberately.
+        test.fail(
+            true,
+            'generated image exposed no "Reuse Parameters" action — either it is a genuine no-metadata image (delete/skip this test deliberately) or metadata is no longer being written (a real regression)',
+        );
     }
     await reuse.click();
     await expect(page).toHaveURL(/\/generate$/);

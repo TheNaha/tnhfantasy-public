@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import clsx from 'clsx';
@@ -21,8 +21,8 @@ import ChatContextPanel from '../components/chat/ChatContextPanel';
 import ChatTimeline from '../components/chat/ChatTimeline';
 import MessageTimeline from '../components/chat/MessageTimeline';
 import { ChatWorkspaceProvider, useChatWorkspace } from '../contexts/ChatWorkspaceContext';
-import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useLocations } from '../hooks/useLocations';
+import ModalOverlay from '../components/common/ModalOverlay';
 
 export default function ChatWorkspace() {
     return (
@@ -68,11 +68,17 @@ function ChatWorkspaceLayout() {
         chatCollection, handleSaveImageToCollection, collectionsList,
         avatarModalSrc, setAvatarModalSrc, contextCollapsed,
         timelineVisible, activeBranch, setActiveBranch,
+        queryErrors,
     } = context;
 
-    // Escape dismisses the Scenes gallery, matching the shared ModalOverlay
-    // dialogs and the "Esc → Close modals" line in KeyboardShortcutsModal.
-    useEscapeKey(() => { if (showScenesModal) setShowScenesModal(false); }, showScenesModal);
+    const closeScenesModal = useCallback(() => setShowScenesModal(false), [setShowScenesModal]);
+    const closeAvatarViewer = useCallback(() => setAvatarModalSrc(null), [setAvatarModalSrc]);
+
+    // Escape for the Scenes gallery now comes from the <ModalOverlay> it is
+    // built on, which registers through the same topmost-wins registry as every
+    // other dialog. The hand-rolled `useEscapeKey` that used to sit here was a
+    // second owner for one dialog; `KeyboardShortcutsModal`'s advertised
+    // "Esc → Close modals" is unchanged.
 
     useEffect(() => {
         if (searchParams.get('new') === '1') {
@@ -244,6 +250,8 @@ function ChatWorkspaceLayout() {
                         locations={locations}
                         worlds={worlds}
                         personas={personasCtx}
+                        lorebooksError={queryErrors.lorebooks?.error}
+                        onRetryLorebooks={queryErrors.lorebooks?.refetch}
                         onCreate={confirmCreateChat}
                         onClose={() => setShowNewChatModal(false)}
                     />
@@ -289,7 +297,13 @@ function ChatWorkspaceLayout() {
             </AnimatePresence>
 
             {showScenesModal && (
-                <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                /* Was a bare `fixed inset-0` div with no `onClick` on the
+                   backdrop, so the only ways out were its own close button and
+                   Escape — unlike every other dialog in the app. `<ModalOverlay>`
+                   brings the backdrop click and the Escape registry with it.
+                   `z-[60]` is kept: the scenes dialog has to sit above the chat
+                   column's own overlays and below the avatar viewer's `z-[100]`. */
+                <ModalOverlay onClose={closeScenesModal} className="z-[60] bg-black/80 backdrop-blur-sm">
                     <motion.div
                         initial={{ scale: 0.95, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
@@ -324,6 +338,8 @@ function ChatWorkspaceLayout() {
                                 <SceneGallery
                                     title={`${linkedCharacter?.name || 'Character'} chat scenes`}
                                     images={chatImages?.map(img => img.path) || []}
+                                    imagesError={queryErrors.chatImages?.error}
+                                    onRetryImages={queryErrors.chatImages?.refetch}
                                     lightboxAction={(path) => (
                                         <select
                                             value=""
@@ -347,27 +363,42 @@ function ChatWorkspaceLayout() {
                                 <SceneGallery
                                     title={`${linkedCharacter?.name || 'Character'} scenes`}
                                     images={chatCollection?.images || []}
+                                    imagesError={queryErrors.chatCollection?.error}
+                                    onRetryImages={queryErrors.chatCollection?.refetch}
                                 />
                             )}
                         </div>
                     </motion.div>
-                </div>
+                </ModalOverlay>
             )}
             {avatarModalSrc && (
-                <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setAvatarModalSrc(null)}>
+                /* Was a hand-rolled `fixed inset-0` with a backdrop click but no
+                   `useEscapeKey`, so the one dismissal every dialog in this app
+                   answers to did nothing here and the viewer could only be closed
+                   with the mouse. `z-[100]` is deliberately kept — it is the
+                   top-most layer in the chat surface, above the Scenes dialog
+                   at `z-[60]`. */
+                <ModalOverlay onClose={closeAvatarViewer} className="z-[100] bg-black/85 backdrop-blur-sm">
                     <div className="flex items-center justify-between w-full absolute top-0 left-0 right-0 px-4 py-3">
                         <span className="text-xs text-gray-400">{linkedCharacter?.name || 'Avatar'}</span>
-                        <button className="p-2 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors" onClick={() => setAvatarModalSrc(null)} aria-label="Close avatar">
+                        <button className="p-2 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors" onClick={closeAvatarViewer} aria-label="Close avatar">
                             <X size={18} />
                         </button>
                     </div>
-                    <img
-                        src={avatarModalSrc}
-                        alt="Avatar"
-                        className="max-h-[85vh] max-w-full rounded-xl shadow-2xl object-contain"
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={`${linkedCharacter?.name || 'Character'} avatar`}
+                        className="max-h-full max-w-full"
                         onClick={(e) => e.stopPropagation()}
-                    />
-                </div>
+                    >
+                        <img
+                            src={avatarModalSrc}
+                            alt="Avatar"
+                            className="max-h-[85vh] max-w-full rounded-xl shadow-2xl object-contain"
+                        />
+                    </div>
+                </ModalOverlay>
             )}
             <BottomTabBar
                 inline

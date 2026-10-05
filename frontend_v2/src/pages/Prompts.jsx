@@ -10,6 +10,8 @@ import {
 } from '../hooks/usePrompts';
 import promptsApi from '../api/promptsApi';
 import { copyToClipboard } from '../utils/clipboard';
+import { downloadJson, pickFile } from '../utils/download';
+import { QueryErrorState } from '../components/common/QueryState';
 import PromptCard from '../components/generator/PromptCard';
 import PromptForm from '../components/generator/PromptForm';
 import toast from 'react-hot-toast';
@@ -17,7 +19,7 @@ import { useConfirmation } from '../store/confirmationStore';
 import { DEFAULT_PROMPT_CATEGORIES } from '../constants/prompts';
 
 export default function Prompts() {
-    const { data: prompts = [], isLoading } = usePrompts();
+    const { data: prompts = [], isLoading, isError, error, refetch } = usePrompts();
     const { data: categories = DEFAULT_PROMPT_CATEGORIES } = usePromptCategories();
 
     const deletePromptMutation = useDeletePrompt();
@@ -101,15 +103,7 @@ export default function Prompts() {
         setIsExporting(true);
         try {
             const { prompts: exportData } = await promptsApi.exportPrompts();
-            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `prompt-library-${Date.now()}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            downloadJson(exportData, `prompt-library-${Date.now()}.json`);
             toast.success('Exported prompt library', { icon: '📥' });
         } catch {
             toast.error('Failed to export prompts');
@@ -118,23 +112,17 @@ export default function Prompts() {
         }
     };
 
-    const handleImport = () => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'application/json';
-        input.onchange = async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            try {
-                const text = await file.text();
-                const data = JSON.parse(text);
-                const result = await importPromptsMutation.mutateAsync(data);
-                toast.success(`Imported ${result.count} prompts`, { icon: '📤' });
-            } catch {
-                toast.error('Failed to import prompts');
-            }
-        };
-        input.click();
+    const handleImport = async () => {
+        const file = await pickFile({ accept: 'application/json' });
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            const result = await importPromptsMutation.mutateAsync(data);
+            toast.success(`Imported ${result.count} prompts`, { icon: '📤' });
+        } catch {
+            toast.error('Failed to import prompts');
+        }
     };
 
     return (
@@ -188,6 +176,7 @@ export default function Prompts() {
                 <select
                     value={selectedCategory}
                     onChange={(e) => setSelectedCategory(e.target.value)}
+                    aria-label="Filter prompts by category"
                     className="px-3 py-2 bg-gray-800/60 border border-white/10 rounded-lg text-sm text-gray-200 focus:outline-none focus:border-blue-500/50"
                 >
                     {categories.map(cat => (
@@ -198,6 +187,12 @@ export default function Prompts() {
 
             {isLoading && prompts.length === 0 ? (
                 <div className="text-center py-12 text-gray-500">Loading prompt library...</div>
+            ) : isError ? (
+                /* Not the empty state. A failed GET /api/v2/prompts used to
+                   render "0 saved prompts / Start by adding your first
+                   prompt!" — a confident, wrong statement that invited the user
+                   to re-add prompts they already had. */
+                <QueryErrorState noun="prompts" error={error} onRetry={refetch} />
             ) : displayedPrompts.length === 0 ? (
                 <div className="text-center py-12">
                     <FolderOpen size={48} className="mx-auto mb-4 opacity-50" />

@@ -249,8 +249,9 @@ function LorebookFormModal({ editingId, form, setForm, onSave, onClose, isSubmit
                 </div>
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-1">Name*</label>
+                        <label htmlFor="lorebook-form-name" className="block text-sm font-medium text-gray-300 mb-1">Name*</label>
                         <input
+                            id="lorebook-form-name"
                             type="text"
                             className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                             value={form.name || ''}
@@ -259,8 +260,9 @@ function LorebookFormModal({ editingId, form, setForm, onSave, onClose, isSubmit
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                        <label htmlFor="lorebook-form-description" className="block text-sm font-medium text-gray-300 mb-1">Description</label>
                         <textarea
+                            id="lorebook-form-description"
                             className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                             value={form.description || ''}
                             onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}
@@ -297,7 +299,8 @@ function EntryManagerModal({ lorebook, onClose }) {
     const [selectedIds, setSelectedIds] = useState(new Set());
     const fileInputRef = useRef(null);
 
-    const { data: entries = [], isLoading } = useLorebookEntries(lorebook.id);
+    const { data: entries = [], isLoading, isError: entriesError, error: entriesFetchError, refetch: refetchEntries } =
+        useLorebookEntries(lorebook.id);
     const createEntry = useCreateEntry();
     const updateEntry = useUpdateEntry();
     const deleteEntry = useDeleteEntry();
@@ -555,6 +558,18 @@ function EntryManagerModal({ lorebook, onClose }) {
                                 </div>
                             ))}
                         </div>
+                    ) : entriesError ? (
+                        /* The lorebook list above already has an error branch;
+                           the entries sub-panel did not, so a failure on
+                           GET /api/v2/lorebooks/{id}/entries showed "No entries
+                           yet. Add the first one." beside a working Add form —
+                           inviting the user to re-add entries that exist. */
+                        <QueryErrorState
+                            noun="entries"
+                            error={entriesFetchError}
+                            onRetry={refetchEntries}
+                            className="py-6"
+                        />
                     ) : displayed.length === 0 ? (
                         <p className="text-xs text-gray-500 text-center py-8">
                             {isSearching ? 'No matching entries' : 'No entries yet. Add the first one.'}

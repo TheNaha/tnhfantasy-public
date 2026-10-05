@@ -59,9 +59,10 @@ function SystemPromptsEditor() {
             <div className="space-y-4">
                 {fields.map(f => (
                     <div key={f.key}>
-                        <label className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-1">{f.label}</label>
+                        <label htmlFor={`prompt-block-${f.key}`} className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-1">{f.label}</label>
                         <p className="text-xs text-gray-600 mb-1">{f.desc}</p>
                         <textarea
+                            id={`prompt-block-${f.key}`}
                             value={draft[f.key] || ''}
                             onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
                             rows={4}
@@ -1358,8 +1359,9 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                     </div>
                     <div className="grid gap-4 md:grid-cols-2">
                         <div>
-                            <label className="block text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Provider</label>
+                            <label htmlFor="llm-default-provider" className="block text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Provider</label>
                             <select
+                                id="llm-default-provider"
                                 value={providerId}
                                 onChange={(e) => setProviderId(e.target.value)}
                                 className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
@@ -1371,11 +1373,12 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">
+                            <label htmlFor="llm-default-model" className="block text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">
                                 Model ID (Optional)
                                 {llmStatus.isModelsLoading && <Loader2 size={10} className="inline ml-1 animate-spin" />}
                             </label>
                             <select
+                                id="llm-default-model"
                                 value={modelId}
                                 onChange={(e) => setModelId(e.target.value)}
                                 className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"

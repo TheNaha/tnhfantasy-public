@@ -346,11 +346,12 @@ export default function Locations() {
                                 </div>
                             ))}
                             <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-300 mb-1">
+                                <label htmlFor="location-tag-input" className="block text-sm font-medium text-gray-300 mb-1">
                                     {TAG_FIELD.label}
                                 </label>
                                 <div className="flex gap-2 mb-2">
                                     <input
+                                        id="location-tag-input"
                                         type="text"
                                         value={tagInput}
                                         onChange={(e) => setTagInput(e.target.value)}
@@ -375,9 +376,10 @@ export default function Locations() {
                             </div>
                             {editingLocation && (
                                 <div className="mb-4">
-                                    <label className="block text-sm font-medium text-gray-300 mb-1">Image</label>
+                                    <label htmlFor="location-image-input" className="block text-sm font-medium text-gray-300 mb-1">Image</label>
                                     <div className="flex items-center gap-3">
                                         <input
+                                            id="location-image-input"
                                             ref={imageInputRef}
                                             type="file"
                                             accept="image/*"

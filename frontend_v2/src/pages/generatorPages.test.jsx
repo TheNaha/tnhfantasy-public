@@ -52,8 +52,12 @@ const mocks = vi.hoisted(() => {
             isMissingModelsOpen: false, setIsMissingModelsOpen: fn(),
             // runWithPreflight immediately invokes onValid (which calls generateApi.workflow)
             // and returns a successful submission result, mirroring the real flow.
-            runWithPreflight: async (_wf, { onValid }) => {
-                await onValid();
+            // Tolerant of both call shapes on purpose: `useGeneratorJob` passes
+            // `(fn, { onValid })`, while SimpleGenerator's variations path calls
+            // it as `runWithPreflight(options)` and does its own queueing. A
+            // mock shaped to one caller fails the other for the wrong reason.
+            runWithPreflight: async (...args) => {
+                await args[1]?.onValid?.();
                 return { ok: true, submissionResult: { id: 'job-1' } };
             },
         },
@@ -135,10 +139,17 @@ vi.mock('../components/generator/ImageUploader', () => ({ default: () => null })
 vi.mock('../components/generator/PresetManager', () => ({ default: () => null }));
 vi.mock('../components/ModelSelector', () => ({ default: () => null }));
 vi.mock('../components/generator/InpaintCanvas', () => ({ default: () => null }));
-/* GenerateButtonBar (Simple only) — expose a clickable button wired to onGenerate. */
+/* GenerateButtonBar (Simple only) — expose a clickable button wired to onGenerate,
+   and one wired to onGenerateVariations so the seed-variations path is reachable
+   without rendering the real (menu-and-dropdown) button bar. */
 vi.mock('../components/generator/GenerateButtonBar', () => ({
-    default: ({ onGenerate }) =>
-        React.createElement('button', { 'data-testid': 'simple-generate', onClick: () => onGenerate() }, 'Generate'),
+    default: ({ onGenerate, onGenerateVariations }) =>
+        React.createElement(
+            'div',
+            null,
+            React.createElement('button', { 'data-testid': 'simple-generate', onClick: () => onGenerate() }, 'Generate'),
+            React.createElement('button', { 'data-testid': 'simple-variations', onClick: () => onGenerateVariations(2) }, 'Variations'),
+        ),
 }));
 vi.mock('../components/generator/ReactFlowEditor', () => ({ default: () => null }));
 
@@ -153,7 +164,12 @@ const assertWired = async (key, expectedNavigate = false) => {
         { idempotencyKey: key },
     );
     if (expectedNavigate) {
-        expect(mocks.navigate).toHaveBeenCalledWith('/gallery');
+        // Not synchronous any more, and that is the point of the change: the
+        // redirect is armed at submit for exactly `redirectDelay` ms, so even
+        // `redirectDelay: 0` goes through a timer. Waiting for it is the
+        // assertion; loosening it to accept zero calls would pass whether or
+        // not the redirect was ever wired up.
+        await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/gallery'));
     } else {
         expect(mocks.navigate).not.toHaveBeenCalled();
     }
@@ -173,6 +189,52 @@ describe('SimpleGenerator wiring', () => {
         renderInRouter(SimpleGenerator);
         fireEvent.click(screen.getAllByTestId('simple-generate')[0]);
         await assertWired('generate-simple', true);
+    });
+});
+
+describe('SimpleGenerator seed variations', () => {
+    async function generateVariations() {
+        const { default: SimpleGenerator } = await import('./SimpleGenerator');
+        renderInRouter(SimpleGenerator);
+        // This file does not clean up between cases, so queries use `All…[0]`
+        // throughout; see the existing `simple-generate` cases.
+        fireEvent.click(screen.getAllByTestId('simple-variations')[0]);
+    }
+
+    it('queues one job per variation with its own idempotency key', async () => {
+        await generateVariations();
+        await waitFor(() => expect(mocks.workflow).toHaveBeenCalledTimes(2));
+        expect(mocks.workflow).toHaveBeenCalledWith(
+            expect.any(Object), expect.any(Object), { idempotencyKey: 'generate-variation-0' },
+        );
+        expect(mocks.workflow).toHaveBeenCalledWith(
+            expect.any(Object), expect.any(Object), { idempotencyKey: 'generate-variation-1' },
+        );
+    });
+
+    it('honours redirectDelay instead of navigating synchronously', async () => {
+        // 300ms is long enough to be unambiguously "not yet" by the time the
+        // assertions below run, and short enough not to need fake timers.
+        mocks.settingsOverrides.value = { redirectDelay: 300 };
+        await generateVariations();
+        await waitFor(() => expect(mocks.workflow).toHaveBeenCalledTimes(2));
+
+        // Queued, but the redirect is still pending: the whole point of the
+        // setting is to let the queued jobs appear in the gallery first. The old
+        // code navigated on the `await Promise.all`, so this was true for zero
+        // milliseconds whatever the slider said.
+        expect(mocks.navigate).not.toHaveBeenCalled();
+
+        await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/gallery'));
+    });
+
+    it('does not redirect at all when redirectAfterGenerate is off', async () => {
+        mocks.settingsOverrides.value = { redirectAfterGenerate: false };
+        await generateVariations();
+        await vi.waitFor(() => expect(mocks.workflow).toHaveBeenCalledTimes(2));
+        // Long enough for any redirect timer to have fired.
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        expect(mocks.navigate).not.toHaveBeenCalled();
     });
 });
 

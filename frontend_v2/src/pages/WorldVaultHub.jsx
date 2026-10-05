@@ -153,6 +153,7 @@ export default function WorldVaultHub() {
                 <select
                     value={selectedType}
                     onChange={(e) => setSelectedType(e.target.value)}
+                    aria-label="Filter the vault by entity type"
                     className="px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                     {ENTITY_TYPE_FILTERS.map((type) => (

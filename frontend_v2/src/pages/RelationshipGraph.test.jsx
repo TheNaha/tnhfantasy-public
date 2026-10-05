@@ -84,11 +84,30 @@ describe('RelationshipGraph page', () => {
             data: undefined,
             isLoading: false,
             isError: true,
+            error: new Error('relationship service unreachable'),
             refetch: mockRefetch,
             isFetching: false,
         });
         render(<RelationshipGraph />, { wrapper: createWrapper() });
-        expect(screen.getByText('Failed to load relationships')).toBeInTheDocument();
+        // The shared error state, not grey body text: it announces itself,
+        // states that this is not an empty graph, and offers a retry.
+        expect(screen.getByRole('alert')).toBeInTheDocument();
+        expect(screen.getByText(/Could not load your relationships/)).toBeInTheDocument();
+        expect(screen.queryByText('Failed to load relationships')).not.toBeInTheDocument();
+    });
+
+    it('offers a retry that calls refetch', () => {
+        mockRelationships.mockReturnValue({
+            data: undefined,
+            isLoading: false,
+            isError: true,
+            error: new Error('boom'),
+            refetch: mockRefetch,
+            isFetching: false,
+        });
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
+        fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+        expect(mockRefetch).toHaveBeenCalled();
     });
 
     it('shows an empty state when there are no relationships', () => {

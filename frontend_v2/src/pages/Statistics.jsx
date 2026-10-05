@@ -178,9 +178,17 @@ const Statistics = () => {
     if (error || !data) {
         return (
             <div className="flex items-center justify-center h-screen bg-neutral-950">
-                <motion.div 
+                <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
+                    // `role="alert"`: this panel is the page's whole statement
+                    // about a failed fetch, and the "No sampler data yet." insight
+                    // strings further down are only reachable because this early
+                    // return happens first. Without the role the branch is
+                    // invisible both to a screen reader and to the structural
+                    // guard in `test/queryErrorInvariants.test.jsx`, which is how
+                    // this page could have lost the branch silently.
+                    role={error ? 'alert' : undefined}
                     className="text-center bg-gray-900/50 backdrop-blur-xl p-8 rounded-3xl border border-white/10 max-w-md shadow-2xl"
                 >
                     <TrendingUp className="mx-auto mb-4 text-gray-500" size={48} />

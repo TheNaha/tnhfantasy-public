@@ -512,8 +512,9 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                             
                             <div className="flex-1 space-y-3">
                                 <div>
-                                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Name *</label>
+                                    <label htmlFor="character-form-name" className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Name *</label>
                                     <input
+                                        id="character-form-name"
                                         type="text"
                                         value={form.name}
                                         onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
@@ -555,7 +556,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                         {CHARACTER_FIELDS.filter(f => f.key !== 'name').map(field => (
                             <div key={field.key}>
                                 <div className="flex items-center justify-between mb-1">
-                                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{field.label}</label>
+                                    <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{field.label}</div>
                                     {field.key !== 'creator_notes' && field.key !== 'default_time' && field.key !== 'default_location' && (
                                         <button
                                             onClick={() => handleGenerateField(field.key)}
@@ -590,7 +591,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                         <div>
                             <div className="flex items-center justify-between mb-1">
                                 <div>
-                                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Visual Tags</label>
+                                    <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Visual Tags</div>
                                     <p className="text-2xs text-gray-500">Tags for image generation (e.g., 1girl, blue hair, school uniform)</p>
                                 </div>
                                 <button
@@ -624,7 +625,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
 
                         {/* LoRA Triggers */}
                         <div>
-                            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">LoRA Triggers</label>
+                            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">LoRA Triggers</div>
                             <p className="text-2xs text-gray-500 mb-2">LoRA trigger words for this character</p>
                             <div className="flex flex-wrap gap-2 mb-2">
                                 {form.lora_triggers.map((tag, idx) => (
@@ -649,7 +650,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
 
                         {/* Lorebooks */}
                         <div data-testid="character-lorebooks">
-                            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Lorebooks</label>
+                            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Lorebooks</div>
                             <p className="text-2xs text-gray-500 mb-2">
                                 Library books this character draws on. They are attached to every chat and story
                                 this character is in, so you set them once instead of per conversation.
@@ -745,8 +746,9 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
 
                         {/* Voice Profile */}
                         <div>
-                            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Voice Model</label>
+                            <label htmlFor="character-form-voice-model" className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Voice Model</label>
                             <select
+                                id="character-form-voice-model"
                                 value={form.voice_model_id || ''}
                                 onChange={e => {
                                     const v = voices.find(x => String(x.id) === String(e.target.value));

@@ -3,6 +3,7 @@ import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw, Save
 import { useNavigate } from 'react-router-dom';
 import { useWorldVaultRelationships, useGraphLayout, useSaveGraphLayout, useDeleteGraphLayout } from '../hooks/useWorldVaultSearch';
 import RoleplayPageShell from '../components/RoleplayPageShell';
+import { QueryErrorState } from '../components/common/QueryState';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
 const NODE_COLORS = {
@@ -248,7 +249,7 @@ export default function RelationshipGraph() {
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const svgRef = useRef(null);
 
-    const { data, isLoading, isError, refetch, isFetching } = useWorldVaultRelationships();
+    const { data, isLoading, isError, error, refetch, isFetching } = useWorldVaultRelationships();
     const { data: savedLayout } = useGraphLayout('default');
     const saveLayout = useSaveGraphLayout();
     const deleteLayout = useDeleteGraphLayout();
@@ -426,11 +427,10 @@ export default function RelationshipGraph() {
     }
 
     if (isError) {
-        return (
-            <div className="text-center py-12 text-gray-400">
-                Failed to load relationships
-            </div>
-        );
+        /* Detected the failure but rendered it as grey body text with no retry,
+           while `refetch` was already destructured and used by the toolbar
+           button two hundred lines below. */
+        return <QueryErrorState noun="relationships" error={error} onRetry={() => refetch()} />;
     }
 
     return (
@@ -443,6 +443,7 @@ export default function RelationshipGraph() {
                     <select
                         value={filter}
                         onChange={(e) => setFilter(e.target.value)}
+                        aria-label="Filter entities by type"
                         className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
                     >
                         <option value="all">All Entities</option>

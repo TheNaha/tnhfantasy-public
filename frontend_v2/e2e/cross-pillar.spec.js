@@ -122,7 +122,16 @@ test.describe('Cross-Pillar Flows (Module E)', () => {
   });
 
   test('Error path: agentic depth limit prevents infinite loop', async ({ page }) => {
-    test.skip();
+    // Needs a live image-generation provider: the depth limit is only reached by
+    // an agentic loop that actually calls generate_image, and every assertion
+    // after this line waits on a real job completing (180 s timeout). Skip
+    // rather than fail on a provider-less host — but with a stated reason, so
+    // this is visibly coverage-the-project-does-not-have rather than a mystery
+    // `test.skip()` that reads like a passing assertion.
+    test.skip(
+        !process.env.E2E_LIVE_GENERATION,
+        'needs a live provider (set E2E_LIVE_GENERATION=1) — the agentic depth limit has no other end-to-end coverage',
+    );
     const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
     trackEntity(page, 'chat', chat.id);
 
