@@ -2,6 +2,7 @@ import { memo, useState } from 'react';
 import { Check, ChevronDown, Layers, Info, Star, ImageIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../api';
+import { formatBytes, KB } from '../../utils/bytes';
 import ModelPreviewImage from './ModelPreviewImage';
 
 const TriggerBox = memo(function TriggerBox({
@@ -159,7 +160,7 @@ const TriggerBox = memo(function TriggerBox({
                           <div className="text-xs text-gray-500 truncate">
                             {version.base_model || 'Unknown'} •{' '}
                             {file.size_kb
-                              ? `${(file.size_kb / 1024 / 1024).toFixed(2)} GB`
+                              ? formatBytes(file.size_kb * KB)
                               : ''}
                           </div>
                         </div>

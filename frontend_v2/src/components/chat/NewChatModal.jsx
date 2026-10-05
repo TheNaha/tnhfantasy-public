@@ -132,7 +132,7 @@ function NewChatModal({ characters, lorebooks, locations = [], personas = [], wo
             >
                 <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
                     <h3 id="new-chat-title" className="font-bold text-gray-100">Create New Chat</h3>
-                    <button onClick={onClose} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                    <button onClick={onClose} aria-label="Close new chat" className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
                         <X size={18} />
                     </button>
                 </div>

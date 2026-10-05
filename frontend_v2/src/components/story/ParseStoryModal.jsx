@@ -40,7 +40,7 @@ export default function ParseStoryModal({ isOpen, onClose, onComplete }) {
                                 <Sparkles className="text-indigo-400" />
                                 Import & Parse Story
                             </h2>
-                            <button onClick={onClose} className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors">
+                            <button onClick={onClose} aria-label="Close import and parse story" className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors">
                                 <X size={20} />
                             </button>
                         </div>

@@ -5,18 +5,26 @@
 
 import api from './client';
 
+/**
+ * Every read takes a trailing `options` and forwards it to the client, so a
+ * React Query `queryFn` can pass the `AbortSignal` from its context. These are
+ * the polling queries: an unmounted card or a job list that has moved on would
+ * otherwise leave its request running to completion and then write a result
+ * nobody is watching. Writes do not need it — a mutation is not cancelled by
+ * changing keys.
+ */
 export const jobsApi = {
     // List jobs with pagination
-    list: (params = {}) => api.get('/api/jobs', { params }),
+    list: (params = {}, options = {}) => api.get('/api/jobs', { params, ...options }),
 
     // Get single job
-    get: (jobId) => api.get(`/api/jobs/${jobId}`),
+    get: (jobId, options = {}) => api.get(`/api/jobs/${jobId}`, options),
     
     // Get all active jobs (pending/running)
-    getActive: () => api.get('/api/jobs/active'),
+    getActive: (options = {}) => api.get('/api/jobs/active', options),
 
     // Get queue status with per-task-type ETA estimates
-    getQueueStatus: () => api.get('/api/jobs/queue'),
+    getQueueStatus: (options = {}) => api.get('/api/jobs/queue', options),
 
     // Delete job
     delete: (jobId) => api.delete(`/api/jobs/${jobId}`),
@@ -48,7 +56,7 @@ export const jobsApi = {
      * duration, failure kind, retryability).
      * @param {string} jobId
      */
-    getDiagnostics: (jobId) => api.get(`/api/jobs/${jobId}/diagnostics`),
+    getDiagnostics: (jobId, options = {}) => api.get(`/api/jobs/${jobId}/diagnostics`, options),
 
     /**
      * List failed jobs (newest first) with diagnostics and a page summary.
@@ -60,13 +68,13 @@ export const jobsApi = {
      * @param {string} [params.taskType]
      * @param {boolean} [params.includeAcknowledged] - Include acknowledged failures
      */
-    getFailed: (params = {}) => {
+    getFailed: (params = {}, options = {}) => {
         const query = {};
         if (params.limit != null) query.limit = params.limit;
         if (params.offset != null) query.offset = params.offset;
         if (params.taskType) query.task_type = params.taskType;
         if (params.includeAcknowledged) query.include_acknowledged = true;
-        return api.get('/api/jobs/failed', { params: query });
+        return api.get('/api/jobs/failed', { params: query, ...options });
     },
 
     /**

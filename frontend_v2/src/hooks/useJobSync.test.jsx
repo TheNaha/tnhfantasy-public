@@ -134,7 +134,7 @@ describe('useJobStatus', () => {
         const { result } = renderHook(() => useJobStatus('j1'), { wrapper });
 
         await waitFor(() => expect(result.current.data).toEqual({ id: 'j1', status: 'generating' }));
-        expect(jobsApi.get).toHaveBeenCalledWith('j1');
+        expect(jobsApi.get).toHaveBeenCalledWith('j1', { signal: expect.any(AbortSignal) });
     });
 
     it('does not poll while the socket is connected', async () => {

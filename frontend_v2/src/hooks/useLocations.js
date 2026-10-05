@@ -9,14 +9,14 @@ const LOCATION_DETAIL_KEY = (id) => buildQueryKey(QUERY_KEYS.LOCATIONS, id);
 export const useLocations = () => {
     return useQuery({
         queryKey: LOCATIONS_KEY,
-        queryFn: () => api.get('/api/v2/locations'),
+        queryFn: ({ signal }) => api.get('/api/v2/locations', { signal }),
     });
 };
 
 export const useLocation = (locationId) => {
     return useQuery({
         queryKey: LOCATION_DETAIL_KEY(locationId),
-        queryFn: () => api.get(`/api/v2/locations/${locationId}`),
+        queryFn: ({ signal }) => api.get(`/api/v2/locations/${locationId}`, { signal }),
         enabled: !!locationId,
     });
 };
@@ -34,7 +34,7 @@ export const useDeleteLocation = () => useDeleteResource({ basePath: '/api/v2/lo
 export const useSearchLocations = (query) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.LOCATIONS, 'search', query),
-        queryFn: () => api.get('/api/v2/locations/search', { params: { q: query } }),
+        queryFn: ({ signal }) => api.get('/api/v2/locations/search', { params: { q: query }, signal }),
         enabled: !!query && query.length >= 2,
     });
 };

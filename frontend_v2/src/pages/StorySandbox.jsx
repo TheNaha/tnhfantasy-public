@@ -13,6 +13,7 @@ import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 import { useCollections } from '../hooks/useCollections';
 import { addImagesToCollection } from '../api/collectionsApi';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import BottomTabBar from '../components/BottomTabBar';
 import StorySidebar from '../components/story/StorySidebar';
 import ChapterSidebar from '../components/story/ChapterSidebar';
@@ -25,6 +26,7 @@ import StoryContextPanel from '../components/story/StoryContextPanel';
 import CreateStoryModal from '../components/story/CreateStoryModal';
 import { useWorlds } from '../hooks/useWorlds';
 import { warnIfWorldIgnored, WORLD_IGNORED_MESSAGE } from '../utils/worldLinkWarning';
+import { copyToClipboard } from '../utils/clipboard';
 import IllustrateModal from '../components/story/IllustrateModal';
 import StoryActionModal from '../components/story/StoryActionModal';
 import ChapterRevisionsModal from '../components/story/ChapterRevisionsModal';
@@ -56,15 +58,27 @@ export default function StorySandbox() {
     const activeChapterId = urlChapterId || null;
 
     const { data: stories = [], isLoading: storiesLoading } = useStories();
-    const { data: worlds = [] } = useWorlds();
+    // `isError`/`error`/`refetch` below are load-bearing, and this is the story
+    // surface's copy of the defect fixed in `useChatWorkspaceData.js`: each of
+    // these six queries destructured `data` with a `= []` default and no
+    // `isError`, and `StoryContextPanel` builds "No lorebooks" / "No
+    // locations" straight off those arrays. A 503 therefore told the author of
+    // a story built on four lorebooks that they had none. `queryErrors` is
+    // passed down instead of an `isErrored` boolean because the panel gates
+    // five different arrays and each needs its own noun.
+    const { data: worlds = [], isError: isWorldsError, error: worldsError, refetch: refetchWorlds } = useWorlds();
     const { data: activeStory } = useStory(activeStoryId);
     const { data: chapters = [], isLoading: chaptersLoading } = useStoryChapters(activeStoryId);
-    const { data: lorebooks = [] } = useLorebooks();
-    const { data: characters = [] } = useCharacters();
-    const { data: locations = [] } = useLocations();
+    const { data: lorebooks = [], isError: isLorebooksError, error: lorebooksError, refetch: refetchLorebooks } = useLorebooks();
+    const { data: characters = [], isError: isCharactersError, error: charactersError, refetch: refetchCharacters } = useCharacters();
+    const {
+        data: locations = [], isError: isLocationsError, error: locationsError, refetch: refetchLocations,
+    } = useLocations();
     // For the story context panel's Scenario row: Apply writes
     // `Story.scenario_id`, and the panel needs the name to show what was applied.
-    const { data: scenarios = [] } = useScenarios();
+    const {
+        data: scenarios = [], isError: isScenariosError, error: scenariosError, refetch: refetchScenarios,
+    } = useScenarios();
     const { data: storyImages = [] } = useStoryImages(activeStoryId);
     const { data: collectionsMap = {} } = useCollections('story');
     // Memoised: this page re-renders on every streamed token.
@@ -72,6 +86,32 @@ export default function StorySandbox() {
         () => Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || '')),
         [collectionsMap]
     );
+
+    // One entry per FAILED context query. Built here, at the same choke point
+    // as the destructuring above, and handed to `StoryContextPanel` whole — the
+    // panel receives arrays and cannot reach a query object itself, which is why
+    // `rg "isError|QueryErrorState|QueryGate"` over it returned nothing. Same
+    // shape as the chat surface's `useChatWorkspaceData` `queryErrors`.
+    const queryErrors = useMemo(() => {
+        const map = {};
+        const failures = [
+            ['worlds', 'worlds', isWorldsError, worldsError, refetchWorlds],
+            ['lorebooks', 'lorebooks', isLorebooksError, lorebooksError, refetchLorebooks],
+            ['characters', 'characters', isCharactersError, charactersError, refetchCharacters],
+            ['locations', 'locations', isLocationsError, locationsError, refetchLocations],
+            ['scenarios', 'scenarios', isScenariosError, scenariosError, refetchScenarios],
+        ];
+        for (const [key, noun, isError, error, refetch] of failures) {
+            if (isError) map[key] = { error, refetch, noun };
+        }
+        return map;
+    }, [
+        isWorldsError, worldsError, refetchWorlds,
+        isLorebooksError, lorebooksError, refetchLorebooks,
+        isCharactersError, charactersError, refetchCharacters,
+        isLocationsError, locationsError, refetchLocations,
+        isScenariosError, scenariosError, refetchScenarios,
+    ]);
 
     const createStory = useCreateStory();
     const createChapter = useCreateChapter();
@@ -525,7 +565,7 @@ export default function StorySandbox() {
         if (!ok) return;
         try {
             await retryLastContinuation.mutateAsync({ storyId: activeStoryId, chapterId: activeChapterId });
-            const key = ['world_vault', 'stories', activeStoryId, 'chapters'];
+            const key = buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'chapters');
             await queryClient.invalidateQueries({ queryKey: key });
             const data = queryClient.getQueryData(key);
             const fresh = Array.isArray(data) ? data.find(ch => ch.id === activeChapterId) : null;
@@ -561,7 +601,7 @@ export default function StorySandbox() {
         if (!ok) return;
         try {
             await restoreRevision.mutateAsync({ storyId: activeStoryId, chapterId: activeChapterId, revisionId: rev.id });
-            const key = ['world_vault', 'stories', activeStoryId, 'chapters'];
+            const key = buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'chapters');
             await queryClient.invalidateQueries({ queryKey: key });
             const data = queryClient.getQueryData(key);
             const fresh = Array.isArray(data) ? data.find(ch => ch.id === activeChapterId) : null;
@@ -624,7 +664,7 @@ export default function StorySandbox() {
                 role: beatRole,
             });
             setBeatInput('');
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'chapters') });
             toast.success('Beat added');
         } catch {
             toast.error('Failed to add beat');
@@ -647,7 +687,7 @@ export default function StorySandbox() {
                 chapterId: activeChapterId,
                 fromBeatId: beatId,
             });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'chapters') });
             navigate(`/story/${activeStoryId}/chapter/${branch.id}`);
             toast.success('Branch created');
         } catch {
@@ -666,7 +706,7 @@ export default function StorySandbox() {
                 chapterId: activeChapterId,
                 beats: newBeats,
             });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'chapters') });
             toast.success('Beats reordered');
         } catch {
             toast.error('Failed to reorder beats');
@@ -723,7 +763,7 @@ export default function StorySandbox() {
             if (newContent !== oldContent || newRole !== oldRole) {
                 syncEditorWithBeat(oldContent, oldRole, newContent, newRole);
             }
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'chapters') });
             toast.success('Beat updated');
         } catch (err) {
             toast.error(err?.message || 'Failed to update beat');
@@ -747,7 +787,7 @@ export default function StorySandbox() {
                 beatId,
             });
             syncEditorWithBeat(beat.content || '', beat.role || 'narrator', null, null);
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'chapters') });
             toast.success('Beat deleted');
         } catch (err) {
             toast.error(err?.message || 'Failed to delete beat');
@@ -827,11 +867,23 @@ export default function StorySandbox() {
     const handlePublishStory = useCallback(() => {
         if (!activeStoryId) return;
         publishStory.mutate({ storyId: activeStoryId }, {
-            onSuccess: (data) => {
+            onSuccess: async (data) => {
+                // The publish and the copy are two facts with two answers.
                 toast.success('Story published!');
+                // `await`, not `.then()`: on a non-secure origin the
+                // `navigator.clipboard` dereference throws SYNCHRONOUSLY, so
+                // there is no promise for `.then`/`.catch` to attach to and the
+                // "Shareable link copied" toast below was unreachable — while
+                // the "Story published!" toast above it had already fired.
+                // Measured: `http://100.150.0.4:5174` → `{"secure":false,
+                // "clip":false}`.
                 if (data?.read_url) {
-                    navigator.clipboard.writeText(window.location.origin + data.read_url);
-                    toast('Shareable link copied to clipboard!', { icon: '🔗' });
+                    const copied = await copyToClipboard(window.location.origin + data.read_url);
+                    if (copied) {
+                        toast('Shareable link copied to clipboard!', { icon: '🔗' });
+                    } else {
+                        toast.error('Story published, but the link could not be copied on this address.');
+                    }
                 }
             },
             onError: (e) => toast.error(`Publish failed: ${e.message}`),
@@ -919,10 +971,18 @@ export default function StorySandbox() {
             } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
                 e.preventDefault();
                 if (editorContent) {
-                    navigator.clipboard.writeText(editorContent).then(() => {
-                        toast.success('Chapter content copied to clipboard');
-                    }).catch(() => {
-                        toast.error('Failed to copy content');
+                    // `copyToClipboard`, not `navigator.clipboard.writeText(...).then().catch()`:
+                    // a bare promise chain does NOT contain a synchronous
+                    // TypeError thrown by the dereference itself. This handler
+                    // runs from a keydown listener, so the throw also had
+                    // nowhere to surface — Ctrl+Shift+C did nothing at all on a
+                    // LAN address, with no message.
+                    copyToClipboard(editorContent).then((copied) => {
+                        if (copied) {
+                            toast.success('Chapter content copied to clipboard');
+                        } else {
+                            toast.error('Failed to copy content');
+                        }
                     });
                 }
             }
@@ -1175,6 +1235,7 @@ export default function StorySandbox() {
                             locations={locations}
                             worlds={worlds}
                             scenarios={scenarios}
+                            queryErrors={queryErrors}
                             storyImages={storyImages}
                             chapters={chapters}
                             llmModels={llmModels}

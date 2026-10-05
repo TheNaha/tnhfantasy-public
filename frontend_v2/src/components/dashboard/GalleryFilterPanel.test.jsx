@@ -2,17 +2,24 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The real module is spread, not replaced: `FACET_DIMENSIONS` drives the panel's
-// sections, and a mock shaped to the import instead of the module would let a
-// renamed export pass every test and then break the build.
+// Only the vocabulary module is mocked, and it is spread rather than replaced:
+// `useTagVocabulary` used to live in `hooks/useGallery` next to
+// `FACET_DIMENSIONS`, which the panel still imports from there. A mock written to
+// match the import instead of the module is what let a default import of a
+// module with no default export pass every test and then fail the build.
 const vocabularyMock = vi.hoisted(() => ({ entries: [] }));
-vi.mock('../../hooks/useGallery', async (importOriginal) => {
+vi.mock('../../hooks/useAssetTags', async (importOriginal) => {
     const actual = await importOriginal();
     return {
         ...actual,
-        useTagVocabulary: (prefix = '') => (prefix
-            ? { data: vocabularyMock.entries, isLoading: false }
-            : { data: [], isLoading: false }),
+        // The real hook takes an options object and returns the raw response; the
+        // deleted copy in `useGallery.js` took a bare prefix string and `select`ed
+        // the array out. A stub shaped like the old one would let a
+        // `data?.tags` regression pass every test in this file.
+        useTagVocabulary: ({ prefix } = {}) => ({
+            data: { tags: prefix ? vocabularyMock.entries : [] },
+            isLoading: false,
+        }),
     };
 });
 

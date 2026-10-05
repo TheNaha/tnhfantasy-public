@@ -35,10 +35,10 @@ export const useWorldVaultSearch = (query, type = null) => {
     const q = (query ?? '').trim();
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.SEARCH, q, type),
-        queryFn: () => {
+        queryFn: ({ signal }) => {
             const params = new URLSearchParams({ q });
             if (type) params.set('type', type);
-            return api.get(`/api/v2/world-vault/search?${params.toString()}`);
+            return api.get(`/api/v2/world-vault/search?${params.toString()}`, { signal });
         },
         enabled: q.length >= WORLD_VAULT_SEARCH_MIN_LENGTH,
         staleTime: 30000,

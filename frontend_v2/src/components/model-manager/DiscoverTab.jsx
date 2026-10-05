@@ -6,7 +6,7 @@ import { api } from '../../api';
 import ModelCard from './ModelCard';
 import ModelImportCard from './ModelImportCard';
 import { useCivitaiEnums, useCivitaiTags, useCivitaiSearch } from '../../hooks/useCivitaiSearch';
-import useDebounce from '../../hooks/useDebounce';
+import { useDebounce } from '../../hooks/useDebounce';
 
 const SORT_OPTIONS = [['', 'Relevance'], ['Newest', 'Newest'], ['Most Downloaded', 'Downloads'], ['Most Liked', 'Likes']];
 const PERIOD_OPTIONS = [['', 'All Time'], ['Year', 'Year'], ['Month', 'Month'], ['Week', 'Week'], ['Day', 'Day']];

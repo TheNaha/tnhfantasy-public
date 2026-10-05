@@ -138,12 +138,13 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
                                     {lightboxAction(imagesList[selectedIdx], selectedIdx)}
                                 </span>
                             )}
-                            <button className="p-2 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors" onClick={() => setSelectedIdx(null)}>
+                            <button aria-label="Close image" className="p-2 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors" onClick={() => setSelectedIdx(null)}>
                                 <X size={18} />
                             </button>
                         </div>
                     </div>
                     <button
+                        aria-label="Previous image"
                         className="p-2.5 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors mr-2"
                         onClick={(e) => { e.stopPropagation(); setSelectedIdx((selectedIdx - 1 + imagesList.length) % imagesList.length); }}
                     >
@@ -164,6 +165,7 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
                         <p className="text-xs text-gray-500 text-center mt-2 truncate">{imagesList[selectedIdx]}</p>
                     </div>
                     <button
+                        aria-label="Next image"
                         className="p-2.5 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors ml-2"
                         onClick={(e) => { e.stopPropagation(); setSelectedIdx((selectedIdx + 1) % imagesList.length); }}
                     >

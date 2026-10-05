@@ -9,8 +9,8 @@ export function useFavorites() {
 
   const query = useQuery({
     queryKey: ['favorites'],
-    queryFn: async () => {
-      const res = await settingsApi.getFavorites();
+    queryFn: async ({ signal }) => {
+      const res = await settingsApi.getFavorites({ signal });
       return res.favorites || [];
     },
   });

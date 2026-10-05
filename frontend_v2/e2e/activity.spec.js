@@ -72,7 +72,7 @@ test.describe('Activity', () => {
     await expect(page.getByText(new RegExp(messageContent))).toBeVisible();
     await expect(page.getByText(new RegExp(chapterTitle))).toBeVisible();
 
-    const { events } = await apiGet(page, '/timeline/timeline');
+    const { events } = await apiGet(page, '/timeline');
 
     const messageEvent = events.find((e) => e.type === 'message' && e.description.includes(messageContent));
     expect(messageEvent, 'seeded message should appear as a message event').toBeTruthy();

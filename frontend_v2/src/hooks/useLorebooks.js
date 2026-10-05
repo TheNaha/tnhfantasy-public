@@ -24,7 +24,7 @@ const LOREBOOK_ENTRIES_KEY = (lorebookId) => buildQueryKey(QUERY_KEYS.LOREBOOKS,
 export const useLorebooks = () => {
     return useQuery({
         queryKey: LOREBOOKS_KEY,
-        queryFn: () => api.get('/api/v2/lorebooks')
+        queryFn: ({ signal }) => api.get('/api/v2/lorebooks', { signal })
     });
 };
 
@@ -51,7 +51,7 @@ export const useDeleteLorebook = () => useDeleteResource({
 export const useLorebookEntries = (lorebookId) => {
     return useQuery({
         queryKey: LOREBOOK_ENTRIES_KEY(lorebookId),
-        queryFn: () => api.get(`/api/v2/lorebooks/${lorebookId}/entries`),
+        queryFn: ({ signal }) => api.get(`/api/v2/lorebooks/${lorebookId}/entries`, { signal }),
         enabled: !!lorebookId,
     });
 };

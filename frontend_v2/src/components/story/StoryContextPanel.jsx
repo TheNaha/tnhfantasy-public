@@ -3,6 +3,7 @@ import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Ed
 import clsx from 'clsx';
 import { assetUrl } from '../../utils/assetUrl';
 import SamplingControls from '../common/SamplingControls';
+import { QueryErrorState } from '../common/QueryState';
 import EntityContextInspector from '../workspace/EntityContextInspector';
 import WorldLinkRow from '../workspace/WorldLinkRow';
 import StoryOutlinePanel from './StoryOutlinePanel';
@@ -15,6 +16,7 @@ export default React.memo(function StoryContextPanel({
     locations,
     worlds = [],
     scenarios = [],
+    queryErrors = {},
     storyImages,
     chapters,
     llmModels,
@@ -37,7 +39,7 @@ export default React.memo(function StoryContextPanel({
     return (
         <>
             <div className="lg:hidden absolute top-3 right-4 z-50">
-                <button onClick={onClose} className="p-2 bg-gray-800 rounded-full text-white">
+                <button onClick={onClose} aria-label="Close story context" className="p-2 bg-gray-800 rounded-full text-white">
                     <X size={16} />
                 </button>
             </div>
@@ -73,6 +75,7 @@ export default React.memo(function StoryContextPanel({
                     worldId={activeStory?.world_id}
                     worlds={worlds}
                     onChange={(next) => onUpdateStory({ world_id: next })}
+                    queryErrors={queryErrors}
                 />
 
                 {/* `Story.scenario_id` is written by Scenarios → Apply and was
@@ -87,7 +90,18 @@ export default React.memo(function StoryContextPanel({
                         <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 min-w-0">
                             <Sparkles size={12} className="text-purple-400 shrink-0" /> Scenario
                         </h4>
-                        {scenarios.length > 0 ? (
+                        {(queryErrors.scenarios || scenarios.length > 0) ? (
+                            // A failed scenarios fetch removed the control
+                            // instead of reporting the failure, so an applied
+                            // scenario became invisible and untakeable — the
+                            // same "write into a void" this row exists to end.
+                            queryErrors.scenarios ? (
+                                <QueryErrorState
+                                    noun={queryErrors.scenarios.noun}
+                                    error={queryErrors.scenarios.error}
+                                    onRetry={queryErrors.scenarios.refetch}
+                                />
+                            ) : (
                             <select
                                 aria-label="Scenario"
                                 data-testid="story-scenario-select"
@@ -103,6 +117,7 @@ export default React.memo(function StoryContextPanel({
                                     <option key={s.id} value={s.id}>{s.name}</option>
                                 ))}
                             </select>
+                            )
                         ) : null}
                     </div>
                     {(() => {
@@ -202,7 +217,13 @@ export default React.memo(function StoryContextPanel({
                             <Plus size={14} />
                         </button>
                     </div>
-                    {lorebooks.length === 0 ? (
+                    {queryErrors.lorebooks ? (
+                        <QueryErrorState
+                            noun={queryErrors.lorebooks.noun}
+                            error={queryErrors.lorebooks.error}
+                            onRetry={queryErrors.lorebooks.refetch}
+                        />
+                    ) : lorebooks.length === 0 ? (
                         <p className="text-sm text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">No lorebooks</p>
                     ) : (
                         <div className="space-y-2">
@@ -257,7 +278,13 @@ export default React.memo(function StoryContextPanel({
                             <Plus size={14} />
                         </button>
                     </div>
-                    {locations.length === 0 ? (
+                    {queryErrors.locations ? (
+                        <QueryErrorState
+                            noun={queryErrors.locations.noun}
+                            error={queryErrors.locations.error}
+                            onRetry={queryErrors.locations.refetch}
+                        />
+                    ) : locations.length === 0 ? (
                         <p className="text-sm text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">No locations</p>
                     ) : (
                         <div className="space-y-2">

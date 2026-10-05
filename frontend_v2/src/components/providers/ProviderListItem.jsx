@@ -9,7 +9,6 @@ import {
     Trash2,
     ChevronRight,
 } from 'lucide-react';
-import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
 import {
     providerBadgeToneClass,
     summarizeProviderStatus,
@@ -38,18 +37,57 @@ function deployBadgeText(capabilities) {
     return 'Provider';
 }
 
-function SparkLine({ data, color, dataKey = 'value', domain = [0, 100] }) {
-    if (!data || data.length === 0) return null;
-    const chartData = data.map((v, i) => ({ index: i, [dataKey]: v }));
+/**
+ * A three-point sparkline, in eight lines of SVG.
+ *
+ * This rendered through `recharts` (`LineChart`/`Line`/`ResponsiveContainer`/
+ * `YAxis`) into a `h-6 w-12` box — 290.37 kB raw / 88.56 kB gzip. Rollup already
+ * kept that out of the app shell, but `ProviderListItem` imports it statically,
+ * so opening /providers downloaded the whole library to draw two trend lines;
+ * `src/pages/Statistics.jsx` is the one consumer that genuinely needs it, and it
+ * now has the library to itself behind `vendor-charts`.
+ *
+ * The same shape it drew before: `domain`-scaled into a 0..100 viewport,
+ * `preserveAspectRatio="none"` so a non-square box stretches rather than
+ * letterboxes (what `ResponsiveContainer` does), and
+ * `vectorEffect="non-scaling-stroke"` so the 1.5px line stays 1.5px instead of
+ * being scaled with the box. The gentle `monotone` curve between points is
+ * deliberately not reproduced — at 48x24 it was never visible, and a polyline
+ * cannot interpolate.
+ */
+function SparkLine({ data, color, label, domain = [0, 100] }) {
+    const points = useMemo(() => {
+        if (!data || data.length === 0) return null;
+        const [low, high] = domain;
+        const span = high - low || 1;
+        const step = data.length > 1 ? 100 / (data.length - 1) : 100;
+        return data
+            .map((v, i) => {
+                const clamped = Math.min(Math.max(Number(v) || 0, low), high);
+                return `${(i * step).toFixed(2)},${(100 - ((clamped - low) / span) * 100).toFixed(2)}`;
+            })
+            .join(' ');
+    }, [data, domain]);
+
+    if (!points) return null;
     return (
-        <div className="h-6 w-12">
-            <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData}>
-                    <YAxis domain={domain} hide />
-                    <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                </LineChart>
-            </ResponsiveContainer>
-        </div>
+        <svg
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            className="h-6 w-12"
+            role="img"
+            aria-label={label}
+        >
+            <polyline
+                points={points}
+                fill="none"
+                stroke={color}
+                strokeWidth={1.5}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+            />
+        </svg>
     );
 }
 
@@ -200,14 +238,23 @@ function ProviderListItem({
                     {vramHistory.length > 0 && (
                         <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/5 bg-black/40 shadow-inner">
                             <span className="text-xs font-bold uppercase tracking-widest text-gray-500">VRAM</span>
-                            <SparkLine data={vramHistory} color="#3b82f6" />
+                            <SparkLine
+                                data={vramHistory}
+                                color="#3b82f6"
+                                label={`VRAM trend, ${vramHistory.length} readings, latest ${vramHistory[vramHistory.length - 1]}%`}
+                            />
                             <span className="text-xs font-bold text-blue-400 min-w-[3ch]">{vramHistory[vramHistory.length - 1]}%</span>
                         </div>
                     )}
                     {tempHistory.length > 0 && (
                         <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/5 bg-black/40 shadow-inner">
                             <span className="text-xs font-bold uppercase tracking-widest text-gray-500">GPU</span>
-                            <SparkLine data={tempHistory} color="#ef4444" domain={[30, 90]} />
+                            <SparkLine
+                                data={tempHistory}
+                                color="#ef4444"
+                                domain={[30, 90]}
+                                label={`GPU temperature trend, ${tempHistory.length} readings, latest ${tempHistory[tempHistory.length - 1]} degrees`}
+                            />
                             <span className="text-xs font-bold text-red-400 min-w-[3ch]">{tempHistory[tempHistory.length - 1]}°</span>
                         </div>
                     )}

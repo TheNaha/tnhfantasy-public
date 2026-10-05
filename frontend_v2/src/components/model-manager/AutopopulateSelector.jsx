@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { X, Loader2, Search, Wand2, Star, Download, AlertCircle, Image as ImageIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { api } from '../../api';
 import ModalOverlay from '../common/ModalOverlay';
-import { useAutopopulateCandidates } from '../../hooks/useCivitaiSearch';
+import { useAutopopulateCandidates, useCivitaiSearchPage } from '../../hooks/useCivitaiSearch';
+import { useAutopopulateModel } from '../../hooks/useAutopopulate';
 
 function matchTone(score) {
     if (score >= 100) return 'text-green-400 bg-green-500/20 border-green-500/30';
@@ -21,15 +21,37 @@ function ScoreBadge({ score, label }) {
     );
 }
 
-export default function AutopopulateSelector({ modelId, modelName, modelType, onClose, onComplete }) {
+export default function AutopopulateSelector({ modelId, modelName, modelType, onClose }) {
     const { data, isLoading: loading, error: queryError } = useAutopopulateCandidates(modelId);
     const error = queryError?.message || null;
 
     const [selectedCivitaiId, setSelectedCivitaiId] = useState(null);
     const [applying, setApplying] = useState(false);
     const [manualQuery, setManualQuery] = useState('');
-    const [manualResults, setManualResults] = useState(null);
-    const [searchingManual, setSearchingManual] = useState(false);
+    /**
+     * The query the user actually asked for, as opposed to the one in the input.
+     *
+     * The input stays submit-driven: the form has a Search button, and searching
+     * on every keystroke would be a different feature. What was wrong was not
+     * *when* it searched but that it had nowhere to remember what it had already
+     * searched — a raw `api.get` into a `useState` re-hit the network for a query
+     * it had just run, and nothing it learned was visible to any other caller.
+     */
+    const [submittedQuery, setSubmittedQuery] = useState('');
+    const autopopulate = useAutopopulateModel();
+
+    /**
+     * The same CivitAI search `DiscoverTab` and `CivitaiSearchModal` run, under
+     * the same cache key. `limit: 12` is this panel's grid size and was hardcoded
+     * into the old request string, so it becomes part of the key instead of a
+     * hidden constant.
+     */
+    const manualSearch = useCivitaiSearchPage(
+        { query: submittedQuery, source: 'civitai', limit: 12 },
+        { enabled: !!submittedQuery.trim() },
+    );
+    const manualResults = manualSearch.data?.items ?? null;
+    const searchingManual = manualSearch.isFetching;
 
     const candidates = data?.candidates || [];
 
@@ -40,12 +62,14 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
         }
         setApplying(true);
         try {
-            await api.post(`/api/v2/models/${modelId}/autopopulate`, { civitai_id: selectedCivitaiId });
+            // The shared hook owns the POST *and* both invalidations, which is why
+            // this component no longer takes an `onComplete` callback whose whole
+            // job was to repeat them. This call site used to invalidate nothing:
+            // after applying a match, the installed-model list kept the
+            // pre-write name, tags and stats, and with `refetchOnWindowFocus` off
+            // globally nothing corrected it later.
+            await autopopulate.mutateAsync({ modelId, civitaiId: selectedCivitaiId });
             toast.success('Model metadata updated!');
-            // The matched civitai id is passed up: it is the id space the
-            // installed-versions query is keyed by, and it is the one value
-            // changed by this write.
-            if (onComplete) onComplete(selectedCivitaiId);
             onClose();
         } catch (err) {
             toast.error('Failed to autopopulate: ' + (err.message || 'Unknown error'));
@@ -54,20 +78,10 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
         }
     };
 
-    const handleManualSearch = async (e) => {
+    const handleManualSearch = (e) => {
         e.preventDefault();
         if (!manualQuery.trim()) return;
-        setSearchingManual(true);
-        setManualResults(null);
-        try {
-            const params = new URLSearchParams({ query: manualQuery, limit: '12' });
-            const res = await api.get(`/api/v2/models/external/civitai?${params.toString()}`);
-            setManualResults(res.items || []);
-        } catch (err) {
-            toast.error('Search failed: ' + err.message);
-        } finally {
-            setSearchingManual(false);
-        }
+        setSubmittedQuery(manualQuery.trim());
     };
 
     return (
@@ -89,7 +103,7 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
                             Find the matching CivitAI model for <span className="text-white font-medium">{data?.model_name || modelName}</span>
                         </p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors">
+                    <button onClick={onClose} aria-label="Close CivitAI match" className="p-2 hover:bg-gray-800 rounded-full transition-colors">
                         <X size={20} />
                     </button>
                 </div>
@@ -304,7 +318,12 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
                                     </div>
                                 </div>
                             )}
-                            {manualResults && manualResults.length === 0 && !searchingManual && (
+                            {manualSearch.isError && (
+                                <p className="text-center text-red-400 text-sm mt-4">
+                                    Search failed: {manualSearch.error?.message || 'Unknown error'}
+                                </p>
+                            )}
+                            {manualResults && manualResults.length === 0 && !searchingManual && !manualSearch.isError && (
                                 <p className="text-center text-gray-500 text-sm mt-4">No results found for that query.</p>
                             )}
                         </div>

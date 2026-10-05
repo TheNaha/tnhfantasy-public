@@ -11,7 +11,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useGallery, useAssetDateHistogram, useTagVocabulary } from './useGallery';
+import { useGallery, useAssetDateHistogram } from './useGallery';
 import { assetsApi } from '../api';
 
 vi.mock('../api', () => ({
@@ -19,7 +19,6 @@ vi.mock('../api', () => ({
         list: vi.fn(),
         facet: vi.fn(),
         dates: vi.fn(),
-        tags: vi.fn(),
     },
     jobsApi: {
         list: vi.fn().mockResolvedValue({ jobs: [] }),
@@ -92,7 +91,6 @@ beforeEach(() => {
         last_day: '2026-09-02',
         day_rule: 'utc',
     });
-    assetsApi.tags.mockResolvedValue({ tags: [{ tag: 'blonde hair', count: 4 }] });
 });
 
 describe('useGallery', () => {
@@ -114,6 +112,7 @@ describe('useGallery', () => {
 
         expect(assetsApi.facet).toHaveBeenCalledWith(
             expect.objectContaining({ ...filters, limit: 24 }),
+            { signal: expect.any(AbortSignal) },
         );
     });
 
@@ -126,6 +125,7 @@ describe('useGallery', () => {
 
         expect(assetsApi.facet).toHaveBeenCalledWith(
             expect.objectContaining({ lora: '1,2', tag: 'pose: kneeling', checkpoint: 'Flux' }),
+            { signal: expect.any(AbortSignal) },
         );
     });
 
@@ -232,23 +232,5 @@ describe('useAssetDateHistogram', () => {
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
         expect(result.current.data).toMatchObject({ days: [], total: 0, firstDay: null, lastDay: null });
-    });
-});
-
-describe('useTagVocabulary', () => {
-    it('sends an anchored prefix and unwraps the list', async () => {
-        const { result } = renderHook(() => useTagVocabulary('blo'), { wrapper });
-        await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-        expect(assetsApi.tags.mock.calls[0][0]).toEqual({ prefix: 'blo', limit: 24 });
-        expect(result.current.data).toEqual([{ tag: 'blonde hair', count: 4 }]);
-    });
-
-    it('omits an empty prefix rather than sending one', async () => {
-        const { result } = renderHook(() => useTagVocabulary(''), { wrapper });
-        await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-        expect(assetsApi.tags.mock.calls[0][0]).toEqual({ limit: 24 });
-        expect('prefix' in assetsApi.tags.mock.calls[0][0]).toBe(false);
     });
 });

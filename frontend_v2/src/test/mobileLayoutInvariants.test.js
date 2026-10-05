@@ -22,6 +22,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import postcss from 'postcss';
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Paths are relative to `src/`, not to this file's directory.
@@ -54,6 +55,132 @@ function classNamesOf(src) {
   while ((m = re.exec(src)) !== null) out.push(m[1] ?? m[2] ?? m[3] ?? '');
   return out;
 }
+
+describe('a rule inside the phone breakpoint must not apply at desktop width', () => {
+    /**
+     * `src/index.css` carried a stray `}` that closed `@media (max-width:
+     * 768px)` eighty lines early, while the block's real closing brace was
+     * missing at the end of the file. Nothing about it is a syntax error: the
+     * brace count was zero and the stylesheet parsed, built and deployed, and
+     * `dist/assets/index-*.css` carried the orphaned rules at top level.
+     *
+     * What that bought, measured on the running stack at 1440px:
+     *
+     *   input[type=range]     height 44px, appearance none, touch-action none
+     *   .max-w-6xl/7xl        max-width 100%   (16 sites)
+     *   .glass-panel          backdrop-filter: none
+     *   every .grid           gap: 0.5rem
+     *   every bare button     padding: 0.75rem
+     *
+     * So every desktop visitor got the phone's touch geometry, and could not
+     * scroll the page by dragging a slider (`touch-action: none`). It arrived
+     * in `295f8888`, which fixed four real rules and created this one.
+     *
+     * Every other check in this file reads `index.css` as TEXT, which cannot see
+     * block membership at all — that is why the four tests above passed against
+     * a stylesheet whose entire mobile section was leaking. These parse it
+     * instead, and assert the rule the text checks cannot: nothing the phone
+     * breakpoint declares may also be sitting at the top level.
+     */
+    const css = read('index.css');
+    let root;
+
+    /** The (selector -> set of "prop:value;prop:value") signatures) inside the block. */
+    const mobileSignatures = () => {
+        const blocks = [];
+        root.walkAtRules('media', (at) => {
+            if (/max-width:\s*768px/.test(at.params)) blocks.push(at);
+        });
+        const bySelector = new Map();
+        for (const block of blocks) {
+            block.walkRules((rule) => {
+                const sig = rule.nodes
+                    .filter((n) => n.type === 'decl')
+                    .map((n) => `${n.prop}:${n.value}`)
+                    .sort()
+                    .join(';');
+                if (!sig) return;
+                if (!bySelector.has(rule.selector)) bySelector.set(rule.selector, new Set());
+                bySelector.get(rule.selector).add(sig);
+            });
+        }
+        return bySelector;
+    };
+
+    it('index.css parses', () => {
+        // A brace imbalance is the other half of the same edit. The stray brace
+        // alone balanced the file, so balance was 0 while it was broken; the
+        // missing closing brace alone leaves the block unterminated. Parse
+        // first so the structural checks below cannot fail confusingly.
+        expect(() => {
+            root = postcss.parse(css);
+        }).not.toThrow();
+    });
+
+    it('the phone breakpoint is a single block that reaches the end of the file', () => {
+        // 18 selectors, and it is the LAST at-rule in the file. If this ever
+        // stops being true the next test is answering a different question than
+        // the one it was written for, so it is asserted rather than assumed.
+        root = postcss.parse(css);
+        const blocks = [];
+        root.walkAtRules('media', (at) => {
+            if (/max-width:\s*768px/.test(at.params)) blocks.push(at);
+        });
+        expect(blocks).toHaveLength(1);
+        expect(mobileSignatures().size).toBeGreaterThan(10);
+    });
+
+    it('declares no rule at the top level that it also declares on a phone', () => {
+        // Generated from the block itself rather than from a hand-kept list of
+        // selectors, which is the defect this repo has now paid for twice: the
+        // event-loop guard indexed a directory that did not exist, and the
+        // hover-reveal rescue listed class names by hand and fell behind.
+        root = postcss.parse(css);
+        const inside = mobileSignatures();
+        expect(inside.size).toBeGreaterThan(0);
+
+        const leaks = [];
+        root.each((node) => {
+            if (node.type !== 'rule') return; // top level only
+            const sigs = inside.get(node.selector);
+            if (!sigs) return;
+            const sig = node.nodes
+                .filter((n) => n.type === 'decl')
+                .map((n) => `${n.prop}:${n.value}`)
+                .sort()
+                .join(';');
+            if (sigs.has(sig)) leaks.push(`${node.selector} { ${sig} }`);
+        });
+
+        expect(
+            leaks,
+            'these rules are at the top level of index.css with the declarations ' +
+                'they carry inside @media (max-width: 768px), so the phone ' +
+                "breakpoint's geometry is being applied at every viewport width: " +
+                leaks.join(' | ')
+        ).toEqual([]);
+    });
+
+    it('keeps the phone touch geometry scoped to the phone breakpoint', () => {
+        // The specific pair that was live on desktop: a 44px slider that also
+        // refuses to let the browser scroll the page. Cheap to state directly,
+        // and it names the defect for the next reader.
+        root = postcss.parse(css);
+        const blocks = [];
+        root.walkAtRules('media', (at) => {
+            if (/max-width:\s*768px/.test(at.params)) blocks.push(at);
+        });
+        expect(blocks).toHaveLength(1);
+        const range = [];
+        blocks[0].walkRules('input[type="range"]', (r) => range.push(r));
+        expect(range.length).toBeGreaterThan(0);
+        const decls = Object.fromEntries(
+            range[0].nodes.filter((n) => n.type === 'decl').map((n) => [n.prop, n.value])
+        );
+        expect(decls.height).toBe('44px');
+        expect(decls['touch-action']).toBe('none');
+    });
+});
 
 describe('horizontal overflow cannot be measured on the document element', () => {
     it('the app root clips overflow-x, so scrollWidth on <html> is not a signal', () => {

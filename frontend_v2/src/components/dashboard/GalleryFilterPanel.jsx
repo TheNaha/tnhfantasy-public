@@ -1,7 +1,8 @@
 import { useCallback, useId, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Search, X } from 'lucide-react';
 
-import { FACET_DIMENSIONS, useTagVocabulary } from '../../hooks/useGallery';
+import { FACET_DIMENSIONS } from '../../hooks/useGallery';
+import { useTagVocabulary } from '../../hooks/useAssetTags';
 
 /**
  * Faceted filter panel for the gallery.
@@ -156,10 +157,15 @@ function FacetChips({ dimension, entries, selected, onToggle }) {
  */
 function TagTypeahead({ selected, onToggle }) {
     const [prefix, setPrefix] = useState('');
-    const { data: suggestions, isLoading } = useTagVocabulary(prefix);
+    // The one surviving `useTagVocabulary` takes an options OBJECT and returns
+    // the raw `{ tags }` response — the deleted copy in `useGallery.js` took a
+    // bare prefix string and `select`ed the array out. Passing a string here
+    // destructured it into `{0:'c',1:'h',…}`, silently fetched the unfiltered
+    // vocabulary, and returned `data.tags === undefined`.
+    const { data: vocabulary, isLoading } = useTagVocabulary({ prefix, limit: 24 });
     const inputId = useId();
     const trimmed = prefix.trim();
-    const list = (suggestions || []).slice(0, 10);
+    const list = (vocabulary?.tags || []).slice(0, 10);
 
     const commit = (value) => {
         onToggle(value);

@@ -9,6 +9,7 @@
  */
 
 import { ApiError, getBaseUrl } from './client';
+import { formatBytes } from '../utils/bytes';
 
 export const MB = 1024 * 1024;
 
@@ -33,13 +34,6 @@ export const UPLOAD_LIMITS = {
 };
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'svg', 'avif'];
-
-export function formatBytes(bytes) {
-    if (!Number.isFinite(bytes) || bytes < 0) return 'unknown size';
-    if (bytes >= MB) return `${(bytes / MB).toFixed(1)} MB`;
-    if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${Math.round(bytes)} B`;
-}
 
 export function isImageFile(file) {
     if (file?.type?.startsWith('image/')) return true;

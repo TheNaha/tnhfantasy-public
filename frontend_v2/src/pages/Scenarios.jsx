@@ -309,7 +309,7 @@ function ApplyScenarioModal({ scenario, targetType, setTargetType, targets, onAp
             >
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-lg font-semibold text-white">Apply &ldquo;{scenario.name}&rdquo;</h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={20} /></button>
+                    <button onClick={onClose} aria-label="Close apply scenario" className="text-gray-400 hover:text-white"><X size={20} /></button>
                 </div>
 
                 <div className="flex gap-2 mb-4">

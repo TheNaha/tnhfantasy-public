@@ -283,3 +283,73 @@ describe('ChatContextPanel — world row', () => {
         expect(screen.getByText(/Added to every reply: 1 lorebook · 1 location\./)).toBeInTheDocument();
     });
 });
+
+/**
+ * Three chat-surface controls were decided by `length > 0` on a query that
+ * discarded `isError`.
+ *
+ * `useChatWorkspaceData` destructured all sixteen of its `data` fields with a
+ * `= []` default, so a 503 produced the same value as an empty result. The
+ * consequences were not uniform:
+ *
+ *  - the lorebooks row printed "No lorebooks available" — a claim;
+ *  - the persona and TTS-voice `<select>`s vanished entirely — a control gone,
+ *    with no message, so narration and persona silently became unconfigurable
+ *    and nothing on screen said why.
+ *
+ * The panel receives `queryErrors` from the hook's choke point and gates each
+ * row on its own entry.
+ */
+describe('ChatContextPanel with failed context queries', () => {
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it('does not claim there are no lorebooks when the lorebooks query failed', () => {
+        renderPanel({
+            lorebooks: [],
+            queryErrors: { lorebooks: { error: new Error('503 down'), refetch: vi.fn(), noun: 'lorebooks' } },
+        });
+
+        expect(screen.getByRole('alert')).toHaveTextContent(/could not load your lorebooks/i);
+        expect(screen.queryByText('No lorebooks available')).toBeNull();
+    });
+
+    it('keeps the persona selector visible with a failure notice, not silently removed', () => {
+        const refetch = vi.fn();
+        renderPanel({
+            personas: [],
+            queryErrors: { personas: { error: new Error('p boom'), refetch, noun: 'personas' } },
+        });
+
+        expect(screen.getByRole('alert')).toHaveTextContent(/could not load your personas/i);
+        // The control itself stays — this outage is transient and the chat
+        // already names a persona; what is wrong is the claim about the library.
+        expect(screen.queryByTestId('chat-persona-select')).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+        expect(refetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('states a failed voices fetch rather than dropping the TTS control', () => {
+        renderPanel({
+            voices: [],
+            queryErrors: { voices: { error: new Error('v boom'), refetch: vi.fn(), noun: 'voices' } },
+        });
+
+        expect(screen.getByRole('alert')).toHaveTextContent(/could not load your voices/i);
+        expect(screen.getByText('Default TTS voice')).toBeInTheDocument();
+    });
+
+    it('still shows the real empty states when the queries succeeded', () => {
+        renderPanel({ lorebooks: [], personas: [], voices: [], queryErrors: {} });
+
+        expect(screen.getByText('No lorebooks available')).toBeInTheDocument();
+        // No personas and no voices legitimately means no selectors.
+        expect(screen.queryByTestId('chat-persona-select')).toBeNull();
+        expect(screen.queryByText('Default TTS voice')).toBeNull();
+        expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('shows the persona selector when personas loaded', () => {
+        renderPanel({ personas: [{ id: 'p-1', name: 'Ilse' }], queryErrors: {} });
+        expect(screen.getByTestId('chat-persona-select')).toBeInTheDocument();
+    });
+});

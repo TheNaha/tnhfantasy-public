@@ -61,7 +61,7 @@ describe('useSessions', () => {
         const { result } = renderHook(() => useSessions(), { wrapper });
 
         await waitFor(() => expect(flattenSessionPages(result.current.data)).toHaveLength(2));
-        expect(apiMock.listSessions).toHaveBeenCalledWith({ limit: 100, offset: 0 });
+        expect(apiMock.listSessions).toHaveBeenCalledWith({ limit: 100, offset: 0 }, { signal: expect.any(AbortSignal) });
         expect(result.current.hasNextPage).toBe(false);
     });
 
@@ -75,7 +75,7 @@ describe('useSessions', () => {
         await waitFor(() => expect(result.current.hasNextPage).toBe(true));
         await act(async () => { await result.current.fetchNextPage(); });
 
-        expect(apiMock.listSessions).toHaveBeenNthCalledWith(2, { limit: 100, offset: 1 });
+        expect(apiMock.listSessions).toHaveBeenNthCalledWith(2, { limit: 100, offset: 1 }, { signal: expect.any(AbortSignal) });
         await waitFor(() =>
             expect(flattenSessionPages(result.current.data).map((s) => s.id)).toEqual(['a', 'b']));
         expect(result.current.hasNextPage).toBe(false);

@@ -50,7 +50,7 @@ describe('useCharacters', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useCharacters(), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual([{ id: 'ch1', name: 'Aria' }]));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/characters');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/characters', { signal: expect.any(AbortSignal) });
     });
 
     it('create/update/patch/delete invalidate the character list', async () => {
@@ -215,6 +215,6 @@ describe('useCharacters', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useCharacterCollection('ch1'), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual({ id: 'col1' }));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/collections/by-character/ch1');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/collections/by-character/ch1', { signal: expect.any(AbortSignal) });
     });
 });

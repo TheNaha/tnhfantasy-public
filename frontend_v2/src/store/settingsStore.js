@@ -20,10 +20,36 @@ import { persist } from 'zustand/middleware';
  * These are merged with any values already persisted in localStorage,
  * so new keys added here will be picked up on the next page load.
  */
+
+/**
+ * The gallery view modes a user can *choose* as their default, in menu order.
+ *
+ * This exists because three files had three vocabularies. `Settings.jsx`
+ * offered grid/list/feed, `DashboardHeader` toggled grid/list/feed/timeline,
+ * and `Dashboard` toggled grid/session — all three writing the same
+ * `ui.defaultViewMode` key. Two consequences, both measured on the live stack:
+ * `timeline` and `session` were writable with no matching `<option>`, so a
+ * `<select value="session">` rendered blank, and picking any value from it
+ * silently switched the gallery out of the session view the user was in; and
+ * the "default" was overwritten by the first gallery interaction of every
+ * session, so the setting could not describe a default at all.
+ *
+ * `SESSION_VIEW_MODE` is deliberately absent: the session panel is an
+ * alternate live view reached by a toggle, not something to land on by default.
+ */
+export const GALLERY_VIEW_MODES = ['grid', 'list', 'feed', 'timeline'];
+export const SESSION_VIEW_MODE = 'session';
+
 const DEFAULT_SETTINGS = {
     ui: {
-        defaultViewMode: 'grid',    // 'grid' | 'list'
+        defaultViewMode: 'grid',    // one of GALLERY_VIEW_MODES
         defaultGridColumns: 4,       // columns shown in grid view
+        // The live gallery view, written by every in-page view toggle and read
+        // only by the Dashboard. `null` means "follow defaultViewMode", which is
+        // what a user who has never toggled gets — and what every existing
+        // install gets on upgrade, since this key is new.
+        viewMode: null,
+        gridColumns: null,           // live column count; null = follow the default
         toastSuccessDuration: 3000,  // success toast lifetime (ms)
         toastErrorDuration: 4000,    // error toast lifetime (ms) – slightly longer so users can read it
         animationDuration: 200,      // Framer Motion default transition (ms)

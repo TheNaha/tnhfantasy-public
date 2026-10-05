@@ -22,7 +22,7 @@ function CharacterDetailsModal({ character, onClose }) {
                         <User size={16} className="text-blue-400" />
                         {character.name}
                     </h3>
-                    <button onClick={onClose} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                    <button onClick={onClose} aria-label="Close character details" className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
                         <X size={18} />
                     </button>
                 </div>

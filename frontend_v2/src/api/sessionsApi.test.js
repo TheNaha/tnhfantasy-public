@@ -48,6 +48,9 @@ describe('sessionsApi', () => {
                 limit: 24,
                 offset: 48,
             },
+            // Folded into the same object rather than a third argument, so the
+            // options bag a `queryFn` uses to pass its `AbortSignal` reaches the
+            // client without changing this call's shape.
         });
     });
 
@@ -69,7 +72,7 @@ describe('sessionsApi', () => {
         getSession('abc');
         listSessionAssets('abc', { limit: 200, offset: 0 });
 
-        expect(getMock).toHaveBeenNthCalledWith(1, '/api/v2/sessions/abc');
+        expect(getMock).toHaveBeenNthCalledWith(1, '/api/v2/sessions/abc', {});
         expect(getMock).toHaveBeenNthCalledWith(2, '/api/v2/sessions/abc/assets', {
             params: { limit: 200, offset: 0 },
         });
@@ -80,17 +83,17 @@ describe('sessionsApi', () => {
         expect(postMock).toHaveBeenCalledWith('/api/v2/sessions', {
             name: 'Winter run',
             asset_ids: ['a1', 'a2'],
-        });
+        }, {});
     });
 
     it('patches with PATCH, not PUT, so a partial edit is not a full replace', () => {
         updateSession('abc', { name: 'Renamed' });
-        expect(patchMock).toHaveBeenCalledWith('/api/v2/sessions/abc', { name: 'Renamed' });
+        expect(patchMock).toHaveBeenCalledWith('/api/v2/sessions/abc', { name: 'Renamed' }, {});
     });
 
     it('soft deletes', () => {
         deleteSession('abc');
-        expect(deleteMock).toHaveBeenCalledWith('/api/v2/sessions/abc');
+        expect(deleteMock).toHaveBeenCalledWith('/api/v2/sessions/abc', {});
     });
 
     it('adds and removes members', () => {
@@ -99,22 +102,22 @@ describe('sessionsApi', () => {
 
         expect(postMock).toHaveBeenCalledWith('/api/v2/sessions/abc/assets', {
             asset_ids: ['a1', 'a2'],
-        });
-        expect(deleteMock).toHaveBeenCalledWith('/api/v2/sessions/abc/assets/a%2F2026%2F09%2F27%2Fa1.png');
+        }, {});
+        expect(deleteMock).toHaveBeenCalledWith('/api/v2/sessions/abc/assets/a%2F2026%2F09%2F27%2Fa1.png', {});
     });
 
     it('splits by posting keep_asset_ids, not a move list', () => {
         splitSession('abc', ['keep-1', 'keep-2']);
         expect(postMock).toHaveBeenCalledWith('/api/v2/sessions/abc/split', {
             keep_asset_ids: ['keep-1', 'keep-2'],
-        });
+        }, {});
     });
 
     it('merges by posting target_session_id on the source session', () => {
         mergeSession('abc', 'target-1');
         expect(postMock).toHaveBeenCalledWith('/api/v2/sessions/abc/merge', {
             target_session_id: 'target-1',
-        });
+        }, {});
     });
 
     it('posts detect to the sessions-detect route with its own timeout', () => {

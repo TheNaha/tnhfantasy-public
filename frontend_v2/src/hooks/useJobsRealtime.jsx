@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as ws from '../api/websocket';
+import { refetchNewestGalleryPage } from './useGallery';
 import { jobMetadata } from '../utils/jobStatus';
 import toast from 'react-hot-toast';
 
@@ -27,15 +28,31 @@ export function useJobsRealtime() {
     // with no job UI at all, and an unobserved cache refetch buys nothing: the
     // query is stale either way, so the next mount of its consumer refetches
     // it (these keys have staleTime 0).
-    // `options` is passed through so a caller can narrow what is refetched — see
-    // the `refetchPage` use on the gallery, where invalidating every loaded page
-    // of an infinite query is a multi-request answer to a single question.
-    const invalidateIfMounted = useCallback((queryKey, options = {}) => {
-        const isMounted = queryClient.getQueryCache()
-            .findAll({ queryKey })
-            .some((query) => query.getObserversCount() > 0);
-        if (isMounted) queryClient.invalidateQueries({ queryKey, ...options });
-    }, [queryClient]);
+    const isMounted = useCallback((queryKey) => queryClient.getQueryCache()
+        .findAll({ queryKey })
+        .some((query) => query.getObserversCount() > 0), [queryClient]);
+
+    const invalidateIfMounted = useCallback((queryKey) => {
+        if (isMounted(queryKey)) queryClient.invalidateQueries({ queryKey });
+    }, [isMounted, queryClient]);
+
+    /*
+     * The gallery listing is a `useInfiniteQuery`, so invalidating `['gallery']`
+     * refetches every loaded page — one request per page, for a question that
+     * only page 0 can answer. `refetchNewestGalleryPage` fetches that one page
+     * and writes it back.
+     *
+     * This replaces `{ queryKey: ['gallery'], refetchPage: (page, all) => page ===
+     * all[0] }`, which was passed to `invalidateQueries` in two places here and
+     * in `useGalleryAutoRefresh`. `refetchPage` is not a react-query v5 option —
+     * `InvalidateQueryFilters` carries no such member in
+     * `@tanstack/query-core@5.90.11` — so all three sites were doing the full
+     * refetch while appearing to scope it. See `useGallery.js`.
+     */
+    const refreshNewestGalleryPageIfMounted = useCallback(() => {
+        if (isMounted(['gallery'])) return refetchNewestGalleryPage(queryClient, { mountedOnly: true });
+        return undefined;
+    }, [isMounted, queryClient]);
 
     // Full refresh of the server-backed state after reconnect / refocus. The
     // per-job/per-active caches are already updated incrementally via
@@ -43,11 +60,11 @@ export function useJobsRealtime() {
     const refreshServerState = useCallback(() => {
         invalidateIfMounted(['jobs', 'active']);
         invalidateIfMounted(['jobs', 'failed']);
-        // Newest page only — see the note on the job.completed handler for why a
+        // Newest page only — see `refreshNewestGalleryPageIfMounted` for why a
         // bare invalidation of an infinite query is the wrong shape here.
-        invalidateIfMounted(['gallery'], { refetchPage: (page, allPages) => page === allPages[0] });
+        void refreshNewestGalleryPageIfMounted();
         invalidateIfMounted(['statistics']);
-    }, [invalidateIfMounted]);
+    }, [invalidateIfMounted, refreshNewestGalleryPageIfMounted]);
 
     // Replay events missed during a disconnect. lastSequenceNumberRef is the
     // highest sequence number already applied, so the server only replays
@@ -174,7 +191,7 @@ export function useJobsRealtime() {
                    shows the new image — without the tail churn. Guarded by
                    `invalidateIfMounted` so a route with no gallery mounted buys
                    no refetch at all. */
-                invalidateIfMounted(['gallery'], { refetchPage: (_page, allPages) => _page === allPages[0] });
+                void refreshNewestGalleryPageIfMounted();
                 // Collection and world counts change with every new asset.
                 invalidateIfMounted(['collections']);
                 invalidateIfMounted(['statistics']);
@@ -286,7 +303,7 @@ export function useJobsRealtime() {
             document.removeEventListener('visibilitychange', onVisibilityChange);
             window.removeEventListener('online', onOnline);
         };
-    }, [queryClient, invalidateIfMounted, replayMissedEvents, dismissConnectionToast, markEventReceived, refreshServerState]);
+    }, [queryClient, invalidateIfMounted, replayMissedEvents, dismissConnectionToast, markEventReceived, refreshServerState, refreshNewestGalleryPageIfMounted]);
 }
 
 export default useJobsRealtime;

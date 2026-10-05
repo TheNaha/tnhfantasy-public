@@ -18,8 +18,8 @@ export function useActiveJobs() {
 
     return useQuery({
         queryKey: ['jobs', 'active'],
-        queryFn: async () => {
-            const data = await jobsApi.getActive();
+        queryFn: async ({ signal }) => {
+            const data = await jobsApi.getActive({ signal });
             return data?.jobs || [];
         },
         staleTime: 30000, // 30 seconds

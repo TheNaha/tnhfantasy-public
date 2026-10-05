@@ -3,6 +3,7 @@ import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clo
 import ProgressiveImage from '../ProgressiveImage';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { assetUrl, assetPath } from '../../utils/assetUrl';
+import { formatBytes } from '../../utils/bytes';
 
 import { memo } from 'react';
 import ModalOverlay from '../common/ModalOverlay';
@@ -333,7 +334,7 @@ export default memo(function ImageLightbox({
                             <p className="text-sm text-gray-400 break-all">{displayImage.name}</p>
                             <p className="text-sm text-gray-500 mt-1">
                                 {Number.isFinite(Number(displayImage.size))
-                                    ? `${(Number(displayImage.size) / 1024 / 1024).toFixed(2)} MB`
+                                    ? formatBytes(Number(displayImage.size))
                                     : /* No file size on this record. The session
                                          * member endpoint has no `size` column and
                                          * stat-ing every file to fill one is not

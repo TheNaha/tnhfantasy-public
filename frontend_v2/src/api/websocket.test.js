@@ -47,6 +47,22 @@ class FakeSocket {
 
 let fakeSocket;
 
+/**
+ * `socket.io-client` is loaded with a dynamic `import()` so it stays out of the
+ * eager entry chunk, which means `io()` — and therefore the `FakeSocket` — is
+ * constructed one microtask after `connect()` is called rather than inside it.
+ * Wait for it rather than assuming it already exists.
+ */
+async function waitForSocketToLoad() {
+    // A macrotask, not a microtask: resolving a dynamic `import()` runs the
+    // module runner, which takes more than one `Promise.resolve()` tick even
+    // when the module is mocked.
+    for (let i = 0; i < 50 && !fakeSocket; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    if (!fakeSocket) throw new Error('socket.io-client was never loaded');
+}
+
 vi.mock('socket.io-client', () => ({
     io: vi.fn(() => {
         fakeSocket = new FakeSocket();
@@ -70,6 +86,7 @@ describe('websocket listener registration', () => {
         const callback = vi.fn();
 
         const connectPromise = ws.connect();
+        await waitForSocketToLoad();
         fakeSocket.trigger('connect');
         await connectPromise;
 
@@ -84,6 +101,7 @@ describe('websocket listener registration', () => {
         const callback = vi.fn();
 
         const connectPromise = ws.connect();
+        await waitForSocketToLoad();
         fakeSocket.trigger('connect');
         await connectPromise;
 
@@ -99,11 +117,13 @@ describe('websocket listener registration', () => {
         const ws = await import('./websocket.js');
 
         const failedConnect = ws.connect();
+        await waitForSocketToLoad();
         fakeSocket.trigger('connect_error', { message: 'connection failed' });
 
         await expect(failedConnect).rejects.toThrow('connection failed');
 
         const retryConnect = ws.connect();
+        await waitForSocketToLoad();
         fakeSocket.trigger('connect');
 
         await expect(retryConnect).resolves.toBeDefined();

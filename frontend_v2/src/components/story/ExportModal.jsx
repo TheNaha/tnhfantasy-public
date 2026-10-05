@@ -4,6 +4,7 @@ import { X, FileText, FileDown, BookOpen, Image as ImageIcon, LayoutTemplate, Gl
 import { useExportStoryFormatted, useExportPublishedStory, usePublishStory, useUnpublishStory } from '../../hooks/useWorldVault';
 import toast from 'react-hot-toast';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { copyToClipboard } from '../../utils/clipboard';
 
 /**
  * ExportModal — Modal for exporting/publishing a story in multiple formats.
@@ -34,9 +35,32 @@ export default function ExportModal({ story, storyId, token, isOpen, onClose }) 
 
     const handlePublish = () => {
         publishMutation.mutate({ storyId }, {
-            onSuccess: (data) => {
-                toast.success('Story published — link copied!');
-                navigator.clipboard.writeText(data.read_url || '');
+            // Async: `onSuccess` awaits the copy. It did not before, and the
+            // ordering was the bug.
+            //
+            // This used to be:
+            //     toast.success('Story published — link copied!');
+            //     navigator.clipboard.writeText(data.read_url || '');
+            //     onClose();
+            // `navigator.clipboard` is undefined on a non-secure origin
+            // (measured: `http://100.150.0.4:5174` → `{"secure":false,
+            // "clip":false}`, `localhost:5174` → both true), and the
+            // dereference throws a SYNCHRONOUS TypeError — before any promise
+            // exists, so no `.then`/`.catch` anywhere downstream could see it.
+            // The throw skipped `onClose()`, leaving the modal open under a
+            // "link copied!" toast, with the link absent and Publish still
+            // enabled. The next click was a second publish of an
+            // already-published story.
+            onSuccess: async (data) => {
+                const copied = await copyToClipboard(data?.read_url || '');
+                // The publish succeeded either way, so it is announced as such.
+                // The copy is a separate fact with a separate answer.
+                if (copied) {
+                    toast.success('Story published — link copied!');
+                } else {
+                    toast.success('Story published');
+                    toast.error('Could not copy the link — your browser blocks the clipboard on this address. Copy it from the reader URL.');
+                }
                 onClose();
             },
             onError: (e) => toast.error(`Publish failed: ${e.message}`),
@@ -81,6 +105,7 @@ export default function ExportModal({ story, storyId, token, isOpen, onClose }) 
                             </h3>
                             <button
                                 onClick={onClose}
+                                aria-label="Close"
                                 className="p-1 text-gray-400 hover:text-white"
                             >
                                 <X size={20} />

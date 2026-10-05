@@ -73,3 +73,55 @@ describe('WorldLinkRow', () => {
         expect(screen.getByText(/No worlds yet/i)).toBeInTheDocument();
     });
 });
+
+/**
+ * A failed worlds fetch rendered as "No worlds yet. Create one…".
+ *
+ * `useWorlds()` destructured `data` with a `= []` default and no `isError`
+ * (fixed in `useChatWorkspaceData.js` and, for the story surface, in
+ * `StorySandbox.jsx`). The row made it worse than a lie: the `<select>` is
+ * gated on `worlds.length > 0`, so the outage also removed the control
+ * entirely, and a world *already attached* resolved to `null` — the panel could
+ * not describe what was in use.
+ *
+ * Both context panels pass `queryErrors` down, so this is asserted once here
+ * rather than twice per consumer.
+ */
+describe('WorldLinkRow with a failed worlds fetch', () => {
+    const FAILURE = { worlds: { error: new Error('503 Service Unavailable'), refetch: vi.fn(), noun: 'worlds' } };
+
+    it('states the failure instead of claiming there are no worlds', () => {
+        render(<WorldLinkRow worldId="w-1" worlds={[]} queryErrors={FAILURE} />);
+
+        const alert = screen.getByRole('alert');
+        expect(alert).toHaveTextContent(/could not load your worlds/i);
+        expect(alert).toHaveTextContent(/503 Service Unavailable/);
+        expect(screen.queryByText(/No worlds yet/)).toBeNull();
+    });
+
+    it('offers a retry wired to the worlds refetch', () => {
+        const refetch = vi.fn();
+        render(
+            <WorldLinkRow
+                worldId="w-1"
+                worlds={[]}
+                queryErrors={{ worlds: { error: new Error('boom'), refetch, noun: 'worlds' } }}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+        expect(refetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not render the picker it cannot populate', () => {
+        render(<WorldLinkRow worldId="w-1" worlds={[]} queryErrors={FAILURE} />);
+        expect(screen.queryByLabelText('World')).toBeNull();
+    });
+
+    it('renders normally when worlds loaded', () => {
+        render(<WorldLinkRow worldId="w-1" worlds={WORLDS} queryErrors={{}} />);
+
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(screen.getByLabelText('World')).toHaveValue('w-1');
+    });
+});

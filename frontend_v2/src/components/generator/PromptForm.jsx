@@ -6,9 +6,19 @@ import {
     useUpdatePrompt
 } from '../../hooks/usePrompts';
 import toast from 'react-hot-toast';
+import ModalOverlay from '../common/ModalOverlay';
 
 /**
- * Form for adding or editing prompts
+ * Form for adding or editing prompts.
+ *
+ * On `ModalOverlay`, not a hand-rolled `fixed inset-0` of its own. It was the
+ * only dialog in this drawer with no Escape handling, no backdrop click and no
+ * portal: it could be dismissed only with its own Cancel button or its close X,
+ * and because it sat in the DOM wherever the generator rendered it rather than in
+ * a portal on `document.body`, a stacking-context rule decided whether it ended
+ * up above or below a dialog opened over it. The `role="dialog"` goes on the
+ * panel, not on the backdrop — `ModalOverlay` is the layer behind the dialog, and
+ * nesting the role there breaks testing-library.
  */
 export const PromptForm = ({ prompt, onClose, onSave }) => {
     const nameId = useId();
@@ -18,7 +28,7 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
     const negativeId = useId();
     const tagId = useId();
 
-    const { data: categories = ['All', 'Portrait', 'Landscape', 'Anime', 'Abstract', 'Realistic', 'Custom'] } = usePromptCategories();
+    const { data: categories } = usePromptCategories();
     const createPromptMutation = useCreatePrompt();
     const updatePromptMutation = useUpdatePrompt();
 
@@ -89,8 +99,14 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
     };
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <div className="bg-gray-900 rounded-xl border border-gray-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <ModalOverlay onClose={onClose} className="z-[60] bg-black/80 backdrop-blur-sm">
+            <div
+                role="dialog"
+                aria-modal="true"
+                aria-label={isEditing ? 'Edit Prompt' : 'Add New Prompt'}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-gray-900 rounded-xl border border-gray-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+            >
                 {/* Header */}
                 <div className="flex items-center justify-between p-6 border-b border-gray-800 sticky top-0 bg-gray-900 z-10">
                     <h3 className="text-xl font-bold text-white">
@@ -261,7 +277,7 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
                     </div>
                 </form>
             </div>
-        </div>
+        </ModalOverlay>
     );
 };
 

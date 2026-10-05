@@ -23,12 +23,12 @@ const PARAM_NAMES = {
 export const useTimeline = (filters = {}) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.TIMELINE, filters),
-        queryFn: () => {
+        queryFn: ({ signal }) => {
             const params = new URLSearchParams();
             Object.entries(filters).forEach(([key, value]) => {
                 if (value) params.set(PARAM_NAMES[key] || key, value);
             });
-            return api.get(`/api/v2/timeline?${params.toString()}`);
+            return api.get(`/api/v2/timeline?${params.toString()}`, { signal });
         },
         enabled: true,
     });

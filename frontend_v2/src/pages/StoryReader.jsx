@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Download, Share2, BookOpen, Play, Pause, FileDown } from 'lucide-react';
 import { api } from '../api';
 import { assetUrl } from '../utils/assetUrl';
+import { copyToClipboard } from '../utils/clipboard';
 import toast from 'react-hot-toast';
 import ExportModal from '../components/story/ExportModal';
 
@@ -13,25 +14,42 @@ export default function StoryReader() {
     const navigate = useNavigate();
     const [showExport, setShowExport] = useState(false);
 
-    const { data: story, isLoading: loading, isError } = useQuery({
+    const { data: story, isLoading: loading, isError, error } = useQuery({
         queryKey: ['published_story', token],
         queryFn: () => api.get(`/api/v2/stories/published/${token}`),
         enabled: !!token,
         retry: false,
     });
 
-    useEffect(() => {
-        if (isError) {
-            toast.error('Story not found or no longer available');
-            navigate('/');
-        }
-    }, [isError, navigate]);
+    /**
+     * A dead share link says so, in place.
+     *
+     * `GET /api/v2/stories/published/{token}` 404s for a token that was never
+     * issued, and 404s for a real story whose author has since unpublished it —
+     * two different mistakes for the reader, one honest thing to say. It used to
+     * toast and `navigate('/')`, and `/` redirects to `/roleplay`, so somebody
+     * who clicked a shared link that had gone stale was silently dropped into the
+     * workspace with no message, no error and no way to tell that the page they
+     * asked for had never loaded. The redirect also raced the query: it fired on
+     * `isError` before anything had a chance to render a failure.
+     *
+     * There is no "no token at all" case left to redirect for — the route is
+     * `/read/story/:token`, so `token` is always present and an absent one is
+     * this same dead link.
+     */
 
     const handleShare = async () => {
-        try {
-            await navigator.clipboard.writeText(window.location.href);
+        // `await navigator.clipboard.writeText(...)` in a try/catch catches the
+        // REJECTION. On a non-secure origin the failure is a synchronous
+        // TypeError on the dereference, before the promise exists — measured:
+        // `http://100.150.0.4:5174` → `{"secure":false,"clip":false}`. The
+        // catch did run for that case, but the message was the generic
+        // "Could not copy link" on a device where copying works fine via the
+        // textarea fallback the other four call sites already used.
+        const copied = await copyToClipboard(window.location.href);
+        if (copied) {
             toast.success('Link copied!');
-        } catch {
+        } else {
             toast.error('Could not copy link');
         }
     };
@@ -76,7 +94,25 @@ export default function StoryReader() {
         return <div className="p-6">Loading story...</div>;
     }
 
-    if (!story) return null;
+    if (isError || !story) {
+        return (
+            <div className="max-w-2xl mx-auto px-6 py-16 text-center" role="alert">
+                <BookOpen size={32} className="mx-auto mb-4 text-gray-600" aria-hidden="true" />
+                <h1 className="text-xl font-semibold text-white mb-2">This story link is invalid</h1>
+                <p className="text-gray-400 mb-6">
+                    It never existed, or it was unpublished by its author.
+                    {error?.response?.status === 404 ? '' : ' Ask whoever shared it for a new link.'}
+                </p>
+                <button
+                    onClick={() => navigate('/')}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors"
+                >
+                    <ArrowLeft size={16} aria-hidden="true" />
+                    Go to the home page
+                </button>
+            </div>
+        );
+    }
 
     return (
         <>

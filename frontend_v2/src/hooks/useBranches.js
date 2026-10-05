@@ -16,7 +16,7 @@ import { invalidateVaultAggregates } from './useWorldVaultResource';
 export const useBranches = (chatId, activeBranch = null) => {
     const query = useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.CHATS, chatId, 'branches'),
-        queryFn: () => api.get(`/api/v2/chats/${chatId}/branches`),
+        queryFn: ({ signal }) => api.get(`/api/v2/chats/${chatId}/branches`, { signal }),
         enabled: !!chatId,
     });
 

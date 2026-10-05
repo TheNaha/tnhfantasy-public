@@ -84,5 +84,54 @@ describe('copyToClipboard', () => {
             // Textarea should have been removed
             expect(document.body.children.length).toBe(initialCount);
         });
+
+        it('removes the textarea when execCommand is missing, which is the leak', async () => {
+            // `document.execCommand` is `undefined` in jsdom and removed from
+            // several browsers. With the `removeChild` after the call rather
+            // than in a `finally`, that throw skipped it, so every copy on such
+            // an origin left a focusable textarea in the live document.
+            delete document.execCommand;
+
+            await copyToClipboard('leak probe');
+
+            expect(document.querySelectorAll('textarea')).toHaveLength(0);
+            expect(document.body.textContent).not.toContain('leak probe');
+        });
+
+        it('leaves no textarea behind when execCommand itself throws', async () => {
+            document.execCommand = vi.fn().mockImplementation(() => {
+                throw new Error('not supported');
+            });
+
+            await expect(copyToClipboard('throw probe')).resolves.toBe(false);
+
+            expect(document.querySelectorAll('textarea')).toHaveLength(0);
+        });
+
+        it('can tell a leaking fallback from a clean one (canary)', async () => {
+            // The pre-fix implementation, in isolation. If this stops leaving a
+            // textarea behind, the two assertions above have stopped meaning
+            // anything.
+            const leakyCopy = () => {
+                let textArea = null;
+                try {
+                    textArea = document.createElement('textarea');
+                    textArea.value = 'leaky';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    return document.execCommand('copy');
+                } catch {
+                    return false;
+                } finally {
+                    /* the missing removeChild */
+                }
+            };
+
+            delete document.execCommand;
+            leakyCopy();
+            expect(document.querySelectorAll('textarea')).toHaveLength(1);
+
+            document.querySelectorAll('textarea').forEach((el) => el.remove());
+        });
     });
 });

@@ -44,23 +44,59 @@ function trackEntity(page, kind, id) {
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 // ---------------------------------------------------------------------------
+// Path resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve an e2e path to a real backend URL.
+ *
+ * The API is not uniformly versioned. Most of it lives under `/api/v2`, but
+ * `/api/settings`, `/api/prompts` and `/api/jobs` are unversioned, and this
+ * harness used to prefix `/api/v2` onto whatever it was handed. Fourteen call
+ * sites across five specs therefore requested routes that do not exist:
+ * `GET /api/v2/settings` (404 — the real one is `/api/settings`),
+ * `GET /api/v2/jobs/{id}`, `POST /api/v2/prompts`, and so on. Every helper
+ * throws on `!res.ok()`, so those tests could not pass, which means the e2e CI
+ * job could not have been green — the failure was invisible only because the
+ * job was not the thing anyone looked at.
+ *
+ * Resolving here rather than at 46 call sites keeps the default short (most
+ * endpoints really are `/api/v2/...`) while making an unversioned path
+ * impossible to get wrong: pass the real path and it is used verbatim.
+ *
+ * `backend_v2/tests/test_e2e_endpoint_contract.py` walks every spec and asserts
+ * each resolved path exists in `app.openapi()`, so a typo cannot come back.
+ */
+export function resolveApiPath(path) {
+  if (typeof path !== 'string') {
+    throw new TypeError(`resolveApiPath needs a string, got ${typeof path}`);
+  }
+  if (!path.startsWith('/')) {
+    throw new Error(`e2e API path must start with '/', got ${JSON.stringify(path)}`);
+  }
+  // Already an absolute backend path: use it exactly as given.
+  if (path === '/api' || path.startsWith('/api/')) return path;
+  return API_BASE + path;
+}
+
+// ---------------------------------------------------------------------------
 // Raw API helpers (page.request; page is the FIRST argument)
 // ---------------------------------------------------------------------------
 
 async function apiDelete(page, path) {
-  const res = await page.request.delete(API_BASE + path);
+  const res = await page.request.delete(resolveApiPath(path));
   if (!res.ok()) throw new Error(`Cleanup DELETE ${path} failed: ${res.status()}`);
   return res.json().catch(() => ({}));
 }
 
 async function apiGet(page, path) {
-  const res = await page.request.get(API_BASE + path);
+  const res = await page.request.get(resolveApiPath(path));
   if (!res.ok()) throw new Error(`GET ${path} failed: ${res.status()}`);
   return res.json();
 }
 
 async function apiPost(page, path, body) {
-  const res = await page.request.post(API_BASE + path, {
+  const res = await page.request.post(resolveApiPath(path), {
     data: body,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -71,7 +107,7 @@ async function apiPost(page, path, body) {
 }
 
 async function apiPut(page, path, body) {
-  const res = await page.request.put(API_BASE + path, {
+  const res = await page.request.put(resolveApiPath(path), {
     data: body,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -80,7 +116,7 @@ async function apiPut(page, path, body) {
 }
 
 async function apiPatch(page, path, body) {
-  const res = await page.request.patch(API_BASE + path, {
+  const res = await page.request.patch(resolveApiPath(path), {
     data: body,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -92,7 +128,7 @@ async function apiUpload(page, path, fileName, buffer, mimeType, fields) {
   const fd = new FormData();
   fd.append('file', new Blob([buffer], { type: mimeType }), fileName);
   for (const [k, v] of Object.entries(fields || {})) fd.append(k, v);
-  const res = await page.request.post(API_BASE + path, { multipart: fd });
+  const res = await page.request.post(resolveApiPath(path), { multipart: fd });
   if (!res.ok()) throw new Error(`UPLOAD ${path} failed: ${res.status()}`);
   return res.json();
 }
@@ -129,7 +165,7 @@ async function waitForJob(page, jobId, { timeout = 300000, expected = 'completed
   const deadline = Date.now() + timeout;
   let last = null;
   while (Date.now() < deadline) {
-    last = await apiGet(page, `/jobs/${jobId}`);
+    last = await apiGet(page, `/api/jobs/${jobId}`);
     if (TERMINAL_JOB_STATUSES.has(last.status)) break;
     await page.waitForTimeout(2000);
   }
@@ -246,6 +282,11 @@ async function seedStory(page, overrides = {}) {
 async function seedStoryChapter(page, storyId, overrides = {}) {
   return apiPost(page, `/stories/${storyId}/chapters`, {
     title: overrides.title || 'Chapter 1',
+    // `ChapterCreate.content` is required and `extra="forbid"`, so omitting it
+    // made every one of the seven chapter seeds a 422. Nothing in the e2e suite
+    // read a chapter's content, which is why no assertion caught it: the helper
+    // failed, the spec carried on, and 50 tests failed later on a symptom.
+    content: overrides.content || '',
     ...overrides,
   });
 }
@@ -309,7 +350,7 @@ async function seedPrompt(page, overrides = {}) {
     ...overrides,
   };
   delete body.prompt;
-  return apiPost(page, '/prompts', body);
+  return apiPost(page, '/api/prompts', body);
 }
 
 async function seedCollection(page, overrides = {}) {
@@ -382,7 +423,7 @@ async function cleanupEntities(page, entities) {
       continue;
     }
     try {
-      const res = await page.request.delete(API_BASE + path);
+      const res = await page.request.delete(resolveApiPath(path));
       if (!res.ok() && res.status() !== 404) errors.push(`${kind} ${id}: HTTP ${res.status()}`);
     } catch (e) {
       errors.push(`${kind} ${id}: ${e.message}`);

@@ -46,7 +46,7 @@ test.describe('Settings & Configuration (Module F)', () => {
     test.setTimeout(60000);
 
     test('All 6 tabs render and each shows its section heading', async ({ page }) => {
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
 
         for (const [label, heading] of TABS) {
@@ -58,7 +58,7 @@ test.describe('Settings & Configuration (Module F)', () => {
     });
 
     test('UI: grid columns slider updates badge and localStorage', async ({ page }) => {
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'UI / UX');
 
         const slider = groupSlider(page, 'Default Grid Columns');
@@ -71,7 +71,7 @@ test.describe('Settings & Configuration (Module F)', () => {
     });
 
     test('UI: toast test buttons fire success and error toasts', async ({ page }) => {
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'UI / UX');
 
         const successTest = page
@@ -90,7 +90,7 @@ test.describe('Settings & Configuration (Module F)', () => {
     });
 
     test('UI: category reset restores defaults', async ({ page }) => {
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'UI / UX');
 
         const slider = groupSlider(page, 'Default Grid Columns');
@@ -103,7 +103,7 @@ test.describe('Settings & Configuration (Module F)', () => {
     });
 
     test('Gallery: both toggles flip and persist to localStorage', async ({ page }) => {
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'Gallery');
 
         for (const title of ['Auto-Refresh on Job Complete', 'Silent Refresh']) {
@@ -120,30 +120,30 @@ test.describe('Settings & Configuration (Module F)', () => {
     });
 
     test('Branding: save applies app name to the sidebar, then restores', async ({ page }) => {
-        const original = await apiGet(page, '/settings/branding');
+        const original = await apiGet(page, '/api/settings/branding');
         const brand = uniqueName('e2e-brand');
 
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'Branding');
         await page.getByPlaceholder('Enter app name').fill(brand);
         await page.getByRole('button', { name: 'Save', exact: true }).click();
         await expectToast(page, /Branding updated! Refresh the page to see changes./);
 
-        const saved = await apiGet(page, '/settings/branding');
+        const saved = await apiGet(page, '/api/settings/branding');
         expect(saved.appName).toBe(brand);
 
         await dismissOnboarding(page);
         await page.goto('/');
         await expect(page.getByText(brand).filter({ visible: true }).first()).toBeVisible();
 
-        await apiPost(page, '/settings/branding', original);
+        await apiPost(page, '/api/settings/branding', original);
     });
 
     test('AI: LLM worker status reflects enabled providers', async ({ page }) => {
         const providers = await apiGet(page, '/llm/providers');
         const enabled = providers.filter((p) => p.enabled);
 
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'AI / LLM');
 
         await expect(page.getByText('LLM Worker Status', { exact: true })).toBeVisible();
@@ -168,7 +168,7 @@ test.describe('Settings & Configuration (Module F)', () => {
         const target = llmProviders.find((p) => (p.provider_id || p.id) === 'llm-local') ?? llmProviders[0];
         expect(target, 'an enabled LLM provider must exist on this stack').toBeTruthy();
 
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'AI / LLM');
 
         const card = page.getByText('Default LLM Provider', { exact: true }).locator('xpath=ancestor::div[contains(@class,"p-6")][1]');
@@ -189,10 +189,10 @@ test.describe('Settings & Configuration (Module F)', () => {
     });
 
     test('AI: context tokens + temperature save to backend config, then restore', async ({ page }) => {
-        const settings = await apiGet(page, '/settings');
+        const settings = await apiGet(page, '/api/settings');
         const originalAi = settings.settings.ai || { maxContextTokens: 4096, temperature: 0.8 };
 
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'AI / LLM');
 
         await groupSlider(page, 'Max Context Tokens').fill('8192');
@@ -208,15 +208,15 @@ test.describe('Settings & Configuration (Module F)', () => {
         await expectToast(page, /AI settings saved to backend/);
         await expect(page.getByRole('button', { name: 'Saved', exact: true })).toBeVisible();
 
-        const saved = await apiGet(page, '/settings');
+        const saved = await apiGet(page, '/api/settings');
         expect(saved.settings.ai.maxContextTokens).toBe(8192);
         expect(saved.settings.ai.temperature).toBe(1.2);
 
-        await apiPut(page, '/settings', { ai: originalAi });
+        await apiPut(page, '/api/settings', { ai: originalAi });
     });
 
     test('Generator: redirect toggle reveals/hides the delay setting', async ({ page }) => {
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'Generator');
 
         const redirect = groupControl(page, 'Redirect After Generate').locator('label').first();
@@ -238,7 +238,7 @@ test.describe('Settings & Configuration (Module F)', () => {
     });
 
     test('Models: items per page and auto-remove toggle persist', async ({ page }) => {
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'Models');
 
         await groupSlider(page, 'Items Per Page').fill('50');
@@ -256,7 +256,7 @@ test.describe('Settings & Configuration (Module F)', () => {
     });
 
     test('Reset All (danger confirm) restores defaults', async ({ page }) => {
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'UI / UX');
         await groupSlider(page, 'Default Grid Columns').fill('6');
         await expect(groupBadge(page, 'Default Grid Columns')).toHaveText('6');
@@ -271,10 +271,10 @@ test.describe('Settings & Configuration (Module F)', () => {
     });
 
     test('System prompt blocks: edit, persist to backend, restore', async ({ page }) => {
-        const originalBlocks = await apiGet(page, '/settings/system-prompts').then((r) => r.blocks);
+        const originalBlocks = await apiGet(page, '/api/settings/system-prompts').then((r) => r.blocks);
         const marker = uniqueName('sys-prompt-e2e');
 
-        await page.goto('/settings');
+        await page.goto('/api/settings');
         await openTab(page, 'AI / LLM');
 
         await expect(page.getByText('System Prompt Blocks', { exact: true })).toBeVisible();
@@ -285,9 +285,9 @@ test.describe('Settings & Configuration (Module F)', () => {
         await page.getByRole('button', { name: /Save prompts/i }).click();
         await expectToast(page, /System prompts updated/);
 
-        const savedBlocks = await apiGet(page, '/settings/system-prompts').then((r) => r.blocks);
+        const savedBlocks = await apiGet(page, '/api/settings/system-prompts').then((r) => r.blocks);
         expect(savedBlocks.roleplay_default).toContain(marker);
 
-        await apiPut(page, '/settings/system-prompts', { blocks: originalBlocks });
+        await apiPut(page, '/api/settings/system-prompts', { blocks: originalBlocks });
     });
 });

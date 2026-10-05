@@ -56,6 +56,7 @@ describe('useChats', () => {
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
         expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats', {
             params: { workspace: 'chat', limit: 20, offset: 10 },
+            signal: expect.any(AbortSignal),
         });
         expect(result.current.data).toEqual({ chats: [{ id: 'c1', name: 'Chat' }] });
     });
@@ -65,7 +66,7 @@ describe('useChats', () => {
         const { wrapper } = createWrapper();
         renderHook(() => useChats(), { wrapper });
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats', { params: { limit: 50 } });
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats', { params: { limit: 50 }, signal: expect.any(AbortSignal) });
     });
 
     it('useChat is disabled without an id and returns undefined data', async () => {
@@ -81,7 +82,7 @@ describe('useChats', () => {
         const { wrapper, queryClient } = createWrapper();
         const { result } = renderHook(() => useChat('c1'), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual({ id: 'c1' }));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1', { signal: expect.any(AbortSignal) });
         expect(queryClient.getQueryState(['world_vault', 'chats', 'c1'])).toBeDefined();
     });
 
@@ -90,7 +91,7 @@ describe('useChats', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useChatSystemPrompt('c1'), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual({ system_prompt: 'You are a bard' }));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1/system-prompt');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1/system-prompt', { signal: expect.any(AbortSignal) });
     });
 
     it('useChatJobs polls fast while a job is active and stops when idle', async () => {
@@ -244,7 +245,7 @@ describe('useChats mutations', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useChatImages('c1'), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual([{ id: 'i1' }]));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1/images');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1/images', { signal: expect.any(AbortSignal) });
     });
 
     it('useSearchChats is disabled for empty queries and sends q param otherwise', async () => {
@@ -257,7 +258,7 @@ describe('useChats mutations', () => {
         apiMock.get.mockResolvedValue([]);
         const second = renderHook(() => useSearchChats('bard'), { wrapper });
         await waitFor(() => expect(second.result.current.isSuccess).toBe(true));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats', { params: { q: 'bard' } });
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats', { params: { q: 'bard' }, signal: expect.any(AbortSignal) });
     });
 
     it('useSearchChats stays disabled below the two-character floor', async () => {

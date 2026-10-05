@@ -49,7 +49,7 @@ describe('useMessages', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useMessages('c1', { limit: 5, offset: 10 }), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual([{ id: 'm1', content: 'hi' }]));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1/messages', { params: { limit: 5, offset: 10 } });
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1/messages', { params: { limit: 5, offset: 10 }, signal: expect.any(AbortSignal) });
     });
 
     it('does not fetch without a chatId', async () => {

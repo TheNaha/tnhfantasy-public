@@ -2,8 +2,11 @@ import { useState, useRef, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { useWebSocket, EventTypes } from '../api/websocket';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { clearStreamingJob } from './useStreamingJobs';
 import { jobMetadata } from '../utils/jobStatus';
+
+const STORY_CHAPTERS_KEY = (storyId) => buildQueryKey(QUERY_KEYS.STORIES, storyId, 'chapters');
 
 export function useStoryStreaming({
     activeStoryId,
@@ -80,10 +83,10 @@ export function useStoryStreaming({
                 // `_handle_story_parse`. That is the whole blast radius: the
                 // bare `['world_vault']` root used to refetch every cached chat,
                 // persona, memory, scenario and relationship graph on top of it.
-                ['characters', 'lorebooks', 'locations'].forEach((resource) => {
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', resource] });
+                [QUERY_KEYS.CHARACTERS, QUERY_KEYS.LOREBOOKS, QUERY_KEYS.LOCATIONS].forEach((resource) => {
+                    queryClient.invalidateQueries({ queryKey: buildQueryKey(resource) });
                 });
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId], exact: true });
+                queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES, activeStoryId), exact: true });
                 toast.success("Story parsed! Characters & lorebooks imported.");
                 return;
             }
@@ -91,8 +94,8 @@ export function useStoryStreaming({
             if (meta.story_id === activeStoryId && meta.chapter_id === activeChapterId) {
                 if (job.task_type === 'image' || meta.workspace === 'image') {
                     setIsIllustrating(false);
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'images'] });
+                    queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(activeStoryId) });
+                    queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'images') });
                     toast.success('Illustration complete');
                 } else if (meta.type === 'story_continue') {
                     const finalStreamedText = streamingRef.current;
@@ -107,9 +110,9 @@ export function useStoryStreaming({
                         return newBase;
                     });
 
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] }).then(() => {
+                    queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(activeStoryId) }).then(() => {
                         if (isDirtyRef.current) return;
-                        const data = queryClient.getQueryData(['world_vault', 'stories', activeStoryId, 'chapters']);
+                        const data = queryClient.getQueryData(STORY_CHAPTERS_KEY(activeStoryId));
                         const freshChapter = Array.isArray(data) ? data.find(ch => ch.id === activeChapterId) : null;
                         if (freshChapter?.content && freshChapter.content !== (streamingBaseRef.current || '')) {
                             setEditorContent(freshChapter.content);

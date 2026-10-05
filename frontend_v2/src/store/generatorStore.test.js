@@ -11,11 +11,17 @@ vi.mock('zustand/middleware', async (importOriginal) => {
 
 describe('useGeneratorStore', () => {
     let useGeneratorStore;
+    let DEFAULT_STEPS;
+    let DEFAULT_SAMPLER;
 
     beforeEach(async () => {
         vi.resetModules();
         const mod = await import('../store/generatorStore.js');
         useGeneratorStore = mod.useGeneratorStore;
+        // Pinned so the "unknown architecture changes nothing" case has
+        // something specific to be unchanged from.
+        DEFAULT_STEPS = useGeneratorStore.getState().steps;
+        DEFAULT_SAMPLER = useGeneratorStore.getState().sampler;
     });
 
     describe('initial state', () => {
@@ -232,27 +238,45 @@ describe('useGeneratorStore', () => {
         });
     });
 
-    describe('applyModelSettings', () => {
-        it('applies pony settings', () => {
-            const { applyModelSettings } = useGeneratorStore.getState();
-            const result = applyModelSettings('pony');
-            expect(result).toBe(true);
-            const { sampler, scheduler } = useGeneratorStore.getState();
-            expect(sampler).toBe('dpmpp_2m');
-            expect(scheduler).toBe('karras');
+    /*
+     * Per-architecture settings, applied.
+     *
+     * This block used to exercise an `applyModelSettings(modelType)` action that
+     * had zero production callers — the only path that applies
+     * `BASE_MODEL_SETTINGS` in the app is `setSelectedCheckpoint` with
+     * `autoApplyModelSettings` on, and that path had its own coverage above. The
+     * action was removed; these assertions moved onto the path that actually
+     * runs, so the architecture table is still covered for every family rather
+     * than for the three the dead action's tests happened to name.
+     */
+    describe('BASE_MODEL_SETTINGS, applied through checkpoint selection', () => {
+        const ARCHITECTURES = [
+            { name: 'illustrious', base_model: 'Illustrious', sampler: 'euler_ancestral', scheduler: 'normal', steps: 25, width: 1024 },
+            { name: 'pony', base_model: 'Pony', sampler: 'dpmpp_2m', scheduler: 'karras', steps: 25, width: 1024 },
+            { name: 'sd15', base_model: 'SD 1.5', sampler: 'euler_ancestral', scheduler: 'normal', steps: 25, width: 512 },
+            { name: 'flux', base_model: 'Flux.1', sampler: 'euler', scheduler: 'normal', steps: 20, width: 1024 },
+        ];
+
+        it.each(ARCHITECTURES)('applies the $name defaults', (arch) => {
+            const { setAutoApplyModelSettings, setSelectedCheckpoint } = useGeneratorStore.getState();
+            setAutoApplyModelSettings(true);
+            setSelectedCheckpoint({ name: 'm.safetensors', base_model: arch.base_model });
+
+            const state = useGeneratorStore.getState();
+            expect(state.sampler).toBe(arch.sampler);
+            expect(state.scheduler).toBe(arch.scheduler);
+            expect(state.steps).toBe(arch.steps);
+            expect(state.width).toBe(arch.width);
         });
 
-        it('returns false for unknown model type', () => {
-            const { applyModelSettings } = useGeneratorStore.getState();
-            const result = applyModelSettings('unknown_model');
-            expect(result).toBe(false);
-        });
+        it('changes nothing for a checkpoint whose architecture is unknown', () => {
+            const { setAutoApplyModelSettings, setSelectedCheckpoint } = useGeneratorStore.getState();
+            setAutoApplyModelSettings(true);
+            setSelectedCheckpoint({ name: 'm.safetensors' });
 
-        it('applies illustrious settings', () => {
-            const { applyModelSettings } = useGeneratorStore.getState();
-            applyModelSettings('illustrious');
-            const { sampler } = useGeneratorStore.getState();
-            expect(sampler).toBe('euler_ancestral');
+            const state = useGeneratorStore.getState();
+            expect(state.steps).toBe(DEFAULT_STEPS);
+            expect(state.sampler).toBe(DEFAULT_SAMPLER);
         });
     });
 

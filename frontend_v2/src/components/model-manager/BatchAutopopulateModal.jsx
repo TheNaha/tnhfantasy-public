@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api';
 import * as ws from '../../api/websocket';
 import { useAutopopulatePending, useBatchAutopopulateCandidates } from '../../hooks/useCivitaiSearch';
+import { useAutopopulateModel } from '../../hooks/useAutopopulate';
 
 function CandidateSelector({ model, candidatesData, onDecision }) {
     const candidates = candidatesData?.data?.candidates || [];
@@ -108,6 +109,7 @@ function CandidateSelector({ model, candidatesData, onDecision }) {
 
 export default function BatchAutopopulateModal({ onClose }) {
     const queryClient = useQueryClient();
+    const autopopulate = useAutopopulateModel();
     const [processingId, setProcessingId] = useState(null);
     const [autoProgress, setAutoProgress] = useState(null);
     const [isAutoPopulatingAll, setIsAutoPopulatingAll] = useState(false);
@@ -145,7 +147,12 @@ export default function BatchAutopopulateModal({ onClose }) {
         if (action === 'approve') {
             setProcessingId(modelId);
             try {
-                await api.post(`/api/v2/models/${modelId}/autopopulate`, { civitai_id: civitaiId });
+                // `useAutopopulateModel` owns the POST and both invalidations.
+                // This modal used to invalidate *nothing*: it only removed the
+                // model from the pending list optimistically, so an approved
+                // write left the installed-model list showing the pre-write name,
+                // tags and stats.
+                await autopopulate.mutateAsync({ modelId, civitaiId });
                 toast.success('Metadata applied!');
             } catch (err) {
                 toast.error('Failed to apply metadata: ' + err.message);
@@ -201,7 +208,7 @@ export default function BatchAutopopulateModal({ onClose }) {
                                 Auto-Populate All
                             </button>
                         )}
-                        <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors">
+                        <button onClick={onClose} aria-label="Close batch autopopulate" className="p-2 hover:bg-gray-800 rounded-full transition-colors">
                             <X size={20} />
                         </button>
                     </div>

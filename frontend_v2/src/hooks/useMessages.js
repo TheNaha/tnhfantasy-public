@@ -6,7 +6,7 @@ import { invalidateVaultAggregates } from './useWorldVaultResource';
 export const useMessages = (chatId, { limit = 100, offset = 0, branchId = null, search = null, tail = false } = {}, options = {}) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, chatId, limit, offset, branchId ?? 'active', search ?? '', tail ? 'tail' : 'asc'),
-        queryFn: () => {
+        queryFn: ({ signal }) => {
             if (!chatId) return [];
             const params = {};
             if (limit) params.limit = limit;
@@ -14,7 +14,7 @@ export const useMessages = (chatId, { limit = 100, offset = 0, branchId = null, 
             if (branchId) params.branch_id = branchId;
             if (search) params.q = search;
             if (tail) params.tail = true;
-            return api.get(`/api/v2/chats/${chatId}/messages`, { params });
+            return api.get(`/api/v2/chats/${chatId}/messages`, { params, signal });
         },
         enabled: !!chatId,
         ...options,
@@ -71,7 +71,7 @@ export const useDeleteMessage = () => {
             // system-prompt / jobs / images / branches sub-queries, so a plain
             // invalidation here refetched the whole system-prompt assembly for a
             // delete that only changes the message list.
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId], exact: true });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHATS, variables.chatId), exact: true });
             invalidateVaultAggregates(queryClient);
         }
     });
@@ -88,7 +88,7 @@ export const useRollbackChat = () => {
             invalidateVaultAggregates(queryClient);
             // See useDeleteMessage: exact, so the rollback does not drag the
             // system-prompt assembly along with it.
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId], exact: true });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHATS, variables.chatId), exact: true });
             invalidateVaultAggregates(queryClient);
         }
     });
@@ -104,7 +104,7 @@ export const useRegenerateReply = () => {
             // the bare root key would refetch the system-prompt assembly (and
             // every other cached chat's) on every click.
             if (variables?.chatId) {
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId], exact: true });
+                queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHATS, variables.chatId), exact: true });
                 queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
                 invalidateVaultAggregates(queryClient);
             }

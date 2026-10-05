@@ -5,7 +5,7 @@ import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 export const useExpressions = (characterId) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, characterId, 'expressions'),
-        queryFn: () => api.get(`/api/v2/characters/${characterId}/expressions`),
+        queryFn: ({ signal }) => api.get(`/api/v2/characters/${characterId}/expressions`, { signal }),
         enabled: !!characterId,
     });
 };

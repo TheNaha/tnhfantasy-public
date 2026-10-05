@@ -6,6 +6,7 @@ import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { filesApi } from "../api";
 import { createStableSorter } from "../utils/seededRandom";
+import { nextOffsetPageParam } from "../utils/pagination";
 import TriggerBox from "./selector/TriggerBox";
 import ModelFilterBar from "./selector/ModelFilterBar";
 import ModelGridCard from "./selector/ModelGridCard";
@@ -98,10 +99,7 @@ const ModelSelector = memo(function ModelSelector({
         tags: selectedTags.length > 0 ? selectedTags.join(",") : undefined,
       }, { signal });
     },
-    getNextPageParam: (lastPage, allPages) => {
-      const loaded = allPages.reduce((acc, page) => acc + (page.files?.length || 0), 0);
-      return (lastPage.files?.length === 50) ? loaded : undefined;
-    },
+    getNextPageParam: nextOffsetPageParam,
     enabled: isOpen && !!directory,
     staleTime: 5 * 60 * 1000,
   });

@@ -1,6 +1,7 @@
 import { Loader2 } from 'lucide-react';
 
 import EmptyState from '../EmptyState';
+import { QueryErrorState } from '../common/QueryState';
 import { TimelineView } from './TimelineView';
 import GroupedDashboardContent from './GroupedDashboardContent';
 import useSettingsStore from '../../store/settingsStore';
@@ -37,6 +38,9 @@ import useSettingsStore from '../../store/settingsStore';
  */
 export default function DashboardGalleryGrid({
     isLoading,
+    isError,
+    error,
+    onRetry,
     viewMode,
     displayedItems,
     showFavorites,
@@ -76,6 +80,21 @@ export default function DashboardGalleryGrid({
         );
     }
 
+    // A failed fetch produces zero items, so every `length === 0` check below
+    // is satisfied by an outage. This is the one place that has to know it: the
+    // grid is handed a flat array with no provenance, so "the library is empty"
+    // and "the library could not be reached" are the same value unless the
+    // query says otherwise. Checked before the empty state, and stated as a
+    // failure with a retry, never as emptiness.
+    //
+    // Gated on emptiness too, deliberately. A background page failing is not a
+    // reason to destroy the pages already on screen — and a query that loaded,
+    // then failed to refresh, leaves `isError` true with real items still
+    // displayed. The failure is only total when it produced nothing.
+    if (isError && displayedItems.length === 0) {
+        return <QueryErrorState noun="images" error={error} onRetry={onRetry} />;
+    }
+
     if (displayedItems.length === 0) {
         return (
             <>
@@ -85,6 +104,9 @@ export default function DashboardGalleryGrid({
                             activeCollection ? 'collection' :
                                 filters.search ? 'search' :
                                     'gallery'
+                    }
+                    primaryLabel={
+                        activeCollection ? 'Back to All Images' : undefined
                     }
                     onAction={onClearFilters}
                     showTutorialHint={!showFavorites && !activeCollection && allItems.length === 0}

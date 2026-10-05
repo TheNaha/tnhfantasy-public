@@ -166,7 +166,6 @@ export const useGeneratorStore = create(
 
             // Auto-apply model settings toggle
             autoApplyModelSettings: true,
-            lastAppliedModelType: null,
 
             // Img2Img & Inpainting State
             sourceImage: null,    // { filename, path, previewUrl, width, height, needsSync }
@@ -241,8 +240,6 @@ export const useGeneratorStore = create(
                                 newState[key] = value;
                             }
                         }
-                        newState.lastAppliedModelType = modelType;
-
                     }
                 }
 
@@ -253,7 +250,6 @@ export const useGeneratorStore = create(
             setSelectedClip: (selectedClip) => set((state) => ({ selectedClip, preflightTick: state.preflightTick + 1 })),
             setSelectedClip2: (selectedClip2) => set((state) => ({ selectedClip2, preflightTick: state.preflightTick + 1 })),
             setSelectedLoras: (selectedLoras) => set((state) => ({ selectedLoras, preflightTick: state.preflightTick + 1 })),
-            setControlnets: (controlnets) => set((state) => ({ controlnets, preflightTick: state.preflightTick + 1 })),
 
             setHiresFix: (hiresFix) => set({ hiresFix }),
             setPreflightChecking: (preflightChecking) => set({ preflightChecking }),
@@ -276,7 +272,6 @@ export const useGeneratorStore = create(
             setMaskImage: (maskImage) => set({ maskImage }),
             setMaskBlur: (maskBlur) => set({ maskBlur }),
             clearSourceImage: () => set({ sourceImage: null, maskImage: null }),
-            clearMask: () => set({ maskImage: null }),
 
 
 
@@ -352,24 +347,41 @@ export const useGeneratorStore = create(
                 return { prompt: currentPrompt + (currentPrompt ? ", " : "") + toAdd.join(", ") };
             }),
 
-            // Apply settings for a specific model type
-            applyModelSettings: (modelType) => {
-                const settings = BASE_MODEL_SETTINGS[modelType?.toLowerCase()];
-                if (settings) {
-                    set({ ...settings, lastAppliedModelType: modelType });
-                    return true;
-                }
-                return false;
-            },
-
             // Bulk Set (for loading saved prompts)
             setAll: (newState) => set((state) => ({ ...state, ...newState }))
         }),
         {
             name: 'generator-storage', // name of the item in the storage (must be unique)
             partialize: (state) => {
-                const { sourceImage, maskImage, preflightTick, preflightChecking, isMissingModelsOpen, ...rest } = state;
-                return rest;
+                const {
+                    sourceImage,
+                    maskImage,
+                    preflightTick,
+                    preflightChecking,
+                    isMissingModelsOpen,
+                    // `ipAdapters` was in `rest`, so it was persisted verbatim —
+                    // and each entry's `image` is a `blob:` URL from
+                    // `URL.createObjectURL(file)` in `ImageUploader.jsx`. Those
+                    // URLs are scoped to the document that created them and are
+                    // dead the moment the tab reloads, but the persisted entry
+                    // stays truthy. On restore, `ImageUploader` saw a non-null
+                    // image and rendered `<img src="blob:http://…">`, which
+                    // displays a broken image: the dropzone behind it was
+                    // unreachable and only the clear button escaped.
+                    //
+                    // The settings are worth keeping — re-picking a reference
+                    // image should not mean re-typing its weight and clip model
+                    // — so they are kept and the blob-bearing field is dropped.
+                    ipAdapters,
+                    ...rest
+                } = state;
+                return {
+                    ...rest,
+                    ipAdapters: (ipAdapters || []).map(({ image, ...settings }) => ({
+                        ...settings,
+                        image: null,
+                    })),
+                };
             }
         }
     )

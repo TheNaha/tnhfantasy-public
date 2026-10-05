@@ -39,7 +39,7 @@ describe('useWorldVaultSearch', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useWorldVaultSearch('aria', 'character'), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual({ characters: [], chats: [] }));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/search?q=aria&type=character');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/search?q=aria&type=character', { signal: expect.any(AbortSignal) });
     });
 
     it('is disabled without a query', async () => {
@@ -62,7 +62,7 @@ describe('useWorldVaultSearch', () => {
         const { result: ok } = renderHook(() => useWorldVaultSearch(' aria '), { wrapper: createWrapper().wrapper });
         await waitFor(() => expect(ok.current.isSuccess).toBe(true));
         // Surrounding whitespace is trimmed, so " aria " is a valid search.
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/search?q=aria');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/search?q=aria', { signal: expect.any(AbortSignal) });
     });
 
     it('omits the type param when falsy', async () => {
@@ -70,7 +70,7 @@ describe('useWorldVaultSearch', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useWorldVaultSearch('bard'), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual({}));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/search?q=bard');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/search?q=bard', { signal: expect.any(AbortSignal) });
     });
 
     it('useWorldVaultDashboard fetches entity counts', async () => {

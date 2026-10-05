@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { Plus, MessageSquare, Edit3, Trash2, Loader2, Upload } from 'lucide-react';
 import clsx from 'clsx';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
+import { QueryErrorState } from '../common/QueryState';
 
 export default function ChatSidebar({
     chatsCollapsed,
@@ -11,6 +12,9 @@ export default function ChatSidebar({
     setChatSearchQuery,
     setChatOffset,
     isChatsLoading,
+    isChatsError,
+    chatsError,
+    refetchChats,
     chats,
     activeChatList,
     renamingChatId,
@@ -84,6 +88,14 @@ export default function ChatSidebar({
             <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
                 {isChatsLoading ? (
                     <div className="flex justify-center p-4"><Loader2 className="animate-spin text-gray-500" size={20} /></div>
+                ) : isChatsError ? (
+                    // `useChats()` destructured `data` with a `= []` default and
+                    // no `isError`, so a failed fetch rendered "No chats yet —
+                    // Click + to create one" beside a **+** button. The user's
+                    // own history was one click away from being duplicated.
+                    <div className="p-2">
+                        <QueryErrorState noun="chats" error={chatsError} onRetry={refetchChats} />
+                    </div>
                 ) : chats?.length === 0 ? (
                     <div className="text-center py-8 text-gray-600 text-sm px-4">
                         <MessageSquare size={28} className="mx-auto mb-2 opacity-40" />

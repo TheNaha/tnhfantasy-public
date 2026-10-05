@@ -89,6 +89,12 @@ const MODEL_DIRECTORY_REQUESTS = [
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'error', 'cancelled'];
 
+// One identity for "no models". An inline `|| []` is a new array on every
+// render, which is what put these three lists in five `exhaustive-deps`
+// warnings: `checkpoints` and `installedLoras` feed two memos and two
+// callbacks, all of which therefore recomputed on every render of this page.
+const NO_MODELS = [];
+
 function findModelByName(models, name) {
     if (!name) return null;
     return models.find((model) => model.name === name) || { name };
@@ -136,9 +142,9 @@ export default function BatchGenerate() {
     const updateSetting = useSettingsStore((state) => state.updateSetting);
 
     const { modelsByKey, loading: modelsLoading } = useModelDirectories(MODEL_DIRECTORY_REQUESTS);
-    const checkpoints = modelsByKey.checkpoints || [];
-    const installedLoras = modelsByKey.loras || [];
-    const vaeModels = modelsByKey.vaeModels || [];
+    const checkpoints = modelsByKey.checkpoints ?? NO_MODELS;
+    const installedLoras = modelsByKey.loras ?? NO_MODELS;
+    const vaeModels = modelsByKey.vaeModels ?? NO_MODELS;
 
     const {
         presets,

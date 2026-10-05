@@ -2,6 +2,7 @@ import { memo, useState } from 'react';
 import { Settings2, Plus, Trash2, ChevronDown, Sparkles, Info, ImageIcon } from 'lucide-react';
 import ModelSelector from '../../components/ModelSelector';
 import { isFluxModel, isAuraFlowModel, isPonyModel, isUnetModel } from '../../utils/modelType';
+import { formatBytes } from '../../utils/bytes';
 import toast from 'react-hot-toast';
 
 const ModelSection = memo(function ModelSection({
@@ -126,7 +127,7 @@ const ModelSection = memo(function ModelSection({
                                         return true;
                                     })
                                     .map(m => (
-                                        <option key={m.name} value={m.name}>{m.name} ({Math.round(m.size / 1024 / 1024)}MB)</option>
+                                        <option key={m.name} value={m.name}>{m.name} ({formatBytes(m.size)})</option>
                                     ))}
                                 {clipModels.some(m => !m.name.toLowerCase().includes('t5') && !m.name.toLowerCase().includes('fp16')) && (
                                     <optgroup label="Other">
@@ -150,7 +151,7 @@ const ModelSection = memo(function ModelSection({
                                     {clipModels
                                         .filter(m => m.name.toLowerCase().includes('clip_l') || m.name.toLowerCase().includes('vit-l') || m.name.toLowerCase().includes('sdxl_clip_l'))
                                         .map(m => (
-                                            <option key={m.name} value={m.name}>{m.name} ({Math.round(m.size / 1024 / 1024)}MB)</option>
+                                            <option key={m.name} value={m.name}>{m.name} ({formatBytes(m.size)})</option>
                                         ))}
                                 </select>
                             </div>

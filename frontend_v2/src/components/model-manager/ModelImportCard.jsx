@@ -6,6 +6,7 @@ import DOMPurify from 'dompurify';
 import { api } from '../../api';
 import { useCheckInstalledVersions } from '../../hooks/useCivitaiSearch';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { formatBytes, KB } from '../../utils/bytes';
 
 export default function ModelImportCard({ model, onCancel }) {
     // Escape dismisses, matching the shared ModalOverlay dialogs and the
@@ -165,7 +166,7 @@ export default function ModelImportCard({ model, onCancel }) {
                         {selectedVersion && (
                             <div className="flex gap-4 text-sm text-gray-400 border-t border-gray-700/50 pt-3">
                                 <div><span className="text-gray-500">Base Model:</span> <span className="text-white">{selectedVersion.baseModel || 'Unknown'}</span></div>
-                                <div><span className="text-gray-500">File Size:</span> <span className="text-white">{primaryFile ? (primaryFile.sizeKB / 1024).toFixed(2) + ' MB' : 'Unknown'}</span></div>
+                                <div><span className="text-gray-500">File Size:</span> <span className="text-white">{primaryFile ? formatBytes(primaryFile.sizeKB * KB) : 'Unknown'}</span></div>
                             </div>
                         )}
                     </div>

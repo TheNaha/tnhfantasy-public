@@ -107,7 +107,13 @@ describe('provider model mutations reach the installed-model list', () => {
         const { useProviderMutations } = await import('../hooks/useProvidersPageData');
         const queryClient = makeClient();
         const keys = seedModelLists(queryClient);
-        const listener = buildQueryKey(QUERY_KEYS.PROVIDERS, 'p1', 'model-listener', { model_type: 'checkpoint' });
+        // A bystander in an unrelated namespace, written as a literal on purpose:
+        // no factory produces it, which is the point — a provider action must
+        // reach the model list and nothing else. (This used to be built from
+        // `QUERY_KEYS.PROVIDERS`, which could only ever yield
+        // `['world_vault','providers',…]` — a key nothing declares, so the test
+        // would have passed for a reason unrelated to what it claims.)
+        const listener = ['provider-model-listener', 'p1', { model_type: 'checkpoint' }];
         queryClient.setQueryData(listener, []);
 
         const { result } = renderHook(() => useProviderMutations(), { wrapper: wrapperFor(queryClient) });
@@ -185,5 +191,69 @@ describe('the react-query v4 positional form, which ModelMetadataModal still use
         await act(async () => { rq2.current.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] }); });
         expect(fresh(withObject, bystander)).toBe(true);
         expect(stale(withObject, modelListKey({ modelType: 'lora' }))).toBe(true);
+    });
+});
+
+/**
+ * `/advanced`'s node palette and the provider lifecycle.
+ *
+ * `objectInfo` is keyed `['objectInfo', providerId]` and, before 2026-10-04,
+ * repo-wide it had 5 references and ZERO `invalidateQueries` matching it. So no
+ * provider action refreshed it — not a deploy, not a reconcile, not a wake. A
+ * provider that had just booted from cold, or just gained a custom-node pack,
+ * left the palette describing it as it was hours or days ago, and because
+ * `refetchOnMount` was `false` reopening `/advanced` did not help either.
+ *
+ * Verified against a seeded cache rather than by spying on
+ * `invalidateQueries`, for the reason in this file's header: a spy passes for a
+ * key that matches nothing.
+ */
+describe('provider actions reach the node palette', () => {
+    /** `useObjectInfo`'s real key shape. */
+    function seedObjectInfo(queryClient, providerId = 'p1') {
+        const key = ['objectInfo', providerId];
+        queryClient.setQueryData(key, { KSampler: { category: 'latent' } });
+        return key;
+    }
+
+    it('a reconcile invalidates objectInfo for that provider', async () => {
+        const { useProviderMutations } = await import('../hooks/useProvidersPageData');
+        const queryClient = makeClient();
+        const key = seedObjectInfo(queryClient, 'p1');
+
+        const { result } = renderHook(() => useProviderMutations(), { wrapper: wrapperFor(queryClient) });
+        await act(async () => {
+            await result.current.reconcileProvider('p1');
+        });
+
+        expect(stale(queryClient, key)).toBe(true);
+    });
+
+    it('a deploy invalidates objectInfo too', async () => {
+        const { useProviderMutations } = await import('../hooks/useProvidersPageData');
+        const queryClient = makeClient();
+        const key = seedObjectInfo(queryClient, 'p1');
+
+        const { result } = renderHook(() => useProviderMutations(), { wrapper: wrapperFor(queryClient) });
+        await act(async () => {
+            await result.current.deployProvider('p1');
+        });
+
+        expect(stale(queryClient, key)).toBe(true);
+    });
+
+    it('does not reach an unrelated namespace', async () => {
+        const { useProviderMutations } = await import('../hooks/useProvidersPageData');
+        const queryClient = makeClient();
+        seedObjectInfo(queryClient, 'p1');
+        const bystander = ['advanced-graph', 'p1'];
+        queryClient.setQueryData(bystander, {});
+
+        const { result } = renderHook(() => useProviderMutations(), { wrapper: wrapperFor(queryClient) });
+        await act(async () => {
+            await result.current.reconcileProvider('p1');
+        });
+
+        expect(fresh(queryClient, bystander)).toBe(true);
     });
 });

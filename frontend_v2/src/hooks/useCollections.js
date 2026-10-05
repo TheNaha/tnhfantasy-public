@@ -4,6 +4,7 @@ import {
     updateCollection, addImagesToCollection, removeImagesFromCollection,
     importCollections, moveImagesBetweenCollections
 } from '../api/collectionsApi';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 
 const MIGRATION_KEY = 'comfy-collections-migrated';
 const OLD_STORAGE_KEY = 'comfy-storage';
@@ -14,7 +15,7 @@ const OLD_STORAGE_KEY = 'comfy-storage';
 function invalidateAllCollections(queryClient) {
     queryClient.invalidateQueries({ queryKey: ['collections'] });
     // A character's collection membership is a *second* server entity read
-    // under ['world_vault','characters', id, 'collection']
+    // under `buildQueryKey(QUERY_KEYS.CHARACTERS, id, 'collection')`
     // (GET /api/v2/collections/by-character/:id), rendered by
     // `ChatContextPanel`. Only one call site in the app remembered to refresh
     // it, and it did so by hand, so every other add/remove left the chat panel
@@ -22,7 +23,7 @@ function invalidateAllCollections(queryClient) {
     // life of the chat and `refetchOnWindowFocus` is globally off, so nothing
     // corrected it later. Invalidate the character list instead: that is the
     // prefix the detail key lives under, so it covers the per-id variant too.
-    queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+    queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
 }
 
 // One-time bootstrap migration: imports collections from the legacy
@@ -62,8 +63,8 @@ export async function migrateLegacyCollections() {
 export function useCollections(workspace = null) {
     return useQuery({
         queryKey: ['collections', workspace],
-        queryFn: async () => {
-            const { collections } = await listCollections(workspace);
+        queryFn: async ({ signal }) => {
+            const { collections } = await listCollections(workspace, { signal });
             // Convert to collections map keyed by id to be compatible with older store design
             const collectionsMap = {};
             for (const col of collections) {
@@ -87,9 +88,9 @@ export function useCollections(workspace = null) {
 export function useCollectionImages(collectionId) {
     return useQuery({
         queryKey: ['collections', collectionId, 'images'],
-        queryFn: async () => {
+        queryFn: async ({ signal }) => {
             if (!collectionId) return [];
-            const col = await getCollection(collectionId, true);
+            const col = await getCollection(collectionId, true, { signal });
             return col.images || [];
         },
         enabled: !!collectionId,

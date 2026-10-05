@@ -10,6 +10,7 @@ import {
 } from '../../hooks/useMemories';
 import { useDebounce } from '../../hooks/useDebounce';
 import EmptyState from '../EmptyState';
+import { QueryErrorState } from '../common/QueryState';
 import { useConfirmation } from '../../store/confirmationStore';
 
 const SEARCH_MIN_CHARS = 2;
@@ -84,12 +85,29 @@ function MemoriesPanelBody({ characterId }) {
     const [newImportance, setNewImportance] = useState(5);
     const [newTags, setNewTags] = useState('');
 
-    const { data: memories = [], isLoading } = useCharacterMemories(characterId);
+    // `isError` is load-bearing. Both queries destructured only `data`/`isLoading`,
+    // and a failed fetch leaves `memories` at its `= []` default — so
+    // `displayed.length === 0` below was satisfied by an outage and rendered
+    // "No memories yet / Add the first memory for this character", next to a
+    // character that already had memories. See components/common/QueryState.jsx.
+    const {
+        data: memories = [],
+        isLoading,
+        isError,
+        error,
+        refetch,
+    } = useCharacterMemories(characterId);
     // One request per keystroke was the old behaviour; the debounce means the
     // search only runs once typing settles.
     const debouncedSearchQuery = useDebounce(searchQuery, SEARCH_DEBOUNCE_MS);
     const settledQuery = debouncedSearchQuery.trim();
-    const { data: searchResults, isFetching: isSearchFetching } = useSearchMemories(characterId, settledQuery);
+    const {
+        data: searchResults,
+        isFetching: isSearchFetching,
+        isError: isSearchError,
+        error: searchError,
+        refetch: refetchSearch,
+    } = useSearchMemories(characterId, settledQuery);
     const createMutation = useCreateMemory();
     const updateMutation = useUpdateMemory();
     const deleteMutation = useDeleteMemory();
@@ -210,6 +228,7 @@ function MemoriesPanelBody({ characterId }) {
                         <button
                             type="button"
                             onClick={() => setSearchQuery('')}
+                            aria-label="Clear message search"
                             className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
                         >
                             <X size={12} />
@@ -376,6 +395,19 @@ function MemoriesPanelBody({ characterId }) {
             {/* ── Memory list ─────────────────────────────────────── */}
             {isLoading || isAwaitingResults ? (
                 <MemorySkeleton />
+            ) : (isSearchError || isError) ? (
+                // Whichever query failed, the list is not empty — it is
+                // unreachable. Saying "No memories yet" here would be a
+                // confident, specific, wrong statement about data the character
+                // already owns, and the Add button next to it would add a
+                // duplicate.
+                <div className="py-6">
+                    <QueryErrorState
+                        noun={isSearchError ? 'memory matches' : 'memories'}
+                        error={isSearchError ? searchError : error}
+                        onRetry={isSearchError ? refetchSearch : refetch}
+                    />
+                </div>
             ) : displayed.length === 0 ? (
                 <div className="py-6">
                     <EmptyState

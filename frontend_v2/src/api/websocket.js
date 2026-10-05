@@ -10,9 +10,26 @@
  * This replaces SSE for bidirectional real-time communication.
  */
 
-import { io } from 'socket.io-client';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { getApiUrl, DEFAULT_API_URL } from './config';
+
+/**
+ * `socket.io-client` is loaded on first connect, not on module evaluation.
+ *
+ * `App.jsx` imports this module for its side effects and the socket only opens
+ * after mount, so a static import meant the entire client — `socket.io` plus the
+ * `engine.io-client` tree — sat in the eager entry chunk and was downloaded
+ * before first paint, for a connection that does not exist yet. `socket.io.min.js`
+ * alone is ~46 kB raw / ~14.7 kB gzip. The promise is memoised so a reconnect
+ * storm loads it once.
+ */
+let ioLoader = null;
+function loadIo() {
+    if (!ioLoader) {
+        ioLoader = import('socket.io-client').then((mod) => mod.io || mod.default);
+    }
+    return ioLoader;
+}
 
 function getSocketBaseUrl() {
     if (import.meta.env.DEV) {
@@ -121,7 +138,7 @@ function _waitForReconnect(existing) {
  * @returns {Promise}
  */
 function _openSocket() {
-    return new Promise((resolve, reject) => {
+    return loadIo().then((io) => new Promise((resolve, reject) => {
         if (socket && isConnected) {
             resolve(socket);
             return;
@@ -201,7 +218,7 @@ function _openSocket() {
             emitLocal('error', data);
         });
 
-    });
+    }));
 }
 
 /**
@@ -426,10 +443,6 @@ export const EventTypes = {
     JOB_CANCELLED: 'job.cancelled',
 
     // Download events
-    DOWNLOAD_STARTED: 'download.started',
-    DOWNLOAD_PROGRESS: 'download.progress',
-    DOWNLOAD_COMPLETED: 'download.completed',
-    DOWNLOAD_FAILED: 'download.failed',
 
     // Provider events
     PROVIDER_STATUS: 'provider.status',
@@ -447,6 +460,13 @@ export const EventTypes = {
     RECONCILIATION_STARTED: 'reconciliation.started',
     RECONCILIATION_PROGRESS: 'reconciliation.progress',
     RECONCILIATION_COMPLETED: 'reconciliation.completed',
+    // Was missing here while the backend emitted it and listed it in
+    // `TERMINAL_EVENT_TYPES`. A worker failure therefore left the provider card
+    // reading "reconciling" with no toast and no error, until a manual refetch,
+    // while the database already held the correct status — the UI and the DB
+    // disagreed until reload. `eventContractInvariants.test.js` fails if an
+    // `EventType` is added on the backend without its counterpart here.
+    RECONCILIATION_FAILED: 'reconciliation.failed',
 
     // Model sync events
     MODEL_SYNC_STARTED: 'model.sync_started',

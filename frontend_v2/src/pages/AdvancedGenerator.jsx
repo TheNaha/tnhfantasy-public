@@ -22,6 +22,21 @@ export default function AdvancedGenerator() {
     const workflowRef = useRef(null);
     const { providers: allProviders = [], isLoading: providersLoading } = useProvidersPageData();
     const providers = useMemo(() => allProviders.filter(p => !(p.type === 'llm' || p.worker_type === 'llm' || p.id.startsWith('llm'))), [allProviders]);
+    // `object_info` must come from a provider that can actually answer it. The
+    // list is not ordered by usability, so `providers[0]` was whichever
+    // provider happened to sort first — measured on the live stack as
+    // `direct_url`, which is registered `enabled=false`. The proxy then took
+    // 30s to return HTTP 200 carrying an error BODY
+    // (`{"status":"error","code":502,"provider":"direct_url"}`), which
+    // `useObjectInfo` could not tell from a successful payload, so it cached the
+    // error object as the node definitions for 24 hours and the palette rendered
+    // one category literally named `unknown` with six entries. Prefer an enabled
+    // provider; fall back to the first only if none is enabled, so the page is
+    // never blank while a provider is being switched on.
+    const objectInfoProviderId = useMemo(() => {
+        const enabled = providers.filter((p) => p.enabled);
+        return (enabled[0] || providers[0])?.id ?? null;
+    }, [providers]);
     const {
         isChecking: preflightChecking,
         summary: validationSummary,
@@ -151,7 +166,7 @@ export default function AdvancedGenerator() {
                     <div className="flex-1 overflow-hidden flex flex-col">
                         {editorMode === 'visual' ? (
                             <ReactFlowEditor 
-                                providerId={providers && providers.length > 0 ? providers[0].id : null}
+                                providerId={objectInfoProviderId}
                                 onGraphChange={handleGraphChange} 
                             />
                         ) : (

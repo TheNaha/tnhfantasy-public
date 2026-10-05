@@ -357,7 +357,7 @@ function ChatWorkspaceLayout() {
                 <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setAvatarModalSrc(null)}>
                     <div className="flex items-center justify-between w-full absolute top-0 left-0 right-0 px-4 py-3">
                         <span className="text-xs text-gray-400">{linkedCharacter?.name || 'Avatar'}</span>
-                        <button className="p-2 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors" onClick={() => setAvatarModalSrc(null)}>
+                        <button className="p-2 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors" onClick={() => setAvatarModalSrc(null)} aria-label="Close avatar">
                             <X size={18} />
                         </button>
                     </div>

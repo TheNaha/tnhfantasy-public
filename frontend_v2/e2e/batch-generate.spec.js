@@ -117,7 +117,7 @@ test.describe('Batch Generate Studio', () => {
     }
 
     for (const job of jobs) {
-      const fetched = await apiGet(page, `/jobs/${job.id}`);
+      const fetched = await apiGet(page, `/api/jobs/${job.id}`);
       expect(fetched.id).toBe(job.id);
     }
   });

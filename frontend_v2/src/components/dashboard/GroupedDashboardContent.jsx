@@ -11,6 +11,7 @@ import { getCheckpointDisplayName } from '../../utils/modelDisplay';
 import { getAssetPrompt } from '../../utils/assetMetadata';
 import { assetUrl, thumbUrl, assetPath } from '../../utils/assetUrl';
 import { formatTimestamp } from '../../utils/dateTime';
+import { formatBytes } from '../../utils/bytes';
 import { useSessionAssets } from '../../hooks/useSessions';
 import { toLightboxImage } from '../../utils/lightboxImage';
 import { useListVirtualizer } from '../../hooks/useScrollRoot';
@@ -198,6 +199,7 @@ const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onTogg
                     <button
                         type="button"
                         key={asset.id}
+                        aria-label={asset.relative_path}
                         onClick={(e) => {
                             e.stopPropagation();
                             if (selectionMode) {
@@ -566,7 +568,7 @@ const ListSingleImageCard = memo(function ListSingleImageCard({ item, selected, 
                 <h4 className="text-sm font-semibold text-white truncate group-hover:text-blue-400 transition-colors">{item.name}</h4>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-xs text-gray-400 font-medium">
                     <span className="flex items-center gap-1.5"><Calendar size={12} className="text-gray-500" />{formatTimestamp(item.date || item.mtime)}</span>
-                    <span className="text-gray-500">{(item.size / 1024 / 1024).toFixed(2)} MB</span>
+                    <span className="text-gray-500">{formatBytes(item.size)}</span>
                     <span className="truncate max-w-[220px] text-blue-300/80" title={getCheckpointDisplayName(item) || 'Unknown Model'}>
                         {getCheckpointDisplayName(item) || 'Unknown Model'}
                     </span>

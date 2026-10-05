@@ -8,7 +8,7 @@ const VOICES_KEY = buildQueryKey(QUERY_KEYS.VOICES);
 export const useVoices = () => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.VOICES),
-        queryFn: () => api.get('/api/v2/voices'),
+        queryFn: ({ signal }) => api.get('/api/v2/voices', { signal }),
     });
 };
 

@@ -8,7 +8,7 @@ const SCENARIOS_KEY = buildQueryKey(QUERY_KEYS.SCENARIOS);
 export const useScenarios = () => {
     return useQuery({
         queryKey: SCENARIOS_KEY,
-        queryFn: () => api.get('/api/v2/scenarios')
+        queryFn: ({ signal }) => api.get('/api/v2/scenarios', { signal })
     });
 };
 

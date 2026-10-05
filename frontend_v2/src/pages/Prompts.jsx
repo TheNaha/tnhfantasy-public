@@ -9,14 +9,16 @@ import {
     useImportPrompts
 } from '../hooks/usePrompts';
 import promptsApi from '../api/promptsApi';
+import { copyToClipboard } from '../utils/clipboard';
 import PromptCard from '../components/generator/PromptCard';
 import PromptForm from '../components/generator/PromptForm';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../store/confirmationStore';
+import { DEFAULT_PROMPT_CATEGORIES } from '../constants/prompts';
 
 export default function Prompts() {
     const { data: prompts = [], isLoading } = usePrompts();
-    const { data: categories = ['All', 'Portrait', 'Landscape', 'Anime', 'Abstract', 'Realistic', 'Custom'] } = usePromptCategories();
+    const { data: categories = DEFAULT_PROMPT_CATEGORIES } = usePromptCategories();
 
     const deletePromptMutation = useDeletePrompt();
     const updatePromptMutation = useUpdatePrompt();
@@ -48,12 +50,19 @@ export default function Prompts() {
     }, [prompts, selectedCategory, searchQuery]);
 
     const handleUsePrompt = async (prompt) => {
+        // The increment runs FIRST and succeeds, so on an insecure origin the
+        // user got a usage count that went up and no feedback whatsoever: the
+        // `navigator.clipboard` dereference below threw synchronously, before
+        // any promise existed, so neither `.then` nor `.catch` could run.
         await incrementPromptUsageMutation.mutateAsync(prompt.id);
-        navigator.clipboard.writeText(prompt.text).then(() => {
+        // `copyToClipboard` resolves to whether the copy happened, which is the
+        // only honest basis for picking between the two messages below.
+        const copied = await copyToClipboard(prompt.text);
+        if (copied) {
             toast.success(`Prompt copied to clipboard`, { icon: '📋' });
-        }).catch(() => {
+        } else {
             toast.success(`Prompt "${prompt.name}" selected`, { icon: '✨' });
-        });
+        }
     };
 
     const handleDelete = async (prompt) => {

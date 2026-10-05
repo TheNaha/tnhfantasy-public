@@ -31,6 +31,7 @@ import { migrateLegacyCollections } from './hooks/useCollections';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
 import { providersApi } from './api/providers';
+import { formatBytes } from './utils/bytes';
 import * as ws from './api/websocket';
 // Lazy-loaded pages to minimise initial JS bundle
 const RoleplayWorkspace = lazy(() => import('./pages/RoleplayWorkspace'));
@@ -165,13 +166,14 @@ function GlobalHooks() {
     // Initialize global job notifications and WebSocket sync
     useJobsRealtime();
 
-    // Subscribe to backend events that have no dedicated page-level handler
-    // yet (download progress, model sync progress). Show a toast for terminal
-    // states so the user has at least a minimal signal that the operation
-    // completed or failed.
+    // Subscribe to backend events that have no dedicated page-level handler.
+    // There used to be a matching set of `download.*` handlers here; that family
+    // never had a producer in the backend, so it was removed from both sides
+    // rather than left looking like push-based download progress already works.
+    // Model-download status is polled instead.
     useEffect(() => {
         let mounted = true;
-        const topics = ['download', 'model'];
+        const topics = ['model'];
         ws.subscribe(topics).catch((error) => {
             if (mounted) console.warn('Failed to subscribe global realtime topics:', error);
         });
@@ -186,12 +188,27 @@ function GlobalHooks() {
             }
         };
 
-        unsubs.push(ws.on(ws.EventTypes.DOWNLOAD_STARTED, (e) => toastFor('Download', e)));
-        unsubs.push(ws.on(ws.EventTypes.DOWNLOAD_COMPLETED, (e) => toastFor('Download', e)));
-        unsubs.push(ws.on(ws.EventTypes.DOWNLOAD_FAILED, (e) => toastFor('Download', e)));
         unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_STARTED, (e) => toastFor('Model sync', e)));
         unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_COMPLETED, (e) => toastFor('Model sync', e)));
         unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_FAILED, (e) => toastFor('Model sync', e)));
+        // The worker POSTs this on every download heartbeat (0-100 plus the byte
+        // count), so it was being published to nobody: the enum member and the
+        // frontend constant both existed, which reads as "download progress is
+        // already pushed" and is how the dead `download.*` family survived next
+        // to it. Keyed by provider+model so a burst of heartbeats for one
+        // download replaces its own toast instead of stacking.
+        unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_PROGRESS, (event) => {
+            const d = event?.data || {};
+            const pct = typeof d.progress === 'number' ? Math.round(d.progress) : null;
+            const label = d.model_name || d.directory || 'Model';
+            const size = typeof d.size_bytes === 'number' && d.size_bytes > 0
+                ? ` · ${formatBytes(d.size_bytes)}`
+                : '';
+            toast.loading(
+                pct === null ? `Downloading ${label}` : `Downloading ${label} — ${pct}%${size}`,
+                { id: `sync-progress:${d.provider_id || ''}:${d.directory || ''}:${label}` },
+            );
+        }));
 
         return () => {
             mounted = false;

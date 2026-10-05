@@ -10,6 +10,7 @@
 
 import api, { API_V2_BASE } from './client';
 import { UPLOAD_LIMITS, assertUploadAllowed, uploadWithProgress } from './upload';
+import { formatBytes } from '../utils/bytes';
 
 /** Route an upload through XHR when the caller wants progress, else fetch. */
 function sendUpload(endpoint, formData, options) {
@@ -121,7 +122,7 @@ export const filesApi = {
         // base64 inflates by ~4/3; check the encoded size against the same budget.
         if (maskDataUrl.length > UPLOAD_LIMITS.input.maxBytes * 1.4) {
             throw new Error(
-                `Mask is too large. Max size is ${Math.round(UPLOAD_LIMITS.input.maxBytes / (1024 * 1024))} MB.`
+                `Mask is too large. Max size is ${formatBytes(UPLOAD_LIMITS.input.maxBytes)}.`
             );
         }
 
@@ -190,12 +191,6 @@ export const assetsApi = {
         ...options,
     }),
 
-    /** The distinct tag vocabulary, most-used first. `prefix` is anchored. */
-    tags: (params = {}, options = {}) => api.get(`${API_V2_BASE}/tags`, {
-        params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)),
-        ...options,
-    }),
-
     /** One image's tags with their provenance. */
     assetTags: (assetId, options = {}) =>
         api.get(`${API_V2_BASE}/asset/${encodeURIComponent(assetId)}/tags`, options),
@@ -221,6 +216,12 @@ export const assetsApi = {
      * Use-count order is the point: an alphabetical list of a few thousand booru
      * tokens is a list nobody scrolls. `prefix` is the typeahead's anchored mode,
      * `q` the looser substring search.
+     *
+     * The single implementation. `assetsApi.tags` was a byte-identical wrapper for
+     * the same endpoint with a subtly different param filter (it kept `0` and
+     * `false`, this one drops falsy values), and its only consumer was a second
+     * `useTagVocabulary` with a different signature — so the two had to be kept
+     * in step by hand and were not. See `hooks/useAssetTags.js`.
      */
     tagVocabulary: (params = {}, options = {}) =>
         api.get(`${API_V2_BASE}/tags`, {

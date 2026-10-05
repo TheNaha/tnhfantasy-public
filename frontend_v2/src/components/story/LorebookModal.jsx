@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCreateLorebook, useUpdateLorebook, useDeleteLorebook } from '../../hooks/useLorebooks';
 import { useConfirmation } from '../../store/confirmationStore';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { buildQueryKey, QUERY_KEYS } from '../../constants/queryKeys';
 
 export function LorebookModal({ isOpen, onClose, lorebook }) {
     // Escape dismisses, matching every other dialog expectation.
@@ -45,7 +46,7 @@ export function LorebookModal({ isOpen, onClose, lorebook }) {
                 await createLorebook.mutateAsync(form);
                 toast.success('Lorebook created');
             }
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'lorebooks'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.LOREBOOKS) });
             onClose();
         } catch (e) {
             console.error(e);
@@ -98,7 +99,7 @@ export function LorebookModal({ isOpen, onClose, lorebook }) {
                         <h2 className="text-xl font-semibold text-gray-100">
                             {lorebook ? 'Edit Lorebook' : 'Create Lorebook'}
                         </h2>
-                        <button onClick={onClose} className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors">
+                        <button onClick={onClose} aria-label={lorebook ? 'Close edit lorebook' : 'Close create lorebook'} className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors">
                             <X size={20} />
                         </button>
                     </div>

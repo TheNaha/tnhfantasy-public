@@ -26,9 +26,9 @@ export function useJobStatus(jobId, { pollInterval = 2000, enabled = true } = {}
 
     return useQuery({
         queryKey: ['jobs', jobId],
-        queryFn: async () => {
+        queryFn: async ({ signal }) => {
             if (!jobId) return null;
-            const data = await jobsApi.get(jobId);
+            const data = await jobsApi.get(jobId, { signal });
             return data?.job || data;
         },
         enabled: !!jobId && enabled,

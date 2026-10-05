@@ -51,7 +51,7 @@ describe('useMemories hooks', () => {
             const { result } = renderHook(() => useCharacterMemories('char-1'), { wrapper });
 
             await waitFor(() => expect(result.current.data).toEqual(MOCK_MEMORIES));
-            expect(apiMock.get).toHaveBeenCalledWith('/api/v2/memories/character/char-1');
+            expect(apiMock.get).toHaveBeenCalledWith('/api/v2/memories/character/char-1', { signal: expect.any(AbortSignal) });
         });
 
         it('does not fetch when characterId is falsy', () => {
@@ -165,7 +165,7 @@ describe('useMemories hooks', () => {
             await waitFor(() => expect(result.current.data).toEqual(searchResults));
             expect(apiMock.get).toHaveBeenCalledWith(
                 '/api/v2/memories/search/semantic',
-                { params: { character_id: 'char-1', query: 'moon', limit: 20 } }
+                { params: { character_id: 'char-1', query: 'moon', limit: 20 }, signal: expect.any(AbortSignal) }
             );
         });
 

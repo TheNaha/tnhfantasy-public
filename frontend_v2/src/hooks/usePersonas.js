@@ -8,7 +8,7 @@ export const PERSONAS_KEY = buildQueryKey(QUERY_KEYS.PERSONAS);
 export const usePersonas = () => {
     return useQuery({
         queryKey: PERSONAS_KEY,
-        queryFn: () => api.get('/api/v2/personas')
+        queryFn: ({ signal }) => api.get('/api/v2/personas', { signal })
     });
 };
 

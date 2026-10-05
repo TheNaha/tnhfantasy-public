@@ -45,6 +45,7 @@ const DEFAULT_FORM = {
 import { useSearchParams } from 'react-router-dom';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { QueryErrorState } from '../components/common/QueryState';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 
 export default function Locations() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -157,7 +158,7 @@ export default function Locations() {
             const formData = new FormData();
             formData.append('file', file);
             await api.post(`/api/v2/locations/${editingLocation.id}/image`, formData);
-            await queryClient.invalidateQueries({ queryKey: ['world_vault', 'locations'] });
+            await queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.LOCATIONS) });
             toast.success('Image uploaded');
         } catch {
             toast.error('Failed to upload image');
@@ -328,7 +329,7 @@ export default function Locations() {
                                 <h2 className="text-lg font-semibold text-white">
                                     {editingLocation ? 'Edit Location' : 'New Location'}
                                 </h2>
-                                <button onClick={resetForm} className="text-gray-400 hover:text-white">
+                                <button onClick={resetForm} aria-label={editingLocation ? 'Cancel editing location' : 'Close location form'} className="text-gray-400 hover:text-white">
                                     <X size={20} />
                                 </button>
                             </div>
@@ -365,7 +366,7 @@ export default function Locations() {
                                     {(form.tags || []).map(tag => (
                                         <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 text-xs border border-blue-500/20">
                                             {tag}
-                                            <button onClick={() => removeTag(tag)} className="hover:text-white">
+                                            <button onClick={() => removeTag(tag)} aria-label={`Remove tag ${tag}`} className="hover:text-white">
                                                 <X size={10} />
                                             </button>
                                         </span>

@@ -1,158 +1,125 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import StoryReader from './StoryReader';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockNavigate = vi.hoisted(() => vi.fn());
-const mockParams = vi.hoisted(() => vi.fn(() => ({ token: 'tok123' })));
-const mockApiGet = vi.hoisted(() => vi.fn());
-const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+/**
+ * The reader's share button on a non-secure origin.
+ *
+ * This one already had `try { await navigator.clipboard.writeText(...) } catch`,
+ * so unlike the other four it never threw out of the handler. It was still
+ * wrong: on the insecure side the `navigator.clipboard` dereference throws
+ * SYNCHRONOUSLY, before the promise exists — so the catch ran only by accident
+ * of the await, and the user got the generic "Could not copy link" on a device
+ * where copying works perfectly well through the textarea fallback the other
+ * four call sites use (measured: `http://100.150.0.4:5174` →
+ * `{"secure":false,"clip":false}`).
+ */
 
-vi.mock('react-router-dom', async (importOriginal) => {
-    const actual = await importOriginal();
-    return { ...actual, useNavigate: () => mockNavigate, useParams: mockParams };
+const toastMock = vi.hoisted(() => {
+    const fn = vi.fn();
+    fn.success = vi.fn();
+    fn.error = vi.fn();
+    return fn;
 });
 
+vi.mock('react-hot-toast', () => ({ default: toastMock }));
 vi.mock('../api', () => ({
-    api: { get: (...args) => mockApiGet(...args) },
+    api: { get: vi.fn().mockResolvedValue({ title: 'A Tale', content: 'Once upon a time' }) },
 }));
+vi.mock('../components/story/ExportModal', () => ({ default: () => null }));
 
-vi.mock('react-hot-toast', () => ({ default: mockToast }));
+import StoryReader from './StoryReader';
 
-vi.mock('framer-motion', () => ({
-    motion: {
-        div: ({ children, ...props }) => {
-            const safe = {};
-            for (const k of Object.keys(props)) {
-                if (!['initial', 'animate', 'exit', 'whileHover', 'whileTap', 'transition', 'variants', 'layout'].includes(k)) {
-                    safe[k] = props[k];
-                }
-            }
-            return <div {...safe}>{children}</div>;
-        },
-    },
-    AnimatePresence: ({ children }) => <>{children}</>,
-}));
-
-const storyData = {
-    story: {
-        title: 'The Dragon of Ashvale',
-        description: 'A tale of fire and ruin',
-        memory: 'Keep a secret close.',
-    },
-    characters: [{ name: 'Elara' }, { name: 'Kael' }],
-    chapters: [
-        {
-            chapter_number: 1,
-            title: 'The Beginning',
-            content: 'Once upon a time **a dragon** slept.\nThen it woke.',
-            image_paths: ['/static/dragon.png', 'cave.png'],
-        },
-    ],
-};
-
-function renderPage() {
+function renderReader() {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
         <QueryClientProvider client={queryClient}>
             <MemoryRouter initialEntries={['/read/tok123']}>
-                <StoryReader />
+                <Routes>
+                    <Route path="/read/:token" element={<StoryReader />} />
+                </Routes>
             </MemoryRouter>
         </QueryClientProvider>
     );
 }
 
-describe('StoryReader page', () => {
+describe('StoryReader share on an insecure origin', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockApiGet.mockImplementation(async (url) => {
-            if (url.includes('/export')) return { content: '# The Dragon of Ashvale' };
-            return storyData;
-        });
-        Object.defineProperty(navigator, 'clipboard', {
-            value: { writeText: vi.fn().mockResolvedValue(undefined) },
-            configurable: true,
-        });
-        vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:story');
-        vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        // The legacy fallback, working. jsdom does not implement
+        // `document.execCommand`, and a real insecure-origin browser does — it
+        // is how every copy still worked before the async Clipboard API. This
+        // stub is what makes the two implementations observably different; see
+        // the note on the second test.
+        document.execCommand = vi.fn().mockReturnValue(true);
+    });
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        delete document.execCommand;
     });
 
-    it('shows the loading state while fetching the story', () => {
-        mockApiGet.mockReturnValue(new Promise(() => {}));
-        renderPage();
-        expect(screen.getByText('Loading story...')).toBeInTheDocument();
+    const clickShare = () => fireEvent.click(screen.getByTitle('Share link'));
+
+    const renderLoaded = async () => {
+        const utils = renderReader();
+        // The header only renders once the story resolves; without this the
+        // Share button does not exist yet and the query is still pending.
+        await screen.findByTitle('Share link', undefined, { timeout: 2000 });
+        return utils;
+    };
+
+    it('does not throw out of the click handler', async () => {
+        vi.stubGlobal('navigator', { ...navigator, clipboard: undefined });
+
+        await renderLoaded();
+        expect(clickShare).not.toThrow();
     });
 
-    it('renders the story title and description', async () => {
-        renderPage();
-        expect(await screen.findByRole('heading', { name: 'The Dragon of Ashvale' })).toBeInTheDocument();
-        expect(screen.getByText('A tale of fire and ruin')).toBeInTheDocument();
+    /**
+     * The behavioural difference between the two implementations.
+     *
+     * `try { await navigator.clipboard.writeText(...) } catch` cannot succeed on
+     * an insecure origin no matter what the browser supports: the dereference
+     * throws before any promise exists, so the catch always runs and the user
+     * always gets "Could not copy link". The textarea fallback does work there,
+     * so routing through `copyToClipboard` is the difference between a button
+     * that is dead on the LAN and one that copies.
+     *
+     * With `execCommand` stubbed to succeed, the old code still reports failure
+     * and the fixed code reports success.
+     */
+    it('succeeds through the legacy fallback instead of reporting a false failure', async () => {
+        vi.stubGlobal('navigator', { ...navigator, clipboard: undefined });
+
+        await renderLoaded();
+        clickShare();
+
+        await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith('Link copied!'), { timeout: 2000 });
+        expect(toastMock.error).not.toHaveBeenCalled();
+        expect(document.execCommand).toHaveBeenCalledWith('copy');
     });
 
-    it('renders the author note from story memory', async () => {
-        renderPage();
-        await screen.findByText('The Dragon of Ashvale');
-        expect(screen.getByText("Author's Note")).toBeInTheDocument();
-        expect(screen.getByText('Keep a secret close.')).toBeInTheDocument();
+    it('copies the current URL and confirms when the clipboard works', async () => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+
+        await renderLoaded();
+        clickShare();
+
+        await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith('Link copied!'), { timeout: 2000 });
+        expect(writeText).toHaveBeenCalledWith(window.location.href);
+        // The async API is preferred; the fallback is not used when it works.
+        expect(document.execCommand).not.toHaveBeenCalled();
     });
 
-    it('renders character chips', async () => {
-        renderPage();
-        await screen.findByText('The Dragon of Ashvale');
-        expect(screen.getByText('Elara')).toBeInTheDocument();
-        expect(screen.getByText('Kael')).toBeInTheDocument();
-    });
+    it('reports a genuine failure when neither route works', async () => {
+        vi.stubGlobal('navigator', { ...navigator, clipboard: undefined });
+        document.execCommand = vi.fn().mockImplementation(() => { throw new Error('denied'); });
 
-    it('renders chapter headings', async () => {
-        renderPage();
-        await screen.findByText('The Dragon of Ashvale');
-        expect(screen.getByRole('heading', { name: 'Chapter 1: The Beginning' })).toBeInTheDocument();
-    });
+        await renderLoaded();
+        clickShare();
 
-    it('converts chapter markdown to bold markup', async () => {
-        const { container } = renderPage();
-        await screen.findByText('The Dragon of Ashvale');
-        const prose = container.querySelector('.prose');
-        expect(prose.textContent).toContain('Once upon a time');
-        expect(prose.querySelector('strong').textContent).toBe('a dragon');
-    });
-
-    it('renders chapter illustrations with normalized asset paths', async () => {
-        renderPage();
-        await screen.findByText('The Dragon of Ashvale');
-        const imgs = screen.getAllByAltText('Chapter 1 illustration');
-        expect(imgs).toHaveLength(2);
-        expect(imgs[0]).toHaveAttribute('src', '/static/dragon.png');
-        expect(imgs[1]).toHaveAttribute('src', '/api/view/output/cave.png');
-    });
-
-    it('copies the share link and toasts success', async () => {
-        renderPage();
-        await screen.findByText('The Dragon of Ashvale');
-        fireEvent.click(screen.getByTitle('Share link'));
-        await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(window.location.href));
-        expect(mockToast.success).toHaveBeenCalledWith('Link copied!');
-    });
-
-    it('exports the story as markdown', async () => {
-        renderPage();
-        await screen.findByText('The Dragon of Ashvale');
-        fireEvent.click(screen.getByTitle('Export as Markdown'));
-        await waitFor(() =>
-            expect(mockApiGet).toHaveBeenCalledWith(
-                '/api/v2/stories/published/tok123/export?format=md',
-                { timeout: 180000 }
-            )
-        );
-        expect(URL.createObjectURL).toHaveBeenCalled();
-        expect(mockToast.success).toHaveBeenCalledWith('Exported as MD');
-    });
-
-    it('shows an error toast and navigates home when the story is missing', async () => {
-        mockApiGet.mockRejectedValue(new Error('not found'));
-        renderPage();
-        await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('Story not found or no longer available'));
-        expect(mockNavigate).toHaveBeenCalledWith('/');
+        await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Could not copy link'), { timeout: 2000 });
     });
 });

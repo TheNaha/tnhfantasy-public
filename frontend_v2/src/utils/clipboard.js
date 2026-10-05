@@ -14,24 +14,35 @@ export async function copyToClipboard(text) {
     }
 
     // Fallback: TextArea hack for HTTP or older browsers
+    //
+    // This is the path every insecure origin takes — `navigator.clipboard` is
+    // undefined there, so the block above is skipped entirely and this is the
+    // only attempt.
+    let textArea = null;
     try {
-        const textArea = document.createElement("textarea");
+        textArea = document.createElement("textarea");
         textArea.value = text;
-        
+
         // Ensure it's not visible but part of DOM
         textArea.style.position = "fixed";
         textArea.style.left = "-9999px";
         textArea.style.top = "0";
         document.body.appendChild(textArea);
-        
+
         textArea.focus();
         textArea.select();
-        
-        const successful = document.execCommand('copy');
-        document.body.removeChild(textArea);
-        return successful;
+
+        return document.execCommand('copy');
     } catch (err) {
         console.error("Fallback copy failed:", err);
         return false;
+    } finally {
+        // Removed in `finally`, not after the call. `document.execCommand` is
+        // `undefined` in jsdom and removed from several browsers, so the
+        // `removeChild` on the success path never ran whenever it threw — and a
+        // copy attempt is the first thing a user does after a story is
+        // published, so these accumulated in the live DOM as invisible,
+        // focusable textareas over the page.
+        if (textArea?.parentNode) textArea.parentNode.removeChild(textArea);
     }
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Search, Command } from 'lucide-react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { EXPERT_TOOLS } from '../constants/navigation';
 
 // Flat, searchable destinations. The expert rows are derived from
@@ -20,7 +21,11 @@ const NAV_ITEMS = [
     { label: 'Roleplay Home', to: '/roleplay' },
     { label: 'Play', to: '/chat' },
     { label: 'Stories', to: '/story' },
-    { label: 'Worlds', to: '/worlds' },
+    // `/worlds` used to have a hand-written row here as well as the one
+    // `EXPERT_TOOLS` contributes two lines below. Rows are keyed by
+    // `${kind}:${label}` (`:122`), so that was a duplicate key and a duplicate
+    // entry in the palette. `commandPaletteInvariants.test.js` now fails on any
+    // repeated label.
     { label: 'Search everything', to: '/world-vault' },
     ...EXPERT_TOOLS.map(({ label, to }) => ({ label, to })),
     { label: 'Prompt Library', to: '/prompts' },
@@ -52,13 +57,19 @@ export default function GlobalCommandPalette({ onClose }) {
         return all.filter((item) => item.label.toLowerCase().includes(q));
     }, [query]);
 
+    useEscapeKey(onClose);
+
+    // Navigation keys only. Escape deliberately does NOT live here: every
+    // `useEscapeKey` handler is a listener on the same `window` target in the
+    // bubble phase, so `stopPropagation()` cannot disarm this one — and this
+    // handler used to call `preventDefault()` without `stopPropagation()`, which
+    // `useEscapeKey` does check, so it kept running underneath whatever dialog
+    // the palette was opened over. One Escape closed the palette *and* the
+    // dialog underneath it.
     useEffect(() => {
         inputRef.current?.focus();
         const onKeyDown = (e) => {
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                onClose();
-            } else if (e.key === 'ArrowDown') {
+            if (e.key === 'ArrowDown') {
                 e.preventDefault();
                 setHighlighted((h) => Math.min(h + 1, items.length - 1));
             } else if (e.key === 'ArrowUp') {

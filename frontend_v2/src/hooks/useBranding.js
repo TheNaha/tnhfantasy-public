@@ -34,8 +34,8 @@ function useDocumentTitle(appName) {
 export function useBranding() {
     const query = useQuery({
         queryKey: ['branding'],
-        queryFn: async () => {
-            const branding = await settingsApi.getBranding();
+        queryFn: async ({ signal }) => {
+            const branding = await settingsApi.getBranding({ signal });
             return {
                 appName: branding?.appName || DEFAULT_BRANDING.appName,
                 logoUrl: branding?.logoUrl || DEFAULT_BRANDING.logoUrl,

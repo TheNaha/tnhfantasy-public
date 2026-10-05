@@ -20,33 +20,33 @@ describe('useTimeline', () => {
         apiMock.get.mockResolvedValue({ events: [], total: 0 });
     });
 
-    it('hits the backend /timeline/timeline route (mounted prefix + route)', async () => {
+    it('hits the backend /api/v2/timeline route (mounted prefix + route)', async () => {
         renderHook(() => useTimeline({}), { wrapper });
         await vi.waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(1));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/timeline?');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/timeline?', { signal: expect.any(AbortSignal) });
     });
 
     it('serializes non-empty filters into the query string', async () => {
         renderHook(() => useTimeline({ character_id: 'c1', limit: 20 }), { wrapper });
         await vi.waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(1));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/timeline?character_id=c1&limit=20');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/timeline?character_id=c1&limit=20', { signal: expect.any(AbortSignal) });
     });
 
     it('omits empty filter values', async () => {
         renderHook(() => useTimeline({ character_id: '', limit: 0, story_id: 's1' }), { wrapper });
         await vi.waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(1));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/timeline?story_id=s1');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/timeline?story_id=s1', { signal: expect.any(AbortSignal) });
     });
 
     it('sends the camelCase worldId option as the route\'s world_id parameter', async () => {
         renderHook(() => useTimeline({ worldId: 'w1' }), { wrapper });
         await vi.waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(1));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/timeline?world_id=w1');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/timeline?world_id=w1', { signal: expect.any(AbortSignal) });
     });
 
     it('keeps `location` a name filter — it is not an id column on the server', async () => {
         renderHook(() => useTimeline({ location: 'The Docks' }), { wrapper });
         await vi.waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(1));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/timeline?location=The+Docks');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/timeline?location=The+Docks', { signal: expect.any(AbortSignal) });
     });
 });

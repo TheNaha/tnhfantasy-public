@@ -59,9 +59,9 @@ describe('the gallery list length must not change while scrolling', () => {
 });
 
 describe('a completed image job must refresh the library it appears in', () => {
-    it('job.completed invalidates the gallery', () => {
+    it('job.completed refreshes the gallery', () => {
         // The handler updated the job caches, invalidated the queue and fired a
-        // toast — and never touched `['gallery']`, so the grid the user is
+        // toast — and never touched the gallery, so the grid the user is
         // looking at stayed exactly as it was. The new image only appeared on a
         // tab refocus or a websocket reconnect, which is why it read as "needs a
         // refresh" rather than as a consistent bug.
@@ -73,9 +73,14 @@ describe('a completed image job must refresh the library it appears in', () => {
         // means five requests for one finished job, and the list height churns
         // as each lands, which moves the sentinel and made a job update look
         // like it was driving the infinite scroll.
-        expect(termination).toMatch(
-            /invalidateIfMounted\(\['gallery'\], \{ refetchPage: \(.*\) => .*allPages\[0\] \}\);/
-        );
+        //
+        // This assertion used to be a source-text match for
+        // `invalidateIfMounted(['gallery'], { refetchPage: … })`, which pinned an
+        // option react-query v5 does not have: it was carried and ignored, so
+        // the full refetch it claimed to prevent is what ran. It now names the
+        // mechanism that works, and `galleryNewestPageRefresh.test.jsx`
+        // measures the request count it produces.
+        expect(termination).toMatch(/refreshNewestGalleryPageIfMounted\(\)/);
         // Counts move with every new asset too.
         expect(termination).toMatch(/invalidateIfMounted\(\['collections'\]\)/);
     });

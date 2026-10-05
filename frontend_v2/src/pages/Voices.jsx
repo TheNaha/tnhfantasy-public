@@ -11,6 +11,7 @@ import {
     useVoicePreview,
 } from '../hooks/useWorldVault';
 import { useJobStatus } from '../hooks/useJobStatus';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { assetUrl } from '../utils/assetUrl';
 import EmptyState from '../components/EmptyState';
 import FormInput from '../components/common/FormInput';
@@ -48,7 +49,7 @@ export default function Voices() {
     useEffect(() => {
         if (!previewJob) return;
         if (previewJob.status === 'completed') {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'voices'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.VOICES) });
             setPreviewJobId(null);
         } else if (['failed', 'error', 'cancelled'].includes(previewJob.status)) {
             toast.error('Voice preview generation failed');

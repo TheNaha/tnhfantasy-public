@@ -42,7 +42,7 @@ export function useJobRecovery({
 
     const query = useQuery({
         queryKey: [...FAILED_JOBS_QUERY_KEY, { limit, taskType, includeAcknowledged }],
-        queryFn: () => jobsApi.getFailed({ limit, taskType, includeAcknowledged }),
+        queryFn: ({ signal }) => jobsApi.getFailed({ limit, taskType, includeAcknowledged }, { signal }),
         enabled,
         staleTime: 15_000,
         refetchOnWindowFocus: false,
@@ -88,30 +88,46 @@ export function useJobRecovery({
         onSuccess: invalidateJobViews(queryClient),
     });
 
-    const retryJob = useCallback((jobId) => retryMutation.mutateAsync(jobId), [retryMutation]);
+    /**
+     * Destured, never depended on whole.
+     *
+     * `useMutation` returns a fresh result literal on every render in React
+     * Query v5, so `[retryMutation]` as a dependency rebuilt all seven of these
+     * callbacks on every render of every consumer — and a consumer that puts
+     * one in a `useEffect` or a child's props then re-runs on every render
+     * forever. `useFavorites.js` documents the same hazard; this is the same
+     * fix applied to every mutation here.
+     */
+    const { mutateAsync: retryAsync } = retryMutation;
+    const { mutateAsync: cancelAsync } = cancelMutation;
+    const { mutateAsync: recoverAsync } = recoverMutation;
+    const { mutateAsync: acknowledgeAsync } = acknowledgeMutation;
+    const { mutateAsync: acknowledgeAllAsync } = acknowledgeAllMutation;
+
+    const retryJob = useCallback((jobId) => retryAsync(jobId), [retryAsync]);
     const cancelJob = useCallback(
-        (jobId, reason) => cancelMutation.mutateAsync({ jobId, reason }),
-        [cancelMutation]
+        (jobId, reason) => cancelAsync({ jobId, reason }),
+        [cancelAsync]
     );
     const recoverJobs = useCallback(
-        (options) => recoverMutation.mutateAsync(options),
-        [recoverMutation]
+        (options) => recoverAsync(options),
+        [recoverAsync]
     );
     const acknowledgeJob = useCallback(
-        (jobId) => acknowledgeMutation.mutateAsync({ jobId, acknowledged: true }),
-        [acknowledgeMutation]
+        (jobId) => acknowledgeAsync({ jobId, acknowledged: true }),
+        [acknowledgeAsync]
     );
     const unacknowledgeJob = useCallback(
-        (jobId) => acknowledgeMutation.mutateAsync({ jobId, acknowledged: false }),
-        [acknowledgeMutation]
+        (jobId) => acknowledgeAsync({ jobId, acknowledged: false }),
+        [acknowledgeAsync]
     );
     const acknowledgeAll = useCallback(
-        (options) => acknowledgeAllMutation.mutateAsync({ acknowledged: true, ...options }),
-        [acknowledgeAllMutation]
+        (options) => acknowledgeAllAsync({ acknowledged: true, ...options }),
+        [acknowledgeAllAsync]
     );
     const unacknowledgeAll = useCallback(
-        () => acknowledgeAllMutation.mutateAsync({ acknowledged: false }),
-        [acknowledgeAllMutation]
+        () => acknowledgeAllAsync({ acknowledged: false }),
+        [acknowledgeAllAsync]
     );
 
     return {

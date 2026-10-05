@@ -71,6 +71,7 @@ export default function AddModelToProviderModal({ providers, onClose }) {
                     <h2 className="text-xl font-semibold text-white">Add Model to Providers</h2>
                     <button
                         onClick={onClose}
+                        aria-label="Close add model to providers"
                         className="text-gray-400 hover:text-white transition-colors"
                     >
                         <X size={20} />

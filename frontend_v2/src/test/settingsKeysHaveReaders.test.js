@@ -19,19 +19,70 @@ import useSettingsStore from '../store/settingsStore';
  * default tree and require a reader somewhere outside the store and outside
  * this test. A key with no reader is a switch that lies.
  *
- * Known exemptions are listed with the reason they are not defects. Anything
- * added to that list needs a reason that survives the next person asking
- * "who reads this?".
+ * An exemption can hide a key from this sweep, so one needs a reason that
+ * survives the next person asking "who reads this?", plus something checkable
+ * behind it — see `EXEMPT_REQUIRES`. The list is currently empty: all 35 leaves,
+ * including the three that once needed an exemption, have a reader the sweep can
+ * find.
  */
 
-/** Leaves deliberately not read in the browser, with the reason. */
-const EXEMPT = {
-    // Read by App.jsx destructured into the React Query defaults:
-    //   ui.animationDuration / ui.queryStaleTime / ui.queryCacheTime
-    'ui.animationDuration': 'read in App.jsx via a destructured alias',
-    'ui.queryStaleTime': 'read in App.jsx via a destructured alias',
-    'ui.queryCacheTime': 'read in App.jsx via a destructured alias',
-};
+/**
+ * Leaves deliberately not read in the browser, with the reason.
+ *
+ * Empty, and it was not always. It held `ui.animationDuration`,
+ * `ui.queryStaleTime` and `ui.queryCacheTime` on the grounds that App.jsx reads
+ * them "via a destructured alias" — it does, but `App.jsx:251,289,292` read
+ * `queryUiSettings.animationDuration` and friends, which is text this sweep
+ * already finds, so the three entries were removing keys that had readers.
+ *
+ * It is kept as a mechanism, not as a list, because the loophole it was is real:
+ * before the staleness case below, any key could be retired from the sweep by
+ * adding a line here with an arbitrary string, and nothing verified that the key
+ * still existed or that the reason was still true. `querySignalInvariants` has
+ * had that half since it was written; this now does too.
+ */
+const EXEMPT = {};
+
+/**
+ * What each exemption depends on, so "still needed" is checkable rather than a
+ * matter of opinion: the alias the reader uses, and the React Query option that
+ * alias feeds. An entry with no requirement here cannot be verified and is
+ * rejected.
+ */
+const EXEMPT_REQUIRES = {};
+
+/**
+ * Every reason an entry is not still needed.
+ *
+ * Shared by the sweep and the canary below, so the canary exercises the code
+ * that runs against the real list rather than a paraphrase of it.
+ */
+function exemptionProblems(entries, requires) {
+    const problems = [];
+    for (const [key, why] of Object.entries(entries)) {
+        if (!(key in leaves)) {
+            problems.push(`${key}: no longer a leaf of DEFAULT_SETTINGS — delete the entry`);
+            continue;
+        }
+        if (!/via a destructured alias/.test(why)) {
+            problems.push(`${key}: the reason no longer says why — "${why}"`);
+            continue;
+        }
+        const [alias, consumer] = requires[key] ?? [];
+        if (!alias || !consumer) {
+            problems.push(`${key}: no EXEMPT_REQUIRES entry — a key retired by an arbitrary string`);
+            continue;
+        }
+        if (!alias.test(corpus)) {
+            problems.push(`${key}: nothing in src/ mentions ${alias} any more — delete the entry`);
+            continue;
+        }
+        if (!consumer.test(corpus)) {
+            problems.push(`${key}: ${alias} is no longer used, because no ${consumer} — delete the entry`);
+        }
+    }
+    return problems;
+}
 
 function collectLeaves(value, prefix = '', out = {}) {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -111,5 +162,40 @@ describe('every settings key is read by something', () => {
 
     it('no key is declared and never read', () => {
         expect(orphans).toEqual([]);
+    });
+
+    it('names every exemption that is still needed', () => {
+        expect(exemptionProblems(EXEMPT, EXEMPT_REQUIRES)).toEqual([]);
+    });
+
+    it('rejects each way an exemption could hide a dead key (canary)', () => {
+        // Real leaf keys throughout, so each case is rejected for the reason it
+        // is meant to model rather than by falling out of the "not a leaf" arm.
+        expect(leaves['ui.animationDuration']).toBeDefined();
+
+        // 1. An arbitrary reason and nothing to verify it against.
+        expect(exemptionProblems(
+            { 'ui.animationDuration': 'no reason at all' },
+            EXEMPT_REQUIRES
+        )).toEqual(['ui.animationDuration: the reason no longer says why — "no reason at all"']);
+
+        // 2. The standard reason, but nothing that says it is still true.
+        expect(exemptionProblems(
+            { 'ui.animationDuration': 'read in App.jsx via a destructured alias' },
+            EXEMPT_REQUIRES
+        )).toEqual(['ui.animationDuration: no EXEMPT_REQUIRES entry — a key retired by an arbitrary string']);
+
+        // 3. A requirement whose consumer no longer exists — the alias is still
+        //    mentioned, but nothing is using it for the reason claimed.
+        expect(exemptionProblems(
+            { 'ui.animationDuration': 'read in App.jsx via a destructured alias' },
+            { 'ui.animationDuration': [/animationDuration/, /noSuchReactQueryOption/] }
+        )).toEqual(['ui.animationDuration: /animationDuration/ is no longer used, because no /noSuchReactQueryOption/ — delete the entry']);
+
+        // 4. A key that is not a leaf of the settings tree any more.
+        expect(exemptionProblems(
+            { ui: 'read in App.jsx via a destructured alias' },
+            { ui: [/queryUiSettings/, /staleTime/] }
+        )).toEqual(['ui: no longer a leaf of DEFAULT_SETTINGS — delete the entry']);
     });
 });

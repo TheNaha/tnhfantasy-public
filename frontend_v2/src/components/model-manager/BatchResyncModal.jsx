@@ -74,7 +74,7 @@ export default function BatchResyncModal({ onClose }) {
                             Fetch fresh metadata for all your installed models from CivitAI.
                         </p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors">
+                    <button onClick={onClose} aria-label="Close resync all metadata" className="p-2 hover:bg-gray-800 rounded-full transition-colors">
                         <X size={20} />
                     </button>
                 </div>

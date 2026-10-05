@@ -13,14 +13,14 @@ const CHAPTER_REVISIONS_KEY = (storyId, chapterId) =>
 export const useStories = () => {
     return useQuery({
         queryKey: STORY_LIST_KEY,
-        queryFn: () => api.get('/api/v2/stories')
+        queryFn: ({ signal }) => api.get('/api/v2/stories', { signal })
     });
 };
 
 export const useStory = (storyId) => {
     return useQuery({
         queryKey: STORY_DETAIL_KEY(storyId),
-        queryFn: () => api.get(`/api/v2/stories/${storyId}`),
+        queryFn: ({ signal }) => api.get(`/api/v2/stories/${storyId}`, { signal }),
         enabled: !!storyId
     });
 };
@@ -28,7 +28,7 @@ export const useStory = (storyId) => {
 export const useStoryChapters = (storyId) => {
     return useQuery({
         queryKey: STORY_CHAPTERS_KEY(storyId),
-        queryFn: () => api.get(`/api/v2/stories/${storyId}/chapters`),
+        queryFn: ({ signal }) => api.get(`/api/v2/stories/${storyId}/chapters`, { signal }),
         enabled: !!storyId
     });
 };
@@ -36,7 +36,7 @@ export const useStoryChapters = (storyId) => {
 export const useStoryImages = (storyId) => {
     return useQuery({
         queryKey: STORY_IMAGES_KEY(storyId),
-        queryFn: () => api.get(`/api/v2/stories/${storyId}/images`),
+        queryFn: ({ signal }) => api.get(`/api/v2/stories/${storyId}/images`, { signal }),
         enabled: !!storyId
     });
 };
@@ -237,7 +237,7 @@ const revisionsKey = (storyId, chapterId) =>
 export const useChapterRevisions = (storyId, chapterId) => {
     return useQuery({
         queryKey: revisionsKey(storyId, chapterId),
-        queryFn: () => api.get(`/api/v2/stories/${storyId}/chapters/${chapterId}/revisions`),
+        queryFn: ({ signal }) => api.get(`/api/v2/stories/${storyId}/chapters/${chapterId}/revisions`, { signal }),
         enabled: Boolean(storyId && chapterId),
     });
 };

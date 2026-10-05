@@ -827,12 +827,10 @@
 @media (hover: none) {
   .opacity-0.group-hover\:opacity-100,
   .opacity-0.group-hover\/message\:opacity-100,
-  .opacity-0.group-hover\/chat-row\:opacity-100,
-  .opacity-0.group-hover\/menu-item\:opacity-100,
+  .opacity-0.group-hover\/card\:opacity-100,
   .sm\:opacity-0.sm\:group-hover\:opacity-100,
   .sm\:opacity-0.sm\:group-hover\/message\:opacity-100,
-  .sm\:opacity-0.sm\:group-hover\/chat-row\:opacity-100,
-  .sm\:opacity-0.sm\:group-hover\/menu-item\:opacity-100,
+  .sm\:opacity-0.sm\:group-hover\/card\:opacity-100,
   .md\:opacity-0.md\:group-hover\:opacity-100,
   .lg\:opacity-0.lg\:group-hover\:opacity-100,
   .xl\:opacity-0.xl\:group-hover\:opacity-100 {
@@ -967,8 +965,6 @@
   select,
   textarea {
     min-height: 44px;
-  }
-
   }
 
   /* Checkboxes and radios keep a small visual box but become tappable.
@@ -1112,3 +1108,4 @@
   .glass-panel {
     background-color: var(--color-raised);
   }
+}

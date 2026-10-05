@@ -68,7 +68,7 @@ describe('useSelectedImageState', () => {
         });
 
         expect(result.current.loadingMeta).toBe(false);
-        expect(mockGet).toHaveBeenCalledWith('/api/view/output/embedded.png.json');
+        expect(mockGet).toHaveBeenCalledWith('/api/view/output/embedded.png.json', { signal: expect.any(AbortSignal) });
         expect(document.body.style.overflow).toBe('hidden');
     });
 
@@ -91,7 +91,7 @@ describe('useSelectedImageState', () => {
         });
 
         expect(result.current.loadingMeta).toBe(false);
-        expect(mockGet).toHaveBeenCalledWith('/api/view/output/legacy.png.json');
+        expect(mockGet).toHaveBeenCalledWith('/api/view/output/legacy.png.json', { signal: expect.any(AbortSignal) });
 
         act(() => {
             result.current.closeSelectedImage();
@@ -120,6 +120,6 @@ describe('useSelectedImageState', () => {
         });
 
         expect(result.current.metadata).toEqual({ prompt: 'embedded only' });
-        expect(mockGet).toHaveBeenCalledWith('/api/view/output/embedded-only.png.json');
+        expect(mockGet).toHaveBeenCalledWith('/api/view/output/embedded-only.png.json', { signal: expect.any(AbortSignal) });
     });
 });

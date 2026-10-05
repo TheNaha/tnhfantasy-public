@@ -8,21 +8,27 @@ import ModalOverlay from '../common/ModalOverlay';
 import CivitaiSearchModal from './CivitaiSearchModal';
 import AutopopulateSelector from './AutopopulateSelector';
 import { copyToClipboard } from '../../utils/clipboard';
+import { formatBytes } from '../../utils/bytes';
 import { QUERY_KEYS } from '../../constants/queryKeys';
 import { installedVersionsKey } from '../../hooks/useCivitaiSearch';
+import { useAutopopulateModel } from '../../hooks/useAutopopulate';
 
 /**
  * Query keys whose pages carry a model's tag list. A new tag is only useful if
- * the list that filters on tags can see it, and there are two such lists: the
- * model manager's Installed tab and the in-generator ModelSelector.
+ * the list that filters on tags can see it, and there used to be two such lists:
+ * the model manager's Installed tab and the in-generator ModelSelector.
  *
- * They used to be two independent caches of one list, under `['models', …]` and
+ * They were two independent caches of one list, under `['models', …]` and
  * `['installed-models', …]`, and every mutation here had to remember to
- * invalidate both. They now share `modelListKey` (`constants/queryKeys.js`), so
- * this is one prefix: invalidating it refreshes both, and a new call site that
- * forgets cannot silently leave the other stale.
+ * invalidate both. They now share `modelListKey` (`constants/queryKeys.js`),
+ * whose keys all start with `[QUERY_KEYS.MODELS]`, so the prefix below reaches
+ * every variant of the one list — including a future `pageSize` or a new
+ * filter combination, which the old two-element literal would not have covered
+ * had the shape moved again.
  */
-const MODEL_LIST_QUERY_KEYS = [[QUERY_KEYS.MODELS]];
+const invalidateModelLists = (queryClient) => {
+    queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
+};
 
 const tagQueryKey = (modelId) => ['model-tags', modelId];
 
@@ -75,12 +81,6 @@ export function ModelTagEditor({ modelId, tags = [] }) {
         return ordered;
     }, [tags, sources]);
 
-    const invalidateLists = () => {
-        for (const queryKey of MODEL_LIST_QUERY_KEYS) {
-            queryClient.invalidateQueries({ queryKey });
-        }
-    };
-
     const addMutation = useMutation({
         mutationFn: (tag) => modelsApi.addTag(modelId, tag),
         onSuccess: (result, tag) => {
@@ -92,7 +92,7 @@ export function ModelTagEditor({ modelId, tags = [] }) {
                 if (existing.some((t) => t.tag === tag)) return prev;
                 return { tags: [...existing, { tag, source: result?.source || 'user' }] };
             });
-            invalidateLists();
+            invalidateModelLists(queryClient);
             setDraft('');
             toast.success(
                 result?.created === false
@@ -109,7 +109,7 @@ export function ModelTagEditor({ modelId, tags = [] }) {
             queryClient.setQueryData(tagQueryKey(modelId), (prev) => ({
                 tags: (prev?.tags || []).filter((t) => t.tag !== tag),
             }));
-            invalidateLists();
+            invalidateModelLists(queryClient);
             toast.success(`Removed tag "${tag}"`);
         },
         onError: (error, tag) => {
@@ -222,6 +222,11 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
     const [showAutopopulateSelector, setShowAutopopulateSelector] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const queryClient = useQueryClient();
+    // Above the `if (!file) return null` below: this modal returns early when it
+    // has no file, and a hook below that line would be called conditionally.
+    // It reads nothing from `file` — the id is passed per call — so hoisting it
+    // changes nothing but the hook order.
+    const autopopulate = useAutopopulateModel();
     
     if (!file) return null;
 
@@ -303,24 +308,22 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
 
     const isAutoDiscovered = modelDescription?.includes("Auto-discovered");
 
-    const handleAutopopulate = async (civitaiId = null) => {
+        const handleAutopopulate = async (civitaiId = null) => {
         if (!file.model_id) {
             toast.error("Model has no database ID");
             return;
         }
         try {
-            const payload = civitaiId ? { civitai_id: civitaiId } : {};
-            await api.post(`/api/v2/models/${file.model_id}/autopopulate`, payload);
+            // `useAutopopulateModel` owns the POST and both invalidations: the
+            // model-list prefix, and `installedVersionsKey(civitaiId)` — which is
+            // `['model','installed',<civitai id>]`, the only query in that
+            // namespace and the one `ModelImportCard` reads. Both were written
+            // out by hand here; the old `{ queryKey: ['model', file.model_id] }`
+            // was two elements under a three-element key, and a *local* id where
+            // the query is keyed by a civitai id, so it matched nothing on both
+            // counts.
+            await autopopulate.mutateAsync({ modelId: file.model_id, civitaiId });
             toast.success(isAutoDiscovered ? "Model details autopopulated!" : "Model metadata refetched!");
-            queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
-            // `installedVersionsKey` is `['model','installed',<civitai id>]`, the
-            // only query in that namespace and the one `ModelImportCard` reads.
-            // This was `{ queryKey: ['model', file.model_id] }` — two elements
-            // under a three-element key, and a *local* id where the query is
-            // keyed by a civitai id, so it matched nothing on both counts.
-            if (civitaiId) {
-                queryClient.invalidateQueries({ queryKey: installedVersionsKey(civitaiId) });
-            }
             setShowSearchModal(false);
             onClose();
         } catch (e) {
@@ -616,7 +619,7 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                             {/* File Info */}
                             <div className="text-xs text-gray-500 pt-4 border-t border-gray-800 space-y-1">
                                 <p>Filename: <span className="text-gray-400">{file.name}</span></p>
-                                <p>Size: <span className="text-gray-400">{file.size > 0 ? (file.size / 1024 / 1024 / 1024).toFixed(2) + " GB" : "Unknown"}</span></p>
+                                <p>Size: <span className="text-gray-400">{formatBytes(file.size)}</span></p>
                                 {civitaiId && (
                                     <a
                                         href={`https://civitai.com/models/${civitaiId}`}
@@ -655,12 +658,6 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                     modelType={modelType}
                     modelDirectory={file.directory}
                     onClose={() => setShowAutopopulateSelector(false)}
-                    onComplete={(selectedCivitaiId) => {
-                        queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
-                        if (selectedCivitaiId) {
-                            queryClient.invalidateQueries({ queryKey: installedVersionsKey(selectedCivitaiId) });
-                        }
-                    }}
                 />
             )}
             {showSearchModal && (

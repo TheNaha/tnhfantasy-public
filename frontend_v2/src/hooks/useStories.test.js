@@ -57,7 +57,7 @@ describe('useStories queries', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useStories(), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual([{ id: 's1', title: 'Tale' }]));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/stories');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/stories', { signal: expect.any(AbortSignal) });
     });
 
     it('useStory/useStoryChapters/useStoryImages gate on storyId and use subkeys', async () => {
@@ -66,16 +66,16 @@ describe('useStories queries', () => {
 
         const story = renderHook(() => useStory('s1'), { wrapper });
         await waitFor(() => expect(story.result.current.data).toEqual([]));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/stories/s1');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/stories/s1', { signal: expect.any(AbortSignal) });
         expect(queryClient.getQueryState(['world_vault', 'stories', 's1'])).toBeDefined();
 
         const chapters = renderHook(() => useStoryChapters('s1'), { wrapper });
         await waitFor(() => expect(chapters.result.current.data).toEqual([]));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/stories/s1/chapters');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/stories/s1/chapters', { signal: expect.any(AbortSignal) });
 
         const images = renderHook(() => useStoryImages('s1'), { wrapper });
         await waitFor(() => expect(images.result.current.data).toEqual([]));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/stories/s1/images');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/stories/s1/images', { signal: expect.any(AbortSignal) });
     });
 
     it('useStory does not fetch without an id', async () => {

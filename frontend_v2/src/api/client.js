@@ -110,22 +110,55 @@ async function request(endpoint, options = {}) {
         delete config.headers['Content-Type'];
     }
 
-    // Timeout guard: only create AbortController when no manual signal is provided
+    /*
+     * One controller for both reasons to stop.
+     *
+     * A caller-supplied signal used to *replace* the timeout guard rather than
+     * join it, so a request that had one had no timeout at all — and that was
+     * free until every `queryFn` started forwarding React Query's signal, at
+     * which point the 30s guard would have quietly disappeared from the entire
+     * app. Both now abort the same controller.
+     *
+     * `timedOut` is what tells the two apart afterwards. Without it, an abort
+     * raised because a keystroke superseded the previous one was reported as
+     * `ApiError(message, 0)` — status 0 is the network-failure shape — so
+     * react-query could not recognise it as a cancellation: it counted as a
+     * failed query, showed up in `isError`, and re-ran the queryFn.
+     */
+    const timeoutMs = typeof timeout === 'number' ? timeout : DEFAULT_TIMEOUT;
     let abortTimeout;
-    if (!userSignal) {
-        const timeoutMs = typeof timeout === 'number' ? timeout : DEFAULT_TIMEOUT;
-        if (timeoutMs > 0) {
-            const controller = new AbortController();
-            abortTimeout = setTimeout(() => controller.abort(), timeoutMs);
-            config.signal = controller.signal;
+    let timedOut = false;
+    let controller = null;
+
+    const onUserAbort = () => controller?.abort();
+
+    if (userSignal || timeoutMs > 0) {
+        controller = new AbortController();
+        config.signal = controller.signal;
+        if (userSignal) {
+            if (userSignal.aborted) {
+                timedOut = false;
+                controller.abort();
+            } else {
+                userSignal.addEventListener('abort', onUserAbort, { once: true });
+            }
         }
-    } else {
-        config.signal = userSignal;
+        if (timeoutMs > 0) {
+            abortTimeout = setTimeout(() => {
+                timedOut = true;
+                controller?.abort();
+            }, timeoutMs);
+        }
     }
+
+    const detachUserSignal = () => {
+        if (userSignal) userSignal.removeEventListener('abort', onUserAbort);
+    };
 
     try {
         const response = await fetch(url, config);
         clearTimeout(abortTimeout);
+        detachUserSignal();
 
         // Handle non-JSON responses (like file downloads)
         const contentType = response.headers.get('content-type');
@@ -152,12 +185,34 @@ async function request(endpoint, options = {}) {
         return data;
     } catch (error) {
         clearTimeout(abortTimeout);
+        detachUserSignal();
         if (error instanceof ApiError) throw error;
-        if (abortTimeout !== undefined && error.name === 'AbortError') {
-            throw new ApiError('Request timed out', 408);
+        if (error?.name === 'AbortError') {
+            if (timedOut) throw new ApiError('Request timed out', 408);
+            // A cancellation, not a failure. Re-thrown with the name react-query
+            // looks for (`error instanceof Error && error.name === 'AbortError'`)
+            // so it cancels the query silently instead of landing in `isError`
+            // and re-triggering the fetcher.
+            throw toAbortError(error);
         }
         throw new ApiError(error.message, 0);
     }
+}
+
+/**
+ * Normalise a platform abort into an `Error` whose `name` is `AbortError`.
+ *
+ * `fetch` rejects with a `DOMException`, which react-query's `isCancelledError`
+ * does accept — but only because `DOMException` inherits from `Error` in every
+ * engine it runs in today. Re-naming our own error makes the guarantee explicit
+ * rather than incidental, and preserves the original as `cause`.
+ */
+function toAbortError(cause) {
+    if (cause instanceof Error) return cause;
+    const error = new Error('The operation was aborted.');
+    error.name = 'AbortError';
+    error.cause = cause;
+    return error;
 }
 
 // HTTP method helpers

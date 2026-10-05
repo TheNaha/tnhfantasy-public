@@ -366,7 +366,7 @@ function WorldFormModal({ world, form, setForm, onSave, onClose, isSubmitting })
                     <h2 className="text-lg font-semibold text-white">
                         {world ? 'Edit World' : 'New World'}
                     </h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white">
+                    <button onClick={onClose} aria-label={world ? 'Cancel editing world' : 'Close world form'} className="text-gray-400 hover:text-white">
                         <X size={20} />
                     </button>
                 </div>
@@ -468,7 +468,7 @@ function WorldDashboardModal({ worldId, onClose, onNavigate }) {
             >
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-lg font-semibold text-white">{data?.world?.name || 'World Dashboard'}</h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white">
+                    <button onClick={onClose} aria-label="Close world dashboard" className="text-gray-400 hover:text-white">
                         <X size={20} />
                     </button>
                 </div>

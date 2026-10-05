@@ -25,7 +25,7 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
     // "Esc → Close modals" line in KeyboardShortcutsModal.
     useEscapeKey(() => { if (isOpen) onClose?.(); }, isOpen);
     const { data: prompts = [], isLoading } = usePrompts();
-    const { data: categories = ['All', 'Portrait', 'Landscape', 'Anime', 'Abstract', 'Realistic', 'Custom'] } = usePromptCategories();
+    const { data: categories } = usePromptCategories();
 
     const deletePromptMutation = useDeletePrompt();
     const updatePromptMutation = useUpdatePrompt();
@@ -202,6 +202,7 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
                         {/* Close */}
                         <button
                             onClick={onClose}
+                            aria-label="Close prompt library"
                             className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded transition-colors"
                         >
                             <X size={24} />

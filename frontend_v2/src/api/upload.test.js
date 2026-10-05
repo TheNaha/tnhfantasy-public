@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
     UPLOAD_LIMITS,
     assertUploadAllowed,
-    formatBytes,
     isImageFile,
     uploadWithProgress,
 } from './upload';
@@ -23,14 +22,6 @@ describe('upload helpers', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
-    });
-
-    describe('formatBytes', () => {
-        it('formats byte counts', () => {
-            expect(formatBytes(512)).toBe('512 B');
-            expect(formatBytes(2048)).toBe('2.0 KB');
-            expect(formatBytes(5 * MB)).toBe('5.0 MB');
-        });
     });
 
     describe('isImageFile', () => {
@@ -179,7 +170,18 @@ describe('filesApi upload wiring', () => {
         await filesApi.uploadInput(makeFile('a.png'), null, { signal: controller.signal });
 
         const [, config] = fetch.mock.calls[0];
-        expect(config.signal).toBe(controller.signal);
+        // Not the caller's own object: the client composes one signal for both
+        // reasons to stop — the caller's abort and the 30s timeout — because
+        // forwarding the caller's signal directly meant the timeout guard was
+        // skipped entirely whenever a signal was present.
+        expect(config.signal).toBeInstanceOf(AbortSignal);
+        expect(config.signal).not.toBe(controller.signal);
+        expect(config.signal.aborted).toBe(false);
+        // The listener is detached once the request settles, so a caller that
+        // reuses one controller for a long-lived screen is not retaining a
+        // closure per completed request.
+        controller.abort();
+        expect(config.signal.aborted).toBe(false);
         expect(config.method).toBe('POST');
     });
 
@@ -290,7 +292,12 @@ describe('filesApi.batchDownload', () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(zipResponse()));
         const controller = new AbortController();
         await filesApi.batchDownload(['a.png'], { signal: controller.signal });
-        expect(fetch.mock.calls[0][1].signal).toBe(controller.signal);
+        const signal = fetch.mock.calls[0][1].signal;
+        // Composed with the timeout guard rather than replaced by it, and
+        // detached once the request settles.
+        expect(signal).toBeInstanceOf(AbortSignal);
+        expect(signal).not.toBe(controller.signal);
+        expect(signal.aborted).toBe(false);
     });
 });
 

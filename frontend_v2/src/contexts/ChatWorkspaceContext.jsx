@@ -19,6 +19,7 @@ import { CHAT_LIST_KEY } from '../hooks/useChats';
 import { setStreamingJob } from '../hooks/useStreamingJobs';
 import { COMMANDS } from '../components/chat/chatCommands';
 import { warnIfWorldIgnored, WORLD_IGNORED_MESSAGE } from '../utils/worldLinkWarning';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 
 const ChatWorkspaceContext = createContext(null);
 
@@ -246,7 +247,8 @@ export function ChatWorkspaceProvider({ children }) {
 
     const cwData = useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQuery: debouncedChatSearchQuery, messagePageCount, messageSearch, chatOffset });
     const {
-        chats, isChatsLoading, searchResults, messagesData, activeChat, lorebooks, characters, worlds,
+        chats, isChatsLoading, isChatsError, chatsError, refetchChats, queryErrors,
+        searchResults, messagesData, activeChat, lorebooks, characters, worlds,
         personas, availableModels, defaultLlmConfig, systemPromptData, chatCollection, chatImages,
         collectionsMap, voices, chatJobs, activeStreamEntries, activeStreams,
     } = cwData;
@@ -540,7 +542,7 @@ export function ChatWorkspaceProvider({ children }) {
 
                 setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: chatIdToUse });
             }
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', chatIdToUse] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, chatIdToUse) });
         } catch {
             toast.error('Failed to send message');
         }
@@ -1125,6 +1127,16 @@ export function ChatWorkspaceProvider({ children }) {
         hasMoreMessages,
         illustrateMutation,
         impersonateMutation,
+        // The error counterpart to `isChatsLoading`, plus the whole
+        // `queryErrors` map. Both exist because every chat-surface empty state
+        // ("No chats yet", "No lorebooks available", "No locations") used to be
+        // reachable from a failed fetch — `useChatWorkspaceData` destructured
+        // `data` with a `= []` default and no `isError`, so the consumer could
+        // not tell "none" from "could not ask".
+        isChatsError,
+        chatsError,
+        refetchChats,
+        queryErrors,
         isChatsLoading,
         isGeneratingScene,
         isGeneratingTitle,
@@ -1247,6 +1259,8 @@ export function ChatWorkspaceProvider({ children }) {
         handleSendMessage, handleSuggestClick, handleSwipe,
         handleTextChange, hasCreatedChatRef, hasMoreChats,
         hasMoreMessages, illustrateMutation, impersonateMutation,
+        // With the rest of the error surface — see the note at the publish site.
+        isChatsError, chatsError, refetchChats, queryErrors,
         isChatsLoading, isGeneratingScene, isGeneratingTitle,
         isUploading, lastLoadedPageFull, linkedCharacter,
         listContainerRef, listItems, loadOlderMessages,
@@ -1274,7 +1288,7 @@ export function ChatWorkspaceProvider({ children }) {
         showMoreTools, showNewChatModal,
         showScenesModal, startRename, subscribe, suggestJobId,
         suggestJobIdRef, suggestReplyMutation, suggestSafetyTimerRef,
-        swipeMessageMutation, systemPromptData, targetCharacterId,
+        selectChat, swipeMessageMutation, systemPromptData, targetCharacterId,
         textareaRef, timelineVisible, titlePollCancelledRef,
         triggerAutoTitle, updateChatMutation, urlChatId, voices, worlds
     ]);

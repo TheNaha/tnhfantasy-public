@@ -10,9 +10,16 @@ import api, { API_V2_BASE } from './client';
 
 const P = `${API_V2_BASE}/providers`;
 
+/**
+ * Every read takes a trailing `options` and forwards it to the client, so a
+ * React Query `queryFn` can pass the `AbortSignal` from its context. The
+ * providers list is mounted app-wide (the layout polls it for the status dot),
+ * so an unmounted subscriber leaving its request in flight was the common case,
+ * not the exception.
+ */
 export const providersApi = {
     /** Fetch all configured providers. */
-    list: () => api.get(P),
+    list: (options = {}) => api.get(P, options),
 
     /**
      * Register a new provider.
@@ -42,7 +49,7 @@ export const providersApi = {
      * Get the current load balancing strategy configuration.
      * Canonical endpoint: /api/v2/providers/config/load-balancing
      */
-    getLoadBalancing: () => api.get(`${P}/config/load-balancing`),
+    getLoadBalancing: (options = {}) => api.get(`${P}/config/load-balancing`, options),
 
     /**
      * Update the load balancing strategy.
@@ -80,10 +87,10 @@ export const providersApi = {
     // -------------------------------------------------------------------------
 
     /** Fetch live metrics directly from the remote provider container. */
-    getLiveMetrics: (providerId) => api.get(`${P}/${providerId}/live-metrics`),
+    getLiveMetrics: (providerId, options = {}) => api.get(`${P}/${providerId}/live-metrics`, options),
 
     /** Fetch container logs for the provider. */
-    getLogs: (providerId) => api.get(`${P}/${providerId}/logs`),
+    getLogs: (providerId, options = {}) => api.get(`${P}/${providerId}/logs`, options),
 
     /**
      * Deploy the latest provider app from the backend orchestrator.

@@ -23,7 +23,7 @@ export default function ChatInputContainer({
                     <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl text-sm text-blue-300">
                         <ImageIcon size={13} className="shrink-0" />
                         <span className="truncate flex-1 text-xs">{pendingAttachment.name}</span>
-                        <button onClick={() => setPendingAttachment(null)} className="p-1 min-w-6 min-h-6 inline-flex items-center justify-center hover:text-red-400 transition-colors shrink-0">
+                        <button onClick={() => setPendingAttachment(null)} aria-label={`Remove attachment ${pendingAttachment.name}`} className="p-1 min-w-6 min-h-6 inline-flex items-center justify-center hover:text-red-400 transition-colors shrink-0">
                             <X size={13} />
                         </button>
                     </div>

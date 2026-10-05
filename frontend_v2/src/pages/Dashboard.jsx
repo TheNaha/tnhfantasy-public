@@ -35,7 +35,7 @@ import { flattenSessionPages, useSessions } from '../hooks/useSessions';
 
 // Stores
 import { useConfirmation } from '../store/confirmationStore';
-import useSettingsStore from '../store/settingsStore';
+import useSettingsStore, { SESSION_VIEW_MODE } from '../store/settingsStore';
 import useStore from '../store/useStore';
 
 // Components
@@ -122,19 +122,31 @@ export default function Dashboard() {
     }, []);
 
     // Local State
-    const viewMode = useSettingsStore((state) => state.settings.ui.defaultViewMode);
+    //
+    // The live view is its own key, distinct from the `default*` preferences.
+    // They used to be the same key, so every in-page toggle rewrote the user's
+    // default — the setting could not survive a session — and `session` (a
+    // live-only mode with no `<option>` anywhere) left the Settings select
+    // rendering blank. `null` means "no choice made yet", so both fall back to
+    // the stored default and an install upgrading into this shape behaves as
+    // before until the user actually toggles something.
+    const defaultViewMode = useSettingsStore((state) => state.settings.ui.defaultViewMode);
+    const liveViewMode = useSettingsStore((state) => state.settings.ui.viewMode);
+    const viewMode = liveViewMode || defaultViewMode;
     const setViewMode = useCallback((mode) => {
-        useSettingsStore.getState().updateSetting('ui', 'defaultViewMode', mode);
+        useSettingsStore.getState().updateSetting('ui', 'viewMode', mode);
     }, []);
     // Grid columns live in the settings store (not local state) so a change made
-    // on /settings is already in force here instead of after a reload.
-    const gridCols = defaultGridColumns;
+    // on /settings is already in force here instead of after a reload — but the
+    // live count is separate from the default, for the same reason as the view.
+    const liveGridCols = useSettingsStore((state) => state.settings.ui.gridColumns);
+    const gridCols = liveGridCols || defaultGridColumns;
     const setGridCols = useCallback((cols) => {
-        useSettingsStore.getState().updateSetting('ui', 'defaultGridColumns', cols);
+        useSettingsStore.getState().updateSetting('ui', 'gridColumns', cols);
     }, []);
     const [showSessionPanel, setShowSessionPanel] = useState(false);
 
-    const isSessionView = viewMode === 'session';
+    const isSessionView = viewMode === SESSION_VIEW_MODE;
     const sessionsQuery = useSessions({}, { enabled: isSessionView });
     const sessions = useMemo(
         () => flattenSessionPages(sessionsQuery.data),
@@ -223,10 +235,21 @@ export default function Dashboard() {
     }, [selectImage]);
 
     // Data Fetching
+    //
+    // `isError`/`error` are load-bearing, not defensive. The gallery query
+    // destructured neither, and the grid below falls back to `displayedItems
+    // .length === 0` — which a 503 satisfies — so a failed fetch rendered
+    // "No images yet / Start creating amazing AI-generated images…" with a
+    // working Generate CTA, while the facet panel 40 lines up printed
+    // "Matching total unavailable" from the same query. The page contradicted
+    // itself and told the user their library was empty. Reproduced live by
+    // intercepting the facet GET and answering 503.
     const {
         data,
+        error: galleryError,
         fetchNextPage,
         hasNextPage,
+        isError: isGalleryError,
         isFetching,
         isFetchingNextPage,
         isLoading,
@@ -590,7 +613,7 @@ export default function Dashboard() {
                     onFilterChange={setFilters}
                     isSessionView={isSessionView}
                     onOpenSessionPanel={() => setShowSessionPanel(true)}
-                    onToggleViewMode={() => setViewMode(isSessionView ? 'grid' : 'session')}
+                    onToggleViewMode={() => setViewMode(isSessionView ? 'grid' : SESSION_VIEW_MODE)}
                 />
 
                 {/* Faceted search. Both panels read page one only — the counts
@@ -620,6 +643,9 @@ export default function Dashboard() {
                 {!sessionPlaceholder && (
                     <DashboardGalleryGrid
                         isLoading={isLoading}
+                        isError={isGalleryError}
+                        error={galleryError}
+                        onRetry={refetch}
                         viewMode={viewMode}
                         displayedItems={displayedItems}
                         showFavorites={showFavorites}

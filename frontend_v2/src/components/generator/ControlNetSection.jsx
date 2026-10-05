@@ -50,7 +50,7 @@ const ControlNetSection = memo(function ControlNetSection({
 
                 {controlnets.map((cn, idx) => (
                     <div key={idx} className="space-y-4 bg-[#0B0E14]/80 p-5 rounded-2xl border border-white/10 relative shadow-inner group/card">
-                        <button onClick={() => removeControlNet(idx)} className="absolute top-4 right-4 text-gray-500 hover:text-red-400 transition-colors opacity-0 group-hover/card:opacity-100">
+                        <button onClick={() => removeControlNet(idx)} aria-label={`Remove ControlNet${cn.name ? ` ${cn.name}` : ''}`} className="absolute top-4 right-4 text-gray-500 hover:text-red-400 transition-colors opacity-0 group-hover/card:opacity-100">
                             <Trash2 size={18} />
                         </button>
 

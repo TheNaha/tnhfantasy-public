@@ -3,6 +3,8 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+
 const apiMock = vi.hoisted(() => ({
     get: vi.fn(),
     post: vi.fn(),
@@ -36,7 +38,7 @@ describe('useBranches', () => {
         const { wrapper, queryClient } = createWrapper();
         const { result } = renderHook(() => useBranches('c1'), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual([{ id: 'b1', message_id: 'm1' }]));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1/branches');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/chats/c1/branches', { signal: expect.any(AbortSignal) });
         expect(queryClient.getQueryState(['world_vault', 'chats', 'c1', 'branches'])).toBeDefined();
     });
 
@@ -88,10 +90,10 @@ describe('useBranches', () => {
         const { result } = renderHook(() => useCreateBranch(), { wrapper });
         await act(async () => result.current.mutateAsync({ chatId: 'c1', messageId: 'm9' }));
         expect(apiMock.post).toHaveBeenCalledWith('/api/v2/chats/c1/branches', { message_id: 'm9' });
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'c1', 'branches'] });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: buildQueryKey(QUERY_KEYS.CHATS, 'c1', 'branches') });
         // The chat-prefix call that used to sit next to it refetched the whole
         // system-prompt assembly (character + lorebook + world state + last N
         // messages) for a branch insert, which changes none of it.
-        expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'c1'] });
+        expect(invalidate).not.toHaveBeenCalledWith({ queryKey: buildQueryKey(QUERY_KEYS.CHATS, 'c1') });
     });
 });

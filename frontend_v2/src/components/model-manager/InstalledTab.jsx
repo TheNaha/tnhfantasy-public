@@ -3,6 +3,8 @@ import { Search, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2 } from 'luci
 import ProgressiveImage from '../ProgressiveImage';
 import { modelListKey } from '../../constants/queryKeys';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
+import { formatBytes } from '../../utils/bytes';
+import { nextOffsetPageParam } from '../../utils/pagination';
 import toast from 'react-hot-toast';
 import { filesApi, api } from '../../api';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
@@ -82,10 +84,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             }, { signal });
             return res;
         },
-        getNextPageParam: (lastPage, allPages) => {
-            const loaded = allPages.reduce((acc, page) => acc + (page.files?.length || 0), 0);
-            return (lastPage.files?.length >= itemsPerPage && loaded < (lastPage.total || 0)) ? loaded : undefined;
-        },
+        getNextPageParam: nextOffsetPageParam,
         enabled: !!path,
     });
 
@@ -374,7 +373,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                     )}
                                     <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-gray-400 gap-2">
                                         <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
-                                            <span className="shrink-0">{(file.size / 1024 / 1024).toFixed(0)} MB</span>
+                                            <span className="shrink-0">{formatBytes(file.size)}</span>
                                             {showAvailabilityBadge && (
                                                 <span
                                                     className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-xs sm:text-2xs font-medium shrink-0 max-w-full truncate ${availabilityTone(availability.label)}`}

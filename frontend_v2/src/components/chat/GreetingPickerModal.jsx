@@ -30,7 +30,7 @@ function GreetingPickerModal({ character, onSelect, onClose }) {
                             {character.name} has {greetings.length} opening messages. Pick one to start the chat.
                         </p>
                     </div>
-                    <button onClick={onClose} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                    <button onClick={onClose} aria-label="Close greeting picker" className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
                         <X size={18} />
                     </button>
                 </div>

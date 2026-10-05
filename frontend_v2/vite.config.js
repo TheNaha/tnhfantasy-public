@@ -82,8 +82,28 @@ export default defineConfig({
           'vendor-query': ['@tanstack/react-query'],
           // Animation library
           'vendor-motion': ['framer-motion'],
-          // Visualization/Charts
+          // Toasts
           'vendor-toast': ['react-hot-toast'],
+// Visualization/Charts
+          // `recharts` is 290.37 kB raw / 88.56 kB gzip. It is not in the app
+          // shell — Rollup already split it — but `ProviderListItem` used it for
+          // one 4-line sparkline, so opening /providers downloaded the whole
+          // library to draw two trend lines. That sparkline is now an inline
+          // <svg>; `Statistics.jsx` is the one consumer that genuinely needs it.
+          //
+          // `clsx` is named BEFORE `recharts` on purpose. A manual chunk is a
+          // *static* dependency of every importer, and with
+          // `onlyExplicitManualChunks: false` (Rollup's default) a manual chunk
+          // also absorbs the dependencies only it needs — so recharts' `clsx`
+          // was merged into `vendor-charts`. The app shell imports `clsx`
+          // directly, which then made the entry statically import
+          // `vendor-charts`, and Vite preloads an entry's whole static closure:
+          // the measured result was a 109.85 kB gzip chunk in `index.html`,
+          // i.e. the manual chunk on its own made the shell 26 kB BIGGER.
+          // Claiming `clsx` first keeps it out of `vendor-charts` and restores
+          // the split, at the cost of a ~0.5 kB gzip chunk for one function.
+          'vendor-clsx': ['clsx'],
+          'vendor-charts': ['recharts'],
           // Blurhash for progressive images
           'vendor-blurhash': ['blurhash', 'react-blurhash'],
           // Lucide icons (tree-shakeable, but still sizeable)

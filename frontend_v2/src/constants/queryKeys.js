@@ -1,3 +1,25 @@
+/**
+ * The World Vault cache namespaces, and ONLY those.
+ *
+ * Every member here is safe to write as `buildQueryKey(QUERY_KEYS.X)` because
+ * every World Vault query actually hangs off `['world_vault', …]`. Anything the
+ * vault does not own — the gallery, providers, settings, statistics, models —
+ * lives under its own string namespace and must be written as a literal; see
+ * `invalidateVaultAggregates` for the boundary.
+ *
+ * Six members used to be here with zero readers: `EXPRESSIONS`, `BRANCHES`,
+ * `GALLERY`, `PROVIDERS`, `SETTINGS`, `STATISTICS`. They are deleted rather than
+ * renamed, because `buildQueryKey` unconditionally prepends `world_vault`, so
+ * each of them could only ever produce a key that matches no query in the app —
+ * and four of them (`GALLERY`, `PROVIDERS`, `SETTINGS`, `STATISTICS`) collided
+ * *in name* with a real non-vault namespace, so a reader who reached for
+ * `buildQueryKey(QUERY_KEYS.GALLERY)` to "find the gallery key" would get
+ * `['world_vault','gallery',…]`, which prefix-matches nothing, and would see a
+ * no-op invalidation with no error. A member here must name a query that exists
+ * under `['world_vault', …]`; if it does not, it does not belong in this table.
+ *
+ * `src/test/vaultQueryKeyInvariants.test.js` enforces both halves of that.
+ */
 export const QUERY_KEYS = {
     WORLD_VAULT: 'world_vault',
     CHARACTERS: 'characters',
@@ -8,16 +30,10 @@ export const QUERY_KEYS = {
     SCENARIOS: 'scenarios',
     VOICES: 'voices',
     MEMORIES: 'memories',
-    EXPRESSIONS: 'expressions',
-    BRANCHES: 'branches',
     LOCATIONS: 'locations',
     WORLDS: 'worlds',
     SEARCH: 'search',
-    GALLERY: 'gallery',
     MODELS: 'models',
-    PROVIDERS: 'providers',
-    SETTINGS: 'settings',
-    STATISTICS: 'statistics',
     PERSONAS: 'personas',
     ENTITY: 'entity',
     DASHBOARD: 'dashboard',

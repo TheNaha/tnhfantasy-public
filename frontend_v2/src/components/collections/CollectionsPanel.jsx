@@ -12,13 +12,18 @@ import CreateCollectionModal from './CreateCollectionModal';
 import { useConfirmation } from '../../store/confirmationStore';
 import { assetUrl } from '../../utils/assetUrl';
 import EmptyState from '../EmptyState';
+import { QueryErrorState } from '../common/QueryState';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 const CollectionsPanel = ({ isOpen, onClose }) => {
     // Escape dismisses, matching the shared ModalOverlay dialogs and the
     // "Esc → Close modals" line in KeyboardShortcutsModal.
     useEscapeKey(() => { if (isOpen) onClose?.(); }, isOpen);
-    const { data: collections = {} } = useCollections();
+    // `isError` is load-bearing. The query destructured only `data`, and the
+    // default `{}` it falls back to produces an empty `collectionList`, so a
+    // failed fetch rendered "Collection is empty" with a create button —
+    // indistinguishable from a first run. See components/common/QueryState.jsx.
+    const { data: collections = {}, isError, error, refetch } = useCollections();
     const activeCollection = useStore((state) => state.activeCollection);
     const setActiveCollection = useStore((state) => state.setActiveCollection);
 
@@ -111,9 +116,17 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
 
                         {/* Collections List */}
                         <div className="flex-1 overflow-y-auto p-4">
-                            {collectionList.length === 0 ? (
+                            {isError ? (
+                                <QueryErrorState
+                                    noun="collections"
+                                    error={error}
+                                    onRetry={refetch}
+                                    className="m-2"
+                                />
+                            ) : collectionList.length === 0 ? (
                                 <EmptyState
                                     type="collection"
+                                    primaryLabel="New Collection"
                                     onAction={() => setShowCreateModal(true)}
                                 />
                             ) : (

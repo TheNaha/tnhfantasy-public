@@ -72,7 +72,7 @@ export function awaitJobText({ jobId, queryClient = null, pollInterval = 1000, m
             if (!queryClient) return api.get(`/api/jobs/${jobId}`);
             return queryClient.fetchQuery({
                 queryKey: ['jobs', jobId],
-                queryFn: () => api.get(`/api/jobs/${jobId}`),
+                queryFn: ({ signal }) => api.get(`/api/jobs/${jobId}`, { signal }),
                 staleTime: 2000,
             });
         };

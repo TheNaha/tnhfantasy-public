@@ -1,6 +1,6 @@
 import { LayoutGrid, List, Square, LineChart, Check, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
-import useSettingsStore from '../../store/settingsStore';
+import { GALLERY_VIEW_MODES } from '../../store/settingsStore';
 
 export function DashboardHeader({
     viewMode,
@@ -12,8 +12,6 @@ export function DashboardHeader({
     selectedFilesCount,
     onRefetch
 }) {
-    const updateSetting = useSettingsStore((state) => state.updateSetting);
-
     return (
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
@@ -25,13 +23,10 @@ export function DashboardHeader({
 
             <div className="flex items-center gap-2 flex-wrap">
                 <div className="bg-gray-800 rounded-lg p-1 flex gap-1">
-                    {['grid', 'list', 'feed', 'timeline'].map(mode => (
+                    {GALLERY_VIEW_MODES.map(mode => (
                         <button
                             key={mode}
-                            onClick={() => {
-                                setViewMode(mode);
-                                updateSetting('ui', 'defaultViewMode', mode);
-                            }}
+                            onClick={() => setViewMode(mode)}
                             aria-label={`${mode.charAt(0).toUpperCase() + mode.slice(1)} View`}
                             className={`p-2 rounded-md transition-all ${viewMode === mode ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
                             type="button"

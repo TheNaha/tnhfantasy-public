@@ -310,4 +310,66 @@ describe('MemoriesPanel', () => {
         expect(screen.queryByText('Editing memory')).not.toBeInTheDocument();
         expect(updateMock).not.toHaveBeenCalled();
     });
+
+    /**
+     * A failed fetch is not an empty memory list.
+     *
+     * Both queries destructured only `data`/`isLoading`, so a rejected request
+     * left `memories` at its `= []` default and rendered "No memories yet / Add
+     * the first memory for this character" for a character that already had
+     * two. Found by the widened `queryErrorInvariants` scan (2026-10-04), which
+     * now walks `src/**` instead of `src/pages/`.
+     */
+    describe('a failed fetch is a failure, not an empty memory list', () => {
+        it('states the failure and never says the character has no memories', () => {
+            useCharacterMemories.mockReturnValue({
+                data: [], isLoading: false, isError: true,
+                error: new Error('503 Service Unavailable'), refetch: vi.fn(),
+            });
+            const { wrapper } = createWrapper();
+            render(<MemoriesPanel characterId="char-1" />, { wrapper });
+
+            const alert = screen.getByRole('alert');
+            expect(alert).toHaveTextContent(/could not load your memories/i);
+            expect(alert).toHaveTextContent(/503 Service Unavailable/);
+            expect(screen.queryByText('No memories yet')).toBeNull();
+        });
+
+        it('offers a retry wired to the memories refetch', () => {
+            const refetch = vi.fn();
+            useCharacterMemories.mockReturnValue({
+                data: [], isLoading: false, isError: true,
+                error: new Error('boom'), refetch,
+            });
+            const { wrapper } = createWrapper();
+            render(<MemoriesPanel characterId="char-1" />, { wrapper });
+
+            fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+        });
+
+        it('reports a failed SEARCH separately from a failed list', () => {
+            // Two queries, two failure modes. "No matches found" for a search
+            // that never ran is the same class of lie.
+            useSearchMemories.mockReturnValue({
+                data: null, isFetching: false, isError: true,
+                error: new Error('search failed'), refetch: vi.fn(),
+            });
+            const { wrapper } = createWrapper();
+            render(<MemoriesPanel characterId="char-1" />, { wrapper });
+
+            expect(screen.getByRole('alert')).toHaveTextContent(/could not load your memory matches/i);
+        });
+
+        it('still says "No memories yet" when the fetch genuinely succeeded', () => {
+            useCharacterMemories.mockReturnValue({
+                data: [], isLoading: false, isError: false, error: null, refetch: vi.fn(),
+            });
+            const { wrapper } = createWrapper();
+            render(<MemoriesPanel characterId="char-1" />, { wrapper });
+
+            expect(screen.getByText('No memories yet')).toBeTruthy();
+            expect(screen.queryByRole('alert')).toBeNull();
+        });
+    });
 });

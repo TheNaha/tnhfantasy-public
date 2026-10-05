@@ -44,7 +44,7 @@ describe('useScenarios', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useScenarios(), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual([{ id: 'sc1', name: 'Night market' }]));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/scenarios');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/scenarios', { signal: expect.any(AbortSignal) });
     });
 
     it('create/update/delete invalidate the scenario list', async () => {

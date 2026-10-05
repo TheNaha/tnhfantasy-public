@@ -16,7 +16,7 @@ function StreamingInput({
                 <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-500/20 text-blue-300 rounded-lg text-sm font-medium mr-2 whitespace-nowrap select-none ml-2">
                     <span>{activeCommand.icon}</span>
                     {activeCommand.cmd}
-                    <button onClick={onClearCommand} className="hover:text-white ml-1 opacity-60 hover:opacity-100 transition-opacity"><X size={14} /></button>
+                    <button onClick={onClearCommand} aria-label={`Clear ${activeCommand.cmd} command`} className="hover:text-white ml-1 opacity-60 hover:opacity-100 transition-opacity"><X size={14} /></button>
                 </div>
             )}
 

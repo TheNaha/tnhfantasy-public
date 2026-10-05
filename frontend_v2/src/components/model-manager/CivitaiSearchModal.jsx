@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { X, Search, Loader2, Star, Download } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../../api';
 import ModalOverlay from '../common/ModalOverlay';
 import ProgressiveImage from '../ProgressiveImage';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
+import { useCivitaiSearchPage } from '../../hooks/useCivitaiSearch';
 
 export default function CivitaiSearchModal({ initialQuery, onClose, onSelect }) {
     // We clean up initial query locally so user sees a clean input
@@ -17,22 +16,32 @@ export default function CivitaiSearchModal({ initialQuery, onClose, onSelect }) 
     const [baseModel, setBaseModel] = useState("");
     const [nsfw, setNsfw] = useState("false");
 
-    const { data: results, isLoading, isError, error } = useQuery({
-        queryKey: ['civitaiSearch', query, type, sort, baseModel, nsfw],
-        queryFn: async () => {
-            if (!query) return { items: [] };
-            const params = new URLSearchParams({ query });
-            if (type) params.append('types', type);
-            if (sort) params.append('sort', sort);
-            if (baseModel) params.append('baseModels', baseModel);
-            if (nsfw !== "") params.append('nsfw', nsfw);
-            params.append('limit', '20');
-            const data = await api.get(`/api/v2/models/external/civitai?${params.toString()}`);
-            return data;
+    /**
+     * The one CivitAI search, not a second cache for it.
+     *
+     * This used to run a hand-rolled `useQuery` under
+     * `['civitaiSearch', query, type, sort, baseModel, nsfw]`. The same search
+     * in `DiscoverTab` lived under `['civitai','search',{…}]`, so a result
+     * fetched in one and the same result fetched from the other were fetched
+     * twice and could disagree — and this modal is reachable from
+     * `ModelMetadataModal`, so the divergence was user-visible. Sharing the key
+     * means mounting both against the same filters is one request.
+     *
+     * The filter names differ, not the meaning: the dropdowns here hold single
+     * strings where the shared vocabulary holds arrays (`types`, `baseModels`),
+     * and `nsfw` is `"false"`/`"true"` here rather than a boolean.
+     */
+    const { data: results, isLoading, isError, error } = useCivitaiSearchPage(
+        {
+            query,
+            source: 'civitai',
+            types: type ? [type] : [],
+            sort,
+            baseModels: baseModel ? [baseModel] : [],
+            nsfw: nsfw === "true",
         },
-        enabled: !!query,
-        retry: false
-    });
+        { enabled: !!query },
+    );
 
     const handleSearch = (e) => {
         e.preventDefault();
@@ -51,7 +60,7 @@ export default function CivitaiSearchModal({ initialQuery, onClose, onSelect }) 
                 <div className="p-6 border-b border-gray-800 space-y-4">
                     <div className="flex justify-between items-center">
                         <h2 className="text-xl font-bold text-white">Search CivitAI</h2>
-                        <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors">
+                        <button onClick={onClose} aria-label="Close CivitAI search" className="p-2 hover:bg-gray-800 rounded-full transition-colors">
                             <X size={20} />
                         </button>
                     </div>

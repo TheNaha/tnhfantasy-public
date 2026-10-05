@@ -5,7 +5,8 @@ import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { settingsApi } from '../api/settingsApi';
 import { useConfirmation } from '../store/confirmationStore';
-import { useSettings, useUpdateSettings } from '../store/settingsStore';
+import { useSettings, useUpdateSettings, GALLERY_VIEW_MODES } from '../store/settingsStore';
+import { useGeneratorStore } from '../store/generatorStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
 import { useLLMProviderStatus, useSetLLMDefault } from '../hooks/useLLMProviderStatus';
 import useProvidersPageData from '../hooks/useProvidersPageData';
@@ -733,14 +734,30 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                 {/* Default View Mode */}
                 <SettingGroup title="Default View Mode" description="Choose the default view mode for the gallery">
                     <select
-                        value={settings.defaultViewMode}
+                        /* The value is coerced into the vocabulary before it
+                           reaches the DOM. A `<select>` whose value has no
+                           matching `<option>` renders *blank* — which is what
+                           happened here: the live gallery mode and this
+                           preference were the same key, the live mode could be
+                           `session` (reachable from the Dashboard toggle, with
+                           no option for it anywhere), and a user landing on this
+                           select while in the session view saw an empty
+                           dropdown. Deriving the options from the one
+                           vocabulary also stops the two lists drifting again. */
+                        value={
+                            GALLERY_VIEW_MODES.includes(settings.defaultViewMode)
+                                ? settings.defaultViewMode
+                                : GALLERY_VIEW_MODES[0]
+                        }
                         onChange={(e) => onUpdate('defaultViewMode', e.target.value)}
                         aria-label="Default view mode"
                         className="w-full lg:w-64 max-w-full min-w-0 bg-[#0B0E14]/80 border border-white/10 rounded-xl p-3 text-white font-medium focus:ring-2 focus:ring-blue-500/50 shadow-inner glow-focus outline-none"
                     >
-                        <option value="grid">Grid</option>
-                        <option value="list">List</option>
-                        <option value="feed">Feed</option>
+                        {GALLERY_VIEW_MODES.map((mode) => (
+                            <option key={mode} value={mode}>
+                                {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                            </option>
+                        ))}
                     </select>
                 </SettingGroup>
 
@@ -1035,6 +1052,14 @@ function ServerCheckpointSelect({ installed, loading, onMirror }) {
 
 // Generator Settings Component
 function GeneratorSettings({ settings, onUpdate, onReset, onMirrorDefaultCheckpoint }) {
+    // This one preference lives in the generator store rather than in
+    // `settings`, because it is read inside `setSelectedCheckpoint` — the
+    // action that decides whether to rewrite the sampler. Mirroring it into
+    // `settings` would have meant two sources of truth for one switch, which is
+    // how it ended up permanently `true` with no control anywhere in the UI:
+    // the setter existed, the field persisted, and nothing rendered it.
+    const autoApplyModelSettings = useGeneratorStore((state) => state.autoApplyModelSettings);
+    const setAutoApplyModelSettings = useGeneratorStore((state) => state.setAutoApplyModelSettings);
     const { modelsByKey, loading } = useModelDirectories([{ directory: 'models/checkpoints', key: 'checkpoints' }]);
     const checkpoints = modelsByKey.checkpoints || [];
     const { data: configResponse } = useSettingsConfig();
@@ -1078,6 +1103,31 @@ function GeneratorSettings({ settings, onUpdate, onReset, onMirrorDefaultCheckpo
                         </div>
                         <span className="text-sm font-bold uppercase tracking-widest text-gray-400 group-hover:text-white transition-colors">{settings.autoRandomizeSeed ? 'Enabled' : 'Disabled'}</span>
                     </label>
+                </SettingGroup>
+
+                <SettingGroup
+                    title="Auto-Apply Model Settings"
+                    description="When you pick a checkpoint, load its recommended sampler settings (steps, CFG, sampler, scheduler, resolution, clip skip)"
+                >
+                    <label className="flex items-center gap-4 cursor-pointer group">
+                        <div className="relative">
+                            <input
+                                type="checkbox"
+                                checked={autoApplyModelSettings}
+                                onChange={(e) => setAutoApplyModelSettings(e.target.checked)}
+                                className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                        </div>
+                        <span className="text-sm font-bold uppercase tracking-widest text-gray-400 group-hover:text-white transition-colors">{autoApplyModelSettings ? 'Enabled' : 'Disabled'}</span>
+                    </label>
+                    <p className="text-xs text-gray-500 mt-3 max-w-xl">
+                        Selecting a checkpoint rewrites the values above with that model's recommended
+                        ones, except anything you have locked. With this off, picking a checkpoint
+                        leaves your sampler exactly as you set it. The switch existed in the store,
+                        persisted, and had no control anywhere — so it was permanently{' '}
+                        <span className="text-gray-400">on</span> with no way to turn it off.
+                    </p>
                 </SettingGroup>
 
                 <SettingGroup title="Redirect After Generate" description="Redirect to gallery after starting generation">

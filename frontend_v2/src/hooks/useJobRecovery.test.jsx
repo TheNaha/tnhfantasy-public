@@ -83,7 +83,7 @@ describe('useJobRecovery', () => {
             limit: 10,
             taskType: null,
             includeAcknowledged: false,
-        });
+        }, { signal: expect.any(AbortSignal) });
     });
 
     it('defaults to an empty list when the payload is malformed', async () => {
@@ -122,7 +122,7 @@ describe('useJobRecovery', () => {
                 limit: 25,
                 taskType: 'llm',
                 includeAcknowledged: false,
-            })
+            }, { signal: expect.any(AbortSignal) })
         );
     });
 
@@ -146,7 +146,7 @@ describe('useJobRecovery', () => {
             limit: 10,
             taskType: null,
             includeAcknowledged: true,
-        });
+        }, { signal: expect.any(AbortSignal) });
     });
 
     it('does not fetch when disabled', async () => {
@@ -294,6 +294,23 @@ describe('useJobRecovery', () => {
                 acknowledged: false,
                 taskType: null,
             });
+        });
+
+        it('keeps every action callback identical across re-renders', async () => {
+            // `useMutation` returns a fresh result literal per render in React
+            // Query v5, so depending on the whole object rebuilt all seven of
+            // these on every render — and any consumer that hands one to an
+            // effect or a memoised child re-runs forever.
+            const { result, rerender } = await renderReady();
+            const ACTIONS = [
+                'retryJob', 'cancelJob', 'recoverJobs', 'acknowledgeJob',
+                'unacknowledgeAll', 'unacknowledgeJob', 'acknowledgeAll',
+            ];
+            const first = Object.fromEntries(ACTIONS.map((k) => [k, result.current[k]]));
+            for (let i = 1; i <= 3; i += 1) rerender();
+            for (const name of ACTIONS) {
+                expect(result.current[name], name).toBe(first[name]);
+            }
         });
 
         it('surfaces acknowledgement errors to the caller', async () => {

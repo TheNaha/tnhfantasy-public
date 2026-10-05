@@ -207,7 +207,7 @@ function EditPanel({ node, onClose, onNavigate }) {
                         <p className="text-gray-400 text-xs capitalize">{node.type}</p>
                     </div>
                 </div>
-                <button onClick={onClose} className="p-1 text-gray-400 hover:text-white transition-colors">
+                <button onClick={onClose} aria-label="Close entity details" className="p-1 text-gray-400 hover:text-white transition-colors">
                     <X size={16} />
                 </button>
             </div>

@@ -115,3 +115,64 @@ describe('StoryContextPanel — scenario row', () => {
         expect(screen.getByText(/injected into every continuation/i)).toBeInTheDocument();
     });
 });
+
+/**
+ * The story surface's copy of the defect fixed in `useChatWorkspaceData.js`.
+ *
+ * `StorySandbox.jsx` destructured six context queries with a `= []` default and
+ * no `isError`, and this panel builds "No lorebooks" / "No locations" straight
+ * off those arrays. A 503 therefore told the author of a story built on four
+ * lorebooks that they had none — and, for scenarios, removed the control that
+ * lets an applied scenario be seen and taken off, which is the entire reason
+ * that row exists.
+ */
+describe('StoryContextPanel with failed context queries', () => {
+    it('does not claim there are no lorebooks when the lorebooks query failed', () => {
+        renderPanel({
+            lorebooks: [],
+            queryErrors: { lorebooks: { error: new Error('503 down'), refetch: vi.fn(), noun: 'lorebooks' } },
+        });
+
+        expect(screen.getByRole('alert')).toHaveTextContent(/could not load your lorebooks/i);
+        expect(screen.queryByText('No lorebooks')).toBeNull();
+    });
+
+    it('does not claim there are no locations when the locations query failed', () => {
+        renderPanel({
+            locations: [],
+            queryErrors: { locations: { error: new Error('boom'), refetch: vi.fn(), noun: 'locations' } },
+        });
+
+        expect(screen.getByRole('alert')).toHaveTextContent(/could not load your locations/i);
+        expect(screen.queryByText('No locations')).toBeNull();
+    });
+
+    it('states a failed scenarios fetch instead of hiding the selector', () => {
+        renderPanel({
+            scenarios: [],
+            activeStory: { id: 'story-1', scenario_id: 'sc-gone' },
+            queryErrors: { scenarios: { error: new Error('s boom'), refetch: vi.fn(), noun: 'scenarios' } },
+        });
+
+        expect(screen.getByRole('alert')).toHaveTextContent(/could not load your scenarios/i);
+    });
+
+    it('retries through the entry the failure came from', () => {
+        const refetch = vi.fn();
+        renderPanel({
+            lorebooks: [],
+            queryErrors: { lorebooks: { error: new Error('boom'), refetch, noun: 'lorebooks' } },
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+        expect(refetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('still shows the real empty states when the queries succeeded', () => {
+        renderPanel({ lorebooks: [], locations: [], scenarios: [], queryErrors: {} });
+
+        expect(screen.getByText('No lorebooks')).toBeInTheDocument();
+        expect(screen.getByText('No locations')).toBeInTheDocument();
+        expect(screen.queryByRole('alert')).toBeNull();
+    });
+});

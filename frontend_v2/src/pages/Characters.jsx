@@ -449,7 +449,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                                     </button>
                                 )}
                             </div>
-                            <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
+                            <button onClick={onClose} aria-label="Close character editor" className="text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
                         </div>
 
                         {/* Tab bar (only visible when editing) */}
@@ -605,7 +605,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                                 {form.visual_tags.map((tag, idx) => (
                                     <span key={idx} className="px-2 py-1 text-xs bg-purple-500/20 text-purple-300 rounded-full border border-purple-500/30 flex items-center gap-1">
                                         {tag}
-                                        <button onClick={() => removeTag('visual_tags', idx)} className="text-purple-400 hover:text-white ml-1"><X size={12} /></button>
+                                        <button onClick={() => removeTag('visual_tags', idx)} aria-label={`Remove visual tag ${tag}`} className="text-purple-400 hover:text-white ml-1"><X size={12} /></button>
                                     </span>
                                 ))}
                             </div>
@@ -630,7 +630,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                                 {form.lora_triggers.map((tag, idx) => (
                                     <span key={idx} className="px-2 py-1 text-xs bg-blue-500/20 text-blue-300 rounded-full border border-blue-500/30 flex items-center gap-1">
                                         {tag}
-                                        <button onClick={() => removeTag('lora_triggers', idx)} className="text-blue-400 hover:text-white ml-1"><X size={12} /></button>
+                                        <button onClick={() => removeTag('lora_triggers', idx)} aria-label={`Remove LoRA trigger ${tag}`} className="text-blue-400 hover:text-white ml-1"><X size={12} /></button>
                                     </span>
                                 ))}
                             </div>
@@ -797,7 +797,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                             >
                                 <div className="flex items-center justify-between p-4 border-b border-gray-700/50">
                                     <h3 className="font-semibold text-gray-200">Select Recent Image</h3>
-                                    <button onClick={() => setShowGalleryPicker(false)} className="text-gray-500 hover:text-white"><X size={20} /></button>
+                                    <button onClick={() => setShowGalleryPicker(false)} aria-label="Close recent image picker" className="text-gray-500 hover:text-white"><X size={20} /></button>
                                 </div>
                                 <div className="flex-1 overflow-y-auto p-4">
                                     {loadingGallery ? (
@@ -812,7 +812,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                                                     onClick={() => handleSelectGalleryImage(img)}
                                                     className="aspect-square rounded-lg border border-gray-700 overflow-hidden hover:border-blue-500 transition-colors"
                                                 >
-                                                    <img src={img.preview} alt="" className="w-full h-full object-cover" />
+                                                    <img src={img.preview} alt={img.name || img.relative_path} className="w-full h-full object-cover" />
                                                 </button>
                                             ))}
                                         </div>

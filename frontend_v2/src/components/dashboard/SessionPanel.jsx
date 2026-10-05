@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     AlertTriangle,
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 
 import { useConfirmation } from '../../store/confirmationStore';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useGallery } from '../../hooks/useGallery';
 import { thumbUrl } from '../../utils/assetUrl';
 import { formatTimestamp } from '../../utils/dateTime';
@@ -571,6 +572,29 @@ function SessionMergePicker({ session, candidates, onCancel, onDone }) {
 export default function SessionPanel({ isOpen, onClose }) {
     const { confirm } = useConfirmation();
 
+    /**
+     * The drawer declares `role="dialog"`, so it takes part in the shared
+     * close-on-Escape contract.
+     *
+     * This replaces a hand-rolled `window` keydown listener that called
+     * `onClose()` on Escape without registering, which is the hazard
+     * `useEscapeKey.js` documents: every handler is a listener on the same
+     * target in the bubble phase, so `stopPropagation()` cannot disarm it, and a
+     * listener that does not check `defaultPrevented` closes whatever is *under*
+     * it as well. With both installed the Escape key called `onClose` twice from
+     * one press.
+     *
+     * The callback is deliberately stable. `useEscapeKey` re-registers — taking a
+     * *new*, higher registration id, which wins the topmost-only check — whenever
+     * its callback identity changes, and `onClose` is a fresh arrow on every
+     * `Dashboard` render. Passing it straight through would let this drawer
+     * outrank a dialog stacked over it and take its Escape.
+     */
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
+    const handleEscape = useCallback(() => onCloseRef.current?.(), []);
+    useEscapeKey(handleEscape, isOpen);
+
     const sessionsQuery = useSessions({}, { enabled: isOpen });
     const sessions = useMemo(() => flattenSessionPages(sessionsQuery.data), [sessionsQuery.data]);
 
@@ -589,15 +613,6 @@ export default function SessionPanel({ isOpen, onClose }) {
     const [imagesTargetId, setImagesTargetId] = useState(null);
     const [mergeTargetId, setMergeTargetId] = useState(null);
     const [actionError, setActionError] = useState(null);
-
-    useEffect(() => {
-        if (!isOpen) return undefined;
-        const onKeyDown = (event) => {
-            if (event.key === 'Escape') onClose?.();
-        };
-        window.addEventListener('keydown', onKeyDown);
-        return () => window.removeEventListener('keydown', onKeyDown);
-    }, [isOpen, onClose]);
 
     const isSplitSession = Boolean(splitTargetId);
     const splitSession = sessions.find((session) => session.id === splitTargetId) || null;
@@ -690,7 +705,7 @@ export default function SessionPanel({ isOpen, onClose }) {
                     onClick={(event) => event.stopPropagation()}
                     className="h-full w-full max-w-md bg-gray-900 border-l border-gray-800 flex flex-col shadow-2xl"
                     role="dialog"
-                    aria-label="Collections"
+                    aria-label="Sessions"
                 >
                     {isSplitSession && splitSession && (
                         <SessionSplitPicker

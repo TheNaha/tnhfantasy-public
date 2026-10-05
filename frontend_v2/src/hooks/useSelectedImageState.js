@@ -8,8 +8,8 @@ export function useSelectedImageState() {
 
     const { data: serverMetadata, isFetching } = useQuery({
         queryKey: ['metadata', assetPath(selectedImage)],
-        queryFn: async () => {
-            const data = await api.get(assetMetadataUrl(assetPath(selectedImage)));
+        queryFn: async ({ signal }) => {
+            const data = await api.get(assetMetadataUrl(assetPath(selectedImage)), { signal });
             return data;
         },
         enabled: !!selectedImage,

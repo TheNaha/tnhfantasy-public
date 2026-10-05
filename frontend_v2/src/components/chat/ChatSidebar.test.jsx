@@ -72,3 +72,49 @@ describe('ChatSidebar import control', () => {
         expect(handleImportChatFile).not.toHaveBeenCalled();
     });
 });
+
+/**
+ * A failed chats fetch rendered as "No chats yet — Click + to create one".
+ *
+ * `useChats()` destructured `data` with a `= []` default and published no
+ * `isError`, so a 503 was indistinguishable from an empty history. The copy
+ * names the remedy — click **+** — next to a working **+** button, and the
+ * chats it would duplicate were one click away.
+ *
+ * Fixed at the choke point (`useChatWorkspaceData`); this pins the consumer
+ * half of that contract. See `src/hooks/useChatWorkspaceData.errors.test.jsx`
+ * for the producer.
+ */
+describe('ChatSidebar with a failed chats fetch', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('states the failure and never says there are no chats', () => {
+        renderSidebar({
+            isChatsError: true,
+            chatsError: new Error('503 Service Unavailable'),
+            refetchChats: vi.fn(),
+            chats: [],
+        });
+
+        const alert = screen.getByRole('alert');
+        expect(alert).toHaveTextContent(/could not load your chats/i);
+        expect(alert).toHaveTextContent(/503 Service Unavailable/);
+        expect(screen.queryByText('No chats yet')).toBeNull();
+        expect(screen.queryByText('Click + to create one')).toBeNull();
+    });
+
+    it('offers a retry wired to the chats refetch', () => {
+        const refetchChats = vi.fn();
+        renderSidebar({ isChatsError: true, chatsError: new Error('boom'), refetchChats });
+
+        fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+        expect(refetchChats).toHaveBeenCalledTimes(1);
+    });
+
+    it('still says "No chats yet" when the fetch genuinely succeeded', () => {
+        renderSidebar({ isChatsError: false, chats: [] });
+
+        expect(screen.getByText('No chats yet')).toBeTruthy();
+        expect(screen.queryByRole('alert')).toBeNull();
+    });
+});

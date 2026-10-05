@@ -13,19 +13,19 @@ export const LLM_MODELS_KEY = ['llm', 'available-models'];
 export const LLM_DEFAULT_KEY = ['llm', 'default-provider'];
 
 /** Fetch all registered LLM providers with is_default flag. */
-async function fetchLLMProviders() {
-    return api.get(`${API_V2_BASE}/llm/providers`);
+async function fetchLLMProviders({ signal } = {}) {
+    return api.get(`${API_V2_BASE}/llm/providers`, { signal });
 }
 
 /** Fetch available models from the default LLM provider's worker. */
-async function fetchLLMModels() {
-    return api.get(`${API_V2_BASE}/llm/available-models`);
+async function fetchLLMModels({ signal } = {}) {
+    return api.get(`${API_V2_BASE}/llm/available-models`, { signal });
 }
 
 /** Fetch the current default provider config. */
-async function fetchLLMDefault() {
+async function fetchLLMDefault({ signal } = {}) {
     try {
-        return await api.get(`${API_V2_BASE}/llm/default-provider`);
+        return await api.get(`${API_V2_BASE}/llm/default-provider`, { signal });
     } catch (err) {
         // 404 means no LLM providers registered — not a hard error
         if (err?.status === 404 || err?.response?.status === 404) return null;

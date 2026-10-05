@@ -2,14 +2,11 @@ import { X, Copy, Check, ExternalLink, AlertCircle, RefreshCw } from 'lucide-rea
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
-import { api } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
 import { getProviderDisplayName } from '../utils/providerUtils';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import CivitaiSearchModal from './model-manager/CivitaiSearchModal';
 import ModalOverlay from './common/ModalOverlay';
-import { installedVersionsKey } from '../hooks/useCivitaiSearch';
-import { QUERY_KEYS } from '../constants/queryKeys';
+import { useAutopopulateModel } from '../hooks/useAutopopulate';
 import {
     ONLINE_RUNTIME_STATES,
     AVAILABLE_MODEL_STATES,
@@ -73,37 +70,32 @@ function ModelMetadataHeader({
 export default function ModelMetadataModal({ metadata, onClose, providers = [], providersLoading = false }) {
     const [copied, setCopied] = useState(null);
     const [activeImage, setActiveImage] = useState(null);
-    const queryClient = useQueryClient();
     const [showSearchModal, setShowSearchModal] = useState(false);
 
-    const autopopulateMutation = useMutation({
-        mutationFn: async (civitaiId = null) => {
-            const modelId = metadata.id || metadata.model_id;
-            const payload = civitaiId ? { civitai_id: civitaiId } : {};
-            const res = await api.post(`/api/v2/models/${modelId}/autopopulate`, payload);
-            return res.data;
+    /**
+     * `useAutopopulateModel` owns the request AND both invalidations.
+     *
+     * This file's hand-written copy had to remember the model-list invalidation
+     * and the installed-versions one, and it also resolved with `res.data` (the
+     * nested payload) — the shared hook resolves with the same value, so nothing
+     * downstream changes. Only the transport and the invalidation moved, and the
+     * toasts ride along as per-call callbacks rather than as hook options so the
+     * hook itself stays a single, unopinionated mutation.
+     */
+    const autopopulateMutation = useAutopopulateModel();
+
+    const runAutopopulate = (civitaiId = null) => autopopulateMutation.mutate(
+        { modelId: metadata?.id || metadata?.model_id, civitaiId },
+        {
+            onSuccess: () => {
+                toast.success("Model details autopopulated!");
+                setShowSearchModal(false);
+            },
+            onError: (err) => {
+                toast.error(err.message || 'Failed to autopopulate');
+            },
         },
-        onSuccess: (result, civitaiId) => {
-            toast.success("Model details autopopulated!");
-            // Object form. The positional `invalidateQueries(['models'])` this
-            // replaced is the react-query **v4** signature: in v5 the array is
-            // spread into the filters object, `queryKey` ends up `undefined`, and
-            // it matches every query in the cache — so one autopopulate refetched
-            // every mounted query in the app.
-            queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
-            // `civitaiId` is the id the write matched against, which is the id
-            // space this query is keyed by. The old `{ queryKey: ['model',
-            // modelId] }` was two elements under a three-element key and matched
-            // nothing.
-            if (civitaiId) {
-                queryClient.invalidateQueries({ queryKey: installedVersionsKey(civitaiId) });
-            }
-            setShowSearchModal(false);
-        },
-        onError: (err) => {
-            toast.error(err.message || 'Failed to autopopulate');
-        }
-    });
+    );
 
     if (!metadata) return null;
 
@@ -464,7 +456,7 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                 <CivitaiSearchModal 
                     initialQuery={displayName}
                     onClose={() => setShowSearchModal(false)}
-                    onSelect={(selectedModel) => autopopulateMutation.mutate(selectedModel.id)}
+                    onSelect={(selectedModel) => runAutopopulate(selectedModel.id)}
                 />
             )}
         </div>

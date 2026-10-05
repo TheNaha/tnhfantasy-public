@@ -54,7 +54,7 @@ export function useSessions(filters = {}, { enabled = true, pageSize = SESSIONS_
 
     return useInfiniteQuery({
         queryKey: sessionsKeys.list({ ...filters, limit }),
-        queryFn: ({ pageParam }) => listSessions({ ...filters, limit, offset: pageParam }),
+        queryFn: ({ pageParam, signal }) => listSessions({ ...filters, limit, offset: pageParam }, { signal }),
         initialPageParam: 0,
         getNextPageParam: (lastPage) => {
             if (!lastPage) return undefined;

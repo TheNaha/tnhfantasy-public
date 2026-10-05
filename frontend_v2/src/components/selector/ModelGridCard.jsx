@@ -6,6 +6,7 @@ import {
   formatAvailabilityBadgeLabel,
   getModelAvailabilitySummary,
 } from '../../utils/modelAvailability';
+import { formatBytes, KB } from '../../utils/bytes';
 import ModelPreviewImage from './ModelPreviewImage';
 
 const ModelGridCard = memo(function ModelGridCard({
@@ -110,7 +111,7 @@ const ModelGridCard = memo(function ModelGridCard({
           <div className="flex items-center gap-2 mt-1">
             {model.size && (
               <span className="text-xs text-gray-400">
-                {(model.size / 1024 / 1024 / 1024).toFixed(2)} GB
+                {formatBytes(model.size)}
               </span>
             )}
             {model.default_version && (
@@ -199,7 +200,7 @@ const ModelGridCard = memo(function ModelGridCard({
                     <div className="text-xs text-gray-500 truncate">
                       {version.base_model || 'Unknown'} •{' '}
                       {file.size_kb
-                        ? `${(file.size_kb / 1024 / 1024).toFixed(2)} GB`
+                        ? formatBytes(file.size_kb * KB)
                         : ''}
                     </div>
                   </div>

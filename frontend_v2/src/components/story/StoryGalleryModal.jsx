@@ -33,7 +33,7 @@ export default React.memo(function StoryGalleryModal({ isOpen, storyTitle, image
                                 <ImageIcon size={16} className="text-indigo-400" />
                                 {storyTitle || 'Story'} Gallery
                             </h3>
-                            <button onClick={onClose} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                            <button onClick={onClose} aria-label="Close story gallery" className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
                                 <X size={18} />
                             </button>
                         </div>

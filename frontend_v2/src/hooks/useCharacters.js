@@ -30,7 +30,7 @@ function downloadUrl(url, filename) {
 export const useCharacters = () => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS),
-        queryFn: () => api.get('/api/v2/characters')
+        queryFn: ({ signal }) => api.get('/api/v2/characters', { signal })
     });
 };
 
@@ -180,7 +180,7 @@ export const useCloneCharacter = () => {
 export const useCharacterCollection = (characterId) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, characterId, 'collection'),
-        queryFn: () => api.get(`/api/v2/collections/by-character/${characterId}`),
+        queryFn: ({ signal }) => api.get(`/api/v2/collections/by-character/${characterId}`, { signal }),
         enabled: !!characterId
     });
 };
@@ -192,7 +192,7 @@ export const useCharacterCollections = (characterIds) => {
     );
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, 'collections-batch', idsParam),
-        queryFn: () => api.get('/api/v2/collections/by-characters', { params: { ids: idsParam } }),
+        queryFn: ({ signal }) => api.get('/api/v2/collections/by-characters', { params: { ids: idsParam }, signal }),
         enabled: idsParam.length > 0
     });
 };

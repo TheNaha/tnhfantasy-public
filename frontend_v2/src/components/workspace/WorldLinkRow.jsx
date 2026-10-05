@@ -1,6 +1,8 @@
 import { Globe2 } from 'lucide-react';
 import clsx from 'clsx';
 
+import { QueryErrorState } from '../common/QueryState';
+
 const countLabel = (n, singular, plural = `${singular}s`) => `${n} ${n === 1 ? singular : plural}`;
 
 /**
@@ -19,8 +21,9 @@ const countLabel = (n, singular, plural = `${singular}s`) => `${n} ${n === 1 ? s
  * world's *index*, not ownership of record, so a count of 0 is honest: the
  * world contributes its description and nothing else.
  */
-export default function WorldLinkRow({ worldId, worlds = [], onChange, testId = 'world-link-row' }) {
+export default function WorldLinkRow({ worldId, worlds = [], onChange, testId = 'world-link-row', queryErrors = {} }) {
     const world = worlds.find(w => w?.id === worldId) || null;
+    const worldsError = queryErrors.worlds;
 
     const contributions = world ? [
         (world.lorebook_ids || []).length && countLabel(world.lorebook_ids.length, 'lorebook'),
@@ -64,12 +67,32 @@ export default function WorldLinkRow({ worldId, worlds = [], onChange, testId = 
                             : 'Added to every reply: this world\'s description. It has no lorebooks, locations or scenarios indexed yet.'}
                     </p>
                 </div>
-            ) : (
+            ) : worldsError ? null : (
+                // Suppressed when the fetch failed: printing "No worlds yet"
+                // and a failure notice in the same panel is the self-
+                // contradicting UI this whole chain exists to remove.
                 <p className="text-xs text-gray-500">
                     {worlds.length === 0
                         ? 'No worlds yet. Create one to group characters, chats, locations and lorebooks under shared lore.'
                         : "A world feeds its own description, lorebooks, locations and scenario into every reply. You can pick, change or drop it here at any time."}
                 </p>
+            )}
+
+            {/*
+                A failed worlds fetch is not an empty vault.
+                `useWorlds()` destructured `data` with a `= []` default, so the
+                row rendered "No worlds yet. Create one…" — and rendered no
+                `<select>` at all, since that is gated on `worlds.length > 0`.
+                A world already attached to the chat also resolved to `null`
+                here, so the panel could not even describe what was already in
+                use. This is the one place the truth can be stated.
+            */}
+            {worldsError && (
+                <QueryErrorState
+                    noun={worldsError.noun}
+                    error={worldsError.error}
+                    onRetry={worldsError.refetch}
+                />
             )}
         </div>
     );

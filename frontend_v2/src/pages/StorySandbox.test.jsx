@@ -37,6 +37,7 @@ const mockIllustrateChapter = vi.hoisted(() => vi.fn());
 const mockStoryAiAction = vi.hoisted(() => vi.fn());
 const mockUpdateStoryBeat = vi.hoisted(() => vi.fn());
 const mockDeleteStoryBeat = vi.hoisted(() => vi.fn());
+const mockPublishStory = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useWorldVault', () => ({
     useStories: (...a) => mockStories(...a),
@@ -73,7 +74,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useParseStory: () => ({ mutateAsync: vi.fn() }),
     useExportStoryFormatted: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     useExportPublishedStory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
-    usePublishStory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    usePublishStory: () => mockPublishStory(),
     useUnpublishStory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     useNarrateChapter: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
 }));
@@ -101,10 +102,16 @@ vi.mock('../api/collectionsApi', () => ({
     addImagesToCollection: vi.fn(),
 }));
 
-vi.mock('react-hot-toast', () => ({
-    default: { success: vi.fn(), error: vi.fn() },
-    toast: vi.fn(),
-}));
+// `toast` is called as a FUNCTION for the copied-link message and as
+// `toast.success` / `toast.error` elsewhere, so the default export has to be
+// both — a plain `{success, error}` object threw on the function call and would
+// have hidden the very branch these tests cover.
+vi.mock('react-hot-toast', () => {
+    const fn = vi.fn();
+    fn.success = vi.fn();
+    fn.error = vi.fn();
+    return { default: fn, toast: fn };
+});
 
 vi.mock('framer-motion', () => ({
     motion: {
@@ -190,6 +197,14 @@ describe('StorySandbox page', () => {
         mockAddStoryBeat.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
         mockIllustrateChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'img-1' }) });
         mockStoryAiAction.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'job-1' }), isPending: false });
+        // A full mutation object, not `{mutate}`: `ExportModal` reads
+        // `isPending` off all four of its mutation hooks, and returning a
+        // partial one crashed the render these tests drive.
+        mockPublishStory.mockReturnValue({
+            mutate: vi.fn(),
+            mutateAsync: vi.fn(),
+            isPending: false,
+        });
     });
 
     it('renders the stories sidebar', () => {
@@ -212,8 +227,19 @@ describe('StorySandbox page', () => {
         await waitFor(() => {
             const textareas = screen.getAllByRole('textbox');
             expect(textareas.some(el => el.value?.includes('Once upon a time'))).toBe(true);
-        }, { timeout: 3000 });
-    }, 5000);
+        }, { timeout: 10000 });
+        // 15000 rather than the previous 5000, and the inner waitFor raised from
+        // 3000. Measured in isolation this test takes ~2.7 s to satisfy — so the
+        // old 3000 ms `waitFor` had under 300 ms of headroom, and the suite runs
+        // 157 files in parallel on one host. It passed in some full-suite runs
+        // and failed in others with no code change in between, which is the
+        // signature of a load-sensitive timeout rather than a defect.
+        //
+        // Same class as `backend_v2/tests/test_app_boot_smoke.py`, which starts
+        // real threads and is the backend suite's known flake: a test whose
+        // assertion is about *what* is rendered should not also be a measurement
+        // of how fast the host is.
+    }, 15000);
 
     it('shows loading state while fetching stories', () => {
         mockStories.mockReturnValue({ data: [], isLoading: true });
@@ -590,5 +616,145 @@ describe('StorySandbox auto-save durability', () => {
         fireEvent.click(screen.getAllByText(/Chapter 2/)[0]);
 
         await waitFor(() => expect(toast.error).toHaveBeenCalled(), { timeout: 3000 });
+    });
+});
+
+describe('StorySandbox clipboard on an insecure origin', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useRealTimers();
+        mockStories.mockReturnValue({
+            data: [{ id: 'story-1', title: 'My Story', description: '', genre: 'Fantasy' }],
+            isLoading: false,
+        });
+        mockChapters.mockReturnValue({
+            data: [{ id: 'ch-1', story_id: 'story-1', chapter_number: 1, content: 'Once upon a time...', beats: [], image_paths: [] }],
+            isLoading: false,
+        });
+        mockLorebooks.mockReturnValue({ data: [], isLoading: false });
+        mockUpdateChapter.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({}) });
+        mockPublishStory.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
+    });
+
+    /**
+     * Publishing a story on a non-secure origin.
+     *
+     * Measured: `http://100.150.0.4:5174` → `{"secure":false,"clip":false}`,
+     * `http://localhost:5174` → both true. On the insecure side,
+     * `navigator.clipboard.writeText(...)` throws a SYNCHRONOUS TypeError, so
+     * there is no promise for `.then`/`.catch` to attach to and the "Shareable
+     * link copied" toast was unreachable — while the "Story published!" toast
+     * on the line above had already fired, and the throw escaped `onSuccess`.
+     */
+    describe('publish story on an insecure origin', () => {
+    const publishAndSucceed = () => {
+        const mutate = vi.fn();
+        mutate.mockImplementation((_vars, { onSuccess }) => onSuccess({ read_url: '/read/story/tok' }));
+        mockPublishStory.mockReturnValue({ mutate, mutateAsync: vi.fn(), isPending: false });
+        return mutate;
+    };
+
+        const clickPublish = () => screen.getByTitle('Publish story to web').click();
+
+        afterEach(() => { vi.unstubAllGlobals(); });
+
+        it('still reports the publish when the clipboard is unavailable', async () => {
+            vi.stubGlobal('navigator', { ...navigator, clipboard: undefined });
+            publishAndSucceed();
+
+            renderWithProviders(<StorySandbox />);
+            clickPublish();
+
+            await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Story published!'), { timeout: 3000 });
+            // And it says the copy failed, instead of silently claiming it worked.
+            const errors = toast.error.mock.calls.map((c) => String(c[0]));
+            expect(errors.some((m) => /could not be copied/i.test(m))).toBe(true);
+        });
+
+        it('confirms the copy when the clipboard works', async () => {
+            const writeText = vi.fn().mockResolvedValue(undefined);
+            vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+            publishAndSucceed();
+
+            renderWithProviders(<StorySandbox />);
+            clickPublish();
+
+            await waitFor(
+                () => expect(toast).toHaveBeenCalledWith(
+                    expect.stringContaining('Shareable link copied'),
+                    expect.anything()
+                ),
+                { timeout: 3000 }
+            );
+            expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/read/story/tok`);
+        });
+
+        it('does not report a copy failure when there was no read_url to copy', async () => {
+            vi.stubGlobal('navigator', { ...navigator, clipboard: undefined });
+            const mutate = vi.fn();
+            mutate.mockImplementation((_vars, { onSuccess }) => onSuccess({}));
+            mockPublishStory.mockReturnValue({ mutate, mutateAsync: vi.fn(), isPending: false });
+
+            renderWithProviders(<StorySandbox />);
+            clickPublish();
+
+            await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Story published!'), { timeout: 3000 });
+            const errors = toast.error.mock.calls.map((c) => String(c[0]));
+            expect(errors.some((m) => /could not be copied/i.test(m))).toBe(false);
+        });
+    });
+
+    /**
+     * Ctrl+Shift+C on the chapter editor.
+     *
+     * The handler was `navigator.clipboard.writeText(content).then(ok).catch(fail)`,
+     * and a bare promise chain does not contain a synchronous TypeError thrown
+     * by the dereference itself. It also runs from a `keydown` listener, where
+     * the throw had nowhere to surface: on a LAN address the shortcut did
+     * nothing at all, with no message.
+     */
+    describe('Ctrl+Shift+C chapter copy on an insecure origin', () => {
+        afterEach(() => { vi.unstubAllGlobals(); });
+
+        it('reports the outcome instead of throwing out of the keydown listener', async () => {
+            vi.stubGlobal('navigator', { ...navigator, clipboard: undefined });
+
+            renderWithProviders(<StorySandbox />);
+            await waitForEditorHydrated();
+
+            // Must not throw: an exception here would escape into the document
+            // and the user would see nothing.
+            expect(() => {
+                window.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'c', ctrlKey: true, shiftKey: true, bubbles: true,
+                }));
+            }).not.toThrow();
+
+            await waitFor(
+                () => {
+                    const messages = [
+                        ...toast.success.mock.calls.map((c) => String(c[0])),
+                        ...toast.error.mock.calls.map((c) => String(c[0])),
+                    ];
+                    expect(messages.some((m) => /copied to clipboard|Failed to copy/i.test(m))).toBe(true);
+                },
+                { timeout: 3000 }
+            );
+        });
+
+        it('confirms the copy when the clipboard works', async () => {
+            const writeText = vi.fn().mockResolvedValue(undefined);
+            vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+
+            renderWithProviders(<StorySandbox />);
+            await waitForEditorHydrated();
+
+            window.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'c', ctrlKey: true, shiftKey: true, bubbles: true,
+            }));
+
+            await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Chapter content copied to clipboard'), { timeout: 3000 });
+            expect(writeText).toHaveBeenCalledWith('Once upon a time...');
+        });
     });
 });

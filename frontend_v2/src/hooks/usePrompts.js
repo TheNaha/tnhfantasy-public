@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import promptsApi from '../api/promptsApi';
+import { DEFAULT_PROMPT_CATEGORIES } from '../constants/prompts';
 
 const MIGRATION_KEY = 'prompt-library-migrated';
 const OLD_STORAGE_KEY = 'prompt-library-storage';
@@ -42,9 +43,9 @@ async function migrateIfNeeded() {
 export function usePrompts(filters = {}) {
     return useQuery({
         queryKey: ['prompts', filters],
-        queryFn: async () => {
+        queryFn: async ({ signal }) => {
             await migrateIfNeeded();
-            const { prompts } = await promptsApi.listPrompts({ limit: 500, ...filters });
+            const { prompts } = await promptsApi.listPrompts({ limit: 500, ...filters }, { signal });
             return prompts || [];
         },
         staleTime: 1 * 60 * 1000, // 1 minute
@@ -54,11 +55,16 @@ export function usePrompts(filters = {}) {
 export function usePromptCategories() {
     return useQuery({
         queryKey: ['prompts', 'categories'],
-        queryFn: async () => {
-            const { categories } = await promptsApi.getCategories();
-            // Default categories in case backend returns empty or incomplete
-            const defaults = ['All', 'Portrait', 'Landscape', 'Anime', 'Abstract', 'Realistic', 'Custom'];
-            const merged = new Set([...defaults, ...(categories || [])]);
+        // Not `initialData`: that would be written to the cache as if it had
+        // been fetched, and the first real request would then be skipped until
+        // the stale time expired. The filter row needs *a* list on the first
+        // render, not a fake fetch.
+        placeholderData: DEFAULT_PROMPT_CATEGORIES,
+        queryFn: async ({ signal }) => {
+            const { categories } = await promptsApi.getCategories({ signal });
+            // Never empty: the filter row renders straight off this, and an
+            // empty array means no categories until the request settles.
+            const merged = new Set([...DEFAULT_PROMPT_CATEGORIES, ...(categories || [])]);
             return Array.from(merged);
         },
         staleTime: 5 * 60 * 1000,

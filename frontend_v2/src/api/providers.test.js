@@ -31,7 +31,7 @@ describe('providersApi load balancer aliases', () => {
     it('uses the canonical config endpoint for getLoadBalancing', () => {
         providersApi.getLoadBalancing();
 
-        expect(getMock).toHaveBeenCalledWith('/api/v2/providers/config/load-balancing');
+        expect(getMock).toHaveBeenCalledWith('/api/v2/providers/config/load-balancing', {});
     });
 
     it('uses the canonical config endpoint for updateLoadBalancing', () => {

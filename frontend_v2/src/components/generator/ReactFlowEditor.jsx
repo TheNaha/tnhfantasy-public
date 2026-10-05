@@ -31,8 +31,14 @@ const edgeTypes = {
 
 
 export default function ReactFlowEditor({ providerId, onGraphChange }) {
-  const { data: objectInfo, isLoading, error } = useObjectInfo(providerId);
-  const registry = useMemo(() => objectInfo ? new NodeRegistry(objectInfo) : null, [objectInfo]);
+  const { data: objectInfo, isLoading, error, isStale, staleData, refetch, isFetching } = useObjectInfo(providerId);
+  // A failed load with a cached payload attached: render the stale nodes so the
+  // editor stays usable, but never as if they were current. `useObjectInfo`
+  // used to return that cache from `queryFn`, which React Query records as a
+  // SUCCESS — so `error` was always undefined here and the palette rendered
+  // from a possibly-days-old IndexedDB copy with no banner and no retry.
+  const displayObjectInfo = error ? staleData : objectInfo;
+  const registry = useMemo(() => displayObjectInfo ? new NodeRegistry(displayObjectInfo) : null, [displayObjectInfo]);
   
   // Load initial state from local storage
   const [initialNodes, initialEdges] = useMemo(() => {
@@ -109,13 +115,24 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
     );
   }
 
-  if (error) {
+  if (error && !isStale) {
+    // No cached payload to fall back on: there is nothing to show, so this is
+    // the honest state — a failure, with the retry that `useObjectInfo` now
+    // refetches on rather than the user having to clear IndexedDB by hand.
     return (
-      <div className="w-full h-full flex items-center justify-center bg-red-500/10 rounded-2xl border border-red-500/20">
+      <div className="w-full h-full flex flex-col items-center justify-center gap-4 bg-red-500/10 rounded-2xl border border-red-500/20">
         <p className="text-red-400 font-medium text-center">
           Failed to load node definitions.<br/>
           <span className="text-sm opacity-75">{error.message}</span>
         </p>
+        <button
+          type="button"
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="inline-flex items-center gap-2 px-3 py-1.5 bg-red-500/20 border border-red-500/40 text-red-200 text-sm font-medium rounded-lg hover:bg-red-500/30 transition-colors disabled:opacity-50"
+        >
+          {isFetching ? 'Retrying…' : 'Try again'}
+        </button>
       </div>
     );
   }
@@ -124,6 +141,25 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
 
   return (
     <RegistryContext.Provider value={registry}>
+      {/* The stale banner. The palette below is usable but may not match the
+          provider's current node set, and the user is the only one who can
+          decide whether that matters for the graph they are about to run. */}
+      {isStale && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-500/30 text-amber-200 text-sm">
+          <span>
+            Showing the last saved node list — the provider could not be reached.
+          </span>
+          <span className="text-amber-200/70 text-xs">{error?.message}</span>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="ml-auto inline-flex items-center gap-2 px-3 py-1 bg-amber-500/20 border border-amber-500/40 text-amber-100 text-xs font-medium rounded-lg hover:bg-amber-500/30 transition-colors disabled:opacity-50"
+          >
+            {isFetching ? 'Retrying…' : 'Retry'}
+          </button>
+        </div>
+      )}
       {/* `flex-col` below `sm`, not `flex`. This is the actual cause of the
           54px canvas at 360: the sidebar is `w-full`, and inside a *row* a
           `w-full` flex item's basis is the whole container, so the canvas's

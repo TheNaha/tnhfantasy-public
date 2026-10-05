@@ -13,7 +13,8 @@ import { isActiveJobStatus } from '../utils/jobStatus';
 // The list used to hang off the root with no marker of its own, so every
 // `invalidateQueries({queryKey: CHAT_LIST_KEY})` — rename, update, send, import,
 // create — also refetched the system-prompt assembly of every cached chat.
-const CHATS_ROOT_KEY = ['world_vault', 'chats'];
+const CHATS_ROOT_KEY = buildQueryKey(QUERY_KEYS.CHATS);
+const MESSAGES_ROOT_KEY = buildQueryKey(QUERY_KEYS.MESSAGES);
 const CHAT_LIST_KEY = [...CHATS_ROOT_KEY, 'list'];
 const CHAT_DETAIL_KEY = (chatId) => [...CHATS_ROOT_KEY, chatId];
 
@@ -26,16 +27,16 @@ export const useChats = ({ limit = 50, offset = 0, workspace } = {}) => {
     if (offset) params.offset = offset;
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.CHATS, 'list', workspace, limit, offset),
-        queryFn: () => api.get('/api/v2/chats', { params })
+        queryFn: ({ signal }) => api.get('/api/v2/chats', { params, signal })
     });
 };
 
 export const useChat = (chatId) => {
     return useQuery({
         queryKey: CHAT_DETAIL_KEY(chatId),
-        queryFn: () => {
+        queryFn: ({ signal }) => {
             if (!chatId) return null;
-            return api.get(`/api/v2/chats/${chatId}`);
+            return api.get(`/api/v2/chats/${chatId}`, { signal });
         },
         enabled: !!chatId
     });
@@ -44,9 +45,9 @@ export const useChat = (chatId) => {
 export const useChatSystemPrompt = (chatId) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.CHATS, chatId, 'system-prompt'),
-        queryFn: () => {
+        queryFn: ({ signal }) => {
             if (!chatId) return null;
-            return api.get(`/api/v2/chats/${chatId}/system-prompt`);
+            return api.get(`/api/v2/chats/${chatId}/system-prompt`, { signal });
         },
         enabled: !!chatId
     });
@@ -55,9 +56,9 @@ export const useChatSystemPrompt = (chatId) => {
 export const useChatJobs = (chatId) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.CHATS, chatId, 'jobs'),
-        queryFn: () => {
+        queryFn: ({ signal }) => {
             if (!chatId) return [];
-            return api.get(`/api/v2/chats/${chatId}/jobs`);
+            return api.get(`/api/v2/chats/${chatId}/jobs`, { signal });
         },
         enabled: !!chatId,
         refetchInterval: (query) => {
@@ -199,7 +200,7 @@ export const useSendMessage = () => {
     return useMutation({
         mutationFn: ({ chatId, message }) => api.post(`/api/v2/chats/${chatId}/messages`, message),
         onMutate: async ({ chatId, message }) => {
-            const keyPrefix = ['world_vault', 'messages', chatId];
+            const keyPrefix = [...MESSAGES_ROOT_KEY, chatId];
             await queryClient.cancelQueries({ queryKey: keyPrefix });
             const previous = queryClient.getQueriesData({ queryKey: keyPrefix });
             const optimisticMessage = {
@@ -228,11 +229,11 @@ export const useSendMessage = () => {
         },
         onError: (_, { chatId }, context) => {
             context?.previous?.forEach(([key, data]) => queryClient.setQueryData(key, data));
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', chatId] });
+            queryClient.invalidateQueries({ queryKey: [...MESSAGES_ROOT_KEY, chatId] });
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
+            queryClient.invalidateQueries({ queryKey: [...MESSAGES_ROOT_KEY, variables.chatId] });
             invalidateVaultAggregates(queryClient);
         }
     });
@@ -252,7 +253,7 @@ export const useIllustrateChat = () => {
 export const useChatImages = (chatId) => {
     return useQuery({
         queryKey: [...CHAT_DETAIL_KEY(chatId), 'images'],
-        queryFn: () => api.get(`/api/v2/chats/${chatId}/images`),
+        queryFn: ({ signal }) => api.get(`/api/v2/chats/${chatId}/images`, { signal }),
         enabled: !!chatId
     });
 };
@@ -268,7 +269,7 @@ export const CHAT_SEARCH_MIN_LENGTH = 2;
 export const useSearchChats = (query) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.CHATS, 'list', 'search', query),
-        queryFn: () => api.get('/api/v2/chats', { params: { q: query } }),
+        queryFn: ({ signal }) => api.get('/api/v2/chats', { params: { q: query }, signal }),
         enabled: !!query && query.trim().length >= CHAT_SEARCH_MIN_LENGTH,
     });
 };

@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCreateLocation, useUpdateLocation } from '../../hooks/useLocations';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { buildQueryKey, QUERY_KEYS } from '../../constants/queryKeys';
 
 export function LocationModal({ isOpen, onClose, location }) {
     // Escape dismisses, matching every other dialog expectation.
@@ -43,7 +44,7 @@ export function LocationModal({ isOpen, onClose, location }) {
                 await createLocation.mutateAsync(form);
                 toast.success('Location created');
             }
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'locations'] });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.LOCATIONS) });
             onClose();
         } catch (e) {
             console.error(e);
@@ -74,7 +75,7 @@ export function LocationModal({ isOpen, onClose, location }) {
                         <h2 className="text-xl font-semibold text-gray-100">
                             {location ? 'Edit Location' : 'Create Location'}
                         </h2>
-                        <button onClick={onClose} className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors">
+                        <button onClick={onClose} aria-label={location ? 'Close edit location' : 'Close create location'} className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors">
                             <X size={20} />
                         </button>
                     </div>

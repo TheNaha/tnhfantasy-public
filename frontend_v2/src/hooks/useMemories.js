@@ -7,7 +7,7 @@ import { invalidateVaultAggregates } from './useWorldVaultResource';
 export const useCharacterMemories = (characterId) => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.MEMORIES, characterId),
-        queryFn: () => api.get(`/api/v2/memories/character/${characterId}`),
+        queryFn: ({ signal }) => api.get(`/api/v2/memories/character/${characterId}`, { signal }),
         enabled: !!characterId,
     });
 };
@@ -61,9 +61,10 @@ export const useSearchMemories = (characterId, query) => {
         queryKey: buildQueryKey(QUERY_KEYS.MEMORIES, 'search', characterId, query),
         // `query` is the debounced term (see MemoriesPanel), so a search is sent
         // once the typing settles rather than on every keystroke.
-        queryFn: () =>
+        queryFn: ({ signal }) =>
             api.get('/api/v2/memories/search/semantic', {
                 params: { character_id: characterId, query, limit: 20 },
+                signal,
             }),
         enabled: !!characterId && !!query && query.length >= 2,
     });

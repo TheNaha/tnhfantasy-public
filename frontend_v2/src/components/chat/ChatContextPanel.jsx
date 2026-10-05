@@ -11,6 +11,7 @@ import { isJobComplete, isJobFailed, isJobRunning } from '../../utils/jobStatus'
 import ContextField from './ContextField';
 import ContextSlider from './ContextSlider';
 import SamplingControls from '../common/SamplingControls';
+import { QueryErrorState } from '../common/QueryState';
 import SystemPromptPanel from './SystemPromptPanel';
 import ExpressionSelector from './ExpressionSelector';
 import MemoriesPanel from './MemoriesPanel';
@@ -41,6 +42,7 @@ function ChatContextPanel() {
         voices,
         worlds = [],
         personas = [],
+        queryErrors = {},
         messages = [],
         onEditCharacter,
         onEditLorebook,
@@ -95,6 +97,7 @@ function ChatContextPanel() {
                 worldId={activeChat?.world_id}
                 worlds={worlds}
                 onChange={(next) => onChatUpdate({ world_id: next })}
+                queryErrors={queryErrors}
             />
 
             {/* Persona Name */}
@@ -147,11 +150,23 @@ function ChatContextPanel() {
                 <p className="text-xs text-gray-500 mt-2 px-1">
                     Sets <code className="text-gray-400">{'{{user}}'}</code> and injects a persona block into the system prompt.
                 </p>
-                {personas.length > 0 && (
+                {(queryErrors.personas || personas.length > 0) && (
                     <div className="mt-3">
                         <label htmlFor="library-persona" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
                             Library Persona
                         </label>
+                        {queryErrors.personas ? (
+                            // A failed personas fetch is not an absent library.
+                            // The selector used to vanish entirely on `length > 0`,
+                            // so the outage looked exactly like "you have no
+                            // personas" and the setting was silently unavailable.
+                            <QueryErrorState
+                                noun={queryErrors.personas.noun}
+                                error={queryErrors.personas.error}
+                                onRetry={queryErrors.personas.refetch}
+                            />
+) : (
+                            <>
                         <select
                             id="library-persona"
                             data-testid="chat-persona-select"
@@ -175,6 +190,8 @@ function ChatContextPanel() {
                             </button>
                             .
                         </p>
+                            </>
+                        )}
                     </div>
                 )}
             </div>
@@ -465,9 +482,21 @@ function ChatContextPanel() {
                         )} />
                     </button>
                 </div>
-                {voices.length > 0 && (
+                {(queryErrors.voices || voices.length > 0) && (
                     <div>
                         <p className="text-xs text-gray-300 font-medium mb-1">Default TTS voice</p>
+                        {queryErrors.voices ? (
+                            // Same inversion as the persona selector above: the
+                            // voices query failing used to remove the control,
+                            // not report the failure, so narration became
+                            // silently unconfigurable.
+                            <QueryErrorState
+                                noun={queryErrors.voices.noun}
+                                error={queryErrors.voices.error}
+                                onRetry={queryErrors.voices.refetch}
+                            />
+                        ) : (
+                        <>
                         <select
                             className="w-full bg-gray-900 border border-gray-700 rounded-lg text-xs p-1.5 text-gray-300 focus:border-blue-500 outline-none"
                             value={activeChat?.tts_voice_id || ''}
@@ -479,6 +508,8 @@ function ChatContextPanel() {
                             ))}
                         </select>
                         <p className="text-xs text-gray-600 mt-1">Applied to every message in this chat.</p>
+                        </>
+                        )}
                     </div>
                 )}
                 <div className="flex items-center justify-between">
@@ -603,7 +634,13 @@ function ChatContextPanel() {
                         </Link>
                     </div>
                 </div>
-                {lorebooks.length === 0 ? (
+                {queryErrors.lorebooks ? (
+                    <QueryErrorState
+                        noun={queryErrors.lorebooks.noun}
+                        error={queryErrors.lorebooks.error}
+                        onRetry={queryErrors.lorebooks.refetch}
+                    />
+                ) : lorebooks.length === 0 ? (
                     <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
                         No lorebooks available
                     </p>

@@ -243,7 +243,7 @@ function LorebookFormModal({ editingId, form, setForm, onSave, onClose, isSubmit
                     <h2 className="text-lg font-semibold text-white">
                         {editingId ? 'Edit Lorebook' : 'New Lorebook'}
                     </h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white">
+                    <button onClick={onClose} aria-label={editingId ? 'Cancel editing lorebook' : 'Close lorebook form'} className="text-gray-400 hover:text-white">
                         <X size={20} />
                     </button>
                 </div>
@@ -447,7 +447,7 @@ function EntryManagerModal({ lorebook, onClose }) {
                             <p className="text-xs text-gray-500 truncate">{lorebook.description}</p>
                         )}
                     </div>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white shrink-0">
+                    <button onClick={onClose} aria-label="Close lorebook entries" className="text-gray-400 hover:text-white shrink-0">
                         <X size={20} />
                     </button>
                 </div>
@@ -464,7 +464,7 @@ function EntryManagerModal({ lorebook, onClose }) {
                             className="w-full bg-gray-800/60 border border-white/10 rounded-lg pl-8 pr-8 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                         />
                         {searchQuery && (
-                            <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                            <button onClick={() => setSearchQuery('')} aria-label="Clear entry search" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
                                 <X size={12} />
                             </button>
                         )}
