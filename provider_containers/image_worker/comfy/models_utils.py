@@ -4,7 +4,8 @@ import logging
 import hashlib
 from typing import List, Dict, Any
 
-from provider_core.utils import get_safe_path, is_model_file
+from provider_core.model_scan import scan_model_directory
+from provider_core.utils import get_safe_path
 
 import asyncio
 import aiofiles
@@ -35,19 +36,13 @@ async def list_models_with_metadata_internal(base_path: str, directory: str, com
         return []
         
     def _scan_directory():
-        file_entries = []
-        entry_set = set()
-        try:
-            with os.scandir(target_dir) as it:
-                for entry in it:
-                    if entry.is_file():
-                        entry_set.add(entry.name)
-                        if is_model_file(entry.name):
-                            file_entries.append((entry.name, entry.stat().st_size))
-        except Exception as e:
-            logger.warning(f"Failed to scandir {target_dir}: {e}")
-            return [], set()
-        return file_entries, entry_set
+        # Raises on a failed scandir or stat. This used to catch, log at
+        # `warning`, and return `([], set())` — which reconciliation's step 3
+        # cannot tell from "this directory holds no models", so it re-downloaded
+        # every checkpoint in it. `remote_agent/server.py::_walk` has always
+        # failed loud here, and every `_fetch_dir` closure already wraps a raise
+        # into RuntimeError. See `provider_core/model_scan.py`.
+        return scan_model_directory(target_dir)
 
     file_entries, entry_set = await asyncio.to_thread(_scan_directory)
     if not file_entries:

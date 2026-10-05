@@ -38,8 +38,17 @@ USER agent
 
 # /health is unauthenticated and answers {"status": "healthy"} (server.py) — the
 # one route that answers before the token check, the token check being the thing
-# most likely to be misconfigured. 8001 matches the ENV PORT above.
+# most likely to be misconfigured.
+#
+# `$PORT`, not a literal. The app reads `os.getenv("PORT", "8001")` (server.py
+# `__main__`), so an operator who set PORT to something else — or a compose file
+# that does — got a container whose healthcheck probed a port nothing listened on:
+# reported unhealthy forever while the agent worked. All three worker Dockerfiles
+# read `$PORT` here for exactly this reason; this one hardcoded 8001, which is the
+# bug class the others were already fixed for.
+#
+# Shell form, not exec form, so the CMD can expand the variable.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://localhost:%s/health' % os.environ.get('PORT', '8001'))"
 
 CMD ["python", "/app/remote_agent/server.py"]

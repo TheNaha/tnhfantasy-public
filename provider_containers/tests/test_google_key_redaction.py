@@ -185,5 +185,25 @@ class TestKeyIsRedactedFromMessages:
             payload = await client.list_models()
 
         assert KEY not in caplog.text
-        assert payload["status"] == "success"
-        assert payload["files"], "the fallback list must still be returned"
+
+        # The failure reason now travels in the message rather than in a list of
+        # invented model ids, so it is a second place the key could leak from.
+        assert KEY not in payload.get("message", ""), payload
+        assert payload["status"] == "success", "the response shape is unchanged"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_listing_returns_no_models(self, client, monkeypatch):
+        """It used to assert the opposite — "the fallback list must still be
+        returned" — which is the defect itself: five hardcoded Gemini ids for a
+        revoked key. `backend_v2/api/routes/world_vault/llm_config.py` only
+        substitutes its own `[{"id": "default"}]` when the list is *empty*, so a
+        fabricated list suppresses the backend's honest fallback and every one of
+        those ids fails on the next turn.
+        """
+        holder = _patch_client(monkeypatch, _FakeStream())
+        holder.get = AsyncMock(side_effect=RuntimeError("boom"))
+
+        payload = await client.list_models()
+
+        assert payload["files"] == [], payload
+        assert "Failed to list models" in payload.get("message", ""), payload

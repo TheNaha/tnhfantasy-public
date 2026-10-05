@@ -13,6 +13,7 @@ from provider_core.models import (
     UploadFileRequest, ValidateModelsRequest, TaskEvent
 )
 from provider_core.responses import failed, files_response, llm_healthy, llm_unhealthy, ok, retryable_for_exception, retryable_for_status
+from provider_core.sse import iter_sse_data, parse_sse_json
 
 
 # The backend's `_check_provider_health` (services/load_balancer.py) counts any
@@ -222,53 +223,54 @@ class AnthropicProviderClient(BaseProviderClient):
                     full_content = ""
                     tool_blocks: dict[int, dict[str, str]] = {}
 
-                    async for line in response.aiter_lines():
-                        line = line.strip()
-                        if not line or line.startswith("event:"):
+                    async def _cancelled() -> str:
+                        return TaskEvent(
+                            event="cancelled",
+                            job_id=job_id,
+                            outputs=[{"role": "assistant", "content": full_content, "cancelled": True}],
+                        ).to_ndjson()
+
+                    # Framing and the cancellation probe are shared
+                    # (`provider_core/sse.py`); only the payload mapping is
+                    # Anthropic's, because its event names live inside the JSON
+                    # body rather than in a sibling `event:` line.
+                    async for data_str in iter_sse_data(
+                        response,
+                        job_id=job_id,
+                        job_tracker=self.job_tracker,
+                        on_cancelled=_cancelled,
+                    ):
+                        data = parse_sse_json(data_str)
+                        if data is None:
                             continue
+                        type_ = data.get("type")
 
-                        if job_id and await self.job_tracker.is_cancelled(job_id):
-                            yield TaskEvent(
-                                event="cancelled",
-                                job_id=job_id,
-                                outputs=[{"role": "assistant", "content": full_content, "cancelled": True}],
-                            ).to_ndjson()
-                            return
-
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            try:
-                                data = json.loads(data_str)
-                                type_ = data.get("type")
-
-                                if type_ == "content_block_start":
-                                    content_block = data.get("content_block") or {}
-                                    if content_block.get("type") == "tool_use":
-                                        index = data.get("index", 0)
-                                        tool_blocks[index] = {
-                                            "id": content_block.get("id", ""),
-                                            "name": content_block.get("name", ""),
-                                            "input_json": "",
-                                        }
-                                elif type_ == "content_block_delta":
-                                    delta = data.get("delta", {}) or {}
-                                    if delta.get("type") == "input_json_delta":
-                                        index = data.get("index", 0)
-                                        entry = tool_blocks.setdefault(
-                                            index, {"id": "", "name": "", "input_json": ""}
-                                        )
-                                        entry["input_json"] += delta.get("partial_json", "")
-                                    else:
-                                        text = delta.get("text", "")
-                                        if text:
-                                            full_content += text
-                                            yield TaskEvent(
-                                                event="delta",
-                                                job_id=job_id,
-                                                text=text,
-                                            ).to_ndjson()
-                            except json.JSONDecodeError:
-                                pass
+                        if type_ == "content_block_start":
+                            content_block = data.get("content_block") or {}
+                            if content_block.get("type") == "tool_use":
+                                index = data.get("index", 0)
+                                tool_blocks[index] = {
+                                    "id": content_block.get("id", ""),
+                                    "name": content_block.get("name", ""),
+                                    "input_json": "",
+                                }
+                        elif type_ == "content_block_delta":
+                            delta = data.get("delta", {}) or {}
+                            if delta.get("type") == "input_json_delta":
+                                index = data.get("index", 0)
+                                entry = tool_blocks.setdefault(
+                                    index, {"id": "", "name": "", "input_json": ""}
+                                )
+                                entry["input_json"] += delta.get("partial_json", "")
+                            else:
+                                text = delta.get("text", "")
+                                if text:
+                                    full_content += text
+                                    yield TaskEvent(
+                                        event="delta",
+                                        job_id=job_id,
+                                        text=text,
+                                    ).to_ndjson()
 
                 output = {"role": "assistant", "content": full_content}
                 if tool_blocks:
@@ -320,17 +322,25 @@ class AnthropicProviderClient(BaseProviderClient):
         )
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
-        fallback = [
-            "claude-sonnet-4-20250514",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022",
-            "claude-3-haiku-20240307",
-            "claude-3-opus-20240229",
-        ]
+        # An empty list on every failure, and never a fabricated one.
+        #
+        # This returned five hardcoded model ids whenever the call failed — or
+        # succeeded with nothing in it. `backend_v2/api/routes/world_vault/
+        # llm_config.py` reads `data.get("files")` and falls back to
+        # `[{"id": "default"}]` only *when the list comes back empty*, so the
+        # fabricated list suppressed the backend's own honest fallback: a revoked
+        # Anthropic key produced five selectable model ids, every one of which
+        # failed on the next turn. The two engines that returned `[]` behaved
+        # better than the two that invented an answer, so all four agree on `[]`.
+        #
+        # A missing key is included. "No key" and "could not reach the API" are
+        # the same thing to the caller — nothing can be served either way — and
+        # promising five models that cannot answer is the same defect as a
+        # revoked key.
         if not self.api_key:
             return files_response(
-                [{"path": m, "name": m} for m in fallback],
-                message="ANTHROPIC_API_KEY not set; returning the known model list",
+                [],
+                message="ANTHROPIC_API_KEY not set; no models to list",
                 provider=self.provider_id,
             )
         try:
@@ -346,8 +356,9 @@ class AnthropicProviderClient(BaseProviderClient):
             resp.raise_for_status()
             data = resp.json()
             models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
-            if not models:
-                models = fallback
+            # An empty successful response stays empty. It used to be replaced by
+            # the fallback list, which is indistinguishable from a revoked key at
+            # the caller's end — see the note on this method.
             return files_response(
                 [{"path": m, "name": m} for m in sorted(models)],
                 provider=self.provider_id,
@@ -355,8 +366,8 @@ class AnthropicProviderClient(BaseProviderClient):
         except Exception as e:
             self.logger.warning(f"Failed to list models from Anthropic: {e}")
             return files_response(
-                [{"path": m, "name": m} for m in fallback],
-                message="Failed to list models from Anthropic; returning the known model list",
+                [],
+                message=f"Failed to list models from Anthropic: {e}",
                 provider=self.provider_id,
             )
 

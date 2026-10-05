@@ -129,7 +129,20 @@ class ModalTTSProviderClient(BaseProviderClient):
         provider_id = (runtime_config or {}).get("provider_id", "")
         super().__init__(provider_id, runtime_config)
         self.runtime_config = runtime_config or {}
-        self.job_tracker = self.runtime_config.get("job_tracker")
+        # `BaseProviderClient.__init__` has already installed the process-wide
+        # tracker via `get_job_tracker()`. This line used to overwrite it with
+        # `runtime_config.get("job_tracker")`, a key `build_runtime_config` has
+        # never produced — so `self.job_tracker` was always `None` in
+        # production, while the test that "covered" it built the client with
+        # `{"provider_id": "p", "job_tracker": tracker}`, a shape nothing builds.
+        #
+        # Two things broke because of it:
+        #   * `BaseProviderClient.cancel_job` raised `AttributeError` on `None`,
+        #     so `POST /cancel-job` returned a 500 carrying `retryable: true`.
+        #   * `inference` guards its `start_job`/`end_job` calls on
+        #     `if job_id and self.job_tracker`, so a cancellation could never be
+        #     observed mid-stream even when one was requested.
+        # The tracker is a singleton, so inheriting it is the whole fix.
 
     async def get_health(self) -> Dict[str, Any]:
         """Report on the TTS app specifically, not on the image one.
@@ -185,7 +198,11 @@ class ModalTTSProviderClient(BaseProviderClient):
             ),
         )
 
-        if job_id and self.job_tracker:
+        # No `and self.job_tracker` guard: the tracker is a process singleton
+        # installed by `BaseProviderClient.__init__`, so a None here means the
+        # constructor was bypassed — which is a bug to raise on, not a condition
+        # to skip cancellation tracking for.
+        if job_id:
             await self.job_tracker.start_job(job_id)
 
         async def event_stream():
@@ -229,7 +246,7 @@ class ModalTTSProviderClient(BaseProviderClient):
                         retryable=False,
                     ).to_ndjson()
             finally:
-                if job_id and self.job_tracker:
+                if job_id:
                     await self.job_tracker.end_job(job_id)
             if not seen_terminal:
                 # The app's generator ended without saying how the job went. A

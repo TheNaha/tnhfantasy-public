@@ -13,7 +13,9 @@ provider never held more than a bounded amount at once.
 
 from __future__ import annotations
 
+import ast
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -92,7 +94,22 @@ async def test_direct_url_get_file_streams_incrementally():
 
 @pytest.mark.asyncio
 async def test_remote_comfy_get_file_streams_and_reports_404():
+    """The streaming path, through the client class production actually uses.
+
+    This test used to substitute a bare `httpx.AsyncClient` for
+    `get_http_client()`, which *has* a `.stream` method. Production's
+    `get_http_client()` returns a `SharedHttpClient`, which does not — so the
+    substitution stood in for the defect it should have caught, and
+    `remote_comfy`'s `/get-file` raised `AttributeError` for every artifact it
+    was asked to fetch while this passed. `provider_core/router.py` flattens that
+    to a 500 carrying `retryable: true`, so the backend re-ran the same work on
+    another provider and paid for it.
+
+    The fake is now the real `SharedHttpClient` with only its inner transport
+    swapped, so a method the wrapper does not have fails here.
+    """
     from image_worker.engines.remote_comfy.client import RemoteComfyProviderClient
+    from provider_core.http_client import SharedHttpClient
 
     app, state = _app_serving_chunks()
     transport = ASGITransport(app=app)
@@ -100,18 +117,117 @@ async def test_remote_comfy_get_file_streams_and_reports_404():
     client = RemoteComfyProviderClient({})
     import image_worker.engines.remote_comfy.client as module
 
+    shared = SharedHttpClient()
+    # Pre-seed the inner client so `get_client()` never builds a real one.
+    shared._client = AsyncClient(transport=transport, base_url="http://agent")
+
     original = module.get_http_client
-    module.get_http_client = lambda: AsyncClient(transport=transport, base_url="http://agent")
+    module.get_http_client = lambda: shared
     try:
+        # The contract that was broken: whatever `get_http_client()` hands back
+        # has to be able to stream.
+        assert hasattr(await shared.get_client(), "stream")
         response = await client.get_file("models/loras/big.safetensors")
         received = bytearray()
         async for chunk in response.body_iterator:
             received += chunk
     finally:
         module.get_http_client = original
+        await shared._client.aclose()
 
     assert bytes(received) == _BODY
     assert state["sent"] == len(_BODY)
+
+
+def _binding_kind(node: ast.Assign) -> str | None:
+    """`"raw"` for the bare wrapper, `"unwrapped"` for a real client, else None."""
+    if not any(isinstance(t, ast.Name) and t.id == "client" for t in node.targets):
+        return None
+    value = node.value
+    if isinstance(value, ast.Await):
+        # `client = await get_http_client().get_client()`
+        return "unwrapped"
+    if (
+        isinstance(value, ast.Call)
+        and getattr(value.func, "id", None) == "get_http_client"
+    ):
+        return "raw"
+    return None
+
+
+def test_no_engine_calls_a_method_the_shared_client_does_not_have():
+    """Structural guard for the class of defect the test above missed.
+
+    `get_http_client()` returns `SharedHttpClient`, whose surface is
+    `get/post/put/delete/get_client/close/config`. Anything else — `.stream`,
+    `.request`, `.build_request` — is an `httpx.AsyncClient` method, so the call
+    site has to go through `await get_http_client().get_client()` first. Getting
+    this wrong is invisible to a suite that substitutes its own client, and at
+    runtime it is an `AttributeError` on a live request path.
+
+    Scoped rather than file-wide on purpose: `remote_comfy` binds `client`
+    thirteen times in one module, some bare and some unwrapped, so a file-wide
+    scan reports every `client.stream` against every bare binding and cries wolf.
+    Each function is walked in source order and a use is judged against the
+    binding that is live at that point.
+    """
+    from provider_core.http_client import SharedHttpClient
+
+    # Only the methods a call site can reach through the wrapper.
+    callable_surface = {
+        name for name in dir(SharedHttpClient) if not name.startswith("_")
+    } - {"config"}
+
+    root = Path(__file__).resolve().parents[1]
+    engine_files = sorted(root.glob("*/engines/*/client.py"))
+    assert engine_files, "no engine client files were indexed; the walk is broken"
+
+    offenders: list[str] = []
+    raw_bindings = 0
+    uses_checked = 0
+
+    for engine_file in engine_files:
+        tree = ast.parse(engine_file.read_text())
+        rel = engine_file.relative_to(root)
+        for func in ast.walk(tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # Source order within this function, and only its own statements.
+            live: str | None = None
+            for stmt in func.body:
+                for node in ast.walk(stmt):
+                    if isinstance(node, ast.Assign):
+                        kind = _binding_kind(node)
+                        if kind is not None:
+                            live = kind
+                            if kind == "raw":
+                                raw_bindings += 1
+                            # A use inside the same statement still sees the
+                            # old binding, so keep scanning this statement.
+                    if (
+                        live == "raw"
+                        and isinstance(node, ast.Attribute)
+                        and isinstance(node.value, ast.Name)
+                        and node.value.id == "client"
+                        and node.attr not in callable_surface
+                    ):
+                        uses_checked += 1
+                        offenders.append(
+                            f"{rel}:{node.lineno}  client.{node.attr}  "
+                            f"(SharedHttpClient has: {sorted(callable_surface)})"
+                        )
+
+    assert raw_bindings > 0, (
+        f"no bare `client = get_http_client()` binding found across "
+        f"{len(engine_files)} engine clients, so this guard is asserting "
+        "nothing; the pattern it constrains was probably renamed, not removed"
+    )
+    assert not offenders, (
+        "these call sites use an httpx.AsyncClient method on the object "
+        "get_http_client() returns. SharedHttpClient has no such method, so "
+        "each raises AttributeError on a live request path:\n  "
+        + "\n  ".join(offenders)
+    )
 
 
 @pytest.mark.asyncio

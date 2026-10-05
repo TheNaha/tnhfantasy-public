@@ -399,19 +399,47 @@ class TestTheEnginesShareTheListingPredicate:
     """Finding 9. One predicate, so a new pipeline-owned suffix is excluded
     everywhere at once instead of being added to a per-engine tuple that drifts."""
 
-    @pytest.mark.parametrize(
-        "dotted",
-        [
-            "image_worker.engines.modal.modal_app",
-            "llm_worker.engines.modal.modal_app",
-            "image_worker.engines.beam.beam_app",
-            "image_worker.comfy.models_utils",
-        ],
+    MODULES = (
+        "image_worker.engines.modal.modal_app",
+        "llm_worker.engines.modal.modal_app",
+        "image_worker.engines.beam.beam_app",
+        "image_worker.comfy.models_utils",
     )
-    def test_the_module_imports_the_shared_predicate(self, dotted):
+
+    @pytest.mark.parametrize("dotted", MODULES)
+    def test_the_module_reaches_the_shared_predicate(self, dotted):
+        """Either it calls `is_model_file`, or it delegates to the shared scan.
+
+        Asserting the name appears in the source would be satisfied by a comment,
+        and asserting the *import* would forbid the delegation that removed the
+        three-way drift: `provider_core/model_scan.scan_model_directory` is now
+        the single implementation of "which names in this directory are models",
+        and `image_worker/comfy/models_utils.py` reaches it that way. The property
+        worth pinning is that no module carries a local suffix list of its own.
+        """
         import inspect
 
         source = inspect.getsource(_import_or_skip(dotted))
-        assert "is_model_file" in source, (
-            f"{dotted} does not use provider_core.utils.is_model_file"
+        assert "is_model_file" in source or "scan_model_directory" in source, (
+            f"{dotted} classifies model files without the shared predicate"
+        )
+
+    def test_the_shared_scan_is_the_one_that_calls_the_predicate(self):
+        """And the scan is not a fourth copy of the rule."""
+        import inspect
+
+        from provider_core.model_scan import scan_model_directory
+
+        assert "is_model_file" in inspect.getsource(scan_model_directory)
+
+    @pytest.mark.parametrize("dotted", MODULES)
+    def test_no_module_hardcodes_a_model_suffix_list(self, dotted):
+        """The drift finding 9 describes: a local tuple of model suffixes."""
+        import inspect
+        import re
+
+        source = inspect.getsource(_import_or_skip(dotted))
+        # `.safetensors"` inside a tuple/list, e.g. `(".safetensors", ".ckpt")`.
+        assert not re.search(r"\(\s*[\"']\.safetensors[\"']\s*,", source), (
+            f"{dotted} carries its own model-suffix tuple; use provider_core.utils"
         )

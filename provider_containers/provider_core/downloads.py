@@ -8,6 +8,8 @@ import fcntl
 import hashlib
 import json
 import os
+import re
+import shutil
 import time
 import uuid
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
@@ -50,6 +52,31 @@ TRANSIENT_STATUSES = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 # retried (that is the whole point of resume); ENOSPC must not be.
 PERMANENT_ERRNOS = frozenset(
     {errno.ENOSPC, errno.EDQUOT, errno.EACCES, errno.EROFS, errno.EISDIR, errno.EPERM}
+)
+
+# "The filesystem said no", as distinct from "I could not read it" and from
+# "something is wrong with the bytes".
+#
+# Parking is right for a *transient* failure: the partial is good, the next
+# attempt resumes it, and nothing is lost. It is wrong for this pair. `rename(2)`
+# needs no space and no blocks, so `_persist_partial` succeeds, parks the partial,
+# and reports "N bytes kept" — on a volume that has no space for the next attempt
+# either. The next `_claim_resume_slot` moves those gigabytes back out and
+# appends into the same full volume, fails at the same wall, and parks again. So
+# every out-of-space attempt leaves a multi-GB file on a full volume, and the
+# error the operator sees is a resume offset rather than the actual cause.
+#
+# The messages are matched too, not only the errno: a gcsfuse or an overlay mount
+# can report the same condition with the errno stripped, and `ENOSPC` buried
+# inside a wrapper that is no longer an `OSError`.
+OUT_OF_SPACE_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT})
+OUT_OF_SPACE_MESSAGES = ("No space left on device", "Disk quota exceeded")
+
+# Headroom required on top of the bytes about to be written, so a download that
+# exactly fills the volume still leaves room for its `.json` and `.preview.png`
+# sidecars, the `.lock`, and whatever else shares the mount.
+DOWNLOAD_FREE_SPACE_MARGIN_BYTES = int(
+    os.getenv("PROVIDER_DOWNLOAD_FREE_SPACE_MARGIN_BYTES", str(64 * 1024 * 1024))
 )
 
 
@@ -345,6 +372,44 @@ def _close_response(response: Any) -> None:
             close()
 
 
+def _reject_undeclared_total(total_size: int) -> None:
+    """Refuse a response that never said how big the body is.
+
+    `total_size == 0` does not mean "no length check needed", it means "there is
+    no length to check against". Both of the pipeline's size comparisons are
+    conditioned on a non-zero total — `on_disk != total_size` here and the
+    `total_size > 0` gate on the published file — so an undeclared total skipped
+    *both*. Reproduced against the pipeline:
+
+        remote total                      : 7000000
+        total_size seen here              : 0          <- unknown
+        bytes on disk                     : 60202
+        validate_downloaded_file(...)     : {'valid': True, 'indeterminate': False}
+        os.replace would publish 60202 bytes as a 7 MB model: True
+
+    `validate_downloaded_file` checks the magic header, not the length, so a short
+    file of a real model is a *valid* short file. A 206 reaches this with
+    `total_size == 0` when `Content-Range` names no total (`bytes 60202-*`) and
+    the response carries no `Content-Length`; a 200 does when the body is
+    delimited only by EOF. Both are legal HTTP.
+
+    Raised before the body is streamed and before `observed["identity"]` is set,
+    so no megabyte is fetched to reach the verdict. `transient=False`: no retry
+    changes what the server chooses to send. On a resume the attempt's bytes are
+    still parked under the identity the *earlier* attempt recorded, because
+    `_transfer_with_resume` keeps the claimed identity when the headers named
+    none — which is why the good bytes survive for the next attempt.
+    """
+    if total_size:
+        return
+    raise _DownloadAttemptError(
+        "the server never declared the total size "
+        "(no Content-Range total and no Content-Length); refusing to accept a "
+        "download of unknown length",
+        transient=False,
+    )
+
+
 def _is_transient_error(exc: BaseException) -> bool:
     if isinstance(exc, _DownloadAttemptError):
         return exc.transient
@@ -353,6 +418,48 @@ def _is_transient_error(exc: BaseException) -> bool:
     if isinstance(exc, OSError) and exc.errno in PERMANENT_ERRNOS:
         return False
     return True
+
+
+def _is_out_of_space(exc: BaseException) -> bool:
+    """Did the filesystem refuse because it is full?"""
+    if isinstance(exc, OSError) and exc.errno in OUT_OF_SPACE_ERRNOS:
+        return True
+    text = str(exc)
+    return any(message in text for message in OUT_OF_SPACE_MESSAGES)
+
+
+def _ensure_free_space(path: str, needed_bytes: int) -> None:
+    """Refuse to start writing `needed_bytes` into a volume that cannot hold them.
+
+    Without this, "no space" is discovered by the kernel part-way through a 7 GB
+    transfer: everything up to that point was fetched, written and then parked,
+    and the volume is left full. Checking once the headers have named the total —
+    before a single body byte is written — turns a multi-GB, minutes-long failure
+    into an immediate one with a message that says what to do.
+
+    Skipped when the remaining length is unknown (there is nothing to check
+    against; `_reject_undeclared_total` has already refused that case) and when
+    `disk_usage` itself fails. A volume whose free space cannot be read is not a
+    reason to refuse a download — the read is a hint, not a gate, and treating it
+    as a gate would break every download on a filesystem that does not report it.
+    """
+    if needed_bytes <= 0:
+        return
+    directory = os.path.dirname(path) or "."
+    try:
+        free = shutil.disk_usage(directory).free
+    except (OSError, ValueError):
+        return
+    required = needed_bytes + DOWNLOAD_FREE_SPACE_MARGIN_BYTES
+    if free >= required:
+        return
+    raise _DownloadAttemptError(
+        f"not enough free space in {directory}: {_format_size(free)} available, "
+        f"{_format_size(needed_bytes)} needed for this download "
+        f"(plus {_format_size(DOWNLOAD_FREE_SPACE_MARGIN_BYTES)} of headroom); "
+        f"free space on the volume before downloading a model",
+        transient=False,
+    )
 
 
 def _stream_to_file(
@@ -489,6 +596,7 @@ def _attempt_download(
                     f"restarting from byte 0"
                 )
             total_size = content_length
+            _reject_undeclared_total(total_size)
             identity = record(total_size)
             if claimed_identity is not None and claimed_identity != identity:
                 log(
@@ -512,6 +620,7 @@ def _attempt_download(
             total_size = range_total if range_total is not None else 0
             if not total_size and content_length:
                 total_size = content_length + range_start
+            _reject_undeclared_total(total_size)
             identity = record(total_size)
             if claimed_identity is not None and claimed_identity != identity:
                 # The 206 body starts at our offset but describes a *different*
@@ -566,6 +675,10 @@ def _attempt_download(
         if append:
             log(f"[{log_prefix}] Resuming at byte {start_offset}")
 
+        # The total is known and not one body byte has been written yet, so this is
+        # the only moment at which the cost of a full volume is still zero.
+        _ensure_free_space(temp_path, total_size - start_offset)
+
         written = _stream_to_file(
             response,
             temp_path,
@@ -582,7 +695,12 @@ def _attempt_download(
         _close_response(response)
 
     on_disk = os.path.getsize(temp_path)
-    if total_size and on_disk != total_size:
+    # Unconditional now. `_reject_undeclared_total` has already guaranteed
+    # `total_size` is positive by the time control reaches here, so the
+    # `if total_size and ...` guard could only ever hide a comparison that needed
+    # running — which is how a 60202-byte body was published for a
+    # 7000000-byte model with no error anywhere.
+    if on_disk != total_size:
         if on_disk > total_size:
             _remove_quietly(temp_path)
             raise _DownloadAttemptError(
@@ -633,6 +751,7 @@ def _transfer_with_resume(
     first_offset = 0
     identity = claimed_identity
     last_error = "no attempt was made"
+    last_exc: Optional[BaseException] = None
     attempt = 0
 
     while attempt < attempts_allowed:
@@ -674,12 +793,27 @@ def _transfer_with_resume(
             etag = observed.get("etag") or etag
             total_written += observed.get("written", 0)
             if not _is_transient_error(exc):
+                if _is_out_of_space(exc):
+                    # Not parked. See OUT_OF_SPACE_ERRNOS: parking succeeds here
+                    # because `rename(2)` needs no space, which leaves a multi-GB
+                    # partial on a volume that cannot hold the next attempt either.
+                    # The bytes on disk are dropped rather than left behind, and
+                    # the message says why — the operator has to free space either
+                    # way, and a parked partial is what makes the next attempt look
+                    # like it is resuming when it is hitting the same wall.
+                    _remove_quietly(temp_path)
+                    raise _DownloadAttemptError(
+                        f"{exc} — the partial was not kept: there is no room for it "
+                        f"or for the next attempt, so resuming would hit the same wall",
+                        transient=False,
+                    ) from exc
                 kept = _persist_partial(full_path, temp_path, identity)
                 raise _DownloadAttemptError(
                     f"{exc}" + (f" ({kept} bytes kept at offset {kept})" if kept else ""),
                     transient=False,
                 ) from exc
             last_error = str(exc)
+            last_exc = exc
             log(f"[{log_prefix}] Attempt {attempt}/{attempts_allowed} failed: {last_error}")
             continue
 
@@ -700,6 +834,17 @@ def _transfer_with_resume(
 
         outcome["attempts"] = attempt
         return outcome
+
+    if last_exc is not None and _is_out_of_space(last_exc):
+        # Same reasoning as the per-attempt branch above: a partial parked on a
+        # volume with no room is a multi-GB file that makes the next attempt look
+        # like a resume when it is hitting the identical wall.
+        _remove_quietly(temp_path)
+        raise _DownloadAttemptError(
+            f"{last_error} — the partial was not kept: the volume is out of space, "
+            f"so there is nothing to resume into",
+            transient=False,
+        )
 
     kept = _persist_partial(full_path, temp_path, identity)
     if kept:
@@ -890,6 +1035,32 @@ def _download_model_to_path_unlocked(
         resumed = int(transfer.get("resumed_bytes") or 0)
         on_disk = os.path.getsize(temp_path)
 
+        # The publish gate, and deliberately independent of the one in
+        # `_attempt_download`. `total_size == 0` means "the remote never said how
+        # big this is", and both size checks in the pipeline are conditioned on a
+        # non-zero total — so with an unknown total, nothing downstream compares
+        # the bytes against anything. `_attempt_download` already refuses that
+        # case; this refuses it again at the only place where the consequence
+        # (an `os.replace` into the live model tree) actually happens, so a future
+        # path that reaches `os.replace` with an unverified length cannot do it
+        # just because it did not inherit the inner guard.
+        if total_size <= 0:
+            _remove_quietly(temp_path)
+            for _identity, slot in _resume_slots(full_path):
+                _remove_quietly(slot)
+            raise ValueError(
+                f"Refusing to publish {label}: the server never declared its total size, "
+                f"so the {on_disk} bytes received could not be verified against it."
+            )
+        if on_disk != total_size:
+            _remove_quietly(temp_path)
+            for _identity, slot in _resume_slots(full_path):
+                _remove_quietly(slot)
+            raise ValueError(
+                f"Refusing to publish {label}: {on_disk} bytes on disk against a declared "
+                f"total of {total_size}."
+            )
+
         elapsed = max(time.time() - transfer_started, 1e-6)
         speed_mbps = (fetched / (1024 ** 2)) / elapsed
         logger(f"[{log_prefix}] Download complete (temp file)")
@@ -910,7 +1081,33 @@ def _download_model_to_path_unlocked(
         if not validation.get("valid"):
             for err in validation.get("errors", [validation.get("error", "Validation failed")]):
                 logger(f"[{log_prefix}] Validation error: {err}")
-            # The bytes are all there and all wrong, so there is nothing worth
+
+            if validation.get("indeterminate"):
+                # The file could not be READ (EIO, ENOMEM, a gcsfuse stall) —
+                # that is not a verdict on it. `provider_core/validation.py`
+                # states the contract this was breaking: "A caller that can act
+                # destructively on `invalid` MUST check `indeterminate` first.
+                # Deleting on an indeterminate result is never correct." Four
+                # callers honoured it; this one removed the temp file AND every
+                # resume slot, so a single transient read fault on a 7 GB
+                # checkpoint reset a transfer that `_transfer_with_resume` exists
+                # to protect back to byte 0 — unattended, on a mount where EIO is
+                # routine. There is no way to recover a multi-GB download deleted
+                # on a guess.
+                #
+                # The partial is PARKED rather than just left alone, because the
+                # outer `except Exception` sweeps this attempt's temp file on any
+                # raise — so "do not delete" has to mean "re-park it where the
+                # next attempt will find it", not "skip two removes".
+                kept = _persist_partial(full_path, temp_path, transfer.get("identity"))
+                raise ValueError(
+                    f"Validation could not read the downloaded file: "
+                    f"{validation.get('error', 'unknown error')} "
+                    f"({kept} bytes parked for the next attempt; the model is not "
+                    f"known to be bad)"
+                )
+
+            # Read succeeded and the bytes are wrong, so there is nothing worth
             # resuming: a rerun must start from byte 0.
             _remove_quietly(temp_path)
             for _identity, slot in _resume_slots(full_path):
@@ -1003,6 +1200,52 @@ def _download_model_to_path_unlocked(
         return {"status": "error", "message": error_message, }
 
 
+# The two shapes of pipeline temp file, as *structure* rather than as a prefix.
+#
+# `_unique_temp_path`  -> f"{full_path}.{os.getpid()}.{uuid.uuid4().hex[:8]}.downloading"
+# `_resume_slot_path`  -> f"{full_path}{RESUME_SLOT_MARKER}{identity}.downloading"
+#
+# These are the patterns, not a guess at them, and they are deliberately defined
+# next to the two functions above so a change to a name breaks this rather than
+# silently making the sweeper match nothing.
+_ATTEMPT_TEMP_RE = re.compile(r"^\d+\.[0-9a-f]{8}$")
+_RESUME_TEMP_RE = re.compile(rf"^{re.escape(RESUME_SLOT_MARKER.lstrip('.'))}[0-9a-zA-Z_-]+$")
+
+
+def _is_temp_for(basename: str, entry: str) -> bool:
+    """Is `entry` a pipeline temp file belonging to the model named `basename`?
+
+    This was `entry.startswith(basename + ".") and entry.endswith(".downloading")`,
+    which is a prefix test, and a prefix test over a namespace that contains other
+    legal model names is not a containment test. For `foo.safetensors` it also
+    swept `foo.safetensors.fp16.safetensors.999.00112233.downloading` — and
+    `is_model_file("foo.safetensors.fp16.safetensors")` is `True`, so that is a
+    perfectly legal filename belonging to a *different* model.
+
+    That matters more than it looks, because this function is the authorisation
+    gate on the delete routes. `remote_agent/server.py`, both Modal apps and
+    `beam_app.py` all do:
+
+        if not os.path.exists(full_path) and not list(pending_download_paths(full_path)):
+            return 404
+        ... remove it ...
+
+    So a false positive here is not a stray entry in a listing — it turns "this
+    model does not exist" into "delete what we found", and what we found belongs to
+    somebody else's in-flight download.
+
+    Matching the two real shapes fixes that and costs nothing: a name that is not
+    `<pid>.<hex>` or `resume.<identity>` after the model name is not ours.
+    """
+    if not entry.endswith(DOWNLOADING_SUFFIX):
+        return False
+    prefix = basename + "."
+    if not entry.startswith(prefix):
+        return False
+    remainder = entry[len(prefix): -len(DOWNLOADING_SUFFIX)]
+    return bool(_ATTEMPT_TEMP_RE.match(remainder) or _RESUME_TEMP_RE.match(remainder))
+
+
 def pending_download_paths(full_path: str) -> Iterator[str]:
     """Yield the temp files of every in-flight or abandoned attempt at `full_path`.
 
@@ -1014,15 +1257,18 @@ def pending_download_paths(full_path: str) -> Iterator[str]:
     Resume slots (`<path>.resume.<identity>.downloading`) match this pattern too,
     which is what makes `FileStorage.delete_file` remove a parked partial along
     with the model it belongs to instead of stranding it on the volume.
+
+    Only names of exactly those two shapes are yielded — see `_is_temp_for` for
+    why that is an authorisation decision and not a tidiness one.
     """
     directory = os.path.dirname(full_path) or "."
-    prefix = os.path.basename(full_path) + "."
+    basename = os.path.basename(full_path)
     try:
         entries = os.listdir(directory)
     except OSError:
         return
     for entry in entries:
-        if entry.startswith(prefix) and entry.endswith(DOWNLOADING_SUFFIX):
+        if _is_temp_for(basename, entry):
             yield os.path.join(directory, entry)
 
 

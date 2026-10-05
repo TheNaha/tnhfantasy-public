@@ -288,10 +288,18 @@ class TestAnthropicMessageHandling:
             def stream(self, *args, **kwargs):
                 captured["json"] = kwargs.get("json", args[2] if len(args) > 2 else None)
                 resp = FakeResponse()
+                # Blank line after every event: Anthropic terminates each SSE
+                # event with one, and it is what separates one frame from the
+                # next. Without it the two deltas are correctly read as ONE frame
+                # (see `tests/test_sse_framing.py`), which is not what this test
+                # is about.
                 resp.lines = [
                     'event: content_block_delta',
+                    '',
                     'data: {"type":"content_block_delta","delta":{"text":"Hel"}}',
+                    '',
                     'data: {"type":"content_block_delta","delta":{"text":"lo"}}',
+                    '',
                 ]
                 return FakeStreamCtx(resp)
 
@@ -344,9 +352,14 @@ class TestGoogleMessageHandling:
                 self.raise_for_status_called = True
 
             async def aiter_lines(self):
-                # Minimal Gemini SSE shape: one candidate, two text chunks.
+                # Minimal Gemini SSE shape: one candidate, two text chunks. Blank
+                # line after each — the Gemini endpoint terminates every SSE event
+                # with one, and without it the two chunks are correctly read as a
+                # single frame (`tests/test_sse_framing.py`).
                 yield 'data: {"candidates":[{"content":{"parts":[{"text":"Hel"}]}}]}'
+                yield ''
                 yield 'data: {"candidates":[{"content":{"parts":[{"text":"lo"}]}}]}'
+                yield ''
 
         class FakeStreamCtx:
             async def __aenter__(self):

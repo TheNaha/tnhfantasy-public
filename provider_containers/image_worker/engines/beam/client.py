@@ -480,7 +480,22 @@ class BeamProviderClient(BaseProviderClient):
         async def validate_existing(delete_invalid: bool):
             client = get_http_client()
             response = await client.post(f"{BEAM_STORAGE_URL}/validate-all-models", json={"delete_invalid": delete_invalid}, headers=get_beam_headers(), timeout=120.0)
-            return response.json() if response.status_code == 200 else {}
+            # A raise, as the Modal twin already did. This returned
+            # `response.json() if response.status_code == 200 else {}`, and `{}`
+            # is a *successful sweep with nothing wrong*: reconciliation's step 0
+            # reads `.get("total_invalid", 0)`, gets 0 from both the failure and
+            # the empty dict, and logs "✓ All existing models are valid". So a 401
+            # from a Beam API-key mismatch read as a clean bill of health on two
+            # of the three engines — the third already logged "⚠ Validation step
+            # failed". Not `raise_for_status()`: the router's catch-all flattens
+            # that to a 500 "Internal server error", so the status and Beam's own
+            # message are the diagnosis.
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Beam storage /validate-all-models returned {response.status_code}: "
+                    f"{response.text}"
+                )
+            return response.json()
 
         async def list_existing_files():
             paths = {}

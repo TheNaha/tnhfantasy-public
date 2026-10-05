@@ -10,11 +10,52 @@ from .logging import get_logger
 from .models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest, DeleteFileRequest,
-    ReconcileRequest, build_error_response
+    ReconcileRequest, TaskEvent, build_error_response
 )
 from .responses import config_fault_detail, retryable_for_status
 
 logger = get_logger("provider_core.router")
+
+
+def _with_started_event(response: StreamingResponse, job_id: Optional[str]) -> StreamingResponse:
+    """Prepend a `started` TaskEvent to an inference stream.
+
+    `TaskEvent.event` has carried `"started"` — documented as "job accepted, work
+    beginning" — since the event schema was written, and the backend acts on it:
+    it is the sole writer of `JobStatus.PRE_GENERATION`
+    (`backend_v2/services/provider_client.py`), which is what `JobCard`'s
+    "Preparing" state renders from. No worker ever emitted it, so that status and
+    that UI state were unreachable: a job went straight from queued to
+    generating.
+
+    Emitting it here rather than in an engine is deliberate. `router.py` is the
+    one request path every image worker's `/inference` goes through, so this is
+    the only place that can guarantee the event regardless of engine. Deriving it
+    from ComfyUI's own `execution_start` message does not: a job whose graph is
+    entirely cached emits `execution_cached` and never starts executing, and the
+    websocket reader in `workflow_executor.py` does not handle `execution_start`
+    at all.
+
+    It is prepended to a stream that already began, so an engine that emits its
+    own `started` first would simply produce two; nothing downstream treats a
+    repeat as terminal.
+    """
+    if not job_id or not hasattr(response, "body_iterator"):
+        return response
+
+    inner = response.body_iterator
+
+    async def with_started():
+        yield TaskEvent(event="started", job_id=job_id).to_ndjson()
+        async for chunk in inner:
+            yield chunk
+
+    return StreamingResponse(
+        with_started(),
+        status_code=response.status_code,
+        media_type=response.media_type,
+        headers=dict(response.headers or {}),
+    )
 
 class ProviderClient(Protocol):
     async def get_health(self) -> Dict[str, Any]: ...
@@ -207,7 +248,8 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
 
     @app.post("/inference", dependencies=protected)
     async def inference(request: InferenceRequest):
-        return await client.inference(request)
+        response = await client.inference(request)
+        return _with_started_event(response, request.job_id)
 
     @app.post("/setup", dependencies=protected)
     async def setup():

@@ -40,7 +40,7 @@ DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "1800"))
 # could route to the port, with write access to the ComfyUI models mount. The flag
 # still works exactly as documented (local dev, single user, loopback); it just
 # refuses to be a remote write API by default.
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", ""})
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 def _resolve_bind_host() -> str:
@@ -52,8 +52,17 @@ def _resolve_bind_host() -> str:
     default being echoed back. An operator who genuinely needs the agent reachable
     from another machine sets REMOTE_AGENT_TOKEN; there is no reason to hand out
     an unauthenticated *writer* to get that.
+
+    `os.getenv("HOST", "0.0.0.0")` was not enough on its own. `agentctl.sh` does
+    `export HOST="${HOST-}"`, which exports an **empty** HOST when the operator
+    set none — so the variable was always set, the default never applied, and the
+    empty string reached uvicorn, which binds `""` as INADDR_ANY. The result was
+    the exact thing the clamp exists to prevent: `REMOTE_AGENT_ALLOW_INSECURE=1`
+    plus no HOST gave an unauthenticated writer on 0.0.0.0:8001. Empty is now
+    treated as unset, and `""` is no longer in the loopback set, because an empty
+    bind address is a wildcard and not a loopback.
     """
-    host = os.getenv("HOST", "0.0.0.0").strip()
+    host = (os.getenv("HOST") or "0.0.0.0").strip()
     if not ALLOW_INSECURE or host in _LOOPBACK_HOSTS:
         return host
     return "127.0.0.1"
@@ -90,22 +99,45 @@ SEED_MAX_CONCURRENT = int(os.getenv("REMOTE_AGENT_SEED_MAX_CONCURRENT", "3"))
 THREAD_MAX_CONCURRENT = int(os.getenv("REMOTE_AGENT_THREAD_MAX_CONCURRENT", "32"))
 _thread_semaphore: Optional[asyncio.Semaphore] = None
 
+# Deadline on a single off-thread call.
+#
+# `_bounded_to_thread` bounded *concurrency* but not *time*: a thread whose peer
+# never answers held its slot, and eventually every one of the 32, so the
+# single-process agent stopped answering anything at all — with no error, because
+# nothing raised. It has no natural upper bound per call site, so the default is
+# derived from the one parameter that does: `DOWNLOAD_TIMEOUT` is the per-request
+# HTTP budget for a model transfer, and a download is the longest thing this file
+# legitimately does. Six minutes of slack covers retries, the preview fetch and a
+# slow `rmtree` on a network volume. `REMOTE_AGENT_THREAD_TIMEOUT_SECONDS=0`
+# disables the deadline.
+#
+# A timed-out thread is NOT reclaimed, and cannot be: `asyncio.to_thread` has no
+# way to interrupt a running function, and no Python-level API can. So the gate is
+# released and the thread is left to finish on its own, which means the deadline
+# bounds how long a *caller* waits, not how long a thread lives. That is the part
+# worth having — the agent answers other requests again — and it is logged rather
+# than swallowed, because an abandoned thread is a thread the pool no longer knows
+# about.
+THREAD_CALL_TIMEOUT_SECONDS = int(
+    os.getenv("REMOTE_AGENT_THREAD_TIMEOUT_SECONDS", str(DOWNLOAD_TIMEOUT + 600))
+)
 
-# Ceiling on one /upload-file body, in decoded bytes. 512 MiB is generous for the
-# route's real traffic (input images, masks) and still finite. The JSON field is
-# checked at the encoded length (4/3 of this plus slack for the rest of the
-# document), because that is what Pydantic has in hand.
-UPLOAD_MAX_BYTES = int(os.getenv("REMOTE_AGENT_UPLOAD_MAX_BYTES", str(512 * 1024 * 1024)))
-UPLOAD_MAX_BYTES_ENCODED = (UPLOAD_MAX_BYTES // 3) * 4 + 4096
+
+class ThreadCallTimeout(RuntimeError):
+    """An off-thread call exceeded `THREAD_CALL_TIMEOUT_SECONDS`."""
 
 
-async def _bounded_to_thread(fn, /, *args, **kwargs):
-    """`asyncio.to_thread` behind a process-wide admission gate.
+async def _bounded_to_thread(fn, /, *args, timeout_seconds: Optional[float] = None, **kwargs):
+    """`asyncio.to_thread` behind a process-wide admission gate, with a deadline.
 
     The gate is taken around the `await`, not inside the thread body: holding it
     in the body would bound nothing, because the coroutine has already handed the
     work to the executor by then (the same reasoning the seed semaphore above
     documents).
+
+    `timeout_seconds` is consumed here rather than forwarded — every call site in
+    this file passes plain positional/keyword arguments to the wrapped function,
+    and a keyword of this name reaching user code would be a silent bug.
 
     The semaphore is created lazily rather than at import, because an
     `asyncio.Semaphore` binds to the loop that is running when it is first
@@ -114,8 +146,33 @@ async def _bounded_to_thread(fn, /, *args, **kwargs):
     global _thread_semaphore
     if _thread_semaphore is None:
         _thread_semaphore = asyncio.Semaphore(THREAD_MAX_CONCURRENT)
+    limit = THREAD_CALL_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
     async with _thread_semaphore:
-        return await asyncio.to_thread(fn, *args, **kwargs)
+        work = asyncio.to_thread(fn, *args, **kwargs)
+        if not limit or limit <= 0:
+            return await work
+        try:
+            return await asyncio.wait_for(work, timeout=limit)
+        except asyncio.TimeoutError as exc:
+            print(
+                f"[thread] {getattr(fn, '__name__', fn)!r} exceeded {limit}s; "
+                f"the thread cannot be cancelled and will finish on its own, but "
+                f"this caller stops waiting",
+                flush=True,
+            )
+            raise ThreadCallTimeout(
+                f"off-thread call {getattr(fn, '__name__', fn)!r} did not finish "
+                f"within {limit}s"
+            ) from exc
+
+
+# Ceiling on one /upload-file body, in decoded bytes. 512 MiB is generous for the
+# route's real traffic (input images, masks) and still finite. The JSON field is
+# checked at the encoded length (4/3 of this plus slack for the rest of the
+# document), because that is what Pydantic has in hand.
+UPLOAD_MAX_BYTES = int(os.getenv("REMOTE_AGENT_UPLOAD_MAX_BYTES", str(512 * 1024 * 1024)))
+UPLOAD_MAX_BYTES_ENCODED = (UPLOAD_MAX_BYTES // 3) * 4 + 4096
+
 
 _SIDECAR_EXTENSIONS = (".json", ".preview.png", ".sha256", ".downloading", ".lock")
 # Deliberately NOT provider_core.utils.SIDECAR_SUFFIXES. The shared tuple also
@@ -324,10 +381,15 @@ async def download_model(req: DownloadRequest):
 
 
 def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
+    empty = {
+        "valid": [], "invalid": [], "partial": [], "indeterminate": [],
+        "total_valid": 0, "total_invalid": 0, "total_partial": 0,
+        "total_indeterminate": 0,
+    }
     if not os.path.isdir(target_dir):
-        return {"valid": [], "invalid": [], "partial": [], "total_valid": 0, "total_invalid": 0, "total_partial": 0}
+        return empty
 
-    valid, invalid, partial = [], [], []
+    valid, invalid, partial, indeterminate = [], [], [], []
     entries = list(os.walk(target_dir))
     for root, _, filenames in entries:
         for name in filenames:
@@ -347,14 +409,33 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
                 # pending_download_paths, which is the only place that can tell an
                 # in-flight attempt from a dead one.
                 rel_path = os.path.relpath(os.path.join(root, name), DATA_DIR).replace("\\", "/")
-                size = os.path.getsize(os.path.join(root, name))
+                try:
+                    size = os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    # Unguarded here, guarded in both Modal validators since
+                    # 2026-09-29. A stat that fails is not a verdict on the file,
+                    # and it is walked over hundreds of entries on a network mount
+                    # where EIO is routine — one raised and the caller lost every
+                    # other file's result with it (see /validate-models).
+                    indeterminate.append({
+                        "name": name, "path": rel_path, "size": None,
+                        "issue": "Could not stat file",
+                    })
+                    continue
                 partial.append({"name": name, "path": rel_path, "size": size, "issue": "Incomplete download (temp file)"})
                 continue
             if _is_sidecar(name):
                 continue
             full_path = os.path.join(root, name)
             rel_path = os.path.relpath(full_path, DATA_DIR).replace("\\", "/")
-            size = os.path.getsize(full_path)
+            try:
+                size = os.path.getsize(full_path)
+            except OSError as exc:
+                indeterminate.append({
+                    "name": name, "path": rel_path, "size": None,
+                    "issue": f"Could not stat file: {exc}",
+                })
+                continue
             validation = validate_downloaded_file(full_path)
             model_info = {"name": name, "path": rel_path, "size": size, "size_mb": round(size / (1024 ** 2), 1), "format": validation.get("format", "unknown")}
             if not validation["valid"]:
@@ -370,8 +451,15 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
                 # guard as the Beam, Modal and LLM validators.
                 if validation.get("indeterminate"):
                     model_info["indeterminate"] = True
+                    # Its own bucket. It used to be appended to `invalid` with an
+                    # extra key, so `total_invalid` counted files that were merely
+                    # unreadable — and it is compared against the Modal and LLM
+                    # engines' `total_invalid`, which exclude them. Same logical
+                    # sweep, three different answers.
+                    indeterminate.append(model_info)
+                    continue
                 invalid.append(model_info)
-                if delete_invalid and not validation.get("indeterminate"):
+                if delete_invalid:
                     try: os.remove(full_path)
                     except Exception: pass
                 # Was `else: continue` as the last statement of the loop body, so
@@ -382,7 +470,10 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
 
     return {
         "total_valid": len(valid), "total_invalid": len(invalid), "total_partial": len(partial),
-        "valid": valid, "invalid": invalid, "partial": partial, "total": len(valid) + len(invalid) + len(partial),
+        "total_indeterminate": len(indeterminate),
+        "valid": valid, "invalid": invalid, "partial": partial,
+        "indeterminate": indeterminate,
+        "total": len(valid) + len(invalid) + len(partial) + len(indeterminate),
     }
 
 
@@ -420,7 +511,20 @@ async def delete_model(req: DeleteModelRequest):
         elif os.path.exists(path):
             os.remove(path)
 
-    try:
+    def _delete_everything():
+        """The whole sweep, off the event loop.
+
+        `shutil.rmtree` is the unbounded operation: it walks and unlinks a whole
+        tree, and on this agent that tree is the *same* models volume the Modal
+        and Beam engines are reading. A directory of multi-GB weights is seconds
+        to minutes of syscalls, and this is the single-process agent's only event
+        loop — so for that whole window `/health` stops answering and Docker's 30s
+        healthcheck fails a process that is busy, not broken.
+
+        The sidecars and the pipeline artifacts go with it, in the same thread,
+        for the same reason: they are `os.remove` calls on the same mount and
+        there is no reason to hand control back to the loop between them.
+        """
         _do_remove(full_path)
         base, _ = os.path.splitext(full_path)
         for ext in (".json", ".preview.png", ".sha256"):
@@ -439,6 +543,9 @@ async def delete_model(req: DeleteModelRequest):
         # used the shared helper; this file never referenced it at all.
         for stale in pipeline_artifacts(full_path):
             _do_remove(stale)
+
+    try:
+        await _bounded_to_thread(_delete_everything)
     except OSError as exc:
         # Was unhandled: `_do_remove` called os.remove on a directory, which
         # raises IsADirectoryError, so a DELETE of a directory was a 500 while
@@ -500,14 +607,28 @@ async def upload_file(req: UploadFileRequest, http_request: Request):
                 )
         except ValueError:
             pass
-    content = base64.b64decode(req.content_base64)
+    # The decode and the write go to a thread. They did not, and they are the
+    # heaviest thing in this file: at the 512 MiB `UPLOAD_MAX_BYTES` ceiling the
+    # base64 decode alone is a ~384 MiB allocation and a multi-hundred-megabyte
+    # memcpy, followed by a synchronous write of the same size to the models
+    # mount. Both inside an `async def`, on the single event loop of a
+    # single-process uvicorn, so for the duration of one upload the agent answered
+    # *nothing* — not `/health`, not a download, not a validation. Every other
+    # heavy call here already went through `_bounded_to_thread`; this one was the
+    # only one that missed it.
     target_dir = _data_path(req.directory)
     os.makedirs(target_dir, exist_ok=True)
     path = _data_path(os.path.join(req.directory, req.filename))
-    with open(path, "wb") as f:
-        f.write(content)
+
+    def _decode_and_write():
+        content = base64.b64decode(req.content_base64)
+        with open(path, "wb") as handle:
+            handle.write(content)
+        return len(content)
+
+    size = await _bounded_to_thread(_decode_and_write)
     rel_path = os.path.relpath(path, DATA_DIR).replace("\\", "/")
-    return ok("File uploaded", path=rel_path, size=len(content))
+    return ok("File uploaded", path=rel_path, size=size)
 
 
 @app.post("/validate-models", dependencies=[Depends(verify_token)])
@@ -520,16 +641,24 @@ async def validate_models(req: ValidateModelsRequest):
     payloads = await asyncio.gather(*[
         _bounded_to_thread(_validate_dir, _data_path(d), req.delete_invalid)
         for d in dirs
-    ])
-    results = {"valid": [], "invalid": [], "partial": [], "total_valid": 0, "total_invalid": 0, "total_partial": 0, "by_directory": {}}
+    ], return_exceptions=True)
+    results = {"valid": [], "invalid": [], "partial": [], "indeterminate": [], "total_valid": 0, "total_invalid": 0, "total_partial": 0, "total_indeterminate": 0, "by_directory": {}}
     for directory, payload in zip(dirs, payloads):
+        if isinstance(payload, BaseException):
+            # Was an unguarded gather: one directory raising discarded every
+            # other directory's result, so a single EIO on one subdirectory
+            # reported "validate failed" and hid the state of the rest of the
+            # volume. Reported per directory so the rest of the answer survives.
+            results["by_directory"][directory] = {"error": f"{type(payload).__name__}: {payload}"}
+            continue
         results["by_directory"][directory] = payload
-        for k in ("valid", "invalid", "partial"):
+        for k in ("valid", "invalid", "partial", "indeterminate"):
             results[k].extend(payload.get(k, []))
         results["total_valid"] += payload["total_valid"]
         results["total_invalid"] += payload["total_invalid"]
         results["total_partial"] += payload["total_partial"]
-    results["total"] = results["total_valid"] + results["total_invalid"] + results["total_partial"]
+        results["total_indeterminate"] += payload.get("total_indeterminate", 0)
+    results["total"] = sum(results[k] for k in ("total_valid", "total_invalid", "total_partial", "total_indeterminate"))
     # The envelope, not a bare `{valid, invalid, partial, ...}`: the worker adopts
     # this body verbatim through `from_upstream`, and a body carrying neither
     # `status` nor `success` is the dialect the envelope exists to make impossible.

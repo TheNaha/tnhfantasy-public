@@ -38,6 +38,27 @@ from fastapi import HTTPException
 
 import tts_worker.engines.modal.client as tts_client
 
+def _production_runtime_config():
+    """The `runtime_config` a real TTS worker is constructed with.
+
+    `tts_worker/worker.py` calls `build_runtime_config(...)` and hands the result
+    to `select_client`. Reproducing it here is the point: it has no
+    `job_tracker` key, which is what the old test supplied by hand and what made
+    that test pass against a client that was broken in production.
+    """
+    from provider_core.worker_bootstrap import build_runtime_config
+
+    return build_runtime_config(
+        provider_id="tts-modal-hp196",
+        backend_url="http://backend_v2:8002",
+        storage_dir="/data",
+        max_concurrent_downloads=2,
+        validation_timeout_seconds=30.0,
+        reconciliation_list_timeout_seconds=30.0,
+        inference_timeout_seconds=1800.0,
+    )
+
+
 TASK_APP = "tts_worker.engines.modal.modal_app"
 
 
@@ -246,21 +267,93 @@ class TestEventStreamReportsFailureAsFailure:
         assert events[0]["retryable"] is True
 
     async def test_the_job_tracker_is_released_even_on_a_failure(self, monkeypatch):
+        """The tracker is a process singleton, so the fake has to be installed as
+        one. Passing it as `runtime_config["job_tracker"]` used to work here and
+        nowhere in production — `build_runtime_config` has no such key, and the
+        client read it instead of the tracker its base class had already
+        installed. That left `self.job_tracker` `None` on every real deployment:
+        `POST /cancel-job` answered 500 and `inference` registered nothing.
+        """
         tracker = MagicMock()
         tracker.start_job = AsyncMock()
         tracker.end_job = AsyncMock()
+        # Patched where it is *looked up*: `base_client.py` binds
+        # `get_job_tracker` into its own namespace at import time, so patching
+        # `provider_core.background` would miss it — the same late-binding
+        # mistake `test_app_boot_smoke.py` documents for the lifespan.
+        monkeypatch.setattr(
+            "provider_core.base_client.get_job_tracker", lambda: tracker
+        )
         _patch_modal_cls(
             monkeypatch,
             _FakeAppInstance([{"status": "error", "message": "nope", "retryable": False}]),
         )
-        client = tts_client.ModalTTSProviderClient(
-            {"provider_id": "p", "job_tracker": tracker}
-        )
+        client = tts_client.ModalTTSProviderClient(_production_runtime_config())
 
         await _drain(await client.inference(_workflow_request()))
 
         tracker.start_job.assert_awaited_once_with("job-1")
         tracker.end_job.assert_awaited_once_with("job-1")
+
+
+class TestTheTrackerIsTheOneProductionBuilds:
+    """The tracker is a process singleton, not a `runtime_config` entry.
+
+    `ModalTTSProviderClient.__init__` overwrote the tracker that
+    `BaseProviderClient.__init__` had just installed with
+    `runtime_config.get("job_tracker")` — a key `build_runtime_config` has never
+    produced. In production `self.job_tracker` was therefore always `None`:
+
+      * `BaseProviderClient.cancel_job` raised
+        `AttributeError: 'NoneType' object has no attribute 'cancel_job'`, so
+        `POST /cancel-job` returned a 500 with `retryable: true`.
+      * `inference` guards `start_job`/`end_job` on `if job_id and
+        self.job_tracker`, so nothing was ever registered and a cancellation
+        could not be observed mid-stream.
+
+    The old test could not see it because it constructed the client with
+    `{"provider_id": "p", "job_tracker": tracker}` — a shape no caller builds.
+    Every test here goes through the real construction path instead:
+    `select_client(TTS_ENGINES, ENGINE, build_runtime_config(...))`, which is
+    what `tts_worker/worker.py` does.
+    """
+
+    def test_a_client_built_the_production_way_has_a_tracker(self):
+        from provider_core.worker_bootstrap import TTS_ENGINES, select_client
+
+        runtime_config = _production_runtime_config()
+        # Nothing named `job_tracker`, which is the whole point.
+        assert "job_tracker" not in runtime_config
+
+        client = select_client(TTS_ENGINES, "modal", runtime_config)
+
+        assert client.job_tracker is not None, (
+            "the TTS client has no job tracker, so /cancel-job raises "
+            "AttributeError and cancellation is never tracked"
+        )
+        assert hasattr(client.job_tracker, "cancel_job")
+
+    def test_the_singleton_is_shared_with_the_base_client(self):
+        """Not merely present: the *same* tracker every other route cancels on."""
+        from provider_core.background import get_job_tracker
+
+        client = tts_client.ModalTTSProviderClient(_production_runtime_config())
+
+        assert client.job_tracker is get_job_tracker()
+
+    @pytest.mark.asyncio
+    async def test_cancel_job_does_not_raise(self):
+        """The end-to-end symptom: the route used to answer 500."""
+        from provider_core.models import CancelJobRequest
+
+        client = tts_client.ModalTTSProviderClient(_production_runtime_config())
+
+        # `cancel_job` on a job the tracker has never seen returns a falsy
+        # "not cancelled" verdict; what matters is that it returns at all rather
+        # than raising `AttributeError` on `None`.
+        result = await client.cancel_job(CancelJobRequest(job_id="never-seen"))
+        assert result is not None
+        assert result.get("status") in {"cancelled", "not_found", "not_running", "ok"}
 
 
 @pytest.mark.asyncio

@@ -55,6 +55,13 @@ class _Host:
         self.honor_range = True
         self.honor_if_range = True
         self.suppress_content_range = False
+        # A 206 that names a start but no total (`bytes 60202-*`) and no
+        # Content-Length. Legal HTTP, and the case that made `total_size` 0 — so
+        # every size comparison in the pipeline was skipped and a truncated body
+        # published as a model.
+        self.undeclared_total = False
+        # A 200 with no Content-Length at all (a body delimited only by EOF).
+        self.omit_content_length = False
         self.drop_after: Optional[int] = None
         self.drop_requests = 0
         self.status_override: Optional[int] = None
@@ -82,10 +89,10 @@ def _handler_for(host: _Host):
             partial = False
 
             if host.status_override is not None:
+                record["status"] = host.status_override
                 self.send_response(host.status_override)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
-                record["status"] = host.status_override
                 return
 
             if range_header and host.honor_range:
@@ -97,6 +104,17 @@ def _handler_for(host: _Host):
                     first, _, _last = spec.partition("-")
                     start = int(first or 0)
                     if start >= total:
+                        # Recorded BEFORE the headers go out, not after.
+                        # `end_headers()` is what first writes to the socket, so
+                        # putting the assignment after it leaves a window in which
+                        # the client has read a 416 and the test thread reads
+                        # `record["status"]` — still the `None` this dict was
+                        # created with. That is not theoretical: it failed roughly
+                        # one run in eight, on the pristine tree, as
+                        # `assert None == 416`. Assigning first makes the write
+                        # happen-before the socket write, so a test that has
+                        # received the response is guaranteed to see the status.
+                        record["status"] = 416
                         self.send_response(416)
                         self.send_header(
                             "Content-Range", "" if host.suppress_content_range else f"bytes */{total}"
@@ -104,21 +122,28 @@ def _handler_for(host: _Host):
                         self.send_header("ETag", host.etag)
                         self.send_header("Content-Length", "0")
                         self.end_headers()
-                        record["status"] = 416
                         return
                     partial = True
 
             record["status"] = 206 if partial else 200
             self.send_response(record["status"])
+
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("ETag", host.etag)
             self.send_header("Accept-Ranges", "bytes")
             if partial:
                 if not host.suppress_content_range:
-                    self.send_header("Content-Range", f"bytes {start}-{total - 1}/{total}")
-                self.send_header("Content-Length", str(total - start))
+                    if host.undeclared_total:
+                        self.send_header("Content-Range", f"bytes {start}-*")
+                    else:
+                        self.send_header(
+                            "Content-Range", f"bytes {start}-{total - 1}/{total}"
+                        )
+                if not host.omit_content_length:
+                    self.send_header("Content-Length", str(total - start))
             else:
-                self.send_header("Content-Length", str(total))
+                if not host.omit_content_length:
+                    self.send_header("Content-Length", str(total))
             self.end_headers()
 
             payload = host.body[start:]
@@ -544,6 +569,140 @@ def test_validation_rejects_a_resumed_file_that_is_not_a_model(origin, tmp_path)
     assert _resume_slots_on_disk(dest) == []
 
 
+def test_an_indeterminate_validation_keeps_the_bytes_and_the_resume_slot(origin, tmp_path):
+    """`indeterminate` means the file could not be READ, not that it is bad.
+
+    `provider_core/validation.py` states the contract this caller broke: "A
+    caller that can act destructively on `invalid` MUST check `indeterminate`
+    first. Deleting on an indeterminate result is never correct." It removed the
+    temp file *and* every resume slot, so one transient read fault — a gcsfuse
+    EIO, routine on the Modal volumes — converted a partially-downloaded 7 GB
+    checkpoint back to byte 0, which is the entire thing `_transfer_with_resume`
+    exists to prevent. Unattended, every couple of hours, on a multi-GB artifact
+    with no way to recover it.
+    """
+    body = _model_bytes()
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "model.safetensors"
+
+    identity = downloads._remote_identity(url, {"etag": host.etag}, len(body))
+    _park_partial(dest, url, identity, body[:_DROP])
+
+    import provider_core.downloads as downloads_mod
+
+    real_validator = downloads_mod.validate_downloaded_file
+
+    def _read_fails(path, total_size=0, **kwargs):
+        # The shape `validate_downloaded_file` returns when a `read()` raises
+        # EIO/ENOMEM: valid False, indeterminate True. The file on disk is the
+        # real, complete, byte-correct model — which is the point: the reader
+        # could not find out, and neither can we.
+        return {
+            "valid": False,
+            "indeterminate": True,
+            "error": "Could not read file: [Errno 5] Input/output error",
+        }
+
+    downloads_mod.validate_downloaded_file = _read_fails
+    try:
+        result = _download(url, dest)
+    finally:
+        downloads_mod.validate_downloaded_file = real_validator
+
+    # Still reported as a failure: the caller learns the download did not finish,
+    # and the message says why rather than implying the bytes are corrupt.
+    assert result["status"] == "error"
+    assert "could not read" in result["message"].lower(), result["message"]
+    assert not dest.exists(), "nothing may be published on an unreadable read"
+
+    # The property that matters: the bytes are still on disk in a form the next
+    # attempt can find and resume from. The outer `except Exception` sweeps this
+    # attempt's temp file on any raise, so the fix has to RE-PARK the partial as
+    # a resume slot rather than merely skip two removes — otherwise "leave it
+    # alone" is satisfied by a file nothing will ever look at again.
+    slots = _resume_slots_on_disk(dest)
+    assert len(slots) == 1, (
+        f"an indeterminate validation left the bytes where no attempt will find "
+        f"them: {list(downloads.pending_download_paths(str(dest)))}"
+    )
+    parked = dest.parent / slots[0]
+    assert parked.stat().st_size == len(body), (
+        "the partial did not keep its bytes, so the next attempt starts from 0"
+    )
+
+
+def test_the_next_attempt_resumes_after_an_indeterminate_validation(origin, tmp_path):
+    """The reason the previous test exists: not "a file is left", but "it is used".
+
+    The whole point of `_transfer_with_resume` is that the second call does not
+    re-fetch the bytes the first one already had.
+    """
+    body = _model_bytes()
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "model.safetensors"
+
+    import provider_core.downloads as downloads_mod
+
+    real_validator = downloads_mod.validate_downloaded_file
+    calls = {"n": 0}
+
+    def _first_read_fails(path, total_size=0, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "valid": False,
+                "indeterminate": True,
+                "error": "Could not read file: [Errno 5] Input/output error",
+            }
+        return real_validator(path, total_size, **kwargs)
+
+    downloads_mod.validate_downloaded_file = _first_read_fails
+    try:
+        first = _download(url, dest)
+        assert first["status"] == "error"
+        assert len(_resume_slots_on_disk(dest)) == 1
+
+        second = _download(url, dest)
+    finally:
+        downloads_mod.validate_downloaded_file = real_validator
+
+    assert second["status"] == "success", second
+    assert second["resumed"] is True, "the second attempt re-fetched from byte 0"
+    assert dest.read_bytes() == body
+
+
+def test_a_genuinely_invalid_file_still_loses_its_resume_slot(origin, tmp_path):
+    """The counter-test: `invalid` (not `indeterminate`) must still sweep.
+
+    Otherwise "never delete on indeterminate" is satisfied by never deleting at
+    all, and a corrupt checkpoint would be retried forever against a body that
+    is wrong every time.
+    """
+    body = _model_bytes()
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "model.safetensors"
+
+    # A full-length body that is not a model, parked as the partial. Same setup as
+    # `test_validation_rejects_a_resumed_file_that_is_not_a_model`, so this branch
+    # is the one that differs: `invalid` rather than `indeterminate`.
+    impostor = b"<!DOCTYPE html><html>not a checkpoint</html>"
+    impostor = impostor + b"\x00" * (len(body) - len(impostor))
+    identity = downloads._remote_identity(url, {"etag": host.etag}, len(body))
+    _park_partial(dest, url, identity, impostor)
+
+    result = _download(url, dest)
+
+    assert result["status"] == "error"
+    assert "Validation failed" in result["message"]
+    assert not dest.exists()
+    assert _resume_slots_on_disk(dest) == [], (
+        "a genuinely invalid file must start from byte 0 on the next attempt"
+    )
+
+
 # ── Giving up ─────────────────────────────────────────────────────────────────
 
 def test_giving_up_reports_the_resume_offset_and_keeps_the_partial(origin, tmp_path):
@@ -619,3 +778,356 @@ def test_no_partial_survives_a_successful_download(origin, tmp_path):
 
     leftovers = [p.name for p in dest.parent.iterdir() if p.name.endswith(".downloading")]
     assert leftovers == []
+
+
+# ── A transfer whose total was never declared ─────────────────────────────────
+#
+# `total_size == 0` does not mean "no length check needed", it means "there is no
+# length to check against". Both of the pipeline's size comparisons are
+# conditioned on a non-zero total, so an undeclared total skipped *both*:
+#
+#     remote total                     : 7000000
+#     total_size seen by _attempt_download: 0        <- unknown
+#     bytes on disk                    : 60202
+#     validate_downloaded_file(...)     : {'valid': True, 'indeterminate': False}
+#     os.replace would publish 60202 bytes as a 7 MB model: True
+#
+#   — `validate_downloaded_file` checks the magic header, not the length, so a
+#   short file of a real model is a *valid* short file.
+
+
+def test_a_206_without_a_declared_total_is_never_published(origin, tmp_path):
+    body = _model_bytes(96 * 1024)
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "models" / "model.safetensors"
+
+    _drop_once(host)
+    assert _download(url, dest, max_attempts=1)["status"] == "error"
+    assert _resume_slots_on_disk(dest), "precondition: a resumable partial exists"
+
+    # The resume now answers 206 with `bytes <start>-*` and no Content-Length.
+    host.undeclared_total = True
+    host.omit_content_length = True
+    result = _download(url, dest)
+
+    assert host.requests[-1]["status"] == 206
+    assert result["status"] == "error", result
+    assert "never declared the total size" in result["message"], result
+    assert not dest.exists(), "a download of unknown length was published as a model"
+
+
+def test_a_206_without_a_total_does_not_retry(origin, tmp_path):
+    """A server that will not name a total will not name one on the next ask, and
+    each attempt re-fetches the body."""
+    body = _model_bytes(96 * 1024)
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "models" / "model.safetensors"
+
+    _drop_once(host)
+    assert _download(url, dest, max_attempts=1)["status"] == "error"
+
+    host.undeclared_total = True
+    host.omit_content_length = True
+    before = len(host.requests)
+    _download(url, dest, max_attempts=3)
+
+    assert len(host.requests) - before == 1, host.requests[before:]
+
+
+def test_a_200_without_a_content_length_is_never_published(origin, tmp_path):
+    """The other shape of the same hole: a body delimited only by EOF."""
+    body = _model_bytes(96 * 1024)
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "models" / "model.safetensors"
+
+    host.omit_content_length = True
+    result = _download(url, dest)
+
+    assert host.requests[0]["status"] == 200
+    assert result["status"] == "error", result
+    assert "never declared the total size" in result["message"], result
+    assert not dest.exists()
+
+
+def test_the_bytes_are_kept_for_the_next_attempt(origin, tmp_path):
+    """The verdict is about the *length*, not the content.
+
+    Parking the partial is correct here and deleting it would be the F7 mistake:
+    the bytes that arrived are good, and an attempt that later gets a declared
+    total resumes from them instead of re-fetching the whole file.
+
+    Asserted from the request the client made, not from a byte counter: the origin
+    thread increments `served_bytes` when it finishes writing, so a response the
+    client deliberately refused leaves the counter settling afterwards, and
+    measuring across one is a race.
+    """
+    body = _model_bytes(96 * 1024)
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "models" / "model.safetensors"
+
+    _drop_once(host)
+    assert _download(url, dest, max_attempts=1)["status"] == "error"
+
+    host.undeclared_total = True
+    host.omit_content_length = True
+    _download(url, dest)
+    assert _resume_slots_on_disk(dest), "the good bytes were thrown away"
+
+    # ...and the next attempt, against a server that declares its total, resumes
+    # from them: a 206 with a Range, not a fresh 200 from byte 0.
+    host.undeclared_total = False
+    host.omit_content_length = False
+    before = len(host.requests)
+    result = _download(url, dest)
+
+    assert result["status"] == "success", result
+    assert dest.read_bytes() == body
+    assert host.requests[before]["status"] == 206, host.requests[before:]
+    assert host.requests[before]["range"] == "bytes=20480-", host.requests[before:]
+    assert len(host.requests) - before == 1, "the resume took more than one request"
+
+
+def test_a_declared_total_is_still_honoured(origin, tmp_path):
+    """The control, in both directions.
+
+    Without it, "always refuse to publish" passes everything above while breaking
+    every real download.
+    """
+    body = _model_bytes()
+    host = _Host(body)
+    url = origin(host)
+    complete = tmp_path / "complete" / "model.safetensors"
+    truncated = tmp_path / "truncated" / "model.safetensors"
+
+    assert _download(url, complete)["status"] == "success"
+    assert complete.read_bytes() == body
+
+    _drop_once(host)
+    result = _download(url, truncated, max_attempts=1)
+    assert result["status"] == "error", "a truncated body must still be rejected"
+
+
+def test_the_publish_gate_rejects_a_zero_total_even_if_the_transfer_claims_success(
+    origin, tmp_path, monkeypatch
+):
+    """The gate is independent of the one in `_attempt_download`.
+
+    `download_model_to_path` refuses an undeclared total at the only place where
+    the consequence happens — `os.replace` into the live model tree — so a path
+    that reaches the publish with an unverified length cannot do it merely by not
+    inheriting the inner guard.
+    """
+    body = _model_bytes()
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "model.safetensors"
+
+    real = downloads._transfer_with_resume
+
+    def _undeclared(**kwargs):
+        outcome = real(**kwargs)
+        outcome["total_size"] = 0
+        return outcome
+
+    monkeypatch.setattr(downloads, "_transfer_with_resume", _undeclared)
+
+    result = _download(url, dest)
+
+    assert result["status"] == "error", result
+    assert "Refusing to publish" in result["message"], result
+    assert not dest.exists()
+
+
+# ── Out of space ──────────────────────────────────────────────────────────────
+#
+# Parking is right for `indeterminate` and for a dropped connection: the partial
+# is good and the next attempt resumes it. It is wrong for "the filesystem said
+# no", because `rename(2)` needs no space — so `_persist_partial` succeeded on a
+# volume with none, and every out-of-space attempt stranded a multi-GB partial
+# that the next attempt moved straight back into the same wall.
+#
+# `shutil.disk_usage` was not called anywhere in the tier (`rg
+# 'disk_usage|statvfs|free_space|shutil.disk'` returned zero hits), so the volume's
+# state was never consulted before a multi-GB transfer started.
+
+
+# Comfortably more than the 64 MB default headroom, so a test that wants the
+# download to proceed does not have to reason about it.
+PLENTY = 8 * 1024 ** 3
+
+
+def _fake_disk_usage(free_bytes: int):
+    """A `shutil.disk_usage` reporting `free_bytes` free, whatever the mount says."""
+    import collections
+
+    usage = collections.namedtuple("usage", "total used free")
+    reported = usage(total=free_bytes + 1024, used=1024, free=free_bytes)
+
+    def _fake(path):
+        return reported
+
+    return _fake
+
+
+def test_a_download_that_cannot_fit_is_refused_before_any_byte_is_written(
+    origin, tmp_path, monkeypatch
+):
+    body = _model_bytes(96 * 1024)
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "models" / "model.safetensors"
+
+    # Room for the bytes but not for the headroom the sidecars and the lock need.
+    monkeypatch.setattr(downloads.shutil, "disk_usage", _fake_disk_usage(len(body)))
+
+    result = _download(url, dest)
+
+    assert result["status"] == "error", result
+    assert "not enough free space" in result["message"], result
+    assert not dest.exists()
+    # Not one byte was written. The request itself still happened — the total is
+    # only known from the headers, so the client cannot refuse before connecting —
+    # but the body was never put on disk.
+    assert [p.name for p in dest.parent.iterdir() if p.name.endswith(".downloading")] == []
+
+
+def test_the_refusal_names_the_volume_and_the_shortfall(origin, tmp_path, monkeypatch):
+    body = _model_bytes(96 * 1024)
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "models" / "model.safetensors"
+
+    monkeypatch.setattr(downloads.shutil, "disk_usage", _fake_disk_usage(1024))
+
+    result = _download(url, dest)
+
+    message = result["message"]
+    assert str(dest.parent) in message, message
+    assert "needed for this download" in message, message
+
+
+def test_a_resume_checks_only_the_bytes_still_missing(origin, tmp_path, monkeypatch):
+    """Not the whole file again. A 7 GB resume that needs 200 MB must not be
+    refused by a 7 GB requirement on a volume holding 1 GB."""
+    body = _model_bytes(96 * 1024)
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "models" / "model.safetensors"
+
+    _drop_once(host)
+    assert _download(url, dest, max_attempts=1)["status"] == "error"
+
+    remaining = len(body) - 2 * _CHUNK
+    # Enough for what is missing, and not enough for the whole file again.
+    monkeypatch.setattr(
+        downloads.shutil,
+        "disk_usage",
+        _fake_disk_usage(remaining + downloads.DOWNLOAD_FREE_SPACE_MARGIN_BYTES),
+    )
+
+    result = _download(url, dest)
+    assert result["status"] == "success", result
+    assert dest.read_bytes() == body
+
+
+def test_an_enospc_mid_transfer_is_not_parked(origin, tmp_path, monkeypatch):
+    """The bytes on disk are dropped, not parked on a volume that is full.
+
+    `_persist_partial` would have succeeded — `rename(2)` needs no space — so the
+    unfixed pipeline reported "N bytes kept at offset N" and left them there.
+    """
+    body = _model_bytes(96 * 1024)
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "models" / "model.safetensors"
+
+    monkeypatch.setattr(downloads.shutil, "disk_usage", _fake_disk_usage(PLENTY))
+
+    real_open = open
+
+    def _fail_once(path, mode="r", *args, **kwargs):
+        if "ab" in mode or "wb" in mode:
+            handle = real_open(path, mode, *args, **kwargs)
+            real_write = handle.write
+
+            def _write(chunk):
+                real_write(chunk)
+                raise OSError(28, "No space left on device")
+
+            handle.write = _write
+            return handle
+        return real_open(path, mode, *args, **kwargs)
+
+    # Restored directly rather than via `monkeypatch.undo()`, which would also
+    # unwind the autouse backoff patch this test never asked about.
+    import builtins
+
+    builtins.open = _fail_once
+    try:
+        result = _download(url, dest, max_attempts=1)
+    finally:
+        builtins.open = real_open
+
+    assert result["status"] == "error", result
+    assert "No space left on device" in result["message"], result
+    assert _resume_slots_on_disk(dest) == [], "an ENOSPC partial was parked"
+    assert [p.name for p in dest.parent.iterdir() if p.name.endswith(".downloading")] == []
+    assert not dest.exists()
+
+
+def test_a_connection_reset_is_still_parked(origin, tmp_path, monkeypatch):
+    """The control, and the reason the rule is narrow.
+
+    Parking a partial is what `_transfer_with_resume` exists for. If the out-of-space
+    branch swallowed everything, a dropped connection would also stop being
+    resumable and every retry would restart from byte 0.
+    """
+    body = _model_bytes(96 * 1024)
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "models" / "model.safetensors"
+
+    monkeypatch.setattr(downloads.shutil, "disk_usage", _fake_disk_usage(PLENTY))
+
+    _drop_once(host)
+    result = _download(url, dest, max_attempts=1)
+
+    assert result["status"] == "error", result
+    assert _resume_slots_on_disk(dest), "a transient drop must stay resumable"
+
+
+def test_a_read_failure_in_free_space_does_not_block_the_download(
+    origin, tmp_path, monkeypatch
+):
+    """`disk_usage` is a hint, not a gate. A filesystem that cannot report its free
+    space must not make every download on it impossible."""
+    body = _model_bytes()
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "model.safetensors"
+
+    def _explode(path):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(downloads.shutil, "disk_usage", _explode)
+
+    result = _download(url, dest)
+    assert result["status"] == "success", result
+    assert dest.read_bytes() == body
+
+
+def test_the_headroom_is_configurable(origin, tmp_path, monkeypatch):
+    body = _model_bytes(96 * 1024)
+    host = _Host(body)
+    url = origin(host)
+    dest = tmp_path / "models" / "model.safetensors"
+
+    monkeypatch.setattr(downloads, "DOWNLOAD_FREE_SPACE_MARGIN_BYTES", 0)
+    monkeypatch.setattr(downloads.shutil, "disk_usage", _fake_disk_usage(len(body)))
+
+    result = _download(url, dest)
+    assert result["status"] == "success", result

@@ -34,6 +34,7 @@ import os
 import pathlib
 
 import pytest
+from requests.structures import CaseInsensitiveDict
 
 from provider_core.downloads import (
     download_model_to_path,
@@ -67,10 +68,19 @@ class _Origin:
     def __call__(self, url, **kwargs):
         headers = kwargs.get("headers") or {}
         self.requests.append({"url": url, "range": headers.get("Range"), **kwargs})
-        response_headers = {
-            "Content-Length": str(len(self.body)),
-            "ETag": '"v1"',
-        }
+        # `requests.structures.CaseInsensitiveDict`, because that is exactly what
+        # `requests.get(...).headers` is. A plain `dict` made `headers.get
+        # ("content-length")` miss the `"Content-Length"` this fixture writes, so
+        # `total_size` came out 0 for every response and *no size check ran at
+        # all* — which is how a truncated chunked download could publish
+        # (`provider_core/downloads.py`, `_attempt_download`). The double has to
+        # honour the real header semantics or it cannot see those checks.
+        response_headers = CaseInsensitiveDict(
+            {
+                "Content-Length": str(len(self.body)),
+                "ETag": '"v1"',
+            }
+        )
         if headers.get("Range"):
             response_headers["Content-Range"] = f"bytes 0-{len(self.body) - 1}/{len(self.body)}"
 

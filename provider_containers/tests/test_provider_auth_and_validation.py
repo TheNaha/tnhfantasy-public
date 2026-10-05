@@ -181,20 +181,48 @@ class TestWiring:
         ):
             assert "indeterminate" in _read(*parts), f"{parts[-2]} ignores indeterminate"
 
-    def test_the_remote_agent_guards_its_delete(self):
-        agent = os.path.join(PROVIDER_ROOT, "..", "remote_agent", "server.py")
-        with open(agent, encoding="utf-8") as fh:
-            src = fh.read()
-        assert "indeterminate" in src, (
-            "remote_agent/server.py deletes on `not validation['valid']` with no "
-            "indeterminate guard, which is the one call site that can destroy a "
-            "real model irrecoverably"
+    def test_the_remote_agent_guards_its_delete(self, tmp_path):
+        """The agent's `delete_invalid` path must be unreachable for an unreadable file.
+
+        This used to grep `remote_agent/server.py` for the literal
+        `delete_invalid and not validation.get("indeterminate")`, which is the
+        shape of test that reads as pinning the guard while being trivially
+        satisfied by moving the string into a comment — and which had to be
+        rewritten every time the guard was expressed differently. It is now the
+        behaviour, which is what the guard is for: an unreadable 7 GB checkpoint
+        survives, and it is reported as unreadable rather than as corrupt.
+
+        `tests/test_remote_agent_gates.py` covers the same contract in detail;
+        this is the cross-implementation statement of it.
+        """
+        import remote_agent.server as agent
+
+        target = tmp_path / "big.safetensors"
+        target.write_bytes(b'{"__metadata__":{}}' + b"\x00" * 65536)
+        (tmp_path / "big.safetensors.json").write_text('{"name": "big"}')
+
+        real_open = open
+
+        def exploding_open(path, *a, **k):
+            if str(path) == str(target):
+                raise OSError(5, "Input/output error")
+            return real_open(path, *a, **k)
+
+        with patch("builtins.open", exploding_open):
+            result = agent._validate_dir(str(tmp_path), True)
+
+        assert target.exists(), (
+            "remote_agent/server.py deleted a model it could not read — the one "
+            "call site that can destroy a real checkpoint irrecoverably"
         )
-        # The guard has to be on the delete itself, not merely mentioned: a
-        # `validation.get("indeterminate")` that only annotates the report is
-        # the shape that reads as fixed and is not.
-        assert "delete_invalid and not validation.get(\"indeterminate\")" in src, (
-            "the delete is not gated on an indeterminate verdict"
+        assert (tmp_path / "big.safetensors.json").exists()
+        # Reported, and in its own bucket: an `indeterminate` counted as `invalid`
+        # made this engine's `total_invalid` mean a different quantity from the
+        # Modal and LLM validators it is compared against.
+        assert result["total_indeterminate"] == 1, result
+        assert result["total_invalid"] == 0, (
+            "an unreadable file must not be counted as invalid, or the same sweep "
+            "answers differently depending on which engine ran it"
         )
 
 

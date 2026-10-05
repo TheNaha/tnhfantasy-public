@@ -4,13 +4,23 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 from provider_core.models import TaskEvent
 
+#: The unit every progress event this tier emits counts in.
+#:
+#: Named on the wire (`TaskEvent.value_unit`) because the reading of
+#: `TaskEvent.value` is otherwise only a convention: the backend re-applies a
+#: legacy heuristic that reads `value <= 1` as a 0..1 fraction
+#: (`backend_v2/services/provider_client.py`), which turns an honest
+#: "1 percent done" into "100 percent done". Everything `translate_update` emits
+#: below ends in percent 0..100, so the unit is stated rather than inferred.
+PROGRESS_VALUE_UNIT = "percent"
+
 # Must stay in sync with the `event` Literal on TaskEvent in models.py.
 # "cached_nodes" was missing here while being a valid TaskEvent.event value, so
 # a canonical cached_nodes line from a ComfyUI worker was not recognised and was
 # re-emitted as a contentless `progress` with value=None — reporting a progress
 # step for an event that carries no progress.
 _TASK_EVENT_KINDS = {
-    "started", "progress", "delta", "node", "cached_nodes", "artifact", "completed",
+    "started", "progress", "delta", "node", "cached_nodes", "completed",
     "failed", "cancelled",
 }
 
@@ -199,7 +209,14 @@ def comfy_status_to_task_event(update: Dict[str, Any], job_id: Optional[str] = N
         # Defensive: legacy workers may emit a 0..1 fraction; canonical is percent 0..100.
         value = round(value * 100)
 
-    return TaskEvent(event="progress", job_id=job_id, value=value)
+    # Named on the wire, not only in this comment. Everything above ends in
+    # percent 0..100, and the backend re-applies a legacy heuristic that reads
+    # `value <= 1` as a fraction — so `value == 1`, one percent done, is recorded
+    # as 100 percent. `value_unit` makes the reading a fact the receiver can read
+    # instead of a convention it has to guess at.
+    return TaskEvent(
+        event="progress", job_id=job_id, value=value, value_unit=PROGRESS_VALUE_UNIT
+    )
 
 
 async def translate_task_events(

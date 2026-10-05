@@ -7,6 +7,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 
 from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
+from provider_core.model_scan import scan_model_directory
 from provider_core.downloads import (
     download_model_to_path,
     pending_download_paths,
@@ -74,23 +75,13 @@ async def list_models_with_metadata_internal(base_path: str, directory: str) -> 
         return []
 
     def _scan():
-        entries, entry_set = [], set()
-        try:
-            for e in os.scandir(target_dir):
-                if e.is_file():
-                    entry_set.add(e.name)
-                    # The shared predicate, not a local suffix tuple: the download
-                    # pipeline owns `<model>.lock` and
-                    # `<model>.<pid>.<hex>.downloading` (and parks a resume slot
-                    # beside them), and a hardcoded exclusion list missed those.
-                    # They were emitted as model files, registered as models by
-                    # reconciliation, and the lock is held for the whole transfer,
-                    # so the entry appeared mid-download.
-                    if is_model_file(e.name):
-                        entries.append((e.name, e.stat().st_size))
-        except Exception:
-            pass
-        return entries, entry_set
+        # Raises on a failed scandir or stat. This was `except: pass`, which made
+        # "the volume could not be read" indistinguishable from "no models here",
+        # and reconciliation then re-downloaded the directory. `is_model_file` is
+        # the shared predicate — see the note at its former call site — applied by
+        # `provider_core/model_scan.py`, so the image twin and this one cannot
+        # drift on which suffixes count as models.
+        return scan_model_directory(target_dir)
 
     entries, entry_set = await asyncio.to_thread(_scan)
 
@@ -375,6 +366,10 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         "total_valid": 0,
         "total_invalid": 0,
         "total_partial": 0,
+        # Present-and-zero, not absent-until-needed: the image twin and the remote
+        # agent both report it, and a key that only exists once something failed
+        # makes "no key" indistinguishable from "this engine does not report it".
+        "total_indeterminate": 0,
         "by_directory": {}
     }
 
@@ -465,15 +460,50 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         # utils.py records that having happened. Abandoned partials are reclaimed
         # by FileStorage.delete_file via pending_download_paths, which is the
         # only place that can tell an in-flight attempt from a dead one.
-        for name in os.listdir(full_dir):
+        #
+        # `os.listdir` is guarded because the loop over it had none: one EIO on
+        # the directory raised out of `validate_directory`, out of the
+        # 16-directory loop below, out of `validate_models`, and became a Modal
+        # 500 — which `llm_worker/engines/modal/client.py::validate_models` turns
+        # into `failed(...)`, and reconciliation's `except Exception` logs as
+        # "⚠ Validation step failed". Step 0 then ran against nothing at all, so
+        # the 15 healthy directories in the same sweep were never counted. The
+        # failure is reported per directory instead, which is what
+        # `remote_agent/server.py::validate_models` has always done with
+        # `return_exceptions=True`.
+        try:
+            names = os.listdir(full_dir)
+        except OSError as exc:
+            return {"error": f"Could not list directory: {exc}"}
+
+        for name in names:
             full_path = os.path.join(full_dir, name)
             if is_transient_artifact(name):
                 if os.path.isfile(full_path):
                     label = f"{dir_path}/{name}" if dir_path else name
+                    try:
+                        size = os.path.getsize(full_path)
+                    except OSError as exc:
+                        # Was unguarded, and reproduced: an ENOSPC on a volume with
+                        # no space for the next attempt's temp file raised
+                        # `OSError: [Errno 28] No space left on device` out of the
+                        # whole 16-directory sweep, so step 0 produced no counts
+                        # for any of them. A stat that failed says nothing about the
+                        # artifact, and it is never deleted here in any case — so it
+                        # is reported, in the bucket whose whole purpose is "we
+                        # could not determine this", and the sweep continues.
+                        result.setdefault("indeterminate", []).append({
+                            "name": name,
+                            "path": label,
+                            "size": None,
+                            "reason": f"Could not stat file: {exc}",
+                            "indeterminate": True,
+                        })
+                        continue
                     result["partial"].append({
                         "name": name,
                         "path": label,
-                        "size": os.path.getsize(full_path),
+                        "size": size,
                         "reason": "Incomplete download (temp file)",
                     })
                 continue
@@ -511,17 +541,38 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         return result
 
     for directory in directories:
-        dir_result = validate_directory(directory)
+        try:
+            dir_result = validate_directory(directory)
+        except Exception as exc:
+            # The outer guard, for anything `validate_directory` does not expect.
+            # One directory raising used to discard the other 15: the counts the
+            # rest of the system reads came from whichever engine answered, and
+            # this one answered "nothing to report". Recorded against its own
+            # directory so the rest of the answer survives.
+            validation_results["by_directory"][directory] = {
+                "error": f"{type(exc).__name__}: {exc}"
+            }
+            continue
+        if "error" in dir_result:
+            # A directory that could not be read. Same treatment as a raise, and
+            # deliberately NOT folded into the four counts: `total_indeterminate`
+            # means "a file was seen and could not be judged", which is a
+            # different statement from "this directory was never opened".
+            validation_results["by_directory"][directory] = dict(dir_result)
+            continue
         valid_count = len(dir_result["valid"])
         invalid_count = len(dir_result["invalid"])
         partial_count = len(dir_result["partial"])
+        indeterminate_count = len(dir_result.get("indeterminate", []))
         validation_results["total_valid"] += valid_count
         validation_results["total_invalid"] += invalid_count
         validation_results["total_partial"] += partial_count
+        validation_results["total_indeterminate"] += indeterminate_count
         validation_results["by_directory"][directory] = {
             "valid": dir_result["valid"],
             "invalid": dir_result["invalid"],
             "partial": dir_result["partial"],
+            "indeterminate": dir_result.get("indeterminate", []),
         }
 
     return validation_results

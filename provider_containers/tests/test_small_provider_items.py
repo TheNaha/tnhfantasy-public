@@ -82,10 +82,19 @@ class TestTheRemoteComfyGetFileQuotesThePath:
                     yield b""
 
         class _HttpClient:
+            async def get_client(self):
+                return self
+
             def stream(self, method, url, **kwargs):
                 seen["url"] = url
                 return _Response()
 
+        # `get_http_client()` returns a `SharedHttpClient`, whose `.stream` does
+        # not exist — the engine unwraps it with `await ...get_client()` first.
+        # The fake exposes `get_client()` for exactly that reason: a fake shaped
+        # like a bare `httpx.AsyncClient` is what let
+        # `test_model_file_streaming.py` pass against code that raised
+        # `AttributeError` on every remote artifact fetch.
         monkeypatch.setattr(module, "get_http_client", lambda: _HttpClient())
         client = self._client()
 

@@ -13,6 +13,7 @@ from provider_core.models import (
     UploadFileRequest, ValidateModelsRequest, TaskEvent
 )
 from provider_core.responses import failed, files_response, llm_healthy, llm_unhealthy, ok, retryable_for_exception, retryable_for_status
+from provider_core.sse import iter_sse_data, parse_sse_json
 
 
 # The backend's `_check_provider_health` (services/load_balancer.py) counts any
@@ -267,48 +268,46 @@ class GoogleProviderClient(BaseProviderClient):
                     full_content = ""
                     tool_calls = []
 
-                    async for line in response.aiter_lines():
-                        line = line.strip()
-                        if not line:
+                    async def _cancelled() -> str:
+                        return TaskEvent(
+                            event="cancelled",
+                            job_id=job_id,
+                            outputs=[{"role": "assistant", "content": full_content, "cancelled": True}],
+                        ).to_ndjson()
+
+                    # Shared framing + cancellation probe (`provider_core/sse.py`).
+                    async for data_str in iter_sse_data(
+                        response,
+                        job_id=job_id,
+                        job_tracker=self.job_tracker,
+                        on_cancelled=_cancelled,
+                    ):
+                        data = parse_sse_json(data_str)
+                        if data is None:
                             continue
-
-                        if job_id and await self.job_tracker.is_cancelled(job_id):
-                            yield TaskEvent(
-                                event="cancelled",
-                                job_id=job_id,
-                                outputs=[{"role": "assistant", "content": full_content, "cancelled": True}],
-                            ).to_ndjson()
-                            return
-
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            try:
-                                data = json.loads(data_str)
-                                candidates = data.get("candidates", [])
-                                if candidates:
-                                    content_parts = candidates[0].get("content", {}).get("parts", [])
-                                    for part in content_parts or []:
-                                        text = part.get("text", "")
-                                        if text:
-                                            full_content += text
-                                            yield TaskEvent(
-                                                event="delta",
-                                                job_id=job_id,
-                                                text=text,
-                                            ).to_ndjson()
-                                        function_call = part.get("functionCall")
-                                        if function_call:
-                                            name = function_call.get("name", "")
-                                            tool_calls.append({
-                                                "id": name,
-                                                "type": "function",
-                                                "function": {
-                                                    "name": name,
-                                                    "arguments": json.dumps(function_call.get("args") or {}),
-                                                },
-                                            })
-                            except json.JSONDecodeError:
-                                pass
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            content_parts = candidates[0].get("content", {}).get("parts", [])
+                            for part in content_parts or []:
+                                text = part.get("text", "")
+                                if text:
+                                    full_content += text
+                                    yield TaskEvent(
+                                        event="delta",
+                                        job_id=job_id,
+                                        text=text,
+                                    ).to_ndjson()
+                                function_call = part.get("functionCall")
+                                if function_call:
+                                    name = function_call.get("name", "")
+                                    tool_calls.append({
+                                        "id": name,
+                                        "type": "function",
+                                        "function": {
+                                            "name": name,
+                                            "arguments": json.dumps(function_call.get("args") or {}),
+                                        },
+                                    })
 
                 output = {"role": "assistant", "content": full_content}
                 if tool_calls:
@@ -354,11 +353,25 @@ class GoogleProviderClient(BaseProviderClient):
         )
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
-        fallback = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+        # An empty list on every failure, and never a fabricated one.
+        #
+        # This returned five hardcoded model ids whenever the call failed — or
+        # succeeded with nothing in it. `backend_v2/api/routes/world_vault/
+        # llm_config.py` reads `data.get("files")` and falls back to
+        # `[{"id": "default"}]` only *when the list comes back empty*, so the
+        # fabricated list suppressed the backend's own honest fallback: a revoked
+        # Google key produced five selectable model ids, every one of which
+        # failed on the next turn. The two engines that returned `[]` behaved
+        # better than the two that invented an answer, so all four agree on `[]`.
+        #
+        # A missing key is included. "No key" and "could not reach the API" are
+        # the same thing to the caller — nothing can be served either way — and
+        # promising five models that cannot answer is the same defect as a
+        # revoked key.
         if not self.api_key:
             return files_response(
-                [{"path": m, "name": m} for m in fallback],
-                message="GOOGLE_API_KEY not set; returning the known model list",
+                [],
+                message="GOOGLE_API_KEY not set; no models to list",
                 provider=self.provider_id,
             )
         try:
@@ -378,8 +391,10 @@ class GoogleProviderClient(BaseProviderClient):
                 supported = m.get("supportedGenerationMethods", [])
                 if "generateContent" in supported:
                     models.append(name)
-            if not models:
-                models = fallback
+            # An empty successful response stays empty — including the case where
+            # the account has models but none support `generateContent`. It used to
+            # be replaced by the fallback list, which is indistinguishable from a
+            # revoked key at the caller's end; see the note on this method.
             return files_response(
                 [{"path": m, "name": m} for m in sorted(models)],
                 provider=self.provider_id,
@@ -389,8 +404,11 @@ class GoogleProviderClient(BaseProviderClient):
                 "Failed to list models from Google: %s", redact_api_key(str(e), self.api_key)
             )
             return files_response(
-                [{"path": m, "name": m} for m in fallback],
-                message="Failed to list models from Google; returning the known model list",
+                [],
+                message=(
+                    "Failed to list models from Google: "
+                    f"{redact_api_key(str(e), self.api_key)}"
+                ),
                 provider=self.provider_id,
             )
 

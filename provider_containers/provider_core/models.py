@@ -64,20 +64,30 @@ class TaskEvent(BaseModel):
 
     event:
       started      job accepted, work beginning
-      progress     coarse progress fraction (0..1) for image jobs
+      progress     coarse progress, 0..100 PERCENT (see `value` and `value_unit`)
       delta        incremental token text for llm jobs
       node         a ComfyUI node started executing (image jobs)
-      artifact     a finished output (image path / text)
       completed    terminal success (carries ``outputs``)
       failed       terminal failure (carries ``message``)
       cancelled    terminal cancellation
+
+    `value_unit` says what `value` counts. It is not decoration: the backend
+    re-normalised a percent as if it might be a fraction
+    (`backend_v2/services/provider_client.py`,
+    `percent = int(val * 100) if val <= 1 else int(val)`), so a worker reporting
+    exactly `value == 1` — one percent done — was recorded as 100%. No worker has
+    emitted a fraction since the normalisation below, so that branch could only
+    ever misfire, and nothing on the wire said which reading was correct. Every
+    progress event this tier emits now carries `value_unit="percent"`, so the
+    reading is a fact on the wire rather than a convention in a comment.
     """
     event: Literal[
-        "started", "progress", "delta", "node", "cached_nodes", "artifact", "completed", "failed", "cancelled"
+        "started", "progress", "delta", "node", "cached_nodes", "completed", "failed", "cancelled"
     ]
     job_id: Optional[str] = None
     seq: Optional[int] = None
-    value: Optional[float] = None          # progress percent 0..100 (image workers); llm engines use text deltas
+    value: Optional[float] = None          # progress, in `value_unit` (image workers); llm engines use text deltas
+    value_unit: Optional[str] = None       # "percent" on every progress event this tier emits
     text: Optional[str] = None             # llm token delta
     node: Optional[str] = None             # executing comfy node
     nodes: Optional[List[str]] = None      # cached comfy nodes

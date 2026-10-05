@@ -73,7 +73,15 @@ export PORT="${PORT:-8001}"
 # REMOTE_AGENT_ALLOW_INSECURE — exporting 0.0.0.0 here would hand the flag an
 # unauthenticated *writer* bound to every interface by default, which is exactly
 # what the clamp exists to prevent.
-export HOST="${HOST-}"
+# Only exported when the operator actually set one, and never as an empty
+# string: `export HOST="${HOST-}"` exported `HOST=""` when unset, and uvicorn
+# binds an empty host as INADDR_ANY — so this line defeated server.py's own
+# loopback clamp and handed REMOTE_AGENT_ALLOW_INSECURE an unauthenticated
+# writer on every interface. server.py now treats empty as unset; not producing
+# it in the first place is the other half.
+if [ -n "${HOST-}" ]; then
+    export HOST
+fi
 
 if [ ! -x "$EXEC" ]; then
     printf 'error: agent executable not found at %s\n' "$EXEC" >&2

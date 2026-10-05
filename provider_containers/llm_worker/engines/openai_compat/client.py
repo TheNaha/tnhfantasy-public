@@ -1,5 +1,4 @@
 import os
-import json
 import logging
 from typing import Dict, Any, Optional
 
@@ -11,6 +10,7 @@ from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, TaskEvent
 )
+from provider_core.sse import iter_sse_data, parse_sse_json
 from provider_core.responses import (
     failed,
     files_response,
@@ -176,60 +176,60 @@ class OpenAICompatProviderClient(BaseProviderClient):
                     full_content = ""
                     tool_calls = []
 
-                    async for line in response.aiter_lines():
-                        line = line.strip()
-                        if not line or line == "data: [DONE]":
+                    async def _cancelled() -> str:
+                        return TaskEvent(
+                            event="cancelled",
+                            job_id=job_id,
+                            outputs=[{"role": "assistant", "content": full_content, "cancelled": True}],
+                        ).to_ndjson()
+
+                    # Framing and the cancellation probe live in provider_core;
+                    # this loop is only the payload -> TaskEvent mapping, which is
+                    # the part that is genuinely OpenAI-shaped.
+                    async for data_str in iter_sse_data(
+                        response,
+                        job_id=job_id,
+                        job_tracker=self.job_tracker,
+                        on_cancelled=_cancelled,
+                    ):
+                        data = parse_sse_json(data_str)
+                        if data is None:
+                            self.logger.error(f"Failed to decode JSON: {data_str}")
+                            continue
+                        choices = data.get("choices", [])
+                        if not choices:
                             continue
 
-                        if job_id and await self.job_tracker.is_cancelled(job_id):
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content")
+                        delta_tool_calls = delta.get("tool_calls")
+
+                        if content:
+                            full_content += content
                             yield TaskEvent(
-                                event="cancelled",
+                                event="delta",
                                 job_id=job_id,
-                                outputs=[{"role": "assistant", "content": full_content, "cancelled": True}],
+                                text=content,
                             ).to_ndjson()
-                            return
 
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            try:
-                                data = json.loads(data_str)
-                                choices = data.get("choices", [])
-                                if not choices:
-                                    continue
-
-                                delta = choices[0].get("delta", {})
-                                content = delta.get("content")
-                                delta_tool_calls = delta.get("tool_calls")
-
-                                if content:
-                                    full_content += content
-                                    yield TaskEvent(
-                                        event="delta",
-                                        job_id=job_id,
-                                        text=content,
-                                    ).to_ndjson()
-
-                                if delta_tool_calls:
-                                    for tc in delta_tool_calls:
-                                        index = tc.get("index", 0)
-                                        while len(tool_calls) <= index:
-                                            tool_calls.append({
-                                                "id": "",
-                                                "type": "function",
-                                                "function": {"name": "", "arguments": ""},
-                                            })
-                                        if tc.get("id"):
-                                            tool_calls[index]["id"] = tc["id"]
-                                        if tc.get("type"):
-                                            tool_calls[index]["type"] = tc["type"]
-                                        if tc.get("function"):
-                                            if tc["function"].get("name"):
-                                                tool_calls[index]["function"]["name"] = tc["function"]["name"]
-                                            if tc["function"].get("arguments"):
-                                                tool_calls[index]["function"]["arguments"] += tc["function"]["arguments"]
-
-                            except json.JSONDecodeError:
-                                self.logger.error(f"Failed to decode JSON: {data_str}")
+                        if delta_tool_calls:
+                            for tc in delta_tool_calls:
+                                index = tc.get("index", 0)
+                                while len(tool_calls) <= index:
+                                    tool_calls.append({
+                                        "id": "",
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    })
+                                if tc.get("id"):
+                                    tool_calls[index]["id"] = tc["id"]
+                                if tc.get("type"):
+                                    tool_calls[index]["type"] = tc["type"]
+                                if tc.get("function"):
+                                    if tc["function"].get("name"):
+                                        tool_calls[index]["function"]["name"] = tc["function"]["name"]
+                                    if tc["function"].get("arguments"):
+                                        tool_calls[index]["function"]["arguments"] += tc["function"]["arguments"]
 
                     output = {"role": "assistant", "content": full_content}
                     if tool_calls:

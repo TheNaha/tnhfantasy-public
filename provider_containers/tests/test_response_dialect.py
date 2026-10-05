@@ -441,13 +441,30 @@ class TestBeamAndRemoteComfyAdoptUpstream:
 # state snapshot read by key name — so the dialect does not apply:
 #   get_object_info    — a verbatim pass-through of ComfyUI's /object_info,
 #                        which api/routes/nodes.py returns unchanged to the UI
-#   run_reconciliation — the inner closures feed run_reconciliation_v2, which
-#                        reads total_invalid / total_partial from them
+#   run_reconciliation — hands these closures to run_reconciliation_v2, which
+#   validate_existing    reads total_invalid / total_partial from, so wrapping
+#                        it in the shared envelope would nest the counts under
+#                        `result` and reconciliation would read zero of them.
+#                        The engine is also required to `raise` when the call
+#                        fails (a returned `{}` reads to reconciliation as a clean
+#                        sweep), which is only expressible as a plain return.
+#   list_existing_files — likewise: a `{path: {...}}` map, not an envelope.
+#   download_file       — returns nothing; it raises on failure so reconciliation
+#                        records a failed download.
+#   delete_file         — returns a bool, the callback contract reconciliation
+#                        increments `deletions_completed` on.
 #   get_health / get_info / get_storage_stats / get_reconciliation_status /
 #   get_config / cancel_job — snapshots, already consistent between engines
+#
+# The four closures are named here as well as `run_reconciliation` because
+# `_dialect_returns` walks nested functions and reads each one's own name.
 PASSTHROUGH_METHODS = {
     "get_object_info",
     "run_reconciliation",
+    "validate_existing",
+    "list_existing_files",
+    "download_file",
+    "delete_file",
     "get_health",
     "get_info",
     "get_storage_stats",

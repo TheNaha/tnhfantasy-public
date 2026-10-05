@@ -23,6 +23,7 @@ from provider_core.comfy_lifecycle import (
 )
 from provider_core.downloads import pending_download_paths, pipeline_artifacts
 from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
+from provider_core.model_scan import scan_model_directory
 from provider_core.downloads import download_model_to_path
 from provider_core.http_client import get_http_client
 
@@ -325,14 +326,10 @@ async def list_models_with_metadata_internal(base_path: str, directory: str) -> 
     if not os.path.exists(target_dir): return []
     
     def _scan():
-        entries, entry_set = [], set()
-        try:
-            for e in os.scandir(target_dir):
-                if e.is_file():
-                    entry_set.add(e.name)
-                    if is_model_file(e.name): entries.append((e.name, e.stat().st_size))
-        except: pass
-        return entries, entry_set
+        # Raises on a failed scandir or stat. This was `except: pass`, which made
+        # "the volume could not be read" indistinguishable from "no models here"
+        # and re-downloaded the directory. See `provider_core/model_scan.py`.
+        return scan_model_directory(target_dir)
 
     entries, entry_set = await asyncio.to_thread(_scan)
     async def _proc(name: str, size: int):
@@ -1022,6 +1019,11 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         "total_valid": 0,
         "total_invalid": 0,
         "total_partial": 0,
+        # A third bucket, and it is a real key rather than a lazily-created one:
+        # reconciliation reads these totals, and a key that only exists once
+        # something failed makes "no key" indistinguishable from "engine that does
+        # not report this". The LLM twin has reported it since 2026-09-29.
+        "total_indeterminate": 0,
         "by_directory": {}
     }
 
@@ -1056,12 +1058,18 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         if is_transient_artifact(name):
             if not os.path.isfile(full_path):
                 return None
+            try:
+                partial_size = os.path.getsize(full_path)
+            except OSError:
+                # EIO on a gcsfuse mount, a file vanishing mid-walk. Report it as
+                # indeterminate rather than aborting the whole directory sweep.
+                partial_size = None
             return {
                 "directory": directory,
                 "type": "partial",
                 "data": {
                     "name": name,
-                    "size": os.path.getsize(full_path),
+                    "size": partial_size,
                     "issue": "Incomplete download (temp file)",
                 },
             }
@@ -1072,7 +1080,24 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         if not os.path.isfile(full_path):
             return None
 
-        file_size = os.path.getsize(full_path)
+        try:
+            file_size = os.path.getsize(full_path)
+        except OSError as exc:
+            # Unguarded here, guarded in the LLM twin
+            # (`llm_worker/engines/modal/modal_app.py`) since 2026-09-29. A stat
+            # that fails is not a verdict on the file, and this runs inside
+            # `asyncio.gather` — so raising did not report one bad file, it
+            # discarded the result of every other file in the sweep with it.
+            logger.warning(f"[Validate] Could not stat {name}: {exc}")
+            return {
+                "directory": directory,
+                "type": "indeterminate",
+                "data": {
+                    "name": name,
+                    "size": None,
+                    "issue": f"Could not stat file: {exc}",
+                },
+            }
         from provider_core.validation import validate_downloaded_file
         validation = validate_downloaded_file(full_path)
         issues = [] if validation["valid"] else [validation["error"]]
@@ -1082,17 +1107,26 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         # `provider_core/validation.py` for why this is a third state.
         should_delete = not validation["valid"] and not validation.get("indeterminate")
         detected_format = validation.get("format", "unknown")
-                
+
         model_info = {
             "name": name,
             "size": file_size,
             "size_mb": round(file_size / (1024**2), 1),
             "format": detected_format
         }
-        
+
         if issues:
             model_info["issues"] = issues
-            
+
+            if validation.get("indeterminate"):
+                # Its own `type`, so `total_invalid` means the same quantity on
+                # this engine as on the LLM twin (`modal_app.py:487`). It used to
+                # be reported as `type: "invalid"`, which made "invalid" count
+                # files that were merely unreadable — and this engine's numbers
+                # were compared against the LLM engine's to decide whether
+                # anything was wrong.
+                return {"directory": directory, "type": "indeterminate", "data": model_info}
+
             if delete_invalid and should_delete:
                 os.remove(full_path)
                 side_files = [
@@ -1104,9 +1138,9 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
                     if os.path.exists(side_file):
                         os.remove(side_file)
                 logger.info(f"[Validate] Deleted invalid: {name}")
-                
+
             return {"directory": directory, "type": "invalid", "data": model_info}
-        
+
         return {"directory": directory, "type": "valid", "data": model_info}
 
     # Collect all file tasks
@@ -1127,8 +1161,9 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         try:
             entries = os.listdir(target_dir)
             validation_results["by_directory"][directory] = {
-                "valid": 0, "invalid": 0, "partial": 0, 
-                "valid_files": [], "invalid_files": [], "partial_files": []
+                "valid": 0, "invalid": 0, "partial": 0, "indeterminate": 0,
+                "valid_files": [], "invalid_files": [], "partial_files": [],
+                "indeterminate_files": []
             }
             # Create a task for each file
             for name in entries:
@@ -1143,19 +1178,27 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
         async def _run_validation(d, n):
             return await asyncio.to_thread(validate_single_file_in_dir, d, n)
 
-        results = await asyncio.gather(*(_run_validation(d, n) for d, n in all_file_tasks))
+        results = await asyncio.gather(*(_run_validation(d, n) for d, n in all_file_tasks), return_exceptions=True)
 
         for res in results:
             try:
+                if isinstance(res, BaseException):
+                    # Was: an unguarded gather, so ONE file raising discarded the
+                    # result of every other file in the sweep. Reconciliation reads
+                    # these totals to decide whether anything is wrong, so one
+                    # EIO reported "validate_models failed" and hid the state of
+                    # 530 healthy checkpoints.
+                    logger.error(f"[Validate] {type(res).__name__} during validation: {res}")
+                    continue
                 if not res:
                     continue
-                    
+
                 d = res["directory"]
                 t = res["type"]
                 data = res["data"]
-                
+
                 stats = validation_results["by_directory"][d]
-                
+
                 if t == "valid":
                     stats["valid"] += 1
                     # stats["valid_files"].append(data) # OMITTED to reduce payload size
@@ -1164,11 +1207,18 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
                     stats["invalid"] += 1
                     stats["invalid_files"].append(data)
                     validation_results["total_invalid"] += 1
+                elif t == "indeterminate":
+                    # A third bucket, matching the LLM twin. Excluded from
+                    # `total_invalid` so that number means "read, and bad" on both
+                    # engines rather than "read, and bad, or we could not read".
+                    stats["indeterminate"] = stats.get("indeterminate", 0) + 1
+                    stats.setdefault("indeterminate_files", []).append(data)
+                    validation_results["total_indeterminate"] = validation_results.get("total_indeterminate", 0) + 1
                 elif t == "partial":
                     stats["partial"] += 1
                     stats["partial_files"].append(data)
                     validation_results["total_partial"] += 1
-                    
+
             except Exception as e:
                 logger.error(f"File validation failed: {e}")
     
