@@ -30,7 +30,7 @@ from provider_core.auth import bearer_from_header, token_matches
 from provider_core.downloads import pending_download_paths, pipeline_artifacts
 from provider_core.http_client import get_file_size_cap
 from provider_core.responses import failed, ok, outcome
-from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
+from provider_core.utils import get_safe_path, is_model_candidate, is_transient_artifact
 from provider_core.logging import get_logger
 
 logger = get_logger("image_worker.beam.beam_app")
@@ -602,7 +602,14 @@ async def validate_models(request: Request):
                         "issues": ["Incomplete download (temp file)"],
                     })
                     continue
-                if not is_model_file(name):
+                # `is_model_candidate`, not `is_model_file`: this sweep runs with
+                # delete_invalid=True, so it must also skip the non-model assets
+                # that legitimately live in a model directory — `.txt` wildcards
+                # and embeddings, `.yaml` poses. `is_model_file` only excludes
+                # pipeline-owned and sidecar names, so a 200-byte wildcard list
+                # was validated, failed MIN_MODEL_SIZE, and was deleted. The
+                # remote agent had the identical defect.
+                if not is_model_candidate(name):
                     continue
                 if not entry.is_file():
                     continue

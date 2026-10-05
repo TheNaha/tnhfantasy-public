@@ -10,7 +10,7 @@ from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, TaskEvent
 )
-from provider_core.sse import iter_sse_data, parse_sse_json
+from provider_core.sse import SSECancelled, iter_sse_data, parse_sse_json
 from provider_core.responses import (
     failed,
     files_response,
@@ -192,6 +192,17 @@ class OpenAICompatProviderClient(BaseProviderClient):
                         job_tracker=self.job_tracker,
                         on_cancelled=_cancelled,
                     ):
+                        # A cancellation, not a vendor payload. The shared
+                        # framing module builds the `cancelled` frame and yields
+                        # it here; without this branch it would be parsed as a
+                        # vendor delta, found to have no `choices`, skipped, and
+                        # the loop would end into the post-loop `completed`
+                        # yield — recording a cancelled job as a success with a
+                        # half-written message. See `provider_core.sse`.
+                        if isinstance(data_str, SSECancelled):
+                            if data_str.ndjson:
+                                yield data_str.ndjson
+                            return
                         data = parse_sse_json(data_str)
                         if data is None:
                             self.logger.error(f"Failed to decode JSON: {data_str}")

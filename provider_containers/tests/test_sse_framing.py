@@ -11,6 +11,7 @@ import json
 import pytest
 
 from provider_core.sse import (
+    SSECancelled,
     iter_sse_data,
     parse_sse_json,
     sse_payload,
@@ -121,9 +122,18 @@ class TestIterSseData:
                 resp, job_id="j1", job_tracker=tracker, on_cancelled=_on_cancelled
             )
         ]
-        # The probe runs on the first frame, before it is yielded, so a cancelled
-        # job produces no content at all — matching what each engine did.
-        assert out == []
+        # The probe runs on the first frame, before that frame is yielded, so no
+        # *vendor* content comes out — matching what each engine did.
+        #
+        # What DOES come out is an `SSECancelled` carrying whatever `on_cancelled`
+        # built. This used to be `assert out == []`: the probe called
+        # `await on_cancelled()` and discarded the return value, so the frame the
+        # engines had just constructed was dropped and their `async for` simply
+        # ended — into the post-loop `yield TaskEvent(event="completed")`. A
+        # cancelled LLM job was recorded as a success with a half-written
+        # assistant message committed to the chat. See `provider_core.sse`.
+        assert [p for p in out if not isinstance(p, SSECancelled)] == []
+        assert sum(isinstance(p, SSECancelled) for p in out) == 1
         assert seen == ["cancelled"]
         assert tracker.probes == 1
 
@@ -149,7 +159,9 @@ class TestIterSseData:
                 resp, job_id="j1", job_tracker=tracker, on_cancelled=_on_cancelled
             )
         ]
-        assert [json.loads(p)["n"] for p in out] == [1]
+        payloads = [p for p in out if not isinstance(p, SSECancelled)]
+        assert [json.loads(p)["n"] for p in payloads] == [1]
+        assert sum(isinstance(p, SSECancelled) for p in out) == 1
         assert seen == ["cancelled"]
 
     @pytest.mark.asyncio
@@ -220,7 +232,11 @@ class TestAMultiLineFrameIsOneFrame:
             p
             async for p in iter_sse_data(resp, job_id="j1", job_tracker=tracker)
         ]
-        assert out == []
+        # The truncated frame is never yielded. A cancellation marker IS, so the
+        # caller can close the job out as cancelled rather than falling through
+        # to its post-loop "completed".
+        assert [p for p in out if not isinstance(p, SSECancelled)] == []
+        assert sum(isinstance(p, SSECancelled) for p in out) == 1
         assert tracker.probes == 1, tracker.probes
 
     @pytest.mark.asyncio

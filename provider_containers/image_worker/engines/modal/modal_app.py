@@ -22,7 +22,7 @@ from provider_core.comfy_lifecycle import (
     wait_for_port_closed,
 )
 from provider_core.downloads import pending_download_paths, pipeline_artifacts
-from provider_core.utils import get_safe_path, is_model_file, is_transient_artifact
+from provider_core.utils import get_safe_path, is_model_candidate, is_transient_artifact
 from provider_core.model_scan import scan_model_directory
 from provider_core.downloads import download_model_to_path
 from provider_core.http_client import get_http_client
@@ -1074,7 +1074,13 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
                 },
             }
 
-        if not is_model_file(name):
+        # `is_model_candidate`, not `is_model_file`: this validator is also the
+        # delete path, and a `.txt` in `models/wildcards` or
+        # `models/embeddings` (or a `.yaml` in `models/poses`) is not a model.
+        # `is_model_file` only excludes pipeline-owned and sidecar names, so such
+        # a file was validated, failed MIN_MODEL_SIZE, and — with
+        # `delete_invalid=True`, which reconciliation uses on a timer — removed.
+        if not is_model_candidate(name):
             return None
 
         if not os.path.isfile(full_path):

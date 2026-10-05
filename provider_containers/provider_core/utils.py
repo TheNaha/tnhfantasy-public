@@ -71,6 +71,41 @@ def is_model_file(name: str) -> bool:
     return not (is_transient_artifact(name) or is_sidecar_artifact(name))
 
 
+# Suffixes that legitimately live *inside* a model directory and are not models.
+#
+# `models/embeddings` and `models/wildcards` hold `.txt` prompt files and
+# `models/poses` holds `.yaml` pose configs. All three directories are in
+# `MODEL_DIRECTORIES`, so the reconciliation validator walks them — and it runs
+# with `delete_invalid=True` every couple of hours.
+#
+# `validate_downloaded_file` skips the header check for these extensions but
+# still applies `MIN_MODEL_SIZE`, so an ordinary 200-byte wildcard list came back
+# `valid: False, indeterminate: False` — a definite verdict, not a read failure —
+# and was `os.remove`d. Measured on the remote agent: four `.txt`/`.yaml` files
+# deleted from one `models/wildcards` directory in a single sweep, only the one
+# over 10 KiB surviving. There is no undo and no notification; the operator finds
+# out when a prompt stops applying.
+NON_MODEL_SUFFIXES = (
+    ".txt", ".yaml", ".yml", ".json", ".md", ".markdown", ".csv",
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
+)
+
+
+def is_model_candidate(name: str) -> bool:
+    """True when a directory entry should be *validated*, and so possibly deleted.
+
+    Narrower than `is_model_file`, which only excludes pipeline-owned and sidecar
+    names. This additionally excludes the non-model assets that are supposed to
+    be in a model directory at all, because the validator's failure verdict
+    removes the file.
+
+    Anything this returns False for must not be passed to
+    `validate_downloaded_file` on a `delete_invalid` path. That is the whole
+    point of the predicate: it is a delete guard, not a listing filter.
+    """
+    return is_model_file(name) and not str(name).lower().endswith(NON_MODEL_SUFFIXES)
+
+
 def get_safe_path(base_dir: str, requested_path: str) -> str:
     """
     Resolve and validate a path to prevent directory traversal.
@@ -176,7 +211,19 @@ def comfy_status_to_task_event(update: Dict[str, Any], job_id: Optional[str] = N
         return TaskEvent(event="cancelled", job_id=job_id, message=update.get("message"))
 
     if status == "executing":
-        return TaskEvent(event="node", job_id=job_id, node=update.get("node"))
+        # Coerced to str because `TaskEvent.node` is `Optional[str]` and the
+        # producer passes ComfyUI's value through verbatim. ComfyUI sends a
+        # string node id today, so this is defence rather than a live fix — but
+        # the line above already coerces the same value for its stall message,
+        # so the two disagreed about the type. A `ValidationError` raised inside
+        # this async generator has no handler: it tears down the
+        # `StreamingResponse` mid-job, after `started` and before `completed`.
+        raw_node = update.get("node")
+        return TaskEvent(
+            event="node",
+            job_id=job_id,
+            node=None if raw_node is None else str(raw_node),
+        )
 
     # progress event with a None value (which would stall the backend reducer).
     #
@@ -193,7 +240,13 @@ def comfy_status_to_task_event(update: Dict[str, Any], job_id: Optional[str] = N
         return None
     
     if status == "execution_cached":
-        return TaskEvent(event="cached_nodes", job_id=job_id, nodes=update.get("nodes") or data.get("nodes") or [])
+        raw_nodes = update.get("nodes") or data.get("nodes") or []
+        return TaskEvent(
+            event="cached_nodes",
+            job_id=job_id,
+            # Same coercion, same reason: `nodes` is `Optional[List[str]]`.
+            nodes=[str(n) for n in raw_nodes] if isinstance(raw_nodes, (list, tuple)) else None,
+        )
 
     value = update.get("value")
     max_v = update.get("max") or 0

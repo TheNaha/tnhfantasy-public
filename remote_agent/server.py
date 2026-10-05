@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from provider_core.auth import bearer_from_header, token_matches
 from provider_core.http_client import get_file_size_cap
 from provider_core.responses import failed, from_upstream, ok
-from provider_core.utils import get_safe_path, is_transient_artifact
+from provider_core.utils import get_safe_path, is_model_candidate, is_transient_artifact
 from provider_core.downloads import (
     download_model_to_path,
     pending_download_paths,
@@ -424,7 +424,19 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
                     continue
                 partial.append({"name": name, "path": rel_path, "size": size, "issue": "Incomplete download (temp file)"})
                 continue
-            if _is_sidecar(name):
+            # Not `is_transient_artifact` (handled above) and not `_is_sidecar`:
+            # `is_model_candidate` also excludes the non-model assets that belong
+            # in these directories — `models/wildcards` and `models/embeddings`
+            # hold `.txt` prompt files, `models/poses` holds `.yaml` — and every
+            # one of them is under `delete_invalid=True` here, on a timer.
+            #
+            # `validate_downloaded_file` skips its header check for those
+            # extensions but still applies MIN_MODEL_SIZE, so a 200-byte
+            # wildcard list came back `valid: False, indeterminate: False` — a
+            # definite verdict, the only kind that deletes — and was removed.
+            # Measured before the fix: four `.txt`/`.yaml` files deleted from one
+            # `models/wildcards` sweep, only the one over 10 KiB surviving.
+            if not is_model_candidate(name):
                 continue
             full_path = os.path.join(root, name)
             rel_path = os.path.relpath(full_path, DATA_DIR).replace("\\", "/")

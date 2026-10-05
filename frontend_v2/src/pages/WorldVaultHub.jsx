@@ -12,6 +12,7 @@ import {
 } from '../hooks/useWorldVaultSearch';
 import { useDebounce } from '../hooks/useDebounce';
 import RoleplayPageShell from '../components/RoleplayPageShell';
+import { QueryErrorState } from '../components/common/QueryState';
 
 const ENTITY_ICONS = {
     character: Users,
@@ -87,15 +88,25 @@ export default function WorldVaultHub() {
         setSelectedType(mention.type);
     }
 
-    const { data: entities, isLoading: entitiesLoading } = useWorldVaultDashboard();
+    // `isError` is load-bearing, not decoration. Both queries used to destructure
+    // only `{data, isLoading}`, so a failed fetch left `displayResults` empty
+    // and the page rendered "No entities yet" / "No results found" — an outage
+    // reported as an empty vault, with no retry and no way to tell the two apart.
+    // That is the eleventh file to do this; see `docs/audit-2026-10-05.md`.
+    const entitiesQuery = useWorldVaultDashboard();
+    const { data: entities, isLoading: entitiesLoading } = entitiesQuery;
     const trimmedQuery = debouncedQuery.trim();
     // One character is below the backend's `min_length=2` and would 422; the
     // search hook stays disabled, so the hub must not present it as an
     // empty-result search either.
     const isSearchActive = trimmedQuery.length >= WORLD_VAULT_SEARCH_MIN_LENGTH;
-    const { data: searchResults, isLoading: searchLoading } = useWorldVaultSearch(trimmedQuery, selectedType !== 'all' ? selectedType : null);
+    const searchResultsQuery = useWorldVaultSearch(trimmedQuery, selectedType !== 'all' ? selectedType : null);
+    const { data: searchResults, isLoading: searchLoading } = searchResultsQuery;
 
     const isLoading = entitiesLoading || searchLoading;
+    const failedQuery = entitiesQuery.isError
+        ? entitiesQuery
+        : (searchResultsQuery.isError ? searchResultsQuery : null);
     const RECENT_TYPE_KEYS = { characters: 'character', chats: 'chat', stories: 'story' };
     const displayResults = isSearchActive
         ? (searchResults?.results || [])
@@ -196,13 +207,21 @@ export default function WorldVaultHub() {
 
             {isLoading && <div className="text-gray-400">Loading...</div>}
 
-            {!isLoading && displayResults.length === 0 && (
+            {!isLoading && failedQuery && (
+                <QueryErrorState
+                    noun={isSearchActive ? 'search results' : 'world vault entities'}
+                    error={failedQuery.error}
+                    onRetry={failedQuery.refetch}
+                />
+            )}
+
+            {!isLoading && !failedQuery && displayResults.length === 0 && (
                 <div className="text-center py-12 text-gray-500">
                     {isSearchActive ? 'No results found' : 'No entities yet'}
                 </div>
             )}
 
-            {!isLoading && displayResults.length > 0 && (
+            {!isLoading && !failedQuery && displayResults.length > 0 && (
                 <div className="space-y-3">
                     {displayResults.map((entity, i) => {
                         const Icon = (ENTITY_ICONS[entity.type] || Tag);

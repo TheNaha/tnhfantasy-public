@@ -7,6 +7,7 @@ import struct
 import json
 from typing import Any, Dict, Optional
 from .logging import get_logger
+from .utils import NON_MODEL_SUFFIXES
 
 logger = get_logger("provider_core.validation")
 
@@ -24,14 +25,15 @@ VALID_FILE_HEADERS = {
     b"\x89PNG": "png",
 }
 
-_SKIP_HEADER_EXTENSIONS = (
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".json",
-    ".txt",
-    ".yaml",
-    ".yml",
+# Derived from the shared tuple rather than re-listed, because the two answers
+# must not be able to disagree: this list decides whether the header check is
+# skipped, `is_model_candidate` decides whether the file is validated (and hence
+# deleted) at all. A suffix added to one and not the other is exactly the drift
+# that removed four files from a wildcards directory.
+_SKIP_HEADER_EXTENSIONS = tuple(
+    suffix for suffix in NON_MODEL_SUFFIXES if suffix in (
+        ".png", ".jpg", ".jpeg", ".json", ".txt", ".yaml", ".yml",
+    )
 )
 
 

@@ -6,6 +6,7 @@ import FeedCard from './FeedCard';
 import ImageGroup from './ImageGroup';
 import JobCard from './JobCard';
 import ProgressiveImage from '../ProgressiveImage';
+import ClickableCard from '../common/ClickableCard';
 import { SessionBadges } from './SessionPanel';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
 import { getAssetPrompt } from '../../utils/assetMetadata';
@@ -370,11 +371,16 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
     const cardPrompt = getAssetPrompt(item);
 
     return (
-        <div
+        // `ClickableCard`, not a hand-rolled `div`. This root used to be
+        // `role="img"`, a leaf role with children-presentational semantics: the
+        // whole subtree collapsed into one image node and the real favourite
+        // `<button aria-pressed>` inside it was pruned from the accessibility
+        // tree. It also had no `tabIndex`, so opening the lightbox was
+        // mouse-only. See `common/ClickableCard.jsx`.
+        <ClickableCard
             className={`group relative aspect-square bg-[#0B0E14] rounded-2xl overflow-hidden transition-all duration-500 ease-out hover:shadow-2xl hover:shadow-blue-500/10 hover:-translate-y-1 ${selected ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-[#0B0E14]' : ''}`}
-            onClick={onCardClick}
-            role="img"
-            aria-label={cardPrompt ? `AI generated image: ${cardPrompt.slice(0, 100)}${cardPrompt.length > 100 ? '...' : ''}` : `Generated image ${item.name}`}
+            onActivate={onCardClick}
+            ariaLabel={cardPrompt ? `AI generated image: ${cardPrompt.slice(0, 100)}${cardPrompt.length > 100 ? '...' : ''}` : `Generated image ${item.name}`}
         >
             <div className="w-full h-full relative">
                 <ProgressiveImage
@@ -465,7 +471,7 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
                     />
                 </button>
             )}
-        </div>
+        </ClickableCard>
     );
 });
 
@@ -480,9 +486,10 @@ const ListImageGroupCard = memo(function ListImageGroupCard({ item, selected, se
     }, [handleImageGroupSelection, item.images]);
 
     return (
-        <div
+        <ClickableCard
             className={`flex items-center gap-4 glass-panel p-3 rounded-2xl transition-all duration-300 cursor-pointer group hover:-translate-y-0.5 hover:shadow-xl ${selected ? 'border-blue-500 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'border-white/5 hover:border-white/10'}`}
-            onClick={onCardClick}
+            onActivate={onCardClick}
+            ariaLabel={getAssetPrompt(item.images[0]) ? `Group of ${item.images.length} images` : undefined}
         >
             {selectionMode && (
                 <div
@@ -517,7 +524,7 @@ const ListImageGroupCard = memo(function ListImageGroupCard({ item, selected, se
                     </span>
                 </div>
             </div>
-        </div>
+        </ClickableCard>
     );
 });
 
@@ -536,9 +543,10 @@ const ListSingleImageCard = memo(function ListSingleImageCard({ item, selected, 
     }, [handleImageClick, item]);
 
     return (
-        <div
+        <ClickableCard
             className={`flex items-center gap-4 glass-panel p-3 rounded-2xl transition-all duration-300 cursor-pointer group hover:-translate-y-0.5 hover:shadow-xl ${selected ? 'border-blue-500 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'border-white/5 hover:border-white/10'}`}
-            onClick={onCardClick}
+            onActivate={onCardClick}
+            ariaLabel={getAssetPrompt(item) ? `Image: ${getAssetPrompt(item).slice(0, 100)}` : undefined}
         >
             {selectionMode && (
                 <button
@@ -574,7 +582,7 @@ const ListSingleImageCard = memo(function ListSingleImageCard({ item, selected, 
                     </span>
                 </div>
             </div>
-        </div>
+        </ClickableCard>
     );
 });
 
@@ -584,9 +592,10 @@ const DefaultImageGroupImageCard = memo(function DefaultImageGroupImageCard({ im
     }, [handleImageClick, image, item]);
 
     return (
-        <div
+        <ClickableCard
             className="aspect-square bg-[#0B0E14] rounded-xl overflow-hidden cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all duration-300 group shadow-lg"
-            onClick={onCardClick}
+            onActivate={onCardClick}
+            ariaLabel={image.name}
         >
             <ProgressiveImage
                 blurhash={image.blurhash}
@@ -596,7 +605,7 @@ const DefaultImageGroupImageCard = memo(function DefaultImageGroupImageCard({ im
                 size="medium"
                 className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             />
-        </div>
+        </ClickableCard>
     );
 });
 
