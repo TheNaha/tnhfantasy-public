@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import {
     UPLOAD_LIMITS,
     assertUploadAllowed,
@@ -8,8 +11,7 @@ import {
 import { ApiError } from './client';
 import { filesApi } from './files';
 import api from './client';
-
-const MB = 1024 * 1024;
+import { MB } from '../utils/bytes';
 
 function makeFile(name, { size = 10, type = 'image/png' } = {}) {
     return { name, size, type };
@@ -75,6 +77,25 @@ describe('upload helpers', () => {
         it('allows non-images on the generic file endpoint', () => {
             expect(assertUploadAllowed(makeFile('model.safetensors', { type: '' }), 'file')).toBe(true);
         });
+    });
+});
+
+describe('the byte ladder has one owner', () => {
+    // `upload.js` used to declare its own `export const MB = 1024 * 1024`
+    // alongside `utils/bytes.js`, which already owned it — so there were two
+    // definitions of the same number in the upload path and nothing tied them
+    // together. The limits below are the whole reason the constant exists.
+    it('derives every upload budget from utils/bytes MB', () => {
+        expect(UPLOAD_LIMITS.input.maxBytes).toBe(50 * MB);
+        expect(UPLOAD_LIMITS.file.maxBytes).toBe(500 * MB);
+        expect(UPLOAD_LIMITS.avatar.maxBytes).toBe(20 * MB);
+        expect(UPLOAD_LIMITS.card.maxBytes).toBe(25 * MB);
+        expect(MB).toBe(1024 * 1024);
+    });
+
+    it('exports no second MB of its own', () => {
+        expect(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'upload.js'), 'utf8'))
+            .not.toMatch(/export const MB\b/);
     });
 });
 

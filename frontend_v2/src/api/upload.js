@@ -9,9 +9,7 @@
  */
 
 import { ApiError, getBaseUrl } from './client';
-import { formatBytes } from '../utils/bytes';
-
-export const MB = 1024 * 1024;
+import { formatBytes, MB } from '../utils/bytes';
 
 /** Mirrors MAX_CARD_SIZE_MB in backend_v2/core/upload_validation.py. */
 export const CARD_MAX_BYTES = 25 * MB;

@@ -41,8 +41,6 @@ function toJobItem(job) {
     };
 }
 
-export 
-
 function toTimestamp(value) {
     if (value === undefined || value === null || value === '') return null;
     const parsed = typeof value === 'number' ? value : Date.parse(value);

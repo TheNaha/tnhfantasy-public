@@ -19,45 +19,16 @@ export function getAssetMetadata(asset) {
     return asset.metadata ?? asset.metadata_ ?? null;
 }
 
-/** The generation prompt, or null when the asset predates metadata capture. */
+/** The generation prompt, or null when the asset predates metadata capture.
+ *
+ * `getAssetNegativePrompt`, `getAssetSeed`, `getAssetCheckpoint`,
+ * `getAssetLoras` and `getAssetTimestamp` were deleted from here: zero consumers
+ * production or test. The grid card reads seed, LoRAs and the checkpoint off the
+ * `metadata` object inline, and the date rail orders on the server's own
+ * timeline, so five accessors documented a contract nobody held to.
+ */
 export function getAssetPrompt(asset) {
     const meta = getAssetMetadata(asset);
     if (!meta) return null;
     return meta.prompt ?? asset.prompt ?? null;
-}
-
-/** The negative prompt, or null. */
-export function getAssetNegativePrompt(asset) {
-    const meta = getAssetMetadata(asset);
-    if (!meta) return null;
-    return meta.negativePrompt ?? meta.negative_prompt ?? asset.negativePrompt ?? null;
-}
-
-/** The seed, or null. `0` is a real seed, so this must not be a truthiness test. */
-export function getAssetSeed(asset) {
-    const meta = getAssetMetadata(asset);
-    const seed = meta?.seed ?? asset?.seed;
-    return typeof seed === 'number' ? seed : null;
-}
-
-/** The checkpoint as stored (an object, or a bare filename string), or null. */
-export function getAssetCheckpoint(asset) {
-    const meta = getAssetMetadata(asset);
-    return meta?.checkpoint ?? asset?.checkpoint ?? null;
-}
-
-/** The LoRA list, each entry `{ name, display_name, strength, ... }`. */
-export function getAssetLoras(asset) {
-    const meta = getAssetMetadata(asset);
-    return Array.isArray(meta?.loras) ? meta.loras : [];
-}
-
-/**
- * The most recent timestamp available on an asset, preferring the generation
- * time over the import time. The backend orders and groups on the same
- * coalesce, so anything date-related should use this rather than picking a
- * field by hand.
- */
-export function getAssetTimestamp(asset) {
-    return asset?.generated_at ?? asset?.created_at ?? null;
 }

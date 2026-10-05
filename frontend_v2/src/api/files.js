@@ -157,11 +157,6 @@ export const filesApi = {
  * DB-backed gallery listing with keyset pagination.
  */
 export const assetsApi = {
-    list: (params = {}, options = {}) => api.get(`${API_V2_BASE}/assets`, {
-        params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)),
-        ...options,
-    }),
-
     /**
      * The faceted listing. Returns the SAME `items` / `has_more` /
      * `next_cursor` shape as `list`, the same sort vocabulary and the same

@@ -27,11 +27,6 @@ export const GENERATOR_MODEL_REQUESTS = [
     { key: 'embeddingModels', directory: 'models/embeddings', label: 'embedding models' },
 ];
 
-export const BASIC_GENERATOR_MODEL_REQUESTS = [
-    { key: 'checkpoints', directory: 'models/checkpoints', label: 'checkpoints' },
-    { key: 'vaeModels', directory: 'models/vae', label: 'VAE models' },
-];
-
 export const MODEL_MANAGER_CATEGORIES = [
     { id: 'checkpoints', label: 'Checkpoints', path: 'models/checkpoints' },
     { id: 'unet', label: 'UNET (Flux)', path: 'models/unet' },
