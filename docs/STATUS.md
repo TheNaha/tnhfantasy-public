@@ -4,7 +4,7 @@
 against the code on **2026-10-04**, not carried over from an earlier plan.
 
 If you are about to make a decision about what to work on next, read this file
-and then the **most recent** audit, which is `docs/audit-2026-10-04b.md`. Each
+and then the **most recent** audit, which is `docs/audit-2026-10-05.md`. Each
 audit supersedes its predecessors for everything it marks fixed; reading an
 older one tells you about defects that no longer exist. The other planning
 documents that used to sit at the repo root are historical and live in

@@ -72,12 +72,12 @@ describe('RelationshipGraph — reset layout', () => {
         try {
             renderGraph();
             await screen.findByTitle('Reset layout');
-            await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/graph-layout?name=default'));
+            await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/graph-layout/?name=default'));
 
             fireEvent.click(screen.getByRole('button', { name: /reset layout/i }));
 
             await waitFor(() => {
-                expect(apiMock.delete).toHaveBeenCalledWith('/api/v2/world-vault/graph-layout?name=default');
+                expect(apiMock.delete).toHaveBeenCalledWith('/api/v2/world-vault/graph-layout/?name=default');
             });
             expect(reload).not.toHaveBeenCalled();
         } finally {
@@ -88,7 +88,7 @@ describe('RelationshipGraph — reset layout', () => {
     it('re-reads the layout after the delete, so the graph re-lays out on this visit', async () => {
         renderGraph();
         await screen.findByTitle('Reset layout');
-        await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/graph-layout?name=default'));
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/api/v2/world-vault/graph-layout/?name=default'));
         const readsBefore = apiMock.get.mock.calls.filter((c) => String(c[0]).includes('graph-layout')).length;
 
         apiMock.get.mockImplementation((url) => {

@@ -252,6 +252,9 @@ def _render(extra: dict) -> str:
     return compact_renderer(None, "error", event)
 
 
+VOLUMINOUS_REPR_CALLS = []
+
+
 class TestExceptionRenderingIsBounded:
     """The 22-second-500 bug, pinned.
 
@@ -300,7 +303,6 @@ class TestExceptionRenderingIsBounded:
     def test_rendering_is_bounded_when_a_frame_local_is_huge(self):
         """A frame local that expands into a large object graph must not be
         rendered, and must not be walked to find out how large it is."""
-        import time
 
         class Voluminous:
             def __init__(self, depth=0):
@@ -313,18 +315,18 @@ class TestExceptionRenderingIsBounded:
                 )
 
             def __repr__(self):
+                VOLUMINOUS_REPR_CALLS.append(1)
                 return f"<Voluminous {len(self.children)} children>"
 
         def _raiser(thing):
             raise RuntimeError("carrying a heavy frame local")
 
         configure_logging()
-        started = time.perf_counter()
+        del VOLUMINOUS_REPR_CALLS[:]
         try:
             _raiser(Voluminous())
         except RuntimeError:
             line = _render({"exc_info": True})
-        elapsed = time.perf_counter() - started
 
         assert "RuntimeError: carrying a heavy frame local" in line
         # The SOURCE line of the call site legitimately mentions the class; what
@@ -333,9 +335,19 @@ class TestExceptionRenderingIsBounded:
         assert "<Voluminous 200 children>" not in line, (
             "frame locals must not be rendered"
         )
-        # Generous ceiling: the real cost was ~22s, and a correct render is
-        # sub-millisecond. This fails loudly rather than flaking.
-        assert elapsed < 2.0, f"exception rendering took {elapsed:.2f}s"
+        # How many times the object's `__repr__` fired — the direct, load-
+        # independent measure of whether the formatter walked the object graph.
+        #
+        # This used to be a wall-clock ceiling of 2.0s, on the reasoning that the
+        # buggy path cost ~22s and a correct render is sub-millisecond. It failed
+        # at 5.23s under a loaded event loop while passing in isolation in 18s
+        # for the whole file, which is exactly what a time-based assertion about
+        # CPU-bound work on a shared machine does. The repr count says the same
+        # thing without reference to how busy the machine is.
+        assert len(VOLUMINOUS_REPR_CALLS) == 0, (
+            f"the formatter repr'd a frame-local object "
+            f"{len(VOLUMINOUS_REPR_CALLS)} times; it must not walk locals"
+        )
 
     def test_a_very_deep_traceback_is_truncated(self):
         from infrastructure.logging import MAX_TRACEBACK_FRAMES
