@@ -1,10 +1,10 @@
 # TNHComfy — Project Status
 
 **The single authoritative status document.** Everything here was verified
-against the code on 2026-10-03, not carried over from an earlier plan.
+against the code on **2026-10-04**, not carried over from an earlier plan.
 
 If you are about to make a decision about what to work on next, read this file
-and then the **most recent** audit, which is `docs/audit-2026-10-03.md`. Each
+and then the **most recent** audit, which is `docs/audit-2026-10-04b.md`. Each
 audit supersedes its predecessors for everything it marks fixed; reading an
 older one tells you about defects that no longer exist. The other planning
 documents that used to sit at the repo root are historical and live in
@@ -40,29 +40,81 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of **2026-10-03**:
+All three suites green as of **2026-10-04**, re-measured after the second
+2026-10-04 pass (`docs/audit-2026-10-04b.md`) completed:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **2823 passed, 7 skipped** (244 s) | `cd backend_v2 && .venv/bin/python -m pytest` |
-| Frontend | **1346 passed across 145 files** (96 s) | `cd frontend_v2 && npm test` |
-| Providers | **793 passed, 4 skipped** (76-81 s) | `cd provider_containers && venv/bin/python -m pytest` |
+| Backend | **3054 passed, 9 skipped** (515 s) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Frontend | **1604 passed across 175 files** (213 s) | `cd frontend_v2 && npm test` |
+| Providers | **1012 passed, 5 skipped** (106 s) | `cd provider_containers && venv/bin/python -m pytest` |
 
-The frontend figures were re-measured on **2026-10-03**. Both counts grew by
-exactly what the 2026-10-03 audit added: four new invariant test files
-(`queryErrorInvariants`, `settingsKeysHaveReaders` on the frontend;
-`no_table_class_request_bodies`, plus a cross-module await-chain resolver added
-to `test_event_loop_invariant` on the backend). Each was confirmed to **fail**
-when its fix is reverted, which is the only property that makes an invariant test
-worth more than the list it replaces.
+`npm run lint` is **0 errors / 6 warnings** (was 11) and `ruff check .` is clean in
+both Python trees.
+
+> **The "known flaky" backend test was not flaky.** This section previously carried
+> `test_lifespan_runs_every_declared_startup_phase` as a load-sensitive flake that
+> "failed in two of four runs". It was deterministic: its `EVENT_BUS_TOPICS` listed
+> `"download"`, which has had no `EventType` behind it since the family was removed
+> on 2026-10-03, so `assert 0 > 0` could not be satisfied by any correct lifespan.
+> It reproduced in 24 s alongside 67 other tests. The list is now derived from
+> `EventType`, and the test is green. **There is no known-flaky backend test.**
+
+> **The backend CI job had been red for four days, and that is why local numbers
+> were not CI numbers.** `tests/conftest.py` probed every module in `sys.modules`
+> with `getattr(module, "get_session_sync", None)`, and `transformers` defines a
+> PEP 562 `__getattr__` that resolves an unknown name by *importing the submodule it
+> names* — which reached `torchvision`, absent from `requirements.txt`. The
+> autouse fixture raised and 1355 of 2832 tests errored in CI while passing
+> locally, because the local venv has no embedding stack at all. Fixed by scoping
+> the loop to backend modules. **`torchvision` is still missing**, so the embedding
+> paths remain uncovered — see §1b item 1.
+
+The frontend count grew by exactly what each pass added, and every new
+invariant test file was confirmed to **fail** when its fix is reverted — the only
+property that makes an invariant test worth more than the list it replaces.
+
+2026-10-03 added four: `queryErrorInvariants`, `settingsKeysHaveReaders`,
+`no_table_class_request_bodies`, and a cross-module await-chain resolver in
+`test_event_loop_invariant`.
+
+**2026-10-03b added nine more**, seven frontend and two backend:
+
+| Test | Retires |
+|---|---|
+| `streamingJobTerminalInvariants` | a terminal event arriving before the submitter's HTTP response |
+| `eventContractInvariants` | an `EventType` with no frontend constant, no producer, or no subscriber |
+| `hoverRevealInvariants` | a hover-reveal group missing from the touch-device rescue, and a rescue entry nothing uses |
+| `chatWorkspaceContextMemo` | a context key published without a matching `useMemo` dependency |
+| `vaultQueryKeyInvariants` | a hand-written `['world_vault', …]` key literal |
+| `test_batch_endpoint_bounds` | an unbounded batch request body |
+| `test_published_story_redaction` | the published export leaking a key the published read withholds |
+| `test_like_pattern_escaping` (AST guard) | escaping a LIKE pattern without the `ESCAPE` clause |
+| `test_validation_twin_parity` (providers) | the image and LLM sweeps disagreeing on what `indeterminate` means |
+
+Three of the four guards in this table are **generated from the thing they
+constrain** rather than hand-maintained: `hoverRevealInvariants` reads every
+`group-hover/<name>` out of `src/**`, `eventContractInvariants` parses both event
+enums, and `chatWorkspaceContextMemo` parses both sides of the memo. A
+hand-maintained list is the defect — the previous pass's `preflight.sh` provider
+check and this pass's hover-reveal block both failed by being one.
 
 > **The stack was verified reachable after the 2026-10-03 changes**, which is
 > worth stating explicitly because both tiers hot-reload in this dev stack —
 > `frontend_v2/src` is bind-mounted into a Vite dev server with `usePolling`, and
 > `backend_v2` is bind-mounted with `COMFY_UVICORN_RELOAD=1` — so no rebuild is
 > needed for a source change, and a stale-container class of defect cannot occur
-> here: `http://localhost:5174` → 200, `http://localhost:8002/api/live` → 200,
-> all 9 containers running.
+> here: `http://localhost:5174` → 200, the backend → healthy with all 9
+> containers running.
+>
+> **There is no `http://localhost:8002` check in that list any more, and that is
+> the point.** The backend used to be published on `0.0.0.0:8002`; it no longer
+> is, so the host answers `000`. Verify it from inside the container instead:
+> `docker compose exec backend_v2 curl -s localhost:8002/api/live`.
+>
+> That hot-reload is also a hazard worth knowing about: editing
+> `infrastructure/database.py` re-resolves the DSN within a second of the save,
+> on the live stack, against the environment the container already has.
 
 **A green suite says nothing about whether the container is serving the code under
 test.** The 2026-09-27 backend count was wrong precisely because the documented
@@ -103,8 +155,20 @@ and `.github/workflows/**` are in its `paths:` filter.
 `tts_worker/Dockerfile` was built by no workflow until 2026-09-29, and it is the
 image `ProviderDeployOrchestrator` uses for every `task_type="tts"` deploy — so a
 broken `COPY` in it broke TTS deployment on every host while every job stayed
-green. `backend_v2/Dockerfile` and `frontend_v2/Dockerfile` are still built by no
-workflow.
+green. It was also missing from the `compileall` step until 2026-10-04, so a
+syntax error in it reached main whenever the provider tests happened to pass.
+
+`backend_v2/Dockerfile` and `frontend_v2/Dockerfile` were built by **no** workflow
+until 2026-10-04. They are what actually runs in production and in every dev `up`,
+and a green test suite says nothing about them: `backend-tests.yml` installs into a
+host venv and `frontend-tests.yml` runs `npm ci` on the host, so neither would
+notice that the image no longer builds — a bad `COPY`, a system package the
+runtime needs, a requirements pin that no longer resolves. A new `app-images` job
+in `provider-tests.yml` builds the backend image and both frontend targets, and the
+two Dockerfiles (plus `backend_v2/requirements.txt` and
+`frontend_v2/package-lock.json`) are in that workflow's `paths:` filter. It lives
+there because GitHub has no job-level `paths:` — `on.<event>.paths` filters the
+whole workflow — and it is a few minutes on a Dockerfile change.
 
 `docs/api.md` covers 201 of the **329** live operations and had 26 endpoints that
 do not exist until 2026-09-29, including two whole sections under the wrong URL
@@ -155,6 +219,151 @@ themselves. See the audit.
 >   offenders are fixed; the architectural cause is not.
 
 ## What was actually wrong, and is now fixed
+
+### The second 2026-10-04 pass
+
+Same method again — four parallel read-only passes (backend, frontend,
+provider/worker tier, cross-seam wiring), every candidate reproduced by hand
+before it was accepted, then fixed in batches with a revert-verified test each.
+Baselines before: backend 2988 + 1 fail, frontend 1467 + 1 fail, providers 844.
+After: **3054 / 1604 / 1012**, and both pre-existing failures are fixed. Full
+register with `file:line`: `docs/audit-2026-10-04b.md`.
+
+Three things in it outrank the rest:
+
+- **The backend CI job had been red on all five runs of the previous four days.**
+  Not a flaky test: `tests/conftest.py` probed every module in `sys.modules` with
+  `getattr(module, "get_session_sync", None)`, and `transformers` has a PEP 562
+  `__getattr__` that resolves a miss by importing the submodule it names — reaching
+  `torchvision`, which is not in `requirements.txt`. 1355 of 2832 tests errored in
+  CI and all of them passed locally. **Every "verified green" number in the passes
+  above was a local observation.**
+- **The frontend re-published the whole API on `0.0.0.0:5174`.** It is a reverse
+  proxy to the backend, so publishing it publishes the unauthenticated API —
+  measured `curl http://192.168.1.28:5174/api/ready → 200` while the backend
+  answered nothing on any host port. Now bound to loopback plus an optional named
+  address; `preflight.sh` fails on a wildcard.
+- **Five declared indexes were never created on a fresh install**, including the
+  HNSW vector index on `character_memories(embedding)` — so semantic memory search
+  had no index at all on any new deployment. `create_all` cannot emit an
+  operator-class index, and the migration that would have created it early-returns
+  because `create_all` made the table first.
+
+The recurring shape was, again, **a control that renders, persists and reports
+success while the value goes nowhere** — a failed gallery fetch rendered as "No
+images yet" with a generate button, four settings sections are served and stored
+but rejected by their own `PUT`, and `jobs_cleanup`'s three controls reach an
+endpoint that does nothing. Five guard tests were also found that **could not
+fail**, each because a hand-maintained list or a regex that matches nothing had
+drifted from the thing it constrains.
+
+### The 2026-10-04 pass
+
+Same method again — five parallel read-only passes (backend, frontend,
+provider/worker tier, cross-seam wiring, and a live browser sweep), plus direct
+measurement of the live database, the live API, the production CSS bundle and
+`preflight.sh`. Baselines before: backend 2953, frontend 1464, providers 833.
+After: **2989 / 1468 / 844**. Every fix is revert-verified — each new test was
+confirmed to fail when its fix was reverted. Full register with `file:line`:
+`docs/audit-2026-10-04.md`.
+
+Two of these are worth reading the audit for, because both were invisible to a
+green suite and one was invisible to a *desktop browser*:
+
+- **The whole mobile stylesheet was applying at desktop width.** A stray `}`
+  closed `@media (max-width: 768px)` eighty lines early, so 55 phone-only rule
+  groups shipped top-level. Measured on the running stack at 1440px: every
+  slider was 44px with `touch-action: none` (so the page could not be scrolled by
+  dragging a slider), every `.max-w-6xl/7xl` collapsed to `max-width: 100%`, and
+  every glass panel had lost its blur. Introduced by `295f8888` in the previous
+  pass, while fixing a different finding. **All 15** pre-existing
+  `mobileLayoutInvariants` tests passed against it, because they regex the
+  stylesheet and never check block membership.
+- **An unauthenticated `GET /api/thumbnail/{size}/{filename}` soft-deleted
+  unrelated gallery rows.** The basename match had no path-separator boundary, so
+  a request for `abc.png` also matched `notabc.png` and `xabc.png`. The
+  function had no tests at all.
+
+Also fixed: the e2e CI job could not have been green (14 call sites requested
+routes that do not exist, because the harness prefixed `/api/v2` onto
+unversioned paths — and `docs/api.md` documented the resulting typo and invented
+a reason for it); every artifact fetch from a `remote_comfy` provider raised
+`AttributeError`; `REMOTE_AGENT_ALLOW_INSECURE` bound an unauthenticated *write*
+API to `0.0.0.0` because `agentctl.sh` exported an empty `HOST` that the clamp
+read as loopback; TTS cancellation was dead (`/cancel-job` returned 500); LLM and
+TTS providers sat at "reconciling" for three hours per trigger; a TTS provider's
+card claimed to track 525 image models; the 9 mobile Playwright tests ran in **no**
+CI workflow; and `docs/api.md` is now generated from `app.openapi()` and
+drift-checked in both directions.
+
+### The 2026-10-03b pass
+
+Same method as its predecessor — five parallel read-only passes, one of which
+drove all 35 routes in a real browser against the running stack. Baselines
+before: backend 2824, frontend 1352, providers 793. After: **2953 / 1464 / 833**.
+19 revert checks; every new invariant test was confirmed to fail when its fix
+was reverted.
+
+The consolidation was again **not** the problem and there were again **no
+stubs**. What is real is one recurring shape: *a control that renders, persists
+and reports success while the value goes nowhere.*
+
+- **A failed chat reply left a permanent "Ilse Vondt is thinking…".** The
+  submitter learns its job id from the HTTP response; the terminal WebSocket
+  event arrives first. Measured: `job.failed` at t=6174 ms, the POST returning
+  200 at t=6230 ms. The failure was handled against an empty store, then the
+  response inserted a placeholder whose only removers had already fired. All
+  seven insertion sites share the shape; the fix is in the store, so a new
+  terminal handler cannot forget it.
+- **`/advanced` could not build a workflow at all.** It asked whichever provider
+  sorted first — `direct_url`, registered `enabled=false`. The proxy returned
+  HTTP **200 carrying an error body**, so the hook cached the error object as
+  the node definitions for 24 hours and rendered a palette with one category
+  named `unknown`.
+- **The event-loop invariant test was blind.** Its search path contained
+  `backend_v2/api/infrastructure`, which does not exist, so
+  `backend_v2/infrastructure/` and `core/` were never indexed — and the resolver
+  scored every unresolvable await as a pass. A guard that cannot see the code is
+  not a guard. Six newly-visible offenders converted; `jobs.py:151 create_job`
+  deleted from the register because it is genuinely fixed.
+- **One invisible-but-tappable *destructive* control** survived the previous
+  pass's touch-device rescue: `group-hover/card` was missing from a
+  hand-maintained list, so the ControlNet delete button was laid out,
+  hit-testable and invisible on touch. The list is now generated from the source
+  by a test that also fails on names nothing uses.
+- **A `<select>` with three vocabularies rendered blank.** `ui.defaultViewMode`
+  was both the live gallery view and the persisted default, and `timeline` and
+  `session` were writable with no matching `<option>`.
+- **`generatorStore.autoApplyModelSettings` was permanently `true` with no
+  control anywhere** — the setter, field and test all existed; only the toggle
+  was missing. Same shape as the `models.autoRemoveDownloads` switch deleted
+  hours earlier.
+- **A transient embedding failure destroyed a good vector** with NULL, and
+  **a Docker failure reported "stopped"** — both now leave state alone and
+  signal a degraded result.
+- **`reconciliation.failed` was emitted and handled nowhere**;
+  **`model.sync_progress` was emitted on every download heartbeat and dropped**;
+  and the entire **`download.*` event family** had zero producers and zero
+  subscribers on both sides, so it was removed rather than left looking like
+  push-based progress already works. One invariant test now asks all three
+  questions of every backend `EventType`.
+- **`preflight.sh`'s provider check was dead** — it curled the host port the
+  previous pass removed, and its fallback was `note` not `bad`. It now reads
+  from inside the container and fires: *"5 of 6 registered providers are
+  switched off."*
+- **`docs/deployment.md` told the operator to bind 8002 to `0.0.0.0`** — advice
+  that would have reopened the exact hole the previous pass closed.
+- `/providers` route closure **−86 kB gzip** (a 290 kB charting library replaced
+  with an 8-line SVG for a sparkline), and `socket.io-client` moved out of the
+  eager entry chunk.
+
+Four claims of the previous audit did not survive re-measurement and are
+corrected in its §6 — including that its `job_service.py` naive-datetime example
+was the one site that was **correct**.
+
+`docs/audit-2026-10-03b.md` has the full register for that pass, and
+`docs/audit-2026-10-04b.md` for the most recent one; both carry `file:line` on
+every item.
 
 ### The 2026-10-03 pass
 
@@ -263,11 +472,13 @@ Items 1-6 of the previous list were fixed — see §1b of the follow-up.
 ### 1a. Five of six providers are disabled and the flag that did it was not a security control
 
 > **Resolved 2026-10-03, later the same day.** `COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS`
-> is **deleted**, from the code, both compose files, `.env.example` and
-> `preflight.sh`. A new provider registers enabled. All six providers share one
-> bearer token, so the token is the entire boundary and cannot tell an impostor
-> from `modal-zetsuke`; the flag only ever set `enabled` on *new* rows and was
-> never consulted on the update path, which overwrites `discovery_url`
+> is **deleted**. It was gone from the code, `.env.example` and
+> `scripts/preflight.sh`, and — found still live on 2026-10-03, injected on every
+> `up` — also had to come out of `docker-compose.yml:106`. It survives nowhere
+> now. A new provider registers enabled. All six providers share one bearer
+> token, so the token is the entire boundary and cannot tell an impostor from
+> `modal-zetsuke`; the flag only ever set `enabled` on *new* rows and was never
+> consulted on the update path, which overwrites `discovery_url`
 > unconditionally — and dispatch prefers `discovery_url`. So it protected nothing
 > the token did not already protect, and a default of `0` only produced a silent
 > capacity and billing surprise.
@@ -284,42 +495,61 @@ Items 1-6 of the previous list were fixed — see §1b of the follow-up.
 > on the reverse proxy. See the audit for the two compose traps found on the way.
 
 Every registered provider reports discovered, connected and healthy, heartbeating
-within the same second. Five are `enabled=false` because
-`COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS=0` when they registered, so
+within the same second. Five are `enabled=false`, which is a per-provider field
+the Providers page owns rather than an environment variable:
 `/api/v2/providers/load-balancer/stats` reports `total_providers: 1`.
 
 Consequences: no failover for image jobs; `direct_url` (the free local GPU path)
 is off; `llm-local` is off, so every chat turn bills a remote model while five
 Modal apps sit idle and are billed for it.
 
-**Setting the flag to `1` will not bring them back.** The discovery *update*
+**Nothing in the environment will bring them back.** The discovery *update*
 branch deliberately never re-asserts `enabled`, because an operator who turned a
 provider off in the UI means it. Each provider needs the Providers-page toggle or
 `PATCH /api/v2/providers/{id} {"enabled": true}`.
 
-What was fixed is the invisibility: `scripts/preflight.sh` now reports the flag
-*and* how many registered providers it is currently keeping off the balancer,
-and the heartbeat logs the exact PATCH the first time it sees the flag turned on.
-Your `.env` was deliberately left alone — this is a capacity and billing
-decision, not a bug fix.
+What was fixed is the invisibility: `scripts/preflight.sh` reports how many
+registered providers it is currently keeping off the balancer. **That check was
+dead until 2026-10-03** — it curled `http://localhost:8002`, which the removal
+of the host port turned into a permanent `000`, and the unreachable case was a
+`note`, so preflight exited 0 while saying nothing. It now reads the list from
+inside the container and an unreadable one is a failure. Your `.env` was
+deliberately left alone — this is a capacity and billing decision, not a bug fix.
 
 ### 1b. The rest
+
+0. **The embedding stack has no CI coverage.** `sentence-transformers` is in
+   `requirements.txt`, `torchvision` is not, and the local venv cannot import
+   `transformers` at all. So the paths that load the embedding model, build the
+   vector index and serve semantic memory search are never executed by any suite —
+   locally or in CI. This is the same gap that hid the conftest bug in the entry
+   above for four days, and it is the first thing worth fixing next.
 
 1. **The app has no authentication.** Deliberate — `DEMO_GAPS_PLAN.md` records
    the decision as out of scope for a local single-user studio — but it means
    every destructive endpoint, including the unauthenticated published-story
-   export, is reachable by anyone who can reach the port. Do not expose this
-   to a network you do not control. Note that the production compose publishes
-   **8002 on 0.0.0.0**, and `docs/api.md`'s stated mitigation ("enforce
-   authentication at the reverse-proxy layer") has no Traefik router for 8002 —
-   the only router is for 5174. The dev override restricts `db` to `127.0.0.1`,
-   which makes the omission look accidental rather than intended.
+   export, is reachable by anyone who can reach the API. Do not expose this
+   to a network you do not control. **The shipped compose file does not:** the
+   backend publishes no host port at all, Traefik reaches it on the external
+   `proxy` Docker network through the `comfyui-api` router on
+   `comfy-backend.lan.thenaha.my.id`, and reachability is governed by the
+   NetBird ACL on the reverse proxy. `docs/deployment.md` has the router table
+   and `docs/api.md` the base-URL options. The dev override restricts `db` to
+   `127.0.0.1`, which makes the backend's omission look deliberate too.
+   **The frontend is now held to the same boundary** — it proxies `/api`, so
+   publishing it published the API; see the second 2026-10-04 pass above.
    **This stopped being theoretical on 2026-10-01:** an audit sub-agent's
    in-process probe called `DELETE /api/jobs` and deleted all 154 rows of job
    history. Assets (16,677 rows, 16,342 PNGs) were verified intact, because
    `assets.job_id` is an un-FK'd soft reference nothing joins on — but the loss
    is real and it happened from an ordinary probe. Nothing destructive should be
-   pointed at this stack until auth exists.
+   pointed at this stack until auth exists. **A second instance of the same class
+   was found on 2026-10-03:** `GET /published/{token}/export` resolved the same
+   public token as the narrowed `GET /published/{token}` and then returned the
+   *unfiltered* owner export, so an unauthenticated caller got every internal id,
+   every chapter's private `beats` outline and the whole lorebook list. Both
+   routes now build the same projection, and the export cannot become wider than
+   the read without a test failing.
 2. **A 7 GB checkpoint is now servable, but slowly on Modal.** All four engines
    stream instead of buffering, and the backend has a `stream_file` path. Modal is
    the exception: a modal method serialises its return value across RPC, so the
@@ -351,8 +581,18 @@ decision, not a bug fix.
 7. ~~**The two `worker.py` bootstraps share ~35 lines.**~~ **Fixed** —
    `provider_core/worker_bootstrap.py` exists and both entrypoints import from
    it. Residual duplication is ~35 lines of env-parsing preamble in each, plus
-   the four "method not supported" tails and the four hand-rolled SSE parsers on
-   the LLM side.
+   the **seven** "method not supported" tails and the **three** hand-rolled SSE
+   parsers on the LLM side. The tails are four in
+   `image_worker/engines/direct_url/client.py` (download_model :283, delete_model
+   :304, delete_file :342, upload_file :349 — the first is a 501, the rest 405)
+   and three in `llm_worker/engines/openai_compat/client.py` (get_file :305,
+   delete_file :309, upload_file :313; all 404). The SSE parsers are now **one**
+   function, `provider_core/sse.py:iter_sse_data`, which also owns the
+   cancellation probe the three copies each re-implemented; each engine keeps only
+   its payload→TaskEvent mapping. That consolidation fixed a live bug: all three
+   copies read `line.startswith("data: ")` and `line[6:]`, and SSE permits
+   `data:{...}` with no space, so a frame in that form was dropped whole,
+   mid-stream, with no error — a silently truncated answer.
 8. **33 inline empty states against one shared `EmptyState`.** The shared
    component has no error slot, which is *why* all 33 hand-rolled ones had to
    decide where errors go — and all 33 chose nowhere, which is how seven pages
@@ -435,7 +675,7 @@ The frontend serves on **:5174** (not 5173) and proxies `/api` and
 | Understand the code | `AGENTS.md`, then the module itself |
 | Understand the product intent | `VISION.md` |
 | Understand a past decision | `docs/archive/` (historical; may be wrong) |
-| See what the last audit found | `docs/audit-2026-10-03.md` |
+| See what the last audit found | `docs/audit-2026-10-04b.md` |
 | Rebuild the frontend | `cd frontend_v2 && npm run build` |
 | Re-measure mobile after a layout change | `cd frontend_v2 && npx playwright test e2e/mobile-responsive.spec.js` |
 | See earlier audits | `docs/audit-2026-09-29b.md`, then `docs/audit-2026-09-29.md` (each superseded by the next) |

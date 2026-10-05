@@ -15,12 +15,31 @@ TNHComfy exposes REST and WebSocket APIs for job lifecycle, model management, pr
 > this line, and it is the reason the note is here.
 
 ## Base URL
-Typically `http://localhost:8002`.
+
+The backend has **no host port**. `http://localhost:8002` answers `000`, and
+that is the security boundary rather than a missing service — a published
+`0.0.0.0:8002` exposed the entire unauthenticated API to anything that could
+route to the host, which is how a probe deleted all job history on 2026-10-01.
+
+Reach it one of these ways:
+
+| context | base URL |
+|---|---|
+| browser, through the frontend | `/api` on the frontend's own origin (`http://localhost:5174`, or `https://comfy.lan.thenaha.my.id`) — the Vite/Nginx frontend proxies `/api` to the backend in-process |
+| a shell inside the container | `http://localhost:8002` from `docker compose exec backend_v2`, or from any container on the `tnhcomfy` network |
+| a dedicated API hostname | `https://comfy-backend.lan.thenaha.my.id` (Traefik router `comfyui-api`, on the external `proxy` Docker network) |
+
+Which of those is reachable from where is governed by the NetBird ACL on the
+reverse proxy. `docs/deployment.md` has the router table.
 
 ## Authentication
 TNHComfy is designed for trusted/self-hosted environments. If exposed publicly, enforce authentication at the reverse-proxy layer.
 
-Note that the production compose publishes the backend on `0.0.0.0:8002` and there is no Traefik router on that port, so that mitigation is not in effect until you add one.
+That mitigation is in effect for the shipped compose file, in the sense that
+nothing is published: the backend has no host port and is reached by Traefik on
+the `proxy` Docker network, under an ACL the reverse proxy enforces. If you add a
+host port or a public router, the whole API becomes unauthenticated and reachable
+— `PATCH /api/v2/providers/{id}` and `DELETE /api/jobs` included.
 
 ## Idempotency-Key
 
@@ -67,7 +86,12 @@ Behavior:
 - `GET /api/v2/models/all-storage-paths`: All expected storage paths from the database.
 - `GET /api/v2/models/preview/{model_id}`: Get the model preview image. The `preview` segment comes **before** the id — it is a static prefix, not a sub-resource of the model.
 - `PUT /api/v2/models/files/{file_id}/providers/{provider_id}/status`: Report one file's status on one provider.
-- `PUT /api/v2/models/versions/{version_id}/toggle`: Enable/disable a version. There is no `PUT /api/v2/models/versions/{version_id}` and no `DELETE` on a version.
+- `PUT /api/v2/models/versions/{version_id}/toggle`: Enable/disable a version. There is no bare update and no delete on a version:
+
+  ```
+  PUT /api/v2/models/versions/{version_id}     (does not exist)
+  DELETE /api/v2/models/versions/{version_id}  (does not exist)
+  ```
 
 Maintenance (`/api/v2/models/maintenance`) — separate verbs on the same models, not a versioned resource:
 
@@ -80,7 +104,13 @@ Maintenance (`/api/v2/models/maintenance`) — separate verbs on the same models
 - `POST /api/v2/models/maintenance/{model_id}/tags`: Add tags to a model.
 - `DELETE /api/v2/models/maintenance/{model_id}/tags/{tag}`: Remove a tag. The path parameter is the tag **string**, not a tag id.
 
-Not endpoints, despite having been documented as such here: `POST /api/v2/models/{model_id}/versions`, `POST /api/v2/models/provider-sync`, and any `GET`/`POST` on `/api/v2/models/versions/{version_id}/files`. Versions are created by import and by provider sync, not by an explicit create call.
+Not endpoints, despite having been documented as such here — versions are created by import and by provider sync, not by an explicit create call:
+
+```
+POST /api/v2/models/{model_id}/versions          (does not exist)
+POST /api/v2/models/provider-sync                (does not exist)
+GET|POST /api/v2/models/versions/{version_id}/files  (does not exist)
+```
 
 ### External Models (`/api/v2/models/external`)
 
@@ -98,7 +128,7 @@ The World Vault is the single PostgreSQL + pgvector index for TNHComfy's three f
 
 DB-backed gallery index (replaces the old in-memory `GalleryIndexer`). The asset's `workspace` (`main` / `roleplay` / `story`) is derived from its source generator at save time by `asset_reconciler._derived_workspace()`.
 
-- `GET /api/v2/assets` — List assets. Query: `limit` (24), `cursor` (keyset pagination), `workspace` (`main|roleplay|story`), `character_id`, `story_id`, `search` (matches `filename` or JSON `metadata_`). Each item carries `id`, `filename`, `relative_path`, `workspace`, `character_id`, `story_id`, `thumbnail` (`/api/thumbnail/medium/{relative_path}`), `file_url` (`/api/v2/assets/{id}/file`), `thumb_url` (`/api/v2/assets/{id}/thumb` when a thumbnail exists), `metadata`, dimensions, `blurhash`, `created_at`.
+- `GET /api/v2/assets` — List assets. Query: `limit` (24), `cursor` (keyset pagination), `workspace` (`main|roleplay|story`), `character_id`, `story_id`, `search` (matches `filename` or JSON `metadata_`). Each item carries `id`, `filename`, `relative_path`, `workspace`, `character_id`, `story_id`, `thumbnail` (a ready-to-use image URL served by `GET /api/thumbnail/{size}/{filename}`, e.g. a `medium` thumbnail of `cat.png`), `file_url` (`/api/v2/assets/{id}/file`), `thumb_url` (`/api/v2/assets/{id}/thumb` when a thumbnail exists), `metadata`, dimensions, `blurhash`, `created_at`.
 - `GET /api/v2/assets/{asset_id}/file` — Serve the full asset file.
 - `GET /api/v2/assets/{asset_id}/thumb` — Serve the asset's (pre-generated) thumbnail; falls back to `/file` when no thumbnail exists.
 
@@ -222,7 +252,16 @@ TTS voices. Synthesis and voice design are `task_type="tts"` jobs routed to the 
 
 ### Timeline (`/api/v2/timeline`)
 
-- `GET /api/v2/timeline/timeline` — Chronological events across the World Vault. Note the doubled segment: the router mounts at `/api/v2/timeline` and the route itself is `/timeline`.
+- `GET /api/v2/timeline` — Chronological events across the World Vault.
+
+  There is no `/api/v2/timeline/timeline`. This file previously documented one and
+  offered a reason for it ("the router mounts at `/api/v2/timeline` and the route
+  itself is `/timeline`") which was simply false: `world_vault/__init__.py`
+  includes `timeline_router` with no prefix, and `app.openapi()` lists only
+  `/api/v2/timeline`. `e2e/activity.spec.js` then requested the doubled path,
+  404'd, and threw. One wrong belief here, one broken test there — which is why
+  `tests/test_e2e_endpoint_contract.py` now checks every endpoint the specs
+  request against the real route table.
 
 ### Gallery (`/api/v2/gallery`)
 
@@ -341,7 +380,11 @@ The Characters, Chats, Lorebooks, Scenarios, Stories and LLM Config sections abo
 - `POST /api/files/batch-download`: Batch download as an archive.
 - `POST /api/files/metadata/batch`: Get metadata for multiple files in batch.
 
-There is no `GET /api/files/proxy/{provider_id}/{path}`. This file documented one; no such route exists, and provider files are reached through `GET /api/v2/assets/{asset_id}/file` instead.
+There is no provider file proxy. This file documented one; no such route exists, and provider files are reached through `GET /api/v2/assets/{asset_id}/file` instead.
+
+```
+GET /api/files/proxy/{provider_id}/{path}    (does not exist)
+```
 
 
 
@@ -361,5 +404,348 @@ containers' `/live` and the backend's are now the same name for the same idea.
 
 ### WebSocket
 
-- Endpoint: `ws://localhost:8002/socket.io` (Socket.IO transport).
+- Endpoint: the socket.io path on the same origin as the frontend —
+  `ws://localhost:5174/socket.io` locally, `wss://comfy.lan.thenaha.my.id/socket.io`
+  through Traefik. There is no `ws://localhost:8002`, because the backend has no
+  host port (see "Base URL").
 - Clients subscribe to job/provider events and receive real-time updates (created, progress, completed, failed, cancelled).
+
+---
+
+## Route index (generated)
+
+<!-- BEGIN GENERATED ROUTE INDEX -->
+
+<!-- Generated by scripts/generate_api_docs.py. Do not edit by hand. -->
+
+The live surface is **249 paths / 329 operations**. Everything below is
+derived from `app.openapi()`, so it cannot name a route that does not exist.
+
+### Characters
+
+- `GET`, `POST` `/api/v2/characters`
+- `POST` `/api/v2/characters/import`
+- `POST` `/api/v2/characters/reorder`
+- `GET`, `PUT`, `PATCH`, `DELETE` `/api/v2/characters/{character_id}`
+- `GET`, `POST` `/api/v2/characters/{character_id}/avatar`
+- `POST` `/api/v2/characters/{character_id}/avatar/animate`
+- `POST` `/api/v2/characters/{character_id}/clone`
+- `GET` `/api/v2/characters/{character_id}/export`
+- `GET`, `POST` `/api/v2/characters/{character_id}/expressions`
+- `PUT`, `DELETE` `/api/v2/characters/{character_id}/expressions/{name}`
+
+### Chats
+
+- `GET`, `POST` `/api/v2/chats`
+- `POST` `/api/v2/chats/import`
+- `GET`, `PATCH`, `DELETE` `/api/v2/chats/{chat_id}`
+- `GET`, `POST` `/api/v2/chats/{chat_id}/branches`
+- `GET` `/api/v2/chats/{chat_id}/export`
+- `POST` `/api/v2/chats/{chat_id}/illustrate`
+- `GET` `/api/v2/chats/{chat_id}/images`
+- `POST` `/api/v2/chats/{chat_id}/impersonate`
+- `GET` `/api/v2/chats/{chat_id}/jobs`
+- `GET`, `POST` `/api/v2/chats/{chat_id}/messages`
+- `PATCH`, `DELETE` `/api/v2/chats/{chat_id}/messages/{message_id}`
+- `GET` `/api/v2/chats/{chat_id}/messages/{message_id}/alternates`
+- `POST` `/api/v2/chats/{chat_id}/messages/{message_id}/generate-swipe`
+- `POST` `/api/v2/chats/{chat_id}/messages/{message_id}/narrate`
+- `PATCH` `/api/v2/chats/{chat_id}/messages/{message_id}/pin`
+- `POST` `/api/v2/chats/{chat_id}/messages/{message_id}/swipe`
+- `POST` `/api/v2/chats/{chat_id}/regenerate`
+- `POST` `/api/v2/chats/{chat_id}/rollback`
+- `POST` `/api/v2/chats/{chat_id}/scene`
+- `POST` `/api/v2/chats/{chat_id}/suggest`
+- `GET` `/api/v2/chats/{chat_id}/system-prompt`
+
+### Stories
+
+- `GET`, `POST` `/api/v2/stories`
+- `POST` `/api/v2/stories/parse`
+- `GET` `/api/v2/stories/published/{token}`
+- `GET` `/api/v2/stories/published/{token}/export`
+- `GET`, `PUT`, `DELETE` `/api/v2/stories/{story_id}`
+- `GET`, `POST` `/api/v2/stories/{story_id}/chapters` — List a story's chapters.
+- `POST` `/api/v2/stories/{story_id}/chapters/reorder` — Reorder the chapter list.
+- `GET`, `PUT`, `DELETE` `/api/v2/stories/{story_id}/chapters/{chapter_id}` — Read or replace one chapter.
+- `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/ai-action`
+- `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/beats`
+- `PATCH`, `DELETE` `/api/v2/stories/{story_id}/chapters/{chapter_id}/beats/{beat_id}`
+- `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/branch`
+- `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/continue`
+- `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/illustrate`
+- `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/narrate`
+- `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/retry-last`
+- `GET`, `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/revisions`
+- `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/revisions/{revision_id}/restore`
+- `GET` `/api/v2/stories/{story_id}/export`
+- `GET` `/api/v2/stories/{story_id}/images`
+- `POST` `/api/v2/stories/{story_id}/publish` — Publish a story to a token URL.
+- `POST` `/api/v2/stories/{story_id}/unpublish`
+
+### Worlds
+
+- `GET`, `POST` `/api/v2/worlds`
+- `GET`, `PUT`, `DELETE` `/api/v2/worlds/{world_id}`
+- `GET` `/api/v2/worlds/{world_id}/dashboard`
+
+### World Vault (aggregates)
+
+- `GET` `/api/v2/world-vault/entities`
+- `POST` `/api/v2/world-vault/estimate-tokens`
+- `GET`, `PUT`, `DELETE` `/api/v2/world-vault/graph-layout/`
+- `GET` `/api/v2/world-vault/relationships`
+- `GET` `/api/v2/world-vault/search`
+
+### Lorebooks
+
+- `GET`, `POST` `/api/v2/lorebooks`
+- `GET`, `PUT`, `DELETE` `/api/v2/lorebooks/{lorebook_id}`
+- `GET`, `POST` `/api/v2/lorebooks/{lorebook_id}/entries`
+- `POST` `/api/v2/lorebooks/{lorebook_id}/entries/bulk-delete`
+- `PUT`, `DELETE` `/api/v2/lorebooks/{lorebook_id}/entries/{entry_id}`
+- `GET` `/api/v2/lorebooks/{lorebook_id}/export`
+- `POST` `/api/v2/lorebooks/{lorebook_id}/import`
+- `POST` `/api/v2/lorebooks/{lorebook_id}/reindex`
+- `GET` `/api/v2/lorebooks/{lorebook_id}/search`
+
+### Locations
+
+- `GET`, `POST` `/api/v2/locations`
+- `GET` `/api/v2/locations/search`
+- `GET`, `PUT`, `PATCH`, `DELETE` `/api/v2/locations/{location_id}`
+- `POST` `/api/v2/locations/{location_id}/image`
+
+### Sessions
+
+- `GET`, `POST` `/api/v2/sessions` — List generation sessions.
+- `POST` `/api/v2/sessions/detect`
+- `GET`, `PATCH`, `DELETE` `/api/v2/sessions/{session_id}`
+- `GET`, `POST` `/api/v2/sessions/{session_id}/assets`
+- `DELETE` `/api/v2/sessions/{session_id}/assets/{asset_id}`
+- `POST` `/api/v2/sessions/{session_id}/merge`
+- `POST` `/api/v2/sessions/{session_id}/split`
+
+### Timeline
+
+- `GET` `/api/v2/timeline`
+
+### Memories
+
+- `GET`, `POST` `/api/v2/memories`
+- `GET` `/api/v2/memories/character/{character_id}`
+- `POST` `/api/v2/memories/reindex` — Re-embed every memory. Expensive.
+- `GET` `/api/v2/memories/search/semantic`
+- `GET`, `PUT`, `DELETE` `/api/v2/memories/{memory_id}`
+
+### Collections
+
+- `GET`, `POST` `/api/v2/collections`
+- `GET` `/api/v2/collections/by-character/{character_id}`
+- `GET` `/api/v2/collections/by-characters`
+- `GET` `/api/v2/collections/export`
+- `POST` `/api/v2/collections/import`
+- `POST` `/api/v2/collections/move`
+- `GET`, `PUT`, `DELETE` `/api/v2/collections/{collection_id}`
+- `POST`, `DELETE` `/api/v2/collections/{collection_id}/images`
+
+### Gallery
+
+- `GET` `/api/v2/gallery`
+
+### Assets
+
+- `GET` `/api/v2/assets`
+- `POST` `/api/v2/assets/auto-tag`
+- `GET` `/api/v2/assets/dates`
+- `GET` `/api/v2/assets/facet`
+- `GET` `/api/v2/assets/{asset_id}/file`
+- `POST` `/api/v2/assets/{asset_id}/move`
+- `GET` `/api/v2/assets/{asset_id}/thumb`
+
+### Models
+
+- `GET`, `POST` `/api/v2/models/`
+- `GET` `/api/v2/models/all`
+- `GET` `/api/v2/models/all-storage-paths`
+- `POST` `/api/v2/models/autopopulate-all`
+- `POST` `/api/v2/models/autopopulate-candidates/batch`
+- `GET` `/api/v2/models/autopopulate-pending`
+- `GET` `/api/v2/models/autopopulate-status`
+- `GET` `/api/v2/models/cache`
+- `POST` `/api/v2/models/check-installed/batch`
+- `GET` `/api/v2/models/check-installed/{civitai_model_id}`
+- `POST` `/api/v2/models/cleanup-orphaned` — Delete assets whose model no longer exists.
+- `GET` `/api/v2/models/directory/{directory}`
+- `GET` `/api/v2/models/external/civitai`
+- `GET` `/api/v2/models/external/civitai/enums`
+- `GET` `/api/v2/models/external/civitai/tags`
+- `GET` `/api/v2/models/external/huggingface`
+- `POST` `/api/v2/models/external/parse`
+- `PUT` `/api/v2/models/files/{file_id}/providers/{provider_id}/status`
+- `POST` `/api/v2/models/maintenance/backfill-statuses`
+- `POST` `/api/v2/models/maintenance/cleanup-orphans`
+- `POST` `/api/v2/models/maintenance/resync-all`
+- `POST` `/api/v2/models/maintenance/{model_id}/check-dependencies`
+- `POST` `/api/v2/models/maintenance/{model_id}/resync`
+- `GET`, `POST` `/api/v2/models/maintenance/{model_id}/tags`
+- `DELETE` `/api/v2/models/maintenance/{model_id}/tags/{tag}`
+- `GET` `/api/v2/models/preview/{model_id}`
+- `POST` `/api/v2/models/providers/batch-status-update`
+- `GET` `/api/v2/models/providers/{provider_id}/pending-downloads`
+- `DELETE` `/api/v2/models/providers/{provider_id}/reset-status`
+- `POST` `/api/v2/models/register-discovered`
+- `GET` `/api/v2/models/search`
+- `GET` `/api/v2/models/search/tag/{tag}`
+- `POST` `/api/v2/models/sync-progress` — Reconcile a batch of models' install progress.
+- `POST` `/api/v2/models/sync-progress/batch`
+- `PUT` `/api/v2/models/versions/{version_id}/toggle`
+- `GET`, `DELETE` `/api/v2/models/{model_id}`
+- `POST` `/api/v2/models/{model_id}/autopopulate`
+- `GET` `/api/v2/models/{model_id}/autopopulate-candidates`
+- `GET` `/api/v2/models/{model_id}/autopopulate-search`
+- `PUT` `/api/v2/models/{model_id}/default-version`
+- `GET` `/api/v2/models/{model_id}/generation-info`
+- `GET` `/api/v2/models/{model_id}/provider-status`
+- `GET` `/api/v2/models/{model_id}/versions`
+
+### Providers
+
+- `GET`, `POST` `/api/v2/providers/`
+- `POST` `/api/v2/providers/cleanup-orphaned-statuses`
+- `GET`, `PUT` `/api/v2/providers/config/load-balancing`
+- `GET` `/api/v2/providers/containers/list`
+- `GET` `/api/v2/providers/containers/status`
+- `POST` `/api/v2/providers/detect`
+- `POST` `/api/v2/providers/discovery`
+- `GET` `/api/v2/providers/load-balancer/stats`
+- `GET`, `PUT` `/api/v2/providers/load-balancing`
+- `GET` `/api/v2/providers/model-cache`
+- `GET` `/api/v2/providers/model-cache/{directory}`
+- `POST` `/api/v2/providers/models/custom`
+- `POST` `/api/v2/providers/state/cleanup`
+- `GET` `/api/v2/providers/status-cards`
+- `POST` `/api/v2/providers/wake`
+- `GET`, `PUT`, `PATCH`, `DELETE` `/api/v2/providers/{provider_id}`
+- `POST` `/api/v2/providers/{provider_id}/deploy`
+- `GET` `/api/v2/providers/{provider_id}/deploy-status`
+- `GET` `/api/v2/providers/{provider_id}/live-metrics`
+- `GET` `/api/v2/providers/{provider_id}/logs`
+- `GET` `/api/v2/providers/{provider_id}/modal-stats`
+- `GET`, `DELETE` `/api/v2/providers/{provider_id}/models`
+- `POST` `/api/v2/providers/{provider_id}/models/sync`
+- `POST` `/api/v2/providers/{provider_id}/ping`
+- `POST` `/api/v2/providers/{provider_id}/reconcile`
+- `POST` `/api/v2/providers/{provider_id}/reconciliation-event`
+- `GET` `/api/v2/providers/{provider_id}/reconciliation-status`
+- `POST` `/api/v2/providers/{provider_id}/setup`
+- `GET` `/api/v2/providers/{provider_id}/status-card`
+- `GET` `/api/v2/providers/{provider_id}/sync-status`
+- `POST`, `DELETE` `/api/v2/providers/{provider_id}/worker-token`
+
+### Voices
+
+- `GET`, `POST` `/api/v2/voices`
+- `POST` `/api/v2/voices/design`
+- `POST` `/api/v2/voices/speak`
+- `GET`, `PUT`, `PATCH`, `DELETE` `/api/v2/voices/{voice_id}`
+- `POST` `/api/v2/voices/{voice_id}/preview`
+
+### Scenarios
+
+- `GET`, `POST` `/api/v2/scenarios`
+- `GET`, `PUT`, `DELETE` `/api/v2/scenarios/{scenario_id}`
+- `POST` `/api/v2/scenarios/{scenario_id}/apply`
+
+### Jobs
+
+- `GET`, `POST`, `DELETE` `/api/jobs`
+- `POST` `/api/jobs/acknowledge-all`
+- `GET` `/api/jobs/active`
+- `GET` `/api/jobs/breakdown`
+- `GET` `/api/jobs/failed`
+- `GET` `/api/jobs/queue`
+- `POST` `/api/jobs/reconcile-chat-replies` — Rewrite chat replies against their jobs.
+- `POST` `/api/jobs/recover`
+- `GET` `/api/jobs/search`
+- `GET` `/api/jobs/stats/summary`
+- `POST` `/api/jobs/validate`
+- `GET`, `DELETE` `/api/jobs/{job_id}`
+- `POST` `/api/jobs/{job_id}/acknowledge`
+- `POST` `/api/jobs/{job_id}/cancel`
+- `GET` `/api/jobs/{job_id}/diagnostics`
+- `POST` `/api/jobs/{job_id}/retry`
+
+### Files
+
+- `GET` `/api/files`
+- `POST` `/api/files/batch-download`
+- `POST` `/api/files/metadata/batch`
+- `DELETE` `/api/files/{filename}`
+
+### Settings
+
+- `GET`, `PUT` `/api/settings`
+- `GET`, `POST` `/api/settings/branding`
+- `GET`, `POST` `/api/settings/favorites`
+- `GET` `/api/settings/presets`
+- `POST` `/api/settings/reset`
+- `GET` `/api/settings/schema`
+- `GET`, `POST` `/api/settings/session`
+- `GET`, `PUT` `/api/settings/system-prompts`
+
+### Statistics
+
+- `GET` `/api/statistics`
+- `GET` `/api/statistics/detailed`
+- `GET` `/api/statistics/summary`
+
+### Prompts
+
+- `GET`, `POST` `/api/prompts`
+- `GET` `/api/prompts/categories`
+- `GET` `/api/prompts/export`
+- `GET` `/api/prompts/favorites`
+- `POST` `/api/prompts/import`
+- `POST` `/api/prompts/magic`
+- `GET` `/api/prompts/most-used`
+- `GET`, `PUT`, `DELETE` `/api/prompts/{prompt_id}`
+- `POST` `/api/prompts/{prompt_id}/use`
+
+### Generation
+
+- `POST` `/api/generate`
+- `POST` `/api/generate/batch`
+
+### Nodes
+
+- `GET` `/api/nodes/object_info`
+
+### Upload
+
+- `POST` `/api/upload`
+- `POST` `/api/upload/input`
+- `POST` `/api/upload/mask`
+
+### Other
+
+- `GET` `/`
+- `POST` `/api/batch/delete`
+- `GET` `/api/live`
+- `GET` `/api/ready`
+- `GET` `/api/thumbnail/{size}/{filename}`
+- `GET`, `POST` `/api/v2/asset/{asset_id}/tags`
+- `DELETE` `/api/v2/asset/{asset_id}/tags/{tag}`
+- `GET` `/api/v2/llm/available-models`
+- `GET`, `PUT` `/api/v2/llm/default-provider`
+- `GET` `/api/v2/llm/providers`
+- `POST` `/api/v2/llm/providers/{provider_id}/test`
+- `GET`, `POST` `/api/v2/personas`
+- `GET`, `PUT`, `DELETE` `/api/v2/personas/{persona_id}`
+- `GET` `/api/v2/tags`
+- `GET` `/api/view/{path}`
+- `GET` `/api/workers/connected`
+- `GET` `/api/workers/{provider_id}/status`
+- `GET` `/metrics`
+
+<!-- END GENERATED ROUTE INDEX -->

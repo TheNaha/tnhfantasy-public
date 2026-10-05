@@ -48,19 +48,24 @@ Tests run on push/PR to `main`/`master` only when the relevant directory changes
 - `frontend_v2/**` -> `frontend-tests.yml` (Node 20, vitest + eslint + build)
 - `frontend_v2/**` or `backend_v2/**` -> `frontend-e2e.yml` (Playwright)
 - `provider_containers/**` or `remote_agent/**` -> `provider-tests.yml`
-  (Python 3.13, pytest + ruff + compileall). The `build` job also validates the
-  compose file and builds the three provider images; it seeds the required
-  `.env*` files first, because compose refuses to render while an `env_file:` is
-  missing and every one of them is gitignored.
+- `docker-compose*.yml`, `scripts/**`, `.env.example*`, `backend_v2/Dockerfile`,
+  `frontend_v2/Dockerfile`, `backend_v2/requirements.txt`,
+  `frontend_v2/package-lock.json` or `.github/workflows/**` -> also
+  `provider-tests.yml`, whose `build` job renders compose, builds the four
+  provider Dockerfiles and the remote agent, and whose `app-images` job builds
+  the backend and frontend images (both targets). Nothing else in CI builds
+  those two, and both test suites run on the host rather than in the image.
+- `remote_agent/**` or `provider_containers/provider_core/**` ->
+  `build-agent-binaries.yml` (PyInstaller, push/release only). The agent imports
+  `provider_core`, so a change there changes every frozen binary.
 - any path -> `secret-scan.yml` (gitleaks)
-- `remote_agent/**` -> `build-agent-binaries.yml` (PyInstaller, push/release only)
 
 ## Backend conventions
 
 - Services take a request-scoped `Session` and instantiate repositories internally.
 - Route handlers resolve dependencies via `api/deps.py` — never import sessions or singletons directly from infrastructure.
 - Domain errors: use `core/exceptions.py` (`ComfyError` hierarchy), not ad hoc `HTTPException`.
-- Domain events: emit through `core/events.py` helpers (`emit_job_event`, `emit_download_event`).
+- Domain events: emit through `core/events.py` helpers (`emit_job_event`). There is no `emit_download_event` — the `download.*` family was removed on 2026-10-03 because it had zero producers and zero subscribers; model-download status is served by polling the model-status endpoints.
 - Config precedence: `COMFY_*` env vars > `config.json` > `DEFAULT_CONFIG` in `config.py`.
 - `metadata` is `metadata_` in Python models, aliased back to `metadata` in API payloads.
 - Migrations run automatically at backend startup via the ordered steps runner in `infrastructure/migrations/steps.py` (no Alembic). Add new migrations as `MigrationStep(version=..., apply_fn=...)` entries there; each step is recorded in `schema_migrations` and runs once.
@@ -159,11 +164,13 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 
 - `docs/` has architecture, backend, frontend, deployment, and API reference.
  - `docs/STATUS.md` is the authoritative project status and what-is-still-open list.
-   `docs/audit-2026-10-03.md` is the most recent code audit, and it supersedes
-   `docs/audit-2026-10-01.md`, `docs/audit-2026-09-29b.md`, `docs/audit-2026-09-29.md`,
-   `docs/audit-2026-09-28.md`, `docs/audit-2026-09-27.md`, `docs/audit-2026-09-26.md` and
+   `docs/audit-2026-10-04b.md` is the most recent code audit, and it supersedes
+   `docs/audit-2026-10-04.md`; both supersede
+   `docs/audit-2026-10-03b.md`, `docs/audit-2026-10-03.md`, `docs/audit-2026-10-01.md`,
+   `docs/audit-2026-09-29b.md`, `docs/audit-2026-09-29.md`, `docs/audit-2026-09-28.md`,
+   `docs/audit-2026-09-27.md`, `docs/audit-2026-09-26.md` and
    `docs/audit-2026-09-26-followup.md` for everything it marks fixed. Read
-   STATUS.md and the 2026-10-03 audit before large-scale changes.
+   STATUS.md and the 2026-10-04 audit before large-scale changes.
    `docs/archive/` holds superseded planning docs —
    historical only, and they contradict each other.
 - `.github/instructions/backend.instructions.md` has backend-specific rules scoped to `backend_v2/**`.

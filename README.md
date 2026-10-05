@@ -15,12 +15,13 @@ For comprehensive details on architecture, frontend, backend, deployment, and AP
 This project serves as a dynamic, containerized wrapper around ComfyUI that integrates provider-based serverless inferencing (Modal, Beam), a custom job queuing system, an image gallery, and a local model management system without permanently storing large checkpoints on the backend.
 
 ## Architecture Summary
+- **tnhcomfy-db** (PostgreSQL 16 + pgvector)
 - **tnhcomfy-frontend** (Vite + React)
-- **tnhcomfy-backend** (FastAPI)
-- **provider-workers** (Serverless instances on Modal or Beam)
+- **tnhcomfy-backend** (FastAPI — no host port; reached through Traefik)
+- **provider-workers** (Serverless instances on Modal or Beam, plus the long-running provider containers)
 
 ## Quick Start
-1. Copy `.env.example` to `.env` and configure the backend settings.
+1. Copy `.env.example` to `.env` and configure the backend settings. **`.env.example.backend` is the canonical reference for the backend's own variables** — every `COMFY_*` setting the code reads, with its default and what breaks when it is unset. Use it for a host-only run (`setup_jules.sh`), where compose's `env_file` is not in play; use `.env.example` for the compose stack, where compose supplies most of them.
 2. **On a new host, run `scripts/preflight.sh` first.** Compose declares the `metrics` and `proxy` networks as external, so without it every `up` fails at network creation — for every service, with an error that does not name the cause. It also reports the config that silently disables features.
 3. Configure the providers you actually want. Each provider is opt-in via a Compose profile, so there is no one file to copy:
    - `--profile providers` enables six services: `modal-hp196`, `modal-stepmania`, `modal-zetsuke`, `tts-modal-hp196`, `llm-local` and `direct_url`. Compose reads **all six** `env_file`s when the profile is on, so all six must exist:
