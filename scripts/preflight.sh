@@ -95,11 +95,49 @@ else
 fi
 
 echo
+echo "==> Network exposure"
+# The backend publishes NO host port. The frontend does, and it is a reverse proxy
+# to that backend — `nginx.conf` (`server_name _`, `location /api/`) in prod,
+# `vite.config.js` in dev — so the frontend's bind address IS the API's reach.
+# `docker-compose.yml:158` defaults it to loopback and Traefik reaches the
+# service on the external `proxy` network without a host port, so a wildcard buys
+# nothing and costs the entire unauthenticated API on every interface.
+#
+# This was measured, not assumed: `curl http://192.168.1.28:5174/api/ready`
+# answered 200 while the backend answered nothing on any host port.
+frontend_bind=$(grep -E "^COMFY_FRONTEND_BIND=" .env 2>/dev/null | head -1 | cut -d= -f2-)
+# 127.0.0.2 is the compose default for the second binding. The whole of
+# 127.0.0.0/8 is loopback and unroutable, so it is a safe default rather than a
+# wildcard — see the comment in docker-compose.yml.
+frontend_bind=${frontend_bind:-127.0.0.2}
+case "$frontend_bind" in
+  ""|127.*|localhost|::1)
+    ok "frontend is bound to loopback only (${frontend_bind}) — Traefik serves it on the proxy network"
+    ;;
+  0.0.0.0|::|"[::]")
+    bad "COMFY_FRONTEND_BIND=${frontend_bind} serves the whole unauthenticated API on EVERY interface, including any LAN NetBird does not cover. Unset it, or name one VPN/LAN address."
+    ;;
+  *)
+    note "frontend is also bound to ${frontend_bind} — correct if that is your VPN/LAN address, but the API is reachable by anything that can route to it"
+    ;;
+esac
+
+echo
 echo "==> Autostart path"
 if grep -qE "^HOST_BACKEND_PATH=." .env 2>/dev/null; then
   ok "HOST_BACKEND_PATH is set (needed only for COMFY_PROVIDER_AUTOSTART_ENABLED=1 / deploy)"
 else
   note "HOST_BACKEND_PATH unset — backend-driven provider autostart and deploy will raise ValueError"
+fi
+
+# `.env` is injected into the backend verbatim by `env_file:`, so a value written
+# there really is in the container's environment — which is how a
+# COMFY_DATABASE_URL=sqlite:///... line survives in a stack whose data is in
+# Postgres, and how `docker exec backend printenv` ends up disagreeing with what
+# the backend is actually using. POSTGRES_HOST decides, and the backend logs the
+# discarded value at boot, but "read the logs" is not a preflight.
+if grep -qE "^COMFY_DATABASE_URL=." .env 2>/dev/null; then
+  note ".env sets COMFY_DATABASE_URL, which POSTGRES_HOST overrides for this stack — remove the line unless you intend a non-compose run (see .env.example.backend)"
 fi
 
 echo
@@ -115,34 +153,131 @@ echo "==> Providers"
 # not an env var, and it is the only control that decides whether a provider takes
 # your jobs. It is invisible everywhere else in the stack, which is why an audit
 # found five of six off with no failover and no local LLM.
-if curl -sf --max-time 3 http://localhost:8002/api/v2/providers/ >/dev/null 2>&1; then
+#
+# Read from INSIDE the container, which is the only place the API is reachable.
+# It used to `curl http://localhost:8002/...` on the host, and that stopped
+# working the moment the `0.0.0.0` publish was removed on 2026-10-03: the host
+# answer is 000, so this section could never fire again — the exact finding it
+# was added for. It then `note`d the failure rather than failing, so preflight
+# exited 0 while reporting nothing. `bad` is correct here: an operator who cannot
+# read provider state cannot act on a disabled-provider surprise, and the exit
+# code is the part they act on.
+BACKEND_SVC=backend_v2
+providers_json=$(
+  docker compose exec -T "$BACKEND_SVC" \
+    curl -sf --max-time 3 localhost:8002/api/v2/providers/ 2>/dev/null
+)
+if [[ -z "$providers_json" ]]; then
+  # `exec` also fails when the container is not running, so this covers "not up"
+  # and "up but not answering" with one message.
+  bad "could not read provider state from inside '$BACKEND_SVC' (is it up? try: docker compose ps $BACKEND_SVC) — provider enable/disable state is unchecked"
+else
   # Counted with a JSON parse, not a grep: the list response nests an `enabled`
   # and several `id`s per provider (runtime_state, capabilities), so a grep count
   # reads 10 disabled "of 6".
-  counts=$(curl -sf --max-time 3 http://localhost:8002/api/v2/providers/ 2>/dev/null | python3 -c '
+  counts=$(printf '%s' "$providers_json" | python3 -c '
 import json, sys
 try:
     body = json.load(sys.stdin)
 except Exception:
-    sys.exit(0)
+    sys.exit(1)
 # The list route answers {"providers": [...]}, not a bare array.
 rows = body.get("providers") if isinstance(body, dict) else body
 if not isinstance(rows, list):
-    sys.exit(0)
+    sys.exit(1)
 off = sum(1 for r in rows if isinstance(r, dict) and r.get("enabled") is False)
-print(f"{off} {len(rows)}")
-' 2>/dev/null)
-  disabled=${counts%% *}
-  total=${counts##* }
-  if [[ "${disabled:-0}" -gt 0 ]]; then
-    note "$disabled of ${total:-?} registered providers are switched off, so the load balancer has no failover and llm-local/direct_url are idle"
-    note "  enable on the Providers page, or PATCH /api/v2/providers/{id} {\"enabled\": true}"
-  elif [[ "${total:-0}" -gt 1 ]]; then
-    ok "all ${total} providers are enabled"
+# Chat is non-functional without an enabled LLM provider, and that is not
+# visible anywhere else in this script: the count above reports "1 of 6
+# providers are switched off" and leaves the operator to work out which.
+# `/api/v2/llm/available-models` is the route the chat composer actually calls,
+# so its emptiness is the honest signal.
+llm_enabled = sum(
+    1 for r in rows
+    if isinstance(r, dict)
+    and r.get("enabled") is not False
+    and (r.get("worker_type") == "llm" or str(r.get("type", "")).startswith(("openai", "anthropic", "google", "ollama", "vllm", "modal_llm")))
+)
+models = None
+print(f"{off} {len(rows)} {llm_enabled}")
+')
+  if [[ -z "$counts" ]]; then
+    bad "provider list from '$BACKEND_SVC' was not the expected JSON shape — provider enable/disable state is unchecked"
+  else
+    disabled=${counts%% *}
+    rest=${counts#* }
+    total=${rest%% *}
+    llm_on=${rest##* }
+    if [[ "${disabled:-0}" -gt 0 ]]; then
+      note "$disabled of ${total:-?} registered providers are switched off, so the load balancer has no failover and llm-local/direct_url are idle"
+      note "  enable on the Providers page, or PATCH /api/v2/providers/{id} {\"enabled\": true}"
+    elif [[ "${total:-0}" -gt 1 ]]; then
+      ok "all ${total} providers are enabled"
+    fi
+    # The single most consequential thing on this page, and the only one that
+    # makes a whole feature dead rather than degraded.
+    if [[ "${llm_on:-0}" -eq 0 ]]; then
+      bad "NO ENABLED LLM PROVIDER — every chat turn will fail. /roleplay, /chat and every story beat that asks a character to reply depend on it."
+      bad "  enable one of the llm providers above, or add one: POST /api/v2/providers {\"type\": \"openai_compat\", \"worker_type\": \"llm\", ...}"
+      bad "  verify with: docker compose exec $BACKEND_SVC curl -s localhost:8002/api/v2/llm/available-models   (an empty [] means no model is reachable)"
+    elif [[ "${llm_on:-0}" -eq 1 ]]; then
+      note "exactly 1 LLM provider is enabled — chat works, with no failover if it goes away"
+    fi
   fi
-else
-  note "could not reach the backend to read provider state (is it up?)"
 fi
+
+echo
+echo "==> Feature gates"
+# A gate that defaults to OFF is invisible: the feature is simply missing and
+# nothing logs an error. Preflight already reports HOST_BACKEND_PATH above; these
+# are the rest of the same class, and each entry states what it costs you when it
+# is unset rather than restating the variable name.
+#
+# The container's environment is the authoritative one: compose `environment:`
+# overrides `env_file:`, so reading `.env` from the host reports the wrong value
+# for anything compose pins.
+backend_env() {
+  docker compose exec -T "$BACKEND_SVC" printenv "$1" 2>/dev/null | tr -d '\r'
+}
+gate() {
+  # gate <VAR> <consequence-when-unset-or-default> <effective-value-label>
+  local var=$1 consequence=$2 label=$3 value
+  value=$(backend_env "$var")
+  if [[ -z "$value" ]]; then
+    note "$var is unset — $consequence"
+  else
+    ok "$var=$value ($label)"
+  fi
+}
+gate COMFY_IDLE_SIM_ENABLED \
+  "idle simulation is off; no autonomous character activity" \
+  "idle sim enabled"
+gate COMFY_LB_HEALTH_CHECKS_ENABLED \
+  "defaults to on; set 0 only to silence provider probes" \
+  "LB health checks on"
+gate COMFY_PROVIDER_AUTOSTART_ENABLED \
+  "backend-driven provider autostart and deploy are off (also needs HOST_BACKEND_PATH)" \
+  "provider autostart on"
+gate COMFY_ASSET_MIGRATION_FORCE \
+  "off by default; set 1 to force a full asset re-scan on boot" \
+  "forced asset re-scan on EVERY boot"
+gate COMFY_DB_POOL_SIZE \
+  "defaults to 30; the SQLAlchemy default of 5 is a hard 15-connection ceiling that 500s a gallery page" \
+  "DB pool size"
+gate COMFY_DB_MAX_OVERFLOW \
+  "defaults to 30 (see COMFY_DB_POOL_SIZE)" \
+  "DB pool overflow"
+gate COMFY_DB_POOL_TIMEOUT \
+  "defaults to 30s; this is how long a request waits before the pool gives up" \
+  "DB pool wait"
+gate COMFY_WORKER_HOSTS \
+  "no exclusions; provider hosts are resolved from the provider table instead, so this only matters for a genuinely external host that must NOT receive the shared token" \
+  "hosts excluded from token attachment"
+gate COMFY_DISCOVERY_ALLOWED_HOSTS \
+  "no allowlist, so any provider may register. Setting it is a RESTRICTION: a provider whose hostname is not listed is refused with 422" \
+  "discovery host allowlist (restrictive)"
+gate COMFY_UVICORN_WORKERS \
+  "single worker, which is required: >1 raises at boot (the websocket broadcast is in-process)" \
+  "requested uvicorn workers"
 
 echo
 if [[ $warn -eq 0 ]]; then

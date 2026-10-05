@@ -103,7 +103,13 @@ services:
       # config.py seeds it from the shipped defaults on first boot.
       - COMFY_CONFIG_PATH=/data/config.json
       - COMFY_PROVIDER_TOKEN=${COMFY_PROVIDER_TOKEN:-}
-      - COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS=${COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS:-1}
+      # `COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS` used to be injected here and is
+      # gone: no code read it after 2026-10-03, so it was a dead variable
+      # re-added on every `up` while the audit and STATUS.md both claimed it had
+      # been removed from compose. See docs/audit-2026-10-03.md §4 — the flag was
+      # an opt-in gate dressed as a security control, and all providers share one
+      # bearer token, so the token was the entire boundary.
+      #
       # Every origin the stack is reached on. The port is not optional:
       # `https://100.150.0.4` is Traefik on 443 and `http://100.150.0.4:5174` is
       # the Vite dev server directly — different scheme, different port, so the
@@ -150,12 +156,38 @@ services:
       backend_v2:
         condition: service_healthy
     ports:
-      # Host port 5174 → container port 5174 (for direct localhost access).
-      # Left as-is deliberately: unlike the backend this one is a dev server you
-      # open in a browser, and binding it to loopback bought nothing because
-      # Traefik's frontend router already existed and the backend API was the
-      # actual exposure. Changing it is a one-character edit if you want it.
-      - "5174:5174"
+# Host port 5174 → container port 5174.
+#
+# The default is loopback, and that is the security control. An earlier revision
+# read "unlike the backend this one is just a dev server" and published it on
+# `0.0.0.0` — which re-opened the exact hole removing the backend's host port was
+# meant to close, because this service is a **reverse proxy to that API**:
+# `frontend_v2/nginx.conf` `server_name _;` and `location /api/` forwards to
+# `backend_v2:8002` with no host check. Measured on the running stack:
+# `curl http://192.168.1.28:5174/api/ready` → 200. So `0.0.0.0:5174` published
+# the whole unauthenticated API — every prompt, and `DELETE /api/jobs`, which is
+# how 154 rows of job history were deleted on 2026-10-01 — to every interface,
+# including the plain home LAN that NetBird does not cover.
+#
+# Traefik reaches this service on the external `proxy` network and does not need
+# a host port at all, so loopback costs nothing on the documented deployment.
+#
+# To reach the site over a VPN address or a LAN address, name that one address:
+#     COMFY_FRONTEND_BIND=100.150.0.4
+# Naming a single address is deliberate. `0.0.0.0` is the one value that widens
+# the exposure, and this indirection makes the safe case the default rather than
+# the thing you have to remember. `scripts/preflight.sh` reports the effective
+# bind and fails on a wildcard.
+#
+# There are two bindings because one host address cannot be both `localhost` and
+# a VPN address, and losing `http://localhost:5174` — the primary documented dev
+# path — is not a trade worth making. The second defaults to `127.0.0.2`, which is
+# inside 127.0.0.0/8 and therefore unroutable and unreachable from any network, so
+# the unset case publishes loopback twice and exposes nothing. Docker rejects two
+# identical bindings ("address already in use"), which is why the default is a
+# distinct loopback address rather than a repeat of the first.
+      - "127.0.0.1:5174:5174"
+      - "${COMFY_FRONTEND_BIND:-127.0.0.2}:5174:5174"
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy

@@ -3,10 +3,15 @@
 #
 # Usage:
 #   Core only (backend + frontend):
-#     docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V
 #
 #   With providers:
-#     docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V
+#
+#   `-V` is not optional in dev: the frontend's node_modules is an ANONYMOUS
+#   volume seeded from the image (see the mount list below), so without
+#   `--renew-anon-volumes` a package-lock.json bump leaves the container serving
+#   the previous dependency set, silently and with no error.
 #
 #   Backend only (no Docker, faster iteration):
 #     bash setup_jules.sh
@@ -14,7 +19,20 @@
 # Access:
 #   Via Traefik:  https://comfy.lan.thenaha.my.id  (Vite HMR over WSS)
 #   Direct:       http://localhost:5174              (Vite HMR over WS)
-#   Backend:      http://localhost:8002              (uvicorn --reload)
+#   Backend:      NO HOST PORT in either compose file. It is reachable from
+#                 inside the `proxy` docker network (that is how Traefik reaches
+#                 it) and from a shell with
+#                 `docker compose exec backend_v2 curl -s localhost:8002/api/live`.
+#                 `http://localhost:8002` on the host answers 000 — that is the
+#                 security boundary, not a misconfiguration.
+#
+#   The FRONTEND is also not published on every interface, and for the same
+#   reason rather than a different one: it proxies `/api` to that backend
+#   (`vite.config.js` in dev, `nginx.conf` in prod), so publishing it publishes
+#   the API. `COMFY_FRONTEND_BIND` in `.env` names the one address to serve it on;
+#   unset means loopback. Set it to your VPN or LAN address to reach the site from
+#   another machine — and understand that this widens the API's reach to every
+#   peer that can route to that address.
 
 services:
   # ─── Database ────────────────────────────────────────────
@@ -45,7 +63,17 @@ services:
       target: dev
     command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5174"]
     ports:
-      - "5174:5174"
+      # The dev server binds 0.0.0.0 *inside the container* so Traefik can reach
+      # it; that is separate from the host-side publishes below, which decide who
+      # can reach the site — and, because this proxies `/api`, who can reach the
+      # whole backend API.
+      #
+      # `127.0.0.1` keeps `http://localhost:5174` working, and the second binding
+      # is `COMFY_FRONTEND_BIND` from `.env`. Unset, it defaults to `127.0.0.2`,
+      # which is loopback and unroutable — so the default publishes nothing a
+      # network can reach, and naming a VPN address is what adds one.
+      - "127.0.0.1:5174:5174"
+      - "${COMFY_FRONTEND_BIND:-127.0.0.2}:5174:5174"
     labels:
       - traefik.http.services.comfyui-frontend.loadbalancer.server.port=5174
     environment:
@@ -110,6 +138,21 @@ services:
           memory: 16G
           cpus: "8"
   provider-modal-stepmania:
+    profiles:
+      - providers
+    # Generous limits for dev — remove to inherit base compose limits
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+          cpus: "8"
+  # Was the one image provider missing from this list, so it kept the base's
+  # 8G/4cpu while its two Modal siblings were raised. That is not a deliberate
+  # asymmetry: hp196 is the account that also backs `tts-modal-hp196`, so the
+  # provider with the *most* work on it had the *least* headroom. Raised to match
+  # its siblings rather than commented out as intentional, because the block it
+  # would have documented was simply forgotten.
+  provider-modal-hp196:
     profiles:
       - providers
     # Generous limits for dev — remove to inherit base compose limits
