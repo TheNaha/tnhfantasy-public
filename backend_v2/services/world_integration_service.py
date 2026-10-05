@@ -500,25 +500,36 @@ async def _handle_chat_image(job_data: dict[str, Any]):
         # batch that produced four images attached one and dropped three, even
         # though all four were already in the `assets` table and visible in the
         # gallery — the conversation was the only place they went missing.
-        for path in image_paths:
-            try:
-                msg = Message(
+        #
+        # All rows go in as ONE unit. This used to `commit()` inside the loop
+        # and `rollback()` on failure, which had two defects that only show up
+        # when one of several images misbehaves: N images meant N commits
+        # (N fsyncs, N transactions, and N chances to lose the whole batch to
+        # a mid-flight failure), and the rollback was not scoped to the row
+        # that failed — it discarded every other change pending on this shared
+        # session. So image 3 of 4 failing could silently drop rows 1 and 2
+        # while the job still read COMPLETED, leaving the transcript shorter
+        # than the gallery with nothing anywhere recording the gap.
+        try:
+            session.add_all([
+                Message(
                     role=MessageRole.SYSTEM,
                     kind=MessageKind.IMAGE,
                     content=content,
                     image_path=path,
                     chat_id=chat_id,
                 )
-                session.add(msg)
-                session.commit()
-            except Exception as e:
-                session.rollback()
-                logger.warning(
-                    "chat_image_msg_failed",
-                    job_id=job_data.get("id"),
-                    image_path=path,
-                    error=str(e),
-                )
+                for path in image_paths
+            ])
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.warning(
+                "chat_image_msg_failed",
+                job_id=job_data.get("id"),
+                image_count=len(image_paths),
+                error=str(e),
+            )
 
         try:
             character_id = metadata.get("character_id")

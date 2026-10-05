@@ -61,11 +61,11 @@ def list_all_containers(container_manager = Depends(get_container_manager)):
             "containers": [],
             "container_runtime_available": False
         }
-    
-    containers = container_manager.list_containers()
+
+    containers, runtime_available = container_manager.list_containers()
     return {
         "containers": containers,
-        "container_runtime_available": True
+        "container_runtime_available": runtime_available
     }
 
 
@@ -120,14 +120,32 @@ async def get_all_container_statuses(
         for provider in providers
     ))
     statuses = dict(zip((p["id"] for p in providers), statuses, strict=False))
-    
+
+    # `True` is a claim that a snapshot was actually taken. It used to be a
+    # literal, which made a host-wide Docker outage answer "the runtime is
+    # fine, all your containers are stopped" — and the route then cached that
+    # lie for 10 s. Only cache a response that was actually observed.
+    runtime_available = not any(
+        status["status"] == _RUNTIME_UNREACHABLE for status in statuses.values()
+    )
+
     result = {
         "statuses": statuses,
         "cached": False,
-        "container_runtime_available": True
+        "container_runtime_available": runtime_available
     }
-    _container_status_cache['all_statuses'] = {**result, "cached": True}
+    if runtime_available:
+        _container_status_cache['all_statuses'] = {**result, "cached": True}
     return result
+
+
+# Status reported for a provider whose container state could not be read at all.
+# Deliberately not "stopped": `provider_lifecycle_service.get_container_status`
+# already established that split, and reporting "stopped" here turned a
+# host-wide runtime outage into N independent, individually-actionable "this
+# container is stopped" verdicts — the one answer nobody asked for, hiding the
+# real one behind it.
+_RUNTIME_UNREACHABLE = "unreachable"
 
 
 def _container_status_sync(container_manager, provider_id: str) -> dict:
@@ -140,14 +158,24 @@ def _container_status_sync(container_manager, provider_id: str) -> dict:
     `running_containers` bookkeeping below actually has work to do. A provider
     whose container is down therefore costs no Docker round trip at all beyond
     the (cached) snapshot probe.
+
+    A snapshot that *raises* is not an answer about this container, so it
+    propagates the distinction rather than resolving to "stopped": the probe
+    raises on anything that is not a `NotFound`, and a `None` snapshot — the
+    genuine absent case — is the only thing that maps to "stopped".
     """
     container_name = provider_container_name(provider_id)
 
     try:
         snapshot = container_manager.get_container_snapshot(provider_id, container_name)
     except Exception as exc:
-        logger.debug("container_status_snapshot_failed", provider_id=provider_id, error=str(exc))
-        return _stopped_container_status()
+        logger.warning(
+            "container_status_snapshot_failed",
+            provider_id=provider_id,
+            container=container_name,
+            error=str(exc),
+        )
+        return _unreachable_container_status()
 
     if snapshot is None:
         return _stopped_container_status()
@@ -169,13 +197,25 @@ def _container_status_sync(container_manager, provider_id: str) -> dict:
         # Update in-memory dict
         container_manager.running_containers[provider_id] = container
     except Exception as exc:
-        logger.debug("container_status_lookup_failed", provider_id=provider_id, error=str(exc))
+        logger.warning(
+            "container_status_lookup_failed", provider_id=provider_id, error=str(exc)
+        )
 
     return status
 
 
 def _stopped_container_status() -> dict:
     return {"status": "stopped", "running": False, "healthy": False, "container_id": None}
+
+
+def _unreachable_container_status() -> dict:
+    """"We could not ask", kept distinct from "we asked and it is stopped"."""
+    return {
+        "status": _RUNTIME_UNREACHABLE,
+        "running": False,
+        "healthy": False,
+        "container_id": None,
+    }
 
 
 @router.get("/status-cards")
@@ -336,9 +376,16 @@ async def remove_model_from_provider(
     except Exception as exc:
         logger.warning("provider_model_delete_failed", provider_id=provider_id, path=storage_path, error=str(exc))
 
-    await service.update_provider_file_status(
+    # `provider_name=` -> `provider_id=`. This call could never have succeeded:
+    # `ModelServiceV2.update_provider_file_status` takes `provider_id`, so the
+    # line raised `TypeError` and the endpoint answered 500 after it had already
+    # deleted the file from the provider. Being fixed here because it is the
+    # same statement the event-loop fix touches, and a thread hop around a call
+    # that always raises is not a fix.
+    await asyncio.to_thread(
+        service.update_provider_file_status,
         file_id=file.id,
-        provider_name=provider_id,
+        provider_id=provider_id,
         status="pending",
         storage_path=storage_path,
         size_bytes=None,

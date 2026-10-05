@@ -182,6 +182,106 @@ def test_list_memories_rejects_limit_over_max(client):
 
 
 # ---------------------------------------------------------------------------
+# Embedding durability on update
+# ---------------------------------------------------------------------------
+
+
+def test_update_memory_keeps_a_good_embedding_when_regeneration_fails(
+    client, session, character, memory_1, fake_embeddings
+):
+    """A transient embedding failure must not destroy an existing vector.
+
+    `update_memory` regenerates the vector whenever `content` changes. The
+    regeneration is best-effort — the embedding service can be rate-limited,
+    time out, or return 503 — and the write is committed either way. Nulling
+    the column on failure therefore destroyed a *good* index entry because of a
+    failure that had nothing to do with the row, and nothing puts it back except
+    a manual `POST /reindex` sweep. The memory silently dropped out of semantic
+    recall until an operator noticed.
+    """
+    memory_1.embedding = [0.5] * 384
+    session.add(memory_1)
+    session.commit()
+
+    # Any transient failure: rate limit, timeout, provider 503.
+    fake_embeddings(fail_on={"completely new text"})
+
+    response = client.put(f"/api/v2/memories/{memory_1.id}", json={"content": "completely new text"})
+
+    assert response.status_code == 200
+    assert response.json()["content"] == "completely new text"
+
+    session.expire_all()
+    stored = session.get(CharacterMemory, memory_1.id)
+    assert stored.embedding is not None, (
+        "a failed embedding regeneration nulled a previously good vector; the "
+        "memory is now unsearchable until someone runs POST /reindex"
+    )
+    assert stored.embedding == [0.5] * 384
+
+
+def test_update_memory_still_writes_when_regeneration_fails(client, session, character, memory_1, fake_embeddings):
+    """The content edit itself must land — only the vector is best-effort."""
+    memory_1.embedding = [0.5] * 384
+    session.add(memory_1)
+    session.commit()
+
+    fake_embeddings(fail_on={"brand new wording"})
+
+    assert client.put(f"/api/v2/memories/{memory_1.id}", json={"content": "brand new wording"}).status_code == 200
+
+    session.expire_all()
+    stored = session.get(CharacterMemory, memory_1.id)
+    assert stored.content == "brand new wording"
+
+
+def test_update_memory_replaces_the_vector_on_success(client, session, character, memory_1, fake_embeddings):
+    """The preservation rule must not become "never regenerate"."""
+    memory_1.embedding = [0.5] * 384
+    session.add(memory_1)
+    session.commit()
+
+    fake_embeddings()
+
+    assert client.put(f"/api/v2/memories/{memory_1.id}", json={"content": "fresh text"}).status_code == 200
+
+    session.expire_all()
+    assert session.get(CharacterMemory, memory_1.id).embedding == [0.1] * 384
+
+
+def test_update_memory_without_content_change_never_calls_the_embedding_service(
+    client, session, character, memory_1, fake_embeddings
+):
+    memory_1.embedding = [0.5] * 384
+    session.add(memory_1)
+    session.commit()
+
+    svc = fake_embeddings()
+
+    assert client.put(f"/api/v2/memories/{memory_1.id}", json={"importance": 3}).status_code == 200
+
+    assert svc.batch_sizes == [] and svc.single_calls == []
+    session.expire_all()
+    assert session.get(CharacterMemory, memory_1.id).embedding == [0.5] * 384
+
+
+def test_create_memory_leaves_embedding_null_when_the_service_fails(
+    client, session, character, fake_embeddings
+):
+    """A row that never had a vector must not gain one on failure."""
+    fake_embeddings(fail_on={"A dragon lives in the mountain."})
+
+    response = client.post("/api/v2/memories", json={
+        "character_id": character.id,
+        "content": "A dragon lives in the mountain.",
+    })
+
+    assert response.status_code == 200
+    session.expire_all()
+    assert session.get(CharacterMemory, response.json()["id"]).embedding is None
+
+
+# ---------------------------------------------------------------------------
 # Bounded, batched reindex
 # ---------------------------------------------------------------------------
 

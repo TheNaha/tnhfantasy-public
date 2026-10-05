@@ -147,9 +147,14 @@ _runtime_states: dict[int, LoadBalancerRuntimeState] = {}
 _load_state_lock = threading.Lock()
 
 def get_runtime_state(state_id: int = 1) -> LoadBalancerRuntimeState:
-    if state_id not in _runtime_states:
-        _runtime_states[state_id] = LoadBalancerRuntimeState()
-    return _runtime_states[state_id]
+    # The membership test and the insert have to be one critical section. Split
+    # across an unlocked window, two callers can both miss and both assign — the
+    # loser silently replaces the winner's state, so whichever store the caller
+    # then mutates is not the one the other one is mutating.
+    with _load_state_lock:
+        if state_id not in _runtime_states:
+            _runtime_states[state_id] = LoadBalancerRuntimeState()
+        return _runtime_states[state_id]
 
 def get_global_runtime_state() -> LoadBalancerRuntimeState:
     return get_runtime_state(1)
@@ -205,7 +210,13 @@ class LoadBalancer:
         if runtime_state:
             runtime_state.reset()
         else:
-            for state in _runtime_states.values():
+            # Iterating `_runtime_states.values()` while another thread inserts
+            # into it raises `RuntimeError: dictionary changed size during
+            # iteration` — the same window as `get_runtime_state`, and reachable
+            # from the same place.
+            with _load_state_lock:
+                states = list(_runtime_states.values())
+            for state in states:
                 state.reset()
         _model_availability_cache.clear()
         _provider_health_cache.clear()
@@ -320,7 +331,18 @@ class LoadBalancer:
         """
         # If runtime_state is provided explicitly, only clean that one up.
         # Otherwise, clean up all known runtime states.
-        stores_to_clean = [(None, runtime_state)] if runtime_state else list(_runtime_states.items())
+        #
+        # The `list()` snapshot is taken under the module lock: iterating
+        # `_runtime_states` while `get_runtime_state` inserts into it raises
+        # `RuntimeError: dictionary changed size during iteration`. The lock is
+        # released immediately — the per-store asyncio lock below is what guards
+        # the mutation, and holding a threading lock across an `async with` would
+        # block the whole event loop for its duration.
+        if runtime_state:
+            stores_to_clean = [(None, runtime_state)]
+        else:
+            with _load_state_lock:
+                stores_to_clean = list(_runtime_states.items())
 
         pending_persist: list[tuple[LoadBalancerRuntimeState, int, dict[str, Any]]] = []
 

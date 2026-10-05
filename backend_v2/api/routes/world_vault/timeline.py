@@ -9,6 +9,7 @@ from sqlmodel import Session, func, select
 
 from api.deps import get_session
 from core.entities import Asset, Chat, CharacterMemory, Message, Story, StoryChapter
+from services.statistics_service import ASSET_GALLERY_TIMESTAMP
 
 # The four sources are merged and then sorted, so a page of the merged timeline
 # needs up to `limit + offset` rows from EACH of them — the multiplier that
@@ -240,9 +241,21 @@ def get_timeline(
             Asset.created_at,
             Asset.metadata_["prompt"].as_string(),
         )
-        .order_by(Asset.created_at.desc())
+        # Ordered by the timestamp the event below is built from, not by
+        # `created_at`. The merge at the end of this handler sorts on
+        # `generated_at or created_at`, so a window cut on `created_at` is a
+        # different set of rows than the page claims to be the newest — and the
+        # disagreement only shows up on deep pages, where the two orderings have
+        # diverged most. `ASSET_GALLERY_TIMESTAMP` is the one definition the
+        # gallery already sorts on; a third would be a fourth answer to the same
+        # question.
+        .order_by(ASSET_GALLERY_TIMESTAMP.desc())
         .limit(fetch_limit)
     )
+    # Soft-deleted assets are excluded, like every other asset read in prod.
+    # Without this the timeline resurrected images the user had deleted.
+    asset_count_query = asset_count_query.where(Asset.deleted_at.is_(None))
+    asset_query = asset_query.where(Asset.deleted_at.is_(None))
     if character_id:
         asset_count_query = asset_count_query.where(Asset.character_id == character_id)
         asset_query = asset_query.where(Asset.character_id == character_id)

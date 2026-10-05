@@ -714,10 +714,19 @@ class TestProviderServiceReconciliationState:
         await service.create_provider(sample_provider_data)
         await service.start_reconciliation_session("test-provider")
 
-        state = await service.upsert_reconciliation_state(
+        state = service.upsert_reconciliation_state(
             "test-provider",
             {"status": "completed", "phase": "done", "message": "Sync complete"},
         )
 
         assert state["status"] == "completed"
         assert state.get("finished_at") is not None
+
+    async def test_upsert_reconciliation_state_is_not_a_coroutine_function(self, service):
+        """Synchronous since 2026-10-03 — one repository read, one merge, one
+        commit, no suspension. `async def` callers reach it via
+        `asyncio.to_thread`; an `async def` here would put that commit back on
+        the event loop for every worker heartbeat."""
+        import inspect
+
+        assert not inspect.iscoroutinefunction(service.upsert_reconciliation_state)

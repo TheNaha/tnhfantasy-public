@@ -34,7 +34,7 @@ from fastapi.testclient import TestClient
 import infrastructure.background_tasks as background_tasks
 import infrastructure.deps as infra_deps
 from api.main import app, lifespan
-from core.events import event_bus
+from core.events import EventType, event_bus
 from infrastructure.scheduler import get_scheduler
 from services.job_queue import queue_manager
 from services.model_preview_service import PREVIEW_PREFETCH_INTERVAL_SECONDS
@@ -101,7 +101,20 @@ EXPECTED_SCHEDULED_JOBS = {
 }
 
 # Topics the broadcast listener and the provider monitor subscribe to.
-EVENT_BUS_TOPICS = ("job", "download", "provider", "reconciliation", "model")
+#
+# Derived from `EventType` rather than listed by hand, because the room a
+# websocket client joins is the prefix of an event value, so this list *is* the
+# set of rooms that can receive anything. It listed `"download"`, which had no
+# `EventType` behind it since the family was removed on 2026-10-03 — so the
+# assertion below could never be satisfied by a correct lifespan, and
+# `test_lifespan_runs_every_declared_startup_phase` was red on every run.
+#
+# It was reported for a long while as a load-related flake ("a boot test that
+# starts real threads, and 20 s is tight after 2550 other tests"). It was not
+# load: it failed identically in 24 s alongside 67 other tests, and
+# `assert 0 > 0` for `download` is deterministic. `docs/STATUS.md` carried the
+# flake label; this is the cause.
+EVENT_BUS_TOPICS = tuple(sorted({e.value.split(".")[0] for e in EventType}))
 
 # The lifespan does blocking I/O (a thread-backed provider-host read, a DB
 # migration) and starts real tasks, so it is not instant. 20s is roughly an

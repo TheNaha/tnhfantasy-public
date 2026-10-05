@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from sqlmodel import Session, func, select
 
 from core.entities import CharacterMemory, LorebookEntry
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from infrastructure.logging import get_logger
 
 logger = get_logger("rag_pipeline")
@@ -144,7 +145,11 @@ def search_memories(
     else:
         stmt = select(CharacterMemory).where(CharacterMemory.character_id == character_id)
         if query:
-            stmt = stmt.where(func.lower(CharacterMemory.content).like(f"%{query.lower()}%"))
+            stmt = stmt.where(
+                func.lower(CharacterMemory.content).like(
+                    like_contains(query.lower()), escape=LIKE_ESCAPE_CHAR
+                )
+            )
         else:
             stmt = stmt.order_by(
                 CharacterMemory.last_accessed_at.desc(),

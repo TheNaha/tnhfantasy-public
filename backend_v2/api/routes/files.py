@@ -52,6 +52,7 @@ from core.exceptions import (
     ServiceUnavailableError,
     ValidationError,
 )
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from core.upload_validation import (
     ALLOWED_UPLOAD_EXTENSIONS,
     IMAGE_EXTENSIONS,
@@ -627,7 +628,13 @@ def _resolve_asset_path(rel_or_filename: str, session: Session | None = None) ->
                 asset = session.exec(
                     select(Asset).where(Asset.filename == rel).where(Asset.deleted_at.is_(None))
                 ).first()
-        except Exception:
+        except Exception as exc:
+            # Not the same as "no such asset": a driver failure, a missing column
+            # or a closed session was being reported as an empty index, and the
+            # caller then fell through to the basename guess below — which
+            # happens to work often enough that the real error was never seen.
+            # Same reason `_query_gallery_files` logs before it raises.
+            logger.warning("asset_index_lookup_failed", relative_path=rel, error=str(exc))
             asset = None
     if asset:
             cand = get_safe_path(OUTPUT_DIR, asset.relative_path)
@@ -655,7 +662,7 @@ def _query_gallery_files(
     `generated_at` (true image time) falling back to `created_at`. Sort options:
     date_desc (default), date_asc, name_asc, name_desc.
     """
-    from sqlalchemy import func
+    from sqlalchemy import String, func
 
     from services.asset_reconciler import _asset_as_file_data
 
@@ -669,8 +676,17 @@ def _query_gallery_files(
         if story_id:
             q = q.where(Asset.story_id == story_id)
         if search:
-            like = f"%{search}%"
-            q = q.where((Asset.filename.ilike(like)) | (Asset.metadata_.cast(str).ilike(like)))
+            like = like_contains(search)
+            # `String`, NOT the builtin `str`: `Column.cast()` takes a TypeEngine
+            # and the builtin made it raise `TypeError: Object '' associated with
+            # '.type' attribute is not a TypeEngine class or object` — which the
+            # caller's `except` turned into a 503 "File listing is unavailable".
+            # So every gallery search, for every term, was a hard failure on the
+            # live site; the sibling call sites below already used `String`.
+            q = q.where(
+                (Asset.filename.ilike(like, escape=LIKE_ESCAPE_CHAR))
+                | (Asset.metadata_.cast(String).ilike(like, escape=LIKE_ESCAPE_CHAR))
+            )
 
         if sort in ("name_asc", "name_desc"):
             # Name sorts need the full filtered set to slice deterministically.
@@ -711,14 +727,22 @@ def _soft_delete_assets(relative_or_filename: str, session: Session | None = Non
         )
         rows = session.exec(q).all()
         if not rows and "/" not in rel:
-            # Fallback for basenames sent by the UI:
-            # Match exact filename OR if the relative path ends with this basename
+            # Fallback for basenames sent by the UI.
+            #
+            # Both arms anchor on a path boundary. A third arm,
+            # `relative_path.endswith(rel)`, also existed and matched every row
+            # whose path merely *ended with* the same characters, so a request
+            # for `abc.png` soft-deleted `notabc.png` and `xabc.png` as well.
+            # It is unreachable as a rescue for the exact-path form, because
+            # `relative_path` is always date-partitioned, so every basename
+            # keyed call took this branch and therefore the over-broad match.
+            #
+            # Reachable without any mistake from the user: the thumbnail route's
+            # "self-heal a missing index row" fall-through calls this with a bare
+            # filename, and the gallery's batch delete does too.
             rows = session.exec(
                 select(Asset).where(Asset.deleted_at.is_(None)).where(
-                    (Asset.filename == rel) | 
-                    (Asset.relative_path.endswith("/" + rel)) |
-                    (Asset.relative_path == "/" + rel) |
-                    (Asset.relative_path.endswith(rel))
+                    (Asset.filename == rel) | (Asset.relative_path.endswith("/" + rel))
                 )
             ).all()
         for a in rows:
@@ -869,8 +893,11 @@ def _list_assets_sync(
         if story_id:
             q = q.where(Asset.story_id == story_id)
         if search:
-            like = f"%{search}%"
-            q = q.where((Asset.filename.ilike(like)) | (Asset.metadata_.cast(String).ilike(like)))
+            like = like_contains(search)
+            q = q.where(
+                (Asset.filename.ilike(like, escape=LIKE_ESCAPE_CHAR))
+                | (Asset.metadata_.cast(String).ilike(like, escape=LIKE_ESCAPE_CHAR))
+            )
         if sort.startswith("random"):
             from sqlalchemy import cast
             seed = "stable_random_seed"
@@ -2133,95 +2160,113 @@ async def batch_get_metadata(request: BatchMetadataRequest):
         results = {}
         missing_files_map = {}  # path -> filename
 
-        def _get_metadata_result(full_path):
-            """Helper to extract metadata from a file."""
-            try:
-                metadata = read_image_metadata(full_path)
-                return {
-                    "success": True,
-                    "metadata": metadata,
-                    "blurhash": metadata.get("blurhash")
-                }
-            except Exception:
-                # Fallback to sidecar JSON
-                meta_path = f"{full_path}.json"
-                if os.path.exists(meta_path):
-                    try:
-                        with open(meta_path, 'r') as f:
-                            metadata = json.load(f)
-                        return {
-                            "success": True,
-                            "metadata": metadata,
-                            "blurhash": metadata.get("blurhash")
-                        }
-                    except Exception:
-                        return {"error": "metadata_read_failed"}
-                else:
-                    return {"error": "metadata_not_found"}
+        # One session for the whole batch, opened lazily on the first name that
+        # needs the index. `_resolve_asset_path` takes one precisely so this is
+        # possible (`_build_export_zip_sync` does the same at MAX_EXPORT_FILES),
+        # and both call sites here were passing none — so each unresolved name
+        # checked out its own pooled connection and held it across two SELECTs.
+        # At MAX_BATCH_ITEMS (1000) that is 1000 checkouts for one request.
+        # Lazy, not eager: a batch where every path resolves directly never
+        # needs a connection at all.
+        from contextlib import ExitStack
 
-        # Phase 1: Check direct paths and collect missing files
-        for path in paths:
-            try:
-                # Normalize path
-                if path.startswith("output/"):
-                    filename = path.replace("output/", "").lstrip("/\\")
-                else:
-                    filename = path.lstrip("/\\")
+        with ExitStack() as session_stack:
+            session_holder: list[Session] = []
 
-                # Try direct path first
+            def _resolve(name: str):
+                if not session_holder:
+                    session_holder.append(session_stack.enter_context(_sync_session()))
+                return _resolve_asset_path(name, session_holder[0])
+
+            def _get_metadata_result(full_path):
+                """Helper to extract metadata from a file."""
                 try:
-                    full_path = get_safe_path(OUTPUT_DIR, filename)
-                except ValidationError:
-                    results[path] = {"error": "invalid_path"}
-                    continue
-
-                if os.path.exists(full_path):
-                    results[path] = _get_metadata_result(full_path)
-                else:
-                    indexed_path = _resolve_asset_path(filename)
-                    if indexed_path and os.path.exists(indexed_path):
-                        results[path] = _get_metadata_result(indexed_path)
+                    metadata = read_image_metadata(full_path)
+                    return {
+                        "success": True,
+                        "metadata": metadata,
+                        "blurhash": metadata.get("blurhash")
+                    }
+                except Exception:
+                    # Fallback to sidecar JSON
+                    meta_path = f"{full_path}.json"
+                    if os.path.exists(meta_path):
+                        try:
+                            with open(meta_path, 'r') as f:
+                                metadata = json.load(f)
+                            return {
+                                "success": True,
+                                "metadata": metadata,
+                                "blurhash": metadata.get("blurhash")
+                            }
+                        except Exception:
+                            return {"error": "metadata_read_failed"}
                     else:
-                        # Keep a basename fallback for legacy callers that only store filenames
-                        missing_files_map[path] = filename
+                        return {"error": "metadata_not_found"}
 
-            except Exception as e:
-                results[path] = {"error": str(e)}
-
-        # Phase 2: Single pass scan for missing files
-        if missing_files_map:
-            unresolved = {}
-            for path, filename in missing_files_map.items():
-                full_path = _resolve_asset_path(os.path.basename(filename))
-                if full_path and os.path.exists(full_path):
-                    results[path] = _get_metadata_result(full_path)
-                else:
-                    unresolved[path] = os.path.basename(filename)
-
-            if unresolved:
-                target_filenames = set(unresolved.values())
-
-                def _scan_metadata():
-                    found = {}
-                    for root, dirs, files in os.walk(OUTPUT_DIR):
-                        if "thumb" in dirs:
-                            dirs.remove("thumb")
-                        for f in files:
-                            if f not in target_filenames:
-                                continue
-                            found.setdefault(f, []).append(os.path.join(root, f))
-                    return found
-
-                found_files = _scan_metadata()
-
-                for path, filename in unresolved.items():
-                    matches = found_files.get(filename, [])
-                    if len(matches) == 1:
-                        results[path] = _get_metadata_result(matches[0])
+            # Phase 1: Check direct paths and collect missing files
+            for path in paths:
+                try:
+                    # Normalize path
+                    if path.startswith("output/"):
+                        filename = path.replace("output/", "").lstrip("/\\")
                     else:
-                        results[path] = {"error": "not_found"}
+                        filename = path.lstrip("/\\")
 
-        return results
+                    # Try direct path first
+                    try:
+                        full_path = get_safe_path(OUTPUT_DIR, filename)
+                    except ValidationError:
+                        results[path] = {"error": "invalid_path"}
+                        continue
+
+                    if os.path.exists(full_path):
+                        results[path] = _get_metadata_result(full_path)
+                    else:
+                        indexed_path = _resolve(filename)
+                        if indexed_path and os.path.exists(indexed_path):
+                            results[path] = _get_metadata_result(indexed_path)
+                        else:
+                            # Keep a basename fallback for legacy callers that only store filenames
+                            missing_files_map[path] = filename
+
+                except Exception as e:
+                    results[path] = {"error": str(e)}
+
+            # Phase 2: Single pass scan for missing files
+            if missing_files_map:
+                unresolved = {}
+                for path, filename in missing_files_map.items():
+                    full_path = _resolve(os.path.basename(filename))
+                    if full_path and os.path.exists(full_path):
+                        results[path] = _get_metadata_result(full_path)
+                    else:
+                        unresolved[path] = os.path.basename(filename)
+
+                if unresolved:
+                    target_filenames = set(unresolved.values())
+
+                    def _scan_metadata():
+                        found = {}
+                        for root, dirs, files in os.walk(OUTPUT_DIR):
+                            if "thumb" in dirs:
+                                dirs.remove("thumb")
+                            for f in files:
+                                if f not in target_filenames:
+                                    continue
+                                found.setdefault(f, []).append(os.path.join(root, f))
+                        return found
+
+                    found_files = _scan_metadata()
+
+                    for path, filename in unresolved.items():
+                        matches = found_files.get(filename, [])
+                        if len(matches) == 1:
+                            results[path] = _get_metadata_result(matches[0])
+                        else:
+                            results[path] = {"error": "not_found"}
+
+            return results
 
     results = await asyncio.to_thread(_process, request.paths)
 

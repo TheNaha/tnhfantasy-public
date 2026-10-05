@@ -224,9 +224,11 @@ async def check_dependencies(
     """
     
     service = get_model_service_v2(session)
-    
-    # Get model to check existence
-    model = await service.get_model(model_id)
+
+    # Get model to check existence. Synchronous repository read behind a
+    # decorative `async def` in the service, so it went through `to_thread`
+    # rather than running inline on the event loop.
+    model = await asyncio.to_thread(service.get_model, model_id)
 
     # Get base model from default version
     versions = model.get("versions", [])
@@ -574,10 +576,14 @@ async def backfill_provider_statuses(
     for directory_updates in all_updates:
         for provider_id, file_id in directory_updates:
             try:
-                await service.update_provider_file_status(
+                # Synchronous upsert + commit; this handler is `async def`
+                # because of the provider fan-out above it, so the write needs
+                # the thread hop.
+                await asyncio.to_thread(
+                    service.update_provider_file_status,
                     provider_id=provider_id,
                     file_id=file_id,
-                    status="ready"
+                    status="ready",
                 )
                 results["models_updated"] += 1
             except Exception as e:

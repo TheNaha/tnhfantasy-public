@@ -248,7 +248,27 @@ def get_story(story_id: str, session: Session = Depends(get_session), story_repo
 
 
 @router.get("/{story_id}/export")
-def export_story(story_id: str, format: str = "json", session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
+def export_story(story_id: str, format: str = "json", session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), published: bool = False):
+    """Export a story.
+
+    `published=True` is the unauthenticated path (`/published/{token}/export`).
+    It existed as a plain call to this function, so the public export returned
+    the owner-shaped payload: internal ids on the story, its characters and its
+    locations, every chapter's `beats` (the author's private planning outline),
+    and the full lorebook list — all reachable with nothing but a share token.
+    The public reader deliberately builds none of that, so "the export is
+    narrower than the read" was never true.
+
+    It is now the same projection, via `_published_story_payload`, so the two
+    cannot drift: `tests/test_published_story_redaction.py` asserts the rule
+    rather than a field list.
+
+    Because `published` is a parameter of a decorated handler, FastAPI exposes it
+    as a query parameter on this route (`?published=true`). That is deliberate
+    rather than hidden with `include_in_schema=False`: it can only ever *narrow*
+    the response, so the worst a caller can do is ask for less, and a parameter
+    that is accepted but undocumented is worse than one that is both.
+    """
     story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
@@ -265,6 +285,15 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
     locations = session.exec(
         select(Location).where(Location.id.in_(story.location_ids or []))
     ).all() if story.location_ids else []
+
+    if published:
+        # JSON is the default format and the only one whose body is a serialised
+        # projection. The others (markdown, epub, pdf, webtoon) render straight
+        # from `story`/`chapters` and never emitted `beats`, lorebooks or ids, so
+        # they need no gating — but they are reached here too, and a future format
+        # branch added below must respect `published`.
+        if format == "json":
+            return _published_story_payload(story, chapters, characters, locations)
 
     def _serialize_chapter(ch: StoryChapter) -> dict:
         return {
@@ -626,27 +655,20 @@ def unpublish_story(story_id: str, session: Session = Depends(get_session), stor
     }
 
 
-@router.get("/published/{token}")
-def read_published_story(token: str, session: Session = Depends(get_session)):
-    """Read a published story by its token (public, read-only)."""
-    story = session.exec(
-        select(Story).where(Story.published_token == token, Story.is_published == True)
-    ).first()
-    if not story:
-        raise NotFoundError("PublishedStory", token)
+def _published_story_payload(
+    story: Story,
+    chapters: list,
+    characters: list,
+    locations: list,
+) -> dict:
+    """The one public projection of a story. Both public routes use it.
 
-    chapters = session.exec(
-        select(StoryChapter).where(StoryChapter.story_id == story.id).order_by(StoryChapter.chapter_number)
-    ).all()
-
-    characters = session.exec(
-        select(Character).where(Character.id.in_(story.character_ids or []))
-    ).all() if story.character_ids else []
-
-    locations = session.exec(
-        select(Location).where(Location.id.in_(story.location_ids or []))
-    ).all() if story.location_ids else []
-
+    A published token is unauthenticated, so this function is the entire
+    redaction boundary: no internal primary keys, no chapter `beats` (the
+    author's private planning outline), no lorebooks, and no authoring
+    timestamps. The export used to build its own, wider payload — see
+    `export_story`'s `published` parameter, which now routes here instead.
+    """
     return {
         "story": {
             "id": story.id,
@@ -676,18 +698,54 @@ def read_published_story(token: str, session: Session = Depends(get_session)):
     }
 
 
-@router.get("/published/{token}/export")
-def export_published_story(token: str, format: str = "json", session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
-    """Export a published story by its token (public, read-only)."""
+@router.get("/published/{token}")
+def read_published_story(token: str, session: Session = Depends(get_session)):
+    """Read a published story by its token (public, read-only)."""
     story = session.exec(
         select(Story).where(Story.published_token == token, Story.is_published == True)
     ).first()
     if not story:
         raise NotFoundError("PublishedStory", token)
 
-    # Build a minimal story dict and reuse the same export logic
-    # by calling export_story with the resolved story_id
-    return export_story(story.id, format=format, session=session, story_repo=story_repo)
+    chapters = session.exec(
+        select(StoryChapter).where(StoryChapter.story_id == story.id).order_by(StoryChapter.chapter_number)
+    ).all()
+
+    characters = session.exec(
+        select(Character).where(Character.id.in_(story.character_ids or []))
+    ).all() if story.character_ids else []
+
+    locations = session.exec(
+        select(Location).where(Location.id.in_(story.location_ids or []))
+    ).all() if story.location_ids else []
+
+    return _published_story_payload(story, chapters, characters, locations)
+
+
+@router.get("/published/{token}/export")
+def export_published_story(token: str, format: str = "json", session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
+    """Export a published story by its token (public, read-only).
+
+    Same token, same redaction as `read_published_story` — that is the whole
+    point of `published=True` below. It used to return the owner-shaped export
+    from an unauthenticated route, which leaked every internal id, each
+    chapter's private `beats` outline, and the whole lorebook list.
+    """
+    story = session.exec(
+        select(Story).where(Story.published_token == token, Story.is_published == True)
+    ).first()
+    if not story:
+        raise NotFoundError("PublishedStory", token)
+
+    # `story_repo` is still injected so the two routes resolve dependencies
+    # identically; `published=True` makes the export use the public projection.
+    return export_story(
+        story.id,
+        format=format,
+        session=session,
+        story_repo=story_repo,
+        published=True,
+    )
 
 
 @router.put("/{story_id}", response_model=Story)

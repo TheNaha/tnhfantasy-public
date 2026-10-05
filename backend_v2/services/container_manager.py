@@ -499,15 +499,33 @@ class ContainerManager:
         try:
             container = client.containers.get(name)
         except docker.errors.NotFound:
+            # The only failure that is an answer about *this* container: Docker
+            # replied and said there is no such container.
             return None
         except Exception as exc:
-            logger.debug("container_probe_failed", container=name, error=str(exc))
-            return None
+            # Everything else is the runtime being unreachable, not the container
+            # being down — daemon down, socket permission denied, TLS handshake
+            # failure, a context that no longer exists, Podman/Docker API version
+            # skew. This used to log at debug and return the same `None` as
+            # NotFound, which made the two indistinguishable, and `None` was
+            # cached for the full TTL by `get_container_snapshot` — so a
+            # host-wide outage was reported as "every container absent" for two
+            # seconds per probe. Raise, and let the caller's own contract decide
+            # what an unknown state means; `provider_lifecycle_service` already
+            # makes exactly this split.
+            logger.error(
+                "container_runtime_unreachable",
+                container=name,
+                error=str(exc),
+                exc_info=True,
+            )
+            raise
         try:
             container.reload()
         except Exception as exc:
             # A container that exists but will not reload (removed mid-read) is
-            # still worth reporting: `get` succeeded, so it was there a moment ago.
+            # still worth reporting: `get` succeeded, so it was there a moment ago,
+            # and that is a fact about the read rather than about the runtime.
             logger.debug("container_reload_failed", container=name, error=str(exc))
         health = (getattr(container, "attrs", {}) or {}).get("State", {}).get("Health", {}).get("Status")
         return ContainerSnapshot(
@@ -566,12 +584,35 @@ class ContainerManager:
         except Exception as e:
             return f"Error getting logs: {e}"
     
-    def list_containers(self) -> list[dict]:
-        """List all running provider containers."""
-        containers = self.client.containers.list(
-            filters={"label": "comfy-provider=true"}
-        )
-        
+    def list_containers(self) -> tuple[list[dict], bool]:
+        """List running provider containers, and whether the runtime answered.
+
+        Degrades to an empty list with `False` rather than raising. This method
+        had no exception handling at all, so a Docker outage made
+        `GET /api/v2/providers/containers/list` answer **500** while
+        `GET /api/v2/providers/containers/status`, on the same host in the same
+        second, reported every container "stopped" with
+        `container_runtime_available: true` — two opposite answers to one
+        question, neither of which was true.
+
+        Returns a `(containers, runtime_available)` pair because the empty list
+        on its own is exactly what "no provider containers are running" looks
+        like, which is the ambiguity that made the 500 the only honest option
+        before.
+        """
+        try:
+            containers = self.client.containers.list(
+                filters={"label": "comfy-provider=true"}
+            )
+        except Exception as exc:
+            logger.error(
+                "container_runtime_unreachable",
+                operation="list_containers",
+                error=str(exc),
+                exc_info=True,
+            )
+            return [], False
+
         return [
             {
                 "id": c.short_id,
@@ -581,7 +622,7 @@ class ContainerManager:
                 "ports": c.ports
             }
             for c in containers
-        ]
+        ], True
     
     def cleanup_all(self):
         """Stop and remove all provider containers."""

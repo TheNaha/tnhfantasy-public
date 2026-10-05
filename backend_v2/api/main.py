@@ -121,7 +121,8 @@ def _warn_if_multiple_processes() -> None:
     """
     import multiprocessing
 
-    # Compose sets `COMFY_UVICORN_WORKERS` unconditionally, and an EMPTY value is
+    # `COMFY_UVICORN_WORKERS` is NOT set by compose — not in its `environment:`
+    # block and not in the rendered environment — so an empty or absent value is
     # the normal state for a single-worker deployment. `int("")` raises, so the
     # first version logged "unparseable" on every single boot. Strip first and
     # treat empty as unset, which is what it means.

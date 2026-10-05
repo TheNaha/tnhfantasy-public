@@ -1705,6 +1705,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Create the indexes migrations recorded as applied but never made — the gallery's own index among them, a 273x difference on its most-used screen",
             apply_fn=_migration_080_recreate_absent_indexes,
         ),
+        MigrationStep(
+            version="081_operator_class_indexes",
+            description="Create the pgvector operator-class indexes on a fresh install, where create_all makes the table and the migration that would have indexed it skips",
+            apply_fn=_migration_081_operator_class_indexes,
+        ),
     ]
 
 
@@ -3569,4 +3574,57 @@ def _migration_080_recreate_absent_indexes(conn) -> bool:
             conn.execute(text("ANALYZE " + table))
 
     logger.info("migration_080_indexes_recreated", count=len(created), indexes=sorted(created))
+    return True
+
+
+def _migration_081_operator_class_indexes(conn) -> bool:
+    """Create the vector index that `create_all` structurally cannot produce.
+
+    `character_memories.embedding` is a pgvector `Vector` column, and its index is
+    an HNSW index with an operator class — `USING hnsw (embedding
+    vector_cosine_ops)`. A SQLModel column declared `index=True` can only ever ask
+    SQLAlchemy for a plain btree, so `SQLModel.metadata.create_all` creates the
+    table without it. Migration 041 creates that table *and* its two indexes, but
+    it early-returns when the table already exists — which, on a fresh database,
+    it always does, because `create_all` runs immediately before the steps runner
+    (see `infrastructure.database.create_db_and_tables`).
+
+    So on every fresh install `character_memories` had no vector index at all and
+    semantic character-memory search was a sequential scan. The existing
+    deployment has the index, which is why it was invisible: the table predates
+    the `create_all` path and was made by migration 041 itself.
+
+    Idempotent, and Postgres-only — SQLite stores the embedding as a JSON array and
+    has no vector index to create.
+    """
+    if conn.dialect.name != "postgresql":
+        return True
+
+    tables = set(inspect(conn).get_table_names())
+    if "character_memories" not in tables:
+        return True
+
+    name = "idx_character_memories_embedding"
+    present = conn.execute(
+        text("SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname = :n"),
+        {"n": name},
+    ).first()
+    if present:
+        return False
+
+    try:
+        with conn.begin_nested():
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS " + name + " ON character_memories "
+                "USING hnsw (embedding vector_cosine_ops)"
+            ))
+    except Exception as exc:
+        # An old pgvector without HNSW support, or a table too small to index.
+        # Logged rather than raised: a missing index degrades a search, it does
+        # not corrupt anything, and failing startup over it would be worse.
+        logger.warning("migration_081_vector_index_failed", error=str(exc))
+        return False
+
+    conn.execute(text("ANALYZE character_memories"))
+    logger.info("migration_081_vector_index_created", index=name)
     return True

@@ -1,4 +1,6 @@
 
+import asyncio
+
 from fastapi import APIRouter, Depends
 
 from api.deps import (
@@ -177,6 +179,26 @@ def check_installed_versions_batch(
 
     return {"models": response}
 
+def _split_already_installed_versions(
+    repo: ModelRepositoryV2,
+    selected_version_ids: list[int],
+) -> tuple[list[int], list[int]]:
+    """Worker-thread body for the duplicate check in `add_model`.
+
+    Returns `(already_installed, new_version_ids)`. Pure synchronous repository
+    reads, which is exactly why it is not called inline from an `async def`
+    route.
+    """
+    already_installed: list[int] = []
+    new_version_ids: list[int] = []
+    for version_id in selected_version_ids:
+        if repo.get_version_by_civitai_id(version_id):
+            already_installed.append(version_id)
+        else:
+            new_version_ids.append(version_id)
+    return already_installed, new_version_ids
+
+
 @router.post("/")
 async def add_model(
     request: AddModelRequest,
@@ -213,17 +235,14 @@ async def add_model(
             f"Selected versions are not present in the model response: {unknown_version_ids}"
         )
 
-    # Check for already installed versions
-    already_installed = []
-    new_version_ids = []
-    
-    for version_id in selected_version_ids:
-        existing = repo.get_version_by_civitai_id(version_id)
-        if existing:
-            already_installed.append(version_id)
-        else:
-            new_version_ids.append(version_id)
-    
+    # Check for already installed versions. One synchronous repository read per
+    # selected version, so a 20-version import issued 20 round-trips — and the
+    # whole loop ran on the event loop before the first real suspension
+    # (`service.add_model_from_civitai`). Hoisted into `asyncio.to_thread`.
+    already_installed, new_version_ids = await asyncio.to_thread(
+        _split_already_installed_versions, repo, selected_version_ids
+    )
+
     if not new_version_ids:
         # All versions already installed
         raise ValidationError(f"All selected versions are already installed: {already_installed}")
@@ -275,12 +294,18 @@ async def search_by_tag(
 
 
 @router.get("/{model_id}")
-async def get_model(
+def get_model(
     model_id: str,
     service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
-    """Get model with versions, files, and images."""
-    return await service.get_model(model_id)
+    """Get model with versions, files, and images.
+
+    Plain `def` on purpose, same as `list_models` above: `ModelServiceV2.get_model`
+    is now a plain `def` (it was a decorative `async def` around one repository
+    read), so there is nothing left to await and the query runs in the worker
+    thread FastAPI gives a `def` handler.
+    """
+    return service.get_model(model_id)
 
 
 @router.delete("/{model_id}")

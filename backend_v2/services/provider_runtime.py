@@ -12,6 +12,12 @@ logger = get_logger("provider_runtime")
 # first provider to miss it.
 _RUNTIME_RESOLVE_TIMEOUT_SECONDS = 5.0
 
+# Reported as a target's `status` when the container runtime could not be
+# reached at all, as distinct from a runtime that answered and has no such
+# container. The resolution still degrades to the same unusable target either
+# way — this only makes the reason legible instead of guessing at it.
+RUNTIME_UNREACHABLE = "runtime_unreachable"
+
 
 @dataclass(frozen=True)
 class ProviderRuntimeTarget:
@@ -36,6 +42,10 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
     provider_id = provider.id
     provider_type = getattr(provider, "type", "")
     provider_config = getattr(provider, "config", None) or {}
+    # Set when the container probe raised rather than answered. Function-scoped:
+    # the `if container_config` block below may not run at all, and the final
+    # target still has to be able to say which failure it was.
+    runtime_unreachable = False
 
     if container_config:
         container_name = container_config.get("container_name", provider_container_name(provider_id))
@@ -61,7 +71,20 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
                     healthy = snapshot.healthy
                     connected = snapshot.running and healthy is not False
         except Exception as exc:
-            logger.debug("provider_runtime_status_probe_failed", provider_id=provider_id, error=str(exc))
+            # Degrading to the worker/discovery fallbacks below is deliberate,
+            # but it used to log at debug, which is indistinguishable from "no
+            # container was ever there" and made a dead Docker daemon invisible
+            # on the page that reports it. The fallbacks still run — the
+            # resolution stays best-effort — but the outcome now says which of
+            # the two happened: "unreachable" is not "absent".
+            runtime_unreachable = True
+            status = RUNTIME_UNREACHABLE
+            logger.warning(
+                "provider_runtime_status_probe_failed",
+                provider_id=provider_id,
+                container=container_name,
+                error=str(exc),
+            )
 
         if docker_available and found:
             port = container_config.get("port", 8000) if isinstance(container_config, dict) else 8000
@@ -111,7 +134,11 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
         supports_setup=False,
         supports_reconciliation=False,
         connected=False,
-        status="unavailable",
+        # A provider whose container was never found is "unavailable"; one whose
+        # runtime could not be asked at all is "unreachable". Both are unusable,
+        # and reporting them identically is what let a dead Docker daemon look
+        # like a fleet of correctly-stopped containers.
+        status=RUNTIME_UNREACHABLE if runtime_unreachable else "unavailable",
         healthy=False,
     )
 

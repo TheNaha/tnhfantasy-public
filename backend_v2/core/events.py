@@ -114,12 +114,23 @@ class EventType(str, Enum):
     JOB_FAILED = "job.failed"
     JOB_CANCELLED = "job.cancelled"
     
-    # Download events
-    DOWNLOAD_STARTED = "download.started"
-    DOWNLOAD_PROGRESS = "download.progress"
-    DOWNLOAD_COMPLETED = "download.completed"
-    DOWNLOAD_FAILED = "download.failed"
-    
+    # NOTE: there is deliberately no `download.*` family here. Model-download
+    # status is served by polling the model-status endpoints, not pushed, so the
+    # four members that used to sit in this enum (`download.started`,
+    # `download.progress`, `download.completed`, `download.failed`) plus the
+    # `emit_download_event` helper had zero producers in production code and
+    # zero subscribers in the frontend, while the frontend mirrored all four
+    # constants — a contract on both sides, implemented by neither, which reads
+    # as "push is already wired" to the next person.
+    # `frontend_v2/src/test/eventContractInvariants.test.js` fails if a member is
+    # re-added without a producer and a frontend counterpart. It is a frontend
+    # test because the vocabulary has to be compared across both trees, and it
+    # runs in `frontend-tests.yml` rather than `backend-tests.yml` — so a backend
+    # change to this enum is only covered once the frontend suite also runs. That
+    # is a real gap in the trigger, not a detail: it is why this comment used to
+    # name a `backend_v2/tests/test_event_type_invariants.py` that never existed,
+    # which read as coverage while providing none.
+
     # Provider events
     PROVIDER_STATUS = "provider.status"
     PROVIDER_CONTAINER_STATUS = "provider.container_status"
@@ -151,8 +162,6 @@ TERMINAL_EVENT_TYPES = {
     EventType.JOB_COMPLETED,
     EventType.JOB_FAILED,
     EventType.JOB_CANCELLED,
-    EventType.DOWNLOAD_COMPLETED,
-    EventType.DOWNLOAD_FAILED,
     EventType.RECONCILIATION_COMPLETED,
     EventType.RECONCILIATION_FAILED,
     EventType.MODEL_SYNC_COMPLETED,
@@ -511,11 +520,6 @@ event_bus = EventBus()
 async def emit_job_event(event_type: EventType, job_data: dict[str, Any]) -> None:
     """Emit a job-related event."""
     await event_bus.publish(Event(type=event_type, data={"job": job_data}))
-
-
-async def emit_download_event(event_type: EventType, download_data: dict[str, Any]) -> None:
-    """Emit a download-related event."""
-    await event_bus.publish(Event(type=event_type, data={"download": download_data}))
 
 
 async def emit_provider_event(event_type: EventType, provider_id: str, data: dict[str, Any]) -> None:

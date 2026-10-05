@@ -13,6 +13,7 @@ from sqlmodel import Session
 
 from core.entities import ModelV2, ModelVersion
 from core.exceptions import NotFoundError
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from services.model_civitai_sync import ModelCivitaiSyncService
 from services.model_downloader import ModelDownloader
@@ -46,8 +47,14 @@ class ModelServiceV2:
         """Add a model from CivitAI with selected versions."""
         return await self.civitai_sync.add_model_from_civitai(civitai_data, selected_version_ids)
 
-    async def get_model(self, model_id: int) -> dict[str, Any]:
-        """Get a model by ID."""
+    def get_model(self, model_id: int) -> dict[str, Any]:
+        """Get a model by ID.
+
+        Synchronous on purpose: one repository read with no suspension of any
+        kind. As `async def` every caller awaited a function that never
+        yielded, which read as "off the loop" and was not — the query ran
+        inline on the event loop.
+        """
         model = self.repo.get_model(model_id)
         if not model:
             raise NotFoundError("Model", str(model_id))
@@ -204,7 +211,7 @@ class ModelServiceV2:
     # PROVIDER STATUS OPERATIONS
     # =========================================================================
 
-    async def update_provider_file_status(
+    def update_provider_file_status(
         self,
         file_id: str,
         provider_id: str,
@@ -213,8 +220,12 @@ class ModelServiceV2:
         size_bytes: int | None = None,
         error_message: str | None = None
     ) -> dict[str, Any]:
-        """Update provider status for a file."""
-        return await self.downloader.update_provider_file_status(
+        """Update provider status for a file.
+
+        Synchronous passthrough to `ModelDownloader.update_provider_file_status`,
+        which is synchronous too — see the note there.
+        """
+        return self.downloader.update_provider_file_status(
             file_id=file_id,
             provider_id=provider_id,
             status=status,
@@ -262,8 +273,10 @@ class ModelServiceV2:
         if query:
             stmt = stmt.where(
                 or_(
-                    ModelV2.name.ilike(f"%{query}%"),
-                    ModelV2.creator_username.ilike(f"%{query}%")
+                    ModelV2.name.ilike(like_contains(query), escape=LIKE_ESCAPE_CHAR),
+                    ModelV2.creator_username.ilike(
+                        like_contains(query), escape=LIKE_ESCAPE_CHAR
+                    )
                 )
             )
         

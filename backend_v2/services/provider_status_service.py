@@ -214,15 +214,22 @@ class ProviderStatusService:
             ``False`` should be rendered as "not managing models", not as
             "N queued".
 
-        An LLM provider reports all zeros: it never installs image models, so any
-        number here would be fiction.
+        An LLM or TTS provider reports all zeros: neither installs image models,
+        so any number here would be fiction. The check was `worker_type ==
+        "llm"` only, so a TTS provider fell through to the image branch and its
+        card claimed to be tracking the whole 525-model image catalogue — live
+        proof on the running stack, `tts-modal-hp196` reporting
+        `"is_image_provider": true, "catalog_models": 525, "total_models": 0`.
         """
         if provider is None:
             provider = await self.provider_service.get_provider(provider_id)
 
-        if getattr(provider, "worker_type", None) == "llm":
-            # LLM workers do not install image models. Reported as an explicit
-            # zero rather than a real query so the card never shows a count.
+        if (getattr(provider, "worker_type", None) or "image") != "image":
+            # LLM and TTS workers do not install image models. Reported as an
+            # explicit zero rather than a real query so the card never shows a
+            # count. Keyed on "is it an image provider" rather than on an
+            # enumeration of the kinds that are not, so the next worker type
+            # added is covered by default.
             return {
                 "provider_id": provider_id,
                 "total_models": 0,

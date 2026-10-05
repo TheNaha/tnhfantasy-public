@@ -4,6 +4,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from core.entities import Character
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 
 
 class CharacterRepository:
@@ -22,10 +23,10 @@ class CharacterRepository:
         return self.session.exec(select(Character).where(Character.id.in_(ids))).all()
 
     def search(self, query: str, limit: int = 10) -> list[Character]:
-        pattern = f"%{query.lower()}%"
+        pattern = like_contains(query.lower())
         stmt = select(Character).where(
-            func.lower(Character.name).like(pattern)
-            | func.lower(Character.description).like(pattern)
+            func.lower(Character.name).like(pattern, escape=LIKE_ESCAPE_CHAR)
+            | func.lower(Character.description).like(pattern, escape=LIKE_ESCAPE_CHAR)
         ).limit(limit)
         return self.session.exec(stmt).all()
 

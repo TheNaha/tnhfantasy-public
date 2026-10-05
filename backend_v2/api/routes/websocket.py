@@ -25,9 +25,15 @@ from api.deps import (
     get_session_context,
 )
 from core.entities import JobStatus
+from core.events import EventType
 from infrastructure.http_client import get_http_client
 from services.job_queue import queue_manager
 from services.provider_runtime import resolve_provider_runtime_async
+
+# The rooms a client may join, derived from the event vocabulary. A room name is
+# the prefix of an `EventType` value, so this is the complete set of rooms that
+# can ever receive a broadcast — see `start_broadcasting`.
+BROADCAST_TOPICS = frozenset(e.value.split(".")[0] for e in EventType)
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +101,14 @@ class WebSocketManager:
         self._broadcast_task = asyncio.current_task()
         logger.info("[WebSocket] Starting EventBus broadcast listener")
         
-        # Subscribe to all topics
-        topics = ["job", "download", "provider", "reconciliation", "model"]
+        # Derived from `EventType` rather than listed by hand, because the room
+        # name is `event.type.value.split(".")[0]` (below) — so the set of rooms
+        # that can ever receive anything IS the set of enum prefixes. The list was
+        # hand-maintained and still contained `"download"` after the whole
+        # `download.*` family was removed on 2026-10-03, which meant a client
+        # could subscribe to a room that would never receive an event and receive
+        # an `ack` saying it had.
+        topics = sorted(BROADCAST_TOPICS)
         
         async for event in get_event_bus().subscribe_multiple(topics, max_queue_size=WS_BROADCAST_QUEUE_SIZE):
             if not self._running:
@@ -170,7 +182,7 @@ async def subscribe(sid, data):
     if not topics and 'topic' in data:
         topics = [data['topic']]
     
-    topics = [topic for topic in topics if topic in {"job", "download", "provider", "reconciliation", "model"}]
+    topics = [topic for topic in topics if topic in BROADCAST_TOPICS]
     for topic in topics:
         await sio.enter_room(sid, topic)
         connected_clients.setdefault(sid, set()).add(topic)

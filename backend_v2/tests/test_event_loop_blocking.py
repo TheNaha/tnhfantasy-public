@@ -19,9 +19,12 @@ Endpoint payload tests for the `asyncio.to_thread` conversions live in
 `test_files_route.py` and `test_upload_export_hardening.py`; here we only assert
 the routing invariant that the blocking work leaves the loop.
 """
+import ast
 import asyncio
 import inspect
+import textwrap
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -438,7 +441,18 @@ class TestContainerStatusesOffLoop:
         assert status["status"] == "stopped"
         assert status["running"] is False
 
-    def test_snapshot_failure_reports_stopped(self):
+    def test_snapshot_failure_is_not_reported_as_stopped(self):
+        """A probe that *raised* is not an answer about this container.
+
+        This test previously asserted the opposite — that a raising
+        `get_container_snapshot` resolves to `"status": "stopped"` — which is
+        the defect itself: it made a host-wide Docker outage render as N
+        independent, individually-actionable "this container is stopped"
+        verdicts, and the route then cached that for 10 s while still
+        reporting `container_runtime_available: true`.
+        `provider_lifecycle_service.get_container_status` already separates
+        `NotFound` from every other failure; this is the same split.
+        """
         from api.routes.providers import lifecycle as lifecycle_module
 
         cm = MagicMock()
@@ -446,11 +460,40 @@ class TestContainerStatusesOffLoop:
 
         status = lifecycle_module._container_status_sync(cm, "p1")
         assert status == {
-            "status": "stopped",
+            "status": "unreachable",
             "running": False,
             "healthy": False,
             "container_id": None,
         }
+
+    def test_route_does_not_cache_or_assert_availability_when_probes_raise(
+        self, client, session
+    ):
+        """`container_runtime_available` must mean "a snapshot was taken"."""
+        from api.deps import get_container_manager
+        from api.main import app
+        from api.routes.providers import lifecycle as lifecycle_module
+        from core.entities import Provider
+
+        # A provider has to exist or `statuses` is empty and the assertion below
+        # is vacuous — and `get_container_manager` reads `request.app.state`, so
+        # it has to be overridden as a dependency, not patched as an attribute.
+        session.add(Provider(id="p1", type="modal", enabled=True))
+        session.commit()
+
+        lifecycle_module._container_status_cache.clear()
+        cm = MagicMock()
+        cm.get_container_snapshot.side_effect = RuntimeError("docker socket down")
+        app.dependency_overrides[get_container_manager] = lambda: cm
+
+        body = client.get("/api/v2/providers/containers/status").json()
+
+        assert set(body) == {"statuses", "cached", "container_runtime_available"}
+        assert body["statuses"]["p1"]["status"] == "unreachable"
+        assert body["container_runtime_available"] is False
+        # Nothing observed, so nothing may be served from cache for the next 10s.
+        assert "all_statuses" not in lifecycle_module._container_status_cache
+        lifecycle_module._container_status_cache.clear()
 
     def test_route_returns_the_same_payload(self, client, monkeypatch):
         from api.routes.providers import lifecycle as lifecycle_module
@@ -676,3 +719,168 @@ class TestFilesRoutesDelegateToWorkerThreads:
 
         assert result["deleted"] == 5
         assert opened["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 9. The model provider-sync routes found by the 2026-10-03 resolver fix
+# ---------------------------------------------------------------------------
+
+# Service methods that were `async def` around nothing but synchronous SQLModel
+# work. `async def` here bought no concurrency and cost every caller a blocking
+# query or commit on the event loop; making them plain `def` is what lets a
+# handler either become a plain `def` itself or reach them through
+# `asyncio.to_thread`.
+SYNCED_SERVICE_METHODS = [
+    ("services.model_service", "ModelServiceV2", "get_model"),
+    ("services.model_service", "ModelServiceV2", "update_provider_file_status"),
+    ("services.model_downloader", "ModelDownloader", "update_provider_file_status"),
+    (
+        "services.provider_service",
+        "ProviderService",
+        "upsert_reconciliation_state",
+    ),
+    (
+        "services.provider_reconciliation_service",
+        "ProviderReconciliationService",
+        "upsert_reconciliation_state",
+    ),
+]
+
+# Handlers that legitimately have to stay `async def` — they await a WebSocket
+# publish or a provider HTTP call — and so must reach the synchronous service
+# work through `asyncio.to_thread`.
+OFFLOADING_HANDLERS = [
+    ("api.routes.models.provider_sync", "update_file_provider_status"),
+    ("api.routes.models.provider_sync", "batch_update_status"),
+    ("api.routes.models.provider_sync", "receive_batch_sync_progress"),
+    ("api.routes.models.crud", "add_model"),
+    ("api.routes.models.maintenance", "check_dependencies"),
+    ("api.routes.providers.lifecycle", "remove_model_from_provider"),
+    ("api.routes.providers.reconciliation", "push_reconciliation_event"),
+]
+
+
+class TestSyncedServiceMethodsAreSynchronous:
+    @pytest.mark.parametrize("module,cls,name", SYNCED_SERVICE_METHODS)
+    def test_not_a_coroutine_function(self, module, cls, name):
+        """A stray `async def` here is the whole bug.
+
+        It is invisible at the call site: `await service.get_model(...)` on a
+        plain `def` raises, and `service.get_model(...)` on an `async def`
+        returns a coroutine that FastAPI fails to serialise. Either way the
+        first symptom is a 500 on a route that used to work, not a lint error.
+        """
+        imported = __import__(module, fromlist=[cls])
+        method = getattr(getattr(imported, cls), name)
+        assert not inspect.iscoroutinefunction(method), (
+            f"{cls}.{name} is `async def` again; its body is synchronous SQLModel "
+            "work, so an `async def` caller runs it on the event loop"
+        )
+
+    @pytest.mark.parametrize("module,cls,name", SYNCED_SERVICE_METHODS)
+    def test_the_conversion_is_actually_used_somewhere(self, module, cls, name):
+        """A method nobody calls is not evidence of anything; a method every
+        caller forgot to update is a 500 waiting to happen."""
+        imported = __import__(module, fromlist=[cls])
+        # Touch the method so an ImportError/AttributeError here is an error in
+        # this test rather than a silent pass from the string scan below.
+        assert callable(getattr(getattr(imported, cls), name))
+        repo_root = Path(__file__).resolve().parents[1]
+        callers = 0
+        for path in list((repo_root / "api").rglob("*.py")) + list(
+            (repo_root / "services").rglob("*.py")
+        ):
+            if "__pycache__" in path.parts:
+                continue
+            source = path.read_text()
+            if f"{name}(" in source and f"await {name}(" in source:
+                pytest.fail(
+                    f"{path.relative_to(repo_root)} still calls `await {name}(...)`, "
+                    f"but {cls}.{name} is a plain `def` — the await would raise "
+                    "'object dict can't be awaited' (or, for a coroutine method, "
+                    "hide a blocking call on the loop)"
+                )
+            if f"{name}(" in source:
+                callers += 1
+        assert callers, f"nothing calls {cls}.{name} at all"
+
+
+class TestOffloadingHandlersUseAWorkerThread:
+    @staticmethod
+    def _calls(obj):
+        """The names of every function called inside `obj`, comments excluded.
+
+        Source-text matching is not enough: a comment explaining that the write
+        goes through `asyncio.to_thread` would satisfy a substring search even
+        after the call was deleted, which is exactly the regression this is
+        here to catch.
+        """
+        tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
+        return [
+            ast.unparse(node.func)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+        ]
+
+    @staticmethod
+    def _awaits_inside(obj):
+        """Every `await` in `obj`, as source text, comments excluded."""
+        tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
+        return [ast.unparse(node.value) for node in ast.walk(tree) if isinstance(node, ast.Await)]
+
+    @pytest.mark.parametrize("module,name", OFFLOADING_HANDLERS)
+    def test_async_handler_offloads_its_db_work(self, module, name):
+        """An `async def` handler must reach the sync work through `to_thread`.
+
+        The alternative — calling it directly — compiles, passes every unit
+        test that mocks the service, and puts a synchronous commit on the event
+        loop in production.
+        """
+        handler = getattr(__import__(module, fromlist=[name]), name)
+        calls = self._calls(handler)
+        assert any(call.endswith("asyncio.to_thread") for call in calls), (
+            f"{module}.{name} is `async def` and no longer awaits a decorative "
+            "service method, but it does not call asyncio.to_thread — its "
+            f"synchronous DB work is running on the event loop. Calls: {calls}"
+        )
+        assert any(
+            "asyncio.to_thread" in awaited for awaited in self._awaits_inside(handler)
+        ), (
+            f"{module}.{name} builds the worker-thread call but never awaits it; "
+            f"awaits: {self._awaits_inside(handler)}"
+        )
+
+    @pytest.mark.parametrize(
+        "module,name",
+        [
+            ("api.routes.models.provider_sync", "_apply_batch_status_updates"),
+            ("api.routes.models.provider_sync", "_apply_batch_sync_progress"),
+            ("api.routes.models.crud", "_split_already_installed_versions"),
+        ],
+    )
+    def test_worker_body_never_re_enters_the_event_loop(self, module, name):
+        """A body moved to a worker thread cannot `await`.
+
+        A leftover `await` inside it would mean the work was never actually
+        moved off the loop: the handler's `await asyncio.to_thread(...)` would
+        only be offloading something that yields again.
+        """
+        body = getattr(__import__(module, fromlist=[name]), name)
+        assert not self._awaits_inside(body), (
+            f"{module}.{name} runs on a worker thread and cannot await"
+        )
+        assert not any(
+            call.endswith("asyncio.to_thread") for call in self._calls(body)
+        ), f"{module}.{name} is the worker-thread body; it must not hop again"
+
+
+class TestModelGetRouteIsAThreadedHandler:
+    def test_route_is_not_a_coroutine_function(self):
+        """`GET /api/v2/models/{model_id}` has nothing left to await.
+
+        `ModelServiceV2.get_model` is a plain `def`; as `async def` this handler
+        would return an un-awaited coroutine from a worker thread.
+        """
+        from api.routes.models import crud as crud_module
+
+        assert not inspect.iscoroutinefunction(crud_module.get_model)

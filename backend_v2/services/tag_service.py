@@ -57,6 +57,11 @@ from sqlalchemy import case, true
 
 from core.entities import Asset, AssetTag
 from core.exceptions import NotFoundError, ValidationError
+from core.sql_search import (
+    LIKE_ESCAPE_CHAR,
+    like_contains,
+    like_startswith,
+)
 from services.asset_metadata_index import (
     DEFAULT_BATCH_SIZE,
     extract_tag_evidence,
@@ -264,10 +269,12 @@ def list_tag_vocabulary(
             raise ValidationError(
                 f"Prefix must be {MAX_TAG_LENGTH} characters or fewer", field="prefix"
             )
-        statement = statement.where(AssetTag.tag.like(f"{normalised}%"))
+        statement = statement.where(
+            AssetTag.tag.like(like_startswith(normalised), escape=LIKE_ESCAPE_CHAR)
+        )
     if query:
         statement = statement.where(
-            AssetTag.tag.ilike(f"%{query.strip()}%")
+            AssetTag.tag.ilike(like_contains(query.strip()), escape=LIKE_ESCAPE_CHAR)
         )
     statement = (
         statement.group_by(AssetTag.tag)

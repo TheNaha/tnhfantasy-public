@@ -38,9 +38,20 @@ MAX_ERROR_DETAIL_LENGTH = 500
 STALE_JOB_TIMEOUT_SECONDS = 300
 STALE_JOB_ERROR = "Server restart during processing - job timed out"
 
+# A job still PENDING with no `enqueued_at` was never handed to the queue.
+# Deliberately much larger than the running-state timeout: a stranded row can
+# never be rescued by waiting, but several callers legitimately create a PENDING
+# row and then run the work themselves (the agentic narrator holds its parent's
+# queue slot), so this pass must not be the shorter of the two windows.
+STRANDED_PENDING_TIMEOUT_SECONDS = 900
+STRANDED_PENDING_JOB_ERROR = (
+    "Job was never handed to the queue - stranded by a failed enqueue"
+)
+
 # Failure kinds recorded on the job when it fails, so the diagnostics view can
 # group failures without parsing free-text error messages.
 FAILURE_STALE = "stale_recovery"
+FAILURE_STRANDED_PENDING = "stranded_pending"
 FAILURE_TIMEOUT = "timeout"
 FAILURE_NO_PROVIDERS = "no_providers"
 FAILURE_PROVIDERS_EXHAUSTED = "providers_exhausted"
@@ -558,6 +569,76 @@ class JobService:
 
         return failed_jobs
 
+    async def fail_stranded_pending_jobs(
+        self, timeout_seconds: int = STRANDED_PENDING_TIMEOUT_SECONDS
+    ) -> list[Job]:
+        """Fail PENDING jobs that were never handed to the queue.
+
+        Second line of defence behind `JobQueue._mark_enqueued`'s propagation.
+        A row that is PENDING with a null `enqueued_at` can never be claimed —
+        the claim query requires the stamp — and nothing else in the tree will
+        ever touch it, so before this pass it sat in `summary["pending"]`
+        forever, counted in every queue summary, invisible to the user and owned
+        by nobody.
+
+        Bounded by age, so a row whose stamp has not landed *yet* is not
+        mistaken for a stranded one. Written directly rather than through
+        `update_job`, for the same reason as `fail_stale_running_jobs`.
+        """
+        now = datetime.now(timezone.utc)
+        stranded: list[tuple[Job, float]] = []
+
+        for job in self.get_pending_jobs():
+            if job.enqueued_at is not None:
+                continue
+            elapsed = (now - as_utc(job.created_at)).total_seconds()
+            if elapsed > timeout_seconds:
+                stranded.append((job, elapsed))
+
+        if not stranded:
+            return []
+
+        try:
+            for job, elapsed in stranded:
+                job.status = JobStatus.FAILED
+                job.error = STRANDED_PENDING_JOB_ERROR
+                job.completed_at = now
+                job.updated_at = now
+
+                metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
+                diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
+                diagnostics["failure_kind"] = FAILURE_STRANDED_PENDING
+                diagnostics["stale_seconds"] = round(elapsed, 3)
+                diagnostics["failed_at"] = now.isoformat()
+                metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
+                job.metadata_ = metadata
+
+                self.session.add(job)
+            self.session.commit()
+        except Exception as exc:
+            try:
+                self.session.rollback()
+            except Exception:
+                pass
+            logger.error("job_recovery_stranded_update_failed", error=str(exc), exc_info=True)
+            return []
+
+        failed_jobs: list[Job] = []
+        for job, elapsed in stranded:
+            logger.warning(
+                "job_recovery_stranded",
+                job_id=job.id,
+                age=f"{elapsed:.0f}s",
+                enqueued_at=None,
+            )
+            try:
+                await emit_job_event(EventType.JOB_FAILED, self._job_to_dict(job))
+            except Exception as exc:
+                logger.warning("job_recovery_emit_failed", job_id=job.id, error=str(exc))
+            failed_jobs.append(job)
+
+        return failed_jobs
+
     async def cancel_job(self, job_id: str, *, reason: str | None = None) -> Job:
         """Cancel a queued or in-flight job.
 
@@ -598,7 +679,7 @@ class JobService:
         Returns:
             Updated job
         """
-        # Track timing based on status changes
+# Track timing based on status changes
         job = self.repo.get(job_id)
         if not job:
             logger.warning("job_update_not_found", job_id=job_id)
@@ -607,9 +688,23 @@ class JobService:
         # Set started_at for first active state
         active_states = {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING}
         status = updates.get("status")
-        
+        requested_status = status
+
         # Enforce Finite State Machine transitions
+        #
+        # The check below is only half the guard, and the half that used to be
+        # missing is the half that mattered. `repo.get` is `session.get`, so it
+        # answers from the identity map with no SELECT — for a long-lived
+        # Session `job.status` is whatever that Session last loaded, which for a
+        # request-scoped one can be arbitrarily old. SENT_TO_PROVIDER's allowed
+        # set contains FAILED, so a CANCELLED committed by another Session in
+        # between was authorised away and then overwritten, taking the user's
+        # cancellation and its reason with it. `expected_status` carries the
+        # status this decision was made against into the write itself, so the
+        # write re-checks it atomically.
+        expected_status: JobStatus | None = None
         if status and status != job.status:
+            expected_status = job.status
             allowed = JOB_STATUS_TRANSITIONS.get(job.status, set())
             if status not in allowed:
                 logger.warning(
@@ -621,11 +716,19 @@ class JobService:
                 # Ignore invalid transitions (e.g. updating a cancelled job to completed)
                 updates.pop("status")
                 status = None
+                expected_status = None
+
+        # Fields this method derives from `status`. They are undone if the
+        # transition is rejected below, so a rejected write does not leave a
+        # `completed_at` on a job that never completed.
+        derived_keys: set[str] = set()
 
         if status in active_states and not job.started_at:
             updates["started_at"] = datetime.now(timezone.utc)
+            derived_keys.add("started_at")
         elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
             updates["completed_at"] = datetime.now(timezone.utc)
+            derived_keys.add("completed_at")
 
         # Annotate failures with a machine-readable cause so the diagnostics
         # view can group them without parsing free-text errors. Callers that
@@ -641,9 +744,40 @@ class JobService:
                     diagnostics["failure_kind"] = failure_kind
                     diagnostics.setdefault("failed_at", datetime.now(timezone.utc).isoformat())
                     metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
-                    updates["metadata_"] = metadata
+                updates["metadata_"] = metadata
+                derived_keys.add("metadata_")
 
-        job = self.repo.update(job_id, **updates)
+        if expected_status is not None:
+            job = self.repo.update_where_status(job_id, expected_status, **updates)
+            if job is None:
+                # 0 rows: the row was no longer in the state this guard read, so
+                # some other writer got there first. Same verdict, same
+                # consequence, one source: drop the transition and everything
+                # derived from it, and let the remaining fields through exactly
+                # as the rejected-transition path above does.
+                for key in derived_keys:
+                    updates.pop(key, None)
+                updates.pop("status", None)
+                status = None
+                job = self.repo.update(job_id, **updates)
+                if job is not None:
+                    logger.warning(
+                        "invalid_fsm_transition",
+                        job_id=job_id,
+                        from_status=expected_status,
+                        to_status=requested_status,
+                        actual_status=job.status,
+                        reason="concurrent_status_change",
+                    )
+        else:
+            job = self.repo.update(job_id, **updates)
+
+        if job is None:
+            # Deleted by the writer that beat us to it. Reporting the update and
+            # emitting an event for a row that no longer exists would put a
+            # terminal event on the wire for a job nobody can fetch.
+            logger.warning("job_update_deleted_concurrently", job_id=job_id)
+            return job
         
         if status:
             status_value = status.value if hasattr(status, "value") else str(status)

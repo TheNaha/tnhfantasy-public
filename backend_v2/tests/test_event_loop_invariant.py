@@ -28,6 +28,8 @@ routes the old sweep passed, including the 1.5 MB model listing measured flat at
 """
 
 import ast
+import re
+from collections import deque
 from pathlib import Path
 
 import pytest
@@ -44,18 +46,49 @@ ROUTES_DIR = Path(__file__).resolve().parents[1] / "api" / "routes"
 # `asyncio.to_thread`, which is a paid-path change with exactly one production
 # caller each — deliberately not done as a drive-by in an audit pass.
 AWAIT_CHAINED_TO_SYNC_SERVICE = {
-    "list_jobs": "awaits JobService.list_jobs, which has no await of its own",
-    "search_jobs": "awaits JobService.search_jobs, same shape",
-    "list_failed_jobs": "awaits JobService.get_failed_jobs, same shape",
+    "list_jobs": (
+        "JobService.list_jobs is a decorative async def around one synchronous "
+        "keyset query. The route hands it to deduplicated() as a coroutine, so "
+        "it runs inside the shielded task - still on the loop. The resolver "
+        "passes this route because deduplicated awaits asyncio.shield, which "
+        "is unresolvable and therefore scored as a real suspension; the "
+        "blocking query is behind that, not under it."
+    ),
+    "search_jobs": (
+        "JobService.search_jobs, same shape: a synchronous tsvector/LIKE query "
+        "passed into deduplicated() as a coroutine, behind the same "
+        "asyncio.shield the resolver stops at."
+    ),
+    "list_failed_jobs": "awaits JobService.get_failed_jobs, which has no await of its own",
     "get_jobs_breakdown": "awaits JobService.get_metadata_key_counts, same shape",
     "acknowledge_job": "awaits JobService.acknowledge_jobs, same shape",
-    "retry_job": "awaits JobService.retry_job, same shape",
-    "cancel_job": "awaits JobService.cancel_job, same shape",
-    "get_job": "awaits JobService.get_job, same shape",
-    "get_job_diagnostics": "awaits JobService.get_job_diagnostics, same shape",
-    "delete_job": "awaits JobService.delete_job, same shape",
-    "recover_jobs": "awaits JobService.recover_jobs, same shape",
-    "create_job": "must await queue_manager.enqueue, which is loop-affine",
+    "retry_job": (
+        "JobService.get_job is a decorative async def around one synchronous "
+        "repository read, run inline at the top of the handler. The rest of "
+        "the chain (JobSubmissionService.create_and_enqueue_job) genuinely "
+        "suspends, so the resolver passes the route and never sees the read."
+    ),
+    "cancel_job": (
+        "JobService.cancel_job is a decorative async def around a synchronous "
+        "status write. It is imported inside the handler body "
+        "(from services.job_processing import cancel_job as "
+        "cancel_job_processing), so the resolver looks the name up under its "
+        "alias, does not find it, and scores the route as suspending."
+    ),
+    "get_job": "awaits JobService.get_job, which has no await of its own",
+    "get_job_diagnostics": (
+        "awaits JobService.get_job for the row it returns diagnostics for, "
+        "same shape"
+    ),
+    "delete_job": "awaits JobService.delete_job, which has no await of its own",
+    "recover_jobs": (
+        "JobService.fail_stale_running_jobs is a decorative async def around a "
+        "synchronous status write, and QueueManager.recover also calls "
+        "job_service.get_pending_jobs()/get_running_jobs() (sync repository "
+        "reads) inline. The enqueue and asyncio.to_thread awaits that make the "
+        "resolver score this chain as suspending happen later in the same "
+        "call, after the writes."
+    ),
 }
 
 # Routes with no await at all. Anything listed here has been converted to a
@@ -72,6 +105,10 @@ CONVERTED = {
     ("settings.py", "start_session"),
     ("worker_ws.py", "list_connected_workers"),
     ("jobs.py", "validate_workflow"),
+    # 2026-10-03 resolver fix. `ModelServiceV2.get_model` is now a plain `def`
+    # (one repository read, no suspension), so `GET /api/v2/models/{id}` had
+    # nothing left to await.
+    ("crud.py", "get_model"),
 }
 
 
@@ -107,7 +144,22 @@ def _route_handlers(path: Path):
 # ---------------------------------------------------------------------------
 
 SRC_DIR = ROUTES_DIR.parent
-SEARCH_DIRS = [SRC_DIR / "routes", SRC_DIR.parent / "services", SRC_DIR / "infrastructure"]
+PKG_DIR = SRC_DIR.parent
+# Every package a route handler's await chain can walk through. `infrastructure`
+# and `core` were missing here for the same reason `routes` was: `SRC_DIR` is
+# `backend_v2/api`, so `SRC_DIR / "infrastructure"` is `backend_v2/api/
+# infrastructure`, which does not exist. `_function_index` skips directories that
+# do not exist, so the two misses were silent — `ModelRepositoryV2`,
+# `ModelDownloader` and `EventBus` were invisible, their methods were
+# unresolvable, and an unresolvable await is scored as "a genuine suspension".
+# That single bad path entry made the resolver pass any route whose chain ended
+# in a repository or a core helper.
+SEARCH_DIRS = [
+    SRC_DIR / "routes",
+    PKG_DIR / "services",
+    PKG_DIR / "infrastructure",
+    PKG_DIR / "core",
+]
 
 
 def _function_index():
@@ -135,9 +187,17 @@ def _function_index():
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
                 index.setdefault(node.name, []).append(node)
+                index.setdefault(f"{path.stem}.{node.name}", []).append(node)
+            # `Class.method` as well, so a register entry can name the exact
+            # method it is about. `get_model` alone is ambiguous across three
+            # classes, which is what made the old stale-entry guard useless for
+            # anything but renames of the route itself.
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
                 for child in node.body:
-                    if isinstance(child, ast.ClassDef):
-                        index.setdefault(f"{child.name}.{node.name}", []).append(node)
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        index.setdefault(f"{node.name}.{child.name}", []).append(child)
     return index
 
 
@@ -160,10 +220,10 @@ def _awaited_names(node) -> set[str]:
     return names
 
 
-def _chain_has_real_await(node, seen: set[str], depth: int = 0) -> bool:
+def _chain_has_real_await(node, seen: set[int] | None = None) -> bool:
     """True when this function, or anything it awaits, genuinely suspends.
 
-    The recursion bottoms out on any await whose callee is not a function we can
+    The traversal bottoms out on any await whose callee is not a function we can
     resolve locally — `await asyncio.sleep(...)`, `await asyncio.to_thread(...)`,
     an httpx call, a socket read. Those really do suspend, and `to_thread`
     additionally moves the work off the loop, which is the whole point of it.
@@ -172,24 +232,31 @@ def _chain_has_real_await(node, seen: set[str], depth: int = 0) -> bool:
     eventually suspends too. A local `async def` with no `await`, or a plain
     `def`, contributes nothing — it runs inline.
 
-    Depth-limited because a service can call another service; the question is
-    only ever about the first few hops, and an unbounded walk over a cyclic call
-    graph would hang the suite.
+    Walks breadth-first over everything reachable, with a visited set rather than
+    a depth limit. The depth limit was a lie about how deep the service facades
+    go: `ModelServiceV2` delegates to `ModelCivitaiSyncService`, which delegates
+    to `ModelDownloader`, which does the actual synchronous SQLModel writes — so
+    `depth > 3` reported "nothing real to see here" for exactly the chains that
+    matter. The visited set is what terminates the walk on a cyclic call graph,
+    which is a property the depth limit never had to provide.
     """
-    if depth > 3 or id(node) in seen:
-        return False
-    seen.add(id(node))
+    visited: set[int] = set() if seen is None else seen
+    queue: deque = deque([node])
+    while queue:
+        current = queue.popleft()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
 
-    # A plain `def` cannot await anything.
-    if not isinstance(node, ast.AsyncFunctionDef):
-        return False
+        # A plain `def` cannot await anything.
+        if not isinstance(current, ast.AsyncFunctionDef):
+            continue
 
-    for name in _awaited_names(node):
-        callees = FUNCTION_INDEX.get(name)
-        if not callees:
-            return True  # unresolvable: a genuine suspension
-        if any(_chain_has_real_await(c, seen, depth + 1) for c in callees):
-            return True
+        for name in _awaited_names(current):
+            callees = FUNCTION_INDEX.get(name)
+            if not callees:
+                return True  # unresolvable: a genuine suspension
+            queue.extend(callees)
     return False
 
 
@@ -287,53 +354,168 @@ def test_the_await_chain_resolver_found_functions():
     )
 
 
+def test_every_searched_directory_exists_and_is_indexed():
+    """A `SEARCH_DIRS` entry that does not exist is a silent hole.
+
+    `_function_index` skips directories that are not there rather than failing,
+    which is what let `SRC_DIR / "infrastructure"` — which resolves to
+    `backend_v2/api/infrastructure`, a path that has never existed — sit in the
+    list silently. Every function in an unindexed package is unresolvable, and
+    unresolvable is scored as "a genuine suspension", so a typo'd path here does
+    not fail this file: it *passes* routes that block the event loop.
+
+    Asserting the path exists also catches the other direction: a package that
+    gets renamed or moved and leaves this list pointing at nothing.
+    """
+    missing = [str(d) for d in SEARCH_DIRS if not d.is_dir()]
+    assert not missing, (
+        "SEARCH_DIRS points at directories that do not exist, so their "
+        "functions are invisible to the resolver and every route whose await "
+        f"chain runs through them is wrongly passed: {missing}"
+    )
+
+    # Existence is necessary but not sufficient: the directory must actually
+    # contribute something, or it is indexed-but-empty and equally blind.
+    empty = [
+        str(d) for d in SEARCH_DIRS if d.is_dir() and not any(d.rglob("*.py"))
+    ]
+    assert not empty, f"these SEARCH_DIRS directories contain no Python: {empty}"
+
+
 # Routes whose await chain resolves to nothing that suspends, discovered by
 # `test_no_await_chain_ends_in_sync_work` on 2026-10-03 rather than by hand. Same
 # contract as AWAIT_CHAINED_TO_SYNC_SERVICE above: a register of known debt, with
 # the rule still enforced for everything not on it, and stale entries failing so
 # a rename cannot quietly shrink the list.
 #
-# Each is `route name -> the service method it awaits`. The fix is the same for
-# all of them and is the one already established in this repo: make the service
-# method synchronous (it has exactly one production caller) and make the route a
-# plain `def`, which FastAPI runs in a worker thread. Four were converted in the
-# same pass — `list_models`, `get_generation_info`, `acknowledge_all_failed_jobs`
-# and `delete_all_jobs` — of which `list_models` was the measured one.
+# Each is `route name -> the service method it awaits, and why`. The fix is the
+# same for all of them and is the one already established in this repo: make the
+# service method synchronous and make the route a plain `def`, which FastAPI
+# runs in a worker thread. Four were converted in the 2026-10-03 pass —
+# `list_models`, `get_generation_info`, `acknowledge_all_failed_jobs` and
+# `delete_all_jobs` — of which `list_models` was the measured one. Four more
+# were converted when the resolver was fixed (see `CONVERTED` and the
+# `asyncio.to_thread` call sites in `provider_sync.py` / `maintenance.py` /
+# `reconciliation.py`); those four are no longer entries here because they are
+# no longer offenders.
+#
+# Every reason must name a resolvable `Owner.method`, and
+# `test_every_register_reason_names_a_method_that_still_exists` holds them to
+# it. Several entries below previously named a method that does not exist
+# (`ModelServiceV2.get_provider_statuses`, `ModelServiceV2.
+# update_batch_sync_progress`, `ProviderService.get_modal_stats`,
+# `ModelCivitaiSyncService.search_candidates`, ...), which is the same
+# vacuous-entry failure the two route-name guards exist for, one level down.
 SYNC_CHAINED = {
-    "list_all_models": "ModelServiceV2.list_models",
-    "list_models_by_directory": "ModelServiceV2.list_models_by_directory",
-    "search_models": "ModelServiceV2.search_models",
-    "search_by_tag": "ModelServiceV2.search_by_tag",
-    "get_model": "ModelServiceV2.get_model",
-    "delete_model": "ModelServiceV2.delete_model",
-    "get_versions": "ModelServiceV2.get_versions",
-    "set_default_version_modern": "ModelServiceV2.set_default_version",
-    "toggle_version_enabled": "ModelServiceV2.toggle_version_enabled",
-    "get_provider_statuses": "ModelServiceV2.get_provider_statuses",
-    "register_discovered_models": "ModelServiceV2.register_discovered_models",
-    "receive_batch_sync_progress": "ModelServiceV2.update_batch_sync_progress",
-    "search_autopopulate_candidates": "ModelCivitaiSyncService.search_candidates",
-    "get_load_balancing_config": "ProviderService.get_load_balancing_config",
-    "update_load_balancing_config": "ProviderService.update_load_balancing_config",
-    "get_load_balancer_stats": "ProviderService.get_load_balancer_stats",
-    "get_load_balancing_alias": "ProviderService.get_load_balancing_config",
-    "update_load_balancing_alias": "ProviderService.update_load_balancing_config",
-    "mint_provider_worker_token": "ProviderService.mint_worker_token",
-    "revoke_provider_worker_token": "ProviderService.revoke_worker_token",
-    "get_provider_modal_stats": "ProviderService.get_modal_stats",
-    "get_provider_sync_status": "ProviderService.get_sync_status",
-    "get_provider_models": "ProviderService.get_provider_models",
-    "setup_provider": "ProviderService.setup_provider",
-    "deploy_provider_app": "ProviderService.deploy_app",
-    "get_reconciliation_status": "ProviderService.get_reconciliation_status",
-    "get_object_info": "ProviderService proxy — pass-through, resolved elsewhere",
-    "handle_provider_discovery": "ProviderService.upsert_provider_from_discovery",
-    "reconcile_chat_replies": "JobService.reconcile_chat_replies",
-    "parse_model_url": "ModelImportService — provider HTTP, needs a real await",
-    "get_civitai_enums": "ModelImportService — provider HTTP, needs a real await",
-    "get_civitai_tags": "ModelImportService — provider HTTP, needs a real await",
-    "search_civitai": "ModelImportService — provider HTTP, needs a real await",
-    "search_huggingface": "ModelImportService — provider HTTP, needs a real await",
+    "list_all_models": "ModelServiceV2.list_models — one bulk query, no await of its own",
+    "list_models_by_directory": (
+        "ModelServiceV2.list_models_by_directory — one bulk query, no await of its own"
+    ),
+    "search_models": "ModelServiceV2.search_models — same shape",
+    "search_by_tag": "ModelServiceV2.search_by_tag — same shape",
+    "delete_model": (
+        "ModelServiceV2.delete_model — runs self.repo.get_model / "
+        "get_files_for_model / add_tombstone (each a synchronous write) inline "
+        "before it awaits ModelDownloader.trigger_delete_from_providers, and "
+        "self.repo.delete_model inline after. The provider HTTP call in the "
+        "middle is what makes the resolver score this chain as suspending; the "
+        "surrounding DB work is not covered by it."
+    ),
+    "get_versions": "ModelServiceV2.get_versions — same shape",
+    "set_default_version_modern": "ModelServiceV2.set_default_version — same shape",
+    "toggle_version_enabled": "ModelServiceV2.toggle_version_enabled — same shape",
+    "get_provider_statuses": (
+        "ModelServiceV2.get_model_provider_statuses — delegates to "
+        "ModelDownloader.get_model_provider_statuses, a bare repository read "
+        "behind two decorative async defs"
+    ),
+    "register_discovered_models": (
+        "ModelServiceV2.register_discovered_files — "
+        "ModelReconciliationService.register_discovered_files does its session "
+        "writes inline"
+    ),
+    "search_autopopulate_candidates": (
+        "ExternalModelService.search_civitai — outbound provider HTTP the "
+        "resolver cannot see. The synchronous repo.get_model() model-existence "
+        "check runs inline before that await, so this is listed as needing a "
+        "real await rather than pretending the sweep proved either way."
+    ),
+    "get_load_balancing_config": (
+        "ProviderService.get_load_balancer_stats — the sibling "
+        "ProviderService.get_load_balancing_config is already a plain `def`, so "
+        "this route's only await is the stats query"
+    ),
+    "update_load_balancing_config": "ProviderService.update_load_balancing_config — same shape",
+    "get_load_balancer_stats": "ProviderService.get_load_balancer_stats — same shape",
+    "get_load_balancing_alias": (
+        "ProviderService.get_load_balancer_stats — reaches it through the "
+        "get_load_balancing_config route handler"
+    ),
+    "update_load_balancing_alias": (
+        "ProviderService.update_load_balancing_config — reaches it through the "
+        "update_load_balancing_config route handler"
+    ),
+    "mint_provider_worker_token": "ProviderService.mint_worker_token — same shape",
+    "revoke_provider_worker_token": "ProviderService.revoke_worker_token — same shape",
+    "get_provider_modal_stats": (
+        "ProviderStatusService.get_provider_storage_stats — "
+        "ProviderService.get_provider alongside it is a decorative async def "
+        "around one repository read"
+    ),
+    "get_provider_sync_status": "ProviderStatusService.get_provider_sync_status — same shape",
+    "get_provider_models": (
+        "ProviderStatusService.get_provider_sync_status — the route awaits the "
+        "get_provider_sync_status handler and then groups the result in Python"
+    ),
+    "setup_provider": (
+        "ProviderLifecycleService.setup_provider — worker CLI setup that still "
+        "opens its session synchronously inline"
+    ),
+    "deploy_provider_app": "ProviderService.deploy_provider_app — same shape",
+    "get_reconciliation_status": (
+        "ProviderLifecycleService.get_reconciliation_status — same shape"
+    ),
+    "get_object_info": (
+        "ProviderService.get_provider — a proxy for the provider HTTP fetch, "
+        "which the resolver cannot see through infrastructure.http_client.get"
+    ),
+    "handle_provider_discovery": (
+        "ProviderService.upsert_provider_from_discovery — same shape"
+    ),
+    "reconcile_chat_replies": (
+        "world_integration_service.reconcile_unpersisted_chat_replies — a "
+        "module-level function, not a JobService method; same shape"
+    ),
+    "parse_model_url": (
+        "ExternalModelService.parse_model_url — provider HTTP, needs a real await"
+    ),
+    "get_civitai_enums": (
+        "ExternalModelService.get_civitai_enums — provider HTTP, needs a real await"
+    ),
+    "get_civitai_tags": (
+        "ExternalModelService.get_civitai_tags — provider HTTP, needs a real await"
+    ),
+    "search_civitai": (
+        "ExternalModelService.search_civitai — provider HTTP, needs a real await"
+    ),
+    "search_huggingface": (
+        "ExternalModelService.search_huggingface — provider HTTP, needs a real await"
+    ),
+    # Known false positive, deliberately kept. Pure in-memory event
+    # construction plus event_bus.publish, which bottoms out at an
+    # uncontended asyncio.Lock (core/events.py:308) — no DB, no file, no HTTP.
+    "receive_sync_progress": (
+        "EventBus.publish — no real suspension, and none needed: builds an Event "
+        "from the request and publishes it. Nothing here touches the database "
+        "or the filesystem, so there is nothing to move off the loop."
+    ),
+    # Not a defect either. One dict lookup under an uncontended
+    # asyncio.Lock in infrastructure/worker_registry._get_live_worker.
+    "get_worker_status": (
+        "worker_registry._get_live_worker — one dict lookup plus an "
+        "asyncio.Lock acquire that does not yield on an uncontended lock. "
+        "Allowlisted rather than converted because there is no work to move."
+    ),
 }
 
 
@@ -390,4 +572,63 @@ def test_the_sync_chained_register_has_no_stale_entries():
     assert not missing, (
         "these SYNC_CHAINED entries no longer name a route; delete them so the "
         f"list keeps meaning something: {missing}"
+    )
+
+
+# `Owner.method` / `module.function`, as written in a register reason.
+_QUALIFIED_SUBJECT = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _reason_subject(reason: str) -> str | None:
+    """The `Owner.method` a register reason is about, if it names one."""
+    match = _QUALIFIED_SUBJECT.search(reason)
+    return f"{match.group(1)}.{match.group(2)}" if match else None
+
+
+@pytest.mark.parametrize(
+    "name,reason",
+    [
+        *sorted((n, r) for n, r in SYNC_CHAINED.items()),
+        *sorted((n, r) for n, r in AWAIT_CHAINED_TO_SYNC_SERVICE.items()),
+    ],
+)
+def test_every_register_reason_names_a_method_that_still_exists(name, reason):
+    """The register's *subject* must still resolve, not just the route name.
+
+    The two guards above only ask "does a route with this name still exist?",
+    which passes for a reason that has rotted underneath it. Both registers are
+    read as claims about a specific callee, and a claim about a callee that has
+    been renamed, moved or deleted is worse than no claim at all: it reads as
+    current and hides the route from the invariant. Seven reasons here were
+    already wrong that way when this check was added — `create_job` said it had
+    to await `queue_manager.enqueue`, which stopped being the whole story when
+    `JobService.create_job` started awaiting `asyncio.to_thread`, and
+    `ModelServiceV2.get_provider_statuses`, `ModelServiceV2.
+    update_batch_sync_progress`, `ModelServiceV2.register_discovered_models`,
+    `ProviderService.get_modal_stats`, `ProviderService.get_sync_status`,
+    `ProviderService.get_provider_models`, `ProviderService.deploy_app` and
+    `ProviderService.get_reconciliation_status` all named methods that do not
+    exist under those names.
+
+    The subject must also still be an `async def`: an entry about a callee that
+    has since been made synchronous describes a chain that can no longer exist,
+    and the route belongs in `CONVERTED` instead.
+    """
+    subject = _reason_subject(reason)
+    assert subject, (
+        f"the allowlist entry for `{name}` does not name a resolvable "
+        "`Owner.method`, so nothing can check whether the reason is still true"
+    )
+
+    callees = FUNCTION_INDEX.get(subject)
+    assert callees, (
+        f"the allowlist entry for `{name}` is about `{subject}`, which is not a "
+        "function in any searched package. The reason no longer describes the "
+        "route: re-derive it, or delete the entry."
+    )
+    assert any(isinstance(c, ast.AsyncFunctionDef) for c in callees), (
+        f"the allowlist entry for `{name}` is about `{subject}`, which is no "
+        "longer `async def`. If it was made synchronous, the route it chains "
+        "to should now be a plain `def`: convert it and move the entry to "
+        "CONVERTED."
     )

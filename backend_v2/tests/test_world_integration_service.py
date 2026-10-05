@@ -1,6 +1,6 @@
 # Tests for services/world_integration_service.py (JOB_COMPLETED handlers)
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlmodel import Session, select
@@ -658,3 +658,122 @@ def _add_msg(session: Session, chat: Chat, role: MessageRole, content: str) -> M
     session.commit()
     session.refresh(msg)
     return msg
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_image_writes_every_output_in_one_transaction(session, wired_engine):
+    """Four images, four transcript rows, ONE transaction.
+
+    The per-image loop this replaces committed once per image, so a 4-image
+    batch cost four transactions (four fsyncs, four chances for one to fail and
+    take the rest of the batch down with it) where the rows are one atomic unit
+    with nothing in between to make them atomic.
+    """
+    chat_id, _ = _seed_chat_with_character(session)
+    outputs = [{"relative_path": f"2026/08/11/scene_{i}.png"} for i in range(4)]
+
+    commits = 0
+    original_commit = Session.commit
+
+    def counting_commit(self):
+        nonlocal commits
+        commits += 1
+        return original_commit(self)
+
+    # No collection exists for this character, so the only commit in the handler
+    # is the transcript batch.
+    with patch.object(Session, "commit", counting_commit):
+        await wis._handle_chat_image({
+            "id": "job-batch",
+            "metadata": {"chat_id": chat_id, "source": "scene_illustrate"},
+            "outputs": outputs,
+        })
+
+    assert commits == 1, f"4 images cost {commits} transactions; they are one unit"
+
+    with Session(wired_engine) as check:
+        paths = {
+            m.image_path
+            for m in check.exec(select(Message).where(Message.chat_id == chat_id)).all()
+        }
+    assert paths == {o["relative_path"] for o in outputs}
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_image_one_bad_row_keeps_the_others(session, wired_engine):
+    """A partial transcript is a silent data-loss bug, so all-or-nothing.
+
+    The rollback inside the per-image loop was not scoped to the row that
+    failed: it discarded *every* pending change on that session. So image 3 of
+    4 failing could drop rows 1 and 2 while the job still read COMPLETED and the
+    gallery still showed all four — the transcript was the only place the
+    shortfall was visible, and nothing recorded it.
+    """
+    chat_id, _ = _seed_chat_with_character(session)
+    paths = [f"2026/08/11/scene_{i}.png" for i in range(4)]
+
+    real_add = Session.add
+    seen: list[str] = []
+
+    def failing_add(self, instance, _warn=True):
+        # Fail on the third Message only, at flush time like a real constraint
+        # violation rather than at construction.
+        if isinstance(instance, Message) and instance.image_path == paths[2]:
+            seen.append(instance.image_path)
+            raise RuntimeError("simulated insert failure")
+        return real_add(self, instance)
+
+    with patch.object(Session, "add", failing_add):
+        await wis._handle_chat_image({
+            "id": "job-partial",
+            "metadata": {"chat_id": chat_id, "source": "scene_illustrate"},
+            "outputs": [{"relative_path": p} for p in paths],
+        })
+
+    assert seen == [paths[2]], "the bad row must be the one that failed"
+
+    with Session(wired_engine) as check:
+        stored = {
+            m.image_path
+            for m in check.exec(select(Message).where(Message.chat_id == chat_id)).all()
+        }
+    # add_all() stages all four and one flush runs them as a unit, so a failure
+    # is all-or-nothing. What matters is that a failure never yields a
+    # *partial* transcript: either every output is in the chat, or the handler
+    # says it failed.
+    assert stored == set()
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_image_leaves_the_session_usable_after_a_failed_insert(session, wired_engine):
+    """A rolled-back transaction must not poison the rest of the handler.
+
+    The collection-linking block that runs after the insert loop is on the same
+    session. If the failure left the session mid-transaction, the images would
+    never be linked into the collection either and the handler would end on an
+    error with nothing to show for it.
+    """
+    chat_id, char_id = _seed_chat_with_character(session)
+    session.add(Collection(name="Aria Album", character_id=char_id))
+    session.commit()
+
+    path = "2026/08/11/scene_0.png"
+    real_add = Session.add
+
+    def failing_add(self, instance, _warn=True):
+        if isinstance(instance, Message):
+            raise RuntimeError("simulated insert failure")
+        return real_add(self, instance)
+
+    with patch.object(Session, "add", failing_add):
+        await wis._handle_chat_image({
+            "id": "job-fail",
+            "metadata": {"chat_id": chat_id, "source": "scene_illustrate"},
+            "outputs": [{"relative_path": path}],
+        })
+
+    with Session(wired_engine) as check:
+        assert check.exec(select(Message)).all() == []
+        # The follow-up block still ran and committed its own work.
+        images = check.exec(select(CollectionImage)).all()
+        assert [i.image_filename for i in images] == [path]

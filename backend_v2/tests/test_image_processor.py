@@ -2,6 +2,7 @@
 import json
 import os
 import tempfile
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -11,6 +12,7 @@ from infrastructure.image_processor import (
     generate_thumbnails,
     get_image_dimensions,
     get_output_path,
+    get_thumb_output_path,
     read_image_metadata,
     resize_image,
     save_image_with_metadata,
@@ -265,3 +267,82 @@ class TestResizeImage:
         output = os.path.join(tmp_dir, "out.jpg")
         result = resize_image(sample_image, 50, output_path=output)
         assert result == output
+
+
+# ---------------------------------------------------------------------------
+# Date partition is UTC, because Asset.created_at is UTC
+# ---------------------------------------------------------------------------
+
+
+class _HostDatetime:
+    """`datetime` stand-in whose naive `now()` is the HOST's local wall clock.
+
+    The production container runs UTC, so `datetime.now()` and
+    `datetime.now(timezone.utc)` return the same thing there — which is exactly
+    why a local-time call in this path survived review and shipping. This fakes
+    a host that is genuinely ahead of UTC (UTC+2) at 23:30 local, i.e. the one
+    moment of day where the two disagree about which day it is.
+    """
+
+    LOCAL_OFFSET_HOURS = 2
+    # 23:30 UTC on a UTC+2 host is already 01:30 the NEXT day locally: the one
+    # window where the two disagree about which day it is.
+    INSTANT = datetime(2026, 3, 14, 23, 30, tzinfo=timezone.utc)
+
+    @classmethod
+    def now(cls, tz=None):
+        # tz=None is what a naive caller gets: the host's LOCAL wall clock.
+        # A tz-aware caller gets the same instant expressed in that zone.
+        if tz is None:
+            return (cls.INSTANT + timedelta(hours=cls.LOCAL_OFFSET_HOURS)).replace(tzinfo=None)
+        return cls.INSTANT.astimezone(tz)
+
+    @classmethod
+    def utcnow(cls):
+        return cls.INSTANT.replace(tzinfo=None)
+
+    def __getattr__(self, item):
+        return getattr(datetime, item)
+
+    def __class_getitem__(cls, item):
+        return datetime[item]
+
+
+def test_output_date_partition_uses_the_utc_day_not_the_local_day(tmp_dir):
+    """The partition must agree with the `created_at` the row is stored with.
+
+    `Asset.created_at` is a UTC column and the gallery's date rail buckets on
+    UTC. With a local `now()`, an image generated at 23:30 in UTC+2 was filed
+    under *tomorrow's* directory while its `created_at` read 21:30 the same
+    day — so the on-disk tree and the UI disagreed for every image in the
+    offset window around local midnight, and neither was wrong on its own.
+    """
+    with patch("config.get_output_date_hierarchy", return_value=True), patch(
+        "infrastructure.image_processor.datetime", _HostDatetime
+    ):
+        path = get_output_path(base_dir=tmp_dir)
+
+    # The host clock really was on the next day; otherwise this proves nothing.
+    assert _HostDatetime.now().date() == datetime(2026, 3, 15).date()
+
+    utc_today = _HostDatetime.INSTANT
+    assert path.endswith(
+        os.path.join(
+            str(utc_today.year), f"{utc_today.month:02d}", f"{utc_today.day:02d}"
+        )
+    ), (
+        "partitioned under the LOCAL date, which disagrees with the UTC "
+        "created_at the row is written with"
+    )
+
+
+def test_thumbnail_partition_matches_the_full_size_partition(tmp_dir):
+    """The two must not disagree either — the thumb mirrors the image tree."""
+    with patch("config.get_output_date_hierarchy", return_value=True), patch(
+        "infrastructure.image_processor.datetime", _HostDatetime
+    ):
+        image_dir = get_output_path(base_dir=tmp_dir)
+        thumb_dir = get_thumb_output_path(base_dir=tmp_dir)
+
+    # image_dir ends .../<y>/<m>/<d>; thumb_dir ends .../thumb/<y>/<m>/<d>.
+    assert image_dir.split(os.sep)[-3:] == thumb_dir.split(os.sep)[-3:]

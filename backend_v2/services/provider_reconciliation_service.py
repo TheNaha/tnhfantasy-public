@@ -94,7 +94,13 @@ class ProviderReconciliationService:
         self._persist_reconciliation_state(provider, next_state)
         return {"accepted": True, "state": next_state}
 
-    async def upsert_reconciliation_state(self, provider: Provider, updates: dict[str, Any]) -> dict[str, Any]:
+    def upsert_reconciliation_state(self, provider: Provider, updates: dict[str, Any]) -> dict[str, Any]:
+        """Merge `updates` into the provider's reconciliation state and persist.
+
+        Synchronous since 2026-10-03: it is a dict merge plus one repository
+        update with its commit, with no suspension of any kind. As `async def`
+        it ran that commit on the event loop for every worker heartbeat.
+        """
         current_state = read_reconciliation_state(provider)
 
         merged = dict(current_state)

@@ -7,13 +7,48 @@ from typing import Any
 import httpx
 from sqlmodel import Session
 
+import docker
+
 from core.events import EventType, emit_provider_event
-from core.exceptions import ProviderError
+from core.exceptions import ProviderError, ServiceUnavailableError
 from infrastructure.http_client import get_http_client
+from infrastructure.logging import get_logger
 from infrastructure.providers.runtime import provider_container_name
 from services.provider_runtime import resolve_provider_runtime_async
 from services.provider_service import ProviderService
 from services.provider_status_service import ProviderStatusService
+
+# The worker's `/reconcile` vocabulary, read rather than assumed.
+#
+# `provider_core/base_client.py` returns `{"status": "started"}` after spawning
+# its reconciliation task, and `{"status": "already_running"}` when one is in
+# flight — both mean the backend should wait and let the worker report back.
+# The LLM and TTS workers have no model tree and answer `ok` / `skipped` with
+# counts, and never push a terminal state. `image_worker` and the Modal/Beam
+# engines report `completed` / `error` / `indeterminate` synchronously for the
+# quick-sync path.
+_RECONCILIATION_IN_FLIGHT_STATUSES = frozenset(
+    {"started", "queued", "already_running", "running", "reconciling", "pending"}
+)
+_RECONCILIATION_FAILED_STATUSES = frozenset({"error", "failed"})
+
+
+def _as_dict(response: Any) -> dict[str, Any]:
+    """A worker's JSON body, or `{}` when it is not a JSON object.
+
+    The response is not trusted to be well-formed: a proxy in front of the
+    worker can answer 200 with an HTML error page, and a worker built from an
+    older image can answer 200 with a bare list. Neither is a reason for the
+    backend to write a state it cannot justify — hence `{}`, which lands on the
+    terminal branch with an honest message instead of raising.
+    """
+    try:
+        body = response.json()
+    except Exception:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+logger = get_logger("provider_lifecycle")
 
 
 class ProviderLifecycleService:
@@ -109,12 +144,34 @@ class ProviderLifecycleService:
 
         try:
             container = await asyncio.to_thread(container_manager.client.containers.get, container_name)
-        except Exception:
+        except docker.errors.NotFound:
+            # The only failure that genuinely means "stopped": Docker answered
+            # and said there is no such container.
             return {
                 "provider_id": provider_id,
                 "status": "stopped",
                 "running": False,
             }
+        except Exception as exc:
+            # Everything else is the runtime being unreachable, not the container
+            # being down: daemon down, socket permission denied, TLS handshake
+            # failure, a context that no longer exists, a Podman/Docker API
+            # version skew. Reporting "stopped" for those answered the one
+            # question nobody asked and hid the real one — a host-wide runtime
+            # outage rendered as N independent, individually-actionable
+            # "this container is stopped" verdicts. NotFound is still a valid
+            # answer about one container; this is not an answer about any.
+            logger.error(
+                "container_runtime_unreachable",
+                provider_id=provider_id,
+                container_name=container_name,
+                error=str(exc),
+                exc_info=True,
+            )
+            raise ServiceUnavailableError(
+                "Container runtime is unreachable",
+                service="container_runtime",
+            ) from exc
 
         await asyncio.to_thread(container.reload)
 
@@ -132,8 +189,7 @@ class ProviderLifecycleService:
                         response = await client.get(f"http://localhost:{host_port}/health", timeout=2.0)
                         healthy = response.status_code == 200
         except Exception as exc:
-            import logging
-            logging.getLogger("provider_lifecycle").debug("provider_health_refresh_failed", provider_id=provider_id, error=str(exc))
+            logger.debug("provider_health_refresh_failed", provider_id=provider_id, error=str(exc))
 
         if container.status == "running":
             container_manager.running_containers[provider_id] = container
@@ -221,7 +277,8 @@ class ProviderLifecycleService:
                 timeout=5.0,
             )
         except httpx.HTTPError as exc:
-            await self.provider_service.upsert_reconciliation_state(
+            await asyncio.to_thread(
+                self.provider_service.upsert_reconciliation_state,
                 provider_id,
                 {
                     "status": "failed",
@@ -232,25 +289,85 @@ class ProviderLifecycleService:
             raise
 
         if response.status_code == 200:
-            persisted_state = await self.provider_service.upsert_reconciliation_state(
+            # The worker answers `/reconcile` with a *status*, and the status
+            # decides whether this provider is now busy or already done. It used
+            # to be discarded, so every 200 became "reconciling / starting" and
+            # the backend waited for the worker to report back.
+            #
+            # For the image workers that is right: they POST progress to
+            # `/reconciliation-event` and finish the state themselves. For the
+            # LLM and TTS workers it never happens — they have no model tree to
+            # reconcile and answer immediately with `skipped` / `ok`, and they
+            # never push a terminal state. Live proof on a running stack:
+            # `llm-local` and `tts-modal-hp196` both sat at
+            # `status: "reconciling", phase: "starting", message:
+            # "Reconciliation started in worker"` with `updated_at` frozen,
+            # reading "Reconciliation started in worker" while the worker had
+            # answered "skipped" in milliseconds. `RECONCILIATION_IN_PROGRESS_TTL`
+            # is 180 minutes, so that is three hours of a provider card claiming
+            # to be busy, per trigger.
+            #
+            # So the worker's own vocabulary is honoured here. `setup_models`
+            # twenty lines up in this file already reads `worker_status` and
+            # branches on it; this was the same decision not repeated.
+            worker_result = _as_dict(response)
+            worker_status = str(worker_result.get("status") or "").strip()
+            worker_message = (
+                worker_result.get("message")
+                or worker_result.get("note")
+                or worker_result.get("message")
+                or f"Reconciliation {' '.join(worker_status.split())}"
+            ).strip()
+
+            if worker_status in _RECONCILIATION_IN_FLIGHT_STATUSES:
+                persisted_state = await asyncio.to_thread(
+                    self.provider_service.upsert_reconciliation_state,
+                    provider_id,
+                    {
+                        "status": "reconciling",
+                        "phase": "running",
+                        "message": worker_message,
+                        "last_contact_at": ProviderService._utcnow_iso(),
+                    },
+                )
+                self.invalidate_caches(provider_id)
+                return {
+                    "status": "triggered",
+                    "provider_id": provider_id,
+                    "message": worker_message,
+                    "reconciliation": self.status_service.normalize_reconciliation_for_card(
+                        persisted_state
+                    ),
+                }
+
+            # Terminal: the worker had nothing to do, or finished synchronously.
+            # Record that as the outcome rather than as work in flight.
+            terminal_status = "failed" if worker_status in _RECONCILIATION_FAILED_STATUSES else "completed"
+            persisted_state = await asyncio.to_thread(
+                self.provider_service.upsert_reconciliation_state,
                 provider_id,
                 {
-                    "status": "reconciling",
-                    "phase": "starting",
-                    "message": "Reconciliation started in worker",
+                    "status": terminal_status,
+                    "phase": worker_status or terminal_status,
+                    "message": worker_message,
+                    "stats": worker_result.get("stats") or {},
+                    "errors": worker_result.get("errors") or [],
                     "last_contact_at": ProviderService._utcnow_iso(),
                 },
             )
             self.invalidate_caches(provider_id)
             return {
-                "status": "triggered",
+                "status": terminal_status,
                 "provider_id": provider_id,
-                "message": "Reconciliation started in worker",
-                "reconciliation": self.status_service.normalize_reconciliation_for_card(persisted_state),
+                "message": worker_message,
+                "reconciliation": self.status_service.normalize_reconciliation_for_card(
+                    persisted_state
+                ),
             }
 
         if response.status_code == 409:
-            await self.provider_service.upsert_reconciliation_state(
+            await asyncio.to_thread(
+                self.provider_service.upsert_reconciliation_state,
                 provider_id,
                 {
                     "status": "reconciling",
@@ -266,7 +383,8 @@ class ProviderLifecycleService:
             }
 
         body = response.text
-        await self.provider_service.upsert_reconciliation_state(
+        await asyncio.to_thread(
+            self.provider_service.upsert_reconciliation_state,
             provider_id,
             {
                 "status": "failed",
@@ -313,7 +431,8 @@ class ProviderLifecycleService:
 
         if response.status_code == 200:
             worker_state = response.json()
-            return await self.provider_service.upsert_reconciliation_state(
+            return await asyncio.to_thread(
+                self.provider_service.upsert_reconciliation_state,
                 provider_id,
                 {
                     **worker_state,

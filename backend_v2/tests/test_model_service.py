@@ -120,12 +120,23 @@ class TestModelServiceV2GetModel:
         with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
             with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 created = await service.add_model_from_civitai(civitai_data, [67890])
-        result = await service.get_model(created["id"])
+        # Synchronous since 2026-10-03: one repository read with no suspension,
+        # so the `async def` that used to wrap it bought nothing and ran the
+        # query on the event loop.
+        result = service.get_model(created["id"])
         assert result["id"] == created["id"]
+
+    async def test_get_model_is_not_a_coroutine_function(self, service):
+        """The route calls this without `await`; a stray `async def` returns a
+        coroutine that serialises to nothing, which is exactly the bug the
+        conversion fixed."""
+        import inspect
+
+        assert not inspect.iscoroutinefunction(service.get_model)
 
     async def test_get_nonexistent_model_raises(self, service):
         with pytest.raises(NotFoundError):
-            await service.get_model(99999)
+            service.get_model(99999)
 
     async def test_list_models_empty(self, service):
         result = await service.list_models()
@@ -210,7 +221,8 @@ class TestModelServiceV2ProviderStatus:
         service.repo.update_provider_status = lambda **_kwargs: status_obj
 
         with patch("services.load_balancer.LoadBalancer.invalidate_model_availability_cache") as invalidate_cache:
-            result = await service.update_provider_file_status(
+            # Synchronous since 2026-10-03: one upsert + commit, no suspension.
+            result = service.update_provider_file_status(
                 file_id=42,
                 provider_id="modal-primary",
                 status="ready",
@@ -221,6 +233,18 @@ class TestModelServiceV2ProviderStatus:
         invalidate_cache.assert_called_once_with(provider_id="modal-primary")
         assert result["provider_id"] == "modal-primary"
         assert result["status"] == "ready"
+
+    async def test_update_provider_file_status_is_not_a_coroutine_function(self, service):
+        """`async def` callers must now reach this through `asyncio.to_thread`.
+
+        A handler that kept `await service.update_provider_file_status(...)`
+        would get an un-awaited coroutine, not a status dict — and, before the
+        call sites were converted, the blocking commit ran on the event loop.
+        """
+        import inspect
+
+        assert not inspect.iscoroutinefunction(service.update_provider_file_status)
+        assert not inspect.iscoroutinefunction(service.downloader.update_provider_file_status)
 
 
 class TestModelServiceV2Search:

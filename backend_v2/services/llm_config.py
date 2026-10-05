@@ -7,6 +7,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from core.entities import Provider
+from infrastructure.logging import get_logger
 
 _CONFIG_PATH = os.path.join(os.environ.get("DATA_DIR", "/data"), "llm_config.json")
 
@@ -19,6 +20,8 @@ _DEFAULT_MODEL_FALLBACK = "default"
 # invalidates the cache, so a stat()-based mtime check is enough to stay correct
 # if anything else writes the file.
 _read_cache: dict[str, Any] = {"mtime": None, "data": None}
+
+logger = get_logger("llm_config")
 
 
 def _read_config() -> dict[str, Any] | None:
@@ -38,7 +41,15 @@ def _read_config() -> dict[str, Any] | None:
         with open(_CONFIG_PATH) as f:
             data = json.load(f)
         data = data if isinstance(data, dict) else None
-    except Exception:
+    except Exception as exc:
+        # Degrades rather than destroys, so this is not the `favorites.json`
+        # case: a corrupt file reads as "no default provider chosen" and
+        # `job_submission_service` silently drops `preferred_provider_id`, so
+        # every LLM job falls back to load-balancer choice. Worth warning about —
+        # it used to log nothing at all, at any level.
+        logger.warning(
+            "llm_config_read_failed", path=_CONFIG_PATH, error=str(exc)
+        )
         return None
 
     _read_cache["mtime"] = mtime
@@ -67,8 +78,7 @@ def get_default_llm_model() -> str:
         if configured:
             return configured
     except Exception as exc:
-        import logging
-        logging.getLogger("llm_config").debug("config_default_llm_read_failed", error=str(exc))
+        logger.warning("config_default_llm_read_failed", error=str(exc))
     return _DEFAULT_MODEL_FALLBACK
 
 

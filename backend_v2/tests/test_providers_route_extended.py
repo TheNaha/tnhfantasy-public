@@ -180,7 +180,10 @@ class TestProvidersRouteReconcile:
 
     def test_reconciliation_event_persists_backend_state(self, client):
         mock_service = MagicMock()
-        mock_service.upsert_reconciliation_state = AsyncMock(
+        # Plain MagicMock, not AsyncMock: the route calls this through
+        # `asyncio.to_thread` (it is a synchronous DB merge behind a decorative
+        # `async def`), so it is invoked synchronously in a worker thread.
+        mock_service.upsert_reconciliation_state = MagicMock(
             return_value={"provider_id": "test-provider", "status": "reconciling"}
         )
 
@@ -197,7 +200,10 @@ class TestProvidersRouteReconcile:
 
     def test_reconciliation_event_emits_provider_stats_update(self, client):
         mock_service = MagicMock()
-        mock_service.upsert_reconciliation_state = AsyncMock(
+        # Plain MagicMock, not AsyncMock: the route calls this through
+        # `asyncio.to_thread` (it is a synchronous DB merge behind a decorative
+        # `async def`), so it is invoked synchronously in a worker thread.
+        mock_service.upsert_reconciliation_state = MagicMock(
             return_value={"provider_id": "test-provider", "status": "reconciling"}
         )
 
@@ -219,7 +225,10 @@ class TestProvidersRouteReconcile:
         from api.deps import get_provider_service
         from api.main import app
         mock_service = MagicMock()
-        mock_service.upsert_reconciliation_state = AsyncMock(
+        # Plain MagicMock, not AsyncMock: the route calls this through
+        # `asyncio.to_thread` (it is a synchronous DB merge behind a decorative
+        # `async def`), so it is invoked synchronously in a worker thread.
+        mock_service.upsert_reconciliation_state = MagicMock(
             return_value={"provider_id": "test-provider", "status": "reconciling"}
         )
 
@@ -236,7 +245,7 @@ class TestProvidersRouteReconcile:
             del app.dependency_overrides[get_provider_service]
 
         assert response.status_code == 200
-        upsert_args = mock_service.upsert_reconciliation_state.await_args.args
+        upsert_args = mock_service.upsert_reconciliation_state.call_args.args
         assert upsert_args[0] == "test-provider"
         assert "stats" not in upsert_args[1]
 

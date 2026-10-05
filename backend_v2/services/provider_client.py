@@ -222,9 +222,21 @@ class _ImageReducer:
             await self.job_service.update_job(self.job_id, status=JobStatus.PRE_GENERATION, message="Queued in worker...")
         elif event == "progress":
             val = ev.get("value") or 0
-            # Canonical worker events carry percent 0..100; legacy deployed
-            # containers still emit 0..1 fractions until they are redeployed.
-            percent = int(val * 100) if val <= 1 else int(val)
+            # `value_unit` says what `value` counts, and every worker on the
+            # current contract sends `"percent"` (see
+            # `provider_core/models.py`). A legacy container deployed before
+            # that field existed still emits a 0..1 fraction, so it is absent
+            # rather than wrong — keep the heuristic for it.
+            #
+            # The heuristic alone cannot be trusted even for modern events: its
+            # `val <= 1` branch reads a worker reporting exactly `value == 1` —
+            # one percent done — as a fraction and records 100%. That is silent,
+            # it lands on the single most-watched number in the UI, and no worker
+            # emits fractions any more, so the branch could only ever misfire.
+            if ev.get("value_unit") == "percent":
+                percent = int(val)
+            else:
+                percent = int(val * 100) if val <= 1 else int(val)
             overall = int((len(self.executed_nodes) / self.total_nodes) * 100) if self.total_nodes > 0 else percent
             await self._persist_progress(
                 status=JobStatus.GENERATING, progress=percent,

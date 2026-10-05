@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, and_, col, or_, select
 
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from core.entities import (
     DeletedFileTombstone,
     ModelFile,
@@ -915,7 +916,7 @@ class ModelRepositoryV2:
         """Search models by tag."""
         stmt = select(ModelV2).join(
             ModelTag, ModelV2.id == ModelTag.model_id
-        ).where(ModelTag.tag.ilike(f"%{tag}%"))
+        ).where(ModelTag.tag.ilike(like_contains(tag), escape=LIKE_ESCAPE_CHAR))
         return list(self.session.exec(stmt).all())
     
     # =========================================================================

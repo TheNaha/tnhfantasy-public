@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select, func
 
 from api.deps import get_session
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from core.entities import (
     Character, Chat, Lorebook, LorebookEntry,
     Story, Scenario, VoiceModel, CharacterMemory,
@@ -245,7 +246,7 @@ def search_entities(
     session: Session = Depends(get_session),
 ):
     """Unified search across characters, chats, stories, lorebooks, scenarios, voices."""
-    pattern = f"%{q}%"
+    pattern = func.lower(like_contains(q))
     results = []
 
     def _add(entity_type, items, title_fn, subtitle_fn):
@@ -262,47 +263,47 @@ def search_entities(
     # Characters (name + description + personality)
     _add("character", session.exec(
         select(Character).where(
-            (func.lower(Character.name).like(func.lower(pattern)))
-            | (func.lower(Character.description).like(func.lower(pattern)))
+            (func.lower(Character.name).like(pattern, escape=LIKE_ESCAPE_CHAR))
+            | (func.lower(Character.description).like(pattern, escape=LIKE_ESCAPE_CHAR))
         ).limit(10)
     ).all(), lambda c: c.name, lambda c: c.description[:100] if c.description else "")
 
     # Stories (title + description)
     _add("story", session.exec(
         select(Story).where(
-            (func.lower(Story.title).like(func.lower(pattern)))
-            | (func.lower(Story.description).like(func.lower(pattern)))
+            (func.lower(Story.title).like(pattern, escape=LIKE_ESCAPE_CHAR))
+            | (func.lower(Story.description).like(pattern, escape=LIKE_ESCAPE_CHAR))
         ).limit(10)
     ).all(), lambda s: s.title, lambda s: s.description[:100] if s.description else "")
 
     # Chats (name)
     _add("chat", session.exec(
-        select(Chat).where(func.lower(Chat.name).like(func.lower(pattern))).limit(10)
+        select(Chat).where(func.lower(Chat.name).like(pattern, escape=LIKE_ESCAPE_CHAR)).limit(10)
     ).all(), lambda c: c.name, lambda c: f"{c.chat_type}")
 
     # Lorebooks (name)
     _add("lorebook", session.exec(
-        select(Lorebook).where(func.lower(Lorebook.name).like(func.lower(pattern))).limit(10)
+        select(Lorebook).where(func.lower(Lorebook.name).like(pattern, escape=LIKE_ESCAPE_CHAR)).limit(10)
     ).all(), lambda l: l.name, lambda l: l.description[:100] if l.description else "")
 
     # Locations (name)
     _add("location", session.exec(
-        select(Location).where(func.lower(Location.name).like(func.lower(pattern))).limit(10)
+        select(Location).where(func.lower(Location.name).like(pattern, escape=LIKE_ESCAPE_CHAR)).limit(10)
     ).all(), lambda l: l.name, lambda l: l.description[:100] if l.description else "")
 
     # Scenarios (name + prompt_template)
     _add("scenario", session.exec(
-        select(Scenario).where(func.lower(Scenario.name).like(func.lower(pattern))).limit(10)
+        select(Scenario).where(func.lower(Scenario.name).like(pattern, escape=LIKE_ESCAPE_CHAR)).limit(10)
     ).all(), lambda s: s.name, lambda s: s.description[:100] if s.description else "")
 
     # Voices (name)
     _add("voice", session.exec(
-        select(VoiceModel).where(func.lower(VoiceModel.name).like(func.lower(pattern))).limit(10)
+        select(VoiceModel).where(func.lower(VoiceModel.name).like(pattern, escape=LIKE_ESCAPE_CHAR)).limit(10)
     ).all(), lambda v: v.name, lambda v: v.description[:100] if v.description else "")
 
     # Memories (content)
     _add("memory", session.exec(
-        select(CharacterMemory).where(func.lower(CharacterMemory.content).like(func.lower(pattern))).limit(10)
+        select(CharacterMemory).where(func.lower(CharacterMemory.content).like(pattern, escape=LIKE_ESCAPE_CHAR)).limit(10)
     ).all(),
        lambda m: (m.content[:80] + "…") if len(m.content) > 80 else m.content,
        lambda m: f"Tags: {', '.join(m.tags or [])}" if m.tags else "")

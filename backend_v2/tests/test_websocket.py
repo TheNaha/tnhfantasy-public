@@ -81,10 +81,32 @@ async def test_subscribe(mock_sio):
 async def test_subscribe_multiple(mock_sio):
     sid = "test_sid"
     connected_clients[sid] = set()
+    await subscribe(sid, {"topics": ["job", "provider"]})
+    assert "job" in connected_clients[sid]
+    assert "provider" in connected_clients[sid]
+    assert mock_sio.enter_room.call_count == 2
+
+@pytest.mark.asyncio
+async def test_subscribe_rejects_a_room_nothing_can_be_broadcast_to(mock_sio):
+    """A topic with no `EventType` behind it must not be enterable.
+
+    This test previously subscribed to `"download"` and asserted it joined, which
+    pinned the defect rather than catching it: the whole `download.*` event family
+    was removed on 2026-10-03, so the room could never receive an event, and a
+    client subscribing to it was told `subscribed` and then heard nothing. The
+    allowlist is now derived from `EventType` (see
+    `tests/test_websocket_topic_contract.py`), so an unknown topic is refused.
+    """
+    from api.routes.websocket import BROADCAST_TOPICS
+
+    assert "download" not in BROADCAST_TOPICS
+
+    sid = "test_sid"
+    connected_clients[sid] = set()
     await subscribe(sid, {"topics": ["job", "download"]})
     assert "job" in connected_clients[sid]
-    assert "download" in connected_clients[sid]
-    assert mock_sio.enter_room.call_count == 2
+    assert "download" not in connected_clients[sid]
+    assert mock_sio.enter_room.call_count == 1
 
 @pytest.mark.asyncio
 async def test_unsubscribe(mock_sio):

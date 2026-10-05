@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 from sqlmodel import Session
@@ -215,14 +216,26 @@ class ModelDownloader:
         provider_ids: list[str] | None = None,
         model_type: str | None = None,
     ) -> dict[str, Any]:
-        """Create a V2 model entry for a direct download URL and trigger sync."""
+        """Create a V2 model entry for a direct download URL and trigger sync.
+
+        The record creation is a `to_thread` because it is six synchronous
+        session calls (`get` / `add` / `flush` x2 / `commit` / `refresh`) plus
+        two repository reads, and it used to run inline on the event loop
+        before the first real suspension — the `trigger_download_to_providers`
+        HTTP call at the end. Splitting it out keeps the genuinely-async part
+        genuinely async and moves the blocking part off the loop.
+        """
         filename = name.split("/")[-1].strip()
         if not filename:
             raise ValueError("Model filename is required")
 
-        existing_file = self.repo.get_file_by_storage_path(directory, filename)
+        existing_file = await asyncio.to_thread(
+            self.repo.get_file_by_storage_path, directory, filename
+        )
         if existing_file:
-            version = self.session.get(ModelVersion, existing_file.version_id)
+            version = await asyncio.to_thread(
+                self.session.get, ModelVersion, existing_file.version_id
+            )
             existing_model = self.repo.get_model(version.model_id) if version else None
             if not existing_model:
                 raise NotFoundError("Model", filename)
@@ -232,44 +245,48 @@ class ModelDownloader:
 
         resolved_type = model_type or directory.replace("models/", "").replace("_", " ").title()
 
-        model = ModelV2(
-            name=filename,
-            type=resolved_type,
-            directory=directory.replace("models/", ""),
-            description=f"Direct import for {filename}",
-            source="custom",
-            source_url=download_url,
-            nsfw=False,
-            nsfw_level=1,
-        )
-        self.session.add(model)
-        self.session.flush()
+        def _create_record() -> ModelV2:
+            model = ModelV2(
+                name=filename,
+                type=resolved_type,
+                directory=directory.replace("models/", ""),
+                description=f"Direct import for {filename}",
+                source="custom",
+                source_url=download_url,
+                nsfw=False,
+                nsfw_level=1,
+            )
+            self.session.add(model)
+            self.session.flush()
 
-        version = ModelVersion(
-            model_id=model.id,
-            name="v1.0",
-            base_model="Custom",
-            base_model_type="Standard",
-            description=f"Direct import for {filename}",
-            is_enabled=True,
-            is_default=True,
-        )
-        self.session.add(version)
-        self.session.flush()
+            version = ModelVersion(
+                model_id=model.id,
+                name="v1.0",
+                base_model="Custom",
+                base_model_type="Standard",
+                description=f"Direct import for {filename}",
+                is_enabled=True,
+                is_default=True,
+            )
+            self.session.add(version)
+            self.session.flush()
 
-        file = ModelFile(
-            version_id=version.id,
-            original_filename=filename,
-            storage_filename=filename,
-            size_kb=0,
-            format=filename.split(".")[-1] if "." in filename else "Unknown",
-            download_url=download_url,
-            is_primary=True,
-            file_type="Model",
-        )
-        self.session.add(file)
-        self.session.commit()
-        self.session.refresh(model)
+            file = ModelFile(
+                version_id=version.id,
+                original_filename=filename,
+                storage_filename=filename,
+                size_kb=0,
+                format=filename.split(".")[-1] if "." in filename else "Unknown",
+                download_url=download_url,
+                is_primary=True,
+                file_type="Model",
+            )
+            self.session.add(file)
+            self.session.commit()
+            self.session.refresh(model)
+            return model
+
+        model = await asyncio.to_thread(_create_record)
 
         await self.trigger_download_to_providers(model.id, provider_ids=provider_ids)
         return self.repo.model_to_dict(model)
@@ -391,7 +408,7 @@ class ModelDownloader:
             "downloads": [m.name for m in models_to_download]
         }
 
-    async def update_provider_file_status(
+    def update_provider_file_status(
         self,
         file_id: str,
         provider_id: str,
@@ -400,7 +417,16 @@ class ModelDownloader:
         size_bytes: int | None = None,
         error_message: str | None = None
     ) -> dict[str, Any]:
-        """Update provider status for a file."""
+        """Update provider status for a file.
+
+        Synchronous on purpose: this is one repository upsert (with its commit)
+        plus an in-memory routing-cache invalidation, and there is no suspension
+        anywhere in it. The `async def` this replaces bought nothing and cost
+        every caller a blocking write on the event loop. Callers that are
+        themselves `async def` and have a session they cannot hand to a worker
+        thread wrap this in `asyncio.to_thread`, which is the idiom
+        `api/routes/world_vault/chats.py` already uses for `session.commit`.
+        """
         status_obj = self.repo.update_provider_status(
             file_id=file_id,
             provider_id=provider_id,

@@ -1,5 +1,7 @@
 # Tests for services/asset_reconciler.py (DB-backed asset index)
 
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlmodel import select
 
@@ -263,3 +265,107 @@ def test_compact_metadata_keeps_the_enriched_lora_ids_end_to_end():
     assert compact["loras"][0]["tags"] == ["boob tent", "breasts", "clothing"]
     assert compact["checkpoint"]["model_id"] == 7
     assert compact["prompt"] == "a scene"
+
+
+# ── Legacy-migration date fallback is UTC ───────────────────────────────────
+
+
+_HOST_OFFSET_HOURS = 2
+# 23:30 UTC on a UTC+2 host is already 01:30 the NEXT local day: the one window
+# where the two disagree about which day it is.
+_HOST_INSTANT = datetime(2026, 3, 14, 23, 30, tzinfo=timezone.utc)
+
+
+class _HostDatetime(datetime):
+    """`datetime` whose naive `now()` is the host's LOCAL wall clock.
+
+    The production container runs UTC, so `now()` and `now(timezone.utc)` agree
+    there — which is how a local-time date fallback survived review and
+    shipping. This fakes a host that is genuinely east of UTC.
+    """
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return (_HOST_INSTANT + timedelta(hours=_HOST_OFFSET_HOURS)).replace(tzinfo=None)
+        return _HOST_INSTANT.astimezone(tz)
+
+
+def _write_flat_legacy_png(root: Path) -> None:
+    (root / "legacy_flat.png").write_bytes(_png_bytes())
+
+
+def test_flat_legacy_file_is_backfiled_under_the_utc_day(session, tmp_path, monkeypatch):
+    """A flat legacy file has no date in its path, so the fallback invents one.
+
+    It must invent the UTC day, because that is the day the row's `created_at`
+    records and the day the gallery buckets on. With a local `now()` the file
+    moved into tomorrow's directory on a host east of UTC, and the tree and the
+    UI disagreed about an image that was never on that day at all.
+    """
+    root = tmp_path / "output"
+    root.mkdir()
+    _write_flat_legacy_png(root)
+    monkeypatch.setenv("COMFY_ASSET_MIGRATION_FORCE", "1")
+
+    from services import asset_reconciler as ar
+
+    monkeypatch.setattr(ar, "datetime", _HostDatetime)
+
+    # The host clock really was on the next local day.
+    assert _HostDatetime.now().date() == datetime(2026, 3, 15).date()
+
+    moved = ar.move_existing_assets(str(root), lambda: session)
+
+    assert moved == 1
+    utc_today = _HOST_INSTANT
+    expected_dir = (
+        root / ar.DEFAULT_USER_ID / "main"
+        / str(utc_today.year) / str(utc_today.month) / str(utc_today.day)
+    )
+    assert (expected_dir / "legacy_flat.png").exists(), (
+        "back-filed under the LOCAL date, inventing a day the image was not "
+        "generated on and contradicting its own created_at"
+    )
+
+
+def test_unparseable_legacy_date_directory_falls_back_to_the_utc_day(session, tmp_path, monkeypatch):
+    """Same rule for the second fallback: a path whose Y/M/D will not parse."""
+    root = tmp_path / "output"
+    (root / "not-a-year" / "xx" / "yy").mkdir(parents=True)
+    (root / "not-a-year" / "xx" / "yy" / "bad_dates.png").write_bytes(_png_bytes())
+    monkeypatch.setenv("COMFY_ASSET_MIGRATION_FORCE", "1")
+
+    from services import asset_reconciler as ar
+
+    monkeypatch.setattr(ar, "datetime", _HostDatetime)
+
+    assert ar.move_existing_assets(str(root), lambda: session) == 1
+
+    utc_today = _HOST_INSTANT
+    expected_dir = (
+        root / ar.DEFAULT_USER_ID / "main"
+        / str(utc_today.year) / str(utc_today.month) / str(utc_today.day)
+    )
+    assert (expected_dir / "bad_dates.png").exists()
+
+
+def test_legacy_path_with_a_real_date_keeps_it_whatever_the_host_clock_says(session, tmp_path, monkeypatch):
+    """The fallback must never override a date that was actually on disk.
+
+    This is the case the UTC fix could have broken: it is only about the
+    *fallback*, and a parsed Y/M/D is still authoritative.
+    """
+    root = tmp_path / "output"
+    legacy = root / "2019" / "03" / "07"
+    legacy.mkdir(parents=True)
+    (legacy / "old.png").write_bytes(_png_bytes())
+    monkeypatch.setenv("COMFY_ASSET_MIGRATION_FORCE", "1")
+
+    from services import asset_reconciler as ar
+
+    monkeypatch.setattr(ar, "datetime", _HostDatetime)
+
+    assert ar.move_existing_assets(str(root), lambda: session) == 1
+
+    assert (root / ar.DEFAULT_USER_ID / "main" / "2019" / "03" / "07" / "old.png").exists()

@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from core.events import Event, EventBus, EventType, emit_download_event, emit_job_event
+from core.events import Event, EventBus, EventType, emit_job_event
 
 
 class TestEvent:
@@ -29,7 +29,7 @@ class TestEvent:
         assert EventType.JOB_CREATED.value == "job.created"
         assert EventType.JOB_COMPLETED.value == "job.completed"
         assert EventType.JOB_FAILED.value == "job.failed"
-        assert EventType.DOWNLOAD_STARTED.value == "download.started"
+        assert EventType.MODEL_STATUS_UPDATE.value == "model.status_update"
         assert EventType.PROVIDER_STATUS.value == "provider.status"
 
 
@@ -75,7 +75,7 @@ class TestEventBus:
     def test_subscriber_count_zero_initially(self, bus):
         """No subscribers initially."""
         assert bus.subscriber_count("job") == 0
-        assert bus.subscriber_count("download") == 0
+        assert bus.subscriber_count("model") == 0
 
     @pytest.mark.asyncio
     async def test_subscriber_receives_published_event(self, bus):
@@ -124,33 +124,33 @@ class TestEventBus:
     async def test_topic_routing(self, bus):
         """Events are routed to correct topic subscribers."""
         job_events = []
-        download_events = []
+        model_events = []
 
         async def job_subscriber():
             async for event in bus.subscribe("job", max_queue_size=5):
                 job_events.append(event)
                 break
 
-        async def download_subscriber():
-            async for event in bus.subscribe("download", max_queue_size=5):
-                download_events.append(event)
+        async def model_subscriber():
+            async for event in bus.subscribe("model", max_queue_size=5):
+                model_events.append(event)
                 break
 
         task_job = asyncio.create_task(job_subscriber())
-        task_dl = asyncio.create_task(download_subscriber())
+        task_model = asyncio.create_task(model_subscriber())
         await asyncio.sleep(0.01)
 
         # Publish to different topics
         await bus.publish(Event(type=EventType.JOB_CREATED, data={}))
-        await bus.publish(Event(type=EventType.DOWNLOAD_STARTED, data={}))
+        await bus.publish(Event(type=EventType.MODEL_STATUS_UPDATE, data={}))
 
         await task_job
-        await task_dl
+        await task_model
 
         assert len(job_events) == 1
-        assert len(download_events) == 1
+        assert len(model_events) == 1
         assert job_events[0].type == EventType.JOB_CREATED
-        assert download_events[0].type == EventType.DOWNLOAD_STARTED
+        assert model_events[0].type == EventType.MODEL_STATUS_UPDATE
 
     @pytest.mark.asyncio
     async def test_multiple_subscribers_same_topic(self, bus):
@@ -186,7 +186,7 @@ class TestEventBus:
         received = []
 
         async def multi_sub():
-            async for event in bus.subscribe_multiple(["job", "download"], max_queue_size=10):
+            async for event in bus.subscribe_multiple(["job", "model"], max_queue_size=10):
                 received.append(event)
                 if len(received) == 2:
                     break
@@ -195,13 +195,13 @@ class TestEventBus:
         await asyncio.sleep(0.01)
 
         await bus.publish(Event(type=EventType.JOB_CREATED, data={}))
-        await bus.publish(Event(type=EventType.DOWNLOAD_STARTED, data={}))
+        await bus.publish(Event(type=EventType.MODEL_STATUS_UPDATE, data={}))
 
         await task
 
         types = {e.type for e in received}
         assert EventType.JOB_CREATED in types
-        assert EventType.DOWNLOAD_STARTED in types
+        assert EventType.MODEL_STATUS_UPDATE in types
 
     @pytest.mark.asyncio
     async def test_subscribe_multiple_prevents_cross_topic_starvation(self, bus):
@@ -209,7 +209,7 @@ class TestEventBus:
         received = []
 
         async def multi_sub():
-            async for event in bus.subscribe_multiple(["job", "download"], max_queue_size=1):
+            async for event in bus.subscribe_multiple(["job", "model"], max_queue_size=1):
                 received.append(event)
                 if len(received) >= 2:
                     break
@@ -221,12 +221,12 @@ class TestEventBus:
 
         for i in range(5):
             await bus.publish(Event(type=EventType.JOB_CREATED, data={"job": {"id": f"job-{i}"}}))
-        await bus.publish(Event(type=EventType.DOWNLOAD_STARTED, data={"download": {"id": "dl-1"}}))
+        await bus.publish(Event(type=EventType.MODEL_STATUS_UPDATE, data={"model": {"id": "m-1"}}))
 
         await asyncio.wait_for(task, timeout=1.0)
 
         types = {event.type for event in received}
-        assert EventType.DOWNLOAD_STARTED in types
+        assert EventType.MODEL_STATUS_UPDATE in types
 
     @pytest.mark.asyncio
     async def test_event_sequence_numbers(self, bus):
@@ -275,26 +275,6 @@ class TestEmitConvenienceFunctions:
 
         assert len(received) == 1
         assert received[0].data["job"]["id"] == "job-1"
-
-    @pytest.mark.asyncio
-    async def test_emit_download_event(self):
-        """emit_download_event publishes to the download topic."""
-        from core.events import event_bus
-        received = []
-
-        async def subscriber():
-            async for event in event_bus.subscribe("download", max_queue_size=5):
-                received.append(event)
-                break
-
-        task = asyncio.create_task(subscriber())
-        await asyncio.sleep(0.01)
-
-        await emit_download_event(EventType.DOWNLOAD_COMPLETED, {"id": "dl-1"})
-        await task
-
-        assert len(received) == 1
-        assert received[0].data["download"]["id"] == "dl-1"
 
 
 class TestEventBusQueueFull:

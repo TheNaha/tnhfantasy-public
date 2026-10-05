@@ -17,6 +17,7 @@ from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Chat, Character, Job, JobStatus, Message, MessageKind, MessageRole, Persona, VoiceModel
 from core.exceptions import ComfyError, NotFoundError, ValidationError
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from core.upload_validation import (
     MAX_CARD_SIZE_MB,
     read_upload_bounded,
@@ -215,8 +216,7 @@ def list_chats(
     if workspace:
         stmt = stmt.where(Chat.chat_type == workspace)
     if q and q.strip():
-        pattern = f"%{q.strip()}%"
-        stmt = stmt.where(Chat.name.ilike(pattern))
+        stmt = stmt.where(Chat.name.ilike(like_contains(q.strip()), escape=LIKE_ESCAPE_CHAR))
     return session.exec(stmt).all()
 
 
@@ -701,7 +701,9 @@ def list_messages(chat_id: str, branch_id: str | None = None, session: Session =
         # branch-scoped, which is what made the inconsistency visible.
         query = query.where(Message.branch_id.is_(None))
     if q:
-        query = query.where(Message.content.ilike(f"%{q}%"))
+        query = query.where(
+            Message.content.ilike(like_contains(q), escape=LIKE_ESCAPE_CHAR)
+        )
     if tail:
         rows = list(session.exec(query.order_by(Message.created_at.desc()).offset(offset).limit(limit)).all())
         rows.reverse()

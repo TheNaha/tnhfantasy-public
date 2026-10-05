@@ -95,6 +95,91 @@ class TestGetDatabaseUrl:
         assert url == "postgresql://user:pass@localhost/db"
 
 
+class TestDatabaseUrlPrecedence:
+    """Which value wins, and is the loser reported.
+
+    The finding: `get_database_url` said "an explicit `COMFY_DATABASE_URL` always
+    wins" and then replaced any non-`postgresql` value with the DSN assembled
+    from `POSTGRES_*` — which compose always sets. So the SQLite case, the only
+    case the variable exists for, was thrown away, and the comment asserted the
+    opposite of the code.
+
+    Two branches, both asserted:
+
+    * `POSTGRES_HOST` set and `COMFY_DATABASE_URL` not a `postgresql` URL ->
+      Postgres wins (that is what the compose deployment means), and the
+      discarded value is now **logged**, so it is no longer silent.
+    * no `POSTGRES_HOST` -> `COMFY_DATABASE_URL` is used unchanged, which is the
+      developer's local-SQLite path and the one the old code got right by
+      accident.
+    """
+
+    @staticmethod
+    def _env(**overrides):
+        """A clean environment with only the POSTGRES_*/COMFY_* keys given."""
+        base = {
+            "COMFY_DATABASE_URL": "",
+            "POSTGRES_HOST": "",
+            "POSTGRES_PORT": "",
+            "POSTGRES_USER": "",
+            "POSTGRES_PASSWORD": "",
+            "POSTGRES_DB": "",
+        }
+        base.update(overrides)
+        return {k: v for k, v in base.items() if v != ""}
+
+    def test_sqlite_url_survives_when_no_postgres_host(self):
+        settings = MagicMock()
+        settings.database_url = "sqlite:///./data/db/comfy.db"
+        with patch.dict(os.environ, self._env(COMFY_DATABASE_URL="sqlite:///mine.db"), clear=False):
+            for stale in ("POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"):
+                os.environ.pop(stale, None)
+            with patch.object(db_module, "settings", settings):
+                with patch("os.makedirs"):
+                    assert db_module.get_database_url() == "sqlite:///mine.db"
+
+    def test_postgres_env_wins_over_a_sqlite_url_and_says_so(self):
+        settings = MagicMock()
+        settings.database_url = "sqlite:///./data/db/comfy.db"
+        env = self._env(
+            COMFY_DATABASE_URL="sqlite:///./data/comfy.db",
+            POSTGRES_HOST="db",
+            POSTGRES_USER="comfy",
+            POSTGRES_PASSWORD="comfy",
+            POSTGRES_DB="comfy",
+        )
+        with patch.dict(os.environ, env, clear=False):
+            with patch.object(db_module, "settings", settings):
+                with patch.object(db_module.logger, "warning") as warned:
+                    url = db_module.get_database_url()
+
+        assert url == "postgresql://comfy:comfy@db:5432/comfy"
+        # The point of the fix: the discard is reported, naming what was dropped.
+        assert warned.call_count == 1
+        assert "sqlite:///./data/comfy.db" in str(warned.call_args)
+
+    def test_an_explicit_postgres_url_is_used_verbatim(self):
+        """A `postgresql://` COMFY_DATABASE_URL was never in doubt; keep it pinned.
+
+        This is the branch that must NOT consult POSTGRES_*: a managed instance
+        reached by its own DSN has to win over the local `db` service.
+        """
+        settings = MagicMock()
+        settings.database_url = "sqlite:///./data/db/comfy.db"
+        env = self._env(
+            COMFY_DATABASE_URL="postgresql://u:p@managed.example.com:5432/other",
+            POSTGRES_HOST="db",
+            POSTGRES_USER="comfy",
+        )
+        with patch.dict(os.environ, env, clear=False):
+            with patch.object(db_module, "settings", settings):
+                with patch.object(db_module.logger, "warning") as warned:
+                    url = db_module.get_database_url()
+
+        assert url == "postgresql://u:p@managed.example.com:5432/other"
+        warned.assert_not_called()
+
+
 class TestGetSession:
     def test_get_session_yields_session(self):
         """Test that get_session yields a session."""

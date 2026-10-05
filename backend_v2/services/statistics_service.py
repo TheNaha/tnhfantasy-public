@@ -59,6 +59,7 @@ from core.entities import (
     Story,
     StoryChapter,
 )
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from infrastructure.logging import get_logger
 from services.asset_reconciler import METADATA_VERSION
 
@@ -544,9 +545,10 @@ def get_asset_date_histogram(
     if story_id:
         stmt = stmt.where(Asset.story_id == story_id)
     if search:
-        like = f"%{search}%"
+        like = like_contains(search)
         stmt = stmt.where(
-            (Asset.filename.ilike(like)) | (Asset.metadata_.cast(String).ilike(like))
+            (Asset.filename.ilike(like, escape=LIKE_ESCAPE_CHAR))
+            | (Asset.metadata_.cast(String).ilike(like, escape=LIKE_ESCAPE_CHAR))
         )
 
     session = _session_scope()

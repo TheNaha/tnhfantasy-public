@@ -269,9 +269,20 @@ class ProviderService:
         provider = await self.get_provider(provider_id)
         return await self.reconciliation_service.start_reconciliation_session(provider, force=force)
 
-    async def upsert_reconciliation_state(self, provider_id: str, updates: dict[str, Any]) -> dict[str, Any]:
-        provider = await self.get_provider(provider_id)
-        return await self.reconciliation_service.upsert_reconciliation_state(provider, updates)
+    def upsert_reconciliation_state(self, provider_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        """Merge reconciliation state for a provider and persist it.
+
+        Synchronous since 2026-10-03: the repository read plus the state merge
+        plus the commit have no suspension in them, so the `async def` this
+        replaced ran a blocking write on the event loop for every worker
+        heartbeat that pushed a reconciliation event. Callers that are
+        themselves `async def` go through `asyncio.to_thread`.
+        """
+        provider = self.repo.get(provider_id)
+        if not provider:
+            logger.warning("provider_not_found", provider_id=provider_id)
+            raise NotFoundError("Provider", provider_id)
+        return self.reconciliation_service.upsert_reconciliation_state(provider, updates)
     
     @staticmethod
     def normalize_reconciliation_status(status: str | None) -> str:

@@ -265,15 +265,16 @@ async def detect_provider_containers(
         # The session work below stays on the loop: it is bounded, indexed, and
         # moving a request-scoped `Session` into a worker thread is the pattern
         # that breaks the moment anything else uses it concurrently.
-        def _scan() -> tuple[list[dict], object, str | None]:
-            entries = container_manager.list_containers()
+        def _scan() -> tuple[list[dict], bool, object, str | None]:
+            entries, runtime_available = container_manager.list_containers()
             try:
                 raw = container_manager.client.containers.list(all=False)
             except Exception as exc:
-                return entries, [], str(exc)
-            return entries, raw, None
+                return entries, runtime_available, [], str(exc)
+            return entries, runtime_available, raw, None
 
-        entries, raw, scan_error = await asyncio.to_thread(_scan)
+        entries, list_runtime_available, raw, scan_error = await asyncio.to_thread(_scan)
+        container_runtime_available = container_runtime_available and list_runtime_available
 
         for entry in entries:
             name = entry.get("name") or ""

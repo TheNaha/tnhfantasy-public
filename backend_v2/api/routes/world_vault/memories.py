@@ -235,13 +235,30 @@ def update_memory(memory_id: str, update_data: MemoryUpdate, session: Session = 
     if "content" in update_dict:
         # Content changed — regenerate the embedding so semantic search
         # never matches against stale vectors.
+        #
+        # On failure the existing vector is KEPT. It is now stale (it describes
+        # the previous text), but it is a working index for a memory that is
+        # still reachable, whereas NULL means the memory drops out of semantic
+        # recall entirely until someone runs `POST /reindex`. Nulling it here
+        # turned any transient embedding failure — a rate limit, a timeout, a
+        # provider 503 — into permanent data loss on a row that was already
+        # correctly indexed, and the write was committed 4 lines later.
+        # `null_on_failure` only applies when there was nothing to lose.
         try:
             from services.embedding_service import get_embedding_service
 
             emb_svc = get_embedding_service()
             mem.embedding = emb_svc.generate_embedding(mem.content)
-        except Exception:
-            mem.embedding = None
+        except Exception as exc:
+            # `mem.embedding` is deliberately left exactly as it was — including
+            # when it was already None, which is the "nothing to lose" case and
+            # needs no assignment at all.
+            logger.warning(
+                "memory_embedding_regeneration_failed",
+                memory_id=mem.id,
+                kept_existing_embedding=mem.embedding is not None,
+                error=str(exc),
+            )
 
     mem.updated_at = datetime.now(timezone.utc)
     session.add(mem)

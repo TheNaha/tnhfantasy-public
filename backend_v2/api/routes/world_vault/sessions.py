@@ -32,6 +32,7 @@ from api.deps import get_session
 from core.entities import Asset, SessionAsset
 from core.entities import Session as GenerationSession
 from core.exceptions import NotFoundError, ValidationError
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from infrastructure.logging import get_logger
 from infrastructure.repositories.session_repo import SessionRepository
 from services.asset_metadata_index import normalise_checkpoints, normalise_loras
@@ -352,10 +353,10 @@ def list_sessions(
     if locked is not None:
         filters.append(GenerationSession.locked == locked)
     if search:
-        pattern = f"%{search.strip()}%"
+        pattern = func.lower(like_contains(search.strip()))
         filters.append(
-            func.lower(GenerationSession.name).like(func.lower(pattern))
-            | func.lower(GenerationSession.description).like(func.lower(pattern))
+            func.lower(GenerationSession.name).like(pattern, escape=LIKE_ESCAPE_CHAR)
+            | func.lower(GenerationSession.description).like(pattern, escape=LIKE_ESCAPE_CHAR)
         )
 
     total = repo.session.execute(

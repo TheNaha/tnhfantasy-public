@@ -189,7 +189,44 @@ def _env_vars_read() -> tuple[set[str], set[str]]:
                 continue  # a helper reading its own parameter; the caller is walked
             else:
                 dynamic.add(rel)
+    keys |= _compose_vars_read()
     return keys, dynamic
+
+
+# Compose files whose `${VAR}` substitutions are real reads of the operator's
+# `.env`. `env_file:` entries are not scanned for reads — those name a file, and
+# the variables inside it are read by the container's own code, which the Python
+# sweep above already covers.
+COMPOSE_FILES = tuple(sorted(REPO.glob("docker-compose*.yml")))
+
+
+def _compose_vars_read() -> set[str]:
+    """Variables the compose layer substitutes out of `.env`.
+
+    A compose file is a consumer of `.env` exactly as much as Python is: it
+    interpolates `${NAME}` and `${NAME:-default}`. The scan walked Python only, so
+    a variable that exists solely to configure compose — `COMFY_FRONTEND_BIND`,
+    which decides the address the frontend *and therefore the whole API* is served
+    on — was reported as "documented in an example file and read by no code". That
+    is a false positive on a security-relevant setting, and it is the kind that
+    teaches a reader to ignore this test.
+
+    Also covers the `${NAME}` form used inside `command:`, `environment:` and
+    `labels:`, which is how the variable reaches the container.
+    """
+    found: set[str] = set()
+    for path in COMPOSE_FILES:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        # Strip comments so a `${VAR}` mentioned in prose is not a read. A `#`
+        # inside a quoted string would confuse this, so only whole-line and
+        # trailing `# ` are dropped — compose files here do not put `#` in values.
+        for line in text.splitlines():
+            stripped = line.split(" #", 1)[0]
+            if stripped.lstrip().startswith("#"):
+                continue
+            for m in re.finditer(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", stripped):
+                found.add(m.group(1))
+    return found
 
 
 def _env_vars_assigned() -> dict[str, list[str]]:
@@ -320,6 +357,102 @@ class TestDirectionB:
         assert EXAMPLE_FILES, "found no .env.example* files at all"
         for path in EXAMPLE_FILES:
             assert path.read_text(encoding="utf-8").strip(), f"{path} is empty"
+
+
+# ── `.env.example.backend` is the CANONICAL backend reference ────────────────
+# The two directions above check the union of every example file, which is the
+# right invariant but leaves a hole: a backend variable documented only in
+# `.env.example.provider.engines` counts as documented, so the backend reference
+# could be emptied out one variable at a time and stay green. It was very nearly
+# that: `.env.example.backend` was 230 lines and the only documentation for ~35
+# variables, referenced by nothing outside `.kilo/plans/` — no README, no doc, no
+# CI step — so nothing would have told the next reader it existed, and nothing
+# would have told them it was still current.
+#
+# Keeping it (rather than deleting it as a duplicate of `config.py`'s `Settings`)
+# is the right call: `Settings` declares a field and its pydantic default, and
+# says nothing about whether the variable gates a feature, what breaks when it is
+# unset, or which code reads it. This file is the only place that knowledge is.
+#
+# The scope rule is by CODE ROOT, not by prefix: `COMFY_` covers the backend, the
+# image worker, the LLM worker, the TTS worker and the remote agent, so prefix
+# alone would drag `MODAL_*` and the provider credentials in here.
+BACKEND_ROOT = "backend_v2"
+BACKEND_EXAMPLE = REPO / ".env.example.backend"
+
+
+class TestTheBackendExampleIsCanonical:
+    @staticmethod
+    def _backend_reads() -> set[str]:
+        """Variables read by `backend_v2/` code only."""
+        keys: set[str] = set()
+        for path in _python_files():
+            if not str(path.relative_to(REPO)).startswith(f"{BACKEND_ROOT}/"):
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+            except SyntaxError:
+                continue
+            params = _param_names(tree)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = _callee_name(node.func)
+                if name not in NAME_TAKING_HELPERS or not node.args:
+                    continue
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    key = PREFIXING_HELPERS.get(name, "") + first.value
+                    if key.isupper():
+                        keys.add(key)
+                elif isinstance(first, ast.Name) and first.id in params:
+                    continue
+        return keys
+
+    def test_every_backend_variable_is_documented_there(self):
+        documented = _all_documented()
+        backend_only = {
+            k for k in self._backend_reads()
+            if k.startswith("COMFY_") or k in {"PYTHONUNBUFFERED", "OUTPUT_DIR", "INPUT_DIR"}
+        }
+        missing = sorted(k for k in backend_only if k not in documented)
+        assert not missing, (
+            "these variables are read by backend_v2/ and appear in no .env.example* "
+            "file:\n  " + "\n  ".join(missing)
+        )
+
+    def test_it_is_referenced_from_a_place_a_reader_will_find(self):
+        """The orphan problem, stated as a test.
+
+        A file nothing points at cannot stay correct: it is not read while it is
+        being written, so it drifts, and nothing reports the drift. Two entry
+        points a reader actually visits — the README's setup steps and the
+        deployment guide — must name it, or this is an orphan again.
+        """
+        for doc in ("README.md", "docs/deployment.md"):
+            path = REPO / doc
+            assert path.exists(), f"{doc} is missing entirely"
+            text = path.read_text(encoding="utf-8")
+            assert ".env.example.backend" in text, (
+                f"{doc} never mentions .env.example.backend, so the only "
+                "documentation for the backend's environment variables is "
+                "unreachable from the documentation"
+            )
+
+    def test_its_database_section_does_not_claim_compose_leaves_the_url_unset(self):
+        """The stale-premise guard for this file specifically.
+
+        It said "Compose does NOT set `COMFY_DATABASE_URL`", which read as "no
+        code path can set it" — while `env_file: - .env` supplies it on every
+        `up`, and this repo's own `.env` does. An operator reading it would
+        conclude the variable was inert. The accurate statement is narrower: the
+        compose `environment:` block does not set it, and `POSTGRES_*` decides.
+        """
+        text = BACKEND_EXAMPLE.read_text(encoding="utf-8")
+        assert "env_file" in text, (
+            ".env.example.backend's database section must account for the fact "
+            "that `env_file: - .env` can and does supply COMFY_DATABASE_URL"
+        )
 
 
 # Deliberately NOT documented in an example file, with the reason. Keep this

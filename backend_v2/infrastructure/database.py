@@ -86,13 +86,50 @@ def _database_url_from_postgres_env() -> str | None:
 
 
 def get_database_url() -> str:
-    """Get database URL, ensuring data directory exists."""
-    # An explicit `COMFY_DATABASE_URL` always wins: that is how a developer
-    # points at a local SQLite file or a managed instance.
-    url = os.environ.get("COMFY_DATABASE_URL") or settings.database_url
+    """Get database URL, ensuring data directory exists.
 
-    if not url.startswith("postgresql"):
-        url = _database_url_from_postgres_env() or url
+    Precedence, highest first:
+
+    1. a `postgresql://` `COMFY_DATABASE_URL` — an explicit DSN, taken as-is;
+    2. the DSN assembled from `POSTGRES_*`, when `POSTGRES_HOST` is set;
+    3. any other `COMFY_DATABASE_URL` (the SQLite / local-file case);
+    4. `settings.database_url` (config.json, then `DEFAULT_CONFIG`).
+
+    Rule 2 sits above rule 3 deliberately, and this function's docstring used to
+    assert the opposite — "an explicit `COMFY_DATABASE_URL` always wins" — while
+    the two lines below it re-read any non-Postgres URL as a default and replaced
+    it. `POSTGRES_HOST` is not a fallback default, it is a deployment stating
+    which database it uses, and the compose stack always sets it: that is how the
+    DSN is built at all (compose cannot percent-encode a password, so the URL has
+    to be assembled here — see `_database_url_from_postgres_env`). So an operator
+    who leaves a stale `COMFY_DATABASE_URL=sqlite:///...` in `.env` gets Postgres,
+    which is what they meant, and the discard is now **reported** rather than
+    silent — that silence was the real defect here. A developer pointing at a
+    local SQLite file has no `POSTGRES_HOST` set, so rule 3 applies and their
+    value is used unchanged.
+
+    Which means the fix for the audit finding is the warning below plus this
+    comment, not a precedence flip: flipping it repoints the running container at
+    a 66-row SQLite file the moment `.env`'s stale value is honoured, and the
+    backend hot-reloads on that file.
+    """
+    explicit = os.environ.get("COMFY_DATABASE_URL", "").strip()
+    assembled = _database_url_from_postgres_env()
+
+    if assembled and not explicit.startswith("postgresql"):
+        logger.warning(
+            "database_url_from_postgres_env_overrides_comfy_database_url",
+            discarded=explicit,
+            resolved=assembled,
+            note=(
+                "POSTGRES_HOST is set, so the DSN is assembled from POSTGRES_* and "
+                "COMFY_DATABASE_URL is not used. Remove the line from .env to stop "
+                "this being reported on every boot."
+            ),
+        )
+        url = assembled
+    else:
+        url = explicit or assembled or settings.database_url
 
     # If using SQLite, ensure directory exists
     if url.startswith("sqlite"):

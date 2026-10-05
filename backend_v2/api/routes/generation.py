@@ -49,6 +49,10 @@ class GenerateRequest(BaseModel):
 
 
 class GenerateBatchRequest(BaseModel):
+    # Deliberately no `max_length` here. A model-level cap answers 422 during
+    # validation; the 400 with `BATCH_TOO_LARGE` from `require_batch_size`
+    # (below) is the contract callers branch on, and
+    # `tests/test_event_loop_blocking.py::TestGenerateBatchCap` pins it.
     workflows: list[dict[str, Any]] | None = None
     options: dict[str, Any] | None = None
     metadata: dict[str, Any] = {}

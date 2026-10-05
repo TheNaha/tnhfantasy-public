@@ -106,8 +106,23 @@ def _redirect_sync_sessions(engine):
     known_originals = {id(original_infra), id(original_deps)}
 
     rebound: list[tuple[object, str, object]] = []
+    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     for module in list(sys.modules.values()):
         if module is None:
+            continue
+        # Only probe modules that belong to this backend. `getattr` is not a
+        # passive read: a module with a PEP 562 module-level `__getattr__`
+        # resolves an unknown name by *importing* the submodule it names. Probing
+        # `transformers` for `get_session_sync` therefore imported
+        # `transformers/models/aria/image_processing_aria.py`, which imports
+        # `torchvision` — which is not in requirements.txt. The fixture raised,
+        # and because it is autouse every test after the first one that touched
+        # the embedding stack errored too: 1355 of 2832 tests in CI run
+        # 37124915160, on a Python that had transformers installed. The local
+        # venv cannot import transformers at all, so the suite was green here and
+        # red in CI for three days.
+        module_file = getattr(module, "__file__", None) or ""
+        if not module_file.startswith(backend_root + os.sep):
             continue
         current = getattr(module, "get_session_sync", None)
         if current is not None and id(current) in known_originals:

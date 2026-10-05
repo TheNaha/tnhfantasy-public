@@ -10,7 +10,10 @@ from core.entities import CONTAINER_TASK_TYPES
 from infrastructure.background_tasks import start_background_task
 from infrastructure.database import database_url
 from infrastructure.logging import get_logger
-from services.job_service import STALE_JOB_TIMEOUT_SECONDS
+from services.job_service import (
+    STALE_JOB_TIMEOUT_SECONDS,
+    STRANDED_PENDING_TIMEOUT_SECONDS,
+)
 
 logger = get_logger("job_queue")
 
@@ -224,15 +227,25 @@ class JobQueue:
         if self._use_db_claims:
             self._schedule_notify()
 
-    @staticmethod
-    def _mark_enqueued(job_id: str) -> None:
+    def _mark_enqueued(self, job_id: str) -> None:
         """Stamp `enqueued_at` so the claim query can see this row.
 
         Best-effort and idempotent: the `IS NULL` predicate means a retry or a
-        duplicate enqueue cannot move the stamp, and a failure here must not
-        stop a job that is already in the in-process queue from running on a
-        SQLite deployment (where the claim query does not exist). On Postgres a
-        failure WOULD strand the job, so it is logged at error level.
+        duplicate enqueue cannot move the stamp.
+
+        The failure mode splits on `_use_db_claims`, which is why this used to
+        be wrong in the one direction that mattered. On SQLite the stamp cannot
+        succeed at all — SQLite has no `now()` function, so the statement below
+        raises every single time — and there is no claim query, so a job already
+        sitting in the in-process queue runs regardless. Swallowing is the
+        documented and correct behaviour there. On Postgres the claim query
+        requires `enqueued_at IS NOT NULL`, so a swallowed failure leaves a row
+        that is PENDING, never claimable, never failed, and not covered by
+        `recover`: counted in `summary["pending"]` forever with no owner. So
+        there the error propagates, which is what lets
+        `JobSubmissionService.submit_job` reach its compensating delete — a
+        delete that is unreachable for every other reason, because this was the
+        only failure that stranded a row.
         """
         from infrastructure.database import engine
         from sqlmodel import Session, text
@@ -246,6 +259,8 @@ class JobQueue:
                 session.commit()
         except Exception as exc:
             logger.error("job_enqueue_stamp_failed", job_id=job_id, error=str(exc))
+            if self._use_db_claims:
+                raise
 
     def _schedule_notify(self) -> None:
         try:
@@ -814,6 +829,7 @@ class QueueManager:
         job_service,
         *,
         timeout_seconds: int = STALE_JOB_TIMEOUT_SECONDS,
+        stranded_timeout_seconds: int = STRANDED_PENDING_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
         """Requeue interrupted work and fail jobs wedged past the stale timeout.
 
@@ -824,15 +840,31 @@ class QueueManager:
         stale_jobs = await job_service.fail_stale_running_jobs(timeout_seconds=timeout_seconds)
         stale_ids = {job.id for job in stale_jobs}
 
-        pending = list(job_service.get_pending_jobs())
+        # A PENDING row with no `enqueued_at` can never be claimed (the claim
+        # query requires the stamp) and nothing else touches it, so it used to
+        # be counted in `summary["pending"]` on every recovery run, forever.
+        # `_mark_enqueued` propagating makes a new one impossible on Postgres;
+        # this makes an existing one visible and terminal.
+        stranded_jobs = await job_service.fail_stranded_pending_jobs(
+            timeout_seconds=stranded_timeout_seconds
+        )
+        stranded_ids = {job.id for job in stranded_jobs}
+
+        pending = [
+            job
+            for job in job_service.get_pending_jobs()
+            if job.id not in stranded_ids
+        ]
         running = list(job_service.get_running_jobs())
         recoverable_running = [job for job in running if job.id not in stale_ids]
 
         summary: dict[str, Any] = {
             "mode": "db_claims" if _DB_CLAIMS_ENABLED else "in_memory",
             "recovered": 0,
-            "failed": len(stale_jobs),
-            "failed_job_ids": [job.id for job in stale_jobs],
+            "failed": len(stale_jobs) + len(stranded_jobs),
+            "failed_job_ids": [job.id for job in stale_jobs]
+            + [job.id for job in stranded_jobs],
+            "failed_stranded_job_ids": [job.id for job in stranded_jobs],
             "pending": len(pending),
             "running": len(recoverable_running),
         }

@@ -11,6 +11,7 @@ from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Location
 from core.exceptions import NotFoundError, ValidationError
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from core.upload_validation import (
     MAX_AVATAR_SIZE_MB,
     inspect_image,
@@ -74,11 +75,11 @@ def create_location(location_in: LocationCreate, session: Session = Depends(get_
 
 @router.get("/search", response_model=list[Location])
 def search_locations(q: str, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
-    pattern = f"%{q}%"
+    pattern = func.lower(like_contains(q))
     return session.exec(
         select(Location).where(
-            func.lower(Location.name).like(func.lower(pattern))
-            | func.lower(Location.description).like(func.lower(pattern))
+            func.lower(Location.name).like(pattern, escape=LIKE_ESCAPE_CHAR)
+            | func.lower(Location.description).like(pattern, escape=LIKE_ESCAPE_CHAR)
         ).order_by(Location.name)
     ).all()
 

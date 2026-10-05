@@ -643,18 +643,25 @@ def move_existing_assets(output_dir: str, db_session_factory, *, user_id: str = 
                 else:
                     if len(parts) < 4:
                         # No date hierarchy (flat legacy config): file sits at root.
-                        y = datetime.now().year
-                        m = datetime.now().month
-                        d = datetime.now().day
+                        # UTC for the same reason as the partition writer in
+                        # `infrastructure/image_processor.py`: `created_at` and
+                        # the gallery's date buckets are UTC, so a local date here
+                        # back-files a flat legacy image under a day it was never
+                        # generated on.
+                        today = datetime.now(timezone.utc)
+                        y = today.year
+                        m = today.month
+                        d = today.day
                     else:
                         y, m, d = parts[0], parts[1], parts[2]
                     try:
                         if not (2000 <= int(y) <= 2100 and 1 <= int(m) <= 12 and 1 <= int(d) <= 31):
                             raise ValueError
                     except ValueError:
-                        y = datetime.now().year
-                        m = datetime.now().month
-                        d = datetime.now().day
+                        today = datetime.now(timezone.utc)
+                        y = today.year
+                        m = today.month
+                        d = today.day
                     # Preserve the original YYYY/MM/DD from the source path
                     # (get_output_path always appends *today's* date, which
                     # would scramble the timeline).

@@ -10,6 +10,7 @@
 #   PUT    /api/v2/providers/load-balancing – Update LB strategy
 #   POST   /api/v2/providers/{id}/reconcile – Trigger model sync
 #   GET/POST /api/v2/providers/{id}/container/* – Container lifecycle management
+import asyncio
 from typing import Any
 
 import httpx
@@ -167,7 +168,15 @@ async def push_reconciliation_event(
         "stats": request.stats or {},
     }
 
-    persisted_state = await service.upsert_reconciliation_state(provider_id, persistence_updates)
+    # Synchronous DB merge plus commit behind a decorative `async def` in both
+    # `ProviderService` and `ProviderReconciliationService`, run inline on the
+    # event loop on every worker heartbeat. The event publish below is genuinely
+    # a coroutine but bottoms out at an uncontended `asyncio.Lock` inside
+    # `EventBus.publish`, so it is the thread hop here, not the publish, that
+    # makes this route safe on the loop.
+    persisted_state = await asyncio.to_thread(
+        service.upsert_reconciliation_state, provider_id, persistence_updates
+    )
     _invalidate_provider_runtime_caches(provider_id)
 
     # Emit event via EventBus (will be broadcast to WebSocket clients)

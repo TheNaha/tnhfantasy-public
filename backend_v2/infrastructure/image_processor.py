@@ -3,7 +3,7 @@
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
@@ -57,7 +57,14 @@ def get_output_path(base_dir: str = None, subdir: str = None, user_id: str = "de
         partition = os.path.join(partition, _safe_component(subdir, ""))
 
     if app_config.get_output_date_hierarchy():
-        now = datetime.now()
+        # UTC, not local. `Asset.created_at` is a UTC column and the gallery
+        # date rail buckets on UTC (`services/statistics_service.py:67`), so a
+        # local `now()` files an image generated at 23:30 in UTC+2 under
+        # *tomorrow's* directory while its `created_at` reads 21:30 the same
+        # day — the on-disk tree and the UI disagree for every image in the
+        # offset window around local midnight. Correct only while the host
+        # happens to run UTC.
+        now = datetime.now(timezone.utc)
         date_path = os.path.join(partition, str(now.year), f"{now.month:02d}", f"{now.day:02d}")
     else:
         date_path = partition

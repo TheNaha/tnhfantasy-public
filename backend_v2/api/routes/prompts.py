@@ -22,6 +22,7 @@ from sqlmodel import Session, or_, select
 from api.deps import get_session, get_prompt_repo
 from core.entities import Prompt
 from core.exceptions import ComfyError, NotFoundError
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from infrastructure.logging import get_logger
 from infrastructure.repositories.prompt_repo import PromptRepository
 
@@ -84,12 +85,12 @@ def list_prompts(
     try:
         # Use simple ILIKE search for now until full text search is optimized
         if q and q.strip():
-            search_query = f"%{q.strip()}%"
+            search_query = like_contains(q.strip())
             stmt = select(Prompt).where(
                 or_(
-                    Prompt.name.ilike(search_query),
-                    Prompt.text.ilike(search_query),
-                    Prompt.description.ilike(search_query),
+                    Prompt.name.ilike(search_query, escape=LIKE_ESCAPE_CHAR),
+                    Prompt.text.ilike(search_query, escape=LIKE_ESCAPE_CHAR),
+                    Prompt.description.ilike(search_query, escape=LIKE_ESCAPE_CHAR),
                 )
             )
             if category:

@@ -9,6 +9,7 @@ from sqlmodel import Session, col, delete, select, update
 
 from core.dtos import JobQueueItem
 from core.entities import Job, JobStatus
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 
 # Far more than any queue a person can act on, and it bounds the `metadata_`
 # jsonb this query pulls. See `get_queue_items`.
@@ -257,6 +258,42 @@ class JobRepository:
         self.session.commit()
         self.session.refresh(job)
         return job
+
+    def update_where_status(
+        self, job_id: str, expected_status: JobStatus, **kwargs
+    ) -> Job | None:
+        """Update a job only while it is still in `expected_status`.
+
+        The atomic form of `update`'s read-then-write, for callers that decide
+        what to write from a status they read earlier. `get` is `session.get`,
+        so for a long-lived Session it answers from the identity map and a
+        "just read it" status can be arbitrarily old — so the read and the write
+        are not one statement and anything can land between them. A cancel
+        request, a recovery sweep and a second worker are all writers of the
+        same row. Re-stating the status in the `WHERE` closes that window in one
+        atomic statement, with no lock and no schema change.
+
+        Returns the refreshed job, or `None` when the predicate matched no row:
+        the job moved on, or was deleted. A 0-row result is not an error, it is
+        the caller learning its guard was stale, so it is returned rather than
+        raised.
+        """
+        if self.get(job_id) is None:
+            return None
+
+        values = {key: value for key, value in kwargs.items() if hasattr(Job, key)}
+        values["updated_at"] = datetime.now(timezone.utc)
+        stmt = (
+            update(Job)
+            .where(Job.id == job_id, Job.status == expected_status)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        result = self.session.exec(stmt)
+        if not result.rowcount:
+            return None
+        self.session.commit()
+        return self.get(job_id)
     
     def delete(self, job_id: str) -> bool:
         """Delete a job."""
@@ -345,6 +382,14 @@ class JobRepository:
 
         PostgreSQL: index-backed tsvector match (generated prompt_tsv column)
         ranked by relevance. SQLite: LIKE fallback over the JSON1 extraction.
+
+        The fallback needs both halves of the escaping rule and had neither:
+        `f"%{query}%"` left `%` and `_` in a user's search term live as
+        wildcards (so `100%` matched `100 percent`), and the pattern was bound
+        to a raw `text()` fragment with no `ESCAPE` clause, which is invisible
+        to the `.like()` guard in `tests/test_like_pattern_escaping.py`.
+        `core.sql_search.like_contains` supplies the first half; the clause
+        below supplies the second — escaping alone matches nothing.
         """
         if not query:
             return []
@@ -364,16 +409,17 @@ class JobRepository:
             rows = self.session.execute(stmt, {"q": query, "limit": int(limit)}).all()
         else:
             stmt = text(
-                """
+                f"""
                 SELECT jobs.*
                 FROM jobs
                 WHERE json_extract(metadata_, '$.prompt') LIKE :like
+                    ESCAPE '{LIKE_ESCAPE_CHAR}'
                 ORDER BY created_at DESC
                 LIMIT :limit
                 """
             )
             rows = self.session.execute(
-                stmt, {"like": f"%{query}%", "limit": int(limit)}
+                stmt, {"like": like_contains(query), "limit": int(limit)}
             ).all()
 
         return [self._row_to_job(row) for row in rows]

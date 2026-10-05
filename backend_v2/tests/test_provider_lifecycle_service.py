@@ -1,11 +1,12 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import docker
 import httpx
 import pytest
 
 from core.events import EventType
-from core.exceptions import ProviderError
+from core.exceptions import ProviderError, ServiceUnavailableError
 from services.provider_lifecycle_service import ProviderLifecycleService
 
 
@@ -203,3 +204,111 @@ async def test_get_container_status_uses_async_health_probe_when_container_is_ru
     assert result["running"] is True
     assert result["healthy"] is True
     async_client.get.assert_awaited_once_with("http://localhost:18000/health", timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# Container status: "stopped" must mean stopped, not "Docker is unreachable"
+# ---------------------------------------------------------------------------
+
+
+def _status_service_for(container_manager):
+    provider_service = MagicMock()
+    provider_service.get_provider = AsyncMock(
+        return_value=SimpleNamespace(
+            id="provider-1",
+            type="modal",
+            container_config={"port": 8000},
+        )
+    )
+    return ProviderLifecycleService(
+        session=MagicMock(),
+        provider_service=provider_service,
+        container_manager=container_manager,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_container_status_reports_stopped_only_on_a_genuine_not_found():
+    """`docker.errors.NotFound` is the one failure that means "not running"."""
+    container_manager = MagicMock()
+    container_manager.client.containers.get.side_effect = docker.errors.NotFound("no such container")
+
+    result = await _status_service_for(container_manager).get_container_status("provider-1")
+
+    assert result["status"] == "stopped"
+    assert result["running"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(docker.errors.DockerException("daemon unreachable"), id="daemon-down"),
+        pytest.param(ConnectionError("socket gone"), id="socket-missing"),
+        pytest.param(PermissionError("permission denied"), id="permission-denied"),
+        pytest.param(docker.errors.APIError("tls handshake failed"), id="tls-failure"),
+    ],
+)
+async def test_get_container_status_refuses_to_call_an_unreachable_runtime_stopped(failure):
+    """A host-wide Docker outage must not read as N stopped containers.
+
+    The bare `except Exception` this replaces answered "the container is
+    stopped" for every way the daemon can fail *other than* reporting the
+    container absent — daemon down, socket permission denied, TLS failure, a
+    context that no longer exists. A caller could not tell a real stop from a
+    broken runtime, and there was no degraded signal to say "this answer is not
+    trustworthy". So a Docker outage produced a clean-looking, entirely false
+    answer instead of one that says the dependency is down.
+    """
+    container_manager = MagicMock()
+    container_manager.client.containers.get.side_effect = failure
+
+    with pytest.raises(ServiceUnavailableError) as excinfo:
+        await _status_service_for(container_manager).get_container_status("provider-1")
+
+    assert excinfo.value.service == "container_runtime"
+    assert excinfo.value.code == "SERVICE_UNAVAILABLE"
+    # Chained to the original so the log names the real cause.
+    assert excinfo.value.__cause__ is failure
+
+
+@pytest.mark.asyncio
+async def test_get_container_status_unreachable_is_503_not_500():
+    """`ComfyError` maps to 500; "your dependency is down" is a retry, not a bug."""
+    container_manager = MagicMock()
+    container_manager.client.containers.get.side_effect = docker.errors.DockerException("boom")
+
+    with pytest.raises(ServiceUnavailableError) as excinfo:
+        await _status_service_for(container_manager).get_container_status("provider-1")
+
+    assert excinfo.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_get_container_status_logs_the_real_cause_before_raising():
+    """The replaced branch swallowed the cause with no log at all.
+
+    The project logs through structlog, which pytest's caplog does not see, so
+    the logger is spied on directly.
+    """
+    container_manager = MagicMock()
+    container_manager.client.containers.get.side_effect = docker.errors.DockerException(
+        "Cannot connect to the Docker daemon"
+    )
+
+    import services.provider_lifecycle_service as lifecycle_module
+
+    calls: list[tuple] = []
+    original_error = lifecycle_module.logger.error
+    lifecycle_module.logger.error = lambda event, **kw: calls.append((event, kw))
+    try:
+        with pytest.raises(ServiceUnavailableError):
+            await _status_service_for(container_manager).get_container_status("provider-1")
+    finally:
+        lifecycle_module.logger.error = original_error
+
+    assert calls, "an unreachable runtime must be logged, not silently reshaped"
+    event, kwargs = calls[0]
+    assert event == "container_runtime_unreachable"
+    assert kwargs["provider_id"] == "provider-1"
+    assert "Cannot connect to the Docker daemon" in kwargs["error"]

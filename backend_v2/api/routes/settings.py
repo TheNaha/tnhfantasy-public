@@ -682,9 +682,19 @@ def get_favorites_list() -> list:
     if os.path.exists(FAVORITES_CONFIG_PATH):
         try:
             with open(FAVORITES_CONFIG_PATH, 'r') as f:
-                return json.load(f)
-        except Exception:
+                favorites = json.load(f)
+        except Exception as e:
+            # Same shape as `get_branding_config`, which logs here; this one was
+            # copied without the log, and the consequence is not degradation.
+            # `GET /favorites` answered `[]`, the client posted that empty list
+            # straight back, and `save_favorites_list` overwrote the file: every
+            # starred image gone, permanently, with nothing anywhere saying why.
+            logger.error("favorites_load_failed", error=str(e))
             return []
+        # A non-list payload would reach the client as `favorites` and then be
+        # rejected by `FavoritesRequest` on the round trip back, so the file
+        # could never be rewritten. Same dead end as a corrupt one.
+        return favorites if isinstance(favorites, list) else []
     return []
 
 def save_favorites_list(favorites: list):
