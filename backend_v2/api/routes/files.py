@@ -22,6 +22,7 @@
 #   client filename before it reaches the filesystem. Rejections raise
 #   UploadValidationError -> HTTP 400 with a machine-readable `code`.
 import asyncio
+import random
 
 from services.asset_reconciler import upsert_asset
 import base64
@@ -138,14 +139,26 @@ def _indexed_thumbnail_path(relative_path: str, session: Session | None) -> str 
     rel = relative_path
     if not rel:
         return None
+
+    def _lookup(sess):
+        asset = sess.exec(
+            select(Asset).where(Asset.relative_path == rel)
+        ).first()
+        if not asset and "/" not in rel:
+            asset = sess.exec(select(Asset).where(Asset.filename == rel)).first()
+        return asset.thumbnail_relative_path if asset else None
+
     try:
-        with _sync_session() as lookup:
-            asset = lookup.exec(
-                select(Asset).where(Asset.relative_path == rel)
-            ).first()
-            if not asset and "/" not in rel:
-                asset = lookup.exec(select(Asset).where(Asset.filename == rel)).first()
-            thumb_rel = asset.thumbnail_relative_path if asset else None
+        # Reuses the caller's session when there is one. It used to open its own
+        # via `_sync_session()` and ignore the parameter entirely, so the
+        # batch-delete path paid a second pooled connection per thumbnail —
+        # and read as though the session were being reused, which is the exact
+        # confusion `_soft_delete_assets`' docstring exists to prevent.
+        if session is not None:
+            thumb_rel = _lookup(session)
+        else:
+            with _sync_session() as own:
+                thumb_rel = _lookup(own)
     except Exception as exc:
         logger.debug("thumbnail_index_lookup_failed", path=rel, error=str(exc))
         return None
@@ -663,6 +676,7 @@ def _query_gallery_files(
     date_desc (default), date_asc, name_asc, name_desc.
     """
     from sqlalchemy import String, func
+    from sqlalchemy import func as sqlfunc
 
     from services.asset_reconciler import _asset_as_file_data
 
@@ -689,18 +703,30 @@ def _query_gallery_files(
             )
 
         if sort in ("name_asc", "name_desc"):
-            # Name sorts need the full filtered set to slice deterministically.
-            # Limitation: loads all rows into memory which can cause issues with large datasets.
-            rows = session.exec(q.order_by(order_col.desc(), Asset.id.desc())).all()
-            total = len(rows)
-            rows = sorted(rows, key=lambda a: a.filename, reverse=(sort == "name_desc"))
-            page = rows[offset : offset + limit]
+            # Ordered and paged in SQL. This used to be
+            # `exec(q.order_by(...)).all()` then `sorted(...)` in Python then a
+            # slice, so the *whole* `assets` table — 16,907 rows including the
+            # ~70 MB `metadata_` jsonb column — was materialised to answer a
+            # request whose response is 27 kB. Measured on the live stack:
+            # 5.5–9.8 s wall, and the backend container's RSS going 150 MiB →
+            # 555 MiB per request. Two concurrent requests would exhaust a 2 GiB
+            # container.
+            #
+            # `filename` alone is not a stable sort (a directory of renamed
+            # files can contain duplicates), so `id` breaks the tie exactly as
+            # the date branch does.
+            name_order = Asset.filename.asc() if sort == "name_asc" else Asset.filename.desc()
+            total = session.exec(select(sqlfunc.count()).select_from(q.subquery())).one()
+            page = session.exec(
+                q.order_by(name_order, Asset.id.asc() if sort == "name_asc" else Asset.id.desc())
+                .offset(offset)
+                .limit(limit)
+            ).all()
             return {"files": [_asset_as_file_data(a, OUTPUT_DIR) for a in page], "total": total}
 
         order = order_col.asc() if sort == "date_asc" else order_col.desc()
         id_order = Asset.id.asc() if sort == "date_asc" else Asset.id.desc()
         # Get total count efficiently without loading all rows
-        from sqlalchemy import func as sqlfunc
         total = session.exec(select(sqlfunc.count()).select_from(q.subquery())).one()
         page = session.exec(q.order_by(order, id_order).offset(offset).limit(limit)).all()
         return {"files": [_asset_as_file_data(a, OUTPUT_DIR) for a in page], "total": total}
@@ -1205,8 +1231,14 @@ async def move_asset(asset_id: str, body: MoveAssetRequest):
 
 @router.get("/api/v2/gallery")
 async def get_v2_gallery(
-    limit: int = 20, 
-    offset: int = 0, 
+    # These need their own bounds, not `list_files_endpoint`'s. Calling a route
+    # function as a plain Python call means FastAPI never resolves the callee's
+    # `Query(..., ge=1, le=MAX_BATCH_ITEMS)` default, so `?limit=100000000`
+    # reached `_query_gallery_files` and materialised the whole assets table —
+    # including the ~70 MB `metadata_` jsonb — in a single response, and a
+    # negative offset made Postgres raise, reported as a 503.
+    limit: int = Query(20, ge=1, le=MAX_BATCH_ITEMS),
+    offset: int = Query(0, ge=0),
     sort: str = "date_desc", 
     search: str | None = None,
     workspace: str | None = None,
@@ -1270,29 +1302,82 @@ async def list_files_endpoint(
     # Handle Models directories - query from SQLite model service
     if directory.startswith("models/"):
         model_dir_type = directory.replace("models/", "")
-        
+
+        # The database does the filtering, the sorting and the paging.
+        #
+        # All three used to happen here, in Python, *after* the whole directory
+        # had been hydrated: this branch built a full `file_data` row —
+        # description, trained words, every version, every image — for all 484
+        # LoRAs and then discarded all but `limit` of them. The query could not
+        # see the page size at all. Measured per request: `limit=2` 543 ms,
+        # `limit=20` 537 ms, `limit=500` 1,198 ms for 3.4 MB, and a search for a
+        # string that does not exist 867 ms to return `{"files": []}`.
+        #
+        # So they are pushed into `ModelServiceV2.list_models_page`, and this
+        # function only projects the rows it is handed. The call is hoisted into
+        # `asyncio.to_thread` for the other half of the same defect: it is a
+        # synchronous query chain inside an `async def` route, so inline it runs
+        # on the event loop and the whole container waits for it.
+        want_tags = [t.strip() for t in tags.split(",")] if tags else None
+        want_base_model = None if base_model in (None, "", "all") else base_model
+        want_model_type = None if model_type in (None, "", "all") else model_type
+
+        # `random[:seed]` shuffles the whole directory before it can take a page,
+        # so it is not a SQL `ORDER BY`. It gets the matching ids — cheap, no
+        # hydration — shuffled by the same algorithm and the same seed over the
+        # same id-ordered input the old code shuffled, and only the resulting page
+        # is hydrated.
+        random_seed = None
+        if sort and sort.startswith("random"):
+            random_seed = sort.split(":", 1)[1] if ":" in sort else (search or "stable_random_seed")
+
+        def _load_models_page() -> tuple[list[dict], int]:
+            page_ids = None
+            if sort and sort.startswith("random"):
+                matching = model_service.repo.get_model_ids_by_directory(
+                    model_dir_type,
+                    search=search,
+                    tags=want_tags,
+                    model_type=want_model_type,
+                    base_model=want_base_model,
+                    show_nsfw=show_nsfw,
+                )
+                random.Random(random_seed).shuffle(matching)
+                page_ids = matching[offset : offset + limit]
+            return model_service.list_models_page(
+                model_dir_type,
+                search=search,
+                tags=want_tags,
+                model_type=want_model_type,
+                base_model=want_base_model,
+                show_nsfw=show_nsfw,
+                sort=None if sort in (None, "random", random_seed) else sort,
+                limit=limit,
+                offset=offset,
+                ids=page_ids,
+            )
+
         try:
-            # Get models for this directory from SQLite
-            models = await model_service.list_models_by_directory(model_dir_type)
-            
+            models, total = await asyncio.to_thread(_load_models_page)
+
             # Format V2 data for frontend compatibility
             valid_files = []
             for model in models:
                 if not isinstance(model, dict):
                     continue
-                
+
                 # Get versions and find default
                 versions = model.get("versions", [])
                 default_version = next(
-                    (v for v in versions if v.get("is_default")), 
+                    (v for v in versions if v.get("is_default")),
                     versions[0] if versions else None
                 )
-                
+
                 # Extract file info from default version
                 file_info = (default_version.get("file") or {}) if default_version else {}
                 filename = file_info.get("filename", model.get("name", "unknown"))
                 size_kb = file_info.get("size_kb", 0)
-                
+
                 # Skip partial/incomplete download artifacts — they must never be
                 # offered as selectable models (preflight would always fail).
                 if any(
@@ -1300,11 +1385,7 @@ async def list_files_endpoint(
                     for suffix in (".downloading", ".part", ".crdownload", ".tmp", ".temp")
                 ):
                     continue
-                
-                # Get base model and trained words from default version
-                version_base_model = default_version.get("base_model", "") if default_version else ""
-                trained_words = default_version.get("trained_words", []) if default_version else []
-                
+
                 # Get preview image URL
                 preview_image = model.get("preview_image") or {}
                 civitai_id = model.get("civitai_model_id")
@@ -1313,13 +1394,23 @@ async def list_files_endpoint(
                 ) or (
                     f"/api/v2/models/preview/{civitai_id}" if civitai_id else ""
                 )
-                
+
                 # Provider statuses
                 provider_statuses = model.get("provider_statuses") or {}
-                
-                # Get images from default version
-                version_images = default_version.get("images", []) if default_version else []
-                
+
+                # `trained_words`, `version_description` and `images` are NOT
+                # repeated here. They were copies of the default version's own
+                # fields, which are still in the payload under `versions`, and
+                # every reader of the top-level copy read it as a fallback that
+                # cannot fire: `ModelDetailsModal.jsx:252-254` uses
+                # `selectedVersion?.x || <the copy>`, and `selectedVersion` is
+                # that same version whenever it exists — and when `versions` is
+                # empty there is no image, trained word or version description to
+                # fall back to. `ModelSelector.jsx` reads `version.trained_words`
+                # off the version object, not off this row.
+                #
+                # Model-level `description` stays: it is a different field from
+                # the version's, and `ModelDetailsModal.jsx:239` renders it.
                 file_data = {
                     # Actual filename for generator
                     "name": filename,
@@ -1334,12 +1425,9 @@ async def list_files_endpoint(
                     "model_id": model.get("id"),
                     "civitai_id": civitai_id,
                     # Version info
-                    "base_model": version_base_model,
-                    "trained_words": trained_words,
+                    "base_model": default_version.get("base_model", "") if default_version else "",
                     "version_count": len(versions),
                     "default_version": default_version.get("name", "") if default_version else "",
-                    # Version description (separate from model description)
-                    "version_description": default_version.get("description", "") if default_version else "",
                     # Full versions list for version selector
                     "versions": versions,
                     # Model type
@@ -1347,8 +1435,6 @@ async def list_files_endpoint(
                     "nsfw": model.get("nsfw", False),
                     # Preview image
                     "preview": preview_url,
-                    # All images from version for gallery
-                    "images": version_images,
                     # Provider sync status
                     "provider_statuses": provider_statuses,
                     # Stats
@@ -1360,77 +1446,11 @@ async def list_files_endpoint(
                     # Creator
                     "creator": model.get("creator", {}),
                 }
-                
-                
-                # Apply search filter
-                if search:
-                    search_lower = search.lower()
-                    # Include all version filenames in searchable string
-                    version_filenames = " ".join([
-                        (v.get("file") or {}).get("filename", "") for v in versions if v
-                    ])
-                    # tags/trained_words/description are already on file_data but
-                    # were not searched, which is what made the selector's
-                    # "Search models by name, tags, description..." placeholder
-                    # a lie: a LoRA tagged for a character was unfindable by
-                    # that character unless the name happened to contain it.
-                    # CivitAI tags are the only description of what a LoRA is
-                    # FOR, so they carry the search.
-                    model_tags = file_data.get("tags") or []
-                    trained = file_data.get("trained_words") or []
-                    tag_text = " ".join(str(t) for t in model_tags if t)
-                    trained_text = " ".join(str(t) for t in trained if t)
-                    description = file_data.get("description") or ""
-                    creator = file_data.get("creator") or {}
-                    creator_name = creator.get("username") or ""
-                    searchable = " ".join([
-                        file_data["name"],
-                        file_data["display_name"],
-                        version_filenames,
-                        tag_text,
-                        trained_text,
-                        description,
-                        creator_name,
-                    ]).lower()
-                    if search_lower not in searchable:
-                        continue
-                
+
                 valid_files.append(file_data)
-            
-            # Apply filters
-            if base_model and base_model != "all":
-                valid_files = [f for f in valid_files if f.get("base_model") == base_model]
-            if model_type and model_type != "all":
-                valid_files = [f for f in valid_files if f.get("type") == model_type]
-            if not show_nsfw:
-                valid_files = [f for f in valid_files if not f.get("nsfw", False)]
-            
-            if tags:
-                tag_list = [t.strip() for t in tags.split(",")]
-                valid_files = [f for f in valid_files if all(tag in f.get("tags", []) for tag in tag_list)]
-            
-            # Sort
-            if sort == "date_desc":
-                valid_files.sort(key=lambda x: x.get("modified_time", 0) or 0, reverse=True)
-            elif sort == "name_asc":
-                valid_files.sort(key=lambda x: x.get("name", ""))
-            elif sort == "name_desc":
-                valid_files.sort(key=lambda x: x.get("name", ""), reverse=True)
-            elif sort == "size_desc":
-                valid_files.sort(key=lambda x: x.get("size", 0) or 0, reverse=True)
-            elif sort == "rating_desc":
-                valid_files.sort(key=lambda x: x.get("stats", {}).get("thumbsUp", 0) or 0, reverse=True)
-            elif sort.startswith("random"):
-                import random
-                seed = "stable_random_seed"
-                if sort.startswith("random:"):
-                    seed = sort.split(":", 1)[1]
-                random.Random(search or seed).shuffle(valid_files)
-                
-            total = len(valid_files)
-            paginated = valid_files[offset:offset + limit]
-            
-            return {"files": paginated, "total": total}
+
+            return {"files": valid_files, "total": total}
+
             
         except Exception as e:
             # A DB failure here used to fall through to a filesystem scan and

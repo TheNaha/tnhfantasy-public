@@ -84,6 +84,7 @@ from core.exceptions import NotFoundError, ValidationError
 from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from infrastructure.logging import get_logger
 from services import tag_service
+from services.tag_service import NOT_TOMBSTONED_ASSET_IDS
 from services.asset_reconciler import _asset_as_file_data
 
 logger = get_logger("tags_api")
@@ -381,7 +382,51 @@ def _date_column(filters: AssetFacetFilters):
     return _ORDER_TS
 
 
-def build_asset_query(filters: AssetFacetFilters, exclude: str | None = None):
+def _live_asset_predicate(anti_join: bool):
+    """`Asset.deleted_at IS NULL`, or the anti-join that it has to be planned as.
+
+    Two spellings of one rule, because PostgreSQL will only pick the cheap plan
+    for one of them. `eq_null_testsel` in `selfuncs.c` hard-codes the selectivity
+    of an `IS NULL` test at 0.5% and never consults `pg_stats`, so on this
+    deployment — where `deleted_at` is NULL for 97.8% of `assets`, 16,518 of
+    16,907 rows — the planner believes the live set holds ~85 rows. Given that
+    estimate, any query that has to *probe* the live set probes it with a
+    memoized btree descent into `assets_pkey`, once per distinct id:
+
+        SELECT tag, count(*) FROM asset_tags
+         WHERE asset_id IN (SELECT id FROM assets WHERE deleted_at IS NULL)
+         GROUP BY tag
+          Nested Loop -> Parallel Seq Scan on asset_tags (loops=3)
+                      -> Memoize -> Index Scan using assets_pkey (loops=16,216)
+          assets idx_scan 16,514   Execution Time 644 ms
+
+    `NOT IN (SELECT id FROM assets WHERE deleted_at IS NOT NULL)` states the same
+    set, but the side the planner must budget is the *tombstoned* assets — a few
+    hundred, already indexed by `ix_assets_deleted_at` — so the semi-join hashes
+    instead (`Parallel Index Only Scan using assets_pkey` builds it in 10 ms):
+
+        Parallel Hash Join
+          -> Parallel Seq Scan on asset_tags
+          -> Parallel Hash -> Parallel Index Only Scan using assets_pkey
+             -> Index Scan using ix_assets_deleted_at on assets (rows=389)
+          assets idx_scan 0        Execution Time 388 ms
+
+    The direct spelling is kept for the *paged* query because it is the only form
+    that still lets the planner prove `deleted_at IS NULL` and therefore use
+    `ix_assets_gallery_ts` (a partial index whose predicate is exactly that
+    test). The anti-join would cost that page query the index. So this is a plan
+    hint expressed in SQL, not a second definition of "live": both branches
+    return the same rows, and `tests/test_world_vault_tags.py` pins that they
+    agree.
+    """
+    if anti_join:
+        return Asset.id.notin_(NOT_TOMBSTONED_ASSET_IDS)
+    return Asset.deleted_at.is_(None)
+
+
+def build_asset_query(
+    filters: AssetFacetFilters, exclude: str | None = None, *, anti_join: bool = False
+):
     """The filtered asset query. `exclude` drops one facet dimension's filter.
 
     Every facet dimension is an `IN (SELECT ...)` semi-join rather than a
@@ -395,8 +440,13 @@ def build_asset_query(filters: AssetFacetFilters, exclude: str | None = None):
     Within a dimension the values are OR-ed (`IN`), across dimensions they are
     AND-ed. That is the behaviour a filter panel expects: two tags widen the
     result, a tag plus a LoRA narrows it.
+
+    `anti_join` selects the liveness spelling that the facet *count* queries need
+    so their subquery is hashed rather than index-probed; see
+    `_live_asset_predicate`. The paged caller leaves it off, because
+    `ix_assets_gallery_ts` is a partial index on the direct spelling.
     """
-    statement = select(Asset).where(Asset.deleted_at.is_(None))
+    statement = select(Asset).where(_live_asset_predicate(anti_join))
 
     if filters.workspace:
         statement = statement.where(Asset.workspace == filters.workspace)
@@ -624,18 +674,54 @@ _JOIN_DIMENSIONS = {
 def _matched_ids(filters: AssetFacetFilters, exclude: str | None = None):
     """The filtered asset ids, as a subquery.
 
-    A `Subquery` rather than `select(subquery.c.id)`: passing a subquery column
+    A `Subquery` rather than a `select(subquery.c.id)`: passing a subquery column
     to `select()` makes SQLModel treat it as a FROM element, which both drops
     the join and raises `TypeError: 'int' object is not subscriptable` when the
     result is unpacked.
+
+    `anti_join=True` is not cosmetic. This subquery is embedded in every facet
+    count as `dimension.asset_id IN (SELECT id FROM <matched>)`, and the live
+    set's real cardinality (16,518) is what decides whether that `IN` is hashed
+    or index-probed 16,514 times; see `_live_asset_predicate`.
     """
-    return build_asset_query(filters, exclude=exclude).subquery()
+    return build_asset_query(filters, exclude=exclude, anti_join=True).subquery()
+
+
+def _facet_exclusion(filters: AssetFacetFilters, dimension: str) -> str | None:
+    """The `exclude` value to use for `dimension`, normalised to what changes a plan.
+
+    `build_asset_query` honours `exclude` for exactly four dimensions, and only
+    when that dimension actually has a filter on it. So two cases collapse to
+    "no exclusion":
+
+    * an unknown-to-`build_asset_query` dimension (`character`, `workspace`) —
+      `exclude` is silently ignored there, so passing it changes nothing;
+    * a dimension with no active filter — excluding an absent filter is a no-op.
+
+    Collapsing them is what lets one request share a single filtered subquery
+    across every dimension that wants the same set, instead of re-deriving an
+    identical (and, on this data, expensive) query per dimension. `tests/
+    test_world_vault_tags.py` pins that the shared subquery returns the same rows
+    as a freshly built one.
+    """
+    active = {
+        "lora": bool(filters.lora_civitai_ids or filters.lora_model_ids),
+        "tag": bool(filters.tags),
+        "checkpoint": bool(filters.checkpoints),
+        "session": bool(filters.session_ids),
+    }
+    return dimension if active.get(dimension) else None
 
 
 def _facet_counts(
-    session: Session, filters: AssetFacetFilters, dimension: str, limit: int
+    session: Session,
+    filters: AssetFacetFilters,
+    dimension: str,
+    limit: int,
+    matched=None,
 ) -> list[FacetCount]:
-    matched = _matched_ids(filters, exclude=dimension)
+    if matched is None:
+        matched = _matched_ids(filters, exclude=_facet_exclusion(filters, dimension))
 
     if dimension in _COLUMN_DIMENSIONS:
         column = matched.c[_COLUMN_DIMENSIONS[dimension]]
@@ -810,16 +896,34 @@ def facet_assets(
     page = rows[:limit]
 
     facets: dict[str, list[FacetCount]] = {}
+    # One filtered subquery per *distinct* exclusion, built once and shared.
+    # `total_matched` and every dimension whose filter is not active want the
+    # same un-excluded set, so on the default request
+    # (`group_by=lora,tag,checkpoint`, no filters) this is one derivation instead
+    # of four — and every count that shares it shares its plan shape too, which
+    # is where the win is: the facet's `tag` dimension alone measured 644 ms
+    # while the same query with an accurate live-set cardinality hashed in 388 ms.
+    matched_cache: dict[str | None, object] = {}
+
+    def matched_for(exclude: str | None):
+        if exclude not in matched_cache:
+            matched_cache[exclude] = _matched_ids(filters, exclude=exclude)
+        return matched_cache[exclude]
+
     for dimension in dimensions:
-        facets[dimension] = _facet_counts(session, filters, dimension, facet_limit)
+        facets[dimension] = _facet_counts(
+            session,
+            filters,
+            dimension,
+            facet_limit,
+            matched=matched_for(_facet_exclusion(filters, dimension)),
+        )
 
     # One count over the filtered subquery. `.one()` already returns the scalar
     # here — SQLModel unwraps a single-column select — so indexing it raised
     # `TypeError: 'int' object is not subscriptable`.
     total_matched = (
-        session.exec(
-            select(func.count()).select_from(_matched_ids(filters))
-        ).one()
+        session.exec(select(func.count()).select_from(matched_for(None))).one()
         if include_total
         else None
     )

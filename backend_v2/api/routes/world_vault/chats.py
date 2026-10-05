@@ -896,6 +896,15 @@ def _add_message_prep_sync(
         if os.path.commonpath([image_candidate, output_root]) != output_root:
             raise ValidationError("Image path is outside the output directory")
 
+    # Validated BEFORE the write, not after it. This used to be checked in the
+    # route, after `session.commit()` had already persisted the user message —
+    # so asking for narration on a chat that has it disabled returned a failure
+    # *and* left the message behind. The frontend reads the error as "send
+    # failed" and the user sends it again.
+    if request.narrate and request.role == MessageRole.USER and not request.no_reply:
+        if not chat.allow_narration:
+            raise ValidationError("Narration is disabled for this chat")
+
     message = Message(
         chat_id=chat_id,
         role=request.role,
@@ -967,8 +976,6 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             job_service = get_job_service(session)
 
             if request.narrate:
-                if not chat.allow_narration:
-                    raise ValidationError("Narration is disabled for this chat")
                 from config import get_system_prompt_blocks
                 from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
 
@@ -1032,6 +1039,11 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             await queue_manager.enqueue(job.id, task_type="llm")
             job_id = job.id
 
+        except ComfyError:
+            # A domain error keeps its own status and code. Re-wrapping it as a
+            # bare `ComfyError` turned every 4xx raised in here into a 500 and
+            # discarded the `code`.
+            raise
         except Exception as e:
             raise ComfyError(str(e))
 

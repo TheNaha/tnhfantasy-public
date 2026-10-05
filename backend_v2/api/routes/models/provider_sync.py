@@ -57,11 +57,20 @@ async def update_file_provider_status(
 
     # Emit WebSocket event to replace polling
     from core.events import emit_model_status_update
+    # `error_message` is part of the payload on purpose. The row was written with
+    # it, but the event carried only storage_path/size_bytes — so the one field
+    # that explains *why* a download failed reached the database and never
+    # reached the browser, and the UI's only way to show a failure reason was to
+    # re-poll the row it had just been told about.
     await emit_model_status_update(
         provider_id=provider_id,
         file_id=file_id,
         status=request.status,
-        extra={"storage_path": request.storage_path, "size_bytes": request.size_bytes}
+        extra={
+            "storage_path": request.storage_path,
+            "size_bytes": request.size_bytes,
+            "error_message": request.error_message,
+        }
     )
 
     return result
