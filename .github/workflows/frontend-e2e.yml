@@ -17,6 +17,13 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    # The job set no timeout, and twelve consecutive red runs each burned about
+    # 1h20m of runner time (run 37196314564: 50 failed, 3 flaky, 28 skipped, 86
+    # passed, 1.3h). A red e2e job that costs more than an hour per push is a red
+    # job people stop reading, which is how a 422 in a seed helper went unnoticed
+    # through several passes. Bounded, and long enough for the two Playwright
+    # passes plus retries.
+    timeout-minutes: 45
 
     services:
       postgres:
@@ -107,6 +114,24 @@ jobs:
       # frontend_v2/** AND backend_v2/** trigger is correct because the UI-level
       # tests exercise both.
       run: npx playwright test --project=chromium --grep-invert @fullstack
+      env:
+        VITE_PROXY_TARGET: http://localhost:8002
+
+    # The mobile layout pass ran in NO workflow. `playwright.config.js` defines a
+    # `mobile-chromium` project (Pixel 7) whose tests live in
+    # `e2e/mobile-responsive.spec.js`, and the `chromium` project excludes that
+    # file with `testIgnore: /mobile-responsive\.spec\.js/`. The step above pins
+    # `--project=chromium`, so all nine mobile tests were unreachable from CI and
+    # the only real measurement of tap targets, horizontal overflow and header
+    # wrapping was manual.
+    #
+    # This matters more than usual right now: commit 295f8888 shipped a stray `}`
+    # in `src/index.css` that closed the phone media query early and applied the
+    # mobile touch geometry at every viewport width. Nothing in the unit suite
+    # could see it (`mobileLayoutInvariants.test.js` regexed the file and never
+    # checked block membership); a real 390px browser run can.
+    - name: Mobile layout pass (390px)
+      run: npx playwright test --project=mobile-chromium --grep-invert @fullstack
       env:
         VITE_PROXY_TARGET: http://localhost:8002
 

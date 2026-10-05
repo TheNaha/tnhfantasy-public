@@ -29,6 +29,26 @@ on:
       - 'scripts/**'
       - '.env.example*'
       - '.github/workflows/**'
+      # The `app-images` job below builds these two Dockerfiles. GitHub has no
+      # job-level `paths:`, so naming the files here is the only way to trigger
+      # it — and it means the whole workflow runs on a Dockerfile change, which
+      # is a few minutes and the cheaper mistake.
+      - 'backend_v2/Dockerfile'
+      - 'frontend_v2/Dockerfile'
+      # The inputs that change what those images produce without changing the
+      # Dockerfile. A lockfile bump that breaks `npm ci`, or a requirements
+      # change that no longer resolves, is exactly the breakage no other job can
+      # see: `frontend-tests.yml` runs `npm ci` on the host and
+      # `backend-tests.yml` installs into a host venv, so neither would notice
+      # that the *image* no longer builds.
+      - 'backend_v2/requirements.txt'
+      - 'frontend_v2/package-lock.json'
+      # The root `.dockerignore` governs the remote agent's build context: the
+      # `build` job below builds it with `context: .`, so this one file decides
+      # what reaches the daemon — and it was the only file in that context
+      # triggering no workflow at all. A `COPY` pattern that started excluding a
+      # needed path would have failed the agent image with nothing watching.
+      - '.dockerignore'
   pull_request:
     branches: [ "main", "master" ]
     paths:
@@ -38,6 +58,11 @@ on:
       - 'scripts/**'
       - '.env.example*'
       - '.github/workflows/**'
+      - 'backend_v2/Dockerfile'
+      - 'frontend_v2/Dockerfile'
+      - 'backend_v2/requirements.txt'
+      - 'frontend_v2/package-lock.json'
+      - '.dockerignore'
 
 jobs:
   test:
@@ -82,7 +107,12 @@ jobs:
       run: ruff check .
 
     - name: Compile provider sources
-      run: python -m compileall -q provider_core image_worker llm_worker ../remote_agent
+      # `tts_worker` was missing here while the `build` job below built its
+      # Dockerfile. A syntax error in it therefore reached main whenever the
+      # provider tests happened to pass — the build is a much later, slower net
+      # than a compile. All four entrypoints plus the shared library, which is
+      # what `remote_agent` imports.
+      run: python -m compileall -q provider_core image_worker llm_worker tts_worker ../remote_agent
 
     - name: Run tests with pytest
       run: |
@@ -180,3 +210,39 @@ jobs:
 
     - name: Build the remote agent image
       run: docker build -f remote_agent/Dockerfile -t tnhcomfy-provider-test-agent:latest .
+
+  # ── the two application images, which nothing built ──────────────────────────
+  # `backend_v2/Dockerfile` and `frontend_v2/Dockerfile` are what actually runs
+  # in production and in every dev `up`, and until 2026-10-03 no workflow built
+  # either. That is a bigger hole than the missing `tts_worker` build this file
+  # already covers: a bad `COPY`, a missing system package, a `pip install` that
+  # no longer resolves, or a frontend `npm ci` that breaks on a lockfile bump all
+  # shipped green while both test suites — which run on the *host*, not in the
+  # image — stayed green too.
+  #
+  # A green suite says nothing about whether the image builds. This job is the
+  # cheapest thing that says something.
+  #
+  # It lives here rather than in `backend-tests.yml` / `frontend-tests.yml`
+  # because GitHub has no job-level `paths:`: `on.<event>.paths` filters the
+  # whole workflow, and `backend_v2/Dockerfile` needs `backend_v2/**` to be a
+  # trigger of whichever workflow builds it. Adding `backend_v2/Dockerfile` to
+  # this workflow's filter would fire it on every backend source change, which is
+  # most of them — so instead the filter names the Dockerfiles themselves plus the
+  # build inputs that change what they produce.
+  app-images:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build the backend image
+      run: docker build -f backend_v2/Dockerfile -t tnhcomfy-backend-build-check:latest backend_v2
+
+    - name: Build the frontend image (prod target)
+      # `prod`, not the default: the dev target is what the hot-reload stack runs,
+      # and it is a different `npm ci`. Both matter; prod is the one whose output
+      # is served.
+      run: docker build --target prod -f frontend_v2/Dockerfile -t tnhcomfy-frontend-build-check:latest frontend_v2
+
+    - name: Build the frontend image (dev target)
+      run: docker build --target dev -f frontend_v2/Dockerfile -t tnhcomfy-frontend-dev-build-check:latest frontend_v2

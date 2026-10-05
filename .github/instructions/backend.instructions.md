@@ -15,7 +15,7 @@ These instructions apply to backend code in backend_v2 only.
 - Services should take a request-scoped Session and instantiate repositories internally.
 - Resolve dependencies through api/deps.py (for example get_session and get_*_service).
 - Prefer domain errors from core/exceptions.py (ComfyError hierarchy) instead of ad hoc HTTPException branching.
-- Emit domain events through core/events.py helpers (emit_job_event, emit_download_event).
+- Emit domain events through core/events.py helpers (emit_job_event). Do not use emit_download_event: it was removed on 2026-10-03 with the whole download.* event family, which had no producer and no subscriber.
 
 ## Data And Config Rules
 

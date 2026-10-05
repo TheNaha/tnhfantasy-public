@@ -5,11 +5,27 @@ on:
     branches: [ "main", "master" ]
     paths:
       - 'backend_v2/**'
+      # `docs/api.md` is GENERATED from `app.openapi()` by
+      # `scripts/generate_api_docs.py`, and `tests/test_api_docs_contract.py`
+      # drift-checks it in both directions. Neither ran on a change to the
+      # document alone, so the one file whose entire job is to track the API was
+      # the one file that could drift silently. The generator itself lives under
+      # `scripts/**`, which triggers `provider-tests.yml` — a workflow that does
+      # not run the backend suite — so the check had no trigger at all.
+      - 'docs/api.md'
       - '.github/workflows/backend-tests.yml'
   pull_request:
     branches: [ "main", "master" ]
     paths:
       - 'backend_v2/**'
+      # `docs/api.md` is GENERATED from `app.openapi()` by
+      # `scripts/generate_api_docs.py`, and `tests/test_api_docs_contract.py`
+      # drift-checks it in both directions. Neither ran on a change to the
+      # document alone, so the one file whose entire job is to track the API was
+      # the one file that could drift silently. The generator itself lives under
+      # `scripts/**`, which triggers `provider-tests.yml` — a workflow that does
+      # not run the backend suite — so the check had no trigger at all.
+      - 'docs/api.md'
       - '.github/workflows/backend-tests.yml'
 
 jobs:

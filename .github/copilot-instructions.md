@@ -54,7 +54,7 @@ npm test
 
 - Services take a request-scoped `Session` and instantiate repositories internally.
 - Route handlers should resolve dependencies via `api/deps.py` (`get_session`, `get_*_service`).
-- Emit domain events through `core/events.py` helpers (`emit_job_event`, `emit_download_event`).
+- Emit domain events through `core/events.py` helpers (`emit_job_event`). Do not use `emit_download_event`: it was removed on 2026-10-03 with the whole `download.*` event family, which had no producer and no subscriber.
 - Use `core/exceptions.py` (`ComfyError` hierarchy) for domain errors.
 - Migrations are ordered startup steps in `infrastructure/migrations/`, with no Alembic.
 - Config precedence is: `COMFY_*` env vars > `config.json` > `DEFAULT_CONFIG` in `config.py`.
