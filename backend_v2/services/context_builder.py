@@ -166,6 +166,11 @@ LOREBOOK_FALLBACK_ENTRIES = 50
 
 _TOKEN_CACHE = TTLCache(maxsize=2048, ttl=300)
 
+# Text longer than this is tokenised without being cached. See `_estimate_cached`.
+# 64 KiB is well past any single chat message and comfortably inside one
+# context window, so nothing that is re-read per turn loses its cache.
+TOKEN_CACHE_MAX_CHARS = 64 * 1024
+
 
 @lru_cache(maxsize=4)
 def _load_encoding(name: str):
@@ -200,7 +205,16 @@ def _estimate_cached(text: str) -> int:
     The plain lru_cache on full message text can grow unbounded across long
     campaigns, pinning large strings in memory. The TTL cache evicts entries
     after 5 minutes, bounding memory usage in long-running chats/stories.
+
+    The bound is in **characters, not entries**. `TTLCache(maxsize=2048)` is 2048
+    *values*, and the key here is the whole message text: 2048 short prompts is
+    nothing, 2048 chapter-sized messages is hundreds of megabytes pinned for
+    five minutes. One bound has to be in the dimension that actually grows, so
+    long text skips the cache entirely rather than evicting everything else to
+    make room for it.
     """
+    if len(text) > TOKEN_CACHE_MAX_CHARS:
+        return estimate_tokens(text)
     cached = _TOKEN_CACHE.get(text)
     if cached is not None:
         return cached

@@ -153,7 +153,6 @@ class ModelCivitaiSyncService:
         if civitai_data.get("modelVersions"):
             local_versions = self.repo.get_versions_for_model(model.id)
             civitai_versions = civitai_data["modelVersions"]
-            matched_ids = set()
 
             # Pre-fetch existing files and images to avoid N+1 queries
             local_version_ids = [lv.id for lv in local_versions]
@@ -175,17 +174,23 @@ class ModelCivitaiSyncService:
 
             civitai_by_id = {lv.civitai_version_id: lv for lv in local_versions if lv.civitai_version_id}
             civitai_by_name = {lv.name.lower(): lv for lv in local_versions}
+            # The auto-discovered placeholder version. It is *adopted* by the
+            # first CivitAI version that has no other match, so its ModelFiles
+            # stay attached to a version that is actually linked — creating a
+            # second version instead left the files stranded on an unlinked
+            # "v1.0" next to an identical, empty, linked one.
             unlinked_v1 = next((lv for lv in local_versions if lv.name == "v1.0" and not lv.civitai_version_id), None)
 
             for civitai_version in civitai_versions:
                 civ_id = civitai_version.get("id")
                 civ_name = civitai_version.get("name", "").lower()
 
-                matched_version = civitai_by_id.get(civ_id) or civitai_by_name.get(civ_name) or unlinked_v1
-                if matched_version is unlinked_v1:
-                    matched_version.name = civitai_version.get("name", "v1.0")
+                matched_version = civitai_by_id.get(civ_id) or civitai_by_name.get(civ_name)
+                if matched_version is None and unlinked_v1 is not None:
+                    matched_version = unlinked_v1
                     unlinked_v1 = None
-                    # Create a new ModelVersion for unmatched CivitAI versions
+
+                if matched_version is None:
                     new_version = ModelVersion(
                         model_id=model.id,
                         name=civitai_version.get("name", "v1.0"),
@@ -202,7 +207,6 @@ class ModelCivitaiSyncService:
                     matched_version = new_version
                     local_versions.append(new_version)
 
-                matched_ids.add(matched_version.id)
                 matched_version.civitai_version_id = civitai_version.get("id")
 
                 # Update file metadata from CivitAI data (size, download_url)

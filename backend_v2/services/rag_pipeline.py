@@ -120,10 +120,11 @@ def search_memories(
     query = (query or "").strip()
     if not q_vec_computed:
         q_vec = _try_embedding(query) if (rag_on and query and _is_postgres(session)) else None
-    elif q_vec is None and rag_on and query and _is_postgres(session):
-        # The caller computed it off-thread and got nothing (model unavailable).
-        # Fall through to the keyword path exactly as the sync branch would.
-        pass
+    # When the caller computed the vector off-thread and got nothing (the model
+    # is unavailable), `q_vec` stays None and the `if q_vec:` branch below takes
+    # the keyword path exactly as the sync branch does. That was previously an
+    # `elif` with an empty body, which read as live handling and would have
+    # silently done nothing if edited.
     if not rag_on and query:
         logger.debug("rag_disabled_keyword_fallback", character_id=character_id)
 

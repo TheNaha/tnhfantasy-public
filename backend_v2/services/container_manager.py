@@ -624,12 +624,4 @@ class ContainerManager:
             for c in containers
         ], True
     
-    def cleanup_all(self):
-        """Stop and remove all provider containers."""
-        logger.info("container_cleanup_all_start", count=len(self.running_containers))
-        
-        for provider_id in list(self.running_containers.keys()):
-            self.stop_container(provider_id)
-        
-        logger.info("container_cleanup_all_complete")
 

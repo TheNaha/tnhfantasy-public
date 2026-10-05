@@ -96,11 +96,6 @@ class JobRepository:
 
 
 
-    def get_by_status(self, status: JobStatus) -> list[Job]:
-        """Get all jobs with a specific status."""
-        stmt = select(Job).where(Job.status == status)
-        return list(self.session.exec(stmt).all())
-    
     def get_by_statuses(self, statuses: list[JobStatus]) -> list[Job]:
         """Get all jobs with any of the specified statuses."""
         stmt = select(Job).where(Job.status.in_(statuses)).order_by(Job.created_at)

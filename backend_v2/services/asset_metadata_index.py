@@ -549,10 +549,17 @@ def reindex_asset_loras(
 
     Returns a summary dict, including `last_asset_id` for resuming.
     """
-    statement = select(Asset).where(Asset.deleted_at.is_(None))
-    if after_id:
-        statement = statement.where(Asset.id > after_id)
-    statement = statement.order_by(Asset.id).limit(batch_size)
+    def batch_query(last_seen_id):
+        # Rebuilt every iteration on purpose. Accumulating
+        # `statement.where(Asset.id > last_id)` on the *same* statement made the
+        # final batch carry one predicate per batch processed — ~80 of them and a
+        # growing bind list on a 16k library at the default batch size of 200 —
+        # so SQLAlchemy's compiled-statement cache missed on every iteration and
+        # the job slowed down monotonically as it progressed.
+        stmt = select(Asset).where(Asset.deleted_at.is_(None))
+        if last_seen_id:
+            stmt = stmt.where(Asset.id > last_seen_id)
+        return stmt.order_by(Asset.id).limit(batch_size)
 
     processed = 0
     loras_seen = 0
@@ -562,7 +569,7 @@ def reindex_asset_loras(
     truncated = False
 
     while True:
-        assets = session.exec(statement).all()
+        assets = session.exec(batch_query(last_id)).all()
         if not assets:
             break
 
@@ -583,8 +590,6 @@ def reindex_asset_loras(
             break
         if len(assets) < batch_size:
             break
-        # Keyset by id so a resume never re-reads the batch we just committed.
-        statement = statement.where(Asset.id > last_id)
 
     return {
         "processed": processed,
@@ -722,17 +727,19 @@ def refresh_asset_metadata_from_png(
         reindex_loras: also rebuild `asset_loras` for each upgraded asset. Turn
             this off if you only want the metadata repaired.
     """
-    statement = select(Asset).where(Asset.deleted_at.is_(None))
-    if after_id:
-        statement = statement.where(Asset.id > after_id)
-    statement = statement.order_by(Asset.id).limit(batch_size)
+    def batch_query(last_seen_id):
+        # Rebuilt per iteration — see the note in `reindex_asset_loras`.
+        stmt = select(Asset).where(Asset.deleted_at.is_(None))
+        if last_seen_id:
+            stmt = stmt.where(Asset.id > last_seen_id)
+        return stmt.order_by(Asset.id).limit(batch_size)
 
     considered = upgraded = files_missing = no_metadata = loras_written = 0
     last_id = after_id
     truncated = False
 
     while True:
-        assets = session.exec(statement).all()
+        assets = session.exec(batch_query(last_id)).all()
         if not assets:
             break
 
@@ -760,7 +767,6 @@ def refresh_asset_metadata_from_png(
             break
         if len(assets) < batch_size:
             break
-        statement = statement.where(Asset.id > last_id)
 
     return {
         "considered": considered,

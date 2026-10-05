@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import selectinload
-from sqlmodel import Session, and_, col, or_, select
+from sqlmodel import Session, and_, col, func, or_, select
 
 from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from core.entities import (
@@ -376,11 +376,261 @@ class ModelRepositoryV2:
         stmt = select(ModelV2).order_by(col(ModelV2.updated_at).desc())
         return list(self.session.exec(stmt).all())
     
-    def get_models_by_directory(self, directory: str) -> list[ModelV2]:
-        """Get models in a specific directory."""
-        stmt = select(ModelV2).where(ModelV2.directory == directory)
+    # ── the directory listing, filtered and paged in SQL ─────────────────────
+    #
+    # This listing was, until 2026-10-05, `get_models_by_directory(directory)`
+    # followed by filtering, sorting and slicing in the route. That cost
+    # 7,062 B and ~1.2 s for one 484-model page, and it charged every request the
+    # whole directory: `?limit=2` measured 543 ms and a search for a string that
+    # does not exist measured the same 0.9 s before returning `{"files": []}`.
+    #
+    # So the four things the route was doing by hand live here now, where the
+    # database can index them, and the route only projects. The filters are
+    # built by one function so the page query and `count_models_by_directory`
+    # cannot drift — a `total` that disagrees with its own rows is worse than no
+    # total at all.
+    #
+    # `_default_version_file` is a correlated subquery rather than a join because
+    # the sort key is *the default version's primary file*, which is not a
+    # column of `models_v2`. Ordering by `models_v2.name` instead would look
+    # equivalent and is not: on this deployment the two differ for every row
+    # (484/484 in `models/loras`, 15/15 in `models/checkpoints`), because
+    # `models_v2.name` is the CivitAI title and the sort key is the filename on
+    # disk. That sort is what the Model Manager's LoRA tab sends, so getting it
+    # wrong would reorder every list in the UI.
+
+    def _default_version_id(self):
+        return (
+            select(ModelVersion.id)
+            .where(ModelVersion.model_id == ModelV2.id)
+            .where(ModelVersion.is_default.is_(True))
+            .limit(1)
+            .correlate(ModelV2)
+            .scalar_subquery()
+        )
+
+    def _default_version_file(self, column):
+        return (
+            select(column)
+            .where(ModelFile.version_id == self._default_version_id())
+            .order_by(ModelFile.is_primary.desc(), ModelFile.id)
+            .limit(1)
+            .correlate(ModelV2)
+            .scalar_subquery()
+        )
+
+    def _directory_filters(
+        self,
+        directory: str,
+        *,
+        search: str | None = None,
+        tags: list[str] | None = None,
+        model_type: str | None = None,
+        base_model: str | None = None,
+        show_nsfw: bool = True,
+    ) -> list:
+        """The WHERE clauses for one directory listing, shared by page and count."""
+        clauses = [ModelV2.directory == directory]
+        if not show_nsfw:
+            clauses.append(ModelV2.nsfw.is_(False))
+        if model_type:
+            clauses.append(ModelV2.type == model_type)
+        if search:
+            like = like_contains(search)
+            # The same fields the route used to join into one string: the model's
+            # name, its creator, its description, its tags, and — the part that is
+            # easy to miss — its versions' trained words and filenames. Trained
+            # words are the *only* vocabulary a HuggingFace-sourced LoRA has, and
+            # `ModelSelector.jsx` documents the backend search as covering
+            # "name, display name, tags, trained words and description".
+            clauses.append(
+                or_(
+                    ModelV2.name.ilike(like),
+                    ModelV2.creator_username.ilike(like),
+                    ModelV2.description.ilike(like),
+                    ModelV2.id.in_(
+                        select(ModelTag.model_id).where(ModelTag.tag.ilike(like))
+                    ),
+                    ModelV2.id.in_(
+                        select(ModelVersion.model_id).where(
+                            or_(
+                                ModelVersion.description.ilike(like),
+                                ModelVersion.trained_words.ilike(like),
+                            )
+                        )
+                    ),
+                    ModelV2.id.in_(
+                        select(ModelVersion.model_id)
+                        .join(ModelFile, ModelFile.version_id == ModelVersion.id)
+                        .where(ModelFile.storage_filename.ilike(like))
+                    ),
+                )
+            )
+        for tag in tags or []:
+            clauses.append(
+                ModelV2.id.in_(
+                    select(ModelTag.model_id).where(ModelTag.tag == tag)
+                )
+            )
+        if base_model:
+            # The route filtered on the *default* version's base model, so this
+            # does too, with the same fallback it had for a model whose versions
+            # carry no `is_default` flag at all: the flag is nullable and the
+            # Python was `next(is_default, versions[0])`. Flat `in_` subqueries
+            # rather than nested `exists`, because a correlated `exists` inside a
+            # `model_versions` subquery that is itself correlated to `models_v2`
+            # makes the correlation ambiguous to read and to resolve.
+            has_default = ModelV2.id.in_(
+                select(ModelVersion.model_id).where(ModelVersion.is_default.is_(True))
+            )
+            default_matches = ModelV2.id.in_(
+                select(ModelVersion.model_id).where(
+                    ModelVersion.is_default.is_(True),
+                    ModelVersion.base_model == base_model,
+                )
+            )
+            any_version_matches = ModelV2.id.in_(
+                select(ModelVersion.model_id).where(
+                    ModelVersion.base_model == base_model
+                )
+            )
+            # For the unflagged fallback the SQL accepts *any* version's base
+            # model where the Python used `versions[0]` specifically. There are no
+            # such models on this deployment (`set_default_version` writes the
+            # flag; measured 0 of 516 across every directory), and preferring a
+            # match over silently hiding the model is the safer of the two
+            # readings.
+            clauses.append(or_(default_matches, and_(~has_default, any_version_matches)))
+        return clauses
+
+    # `name`/`size` resolve through `_default_version_file`, so they are built on
+    # demand rather than stored in a module-level map next to the column sorts.
+    _DIRECTORY_COLUMN_SORTS = {
+        "date_desc": ModelV2.updated_at,
+        "date_asc": ModelV2.updated_at,
+        "rating_desc": ModelV2.stats_thumbs_up,
+    }
+
+    def _directory_order(self, sort: str | None, descending: bool):
+        if sort is None:
+            # Deterministic, and the same order `random[:seed]` shuffles over, so a
+            # seeded shuffle keeps producing the page it produced before.
+            return ModelV2.id.desc() if descending else ModelV2.id.asc()
+        if sort in ("name_asc", "name_desc"):
+            key = self._default_version_file(ModelFile.storage_filename)
+            return key.desc() if sort.endswith("_desc") else key.asc()
+        if sort == "size_desc":
+            return self._default_version_file(ModelFile.size_kb).desc()
+        column = self._DIRECTORY_COLUMN_SORTS.get(sort)
+        if column is None:
+            raise ValueError(f"Unsupported directory sort: {sort!r}")
+        return column.desc() if descending else column.asc()
+
+    def get_models_by_directory(
+        self,
+        directory: str,
+        *,
+        search: str | None = None,
+        tags: list[str] | None = None,
+        model_type: str | None = None,
+        base_model: str | None = None,
+        show_nsfw: bool = True,
+        sort: str | None = None,
+        descending: bool = True,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[ModelV2]:
+        """Get models in a specific directory, filtered and paged in the database.
+
+        Every argument is optional and defaults to today's behaviour, so the
+        callers that want the whole directory (`/directory/{directory}`) are
+        unaffected by the paging machinery they never pass.
+        """
+        stmt = select(ModelV2).where(
+            *self._directory_filters(
+                directory,
+                search=search,
+                tags=tags,
+                model_type=model_type,
+                base_model=base_model,
+                show_nsfw=show_nsfw,
+            )
+        )
+        stmt = stmt.order_by(self._directory_order(sort, descending))
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
         return list(self.session.exec(stmt).all())
-    
+
+    def get_models_by_ids(self, ids: list[int]) -> list[ModelV2]:
+        """Models by id, for a caller that already chose the page itself.
+
+        For the sorts the database cannot evaluate — `random[:seed]` shuffles the
+        whole directory and then takes one page — the ids are decided outside the
+        query, and this fetches exactly those rows.
+        """
+        if not ids:
+            return []
+        stmt = select(ModelV2).where(ModelV2.id.in_(ids))
+        return list(self.session.exec(stmt).all())
+
+    def get_model_ids_by_directory(
+        self,
+        directory: str,
+        *,
+        search: str | None = None,
+        tags: list[str] | None = None,
+        model_type: str | None = None,
+        base_model: str | None = None,
+        show_nsfw: bool = True,
+    ) -> list[int]:
+        """Just the ids, in id order — for a sort the database cannot express.
+
+        `random[:seed]` shuffles the whole directory before slicing it, so it has
+        to see every id even though it only hydrates one page. Selecting ids is
+        cheap; selecting, hydrating and then discarding the models is what it
+        used to do.
+        """
+        stmt = select(ModelV2.id).where(
+            *self._directory_filters(
+                directory,
+                search=search,
+                tags=tags,
+                model_type=model_type,
+                base_model=base_model,
+                show_nsfw=show_nsfw,
+            )
+        ).order_by(ModelV2.id)
+        return list(self.session.exec(stmt).all())
+
+    def count_models_by_directory(
+        self,
+        directory: str,
+        *,
+        search: str | None = None,
+        tags: list[str] | None = None,
+        model_type: str | None = None,
+        base_model: str | None = None,
+        show_nsfw: bool = True,
+    ) -> int:
+        """How many models a directory listing matches, before paging.
+
+        Shares `_directory_filters` with the page query, so `total` cannot
+        describe a different set than `files`.
+        """
+        stmt = select(func.count()).select_from(ModelV2).where(
+            *self._directory_filters(
+                directory,
+                search=search,
+                tags=tags,
+                model_type=model_type,
+                base_model=base_model,
+                show_nsfw=show_nsfw,
+            )
+        )
+        return int(self.session.exec(stmt).one())
+
     def get_models_by_type(self, model_type: str) -> list[ModelV2]:
         """Get models of a specific type."""
         stmt = select(ModelV2).where(ModelV2.type == model_type)
@@ -788,11 +1038,14 @@ class ModelRepositoryV2:
             return first if first in ("downloading", "failed") else "pending"
         return "partial"
     
-    def delete_all_statuses_for_provider(self, provider_id: str) -> int:
+    def delete_all_statuses_for_provider(self, provider_id: str, *, commit: bool = True) -> int:
         """
         Delete all ProviderVersionStatus records for a given provider.
         Used when deleting a provider to cascade cleanup.
-        
+
+        `commit=False` lets a caller that is sweeping several providers pay one
+        commit for the whole sweep instead of one each.
+
         Returns:
             Number of records deleted
         """
@@ -801,13 +1054,13 @@ class ModelRepositoryV2:
         )
         statuses = list(self.session.exec(stmt).all())
         count = len(statuses)
-        
+
         for status in statuses:
             self.session.delete(status)
-        
-        if count > 0:
+
+        if count > 0 and commit:
             self.session.commit()
-        
+
         return count
     
     def cleanup_orphaned_provider_statuses(self, active_provider_names: list[str]) -> dict[str, int]:
@@ -836,9 +1089,14 @@ class ModelRepositoryV2:
         
         total_deleted = 0
         for provider_id in orphaned_providers:
-            count = self.delete_all_statuses_for_provider(provider_id)
+            count = self.delete_all_statuses_for_provider(provider_id, commit=False)
             total_deleted += count
-        
+        # One commit for the whole sweep. The per-provider commit meant N
+        # round-trips and N fsyncs for a single logical operation, and left the
+        # caller unable to reason about it as atomic.
+        if total_deleted > 0:
+            self.session.commit()
+
         return {
             "deleted_count": total_deleted,
             "orphaned_providers": orphaned_providers
@@ -891,17 +1149,6 @@ class ModelRepositoryV2:
             ModelImage.version_id == version_id
         ).order_by(ModelImage.sort_order)
         return list(self.session.exec(stmt).all())
-    
-    def get_primary_image_for_model(self, model_id: int) -> ModelImage | None:
-        """Get the first image from the default version."""
-        default_version = self.get_default_version(model_id)
-        if not default_version:
-            return None
-        
-        stmt = select(ModelImage).where(
-            ModelImage.version_id == default_version.id
-        ).order_by(ModelImage.sort_order).limit(1)
-        return self.session.exec(stmt).first()
     
     # =========================================================================
     # TAG OPERATIONS

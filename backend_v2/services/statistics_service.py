@@ -17,8 +17,14 @@ Portability
 -----------
 All SQL is built from SQLAlchemy Core constructs that compile to `->>` on
 Postgres and `JSON_EXTRACT` on SQLite, so the test suite exercises the same
-code path as production. There is no dialect branching and no Postgres-only
-operator in a query the tests reach.
+code path as production. There is no dialect branching in a distribution query
+and no Postgres-only operator in a query the tests reach. The one deliberate
+exception is the gallery's day bucket (`_day_bucket`): `date_trunc` exists only
+in Postgres, so that one expression branches on the dialect name and SQLite keeps
+bucketing in Python — with the test suite pinning that both branches produce the
+same day keys. `cast(ts AS varchar)` is not an acceptable way to avoid the
+branch, on either dialect: it would make the day depend on the session
+`TimeZone` rather than on the data.
 
 Two consequences of aggregating text rather than the decoded document are worth
 knowing:
@@ -40,6 +46,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from collections import Counter, OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Sequence
@@ -524,21 +531,85 @@ def _session_scope() -> Any:
 def gallery_day_key(moment: Any) -> str | None:
     """`YYYY-MM-DD` in UTC for one gallery timestamp, or None if unusable.
 
-    The bucketing is done in Python rather than as a SQL `GROUP BY date_trunc`
-    for one reason: correctness across both dialects this module supports.
-    Postgres has no `date_trunc` equivalent in SQLite, and SQLite's `date()` has
-    no Postgres equivalent, so a SQL-side bucket either branches on dialect —
-    which this module's portability rule exists to prevent — or picks
-    `cast(ts AS varchar)` and silently depends on the session `TimeZone` being
-    UTC, which is an environment fact rather than a guarantee. One narrow
-    column scan of already-materialised datetimes is the honest cost: the
-    expensive part of the old row pass was 70 MB of jsonb, not the timestamps.
+    The day *bucket* is built in SQL where the dialect has `date_trunc` — see
+    `_day_bucket` — and this remains the single definition of what a day key
+    looks like, applied to the bucket's value. On a dialect without `date_trunc`
+    it is also the bucketing step, over the raw timestamps.
     """
     if not isinstance(moment, datetime):
         return None
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _day_bucket(dialect_name: str, moment: ColumnElement[Any]):
+    """`moment` grouped to its UTC calendar day in SQL, or None to bucket in Python.
+
+    The bucketing used to happen in Python over all 16,518 timestamps, because
+    `date_trunc` does not exist in SQLite and a SQL-side bucket therefore needed
+    a dialect branch — which this module's portability rule used to forbid.
+    That rule is about *correctness*, though, not about never branching: the two
+    branches below return identical day keys, because `date_trunc('day', ts)` on
+    a `timestamp without time zone` truncates the stored wall clock and the
+    stored wall clock is UTC (`gallery_day_key` treats a naive value as UTC for
+    the same reason). The rule that does still hold, and now has a test, is the
+    other one: never reach for `cast(ts AS varchar)`, which would make the answer
+    depend on the session `TimeZone` being UTC rather than on the data.
+
+    Measured on this deployment, `/api/v2/assets/dates` cost 296 ms of which the
+    scan was 80-109 ms and the Python bucketing was the rest: 16,518 rows out of
+    the query and 271 day groups back in. Grouping in SQL returns those 271 rows.
+    """
+    if dialect_name != "postgresql":
+        return None
+    return func.date_trunc("day", moment)
+
+
+# The unfiltered histogram's own cache.
+#
+# `_PROMPT_CACHE` above is keyed on a *content signature*, so it can never serve a
+# stale aggregate; doing the same here would need a signature query, and that
+# query is itself a full scan of `assets` (measured 100 ms) — half of what the
+# cache saves. So this one is a short TTL instead, which is also what fixes the
+# part of the cost the SQL rewrite cannot: the endpoint opens its own session per
+# request, and 16 concurrent scans of the same 16.5k rows inverted throughput
+# (c=1 298 ms / 3.35 rps → c=16 6,267 ms / 2.53 rps — sixteen requests
+# delivering *less* work per second than one).
+#
+# Only the unfiltered form is cached. A scoped histogram describes one gallery
+# view, so caching it would hold a rail that is stale for a specific character or
+# search while the unfiltered rail next to it is current — and the filtered
+# queries are the narrow ones that filter on an indexed column, which is where the
+# scan cost was not the problem anyway.
+#
+# 30 s is long enough that opening the gallery repeatedly costs one scan, and
+# short enough that a freshly generated image reaches the rail almost at once.
+_HISTOGRAM_CACHE: "OrderedDict[str, tuple[float, dict[str, Any]]]" = OrderedDict()
+_HISTOGRAM_CACHE_MAX = 8
+_HISTOGRAM_CACHE_TTL_SECONDS = 30.0
+_histogram_cache_lock = threading.Lock()
+
+_UNFILTERED_HISTOGRAM_KEY = "workspace=None|character=None|story=None|search=None"
+
+
+def _cached_date_histogram(key: str) -> dict[str, Any] | None:
+    with _histogram_cache_lock:
+        entry = _HISTOGRAM_CACHE.get(key)
+        if entry is None:
+            return None
+        expires_at, payload = entry
+        if expires_at <= time.monotonic():
+            _HISTOGRAM_CACHE.pop(key, None)
+            return None
+        return payload
+
+
+def _store_date_histogram(key: str, payload: dict[str, Any]) -> None:
+    with _histogram_cache_lock:
+        _HISTOGRAM_CACHE[key] = (time.monotonic() + _HISTOGRAM_CACHE_TTL_SECONDS, payload)
+        while len(_HISTOGRAM_CACHE) > _HISTOGRAM_CACHE_MAX:
+            _HISTOGRAM_CACHE.popitem(last=False)
 
 
 def get_asset_date_histogram(
@@ -558,40 +629,64 @@ def get_asset_date_histogram(
     oldest-first, ascending. The caller projects them onto its own local day keys
     for display; it does not recompute them.
     """
-    stmt = select(ASSET_GALLERY_TIMESTAMP).where(Asset.deleted_at.is_(None))
+    unfiltered = not (workspace or character_id or story_id or search)
+    if unfiltered:
+        cached = _cached_date_histogram(_UNFILTERED_HISTOGRAM_KEY)
+        if cached is not None:
+            return cached
+
+    conditions: list[ColumnElement[bool]] = [Asset.deleted_at.is_(None)]
     if workspace:
-        stmt = stmt.where(Asset.workspace == workspace)
+        conditions.append(Asset.workspace == workspace)
     if character_id:
-        stmt = stmt.where(Asset.character_id == character_id)
+        conditions.append(Asset.character_id == character_id)
     if story_id:
-        stmt = stmt.where(Asset.story_id == story_id)
+        conditions.append(Asset.story_id == story_id)
     if search:
         like = like_contains(search)
-        stmt = stmt.where(
+        conditions.append(
             (Asset.filename.ilike(like, escape=LIKE_ESCAPE_CHAR))
             | (Asset.metadata_.cast(String).ilike(like, escape=LIKE_ESCAPE_CHAR))
         )
 
     session = _session_scope()
     try:
-        moments = session.execute(stmt).all()
+        bind = session.get_bind()
+        bucket = _day_bucket(
+            bind.dialect.name if bind is not None else "", ASSET_GALLERY_TIMESTAMP
+        )
+        counts: Counter[str] = Counter()
+        if bucket is not None:
+            stmt = (
+                select(bucket, func.count())
+                .where(*conditions)
+                .group_by(bucket)
+                .order_by(bucket)
+            )
+            for day, count in session.execute(stmt).all():
+                key = gallery_day_key(day)
+                if key is not None:
+                    counts[key] = int(count)
+        else:
+            stmt = select(ASSET_GALLERY_TIMESTAMP).where(*conditions)
+            for (moment,) in session.execute(stmt).all():
+                key = gallery_day_key(moment)
+                if key is not None:
+                    counts[key] += 1
     finally:
         session.close()
 
-    counts: Counter[str] = Counter()
-    for (moment,) in moments:
-        key = gallery_day_key(moment)
-        if key is not None:
-            counts[key] += 1
-
     days = [{"day": day, "count": counts[day]} for day in sorted(counts)]
-    return {
+    payload = {
         "days": days,
         "total": sum(counts.values()),
         "first_day": days[0]["day"] if days else None,
         "last_day": days[-1]["day"] if days else None,
         "day_rule": "utc",
     }
+    if unfiltered:
+        _store_date_histogram(_UNFILTERED_HISTOGRAM_KEY, payload)
+    return payload
 
 
 # ── public API ──────────────────────────────────────────────────────────────

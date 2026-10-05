@@ -73,6 +73,7 @@ __all__ = [
     "ASSET_TAG_SOURCE_AUTO",
     "ASSET_TAG_SOURCE_USER",
     "DEFAULT_AUTO_TAG_LIMIT",
+    "NOT_TOMBSTONED_ASSET_IDS",
     "MAX_AUTO_TAGS_PER_ASSET",
     "MAX_TAG_LENGTH",
     "add_user_tag",
@@ -94,6 +95,22 @@ ASSET_TAG_SOURCE_USER = "user"
 # enough that the whole vocabulary stays a reasonable list in the UI. Same bound
 # as `api/routes/models/maintenance.py`.
 MAX_TAG_LENGTH = 64
+
+# The ids of every *tombstoned* asset — the complement of the live set, and the
+# cheap way to say "is this row live" without a mis-estimate.
+#
+# `Asset.deleted_at IS NULL` is 97.8% true on this deployment but PostgreSQL
+# costs every `IS NULL` test at a hard-coded 0.5% selectivity, so a planner given
+# the direct form budgets an 85-row lookup table and nested-loops the *scanning*
+# side against `assets_pkey` once per distinct id — measured at 16,514 index
+# descents for `/api/v2/tags`. Negated, the build side is the few hundred
+# tombstoned ids, `ix_assets_deleted_at` already covers it, and the join hashes.
+# Exported because `api/routes/world_vault/tags.py` needs the identical
+# predicate: two copies of a liveness rule is two places to drift.
+#
+# `Asset.id` is NOT NULL, which is what makes `NOT IN` safe here — `NOT IN`
+# against a subquery that can yield NULL matches nothing at all.
+NOT_TOMBSTONED_ASSET_IDS = select(Asset.id).where(Asset.deleted_at.is_not(None))
 
 # Ceiling on auto tags stored per image. A four-LoRA image can offer over a
 # hundred distinct tokens (MAX_MODEL_TAGS per reference, and trained words are
@@ -247,22 +264,21 @@ def list_tag_vocabulary(
     it and the payload it scans is tag text, not the 70 MB metadata document.
 
     Soft-deleted assets are excluded: a tombstoned image should not keep a tag
-    alive in the picker.
+    alive in the picker. That exclusion is `NOT_TOMBSTONED_ASSET_IDS` rather than
+    `deleted_at IS NULL` — see its definition for the measured reason; the short
+    version is that PostgreSQL costs an `IS NULL` test at a fixed 0.5%
+    selectivity, so the direct form planned a memoized `assets_pkey` descent per
+    distinct asset id (16,514 of them) and the negated form plans a hash of the
+    389 tombstoned ids instead.
     """
-    statement = (
-        select(
-            AssetTag.tag,
-            func.count(AssetTag.id),
-            # `case` rather than a dialect-specific boolean sum: the same query
-            # has to run on the SQLite the tests use and the Postgres it runs on
-            # in production.
-            func.sum(
-                case((AssetTag.source == ASSET_TAG_SOURCE_USER, 1), else_=0)
-            ),
-        )
-        .join(Asset, Asset.id == AssetTag.asset_id)
-        .where(Asset.deleted_at.is_(None))
-    )
+    statement = select(
+        AssetTag.tag,
+        func.count(AssetTag.id),
+        # `case` rather than a dialect-specific boolean sum: the same query
+        # has to run on the SQLite the tests use and the Postgres it runs on
+        # in production.
+        func.sum(case((AssetTag.source == ASSET_TAG_SOURCE_USER, 1), else_=0)),
+    ).where(AssetTag.asset_id.notin_(NOT_TOMBSTONED_ASSET_IDS))
     if prefix:
         normalised = " ".join(prefix.split())
         if len(normalised) > MAX_TAG_LENGTH:

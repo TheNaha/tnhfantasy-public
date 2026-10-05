@@ -66,9 +66,60 @@ class ModelServiceV2:
         return self.repo.models_to_dict(models, include_versions=include_versions)
 
     async def list_models_by_directory(self, directory: str) -> list[dict[str, Any]]:
-        """List models in a specific directory (bulk-loaded, no N+1)."""
+        """List models in a specific directory (bulk-loaded, no N+1).
+
+        The *whole* directory, with no filtering — which is why it is cheap for
+        the one caller that wants it (`GET /directory/{directory}`) and unusable
+        for a picker that wants 20 of 484. `list_models_page` is the paged,
+        filtered form; this one stays because its contract is a list.
+        """
         models = self.repo.get_models_by_directory(directory)
         return self.repo.models_to_dict(models, include_versions=True)
+
+    def list_models_page(
+        self,
+        directory: str,
+        *,
+        search: str | None = None,
+        tags: list[str] | None = None,
+        model_type: str | None = None,
+        base_model: str | None = None,
+        show_nsfw: bool = True,
+        sort: str | None = None,
+        descending: bool = True,
+        limit: int | None = None,
+        offset: int = 0,
+        ids: list[int] | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """One page of a directory listing, and how many rows matched in total.
+
+        A plain `def`, not a decorative `async def`, because it is a
+        synchronous query chain and the caller is expected to hoist it into
+        `asyncio.to_thread` — see `get_models_grouped` above for why that
+        distinction is worth making here rather than annotating it.
+
+        `ids` bypasses the page query for a sort the database cannot express: the
+        caller supplies the ids it wants, already ordered and sliced, and this
+        hydrates only those. That is the path `random[:seed]` takes — it has to
+        see every id to shuffle them, and it has to hydrate one page.
+        """
+        filters = {
+            "search": search,
+            "tags": tags,
+            "model_type": model_type,
+            "base_model": base_model,
+            "show_nsfw": show_nsfw,
+        }
+        if ids is None:
+            models = self.repo.get_models_by_directory(
+                directory, sort=sort, descending=descending, limit=limit, offset=offset,
+                **filters,
+            )
+        else:
+            by_id = {model.id: model for model in self.repo.get_models_by_ids(ids)}
+            models = [by_id[model_id] for model_id in ids if model_id in by_id]
+        total = self.repo.count_models_by_directory(directory, **filters)
+        return self.repo.models_to_dict(models, include_versions=True), total
 
     def get_models_grouped(self) -> dict[str, list[dict[str, Any]]]:
         """Get all models grouped by directory.

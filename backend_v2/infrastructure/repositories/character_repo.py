@@ -30,6 +30,3 @@ class CharacterRepository:
         ).limit(limit)
         return self.session.exec(stmt).all()
 
-    def get_recent(self, limit: int = 5) -> list[Character]:
-        stmt = select(Character).order_by(Character.created_at.desc()).limit(limit)
-        return self.session.exec(stmt).all()

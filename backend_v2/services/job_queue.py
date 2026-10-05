@@ -466,19 +466,13 @@ class JobQueue:
             # In Postgres mode the queue is wakeup-only; we discard items
             # WITHOUT calling task_done() because the worker will not call it
             # either (task_done is only used in SQLite in-process mode).
-            if self._use_db_claims:
-                while True:
-                    try:
-                        self._queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-            else:
-                while True:
-                    try:
-                        self._queue.get_nowait()
-                        self._queue.task_done()
-                    except asyncio.QueueEmpty:
-                        break
+            # Unreachable to test: the `not self._use_db_claims` early return
+            # above means only the DB-claims mode reaches here.
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
             return claimed
 
         try:

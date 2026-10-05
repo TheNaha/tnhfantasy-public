@@ -296,10 +296,14 @@ def _load_rows(session: Session, max_assets: int) -> list:
     # The resolved timestamp is an expression, so no index orders it; sorting
     # 16k narrow tuples in Python beats a database sort here and gives a
     # deterministic order, which the gap walk depends on.
-    ordered = sorted(
-        rows, key=lambda r: (r.user_id, r.workspace or "", r.ts, r.id)
+    #
+    # Filtered BEFORE sorting, not after: rows with no resolved timestamp sort
+    # first (`None` compares lowest against a datetime) and were then dropped
+    # anyway, so the sort was doing full work on rows that could not survive.
+    live = [r for r in rows if r.ts is not None]
+    return sorted(
+        live, key=lambda r: (r.user_id, r.workspace or "", r.ts, r.id)
     )
-    return [r for r in ordered if r.ts is not None]
 
 
 def _build_groups(rows: list, min_size: int, gap: timedelta) -> tuple[list[_Group], int]:

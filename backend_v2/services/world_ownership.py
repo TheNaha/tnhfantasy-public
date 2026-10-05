@@ -93,9 +93,11 @@ def detach_world(session: Session, world_id: str) -> None:
     """Clear every owner reference to a world that is about to be deleted.
 
     `delete_world` calls this before the delete. Without it, `Chat.world_id` and
-    `Story.world_id` are the only references in the vault with no scrub path —
-    `scrub_entity_references` has no `kind == "world"` branch, because when it
-    was written nothing was ever set.
+    `Story.world_id` are the only references in the vault with no scrub path.
+
+    `scrub_entity_references` also has a `kind == "world"` branch, and it calls
+    this function rather than repeating the two loops — it was written as a
+    second, byte-equivalent copy.
     """
     for chat in session.exec(select(Chat).where(Chat.world_id == world_id)).all():
         chat.world_id = None

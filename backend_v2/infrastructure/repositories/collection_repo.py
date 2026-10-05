@@ -50,13 +50,6 @@ class CollectionRepository:
         ).order_by(CollectionImage.added_at.desc())
         return self.session.exec(stmt).all()
 
-    def get_collection_image(self, collection_id: int, filename: str) -> CollectionImage | None:
-        stmt = select(CollectionImage).where(
-            CollectionImage.collection_id == collection_id,
-            CollectionImage.image_filename == filename
-        )
-        return self.session.exec(stmt).first()
-
     def get_collection_images_by_filenames(self, collection_id: int, filenames: list[str]) -> list[CollectionImage]:
         if not filenames:
             return []
@@ -65,10 +58,6 @@ class CollectionRepository:
             CollectionImage.image_filename.in_(filenames)
         )
         return self.session.exec(stmt).all()
-
-    def add_collection_image(self, collection_image: CollectionImage):
-        self.session.add(collection_image)
-        self.session.flush()
 
     def add_collection_images(self, collection_images: list[CollectionImage]):
         if not collection_images:

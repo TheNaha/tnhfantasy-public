@@ -41,11 +41,6 @@ class ProviderRepository:
         stmt = select(Provider).where(Provider.enabled == True)
         return list(self.session.exec(stmt).all())
     
-    def get_by_type(self, provider_type: str) -> list[Provider]:
-        """Get providers by type."""
-        stmt = select(Provider).where(Provider.type == provider_type)
-        return list(self.session.exec(stmt).all())
-    
     def update(self, provider_id: str, updates: dict[str, Any]) -> Provider | None:
         """Update a provider."""
         provider = self.get(provider_id)
