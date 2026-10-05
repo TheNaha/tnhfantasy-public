@@ -10,6 +10,25 @@ import api, { API_V2_BASE } from './client';
 
 const P = `${API_V2_BASE}/providers`;
 
+// The collection routes are declared `@router.get("/")` / `@router.post("/")`,
+// so their canonical path carries a trailing slash. Asking for the bare path made
+// FastAPI answer `307 Temporary Redirect` and re-issue the request, doubling
+// every call this client makes with them. `list` runs app-wide on every page
+// load — the layout status dot mounts `useProvidersPageData` — so that was one
+// wasted round trip per page navigation, twice over, plus a redirect body to
+// parse and discard.
+//
+// A second constant rather than a slash on `P`, because every sibling call is
+// `${P}/${id}` and that would become a double slash.
+//
+// Guarded by `src/test/apiPathInvariants.test.js`, which fails if any literal
+// client path needs a redirect to resolve.
+const P_COLLECTION = `${P}/`;
+
+// Exported so the path-shape guard can name the exact string rather than
+// re-deriving it and drifting.
+export const COLLECTION_PATH = P_COLLECTION;
+
 /**
  * Every read takes a trailing `options` and forwards it to the client, so a
  * React Query `queryFn` can pass the `AbortSignal` from its context. The
@@ -19,14 +38,14 @@ const P = `${API_V2_BASE}/providers`;
  */
 export const providersApi = {
     /** Fetch all configured providers. */
-    list: (options = {}) => api.get(P, options),
+    list: (options = {}) => api.get(P_COLLECTION, options),
 
     /**
      * Register a new provider.
      * @param {object} config - Provider configuration including `id`, `type`,
      *   `credentials`, and `config` fields.
      */
-    create: (config) => api.post(P, config),
+    create: (config) => api.post(P_COLLECTION, config),
 
     /**
      * Partially update a provider's configuration.

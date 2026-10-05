@@ -47,7 +47,9 @@ export default function ModelImportCard({ model, onCancel }) {
                 ]
             };
 
-            const result = await api.post('/api/v2/models', payload);
+            // Trailing slash: the collection route is `@router.post("/")`, so
+            // the bare path answered 307 and re-issued the POST.
+            const result = await api.post('/api/v2/models/', payload);
             if (result.skipped_versions?.length > 0) {
                 toast.success(`Added ${model.name} (${selectedVersion.name}). Skipped ${result.skipped_versions.length} already installed version(s).`);
             } else {

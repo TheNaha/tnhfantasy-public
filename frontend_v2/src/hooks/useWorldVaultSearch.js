@@ -88,7 +88,7 @@ export const useWorldVaultRelationships = () => {
 export const useGraphLayout = (name = 'default') => {
     return useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name),
-        queryFn: () => api.get(`/api/v2/world-vault/graph-layout?name=${encodeURIComponent(name)}`),
+        queryFn: () => api.get(`/api/v2/world-vault/graph-layout/?name=${encodeURIComponent(name)}`),
         enabled: !!name,
         staleTime: 30000,
     });
@@ -98,7 +98,7 @@ export const useSaveGraphLayout = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ name = 'default', nodes }) =>
-            api.put(`/api/v2/world-vault/graph-layout?name=${encodeURIComponent(name)}`, { nodes }),
+            api.put(`/api/v2/world-vault/graph-layout/?name=${encodeURIComponent(name)}`, { nodes }),
         onSuccess: (_, { name = 'default' }) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name) });
         },
@@ -117,7 +117,7 @@ export const useDeleteGraphLayout = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ name = 'default' } = {}) =>
-            api.delete(`/api/v2/world-vault/graph-layout?name=${encodeURIComponent(name)}`),
+            api.delete(`/api/v2/world-vault/graph-layout/?name=${encodeURIComponent(name)}`),
         onSuccess: (_, { name = 'default' }) => {
             queryClient.setQueryData(buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name), null);
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name) });
