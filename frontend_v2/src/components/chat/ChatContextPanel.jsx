@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
     User, Clock, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown, NotebookPen,
@@ -20,6 +20,45 @@ import WorldLinkRow from '../workspace/WorldLinkRow';
 import { useChatWorkspace } from '../../contexts/ChatWorkspaceContext';
 
 const LOREBOOK_CONTEXT_TAIL = 12;
+
+/**
+ * One row of the chat's job list.
+ *
+ * Memoised, because this panel re-renders on every streamed token of the
+ * conversation behind it and the list sits above eleven other panels — so an
+ * un-memoised row meant re-rendering all of them per token. The previous
+ * checks used snake_case spellings ('pre_generation', 'post_processing') that
+ * the API never emits, so every real in-flight job fell through to the grey
+ * branch and printed its raw enum value as the label; the translations live
+ * here now so the memo boundary and the fix are the same object.
+ */
+const ChatJobRow = memo(function ChatJobRow({ job }) {
+    const isRunning = isJobRunning(job.status);
+    const isImage = job.task_type === 'image' || job.type === 'image' || job.type === 'agentic_image';
+    const isFailed = isJobFailed(job.status);
+    const isComplete = isJobComplete(job.status);
+    return (
+        <div className={clsx(
+            "flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs border",
+            isFailed ? "bg-red-500/5 border-red-500/15 text-red-300" :
+                isComplete ? (isImage ? "bg-emerald-500/5 border-emerald-500/15 text-emerald-300" : "bg-blue-500/5 border-blue-500/15 text-blue-300") :
+                    isRunning ? "bg-amber-500/5 border-amber-500/15 text-amber-300" : "bg-gray-800/30 border-gray-700/30 text-gray-400"
+        )}>
+            <span className={clsx("w-1.5 h-1.5 rounded-full shrink-0", isFailed ? "bg-red-400" : isComplete ? (isImage ? "bg-emerald-400" : "bg-blue-400") : isRunning ? "bg-amber-400 animate-pulse" : "bg-gray-600")} />
+            <span className="truncate flex-1 font-medium">{isImage ? (job.type === 'agentic_image' ? 'Image generation' : 'Image job') : 'LLM reply'}</span>
+            <span className="text-xs text-gray-500 shrink-0">{isFailed ? 'Failed' : isComplete ? 'Done' : isRunning ? 'Active' : job.status}</span>
+            {/* The sampler percentage, not the node counter.
+                `overall_progress` is frozen while a checkpoint sampler runs —
+                the phase that takes the time — so the row sat at one number for
+                a minute while the job visibly progressed. */}
+            {isRunning && (job.progress || job.overall_progress) != null && (
+                <span className="text-xs text-amber-300/80 shrink-0">
+                    {Math.round(job.progress > 0 ? job.progress : job.overall_progress)}%
+                </span>
+            )}
+        </div>
+    );
+});
 
 function ChatContextPanel() {
     const {
@@ -210,43 +249,24 @@ function ChatContextPanel() {
                     </h4>
                     <span className="text-xs text-gray-600 shrink-0">{chatJobs?.length || 0} total</span>
                 </div>
-                {!chatJobs?.length ? (
+                {queryErrors.chatJobs ? (
+                    // Same inversion as the persona and voices selectors above,
+                    // and the same one this very panel already fixed for
+                    // `lorebooks`: `chatJobs` sits at its `= []` default when
+                    // GET /api/v2/chats/{id}/jobs fails, so "No jobs tracked for
+                    // this chat yet" was an outage reading as an idle chat.
+                    <QueryErrorState
+                        noun={queryErrors.chatJobs.noun}
+                        error={queryErrors.chatJobs.error}
+                        onRetry={queryErrors.chatJobs.refetch}
+                    />
+                ) : !chatJobs?.length ? (
                     <p className="text-xs text-gray-600">No jobs tracked for this chat yet.</p>
                 ) : (
                     <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
-                        {chatJobs.slice(0, 10).map((job) => {
-                            // The previous checks used snake_case spellings
-                            // ('pre_generation', 'post_processing') that the API
-                            // never emits, so every real in-flight job fell
-                            // through to the grey branch and printed its raw
-                            // enum value as the label.
-                            const isRunning = isJobRunning(job.status);
-                            const isImage = job.task_type === 'image' || job.type === 'image' || job.type === 'agentic_image';
-                            const isFailed = isJobFailed(job.status);
-                            const isComplete = isJobComplete(job.status);
-                            return (
-                                <div key={job.id} className={clsx(
-                                    "flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs border",
-                                    isFailed ? "bg-red-500/5 border-red-500/15 text-red-300" :
-                                    isComplete ? (isImage ? "bg-emerald-500/5 border-emerald-500/15 text-emerald-300" : "bg-blue-500/5 border-blue-500/15 text-blue-300") :
-                                    isRunning ? "bg-amber-500/5 border-amber-500/15 text-amber-300" : "bg-gray-800/30 border-gray-700/30 text-gray-400"
-                                )}>
-                                    <span className={clsx("w-1.5 h-1.5 rounded-full shrink-0", isFailed ? "bg-red-400" : isComplete ? (isImage ? "bg-emerald-400" : "bg-blue-400") : isRunning ? "bg-amber-400 animate-pulse" : "bg-gray-600")} />
-                                    <span className="truncate flex-1 font-medium">{isImage ? (job.type === 'agentic_image' ? 'Image generation' : 'Image job') : 'LLM reply'}</span>
-                                    <span className="text-xs text-gray-500 shrink-0">{isFailed ? 'Failed' : isComplete ? 'Done' : isRunning ? 'Active' : job.status}</span>
-                                    {/* The sampler percentage, not the node counter.
-                                        `overall_progress` is frozen while a
-                                        checkpoint sampler runs — the phase that takes
-                                        the time — so the row sat at one number for a
-                                        minute while the job visibly progressed. */}
-                                    {isRunning && (job.progress || job.overall_progress) != null && (
-                                        <span className="text-xs text-amber-300/80 shrink-0">
-                                            {Math.round(job.progress > 0 ? job.progress : job.overall_progress)}%
-                                        </span>
-                                    )}
-                                </div>
-                            );
-                        })}
+                        {chatJobs.slice(0, 10).map((job) => (
+                            <ChatJobRow key={job.id} job={job} />
+                        ))}
                     </div>
                 )}
             </div>
@@ -542,6 +562,8 @@ function ChatContextPanel() {
                 activeChat={activeChat}
                 linkedCharacter={linkedCharacter}
                 systemPromptData={systemPromptData}
+                systemPromptError={queryErrors.systemPromptData?.error}
+                onRetrySystemPrompt={queryErrors.systemPromptData?.refetch}
                 onChatUpdate={onChatUpdate}
                 onCharacterPatch={onCharacterPatch}
             />

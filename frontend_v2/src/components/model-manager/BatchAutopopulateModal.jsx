@@ -16,8 +16,14 @@ function CandidateSelector({ model, candidatesData, onDecision }) {
     const selectedId = manualSelectedId || (candidates.length > 0 ? candidates[0].civitai_model.id : null);
 
     if (!candidatesData) {
+        // `role="alert"`: this row is the whole statement about a failed
+        // per-model candidates fetch, and the row immediately below it says
+        // "No matches found automatically." for `candidates.length === 0`. The
+        // structural guard in `test/queryErrorInvariants.test.jsx` reads
+        // `role="alert"` as error handling; a bare red paragraph is invisible to
+        // it, which is how a hand-rolled failure state goes missing unnoticed.
         return (
-            <div className="flex items-center justify-between bg-red-900/20 border border-red-700/30 rounded p-3">
+            <div role="alert" className="flex items-center justify-between bg-red-900/20 border border-red-700/30 rounded p-3">
                 <div>
                     <p className="text-red-400 text-sm font-medium">{model.name}</p>
                     <p className="text-red-500/70 text-xs">{error}</p>

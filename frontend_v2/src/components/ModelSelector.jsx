@@ -10,6 +10,7 @@ import { nextOffsetPageParam } from "../utils/pagination";
 import TriggerBox from "./selector/TriggerBox";
 import ModelFilterBar from "./selector/ModelFilterBar";
 import ModelGridCard from "./selector/ModelGridCard";
+import { QueryErrorState } from "./common/QueryState";
 
 // One sorter per seed, kept at module scope so its key cache survives
 // re-renders. createStableSorter memoises the hash per item identity, which is
@@ -76,6 +77,8 @@ const ModelSelector = memo(function ModelSelector({
     hasNextPage,
     isFetching,
     isFetchingNextPage,
+    isError,
+    error,
     refetch,
   } = useInfiniteQuery({
     // `baseModel` / `modelType`, not `filterBaseModel` / `filterType` — the
@@ -268,6 +271,15 @@ const ModelSelector = memo(function ModelSelector({
     else onChange(modelWithVersion);
   }, [getModelWithVersion, onVersionChange, onChange]);
 
+  // `ModelGridCard` is memoised, and a fresh arrow prop per render defeats it
+  // exactly as thoroughly as not memoising the card at all: with a 200-model
+  // grid, every keystroke in the search box re-rendered every card even when
+  // the model, the filters and the expanded id were all unchanged.
+  const handleSelectAndClose = useCallback((model) => {
+    onChange(model);
+    handleClose();
+  }, [onChange, handleClose]);
+
   return (
     <div className="space-y-2">
       <label className="block text-xs font-medium text-gray-500">{label}</label>
@@ -330,6 +342,8 @@ const ModelSelector = memo(function ModelSelector({
                 onSelectedTagsChange={setSelectedTags}
                 hasActiveFilters={filterBaseModel !== "all" || filterType !== "all" || !showNSFW || selectedTags.length > 0}
                 onClearFilters={() => { setFilterBaseModel("all"); setFilterType("all"); setShowNSFW(true); setSelectedTags([]); }}
+                tagsError={isError ? error : null}
+                onRetryTags={refetch}
               />
             </div>
 
@@ -339,6 +353,20 @@ const ModelSelector = memo(function ModelSelector({
                 <div className="flex justify-center py-20 text-gray-500">
                   <Loader2 className="animate-spin" />
                 </div>
+              ) : isError ? (
+                /* Not the empty state. A failed GET /api/files leaves `models`
+                   at its `|| []` default, so `filteredAndSortedModels.length ===
+                   0` was satisfied by an outage and printed "No models found"
+                   next to a picker for a directory that holds hundreds of
+                   files. Only reachable when the query actually ran, so the
+                   `initialModels` path (no `directory`, query disabled) cannot
+                   land here. */
+                <QueryErrorState
+                  noun={`${label || 'models'} in this picker`}
+                  error={error}
+                  onRetry={refetch}
+                  className="text-left"
+                />
               ) : filteredAndSortedModels.length === 0 ? (
                 <div className="text-center py-20 text-gray-500">
                   {models.length === 0 ? "No models found" : "No models match your filters"}
@@ -352,7 +380,7 @@ const ModelSelector = memo(function ModelSelector({
                       value={value}
                       isExpanded={expandedModel === model.model_id}
                       onExpand={setExpandedModel}
-                      onSelect={(m) => { onChange(m); handleClose(); }}
+                      onSelect={handleSelectAndClose}
                       onVersionSelect={handleVersionSelect}
                       onAddTriggerWords={onAddTriggerWords}
                       onApplySDXLSettings={onApplySDXLSettings}

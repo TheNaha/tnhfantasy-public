@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Tag, Plus, X, Lock } from 'lucide-react';
 import { useAssetTags, useAddAssetTag, useRemoveAssetTag, useTagVocabulary } from '../../hooks/useAssetTags';
+import { QueryErrorState } from '../common/QueryState';
 
 /**
  * The producer the Tags filter was missing.
@@ -24,7 +25,7 @@ export default function AssetTagEditor({ assetId }) {
     const [isFocused, setIsFocused] = useState(false);
     const containerRef = useRef(null);
 
-    const { data, isLoading, isError } = useAssetTags(assetId);
+    const { data, isLoading, isError, error, refetch } = useAssetTags(assetId);
     const addTag = useAddAssetTag(assetId);
     const removeTag = useRemoveAssetTag(assetId);
     const { data: vocabulary } = useTagVocabulary({ prefix: draft.trim() }, { enabled: isFocused && draft.trim().length > 0 });
@@ -71,9 +72,11 @@ export default function AssetTagEditor({ assetId }) {
             {isLoading ? (
                 <p className="text-xs text-gray-500">Loading tags…</p>
             ) : isError ? (
-                <p role="alert" className="text-xs text-red-300">
-                    Could not load this image's tags. The list below would be a guess, so it is not shown.
-                </p>
+                // The shared component, not a hand-rolled paragraph: this panel
+                // is the only tag surface for an image, and the previous alert
+                // had no retry, so a single failed GET left the tags
+                // permanently unlisted until a manual reload.
+                <QueryErrorState noun="tags" error={error} onRetry={refetch} className="!p-3" />
             ) : tags.length === 0 ? (
                 <p className="text-xs text-gray-500 mb-2">No tags yet.</p>
             ) : (

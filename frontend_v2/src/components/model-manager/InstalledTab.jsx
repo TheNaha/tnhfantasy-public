@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { Search, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2 } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { modelListKey } from '../../constants/queryKeys';
@@ -21,8 +21,148 @@ import ModelTagFilter from '../selector/ModelTagFilter';
 import ModelDetailsModal from './ModelDetailsModal';
 import BatchAutopopulateModal from './BatchAutopopulateModal';
 import BatchResyncModal from './BatchResyncModal';
+import { QueryErrorState } from '../common/QueryState';
 
 const CATEGORIES = MODEL_MANAGER_CATEGORIES;
+
+/**
+ * One row of the installed-model grid.
+ *
+ * Memoised, with every prop it needs passed by reference rather than baked in
+ * as a closure. The grid maps over `filteredFiles`, which changes identity on
+ * every keystroke in the search box and on every provider-status poll — and the
+ * inline `() => setSelectedModel(file)` / `() => handleDelete(file)` arrows it
+ * used to carry meant a re-render reached every row on the tab regardless of
+ * whether that row's model had changed. `ModelGridCard` next door already works
+ * this way.
+ *
+ * `onSelect`/`onCheckDependencies`/`onDelete` are the tab's own handlers,
+ * passed straight through: the row calls them with its own `file`, so no
+ * per-row arrow is created at all.
+ */
+const InstalledModelRow = memo(function InstalledModelRow({
+    file,
+    providers,
+    providersLoading,
+    onSelect,
+    onCheckDependencies,
+    onDelete,
+}) {
+    const availability = getModelAvailabilitySummary(
+        file.provider_statuses,
+        providers,
+        { providersLoading }
+    );
+    const showAvailabilityBadge = availability.hasStatusData;
+    const availabilityLabel = formatAvailabilityBadgeLabel(availability.label);
+    const proxyPreviewUrl = file.civitai_id ? `/api/v2/models/preview/${file.civitai_id}?image_index=0` : null;
+    const previewImage = proxyPreviewUrl || file.preview;
+
+    return (
+        <div
+            onClick={() => onSelect(file)}
+            className="group relative bg-[#0B0E14]/80 rounded-2xl overflow-hidden border border-white/5 hover:border-blue-500/50 hover:shadow-[0_0_20px_rgba(59,130,246,0.2)] transition-all duration-300 aspect-[2/3] cursor-pointer"
+        >
+            <div className="absolute inset-0">
+                {previewImage ? (
+                    <ProgressiveImage
+                        src={previewImage}
+                        medium={getOptimizedImageUrl(previewImage, 450)}
+                        alt={file.display_name || file.name}
+                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                        size="medium"
+                        aspectRatio="2/3"
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                    />
+                ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-black/60 to-black/20 flex items-center justify-center text-gray-600/50">
+                        <Globe size={48} />
+                    </div>
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-[#0B0E14] via-[#0B0E14]/60 to-transparent opacity-90 transition-opacity duration-300 group-hover:opacity-75" />
+            </div>
+
+            <div className="absolute bottom-0 left-0 right-0 p-4">
+                <h3 className="text-sm font-bold text-white line-clamp-2 break-words hyphens-auto mb-2 drop-shadow-md tracking-wide" title={file.display_name || file.name}>
+                    {file.display_name || file.name}
+                </h3>
+                {file.description?.includes("Auto-discovered") && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/50 mb-1">
+                        Auto-discovered
+                    </span>
+                )}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-gray-400 gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
+                        <span className="shrink-0">{formatBytes(file.size)}</span>
+                        {showAvailabilityBadge && (
+                            <span
+                                className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-xs sm:text-2xs font-medium shrink-0 max-w-full truncate ${availabilityTone(availability.label)}`}
+                                title={availability.detail || availability.label}
+                            >
+                                {availabilityLabel}
+                            </span>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0 self-end sm:self-auto">
+                        {/* Dependency Check Button for DB-tracked models */}
+                        {file.model_id && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onCheckDependencies(file);
+                                }}
+                                className="p-1.5 hover:bg-blue-500/20 hover:text-blue-400 rounded-full transition-colors"
+                                title="Check & Download Dependencies (CLIP/VAE)"
+                                aria-label="Check & Download Dependencies"
+                            >
+                                <RotateCw size={14} />
+                            </button>
+                        )}
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onDelete(file);
+                            }}
+                            className="p-1.5 hover:bg-red-500/20 hover:text-red-400 rounded-full transition-colors"
+                            title="Delete"
+                            aria-label={`Delete ${file.display_name || file.name}`}
+                        >
+                            <Trash2 size={14} />
+                        </button>
+                    </div>
+                </div>
+
+                {/* Provider sync status initials */}
+                {file.provider_statuses && Object.keys(file.provider_statuses).length > 0 && (
+                    <div className="mt-1 flex gap-1">
+                        {Object.entries(file.provider_statuses).map(([providerId, status]) => {
+                            const providerShort = getProviderDisplayName(providerId);
+                            const initial = providerShort.charAt(0).toUpperCase();
+                            const statusValue = typeof status === 'object' ? status.status : status;
+                            const colorClass = {
+                                installed: 'text-green-400',
+                                ready: 'text-green-400',
+                                partial: 'text-amber-400',
+                                downloading: 'text-yellow-400',
+                                pending: 'text-gray-400',
+                                failed: 'text-red-400'
+                            }[statusValue] || 'text-gray-400';
+                            return (
+                                <span
+                                    key={providerId}
+                                    title={`${providerShort}: ${statusValue}`}
+                                    className={`text-xs font-bold ${colorClass}`}
+                                >
+                                    {initial}
+                                </span>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+});
 export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     const [category, setCategory] = useState(() => {
         return localStorage.getItem('modelManagerCategory') || "checkpoints";
@@ -53,6 +193,8 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         hasNextPage,
         isFetching,
         isFetchingNextPage,
+        isError,
+        error,
         refetch,
     } = useInfiniteQuery({
         queryKey: modelListKey({
@@ -108,9 +250,9 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         }
     }, [filteredFiles, availableTags]);
 
-    const handleCheckDependencies = async (file) => {
+    const handleCheckDependencies = useCallback(async (file) => {
         if (!file.model_id) return;
-        
+
         try {
             toast.promise(
                 api.post(`/api/v2/models/maintenance/${file.model_id}/check-dependencies`),
@@ -123,7 +265,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         } catch {
             toast.error('Failed to check dependencies');
         }
-    };
+    }, []);
 
     const handleRefresh = () => {
         refetch();
@@ -136,7 +278,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         rootMargin: '400px'
     });
 
-    const handleDelete = async (file) => {
+    const handleDelete = useCallback(async (file) => {
         const displayName = file.display_name || file.name;
         const modelId = file.model_id;
 
@@ -162,7 +304,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         } catch {
             toast.error("Error deleting model");
         }
-    };
+    }, [openConfirm, refetch]);
 
     return (
         <div className="space-y-4 md:space-y-6">
@@ -308,6 +450,8 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         availableTags={availableTags}
                         selectedTags={selectedTags}
                         onSelectedTagsChange={setSelectedTags}
+                        tagsError={isError ? error : null}
+                        onRetryTags={refetch}
                     />
                 </div>
             </div>
@@ -318,6 +462,13 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         <div key={i} className="aspect-[2/3] bg-white/5 rounded-2xl animate-pulse shadow-inner" />
                     ))}
                 </div>
+            ) : isError ? (
+                /* Not "No models found". A failed GET /api/files leaves `files`
+                   at its `|| []` default, so `filteredFiles.length === 0` was
+                   satisfied by an outage and the grid told the user their
+                   installed model library was empty. `files` already carries
+                   `isError`/`error`, which the tag filter below also needed. */
+                <QueryErrorState noun="installed models" error={error} onRetry={refetch} />
             ) : filteredFiles.length === 0 ? (
                 <div className="text-center py-20 text-gray-500 glass-panel rounded-3xl border border-white/5">
                     <HardDrive className="mx-auto mb-4 opacity-50 text-blue-400 drop-shadow-[0_0_10px_rgba(59,130,246,0.4)]" size={64} />
@@ -326,123 +477,17 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                 </div>
             ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                    {filteredFiles.map(file => {
-                        const availability = getModelAvailabilitySummary(
-                            file.provider_statuses,
-                            providers,
-                            { providersLoading }
-                        );
-                        const showAvailabilityBadge = availability.hasStatusData;
-                        const availabilityLabel = formatAvailabilityBadgeLabel(availability.label);
-                        const proxyPreviewUrl = file.civitai_id ? `/api/v2/models/preview/${file.civitai_id}?image_index=0` : null;
-                        const previewImage = proxyPreviewUrl || file.preview;
-
-                        return (
-                            <div
-                                key={file.name}
-                                onClick={() => setSelectedModel(file)}
-                                className="group relative bg-[#0B0E14]/80 rounded-2xl overflow-hidden border border-white/5 hover:border-blue-500/50 hover:shadow-[0_0_20px_rgba(59,130,246,0.2)] transition-all duration-300 aspect-[2/3] cursor-pointer"
-                            >
-                                <div className="absolute inset-0">
-                                    {previewImage ? (
-                                        <ProgressiveImage
-                                            src={previewImage}
-                                            medium={getOptimizedImageUrl(previewImage, 450)}
-                                            alt={file.display_name || file.name}
-                                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                                            size="medium"
-                                            aspectRatio="2/3"
-                                            onError={(e) => { e.target.style.display = 'none'; }}
-                                        />
-                                    ) : (
-                                        <div className="w-full h-full bg-gradient-to-br from-black/60 to-black/20 flex items-center justify-center text-gray-600/50">
-                                            <Globe size={48} />
-                                        </div>
-                                    )}
-                                    <div className="absolute inset-0 bg-gradient-to-t from-[#0B0E14] via-[#0B0E14]/60 to-transparent opacity-90 transition-opacity duration-300 group-hover:opacity-75" />
-                                </div>
-
-                                <div className="absolute bottom-0 left-0 right-0 p-4">
-                                    <h3 className="text-sm font-bold text-white line-clamp-2 break-words hyphens-auto mb-2 drop-shadow-md tracking-wide" title={file.display_name || file.name}>
-                                        {file.display_name || file.name}
-                                    </h3>
-                                    {file.description?.includes("Auto-discovered") && (
-                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/50 mb-1">
-                                            Auto-discovered
-                                        </span>
-                                    )}
-                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-gray-400 gap-2">
-                                        <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
-                                            <span className="shrink-0">{formatBytes(file.size)}</span>
-                                            {showAvailabilityBadge && (
-                                                <span
-                                                    className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-xs sm:text-2xs font-medium shrink-0 max-w-full truncate ${availabilityTone(availability.label)}`}
-                                                    title={availability.detail || availability.label}
-                                                >
-                                                    {availabilityLabel}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="flex items-center gap-1 shrink-0 self-end sm:self-auto">
-                                            {/* Dependency Check Button for DB-tracked models */}
-                                            {file.model_id && (
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleCheckDependencies(file);
-                                                    }}
-                                                    className="p-1.5 hover:bg-blue-500/20 hover:text-blue-400 rounded-full transition-colors"
-                                                    title="Check & Download Dependencies (CLIP/VAE)"
-                                                    aria-label="Check & Download Dependencies"
-                                                >
-                                                    <RotateCw size={14} />
-                                                </button>
-                                            )}
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleDelete(file);
-                                                }}
-                                                className="p-1.5 hover:bg-red-500/20 hover:text-red-400 rounded-full transition-colors"
-                                                title="Delete"
-                                                aria-label={`Delete ${file.display_name || file.name}`}
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {/* Provider sync status initials */}
-                                    {file.provider_statuses && Object.keys(file.provider_statuses).length > 0 && (
-                                        <div className="mt-1 flex gap-1">
-                                            {Object.entries(file.provider_statuses).map(([providerId, status]) => {
-                                                const providerShort = getProviderDisplayName(providerId);
-                                                const initial = providerShort.charAt(0).toUpperCase();
-                                                const statusValue = typeof status === 'object' ? status.status : status;
-                                                const colorClass = {
-                                                    installed: 'text-green-400',
-                                                    ready: 'text-green-400',
-                                                    partial: 'text-amber-400',
-                                                    downloading: 'text-yellow-400',
-                                                    pending: 'text-gray-400',
-                                                    failed: 'text-red-400'
-                                                }[statusValue] || 'text-gray-400';
-                                                return (
-                                                    <span
-                                                        key={providerId}
-                                                        title={`${providerShort}: ${statusValue}`}
-                                                        className={`text-xs font-bold ${colorClass}`}
-                                                    >
-                                                        {initial}
-                                                    </span>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        );
-                    })}
+                    {filteredFiles.map(file => (
+                        <InstalledModelRow
+                            key={file.name}
+                            file={file}
+                            providers={providers}
+                            providersLoading={providersLoading}
+                            onSelect={setSelectedModel}
+                            onCheckDependencies={handleCheckDependencies}
+                            onDelete={handleDelete}
+                        />
+                    ))}
                 </div>
             )}
 

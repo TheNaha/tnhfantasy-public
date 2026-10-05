@@ -2,8 +2,18 @@ import React, { useState } from 'react';
 import { Plus, Trash2, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
+import { QueryErrorState } from '../common/QueryState';
 
-export default React.memo(function StorySidebar({ stories, activeStoryId, onSelectStory, onCreateStory, onDeleteStory, onImportParse, isLoading }) {
+/**
+ * The story list.
+ *
+ * `isError`/`error`/`onRetry` are the caller's `useStories()` failure, passed
+ * down. `useStories()` destructured `data` with a `= []` default and no
+ * `isError`, so a failed GET rendered "No stories yet. Create one above." —
+ * with a working Create input — beside a library that already had stories in
+ * it, and the typed title then made a duplicate.
+ */
+export default React.memo(function StorySidebar({ stories, activeStoryId, onSelectStory, onCreateStory, onDeleteStory, onImportParse, isLoading, isError, error, onRetry }) {
     const [creating, setCreating] = useState(false);
     const [newTitle, setNewTitle] = useState('');
 
@@ -47,6 +57,10 @@ export default React.memo(function StorySidebar({ stories, activeStoryId, onSele
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
                 {isLoading ? (
                     <div className="flex justify-center p-4"><Loader2 className="animate-spin text-gray-500" /></div>
+                ) : isError ? (
+                    <div className="p-2">
+                        <QueryErrorState noun="stories" error={error} onRetry={onRetry} />
+                    </div>
                 ) : stories?.length === 0 ? (
                     <p className="text-xs text-gray-500 text-center p-4">No stories yet. Create one above.</p>
                 ) : (

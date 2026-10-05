@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { DataRow, StatusRow, ActionBtn } from './Shared';
 import { STATUS_TONE, humanize } from './utils';
 import { useLLMProviderTest } from '../../../hooks/useLLMProviderStatus';
+import { formatTimestamp } from '../../../utils/dateTime';
 import { api } from '../../../api';
 
 // ── LLM-specific panel shown inside RuntimeTab for LLM workers ──────────────
@@ -127,7 +128,7 @@ export default function RuntimeTab({
                 <DataRow label="Container Port" value={String(provider.runtime_config?.port ?? 'n/a')} />
                 <DataRow label="Jobs Assigned" value={String(jobsAssigned)} />
                 <DataRow label="Failures" value={String(providerFailures)} />
-                <DataRow label="Last Seen" value={runtime.last_seen_at ? new Date(runtime.last_seen_at).toLocaleString() : 'N/A'} />
+                <DataRow label="Last Seen" value={runtime.last_seen_at ? formatTimestamp(runtime.last_seen_at) : 'N/A'} />
                 {!isLLM && (
                     <>
                         <DataRow label="Container ID" value={runtime.container_id ? runtime.container_id.slice(0, 12) : 'N/A'} mono />

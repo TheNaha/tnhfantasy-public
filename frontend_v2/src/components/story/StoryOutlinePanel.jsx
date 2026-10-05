@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import { Camera, ChevronDown, History, ListTree, Loader2 } from 'lucide-react';
 import { buildStoryOutline, formatWordCount } from '../../utils/storyOutline';
+import { QueryErrorState } from '../common/QueryState';
 
 /**
  * StoryOutlinePanel — progressive outline of the current story plus the
@@ -20,6 +21,12 @@ export default function StoryOutlinePanel({
     onNavigate: onNavigateProp,
     defaultOpen = false,
     className = '',
+    // The chapters query's failure, handed down from the page. `outline` is
+    // built from `chapters`, which sits at its `= []` default when the fetch
+    // fails, so "No chapters yet — add one to start the outline" was rendered
+    // by an outage and sat beside a working Snapshot button.
+    chaptersError = null,
+    onRetryChapters,
 }) {
     const routerNavigate = useNavigate();
     const [open, setOpen] = useState(defaultOpen);
@@ -88,7 +95,16 @@ export default function StoryOutlinePanel({
                         </div>
                     )}
 
-                    {outline.chapters.length === 0 ? (
+                    {chaptersError ? (
+                        <div className="p-1">
+                            <QueryErrorState
+                                noun="chapters"
+                                error={chaptersError}
+                                onRetry={onRetryChapters}
+                                className="!p-3"
+                            />
+                        </div>
+                    ) : outline.chapters.length === 0 ? (
                         <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
                             No chapters yet — add one to start the outline.
                         </p>

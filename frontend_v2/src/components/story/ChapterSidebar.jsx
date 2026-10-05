@@ -16,6 +16,7 @@ import {
     verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { QueryErrorState } from '../common/QueryState';
 
 const ChapterItem = React.memo(function ChapterItem({ chapter, isActive, onSelect, onDelete, hasDelete }) {
     const {
@@ -66,7 +67,15 @@ const ChapterItem = React.memo(function ChapterItem({ chapter, isActive, onSelec
     );
 });
 
-export default React.memo(function ChapterSidebar({ chapters, activeChapterId, onSelectChapter, onCreateChapter, onDeleteChapter, onReorder, isLoading }) {
+/**
+ * The chapter list for the open story.
+ *
+ * `isError`/`error`/`onRetry` are the caller's `useStoryChapters()` failure.
+ * That query destructured `data` with a `= []` default and no `isError`, so a
+ * failed fetch rendered "No chapters yet" under a **+** button that creates a
+ * chapter — next to a story that already had several.
+ */
+export default React.memo(function ChapterSidebar({ chapters, activeChapterId, onSelectChapter, onCreateChapter, onDeleteChapter, onReorder, isLoading, isError, error, onRetry }) {
     const [creating, setCreating] = useState(false);
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -112,6 +121,10 @@ export default React.memo(function ChapterSidebar({ chapters, activeChapterId, o
             <div className="flex-1 overflow-y-auto p-2 space-y-1 min-h-0">
                 {isLoading ? (
                     <div className="flex justify-center p-3"><Loader2 className="animate-spin text-gray-500" size={14} /></div>
+                ) : isError ? (
+                    <div className="p-2">
+                        <QueryErrorState noun="chapters" error={error} onRetry={onRetry} />
+                    </div>
                 ) : chapters?.length === 0 ? (
                     <p className="text-2xs text-gray-500 text-center p-3">No chapters yet</p>
                 ) : canReorder ? (

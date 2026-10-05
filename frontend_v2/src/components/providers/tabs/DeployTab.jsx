@@ -1,6 +1,7 @@
 import { Rocket, Loader2 } from 'lucide-react';
 import { DataRow, StatusRow, ActionBtn, Notice } from './Shared';
 import { STATUS_TONE, humanize } from './utils';
+import { formatTimestamp } from '../../../utils/dateTime';
 
 export default function DeployTab({ deploy, deployBadge, capabilities, capabilityReasons, loading, onDeploy, provider }) {
 
@@ -11,7 +12,7 @@ export default function DeployTab({ deploy, deployBadge, capabilities, capabilit
                 <DataRow label="Deploy Mode" value={deployBadge} />
                 <DataRow label="Message" value={deploy.message || capabilityReasons.deploy || 'No deploy activity'} />
                 <DataRow label="Provider Type" value={deploy.mode || provider.type} />
-                <DataRow label="Last Deployed" value={deploy.finished_at ? new Date(deploy.finished_at).toLocaleString() : 'Never'} />
+                <DataRow label="Last Deployed" value={deploy.finished_at ? formatTimestamp(deploy.finished_at) : 'Never'} />
                 <DataRow
                     label="Completed Steps"
                     value={String(deploy.completed_steps?.length || deploy.steps?.filter((s) => s.success)?.length || 0)}

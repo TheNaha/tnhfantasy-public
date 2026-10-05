@@ -131,7 +131,12 @@ export default function CivitaiSearchModal({ initialQuery, onClose, onSelect }) 
                             <Loader2 className="animate-spin text-blue-500" size={32} />
                         </div>
                     ) : isError ? (
-                        <div className="text-center text-red-400 mt-10 min-h-[300px]">
+                        /* `role="alert"`, not decoration: this is the only thing
+                           standing between a failed search and "No models found
+                           matching …" below it, and the structural guard in
+                           `test/queryErrorInvariants.test.jsx` cannot see a
+                           hand-rolled red paragraph as error handling. */
+                        <div role="alert" className="text-center text-red-400 mt-10 min-h-[300px]">
                             Failed to search: {error?.message}
                         </div>
                     ) : results?.items?.length > 0 ? (

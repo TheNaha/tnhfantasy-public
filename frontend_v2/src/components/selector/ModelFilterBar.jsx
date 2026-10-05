@@ -17,6 +17,8 @@ export default function ModelFilterBar({
   onSelectedTagsChange,
   hasActiveFilters,
   onClearFilters,
+  tagsError,
+  onRetryTags,
 }) {
   return (
     <>
@@ -149,6 +151,8 @@ export default function ModelFilterBar({
           availableTags={availableTags}
           selectedTags={selectedTags}
           onSelectedTagsChange={onSelectedTagsChange}
+          tagsError={tagsError}
+          onRetryTags={onRetryTags}
         />
       )}
     </>

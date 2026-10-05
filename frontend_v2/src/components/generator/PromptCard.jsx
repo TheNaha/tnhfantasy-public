@@ -1,6 +1,7 @@
 import { Star, Trash2, Copy, Edit2, TrendingUp, Check } from 'lucide-react';
 import { useState } from 'react';
 import { copyToClipboard } from '../../utils/clipboard';
+import { parseGalleryDate } from '../../utils/dateTime';
 
 /**
  * Individual Prompt Card Component
@@ -133,7 +134,7 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
 
             {/* Metadata Footer */}
             <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500">
-                Created {new Date(prompt.created_at ?? prompt.createdAt).toLocaleDateString()}
+                Created {parseGalleryDate(prompt.created_at ?? prompt.createdAt).toLocaleDateString()}
             </div>
         </div>
     );

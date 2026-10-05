@@ -4,7 +4,7 @@ import { ImageIcon, X } from 'lucide-react';
 import SceneGallery from '../SceneGallery';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 
-export default React.memo(function StoryGalleryModal({ isOpen, storyTitle, images, collectionsList, onSaveToCollection, onClose }) {
+export default React.memo(function StoryGalleryModal({ isOpen, storyTitle, images, imagesError, onRetryImages, collectionsList, onSaveToCollection, onClose }) {
     // Escape dismisses, matching every other dialog expectation.
     // `isOpen` is the dialog's own visibility (the name <Modal>/<ModalOverlay> use). Passing a literal `true` registered a
     // permanent window keydown listener for a component that is mounted
@@ -41,6 +41,8 @@ export default React.memo(function StoryGalleryModal({ isOpen, storyTitle, image
                             <SceneGallery
                                 title={`${storyTitle || 'Story'} gallery`}
                                 images={images}
+                                imagesError={imagesError}
+                                onRetryImages={onRetryImages}
                                 lightboxAction={(path) => (
                                     <select
                                         value=""

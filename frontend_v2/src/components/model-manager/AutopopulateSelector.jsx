@@ -146,7 +146,12 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
 
                     {/* Error */}
                     {error && !loading && (
-                        <div className="bg-red-900/20 border border-red-700/30 rounded-xl p-6 text-center">
+                        // `role="alert"` for the same reason as the manual-search
+                        // branch below: the "No matches found automatically" copy
+                        // is gated on `!error`, so the alert is the only thing
+                        // standing between a failed candidates fetch and a false
+                        // "nothing matched".
+                        <div role="alert" className="bg-red-900/20 border border-red-700/30 rounded-xl p-6 text-center">
                             <AlertCircle className="mx-auto mb-2 text-red-400" size={32} />
                             <p className="text-red-300">Failed to search CivitAI</p>
                             <p className="text-red-400/70 text-sm mt-1">{error}</p>

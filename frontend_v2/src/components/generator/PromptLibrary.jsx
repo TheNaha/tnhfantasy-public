@@ -15,6 +15,7 @@ import PromptForm from './PromptForm';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../../store/confirmationStore';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { QueryErrorState } from '../common/QueryState';
 
 /**
  * Prompt Library Modal Component
@@ -24,7 +25,7 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
     // Escape dismisses, matching the shared ModalOverlay dialogs and the
     // "Esc → Close modals" line in KeyboardShortcutsModal.
     useEscapeKey(() => { if (isOpen) onClose?.(); }, isOpen);
-    const { data: prompts = [], isLoading } = usePrompts();
+    const { data: prompts = [], isLoading, isError, error, refetch } = usePrompts();
     const { data: categories } = usePromptCategories();
 
     const deletePromptMutation = useDeletePrompt();
@@ -280,6 +281,14 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
                         <div className="text-center py-20 text-gray-500">
                             <p className="text-lg mb-2">Loading prompt library...</p>
                         </div>
+                    ) : isError ? (
+                        /* Not "No prompts found". This modal and the standalone
+                           /prompts page both read the same query; the page
+                           already gated on `isError` and this one did not, so a
+                           500 rendered "No prompts found / Start by adding your
+                           first prompt!" inside a library that already had
+                           prompts saved. */
+                        <QueryErrorState noun="prompts" error={error} onRetry={refetch} />
                     ) : displayedPrompts.length === 0 ? (
                         <div className="text-center py-20 text-gray-500">
                             <FolderOpen size={48} className="mx-auto mb-4 opacity-50" />

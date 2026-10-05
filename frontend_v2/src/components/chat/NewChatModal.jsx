@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { X, Check } from 'lucide-react';
 import ModalOverlay from '../common/ModalOverlay';
+import { QueryErrorState } from '../common/QueryState';
 
 const CUSTOM_PERSONA = '__custom__';
 const CUSTOM_LOCATION = '__custom__';
@@ -11,7 +12,23 @@ const CUSTOM_LOCATION = '__custom__';
 // caller already has to supply characters, lorebooks, personas and worlds; a
 // data hook here meant every renderer of this modal needed a QueryClient it
 // otherwise had no reason to have.
-function NewChatModal({ characters, lorebooks, locations = [], personas = [], worlds = [], onCreate, onClose }) {
+//
+// `lorebooksError` / `onRetryLorebooks` are the same deal for the failure: the
+// wizard cannot see the query that produced `lorebooks`, so it cannot report
+// that the fetch failed. Without them, step 3's "No lorebooks yet" was
+// rendered by a 503 on GET /api/v2/lorebooks, next to a wizard that claims you
+// can add one later from the World page.
+function NewChatModal({
+    characters,
+    lorebooks,
+    locations = [],
+    personas = [],
+    worlds = [],
+    onCreate,
+    onClose,
+    lorebooksError = null,
+    onRetryLorebooks,
+}) {
     const [selectedCharacter, setSelectedCharacter] = useState(null);
     const [selectedLorebooks, setSelectedLorebooks] = useState([]);
     const [chatName, setChatName] = useState('New Chat');
@@ -240,7 +257,14 @@ function NewChatModal({ characters, lorebooks, locations = [], personas = [], wo
 
                     {step === 2 && (
                         <>
-                            {lorebooks.length > 0 ? (
+                            {lorebooksError ? (
+                                <QueryErrorState
+                                    noun="lorebooks"
+                                    error={lorebooksError}
+                                    onRetry={onRetryLorebooks}
+                                    className="!p-4"
+                                />
+                            ) : lorebooks.length > 0 ? (
                                 <div className="space-y-2">
                                     <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Context Lorebooks (Optional)</label>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{lorebooks.map(lb => { const isActive = selectedLorebooks.includes(lb.id); return <button type="button" key={lb.id} onClick={() => toggleLorebook(lb.id)} className={`text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors border ${isActive ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' : 'bg-gray-800/30 text-gray-400 hover:bg-white/5 border-transparent'}`}>{isActive ? <Check size={14} className="text-cyan-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}<span className="truncate">{lb.name}</span></button>; })}</div>

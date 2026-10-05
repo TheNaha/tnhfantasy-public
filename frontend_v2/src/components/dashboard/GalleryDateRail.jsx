@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { CalendarDays, X } from 'lucide-react';
 
 import { useAssetDateHistogram } from '../../hooks/useGallery';
+import { QueryErrorState } from '../common/QueryState';
 
 /**
  * Date rail for the gallery.
@@ -142,7 +143,7 @@ function dayOfInstant(instant) {
 }
 
 export function GalleryDateRail({ filters = {}, onChange }) {
-    const { data, isLoading } = useAssetDateHistogram(filters);
+    const { data, isLoading, isError, error, refetch } = useAssetDateHistogram(filters);
     const days = useMemo(() => data?.days || [], [data]);
 
     const { columns, aggregated, spanDays } = useMemo(() => buildColumns(days), [days]);
@@ -208,13 +209,27 @@ export function GalleryDateRail({ filters = {}, onChange }) {
                 </p>
             )}
 
-            {!isLoading && columns.length === 0 && (
+            {/* Not "No images in this view yet." A 503 on the histogram GET
+                leaves `data` undefined, so `days` is `[]`, so `columns` is
+                `[]` — and the rail told the user their library has no images
+                in this view while the facet panel beside it was rendering a
+                real total. Same inversion the gallery grid already guards. */}
+            {isError && !isLoading && (
+                <QueryErrorState
+                    noun="date counts"
+                    error={error}
+                    onRetry={refetch}
+                    className="!p-3 text-left"
+                />
+            )}
+
+            {!isError && !isLoading && columns.length === 0 && (
                 <p data-testid="date-rail-empty" className="py-4 text-center text-2xs text-tertiary">
                     No images in this view yet.
                 </p>
             )}
 
-            {columns.length > 0 && (
+            {!isError && columns.length > 0 && (
                 <>
                     <div data-testid="date-rail-bars" className="flex h-16 items-end gap-px overflow-x-auto">
                         {columns.map((column) => {

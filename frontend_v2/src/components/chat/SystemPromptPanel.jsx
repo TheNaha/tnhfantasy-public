@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { Brain } from 'lucide-react';
+import { QueryErrorState } from '../common/QueryState';
 
 const SOURCE_DOT = {
     override:    'bg-orange-400',
@@ -34,7 +35,7 @@ function SectionPreview({ sec }) {
     );
 }
 
-function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onChatUpdate, onCharacterPatch }) {
+function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, systemPromptError = null, onRetrySystemPrompt, onChatUpdate, onCharacterPatch }) {
     const [activeTab, setActiveTab] = useState('preview'); // 'preview' | 'override' | 'append'
 
     // Controlled textarea values — reset when active chat changes
@@ -136,7 +137,19 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
             {/* Preview tab — collapsible section list */}
             {activeTab === 'preview' && (
                 <div className="space-y-1.5">
-                    {systemPromptData?.sections?.length ? (
+                    {systemPromptError ? (
+                        // `systemPromptData` sits undefined when
+                        // GET /api/v2/chats/{id}/system-prompt fails, which made
+                        // `systemPromptData?.sections?.length` falsy and rendered
+                        // "No system prompt sections assembled yet." for a chat
+                        // whose prompt is assembled from eight sources.
+                        <QueryErrorState
+                            noun="system prompt"
+                            error={systemPromptError}
+                            onRetry={onRetrySystemPrompt}
+                            className="!p-3"
+                        />
+                    ) : systemPromptData?.sections?.length ? (
                         systemPromptData.sections.map((sec, i) => (
                             <SectionPreview key={i} sec={sec} />
                         ))

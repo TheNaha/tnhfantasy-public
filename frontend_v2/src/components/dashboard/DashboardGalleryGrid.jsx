@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import EmptyState from '../EmptyState';
@@ -35,8 +36,18 @@ import useSettingsStore from '../../store/settingsStore';
  * @param {React.RefObject} props.sentinelRef - React Ref for infinite scrolling scroll sentinel
  * @param {boolean} props.isFetchingNextPage - Whether next page is being fetched
  * @param {boolean} props.isRefreshing - Whether a background refetch is in flight
+ *
+ * Memoised, and the memo holds: every prop is either a primitive, a ref, a
+ * `Set` held in state, or one of `useDashboardItems`/`useDashboardModals`/
+ * `useDashboardSelection`'s `useMemo`/`useCallback` outputs. `Dashboard` itself
+ * re-renders on every job-progress websocket frame, on every settings-store
+ * write and on every keystroke in the filter panel, and each of those used to
+ * re-render the whole gallery subtree — the most expensive thing on the page.
+ * A memo that did not hold would be worse than none (a wasted shallow prop
+ * comparison plus a false sense of safety), so `Dashboard.galleryGridProps`
+ * pins the referential stability this depends on.
  */
-export default function DashboardGalleryGrid({
+export default memo(function DashboardGalleryGrid({
     isLoading,
     isError,
     error,
@@ -168,4 +179,4 @@ export default function DashboardGalleryGrid({
             )}
         </>
     );
-}
+});

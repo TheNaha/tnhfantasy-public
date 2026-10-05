@@ -3,6 +3,7 @@ import { X, ChevronLeft, ChevronRight, Images } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { assetUrl, thumbUrl } from '../utils/assetUrl';
 import ModalOverlay from './common/ModalOverlay';
+import { QueryErrorState } from './common/QueryState';
 
 function buildUrl(filename) {
     if (!filename) return '';
@@ -47,7 +48,7 @@ function SceneCell({ filename, onOpen }) {
     );
 }
 
-export default function SceneGallery({ title, images, compact, lightboxAction }) {
+export default function SceneGallery({ title, images, compact, lightboxAction, imagesError = null, onRetryImages }) {
     const [selectedIdx, setSelectedIdx] = useState(null);
     const gridRef = useRef(null);
     const [scrollEl, setScrollEl] = useState(null);
@@ -73,6 +74,21 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
         estimateSize: () => 96,
         overscan: 4,
     });
+
+    if (imagesError) {
+        // "No scenes generated yet" is a statement about a library that has
+        // none, and a failed fetch satisfies `imagesList.length === 0` exactly
+        // as well as an empty one does. The gallery cannot see the query that
+        // produced `images`, so the caller hands the error down.
+        return (
+            <QueryErrorState
+                noun="scenes"
+                error={imagesError}
+                onRetry={onRetryImages}
+                className="!p-3 text-left"
+            />
+        );
+    }
 
     if (imagesList.length === 0) {
         return (

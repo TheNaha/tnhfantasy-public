@@ -2,6 +2,8 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { History, Loader2, RotateCcw, X, Camera } from 'lucide-react';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { QueryErrorState } from '../common/QueryState';
+import { parseGalleryDate } from '../../utils/dateTime';
 
 const SOURCE_META = {
     manual: { label: 'Manual save', className: 'bg-sky-500/15 text-sky-300 border-sky-500/30' },
@@ -14,7 +16,11 @@ const SOURCE_META = {
 const formatTime = (iso) => {
     if (!iso) return '';
     try {
-        return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        // `parseGalleryDate`, not `new Date(iso)`: a snapshot timestamp with no
+        // offset is UTC, and the bare constructor reads it as local time, so
+        // every revision taken before 08:00 UTC was listed under the wrong day
+        // for anyone west of Greenwich.
+        return parseGalleryDate(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     } catch {
         return iso;
     }
@@ -25,6 +31,13 @@ export default function ChapterRevisionsModal({
     chapterTitle,
     revisions = [],
     isLoading,
+    // The revisions query's failure. `revisions` defaults to `[]`, so a failed
+    // GET rendered "No snapshots yet — save one with Snapshot now" and offered
+    // the Snapshot button, for a chapter whose entire history was merely
+    // unreachable.
+    isError = false,
+    error = null,
+    onRetry,
     isRestoring,
     onRestore,
     onSnapshot,
@@ -67,12 +80,21 @@ export default function ChapterRevisionsModal({
                                     <Loader2 size={18} className="animate-spin" />
                                 </div>
                             )}
-                            {!isLoading && revisions.length === 0 && (
+                            {!isLoading && isError && (
+                                <div className="py-4">
+                                    <QueryErrorState
+                                        noun="snapshots"
+                                        error={error}
+                                        onRetry={onRetry}
+                                    />
+                                </div>
+                            )}
+                            {!isLoading && !isError && revisions.length === 0 && (
                                 <p className="text-sm text-gray-500 text-center py-8">
                                     No snapshots yet — save one with “Snapshot now”, or let retries and beat edits create them automatically.
                                 </p>
                             )}
-                            {!isLoading && revisions.map((rev) => {
+                            {!isLoading && !isError && revisions.map((rev) => {
                                 const meta = SOURCE_META[rev.source] || SOURCE_META.manual;
                                 return (
                                     <div

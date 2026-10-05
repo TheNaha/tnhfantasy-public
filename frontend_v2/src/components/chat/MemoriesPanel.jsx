@@ -11,6 +11,7 @@ import {
 import { useDebounce } from '../../hooks/useDebounce';
 import EmptyState from '../EmptyState';
 import { QueryErrorState } from '../common/QueryState';
+import { parseGalleryDate } from '../../utils/dateTime';
 import { useConfirmation } from '../../store/confirmationStore';
 
 const SEARCH_MIN_CHARS = 2;
@@ -458,7 +459,7 @@ function MemoriesPanelBody({ characterId }) {
                                 {/* Timestamps */}
                                 <p className="text-2xs text-gray-600">
                                     {memory.created_at
-                                        ? new Date(memory.created_at).toLocaleDateString(undefined, {
+                                        ? parseGalleryDate(memory.created_at).toLocaleDateString(undefined, {
                                               month: 'short',
                                               day: 'numeric',
                                               year: 'numeric',
@@ -466,7 +467,7 @@ function MemoriesPanelBody({ characterId }) {
                                         : ''}
                                     {memory.last_accessed_at && (
                                         <span className="ml-2 text-gray-700">
-                                            · accessed {new Date(memory.last_accessed_at).toLocaleDateString()}
+                                            · accessed {parseGalleryDate(memory.last_accessed_at).toLocaleDateString()}
                                         </span>
                                     )}
                                 </p>

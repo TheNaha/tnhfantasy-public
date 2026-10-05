@@ -17,6 +17,7 @@ import {
     verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { QueryErrorState } from '../common/QueryState';
 
 const BEAT_ROLE_OPTIONS = ['user', 'narrator', 'system'];
 
@@ -177,6 +178,12 @@ export default React.memo(function StoryBeatsPanel({
     onUpdateBeat,
     onDeleteBeat,
     onClose,
+    // `beats` is `activeChapter?.beats` from the page, and a failed chapters
+    // fetch leaves `activeChapter` undefined — so this panel said "No beats
+    // recorded yet" while the chapter it belongs to had a page of them. The
+    // page passes its own failure down.
+    beatsError = null,
+    onRetryBeats,
 }) {
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -214,7 +221,11 @@ export default React.memo(function StoryBeatsPanel({
                     </button>
                 </div>
             </div>
-            {beats.length === 0 ? (
+            {beatsError ? (
+                <div className="py-1">
+                    <QueryErrorState noun="story beats" error={beatsError} onRetry={onRetryBeats} className="!p-3" />
+                </div>
+            ) : beats.length === 0 ? (
                 <p className="text-xs text-gray-500 text-center py-2">No beats recorded yet. Use the beat input below or press Continue.</p>
             ) : (
                 <DndContext

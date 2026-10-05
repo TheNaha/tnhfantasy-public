@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Filter, X } from 'lucide-react';
+import { QueryErrorState } from '../common/QueryState';
 
 /**
  * Tag picker for the model lists.
@@ -31,6 +32,13 @@ export default function ModelTagFilter({
     selectedTags = [],
     onSelectedTagsChange,
     tagSources = {},
+    // The tags are read off whatever model list the caller loaded, so this
+    // panel can only report a failure the caller can see. `tagsError` is the
+    // caller's query error; without it a 503 renders "No tags on the loaded
+    // models yet", which is the same false-emptiness the whole rest of the app
+    // was fixed for.
+    tagsError = null,
+    onRetryTags,
 }) {
     // Hover already reveals the panel, but a hover-only menu cannot be reached by
     // keyboard or touch, so click toggles it too.
@@ -62,7 +70,16 @@ export default function ModelTagFilter({
                 <div
                     className={`absolute right-0 mt-2 w-64 max-h-96 overflow-y-auto glass-panel border border-white/10 rounded-2xl shadow-2xl p-3 z-20 backdrop-blur-xl ${open ? 'block' : 'hidden group-hover:block'}`}
                 >
-                    {availableTags.length === 0 && (
+                    {tagsError ? (
+                        <div className="p-1">
+                            <QueryErrorState
+                                noun="tags"
+                                error={tagsError}
+                                onRetry={onRetryTags}
+                                className="!p-3"
+                            />
+                        </div>
+                    ) : availableTags.length === 0 && (
                         <p className="p-2 text-xs text-gray-500">
                             No tags on the loaded models yet. Open a model's
                             details to give it a tag of your own.

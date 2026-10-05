@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2, Plus, MapPin, Eye, Target, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 import { assetUrl } from '../../utils/assetUrl';
+import { parseGalleryDate } from '../../utils/dateTime';
 import SamplingControls from '../common/SamplingControls';
 import { QueryErrorState } from '../common/QueryState';
 import EntityContextInspector from '../workspace/EntityContextInspector';
@@ -157,6 +158,8 @@ export default React.memo(function StoryContextPanel({
                     onOpenRevisions={onOpenRevisions}
                     onSnapshot={onSnapshotChapter}
                     isSnapshotting={isSnapshotting}
+                    chaptersError={queryErrors.chapters?.error}
+                    onRetryChapters={queryErrors.chapters?.refetch}
                 />
 
                 <div className="glass-panel p-4 rounded-xl border border-white/5">
@@ -435,7 +438,7 @@ export default React.memo(function StoryContextPanel({
                         {activeStory?.created_at && (
                             <p className="flex items-center gap-1">
                                 <Calendar size={10} className="text-gray-600" />
-                                Created: {new Date(activeStory.created_at).toLocaleDateString()}
+                                Created: {parseGalleryDate(activeStory.created_at).toLocaleDateString()}
                             </p>
                         )}
                     </div>
