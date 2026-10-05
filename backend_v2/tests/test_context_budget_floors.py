@@ -23,9 +23,12 @@ stops, and does not then mangle what is left. Truncation is therefore scoped to
 messages that are individually unsendable (`TRUNCATION_MIN_TOKENS`).
 """
 
+import logging
+
 import pytest
 
 from services.context_builder import (
+    MIN_RETAINED_TOKENS,
     MIN_UNPINNED_MESSAGES,
     SYSTEM_TOKEN_FLOOR,
     TRUNCATION_MIN_TOKENS,
@@ -173,3 +176,65 @@ def test_messages_below_the_truncation_floor_are_sent_whole(content_tokens):
     content = "w " * content_tokens
     pruned = prune_context([_msg("user", content)], "", [], max_tokens=BUDGET)
     assert len(pruned) == 1
+
+
+class TestTotalOverflowHasNoSizeFloorGap:
+    """The gap between "individually unsendable" and "the request fits".
+
+    `TRUNCATION_MIN_TOKENS` exists so an ordinary turn the caller asked for is
+    never shortened just because the configured budget is smaller than the
+    content. But the only thing that used to consult it was a message *shorter*
+    than nothing being over budget on its own — so a set of mid-size turns whose
+    SUM overflowed the budget matched no candidate, the trim loop found nothing
+    to do, and the oversized prompt went out silently. Measured before the fix:
+    two ~5.2k-token turns against a 4,096 budget emitted 10,503 tokens (2.56x)
+    with no `conversation_truncated` line. It is a paid call, and the caller
+    configured the budget precisely so the provider would not refuse it.
+
+    Every shape below overflows only in aggregate. None of them contains a
+    message at or above `TRUNCATION_MIN_TOKENS`, so the conservative gate is
+    silent about all of them.
+    """
+
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            ("two mid-size turns", (5250, 5250)),
+            ("three mid-size turns", (3000, 3000, 3000)),
+            ("two barely-over turns", (2100, 2100)),
+            ("a long history", (2000,) * 6),
+        ],
+    )
+    def test_the_emitted_conversation_fits_the_budget(self, shape):
+        label, token_counts = shape
+        msgs = [_msg("user", "a " * n, _id=str(i)) for i, n in enumerate(token_counts)]
+        assert all(n < TRUNCATION_MIN_TOKENS for n in token_counts), label
+        pruned = prune_context(msgs, "", [], max_tokens=BUDGET)
+        assert _budget(pruned) <= BUDGET, f"{label}: {_budget(pruned)} > {BUDGET}"
+
+    def test_a_budget_too_small_to_trim_usefully_is_reported_not_obeyed(self, caplog):
+        """Trimming to fit here would leave each kept message one character long
+        plus a marker. `MIN_UNPINNED_MESSAGES` promises the model something to
+        continue with, so the pass declines and logs instead — and the messages
+        stay recognisable."""
+        msgs = [_msg("user", "narrator scene " * 100, _kind="narrator") for _ in range(4)]
+        with caplog.at_level(logging.WARNING):
+            pruned = prune_context(msgs, "", [], max_tokens=MIN_RETAINED_TOKENS)
+        contents = [m["content"] for m in pruned]
+        assert len(contents) == MIN_UNPINNED_MESSAGES, "the count floor still owns count"
+        assert all(len(c) > 50 for c in contents), (
+            "a budget too small to trim must not shred the turns it has to keep"
+        )
+        assert any("budget_too_small" in r.message for r in caplog.records)
+
+    def test_pinned_tokens_that_exceed_the_budget_alone_are_reported(self, caplog):
+        """Pinned messages are subtracted first, so a pinned block larger than
+        the whole budget leaves nothing to trim into. That is not fixable by
+        dropping conversation turns — but it used to be completely silent."""
+        msgs = [_msg("user", "a " * 5000, _pinned=True)]
+        msgs += [_msg("user", f"chatter {i} " * 500) for i in range(5)]
+        with caplog.at_level("WARNING"):
+            prune_context(msgs, "", [], max_tokens=BUDGET)
+        assert any("untrimmable" in r.message for r in caplog.records), (
+            "pinned tokens alone over budget must be reported"
+        )

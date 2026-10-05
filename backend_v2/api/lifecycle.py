@@ -9,7 +9,7 @@ from api.startup_helpers import (
     configure_worker_pool,
     recover_pending_jobs,
 )
-from core.entities import JobStatus
+from core.entities import ACTIVE_JOB_STATUSES, JobStatus
 from infrastructure.background_tasks import (
     cancel_background_tasks,
     start_background_task,
@@ -108,7 +108,16 @@ def requeue_inflight_jobs_for_shutdown() -> int:
             except Exception:
                 continue
 
-            active_states = {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING}
+            # NARROWER THAN ACTIVE_JOB_STATUSES, on purpose: a POST_PROCESSING or
+            # RETRYING job at shutdown has already paid for its inference, and
+            # requeueing it would spend the provider's time again for nothing.
+            # Only a job that was still rendering is worth re-running.
+            active_states = set(ACTIVE_JOB_STATUSES) & {
+                JobStatus.SENT_TO_PROVIDER,
+                JobStatus.CONNECTED,
+                JobStatus.PRE_GENERATION,
+                JobStatus.GENERATING,
+            }
             if job.status not in active_states:
                 continue
 

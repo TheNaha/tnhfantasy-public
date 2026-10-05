@@ -1,6 +1,6 @@
 import { useState, useEffect, useId, memo } from 'react';
 import { Search, X } from 'lucide-react';
-import { useDebounce } from '../../hooks/useDebounce';
+import { useDebouncedValue } from '../../hooks/useDebounce';
 
 // ⚡ Bolt: Wrap FilterBar in React.memo to prevent unnecessary re-renders when parent dashboard updates
 export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
@@ -15,8 +15,16 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
 
     const searchId = useId();
 
-    // Debounced search value - waits 400ms after user stops typing
-    const debouncedSearch = useDebounce(localFilters.search, 400);
+    // Debounced search value - waits 400ms after user stops typing.
+    //
+    // The `cancel` handle is load-bearing, not defensive. "Clear search" writes
+    // straight to the parent, so without cancelling, the timer that was armed by
+    // the last keystroke still held the old term and fired it back 400 ms later:
+    // `onFilterChange` was called with `{search: ""}` and then again with
+    // `{search: "sunset"}`, the input visibly repopulated with the term it had
+    // just been told to delete, and the filter was never cleared. Measured on
+    // the component before this change.
+    const [debouncedSearch, cancelDebouncedSearch] = useDebouncedValue(localFilters.search, 400);
 
     // Apply debounced search to parent
     useEffect(() => {
@@ -26,6 +34,7 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
     }, [debouncedSearch, filters, onFilterChange]);
 
     const handleClear = () => {
+        cancelDebouncedSearch('');
         const cleared = { ...filters, search: '' };
         setLocalFilters(cleared);
         onFilterChange(cleared);

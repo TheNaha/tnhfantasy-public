@@ -12,7 +12,13 @@ from cachetools import TTLCache
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from core.entities import LoadBalancerState, Provider, Job, JobStatus, CONTAINER_TASK_TYPES
+from core.entities import (
+    ACTIVE_JOB_STATUSES,
+    CONTAINER_TASK_TYPES,
+    Job,
+    LoadBalancerState,
+    Provider,
+)
 from infrastructure.background_tasks import start_background_task
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
@@ -254,7 +260,11 @@ class LoadBalancer:
             # thousand whole Job rows to read one string field off each — and past
             # a thousand active jobs the counts were silently wrong, with nothing
             # anywhere saying the number was a floor rather than a total.
-            active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING]
+            # The shared tuple. This copy omitted `RETRYING`, so a job in retry
+            # backoff counted as zero in-flight on its provider and
+            # `least-connections` could hand that provider a second job while the
+            # first was still occupying it.
+            active_states = ACTIVE_JOB_STATUSES
             counted = session.exec(
                 select(Job.provider_id, func.count(Job.id))
                 .where(Job.status.in_(active_states), Job.provider_id.is_not(None))

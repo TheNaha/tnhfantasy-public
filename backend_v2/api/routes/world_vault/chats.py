@@ -15,7 +15,18 @@ from infrastructure.repositories.message_repo import MessageRepository
 from infrastructure.repositories.character_repo import CharacterRepository
 from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Chat, Character, Job, JobStatus, Message, MessageKind, MessageRole, Persona, VoiceModel
+from core.entities import (
+    ACTIVE_JOB_STATUSES,
+    Chat,
+    Character,
+    Job,
+    JobStatus,
+    Message,
+    MessageKind,
+    MessageRole,
+    Persona,
+    VoiceModel,
+)
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from core.upload_validation import (
@@ -1047,9 +1058,15 @@ def list_chat_jobs(chat_id: str, session: Session = Depends(get_session), chat_r
     jobs = session.exec(
         select(Job)
         .where(
-            Job.status.in_([JobStatus.PENDING, JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED,
-                           JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING,
-                           JobStatus.COMPLETED, JobStatus.FAILED]),
+            # Every status except CANCELLED — the jobs a chat owns, including the
+            # ones still moving. Built from the shared sets rather than listed
+            # inline, which had already dropped RETRYING.
+            Job.status.in_([
+                JobStatus.PENDING,
+                *ACTIVE_JOB_STATUSES,
+                JobStatus.COMPLETED,
+                JobStatus.FAILED,
+            ]),
         )
         .where(Job.metadata_["chat_id"].as_string() == chat_id)
         .order_by(Job.created_at.desc())

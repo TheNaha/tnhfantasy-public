@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from sqlmodel import Session, select
 
 from core.dtos import JobQueueItem
-from core.entities import Job, JobStatus
+from core.entities import ACTIVE_JOB_STATUSES, Job, JobStatus
 from core.events import EventType, emit_job_event
 from core.exceptions import NotFoundError, ValidationError
 from infrastructure.logging import job_logger
@@ -62,15 +62,9 @@ FAILURE_UNEXPECTED = "unexpected"
 FAILURE_CANCELLED = "cancelled"
 FAILURE_UNKNOWN = "unknown"
 
-# States in which a worker has picked the job up and it is no longer queued.
-ACTIVE_JOB_STATUSES = (
-    JobStatus.SENT_TO_PROVIDER,
-    JobStatus.CONNECTED,
-    JobStatus.PRE_GENERATION,
-    JobStatus.GENERATING,
-    JobStatus.POST_PROCESSING,
-    JobStatus.RETRYING,
-)
+# `ACTIVE_JOB_STATUSES` is defined beside `JobStatus` in `core.entities`, because
+# three services need it and two of them had drifted from a private copy.
+# Re-exported here so the existing importers keep working.
 
 # A job can be cancelled until it reaches a terminal state.
 CANCELLABLE_JOB_STATUSES = (JobStatus.PENDING, *ACTIVE_JOB_STATUSES)
@@ -686,7 +680,10 @@ class JobService:
             raise NotFoundError("Job", job_id)
             
         # Set started_at for first active state
-        active_states = {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING}
+        # The shared tuple, not a transcription of it. This copy omitted
+        # `RETRYING`, so `started_at` was never stamped for a job entering retry
+        # backoff.
+        active_states = ACTIVE_JOB_STATUSES
         status = updates.get("status")
         requested_status = status
 

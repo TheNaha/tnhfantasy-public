@@ -112,6 +112,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, insert, tuple_
 from sqlmodel import Session, func, select
 
+from core.asset_sql import CHECKPOINT_KEY, RESOLVED_TS
 from core.entities import Asset
 from core.entities import Session as GenerationSession
 from core.entities import SessionAsset
@@ -128,22 +129,10 @@ __all__ = ["MAX_DETECT_ASSETS", "RESOLVED_TS", "detect_sessions"]
 # rather than an HTTP request.
 MAX_DETECT_ASSETS = 200_000
 
-# The instant an asset counts towards, preferring the job's own completion time.
-# Must stay identical to `_RESOLVED_TS` in `services/statistics_service`; that one
-# is private, so the expression is mirrored here and the coupling is documented on
-# both sides rather than left to drift silently.
-RESOLVED_TS = func.coalesce(Asset.job_completed_at, Asset.generated_at, Asset.created_at)
-
-# The checkpoint grouping key. The rollup column is preferred, with the jsonb
-# forms behind it so a row written before migration 067 (no `checkpoint_name`)
-# still groups under the same name the statistics facet groups it under. Mirrors
-# `_CHECKPOINT` in `services/statistics_service`.
-_META = Asset.metadata_
-CHECKPOINT_KEY = func.coalesce(
-    Asset.checkpoint_name,
-    _META["checkpoint"]["name"].as_string(),
-    _META["checkpoint"].as_string(),
-)
+# `RESOLVED_TS` (the instant an asset counts towards) and `CHECKPOINT_KEY` (the
+# grouping key) are imported from `core.asset_sql` above. Both used to be
+# transcribed here with a comment saying they had to stay identical to the private
+# copies in `services/statistics_service`, and no test asserting that they did.
 
 _BUCKET = "%Y-%m-%dT%H:%M"
 

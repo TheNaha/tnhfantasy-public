@@ -59,6 +59,8 @@ from core.entities import (
     Story,
     StoryChapter,
 )
+from core.asset_sql import CHECKPOINT_KEY, META, RESOLVED_TS
+from core.entities import TERMINAL_JOB_STATUSES
 from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from infrastructure.logging import get_logger
 from services.asset_reconciler import METADATA_VERSION
@@ -90,7 +92,7 @@ _STOP_WORDS = frozenset(
 
 _TIME_RANGES: dict[str, int | None] = {"24h": 24 * 3600, "7d": 7 * 86400, "30d": 30 * 86400}
 
-_META = Asset.metadata_
+_META = META
 
 
 def _meta(key: str) -> ColumnElement[Any]:
@@ -105,11 +107,10 @@ def _meta(key: str) -> ColumnElement[Any]:
 # A checkpoint is an object with a `name`; legacy rows stored a bare string.
 # The rollup column is preferred, with the jsonb forms as a fallback so a row
 # written before migration 067 still groups under the right name.
-_CHECKPOINT = func.coalesce(
-    Asset.checkpoint_name,
-    _META["checkpoint"]["name"].as_string(),
-    _META["checkpoint"].as_string(),
-)
+#
+# One definition, shared with `services/session_detector` — see `core.asset_sql`
+# for why these two had to stop being two spellings.
+_CHECKPOINT = CHECKPOINT_KEY
 
 # Resolution is built from the real `width`/`height` columns, not from
 # `metadata_`. `reconcile_asset` populates them from the image itself and they
@@ -122,8 +123,9 @@ _RESOLUTION = func.cast(Asset.width, String) + "x" + func.cast(Asset.height, Str
 # comparable prefix; anything else falls through to the row timestamp columns.
 # The resolved completion time: the job's own, else the row's own timestamps.
 # Mirrors `_resolved_timestamp`, which is the Python version used for the
-# timeline buckets.
-_RESOLVED_TS = func.coalesce(Asset.job_completed_at, Asset.generated_at, Asset.created_at)
+# timeline buckets, and `services.session_detector.RESOLVED_TS`, which is now the
+# same object rather than a second transcription of it.
+_RESOLVED_TS = RESOLVED_TS
 
 # The gallery's timeline, and therefore the ONE day-bucketing rule.
 #
@@ -428,20 +430,39 @@ def _totals(session: Session, where: ColumnElement[bool] | None) -> dict[str, An
     )
 
 
-def _image_job_success_rate(session: Session) -> float | None:
+def _image_job_success_rate(
+    session: Session, cutoff: datetime | None = None
+) -> float | None:
     """Fraction of image jobs that completed.
 
     Reported as `performance.success_rate`. The Statistics page has read this
     key since it was written, but nothing ever produced it, so the card silently
     rendered nothing.
+
+    Two things were wrong about it beyond the missing key. It took no `where`,
+    so the only number in the payload that the page's time-range selector did
+    not scope was this one — measured: `total_images` narrowed from 2 to 1
+    between `?timeRange=all` and `?timeRange=24h` while `success_rate` stayed
+    byte-identical. The scope it needs is a `Job` scope, not the asset
+    `_time_range_filter` the rest of the payload uses — that one is built on
+    `Asset.job_completed_at`, which a job row has no column for — so the cutoff
+    arrives as a datetime and is applied to `Job.created_at`, which
+    `idx_job_status_created` covers. And its denominator counted every image job
+    ever submitted, including the PENDING and RUNNING ones, so a queue with work
+    in it always read as failures. The denominator is now the terminal jobs,
+    which is what "of the jobs that finished, how many succeeded" means.
     """
+    scopes: list[ColumnElement[bool]] = [
+        Job.task_type == "image",
+        Job.status.in_(TERMINAL_JOB_STATUSES),
+    ]
+    if cutoff is not None:
+        scopes.append(Job.created_at >= cutoff)
     completed = session.execute(
-        select(func.count())
-        .select_from(Job)
-        .where(Job.task_type == "image", Job.status == JobStatus.COMPLETED)
+        select(func.count()).select_from(Job).where(*scopes, Job.status == JobStatus.COMPLETED)
     ).scalar()
     total = session.execute(
-        select(func.count()).select_from(Job).where(Job.task_type == "image")
+        select(func.count()).select_from(Job).where(*scopes)
     ).scalar()
     if not total:
         return None
@@ -689,7 +710,23 @@ def get_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
         hourly: dict[str, int] = {}
         weekday: dict[str, int] = {}
 
-        for row in _row_pass(session, where, with_prompts=cached_prompts is None):
+        # On a cache miss the prompt aggregates are computed from the SAME pass,
+        # not a second one. There used to be a `for row in _row_pass(...)` here
+        # whose only work was prompt accounting, which meant a cache miss issued
+        # the identical byte-for-byte statement twice — captured in a statement
+        # log as statements 12 and 13 — and transferred the prompt-bearing half
+        # of the jsonb document (9.1 MB by this module's own figure) twice. The
+        # prompt columns are already selected on a miss; they were just being
+        # read by a different loop.
+        keyword_counts = Counter()
+        prompt_total = 0
+        prompt_len_sum = 0
+        prompt_len_min = None
+        prompt_len_max = None
+        negative_usage = 0
+        want_prompts = cached_prompts is None
+
+        for row in _row_pass(session, where, with_prompts=want_prompts):
             lora_array, job_ts, generated_at, created_at, *prompt_columns = row
 
             for name, weight in _lora_entries(lora_array):
@@ -704,6 +741,28 @@ def get_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
                 dow = str(moment.weekday())
                 weekday[dow] = weekday.get(dow, 0) + 1
 
+            if not want_prompts:
+                continue
+
+            prompt, negative = prompt_columns[0], prompt_columns[1]
+
+            if negative is not None and str(negative).strip():
+                negative_usage += 1
+
+            if prompt is None:
+                continue
+            prompt_total += 1
+            text = prompt if isinstance(prompt, str) else str(prompt)
+            length = len(text)
+            prompt_len_sum += length
+            prompt_len_min = length if prompt_len_min is None else min(prompt_len_min, length)
+            prompt_len_max = length if prompt_len_max is None else max(prompt_len_max, length)
+            # `Counter.update` tallies in C; a per-word `dict.get` loop over
+            # ~1.3M words was the single most expensive thing in this function.
+            keyword_counts.update(
+                word for word in _WORD_RE.findall(text.lower()) if word not in _STOP_WORDS
+            )
+
         if cached_prompts is not None:
             keyword_counts = Counter(cached_prompts["keywords"])
             prompt_total = cached_prompts["total"]
@@ -712,35 +771,6 @@ def get_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
             prompt_len_max = cached_prompts["length_max"]
             negative_usage = cached_prompts["negative_usage"]
         else:
-            keyword_counts = Counter()
-            prompt_total = 0
-            prompt_len_sum = 0
-            prompt_len_min = None
-            prompt_len_max = None
-            negative_usage = 0
-
-            for row in _row_pass(session, where, with_prompts=True):
-                prompt, negative = row[4], row[5]
-
-                if negative is not None and str(negative).strip():
-                    negative_usage += 1
-
-                if prompt is None:
-                    continue
-                prompt_total += 1
-                text = prompt if isinstance(prompt, str) else str(prompt)
-                length = len(text)
-                prompt_len_sum += length
-                prompt_len_min = length if prompt_len_min is None else min(prompt_len_min, length)
-                prompt_len_max = length if prompt_len_max is None else max(prompt_len_max, length)
-                # `Counter.update` tallies in C; a per-word `dict.get` loop over
-                # ~1.3M words was the single most expensive thing in this function.
-                keyword_counts.update(
-                    word
-                    for word in _WORD_RE.findall(text.lower())
-                    if word not in _STOP_WORDS
-                )
-
             _store_prompt_aggregates(signature, {
                 "keywords": dict(keyword_counts),
                 "total": prompt_total,
@@ -811,7 +841,7 @@ def get_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
                 "slowest": round(float(totals["duration_max"]), 2) if totals["duration_max"] else None,
                 "total_time": total_time,
                 "avg_time": round(total_time / duration_count, 2) if duration_count else 0,
-                "success_rate": _image_job_success_rate(session),
+                "success_rate": _image_job_success_rate(session, cutoff),
             },
             "model_sampler_matrix": model_sampler_matrix,
             "correlations": {

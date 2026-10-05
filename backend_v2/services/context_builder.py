@@ -107,6 +107,20 @@ def _lorebook_query_text(message: Any) -> str:
 # caller asked for.
 TRUNCATION_MIN_TOKENS = 8192
 
+# How much of a message the escalation pass must be able to leave behind.
+#
+# `prune_context` guarantees a floor of `MIN_UNPINNED_MESSAGES` turns, and
+# proportional trimming divides whatever budget is left between them. When the
+# budget is smaller than this per message, the division produces one character
+# plus a truncation marker per message — the request fits and the conversation is
+# gone. A caller whose budget is that tight has a misconfiguration, not a
+# request to shred, so the pass declines and says so.
+MIN_RETAINED_TOKENS = 128
+
+# Backstop on the trim loop. Each pass strictly shrinks the content, so two or
+# three always converge; this only bounds the pathological case.
+_TRIM_MAX_PASSES = 4
+
 
 def _truncate_system_msgs(
     system_msgs: list[dict], budget_tokens: int
@@ -363,7 +377,18 @@ def prune_context(
     # This runs AFTER the ordering rebuild. Doing it before meant substituting a
     # new dict, and the merge keys surviving messages by `id()`, so a substituted
     # object was no longer found in the original list.
-    over_budget = total_tokens > remaining_budget and remaining_budget > 0
+    over_budget = total_tokens > remaining_budget
+    # ...but only actionable while there is budget left to trim into. Pinned
+    # messages are subtracted first, so a pinned block larger than the whole
+    # budget drives `remaining_budget` to zero or below and no amount of
+    # trimming the unpinned remainder can fix it. That case used to be silent.
+    trimmable = over_budget and remaining_budget > 0
+    if over_budget and not trimmable:
+        logger.warning(
+            "conversation_over_budget_untrimmable: total=%d budget=%d pinned=%d "
+            "pinned_tokens=%d — pinned messages alone exceed the budget",
+            total_tokens, max_tokens, len(pinned_msgs), pinned_tokens,
+        )
 
     # Reconstruct in original order: system → unpinned (oldest first) → pinned at end
     # Actually preserve original relative order for pinned messages
@@ -389,55 +414,102 @@ def prune_context(
         if key in unpinned_keys or key in pinned_keys:
             result.append(m)
 
-    if over_budget:
+    if trimmable:
         # Scale every remaining conversation message by the same ratio, rather
         # than spending the whole budget on the largest one and leaving the rest
         # to overflow. Per-message trimming does not compose: filling the budget
         # with message A leaves nothing for message B, so a two-message history
         # of 40,000 tokens each still went out at 47,180.
-        #
-        # Restricted to messages that are individually unsendable — see
-        # TRUNCATION_MIN_TOKENS. `MIN_UNPINNED_MESSAGES` owns the count, and this
-        # only decides how much of what is left fits.
-        #
-        # A single proportional pass is enough and always terminates, because
-        # `_estimate_cached` is linear in character count. The trailing marker is
-        # budgeted for explicitly so the result actually lands under the cap
-        # rather than a few tokens over it.
         marker = "\n\n[...truncated to fit the context budget]"
         marker_tokens = _estimate_cached(marker)
 
-        def _truncation_candidates(seq: list[dict]) -> list[int]:
-            """Indices of messages large enough to be worth trimming."""
+        def _truncation_candidates(seq: list[dict], only_individually_oversized: bool) -> list[int]:
+            """Indices of messages this pass is allowed to shorten.
+
+            `only_individually_oversized` is the conservative gate: a message
+            qualifies only if it is at or above `TRUNCATION_MIN_TOKENS` *and* on
+            its own larger than the whole remaining budget. The escalation pass
+            drops both conditions — the total is over budget, and proportional
+            trimming is the only arithmetic that composes — but it still leaves
+            system and pinned messages alone.
+            """
             out = []
             for i, m in enumerate(seq):
                 if _is_exempt_system(m) or m.get("_pinned"):
                     continue
                 tokens = _estimate_cached(m.get("content", ""))
-                if tokens >= TRUNCATION_MIN_TOKENS and tokens > remaining_budget:
-                    out.append(i)
+                if only_individually_oversized and not (
+                    tokens >= TRUNCATION_MIN_TOKENS and tokens > remaining_budget
+                ):
+                    continue
+                out.append(i)
             return out
 
-        while True:
-            indices = _truncation_candidates(result)
+        # Two gates, and the second one is the point.
+        #
+        # The conservative gate keeps the documented behaviour: only a message
+        # that is individually unsendable is shortened, so an ordinary turn the
+        # caller asked for survives whole. But "individually unsendable" is not
+        # the same condition as "the request fits". Two mid-size turns of ~5.2k
+        # tokens each are both perfectly sendable, and their SUM is 10,503 tokens
+        # against a 4,096 budget — measured, and it shipped, silently, with no
+        # `conversation_truncated` line, because the candidate list came back
+        # empty and the loop gave up. The budget is both what the caller
+        # configured and what the provider refuses to exceed, so a total overflow
+        # has to be resolved even when no single message is at fault.
+        #
+        # The escalation gate is therefore "every unpinned turn, no size floor".
+        for only_individually_oversized in (True, False):
+            indices = _truncation_candidates(result, only_individually_oversized)
             if not indices:
-                break
-            # Share the budget across the unsendable messages only; the small
-            # ones are kept whole because the caller has already decided they
-            # are worth their tokens.
-            current = sum(_estimate_cached(result[i].get("content", "")) for i in indices)
-            usable = max(0, remaining_budget - marker_tokens * len(indices))
-            ratio = usable / current if current else 0.0
-            for i in indices:
+                continue
+
+            # Share the budget proportionally across the candidates. Repeating
+            # until it fits matters: `_estimate_cached` splits on whitespace, so
+            # cutting at a raw character offset can change the word count in
+            # either direction and a single pass left the result 12 tokens over a
+            # 4096 budget — which is a failure the existing tests correctly
+            # reject. Each pass strictly shrinks the content, so this converges;
+            # the iteration cap is a backstop, not the mechanism.
+            def _body(i: int) -> str:
+                """Message content with any marker from a previous pass removed.
+
+                Without this the loop appends a second marker on top of the first,
+                so the content grows on every pass and the estimate drifts
+                upward — which is how the repeat-to-converge version ended up
+                stacking `\\n\\n[\\n\\n[\\n\\n[…` and finishing 20 tokens OVER.
+                """
                 content = result[i].get("content", "") or ""
-                keep = max(1, int(len(content) * ratio))
-                if keep < len(content):
-                    result[i] = {**result[i], "content": content[:keep] + marker}
+                return content[: -len(marker)] if content.endswith(marker) else content
+
+            for _ in range(_TRIM_MAX_PASSES):
+                bodies = {i: _body(i) for i in indices}
+                current = sum(_estimate_cached(b) for b in bodies.values())
+                if current <= 0:
+                    break
+                usable = max(0, remaining_budget - marker_tokens * len(indices))
+                if not only_individually_oversized and usable < MIN_RETAINED_TOKENS * len(indices):
+                    logger.warning(
+                        "conversation_over_budget_budget_too_small: budget=%d "
+                        "needed_for_markers_and_content=%d messages=%d",
+                        remaining_budget, MIN_RETAINED_TOKENS * len(indices), len(indices),
+                    )
+                    break
+                ratio = usable / current
+                for i, body in bodies.items():
+                    keep = max(1, int(len(body) * ratio))
+                    if keep < len(body):
+                        result[i] = {**result[i], "content": body[:keep] + marker}
+                landed = sum(
+                    _estimate_cached(_body(i)) + marker_tokens for i in indices
+                )
+                if landed <= remaining_budget:
+                    break
+
             logger.warning(
-                "conversation_truncated: tokens=%d budget=%d messages=%d",
-                current, remaining_budget, len(indices),
+                "conversation_truncated: tokens=%d budget=%d messages=%d escalated=%s",
+                current, remaining_budget, len(indices), not only_individually_oversized,
             )
-            break
     return result
 
 

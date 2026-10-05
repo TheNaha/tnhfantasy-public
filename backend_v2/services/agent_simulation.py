@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import exists
 from sqlmodel import select
 
-from core.entities import Character, Chat, Job, JobStatus, Message
+from core.entities import ACTIVE_JOB_STATUSES, Character, Chat, Job, JobStatus, Message
 from infrastructure.logging import get_logger
 from services.chat_utils import resolve_context_tokens as _resolve_context_tokens
 
@@ -40,15 +40,7 @@ IDLE_SIM_MAX_JOBS_PER_TICK = 5
 # The statuses that mean "a reply is already on its way". Named here because
 # the previous form of this check listed them inside a Python `any()`, which is
 # why the set is easy to forget to extend when a status is added.
-IN_FLIGHT_JOB_STATUSES = (
-    JobStatus.PENDING,
-    JobStatus.SENT_TO_PROVIDER,
-    JobStatus.CONNECTED,
-    JobStatus.PRE_GENERATION,
-    JobStatus.GENERATING,
-    JobStatus.POST_PROCESSING,
-    JobStatus.RETRYING,
-)
+IN_FLIGHT_JOB_STATUSES = (JobStatus.PENDING, *ACTIVE_JOB_STATUSES)
 
 _IDLE_SIM_TRIGGER = (
     "[Idle simulation] The user has been away for a while. Act on your own "

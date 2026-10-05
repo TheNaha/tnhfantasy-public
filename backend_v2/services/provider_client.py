@@ -4,6 +4,7 @@ import time
 
 from core.entities import JobStatus
 from core.events import emit_job_event, EventType
+from core.progress import coerce_worker_percent
 from infrastructure.http_client import get_streaming_client
 from infrastructure.logging import get_logger
 
@@ -221,22 +222,11 @@ class _ImageReducer:
         if event == "started":
             await self.job_service.update_job(self.job_id, status=JobStatus.PRE_GENERATION, message="Queued in worker...")
         elif event == "progress":
-            val = ev.get("value") or 0
-            # `value_unit` says what `value` counts, and every worker on the
-            # current contract sends `"percent"` (see
-            # `provider_core/models.py`). A legacy container deployed before
-            # that field existed still emits a 0..1 fraction, so it is absent
-            # rather than wrong — keep the heuristic for it.
-            #
-            # The heuristic alone cannot be trusted even for modern events: its
-            # `val <= 1` branch reads a worker reporting exactly `value == 1` —
-            # one percent done — as a fraction and records 100%. That is silent,
-            # it lands on the single most-watched number in the UI, and no worker
-            # emits fractions any more, so the branch could only ever misfire.
-            if ev.get("value_unit") == "percent":
-                percent = int(val)
-            else:
-                percent = int(val * 100) if val <= 1 else int(val)
+            # One definition of the rule, shared with `api/routes/worker_ws`.
+            # That half had kept the pre-`value_unit` `val <= 1` heuristic while
+            # this half had been converted, so a canonical event carrying
+            # `value == 1` — one percent done — read as 1% here and 100% there.
+            percent = coerce_worker_percent(ev.get("value") or 0, ev.get("value_unit"))
             overall = int((len(self.executed_nodes) / self.total_nodes) * 100) if self.total_nodes > 0 else percent
             await self._persist_progress(
                 status=JobStatus.GENERATING, progress=percent,

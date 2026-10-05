@@ -19,6 +19,7 @@ absent unit keeps the old reading. Both halves are pinned below.
 
 import pytest
 
+from core.progress import coerce_worker_percent
 from services.provider_client import _ImageReducer
 
 
@@ -116,3 +117,41 @@ async def test_missing_value_is_zero_not_an_error(reducer):
     """A progress frame with no value must not become 100 percent."""
     await reducer({"event": "progress", "value_unit": "percent"})
     assert reducer.job_service.calls[-1]["progress"] == 0
+
+class TestBothHalvesAgree:
+    """One rule, two call sites, and the guard that keeps them one rule.
+
+    `api/routes/worker_ws._coerce_percent` and `services/provider_client`'s
+    reducer are the two consumers of a worker's progress frame. They had already
+    drifted: this side was converted to `value_unit`, that side kept
+    `0 <= value <= 1 means a fraction`, so a canonical `value == 1` read as 1%
+    here and 100% there — the same socket, the same frame, two answers, silently.
+
+    Comparing the two is the only guard that can catch a third copy appearing,
+    or one of them being edited back to a local heuristic.
+    """
+
+    @pytest.mark.parametrize(
+        "value,unit",
+        [
+            (0, "percent"), (0.01, "percent"), (0.25, "percent"), (1, "percent"),
+            (1.5, "percent"), (2, "percent"), (42, "percent"), (99, "percent"),
+            (100, "percent"), (150, "percent"), (-5, "percent"),
+            (None, "percent"), ("nan", "percent"), ("x", "percent"),
+            (0.5, None), (1, None), (0, None), (1.0, None), (42, None),
+        ],
+    )
+    def test_socket_and_client_halves_return_the_same_integer(self, value, unit):
+        from api.routes.worker_ws import _coerce_percent
+
+        assert _coerce_percent(value, unit) == coerce_worker_percent(value, unit)
+
+    def test_the_client_half_reads_value_unit_from_the_frame(self):
+        """The reducer must pass the frame's own `value_unit` through, not
+        re-derive it. Before the consolidation it hardcoded the branch inline."""
+        import inspect
+
+        source = inspect.getsource(_ImageReducer.__call__)
+        assert "coerce_worker_percent" in source
+        assert 'value_unit' in source
+        assert "val * 100" not in source, "the local heuristic must be gone"

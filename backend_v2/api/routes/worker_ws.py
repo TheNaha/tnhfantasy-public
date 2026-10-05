@@ -35,6 +35,7 @@ from api.deps import (
 )
 from core.entities import Job, JobStatus
 from core.exceptions import NotFoundError
+from core.progress import coerce_worker_percent
 from infrastructure.worker_registry import (  # noqa: F401
     _get_live_worker,
     dispatch_job_to_worker,
@@ -101,24 +102,17 @@ async def _worker_owns_job(job_id: str | None, provider_id: str) -> bool:
     # report progress/completion for a job it was never given.
     return assigned == provider_id
 
-def _coerce_percent(value) -> int:
+def _coerce_percent(value, value_unit: str | None = None) -> int:
     """Normalise a worker-reported progress value to a 0..100 integer.
 
-    Canonical worker events are percent 0..100, but legacy containers still
-    emit 0..1 fractions.  The result is always clamped into 0..100 because
-    migration 047 added `CHECK (progress BETWEEN 0 AND 100)` on jobs — writing
-    an out-of-range value raised IntegrityError inside the session context,
-    which propagated to the socket-level handler and dropped the worker,
-    leaving the job non-terminal.
+    Delegates to `core.progress.coerce_worker_percent`. This used to keep its own
+    copy of the `0 <= value <= 1 means a fraction` heuristic while
+    `services/provider_client._ImageReducer` had already been converted to the
+    `value_unit` field the current worker contract carries — so a canonical event
+    carrying `value == 1` was recorded as 100% here and as 1% there. Two halves
+    of one socket, one number, two answers. The rule now lives in one place.
     """
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return 0
-    if number != number:  # NaN
-        return 0
-    percent = number * 100 if 0 <= number <= 1 else number
-    return max(0, min(100, int(percent)))
+    return coerce_worker_percent(value, value_unit)
 
 
 # Re-exported from infrastructure.worker_registry so callers (including tests)
@@ -192,7 +186,7 @@ async def _handle_job_progress(websocket: WebSocket, worker, provider_id: str, m
 
     # TaskEvent-shaped payloads (canonical): {"event": "progress", "value": percent 0..100}
     if payload.get("event") == "progress" and payload.get("value") is not None:
-        percent = _coerce_percent(payload["value"])
+        percent = _coerce_percent(payload["value"], payload.get("value_unit"))
         updates["progress"] = percent
         updates["overall_progress"] = percent
     else:

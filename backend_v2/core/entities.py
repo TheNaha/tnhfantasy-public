@@ -32,6 +32,35 @@ class JobStatus(str, Enum):
     CANCELLED = "cancelled"  # User-initiated cancellation
 
 
+# The states in which a worker has picked the job up and it is no longer queued.
+#
+# This lives beside the enum rather than in `services/job_service` because three
+# services need it and two of them had their own transcription. `load_balancer`
+# and `job_service.update_job` both re-spelled the tuple without `RETRYING`,
+# which is the one state that most obviously belongs in it — a job in retry
+# backoff is holding its slot on the provider. Under `least-connections` that
+# read as zero in-flight jobs, so the balancer could hand the same provider a
+# second job while the first was still there.
+#
+# `RETRYING` is the state most likely to be forgotten when a new one is added,
+# because nothing about the name suggests "still occupying the worker".
+ACTIVE_JOB_STATUSES = (
+    JobStatus.SENT_TO_PROVIDER,
+    JobStatus.CONNECTED,
+    JobStatus.PRE_GENERATION,
+    JobStatus.GENERATING,
+    JobStatus.POST_PROCESSING,
+    JobStatus.RETRYING,
+)
+
+# The states a job can never leave on its own.
+TERMINAL_JOB_STATUSES = (
+    JobStatus.COMPLETED,
+    JobStatus.FAILED,
+    JobStatus.CANCELLED,
+)
+
+
 # Canonical worker/task type vocabulary. Anything else is rejected so
 # ad-hoc values (e.g. "text") can't silently fall into the image queue.
 # Task types a Job can carry, and a Provider can serve.
