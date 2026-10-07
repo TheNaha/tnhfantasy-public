@@ -14,8 +14,9 @@ import useProvidersPageData, { useProviderMutations } from '../hooks/useProvider
 
 const FILTERS = [
     { id: 'all', label: 'All' },
-    { id: 'managed', label: 'Managed' },
-    { id: 'manual', label: 'Manual' },
+    { id: 'image', label: 'Image' },
+    { id: 'llm', label: 'LLM' },
+    { id: 'tts', label: 'Voice' },
     { id: 'issues', label: 'Needs Attention' },
 ];
 
@@ -66,11 +67,11 @@ export default function Providers() {
             const created = result?.created ?? [];
             const already = result?.already ?? [];
             if (created.length) {
-                toast.success(`Detected ${created.length} new container${created.length > 1 ? 's' : ''}: ${created.join(', ')}`);
+                toast.success(`Detected ${created.length} new provider${created.length > 1 ? 's' : ''}: ${created.join(', ')}`);
             } else if (already.length) {
                 toast(`${already.length} provider${already.length > 1 ? 's' : ''} already registered (heartbeat auto-discovery).`, { icon: '📡' });
             } else {
-                toast('No provider containers detected. Add one manually, or check the container is running.');
+                toast('No new providers detected. Add one manually using "+ Add Provider".');
             }
             await refreshProviderData();
         } catch (e) {
@@ -104,6 +105,9 @@ export default function Providers() {
 
             const matchesFilter = (
                 filter === 'all'
+                || (filter === 'image' && (provider.worker_type === 'image' || (!provider.worker_type && !provider.capabilities?.length) || (Array.isArray(provider.capabilities) && provider.capabilities.includes('image'))))
+                || (filter === 'llm' && (provider.worker_type === 'llm' || (Array.isArray(provider.capabilities) && provider.capabilities.includes('llm'))))
+                || (filter === 'tts' && (provider.worker_type === 'tts' || (Array.isArray(provider.capabilities) && provider.capabilities.includes('tts'))))
                 || (filter === 'managed' && provider.capabilities?.managed_deploy)
                 || (filter === 'manual' && provider.capabilities?.manual_deploy)
                 || (filter === 'issues' && hasIssues)

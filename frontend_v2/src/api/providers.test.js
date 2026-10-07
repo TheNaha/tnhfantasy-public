@@ -41,4 +41,24 @@ describe('providersApi load balancer aliases', () => {
         expect(putMock).toHaveBeenCalledWith('/api/v2/providers/config/load-balancing', payload);
     });
 
+    it('fetches engine schemas via getSchemas', () => {
+        providersApi.getSchemas();
+
+        expect(getMock).toHaveBeenCalledWith('/api/v2/providers/schemas', {});
+    });
+
+    it('calls testConnection with payload', () => {
+        const payload = { type: 'modal', credentials: { token_id: 'a', token_secret: 'b' } };
+        providersApi.testConnection(payload);
+
+        expect(postMock).toHaveBeenCalledWith('/api/v2/providers/test-connection', payload);
+    });
+
+    it('calls testProvider with providerId', () => {
+        providersApi.testProvider('test-prov-1');
+
+        expect(postMock).toHaveBeenCalledWith('/api/v2/providers/test-prov-1/test');
+    });
 });
+
+

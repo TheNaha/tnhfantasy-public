@@ -10,6 +10,7 @@
 #   PUT    /api/v2/providers/load-balancing – Update LB strategy
 import asyncio
 import time
+from types import SimpleNamespace
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
@@ -90,6 +91,13 @@ class AddCustomProviderModelRequest(BaseModel):
     directory: str
     model_data: dict[str, Any]
     provider_ids: list[str]
+
+
+class TestConnectionRequest(BaseModel):
+    id: str | None = None
+    type: str
+    credentials: dict[str, Any] = {}
+    config: dict[str, Any] = {}
 
 
 
@@ -405,6 +413,256 @@ async def ping_provider(provider_id: str, session: Session = Depends(get_session
         "latency_ms": latency_ms,
         "error": None if resp.status_code == 200 else f"Health check failed: HTTP {resp.status_code}",
     }
+
+
+# ============================================================================
+# ENGINE SCHEMAS & INTERACTIVE TEST BENCH
+# ============================================================================
+
+ENGINE_SCHEMAS: dict[str, dict[str, Any]] = {
+    "modal": {
+        "id": "modal",
+        "name": "Modal (ComfyUI)",
+        "category": "image",
+        "worker_type": "image",
+        "capabilities": ["image"],
+        "description": "Serverless ComfyUI execution on Modal cloud GPU workers with shared volume storage.",
+        "credentials": [
+            {"key": "token_id", "label": "Modal Token ID", "type": "password", "required": True, "placeholder": "ak-..."},
+            {"key": "token_secret", "label": "Modal Token Secret", "type": "password", "required": True, "placeholder": "as-..."},
+            {"key": "hf_token", "label": "HuggingFace Token", "type": "password", "required": False, "placeholder": "hf_..."},
+            {"key": "civitai_token", "label": "CivitAI Token", "type": "password", "required": False, "placeholder": "CivitAI API token"},
+        ],
+        "config": [
+            {"key": "app_name", "label": "Modal App Name", "type": "text", "default": "comfy-modal-stack", "placeholder": "comfy-modal-stack"},
+            {"key": "enable_memory_snapshot", "label": "Memory Snapshot", "type": "checkbox", "default": False, "help_text": "Use memory snapshot container if deployed"},
+        ],
+    },
+    "beam": {
+        "id": "beam",
+        "name": "Beam.cloud (ComfyUI)",
+        "category": "image",
+        "worker_type": "image",
+        "capabilities": ["image"],
+        "description": "Serverless ComfyUI execution on Beam.cloud GPU endpoints with persistent storage volume.",
+        "credentials": [
+            {"key": "api_key", "label": "Beam API Key", "type": "password", "required": True, "placeholder": "beam_..."},
+            {"key": "workspace_id", "label": "Workspace ID", "type": "text", "required": False, "placeholder": "Workspace ID"},
+            {"key": "hf_token", "label": "HuggingFace Token", "type": "password", "required": False, "placeholder": "hf_..."},
+            {"key": "civitai_token", "label": "CivitAI Token", "type": "password", "required": False, "placeholder": "CivitAI Token"},
+        ],
+        "config": [
+            {"key": "gpu_url", "label": "GPU Realtime / Webhook URL", "type": "text", "required": True, "placeholder": "https://...beam.run"},
+            {"key": "storage_url", "label": "Storage REST App URL", "type": "text", "required": True, "placeholder": "https://...beam.run"},
+            {"key": "download_url", "label": "Downloader URL (Optional)", "type": "text", "required": False, "placeholder": "Defaults to Storage URL"},
+            {"key": "gpu_type", "label": "GPU Accelerator Type", "type": "select", "default": "RTX4090", "options": ["RTX4090", "A10G", "A100", "H100"]},
+        ],
+    },
+    "direct_url": {
+        "id": "direct_url",
+        "name": "Direct ComfyUI Server",
+        "category": "image",
+        "worker_type": "image",
+        "capabilities": ["image"],
+        "description": "Direct HTTP & WebSocket connection to any running ComfyUI server instance.",
+        "credentials": [
+            {"key": "comfyui_api_key", "label": "ComfyUI API Key", "type": "password", "required": False, "placeholder": "Optional auth token"},
+            {"key": "agent_api_key", "label": "Remote Agent API Key", "type": "password", "required": False, "placeholder": "Optional agent auth token"},
+        ],
+        "config": [
+            {"key": "comfy_url", "label": "ComfyUI Server URL", "type": "text", "required": True, "default": "http://localhost:8188", "placeholder": "http://localhost:8188"},
+            {"key": "remote_agent_url", "label": "Remote Agent Sidecar URL", "type": "text", "required": False, "placeholder": "http://remote-host:8001"},
+        ],
+    },
+    "openai_compat": {
+        "id": "openai_compat",
+        "name": "OpenAI / Local LLM (Ollama, vLLM, OpenRouter)",
+        "category": "llm",
+        "worker_type": "llm",
+        "capabilities": ["llm"],
+        "description": "Standard OpenAI chat completion endpoint for local LLMs (Ollama, LM Studio) or hosted APIs.",
+        "credentials": [
+            {"key": "api_key", "label": "API Key", "type": "password", "required": False, "placeholder": "sk-... (leave empty for local Ollama)"},
+        ],
+        "config": [
+            {"key": "base_url", "label": "API Base URL", "type": "text", "required": True, "default": "http://localhost:11434/v1", "placeholder": "https://api.openai.com/v1"},
+            {"key": "model", "label": "Default Model ID", "type": "text", "required": False, "placeholder": "e.g. llama3.2, mistral, gpt-4o"},
+            {"key": "temperature", "label": "Default Temperature", "type": "number", "default": 0.7, "step": 0.05, "min": 0.0, "max": 2.0},
+            {"key": "max_output_tokens", "label": "Max Output Tokens", "type": "number", "default": 4096},
+        ],
+    },
+    "anthropic": {
+        "id": "anthropic",
+        "name": "Anthropic Claude",
+        "category": "llm",
+        "worker_type": "llm",
+        "capabilities": ["llm"],
+        "description": "Anthropic Claude Messages API (Claude 3.5 Sonnet, Claude 3.5 Haiku, etc.).",
+        "credentials": [
+            {"key": "api_key", "label": "Anthropic API Key", "type": "password", "required": True, "placeholder": "sk-ant-..."},
+        ],
+        "config": [
+            {"key": "model", "label": "Default Model ID", "type": "text", "default": "claude-3-5-sonnet-latest", "placeholder": "claude-3-5-sonnet-latest"},
+            {"key": "temperature", "label": "Default Temperature", "type": "number", "default": 0.7, "step": 0.05, "min": 0.0, "max": 1.0},
+            {"key": "max_output_tokens", "label": "Max Output Tokens", "type": "number", "default": 4096},
+        ],
+    },
+    "google": {
+        "id": "google",
+        "name": "Google Gemini",
+        "category": "llm",
+        "worker_type": "llm",
+        "capabilities": ["llm"],
+        "description": "Google Gemini API via Generative Language endpoints.",
+        "credentials": [
+            {"key": "api_key", "label": "Google AI API Key", "type": "password", "required": True, "placeholder": "AIza..."},
+        ],
+        "config": [
+            {"key": "model", "label": "Default Model ID", "type": "text", "default": "gemini-2.0-flash", "placeholder": "gemini-2.0-flash"},
+            {"key": "temperature", "label": "Default Temperature", "type": "number", "default": 0.7, "step": 0.05, "min": 0.0, "max": 2.0},
+            {"key": "max_output_tokens", "label": "Max Output Tokens", "type": "number", "default": 4096},
+        ],
+    },
+    "modal_vllm": {
+        "id": "modal_vllm",
+        "name": "Modal vLLM",
+        "category": "llm",
+        "worker_type": "llm",
+        "capabilities": ["llm"],
+        "description": "Serverless vLLM high-throughput engine on Modal cloud GPU volumes.",
+        "credentials": [
+            {"key": "token_id", "label": "Modal Token ID", "type": "password", "required": True, "placeholder": "ak-..."},
+            {"key": "token_secret", "label": "Modal Token Secret", "type": "password", "required": True, "placeholder": "as-..."},
+        ],
+        "config": [
+            {"key": "app_name", "label": "Modal App Name", "type": "text", "default": "comfy-modal-vllm", "placeholder": "comfy-modal-vllm"},
+            {"key": "model", "label": "Model ID", "type": "text", "placeholder": "Model ID"},
+        ],
+    },
+    "modal_tts": {
+        "id": "modal_tts",
+        "name": "Modal Kokoro / TTS",
+        "category": "tts",
+        "worker_type": "tts",
+        "capabilities": ["tts"],
+        "description": "Serverless Text-to-Speech audio synthesis powered by Kokoro on Modal.",
+        "credentials": [
+            {"key": "token_id", "label": "Modal Token ID", "type": "password", "required": True, "placeholder": "ak-..."},
+            {"key": "token_secret", "label": "Modal Token Secret", "type": "password", "required": True, "placeholder": "as-..."},
+        ],
+        "config": [
+            {"key": "app_name", "label": "Modal App Name", "type": "text", "default": "comfy-modal-tts", "placeholder": "comfy-modal-tts"},
+        ],
+    },
+}
+
+
+@router.get("/schemas")
+async def get_provider_schemas():
+    """Return declarative schemas and field definitions for supported provider engines."""
+    return {
+        "engines": ENGINE_SCHEMAS,
+        "categories": [
+            {"id": "image", "label": "Image Generation", "icon": "image"},
+            {"id": "llm", "label": "Language Models (LLM)", "icon": "message-square"},
+            {"id": "tts", "label": "Voice & Audio (TTS)", "icon": "mic"},
+        ],
+    }
+
+
+@router.post("/test-connection")
+async def test_provider_connection(request: TestConnectionRequest):
+    """Test connection and authentication for an engine configuration without saving."""
+    from services.engines.engine_factory import can_create_engine, get_engine, invalidate_engine
+
+    schema = ENGINE_SCHEMAS.get(request.type)
+    worker_type = schema.get("worker_type", "image") if schema else "image"
+    temp_id = f"__test_conn_{int(time.monotonic() * 1000)}__"
+    mock_provider = SimpleNamespace(
+        id=temp_id,
+        type=request.type,
+        worker_type=worker_type,
+        capabilities=[worker_type],
+        credentials=request.credentials,
+        config=request.config,
+    )
+
+    if not can_create_engine(mock_provider):
+        return {
+            "healthy": False,
+            "status": "unhealthy",
+            "ready": False,
+            "latency_ms": None,
+            "error": "Required credentials or configuration missing for this engine",
+        }
+
+    try:
+        engine = get_engine(temp_id, mock_provider)
+        if not engine:
+            return {
+                "healthy": False,
+                "status": "unhealthy",
+                "ready": False,
+                "latency_ms": None,
+                "error": "Failed to initialize engine",
+            }
+
+        health = await asyncio.wait_for(engine.check_health(), timeout=15.0)
+        is_healthy = bool(health.get("ready") or health.get("status") == "healthy")
+        return {
+            "healthy": is_healthy,
+            "status": health.get("status", "healthy" if is_healthy else "unhealthy"),
+            "ready": is_healthy,
+            "latency_ms": health.get("latency_ms"),
+            "details": health,
+            "error": health.get("error"),
+        }
+    except Exception as exc:
+        return {
+            "healthy": False,
+            "status": "unhealthy",
+            "ready": False,
+            "latency_ms": None,
+            "error": str(exc),
+        }
+    finally:
+        invalidate_engine(temp_id)
+
+
+@router.post("/{provider_id}/test")
+async def test_existing_provider(provider_id: str, session: Session = Depends(get_session)):
+    """Test connection and health of an existing registered provider."""
+    provider = session.get(Provider, provider_id)
+    if not provider:
+        return {"healthy": False, "status": "not_found", "error": f"Provider '{provider_id}' not found"}
+
+    from services.engines.engine_factory import can_create_engine, get_engine
+
+    if can_create_engine(provider):
+        engine = get_engine(provider_id, provider)
+        if engine:
+            try:
+                health = await asyncio.wait_for(engine.check_health(), timeout=15.0)
+                is_healthy = bool(health.get("ready") or health.get("status") == "healthy")
+                return {
+                    "healthy": is_healthy,
+                    "status": health.get("status", "healthy" if is_healthy else "unhealthy"),
+                    "ready": is_healthy,
+                    "latency_ms": health.get("latency_ms"),
+                    "details": health,
+                    "error": health.get("error"),
+                }
+            except Exception as exc:
+                return {
+                    "healthy": False,
+                    "status": "unhealthy",
+                    "ready": False,
+                    "latency_ms": None,
+                    "error": str(exc),
+                }
+
+    # Fallback to ping_provider
+    return await ping_provider(provider_id, session)
 
 
 @router.get("/")

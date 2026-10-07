@@ -4,7 +4,7 @@ import { DataRow, StatusRow, ActionBtn } from './Shared';
 import { STATUS_TONE, humanize } from './utils';
 import { useLLMProviderTest } from '../../../hooks/useLLMProviderStatus';
 import { formatTimestamp } from '../../../utils/dateTime';
-import { api } from '../../../api';
+import { providersApi } from '../../../api';
 
 // ── LLM-specific panel shown inside RuntimeTab for LLM workers ──────────────
 function LLMRuntimePanel({ provider }) {
@@ -93,29 +93,23 @@ export default function RuntimeTab({
     const [pingStatus, setPingStatus] = useState(null); // null, 'loading', 'success', 'error'
     const [pingLatency, setPingLatency] = useState(null);
     const isLLM = provider.worker_type === 'llm';
+    const isInProcess = runtime.mode === 'in_process' || provider.execution_mode === 'in_process' || !provider.runtime_config?.container_name;
 
     const handlePingTest = async () => {
-        if (!runtime.worker_url) return;
         setPingStatus('loading');
         setPingLatency(null);
-        const start = Date.now();
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
         try {
-            const data = await api.post(`/api/v2/providers/${provider.id}/ping`, {}, { signal: controller.signal });
-            if (data?.healthy) {
-                const latency = data.latency_ms ?? Date.now() - start;
-                setPingLatency(latency);
+            const data = await providersApi.testProvider(provider.id);
+            if (data?.healthy || data?.status === 'healthy' || data?.ready) {
+                setPingLatency(data.latency_ms ?? null);
                 setPingStatus('success');
-                setTimeout(() => setPingStatus(null), 3000);
+                setTimeout(() => setPingStatus(null), 3500);
             } else {
-                throw new Error('Ping failed');
+                throw new Error(data?.error || 'Test failed');
             }
         } catch {
             setPingStatus('error');
-            setTimeout(() => setPingStatus(null), 3000);
-        } finally {
-            clearTimeout(timeoutId);
+            setTimeout(() => setPingStatus(null), 3500);
         }
     };
 
@@ -124,12 +118,22 @@ export default function RuntimeTab({
             <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">
                 <StatusRow label="Runtime Status" value={humanize(runtimeStatus)} tone={STATUS_TONE[runtimeStatus]} />
                 <StatusRow label="Connectivity" value={runtime.connected ? 'Connected' : 'Unavailable'} tone={runtime.connected ? 'green' : 'gray'} />
-                <DataRow label="Worker URL" value={runtime.worker_url} mono />
-                <DataRow label="Container Port" value={String(provider.runtime_config?.port ?? 'n/a')} />
+                {isInProcess ? (
+                    <>
+                        <DataRow label="Engine Mode" value="In-Process Engine" />
+                        {provider.config?.app_name && <DataRow label="Modal App" value={provider.config.app_name} />}
+                        {provider.config?.comfy_url && <DataRow label="ComfyUI URL" value={provider.config.comfy_url} mono />}
+                    </>
+                ) : (
+                    <>
+                        <DataRow label="Worker URL" value={runtime.worker_url} mono />
+                        <DataRow label="Container Port" value={String(provider.runtime_config?.port ?? 'n/a')} />
+                    </>
+                )}
                 <DataRow label="Jobs Assigned" value={String(jobsAssigned)} />
                 <DataRow label="Failures" value={String(providerFailures)} />
                 <DataRow label="Last Seen" value={runtime.last_seen_at ? formatTimestamp(runtime.last_seen_at) : 'N/A'} />
-                {!isLLM && (
+                {!isLLM && !isInProcess && (
                     <>
                         <DataRow label="Container ID" value={runtime.container_id ? runtime.container_id.slice(0, 12) : 'N/A'} mono />
                         <DataRow label="Uptime" value={runtime.uptime ? Math.floor(runtime.uptime / 60) + 'm' : 'N/A'} />
@@ -144,22 +148,23 @@ export default function RuntimeTab({
                 {capabilities.setup && (
                     <ActionBtn onClick={onSetup} disabled={Boolean(loading)} tone="blue" icon={Wrench} label="Setup" />
                 )}
-                {!isLLM && runtime.worker_url && (
+                {!isLLM && (
                     <ActionBtn
                         onClick={handlePingTest}
                         disabled={pingStatus === 'loading'}
                         tone="green"
                         icon={Zap}
-                        label={pingStatus === 'loading' ? "Pinging..." : "Send Ping Test"}
+                        label={pingStatus === 'loading' ? "Testing..." : "Test Connection"}
                     />
                 )}
                 {pingStatus === 'success' && (
-                    <span className="text-sm text-green-400 ml-2">Success ({pingLatency}ms)</span>
+                    <span className="text-sm text-green-400 ml-2">Success {pingLatency ? `(${pingLatency}ms)` : ''}</span>
                 )}
                 {pingStatus === 'error' && (
-                    <span className="text-sm text-red-400 ml-2">Failed to reach worker</span>
+                    <span className="text-sm text-red-400 ml-2">Failed to reach provider</span>
                 )}
             </div>
         </>
     );
 }
+

@@ -201,17 +201,23 @@ export default function ProviderDetailPanel({
                             if (provider.worker_type === 'llm' && (tab.id === 'deploy' || tab.id === 'sync')) {
                                 return false;
                             }
+                            if (runtime.mode === 'in_process' && tab.id === 'deploy') {
+                                return false;
+                            }
                             return true;
-                        }).map((tab) => (
-                            <button
-                                key={tab.id}
-                                type="button"
-                                className={activeTab === tab.id ? 'active' : ''}
-                                onClick={() => setActiveTab(tab.id)}
-                            >
-                                {tab.label}
-                            </button>
-                        ))}
+                        }).map((tab) => {
+                            const label = (runtime.mode === 'in_process' && tab.id === 'runtime') ? 'Overview' : tab.label;
+                            return (
+                                <button
+                                    key={tab.id}
+                                    type="button"
+                                    className={activeTab === tab.id ? 'active' : ''}
+                                    onClick={() => setActiveTab(tab.id)}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
 

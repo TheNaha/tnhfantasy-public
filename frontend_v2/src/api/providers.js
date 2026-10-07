@@ -122,6 +122,15 @@ export const providersApi = {
      * Only needed once when a Modal provider is first configured.
      */
     setup: (providerId) => api.post(`${P}/${providerId}/setup`),
+
+    /** Fetch declarative schemas for all supported provider engines. */
+    getSchemas: (options = {}) => api.get(`${P}/schemas`, options),
+
+    /** Test connection and authentication for an unsaved engine configuration. */
+    testConnection: (payload) => api.post(`${P}/test-connection`, payload),
+
+    /** Test connection and health of an existing provider. */
+    testProvider: (providerId) => api.post(`${P}/${providerId}/test`),
 };
 
 export default providersApi;

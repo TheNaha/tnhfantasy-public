@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { createPortal } from 'react-dom';
+import { AlertCircle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { providersApi } from '../../api';
 
 const INPUT_CLASS = 'w-full rounded-lg border border-gray-700 bg-gray-800/80 px-4 py-3 text-white outline-none transition-colors focus:border-blue-500';
 const LLM_PROVIDER_TYPES = new Set(['ollama', 'openai_compat', 'anthropic', 'google', 'modal_llm']);
@@ -27,6 +29,13 @@ function defaultDeployConfig(type) {
     if (type === 'direct_url' || type === 'remote_comfy') {
         return {
             deploy_mode: 'manual',
+        };
+    }
+
+    if (type === 'modal_tts') {
+        return {
+            deploy_mode: 'manual',
+            app_name: 'comfy-modal-tts',
         };
     }
 
@@ -67,6 +76,40 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         credentials: {},
     });
     const [enableRuntime, setEnableRuntime] = useState(Boolean(provider?.runtime_config || !provider));
+    const [testingConnection, setTestingConnection] = useState(false);
+    const [testResult, setTestResult] = useState(null);
+
+    const handleTestConnection = async () => {
+        setTestingConnection(true);
+        setTestResult(null);
+        try {
+            const rawCreds = sanitizeCredentials(formData.credentials);
+            const payload = {
+                id: formData.id ? formData.id.trim() : 'test-provider',
+                type: formData.type,
+                credentials: rawCreds,
+                config: {
+                    ...(formData.deploy_config || {}),
+                },
+            };
+            if (rawCreds.endpoint_url) payload.config.base_url = rawCreds.endpoint_url;
+            if (rawCreds.comfy_url) payload.config.comfy_url = rawCreds.comfy_url;
+            if (rawCreds.remote_agent_url) payload.config.remote_agent_url = rawCreds.remote_agent_url;
+
+            const res = await providersApi.testConnection(payload);
+            setTestResult(res);
+            if (res.healthy) {
+                toast.success(`Connected (${res.latency_ms || 0}ms)`);
+            } else {
+                toast.error(res.error || 'Connection failed');
+            }
+        } catch (err) {
+            setTestResult({ healthy: false, error: err.message });
+            toast.error(`Test failed: ${err.message}`);
+        } finally {
+            setTestingConnection(false);
+        }
+    };
 
     const credentialSummary = provider?.credential_summary || {};
     const configuredFields = credentialSummary.configured_fields || [];
@@ -125,6 +168,13 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
             ];
         }
 
+        if (formData.type === 'modal_tts') {
+            return [
+                { key: 'token_id', label: 'Modal Token ID', type: 'password', placeholder: 'ak-...' },
+                { key: 'token_secret', label: 'Modal Token Secret', type: 'password', placeholder: 'as-...' },
+            ];
+        }
+
         return [
             { key: 'token_id', label: 'Token ID', type: 'text', placeholder: 'ak-...' },
             { key: 'token_secret', label: 'Token Secret', type: 'password', placeholder: 'as-...' },
@@ -168,12 +218,20 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
     const handleSubmit = async (event) => {
         event.preventDefault();
 
+        const effectiveWorkerType = formData.type === 'modal_tts' ? 'tts' : (LLM_PROVIDER_TYPES.has(formData.type) ? 'llm' : 'image');
         const payload = {
             id: formData.id.trim(),
             type: formData.type,
-            worker_type: LLM_PROVIDER_TYPES.has(formData.type) ? 'llm' : 'image',
+            worker_type: effectiveWorkerType,
+            declared_capabilities: [effectiveWorkerType],
             enabled: formData.enabled,
             priority: Number(formData.priority) || 1,
+            config: {
+                ...(formData.deploy_config || {}),
+                ...(formData.type === 'modal' || formData.type === 'modal_tts'
+                    ? { app_name: formData.deploy_config?.app_name || (formData.type === 'modal_tts' ? 'comfy-modal-tts' : 'comfy-modal-stack') }
+                    : {}),
+            },
             runtime_config: enableRuntime
                 ? {
                     ...(formData.runtime_config || defaultRuntimeConfig()),
@@ -267,6 +325,9 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                         <option value="google">Google AI (Gemini)</option>
                                         <option value="modal_llm">Modal LLM</option>
                                     </optgroup>
+                                    <optgroup label="Voice & Audio (TTS)">
+                                        <option value="modal_tts">Modal Kokoro / TTS</option>
+                                    </optgroup>
                                 </select>
                             </Field>
 
@@ -332,43 +393,48 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                         </div>
                     </Section>
 
-                    <Section title="Runtime Settings">
-                        <div className="space-y-4">
-                            <label className="inline-flex items-center gap-3 rounded-lg border border-gray-700 bg-gray-800/60 px-4 py-3 text-sm text-gray-200">
-                                <input
-                                    type="checkbox"
-                                    checked={enableRuntime}
-                                    onChange={(event) => setEnableRuntime(event.target.checked)}
-                                />
-                                Enable dedicated runtime container for this provider
-                            </label>
-
-                            {enableRuntime ? (
-                                <div className="grid gap-4 md:grid-cols-2">
-                                    <Field label="Runtime Port">
+                    <Section title="Engine & Execution Mode">
+                        <div className="space-y-3">
+                            <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3.5 text-xs text-blue-200">
+                                <span className="font-semibold text-blue-300">In-Process Engine Active:</span> This provider executes directly within the backend without separate Docker container overhead, port bindings, or socket proxying.
+                            </div>
+                            <details className="text-xs text-gray-400 group">
+                                <summary className="cursor-pointer hover:text-gray-300 select-none py-1">
+                                    Advanced / Legacy Container Settings
+                                </summary>
+                                <div className="mt-3 space-y-3 pl-2 border-l border-gray-800">
+                                    <label className="inline-flex items-center gap-2 text-gray-300">
                                         <input
-                                            type="number"
-                                            min="1"
-                                            value={formData.runtime_config?.port || 8000}
-                                            onChange={(event) => updateRuntimeConfig({ port: Number(event.target.value) })}
-                                            className={INPUT_CLASS}
+                                            type="checkbox"
+                                            checked={enableRuntime}
+                                            onChange={(event) => setEnableRuntime(event.target.checked)}
                                         />
-                                    </Field>
-                                    <Field label="Container Name">
-                                        <input
-                                            type="text"
-                                            value={formData.runtime_config?.container_name || ''}
-                                            onChange={(event) => updateRuntimeConfig({ container_name: event.target.value })}
-                                            className={INPUT_CLASS}
-                                            placeholder={`tnhcomfy-${formData.id || formData.type}`}
-                                        />
-                                    </Field>
+                                        Enable legacy container runtime (Deprecated)
+                                    </label>
+                                    {enableRuntime && (
+                                        <div className="grid gap-4 md:grid-cols-2 pt-2">
+                                            <Field label="Runtime Port">
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    value={formData.runtime_config?.port || 8000}
+                                                    onChange={(event) => updateRuntimeConfig({ port: Number(event.target.value) })}
+                                                    className={INPUT_CLASS}
+                                                />
+                                            </Field>
+                                            <Field label="Container Name">
+                                                <input
+                                                    type="text"
+                                                    value={formData.runtime_config?.container_name || ''}
+                                                    onChange={(event) => updateRuntimeConfig({ container_name: event.target.value })}
+                                                    className={INPUT_CLASS}
+                                                    placeholder={`tnhcomfy-${formData.id || formData.type}`}
+                                                />
+                                            </Field>
+                                        </div>
+                                    )}
                                 </div>
-                            ) : (
-                                <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-4 text-sm text-amber-200">
-                                    This provider will not manage a local runtime container. Use this for manual/external runtimes only.
-                                </div>
-                            )}
+                            </details>
                         </div>
                     </Section>
 
@@ -385,14 +451,14 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                 </select>
                             </Field>
 
-                            {formData.type === 'modal' ? (
+                            {formData.type === 'modal' || formData.type === 'modal_tts' ? (
                                 <Field label="App Name">
                                     <input
                                         type="text"
                                         value={formData.deploy_config?.app_name || ''}
                                         onChange={(event) => updateDeployConfig({ app_name: event.target.value })}
                                         className={INPUT_CLASS}
-                                        placeholder="comfy-modal-stack"
+                                        placeholder={formData.type === 'modal_tts' ? 'comfy-modal-tts' : 'comfy-modal-stack'}
                                     />
                                 </Field>
                             ) : formData.type === 'beam' ? (
@@ -458,20 +524,57 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                         )}
                     </Section>
 
-                    <div className="flex items-center justify-end gap-3 border-t border-gray-800 pt-4">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="rounded-lg border border-gray-700 bg-gray-800 px-4 py-2 text-sm text-gray-200 transition-colors hover:bg-gray-700"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="submit"
-                            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-                        >
-                            {provider ? 'Save Changes' : 'Create Provider'}
-                        </button>
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-800 pt-4">
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={handleTestConnection}
+                                disabled={testingConnection}
+                                className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800/80 px-3.5 py-2 text-xs font-medium text-gray-200 transition-colors hover:bg-gray-700 disabled:opacity-50"
+                            >
+                                {testingConnection ? (
+                                    <>
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
+                                        Testing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <RefreshCw className="h-3.5 w-3.5 text-gray-400" />
+                                        Test Connection
+                                    </>
+                                )}
+                            </button>
+                            {testResult && (
+                                <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${testResult.healthy ? 'text-green-400' : 'text-red-400'}`}>
+                                    {testResult.healthy ? (
+                                        <>
+                                            <CheckCircle2 className="h-3.5 w-3.5" />
+                                            Connected {testResult.latency_ms ? `(${testResult.latency_ms}ms)` : ''}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <AlertCircle className="h-3.5 w-3.5" />
+                                            {testResult.error || 'Failed'}
+                                        </>
+                                    )}
+                                </span>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="rounded-lg border border-gray-700 bg-gray-800 px-4 py-2 text-sm text-gray-200 transition-colors hover:bg-gray-700"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                            >
+                                {provider ? 'Save Changes' : 'Create Provider'}
+                            </button>
+                        </div>
                     </div>
                 </form>
             </motion.div>

@@ -441,3 +441,50 @@ class TestProvidersRouteReconcile:
             json={"step": "init"}
         )
         assert response.status_code in (404, 500, 200, 422)
+
+
+class TestProviderSchemasAndTestBench:
+    def test_get_schemas_endpoint(self, client):
+        response = client.get("/api/v2/providers/schemas")
+        assert response.status_code == 200
+        data = response.json()
+        assert "engines" in data
+        assert "categories" in data
+        assert "modal" in data["engines"]
+        assert "beam" in data["engines"]
+        assert "direct_url" in data["engines"]
+        assert "openai_compat" in data["engines"]
+        assert "anthropic" in data["engines"]
+        assert "google" in data["engines"]
+        assert "modal_tts" in data["engines"]
+
+        modal_schema = data["engines"]["modal"]
+        assert modal_schema["category"] == "image"
+        assert any(f["key"] == "token_id" for f in modal_schema["credentials"])
+        assert any(f["key"] == "token_secret" for f in modal_schema["credentials"])
+
+    def test_test_connection_missing_credentials(self, client):
+        response = client.post(
+            "/api/v2/providers/test-connection",
+            json={"type": "modal", "credentials": {}, "config": {}}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["healthy"] is False
+        assert "missing" in data["error"].lower()
+
+    def test_test_connection_healthy_mock(self, client):
+        with patch("services.engines.direct_comfy_engine.DirectComfyEngine.check_health", new=AsyncMock(return_value={"status": "healthy", "ready": True, "latency_ms": 12.5})):
+            response = client.post(
+                "/api/v2/providers/test-connection",
+                json={
+                    "type": "direct_url",
+                    "credentials": {},
+                    "config": {"comfy_url": "http://127.0.0.1:8188"}
+                }
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["healthy"] is True
+            assert data["status"] == "healthy"
+            assert data["latency_ms"] == 12.5
