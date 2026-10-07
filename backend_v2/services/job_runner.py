@@ -173,6 +173,33 @@ async def _get_job_status(job_service, job_id: str):
 async def signal_provider_cancellation(*, runtime, provider_id: str, job_id: str) -> bool:
     """Best-effort cancellation request to the active provider runtime."""
     try:
+        if runtime.mode == "in_process":
+            from services.engines.base import find_engine_for_job
+            from services.engines.engine_factory import get_engine
+
+            # Route to the engine instance actually streaming the job first;
+            # the cache may have handed out a fresh instance since.
+            engine = find_engine_for_job(job_id) or get_engine(provider_id)
+            if engine is None or not hasattr(engine, "cancel_job"):
+                logger.warning(
+                    "provider_cancel_no_engine",
+                    job_id=job_id,
+                    provider=provider_id,
+                    mode=runtime.mode,
+                )
+                return False
+            cancelled = await engine.cancel_job(job_id)
+            if cancelled:
+                logger.info("provider_cancel_signaled", job_id=job_id, provider=provider_id, mode=runtime.mode)
+            else:
+                logger.warning(
+                    "provider_cancel_not_confirmed",
+                    job_id=job_id,
+                    provider=provider_id,
+                    mode=runtime.mode,
+                )
+            return bool(cancelled)
+
         if runtime.mode in ("container_http", "discovery") and runtime.worker_url:
             http_client = get_http_client()
             response = await http_client.post(
@@ -391,7 +418,54 @@ async def execute_job(
                 use_snapshot = provider_config.get("enable_memory_snapshot", False)
 
                 try:
-                    if runtime.mode in ("container_http", "discovery"):
+                    if runtime.mode == "in_process":
+                        from services.engines.engine_factory import get_engine
+
+                        engine = get_engine(current_provider.id, current_provider)
+                        if not engine:
+                            raise ProviderCallError(
+                                f"In-process engine for {current_provider.id} could not be initialized",
+                                provider_id=current_provider.id,
+                                is_retryable=False,
+                            )
+                        if task_type == "llm":
+                            from services.provider_client import call_in_process_llm_provider
+
+                            final_result = await call_in_process_llm_provider(
+                                engine=engine,
+                                workflow=job.workflow,
+                                job_id=job_id,
+                                job_service=job_service,
+                                timeout=timeout,
+                                provider_id=current_provider.id,
+                            )
+                        elif task_type == "tts":
+                            from services.provider_client import call_in_process_tts_provider
+
+                            final_result = await call_in_process_tts_provider(
+                                engine=engine,
+                                workflow=job.workflow,
+                                job_id=job_id,
+                                job_service=job_service,
+                                total_nodes=total_nodes,
+                                timeout=timeout,
+                                use_snapshot=use_snapshot,
+                                provider_id=current_provider.id,
+                            )
+                        else:
+                            from services.provider_client import call_in_process_image_provider
+
+                            final_result = await call_in_process_image_provider(
+                                engine=engine,
+                                workflow=job.workflow,
+                                job_id=job_id,
+                                job_service=job_service,
+                                total_nodes=total_nodes,
+                                timeout=timeout,
+                                use_snapshot=use_snapshot,
+                                provider_id=current_provider.id,
+                            )
+                    elif runtime.mode in ("container_http", "discovery"):
                         # Route to the correct provider function based on task type.
                         # call_*_provider_fn already enforces stream/client timeout semantics.
                         # Avoid double-wrapping with asyncio.wait_for to keep timeout ownership clear.

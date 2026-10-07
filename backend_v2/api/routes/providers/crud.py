@@ -344,6 +344,36 @@ async def ping_provider(provider_id: str, session: Session = Depends(get_session
 
     base_url = None
     runtime = await resolve_provider_runtime_async(provider)
+    if runtime.mode == "in_process":
+        from services.engines.engine_factory import get_engine
+
+        engine = get_engine(provider_id, provider)
+        if engine:
+            try:
+                # Bounded like the container /health probe below; an engine
+                # whose upstream hangs must answer unhealthy, not hang ping.
+                health = await asyncio.wait_for(engine.check_health(), timeout=10.0)
+            except Exception as exc:
+                # Parity with container path which returned {healthy:false}
+                # instead of 500 on probe failure.
+                return {
+                    "healthy": False,
+                    "worker_url": "in_process",
+                    "latency_ms": 0,
+                    "error": str(exc),
+                }
+            # "ok" counts: llm_config.test_llm_provider treats healthy/ok/ready
+            # as healthy, and engines report both vocabularies.
+            is_healthy = bool(
+                health.get("ready") or health.get("status") in ("healthy", "ok")
+            )
+            return {
+                "healthy": is_healthy,
+                "worker_url": "in_process",
+                "latency_ms": health.get("latency_ms", 0),
+                "error": None if is_healthy else health.get("error"),
+            }
+
     if runtime.worker_url:
         base_url = runtime.worker_url.rstrip("/")
     elif provider.container_config:
@@ -428,6 +458,11 @@ async def update_provider(
         updates["capabilities"] = updates.pop("declared_capabilities")
     provider = await service.update_provider(provider_id, updates)
     await _republish_known_provider_hosts()
+    # Credentials/config may have rotated: drop the cached in-process engine
+    # (and its health verdict) so the next use rebuilds from the new values.
+    from services.engines.engine_factory import invalidate_engine
+    invalidate_engine(provider_id)
+    invalidate_provider_status_caches(provider_id)
     status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider.id, provider=provider)
 
@@ -476,6 +511,8 @@ async def delete_provider(
     """Delete a provider."""
     service = get_provider_service(session)
     await service.delete_provider(provider_id)
+    from services.engines.engine_factory import invalidate_engine
+    invalidate_engine(provider_id)
     invalidate_provider_status_caches(provider_id)
     await _republish_known_provider_hosts()
     return {"status": "success"}

@@ -537,25 +537,60 @@ async def backfill_provider_statuses(
                 return []
             
             data = response.json()
-            updates = []
-            for provider_file in data.get("files", []):
-                storage_path = provider_file.get("path") or provider_file.get("storage_path")
-                if not storage_path:
-                    name = provider_file.get("name")
-                    if not name:
-                        continue
-                    storage_path = f"{directory}/{name}"
-
-                file_id = all_files_by_path.get(storage_path)
-                if file_id:
-                    updates.append((provider_id, file_id))
-            return updates
+            return _collect_ready_updates(provider_id, directory, data.get("files", []))
         except Exception as e:
             results["errors"].append(f"Failed to query {provider_id} at {directory}: {e!s}")
             return []
+
+    def _collect_ready_updates(provider_id, directory, provider_files):
+        updates = []
+        for provider_file in provider_files or []:
+            if not isinstance(provider_file, dict):
+                continue
+            storage_path = provider_file.get("path") or provider_file.get("storage_path")
+            if not storage_path:
+                name = provider_file.get("name")
+                if not name:
+                    continue
+                storage_path = f"{directory}/{name}"
+
+            file_id = all_files_by_path.get(storage_path)
+            if file_id:
+                updates.append((provider_id, file_id))
+        return updates
+
+    async def check_directory_engine(provider_id, directory, engine):
+        try:
+            files = await engine.list_models(directory)
+        except Exception as e:
+            results["errors"].append(f"Failed to query {provider_id} at {directory}: {e!s}")
+            return []
+        return _collect_ready_updates(provider_id, directory, files)
     
     for provider in providers:
         runtime = await resolve_provider_runtime_async(provider)
+        if getattr(runtime, "mode", "") == "in_process":
+            from services.engines.engine_factory import get_engine
+
+            engine = get_engine(provider.id, provider)
+            # LLM/TTS engines own no model tree; querying them wastes one
+            # upstream call per image directory, same reason the container
+            # path skips llm worker_types below. A plain Direct ComfyUI has
+            # no mutation surface but still reports loadables via
+            # /object_info, so it stays in for discovery.
+            if engine is None:
+                continue
+            if not getattr(engine, "manages_model_files", False) and not getattr(
+                engine, "supports_discovery_reconcile", False
+            ):
+                continue
+
+            results["providers_checked"] += 1
+
+            for directory in MODEL_DIRECTORIES:
+                tasks.append(check_directory_engine(provider.id, directory, engine))
+            continue
+
         if runtime.mode not in ("container_http", "discovery"):
             continue
 

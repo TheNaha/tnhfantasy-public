@@ -15,7 +15,7 @@ class CollectionRepository:
             SELECT c.*, COUNT(ci.id) as image_count
             FROM collections c
             LEFT JOIN collection_images ci ON c.id = ci.collection_id
-            WHERE (:workspace IS NULL OR c.workspace = :workspace)
+            WHERE (CAST(:workspace AS text) IS NULL OR c.workspace = CAST(:workspace AS text))
             GROUP BY c.id
             ORDER BY c.updated_at DESC
         """)

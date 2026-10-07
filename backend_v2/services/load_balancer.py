@@ -408,7 +408,30 @@ class LoadBalancer:
         # Circuit-breaker: skip providers with a long failure streak.
         if self.runtime_state.provider_failures.get(provider.id, 0) >= _FAILURE_STREAK_THRESHOLD:
             return False
-        
+
+        # In-process compute engine health probe
+        from services.provider_runtime import use_in_process_engines
+        use_in_process = use_in_process_engines()
+        provider_config = getattr(provider, "config", None) or {}
+        explicit_container = isinstance(provider_config, dict) and provider_config.get("execution_mode") == "container"
+        if use_in_process and not explicit_container:
+            from services.engines.engine_factory import can_create_engine, get_engine
+            if can_create_engine(provider):
+                in_proc_key = f"in_process:{provider.id}"
+                if in_proc_key in _provider_health_cache:
+                    return _provider_health_cache[in_proc_key]
+                engine = get_engine(provider.id, provider)
+                if engine:
+                    try:
+                        res = await asyncio.wait_for(engine.check_health(), timeout=_CONTAINER_PROBE_TIMEOUT_SECONDS)
+                        is_ready = bool(res.get("ready") or res.get("status") == "healthy")
+                        _provider_health_cache[in_proc_key] = is_ready
+                        return is_ready
+                    except Exception as exc:
+                        logger.warning("in_process_health_failed", provider_id=provider.id, error=str(exc))
+                        _provider_health_cache[in_proc_key] = False
+                        return False
+
         # Check cache
         if cache_key in _provider_health_cache:
             return _provider_health_cache[cache_key]

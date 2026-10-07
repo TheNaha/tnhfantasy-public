@@ -51,7 +51,6 @@ export const useUpdateCharacter = () => {
         mutationFn: ({ id, ...data }) => api.put(`/api/v2/characters/${id}`, data),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
-            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.id) });
             invalidateVaultAggregates(queryClient);
         }
@@ -64,7 +63,6 @@ export const usePatchCharacter = () => {
         mutationFn: ({ id, ...data }) => api.patch(`/api/v2/characters/${id}`, data),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
-            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.id) });
             invalidateVaultAggregates(queryClient);
         }
@@ -86,7 +84,6 @@ export const useUploadAvatar = () => {
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.characterId) });
-            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             invalidateVaultAggregates(queryClient);
         }
@@ -139,11 +136,10 @@ export const useImportCharacterCard = () => {
         },
         onSuccess: (result) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
-            invalidateVaultAggregates(queryClient);
             if (result?.character?.id) {
                 queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, result.character.id) });
-                invalidateVaultAggregates(queryClient);
             }
+            invalidateVaultAggregates(queryClient);
         }
     });
 };
@@ -209,7 +205,6 @@ export const useAnimateCharacterAvatar = () => {
         },
         onSuccess: (data, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
-            invalidateVaultAggregates(queryClient);
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.characterId) });
             invalidateVaultAggregates(queryClient);
         }

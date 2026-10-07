@@ -72,7 +72,6 @@ const SIGNAL_PENDING_SPEC_UPDATE = {
     },
     'useWorlds.js': {
         "api.get('/api/v2/worlds')": 'Worlds.test.jsx and RoleplayWorkspace.test.jsx assert one argument',
-        'api.get(`/api/v2/worlds/${worldId}`)': 'Worlds.test.jsx asserts one argument',
         'api.get(`/api/v2/worlds/${worldId}/dashboard`)': 'Worlds.test.jsx asserts one argument',
     },
     'useWorldVaultSearch.js': {

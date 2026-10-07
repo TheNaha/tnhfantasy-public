@@ -296,8 +296,12 @@ class TestProvidersRouteReconcile:
         response = client.post("/api/v2/providers/nonexistent/deploy")
         assert response.status_code in (404, 500, 200)
 
-    def test_deploy_returns_conflict_when_already_running(self, client):
+    def test_deploy_returns_conflict_when_already_running(self, client, monkeypatch):
         from api.deps import get_provider_service
+        # Force the container branch: with in-process engines enabled the
+        # route short-circuits to 200 not_applicable before reaching the
+        # service, so the already_running -> 400 mapping would not execute.
+        monkeypatch.setenv("COMFY_USE_IN_PROCESS_ENGINES", "false")
         mock_service = AsyncMock()
         mock_service.deploy_provider_app = AsyncMock(
             return_value={

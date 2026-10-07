@@ -369,7 +369,6 @@ async def startup_application(process_job, ws_manager):
         logger.info("idle_simulation_registered", enabled=True, interval_seconds=interval)
     else:
         logger.info("idle_simulation_disabled")
-
     logger.info("startup_init", phase="civitai_resync")
     from api.routes.models.maintenance import run_background_resync
     # Run a full CivitAI resync every 24 hours
@@ -377,6 +376,22 @@ async def startup_application(process_job, ws_manager):
         run_background_resync,
         interval_seconds=86400,
         job_id="civitai_resync_job",
+        start_immediately=False,
+    )
+
+    logger.info("startup_init", phase="in_process_reconcile")
+    from services.in_process_reconciliation import (
+        IN_PROCESS_RECONCILE_INTERVAL_SECONDS,
+        run_periodic_in_process_reconciliation,
+    )
+
+    # In-process replacement for the container workers' 2h force-reconcile
+    # loop: without it, model drift on serverless volumes is only fixed on a
+    # manual trigger.
+    add_interval_job(
+        run_periodic_in_process_reconciliation,
+        interval_seconds=IN_PROCESS_RECONCILE_INTERVAL_SECONDS,
+        job_id="in_process_reconcile",
         start_immediately=False,
     )
 

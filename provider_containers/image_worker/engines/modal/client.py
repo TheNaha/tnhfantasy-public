@@ -108,11 +108,10 @@ class ModalProviderClient(BaseProviderClient):
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
         job_id = request.job_id
         inference_timeout = max(1.0, float(request.timeout_seconds or self.runtime_config.get("inference_timeout_seconds", 3600.0)))
-        # `request.use_snapshot` is not consulted: `class_name` is fixed, and was
-        # already fixed with a comment saying so. The flag was read into a local
-        # and never used, so a caller passing it got the snapshot class either way
-        # and had no way to know.
-        class_name = "ComfyUISnapshot" # Always use snapshot per user request
+        use_snapshot = request.use_snapshot
+        if use_snapshot is None:
+            use_snapshot = os.getenv("ENABLE_MEMORY_SNAPSHOT", "true").lower() in ("true", "1", "yes")
+        class_name = "ComfyUISnapshot" if use_snapshot else "ComfyUIStable"
 
         if job_id:
             await self.job_tracker.start_job(job_id)
@@ -249,12 +248,14 @@ class ModalProviderClient(BaseProviderClient):
             registry=self._read_tasks,
         )
 
+        try:
+            await reader.prepare()
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
         async def _stream() -> AsyncIterator[bytes]:
-            try:
-                async for chunk in reader.stream():
-                    yield chunk
-            except FileNotFoundError:
-                raise HTTPException(status_code=404, detail=f"File not found: {path}")
+            async for chunk in reader.stream():
+                yield chunk
 
         return StreamingResponse(_stream(), media_type="application/octet-stream")
 

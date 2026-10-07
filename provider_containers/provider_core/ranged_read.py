@@ -61,9 +61,14 @@ class RangedReader:
         self._range_bytes = range_bytes
         self._timeout_seconds = timeout_seconds
         self._registry = registry
+        self._total: Optional[int] = None
+
+    async def prepare(self) -> None:
+        """Probe the file size and verify existence before streaming starts."""
+        self._total = await self._read_size(self._path)
 
     async def _pump(self, queue: "asyncio.Queue[bytes]") -> None:
-        total = await self._read_size(self._path)
+        total = self._total if self._total is not None else await self._read_size(self._path)
         offset = 0
         while offset < total:
             chunk = await self._read_range(self._path, offset, self._range_bytes)

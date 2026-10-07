@@ -322,17 +322,23 @@ class DirectUrlProviderClient(BaseProviderClient):
         longer turn the request into a 4xx.
         """
 
+        request = self._http.build_request("GET", "/view", params={"filename": path})
+        resp = await self._http.send(request, stream=True)
+        if resp.status_code != 200:
+            await resp.aread()
+            if resp.status_code == 404:
+                raise HTTPException(status_code=404, detail=f"File not found: {path}")
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=f"ComfyUI returned {resp.status_code} for {path}",
+            )
+
         async def _stream() -> AsyncIterator[bytes]:
-            async with self._http.stream("GET", "/view", params={"filename": path}) as resp:
-                if resp.status_code == 404:
-                    raise HTTPException(status_code=404, detail=f"File not found: {path}")
-                if resp.status_code >= 400:
-                    raise HTTPException(
-                        status_code=resp.status_code,
-                        detail=f"ComfyUI returned {resp.status_code} for {path}",
-                    )
+            try:
                 async for chunk in resp.aiter_bytes(_STREAM_CHUNK_BYTES):
                     yield chunk
+            finally:
+                await resp.aclose()
 
         return StreamingResponse(_stream(), media_type="application/octet-stream")
 

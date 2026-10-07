@@ -1,3 +1,4 @@
+import asyncio
 import codecs
 import json
 import time
@@ -385,6 +386,126 @@ async def call_image_provider(
         total_nodes=total_nodes,
         reducer=reducer,
     )
+
+
+async def call_in_process_image_provider(
+    engine,
+    workflow: dict,
+    job_id: str,
+    job_service,
+    total_nodes: int,
+    timeout: float,
+    use_snapshot: bool = False,
+    provider_id: str = "",
+) -> dict:
+    reducer = _ImageReducer(job_id, job_service, total_nodes, provider_id)
+    await job_service.update_job(job_id, status=JobStatus.CONNECTED, message=f"Connected to {provider_id}...")
+    try:
+        async with asyncio.timeout(timeout):
+            async for event in engine.run_inference(
+                workflow=workflow,
+                job_id=job_id,
+                use_snapshot=use_snapshot,
+                timeout=timeout,
+            ):
+                result = await reducer(event)
+                if result is not None:
+                    return result
+    except TimeoutError as exc:
+        from services.engines.base import EngineAuthError
+
+        raise JobTimeoutError(f"Job timed out after {timeout}s") from exc
+    except EngineAuthError as exc:
+        raise ProviderCallError(str(exc), provider_id=provider_id, is_retryable=False) from exc
+    return reducer.finalize()
+
+
+async def call_in_process_tts_provider(
+    engine,
+    workflow: dict,
+    job_id: str,
+    job_service,
+    total_nodes: int,
+    timeout: float,
+    use_snapshot: bool = False,
+    provider_id: str = "",
+) -> dict:
+    """TTS execute path (parity with container routing).
+
+    TTS workers emit the same terminal TaskEvent dialect (completed with
+    ``outputs`` filename refs, failed with explicit retryable, cancelled),
+    so the image reducer already finalizes them and ``job_processing``
+    fetches the audio off the engine afterwards. Kept as a named wrapper
+    (rather than calling the image helper) so dispatch, logs and timeout
+    ownership read as TTS, matching the ``task_type`` the worker sees.
+    """
+    return await call_in_process_image_provider(
+        engine=engine,
+        workflow=workflow,
+        job_id=job_id,
+        job_service=job_service,
+        total_nodes=total_nodes,
+        timeout=timeout,
+        use_snapshot=use_snapshot,
+        provider_id=provider_id,
+    )
+
+
+async def call_in_process_llm_provider(
+    engine,
+    workflow: dict,
+    job_id: str,
+    job_service,
+    timeout: float,
+    provider_id: str = "",
+) -> dict:
+    reducer = _LLMReducer(job_id, job_service, provider_id, workflow)
+    await job_service.update_job(job_id, status=JobStatus.CONNECTED, message=f"Connected to {provider_id}...")
+    try:
+        from config import get_config
+        global_ai = ((get_config() or {}).get("ai") or {})
+    except Exception:
+        global_ai = {}
+
+    def _resolve(key: str):
+        # Per-job override wins; otherwise the global default (may be None).
+        return workflow.get(key) if workflow.get(key) is not None else global_ai.get(key)
+
+    payload = {
+        "messages": workflow.get("messages"),
+        "tools": workflow.get("tools"),
+        "model": workflow.get("model"),
+        "temperature": _resolve("temperature"),
+        "top_p": _resolve("top_p"),
+        "max_output_tokens": _resolve("max_output_tokens"),
+        "frequency_penalty": _resolve("frequency_penalty"),
+        "presence_penalty": _resolve("presence_penalty"),
+        "job_id": job_id,
+        "timeout_seconds": timeout,
+    }
+
+    # Same timeout ownership as the image path: a hung engine must fail the
+    # job, not hang it forever. The container fns owned their own timeout
+    # semantics; in-process the caller enforces the budget.
+    try:
+        async with asyncio.timeout(timeout):
+            async for event in engine.run_inference(
+                workflow=payload,
+                job_id=job_id,
+                timeout=timeout,
+            ):
+                result = await reducer(event)
+                if result is not None:
+                    return result
+    except TimeoutError as exc:
+        raise JobTimeoutError(f"Job timed out after {timeout}s") from exc
+    except Exception as exc:
+        from services.engines.base import EngineAuthError
+
+        if isinstance(exc, EngineAuthError):
+            raise ProviderCallError(str(exc), provider_id=provider_id, is_retryable=False) from exc
+        raise
+    return reducer.finalize()
 
 
 async def call_llm_provider(

@@ -15,13 +15,13 @@ All of these share the **World Vault** data layer (Characters, Chats, Lorebooks,
 # Full stack (agent/dev shell)
 bash setup_jules.sh
 
-# Full stack (Docker, with providers + dev overrides)
+# Full stack (Docker, in-process engines by default; containers optional)
 # Run scripts/preflight.sh first on a new host: it creates the `metrics` and
 # `proxy` networks that compose declares external (without them `up` fails at
 # network creation, for every service, with an unrelated-looking error) and
 # reports the config that silently disables features.
 bash scripts/preflight.sh
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
 
 # Backend only (from backend_v2/)
 .venv/bin/pip install -r requirements.txt && .venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
@@ -142,7 +142,20 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 
 ## Provider contract
 
-- Shared API models: `provider_containers/provider_core/models.py`.
+- Default path is in-process: `backend_v2/services/engines/` (Modal, Beam,
+  DirectComfy, LLM, TTS) + `backend_v2/services/in_process_reconciliation.py`,
+  gated by `COMFY_USE_IN_PROCESS_ENGINES` (default true). Engine contract:
+  `services/engines/base.py` (`InProcessEngine`, `translate_legacy_image_update`,
+  `normalize_validation_result`, `EngineAuthError`, `MODEL_DIRECTORIES`).
+- DEPRECATED — Legacy fallback is containerized: `provider_containers/`
+  (retained only for `COMFY_USE_IN_PROCESS_ENGINES=false` or per-provider
+  `execution_mode: "container"`). Do not add features there; parity fixes go in
+  `services/engines/`. To migrate running containers:
+  `docker compose --profile providers stop`.
+- Provider containers are behind the `--profile providers` compose profile and
+  do not start with a plain `docker compose up`. The backend emits a one-time
+  deprecation warning when a provider resolves to `container_http` or `discovery`
+  mode.
 - `POST /inference` streams NDJSON progress lines, finishes with a success or error JSON payload.
 - Model directories: `models/checkpoints`, `models/loras`, `models/vae`, `models/controlnet`, `models/unet`, `models/clip`.
 

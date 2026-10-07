@@ -75,6 +75,11 @@ services:
     user: "1000:1000"
     volumes:
       - ./data:/data
+      # Read-only mount of the project root so in-process engines can resolve
+      # per-provider credential files (.env.modal-zetsuke, .env.modal-hp196, etc.).
+      # Without this, can_create_engine() cannot find the tokens and providers
+      # silently fall back to the deprecated container path.
+      - ./:/comfyui:ro
     env_file:
       - .env
     environment:
@@ -125,6 +130,10 @@ services:
       # DEFAULT_CONFIG), so it is the line that actually governs the policy.
       - COMFY_CORS_ORIGINS=${COMFY_CORS_ORIGINS:-["http://localhost:5174","http://localhost:8002","http://127.0.0.1:5174","https://comfy.lan.thenaha.my.id","https://100.150.0.4","http://100.150.0.4:5174"]}
       - COMFY_UVICORN_RELOAD=0
+      - COMFY_PROVIDER_ENV_PATH=/comfyui
+      # TEMPORARY: modal installed to /data/modal_pkg for testing until the
+      # Dockerfile image is rebuilt with modal>=1.5.0 in requirements.txt.
+      - PYTHONPATH=/data/modal_pkg
     networks:
       - tnhcomfy
       - metrics
@@ -221,10 +230,29 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Provider containers - managed by compose (backend autostart is disabled).
-  # To add a provider: copy this block, set a unique PROVIDER_ID and container_name.
-  # container_name MUST be "tnhcomfy-{PROVIDER_ID}" so the backend can detect it
-  # (see infrastructure/providers/runtime.py:provider_container_name).
+  # ┌──────────────────────────────────────────────────────────────────────────┐
+  # │ DEPRECATED — Provider containers (optional profile: `providers`)          │
+  # │                                                                          │
+  # │ Image, LLM, and TTS inference engines now run IN-PROCESS inside         │
+  # │ backend_v2 via InProcessEngine (ModalEngine, BeamEngine, DirectComfy,    │
+  # │ OpenAICompatLLMEngine, ModalVLLMEngine, AnthropicLLMEngine,              │
+  # │ GoogleLLMEngine, ModalTTSEngine).                                       │
+  # │                                                                          │
+  # │ Running default compose (without `--profile providers`) already uses    │
+  # │ the in-process path and saves ~1.5–2.5 GB RAM. These container services  │
+  # │ are retained ONLY for the 0.1 deprecation period:                       │
+  # │                                                                          │
+  # │   COMFY_USE_IN_PROCESS_ENGINES=false   →  in-process engines disabled    │
+  # │   (or a provider with execution_mode: "container")                      │
+  # │                                                                          │
+  # │ To migrate running containers:                                          │
+  # │   docker compose --profile providers stop                               │
+  # │ Providers with in-process-capable engines auto-resolve on next restart. │
+  # │ Existing PENDING/RUNNING jobs re-enqueue and route to in-process.      │
+  # │                                                                          │
+  # │ These services will be REMOVED in a future release. Do not add new      │
+  # │ provider containers — add engine config to backend_v2 config instead.   │
+  # └──────────────────────────────────────────────────────────────────────────┘
   provider-modal-zetsuke:
     build:
       context: ./provider_containers

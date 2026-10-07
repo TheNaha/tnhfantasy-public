@@ -64,6 +64,27 @@ async def get_available_models(session: Session = Depends(get_session)):
         return []
 
     runtime = await resolve_provider_runtime_async(provider)
+    if runtime.mode == "in_process":
+        try:
+            from services.engines.engine_factory import get_engine
+
+            engine = get_engine(provider.id, provider)
+            if engine is not None:
+                files = await engine.list_models("")
+                models = []
+                for m in files or []:
+                    if isinstance(m, str):
+                        models.append({"id": m, "name": m})
+                    elif isinstance(m, dict):
+                        model_id = m.get("id") or m.get("path") or m.get("name")
+                        if model_id:
+                            models.append({"id": model_id, "name": m.get("name") or model_id})
+                if models:
+                    return models
+        except Exception as exc:
+            logger.debug("provider_model_fetch_failed", provider_id=provider.id, error=str(exc))
+        return [{"id": "default", "name": f"{provider.id} (default)"}]
+
     if not runtime.worker_url:
         return []
 
@@ -147,6 +168,31 @@ async def test_llm_provider(provider_id: str, session: Session = Depends(get_ses
     provider = await asyncio.to_thread(_llm_provider_row, session, provider_id)
 
     runtime = await resolve_provider_runtime_async(provider)
+    if runtime.mode == "in_process":
+        models = []
+        error = None
+        healthy = False
+        try:
+            from services.engines.engine_factory import get_engine
+
+            engine = get_engine(provider.id, provider)
+            if engine is None:
+                return {"healthy": False, "models": [], "error": "No in-process engine available for this provider"}
+            health = await engine.check_health()
+            healthy = health.get("status") in ("healthy", "ok") or bool(health.get("ready", False))
+            try:
+                files = await engine.list_models("")
+                for m in files or []:
+                    if isinstance(m, dict):
+                        models.append(m.get("id") or m.get("path") or m.get("name", "?"))
+                    elif isinstance(m, str):
+                        models.append(m)
+            except Exception as exc:
+                logger.debug("llm_list_models_fetch_failed", provider_id=provider.id, error=str(exc))
+        except Exception as e:
+            error = f"Health check failed: {e}"
+        return {"healthy": healthy, "models": models, "error": error, "worker_url": None}
+
     if not runtime.worker_url:
         return {"healthy": False, "models": [], "error": "No worker URL configured for this provider"}
 

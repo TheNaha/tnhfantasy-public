@@ -197,7 +197,8 @@ async def test_model_sync_on_the_status_card_is_per_provider(session, status_ser
     monkeypatch.setattr(
         pss, "resolve_provider_runtime_async",
         lambda _p: _async_value(type("R", (), {"worker_url": None, "mode": "local", "connected": False,
-                                               "supports_setup": False, "supports_reconciliation": False})()),
+                                               "supports_setup": False, "supports_reconciliation": False,
+                                               "status": "unavailable"})()),
     )
     monkeypatch.setattr(
         ProviderStatusService, "get_live_reconciliation_state",
@@ -232,6 +233,53 @@ async def test_model_sync_on_the_status_card_is_per_provider(session, status_ser
     assert card["model_sync"]["stats"]["pending"] == 0
     assert card["model_sync"]["catalog_models"] == 2
     assert card["model_sync"]["has_install_intent"] is False
+
+
+@pytest.mark.asyncio
+async def test_status_card_propagates_in_process_runtime_status(session, status_service, monkeypatch):
+    """In-process providers must surface runtime.status='in_process' on the card
+    so the frontend can classify them as online instead of relying on stale
+    runtime_state.status from the DB (which still says 'stopped' for the
+    container that was decommissioned)."""
+    _make_provider(session, "zetsuke")
+
+    monkeypatch.setattr(
+        "services.provider_status_service.resolve_provider_runtime_async",
+        lambda _p: _async_value(type("R", (), {
+            "worker_url": None, "mode": "in_process", "connected": True,
+            "supports_setup": True, "supports_reconciliation": True,
+            "status": "in_process",
+        })()),
+    )
+    monkeypatch.setattr(
+        ProviderStatusService, "get_live_reconciliation_state",
+        lambda self, pid, provider=None: _async_value({"status": "idle"}),
+    )
+    monkeypatch.setattr(
+        ProviderStatusService, "get_live_deploy_state",
+        lambda self, pid, provider=None: _async_value({"status": "idle"}),
+    )
+    monkeypatch.setattr(
+        ProviderStatusService, "get_provider_storage_stats",
+        lambda self, pid, provider=None, reconciliation_state=None: _async_value({"provider_id": pid, "total": 0, "by_directory": {}}),
+    )
+    monkeypatch.setattr(
+        ProviderStatusService, "get_provider_sync_stats",
+        lambda self, pid, provider=None: _async_value({
+            "total_models": 0, "stats": {"installed": 0, "pending": 0, "downloading": 0, "failed": 0},
+            "catalog_models": 0, "has_install_intent": False, "is_image_provider": True,
+        }),
+    )
+    monkeypatch.setattr(
+        ProviderStatusService, "get_provider_sync_status",
+        lambda self, pid: _async_value({"total_models": 0, "stats": {}, "models": []}),
+    )
+
+    card = await status_service.build_provider_status_card("zetsuke")
+
+    assert card["runtime"]["mode"] == "in_process"
+    assert card["runtime"]["connected"] is True
+    assert card["runtime"]["status"] == "in_process"
 
 
 async def _async_value(value):

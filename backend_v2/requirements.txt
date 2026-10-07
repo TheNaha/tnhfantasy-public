@@ -17,6 +17,10 @@ sqlmodel>=0.0.14
 # dependency. Pinned to what backend_v2/.venv actually has.
 sqlalchemy>=2.0.52
 psycopg2-binary>=2.9.9
+# SQLAlchemy 2.1+ defaults `postgresql://` to the psycopg (v3) driver; both
+# psycopg (v3, for SQLAlchemy) and psycopg2-binary (v2, for job_queue.py) are
+# required.
+psycopg[binary]>=3.2.0
 pgvector>=0.2.5
 
 # Configuration
@@ -37,8 +41,9 @@ python-socketio[asyncio_client]>=5.10.0
 # Compression
 Brotli>=1.1.0
 
-# Container management
+# Container management & compute providers
 docker>=6.1.0
+modal>=1.5.0
 
 # Image processing
 Pillow>=10.0.0

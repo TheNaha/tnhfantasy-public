@@ -256,6 +256,33 @@ async def get_provider_live_metrics(
     provider = await service.get_provider(provider_id)
     runtime = await resolve_provider_runtime_async(provider)
     
+    if runtime.mode == "in_process":
+        from services.engines.engine_factory import get_engine
+        engine = get_engine(provider_id, provider)
+        if engine is None:
+            return {"status": "offline", "latency_ms": 0, "error": "No in-process engine available"}
+        try:
+            import time
+            start_t = time.time()
+            health = await engine.check_health()
+            latency = int((time.time() - start_t) * 1000)
+            info = {
+                "provider_id": provider_id,
+                "engine": getattr(engine, "__class__", {}).__name__ or "in_process",
+                "healthy": bool(health.get("ready") or health.get("status") == "healthy"),
+            }
+            return {
+                "status": "online" if info["healthy"] else "degraded",
+                "latency_ms": latency,
+                "info": info,
+            }
+        except Exception as exc:
+            return {
+                "status": "offline",
+                "latency_ms": 0,
+                "error": str(exc),
+            }
+    
     if not runtime.worker_url:
         return {"status": "offline", "latency_ms": 0, "error": "No worker URL configured"}
         
@@ -363,18 +390,34 @@ async def remove_model_from_provider(
         raise NotFoundError("Resource", "Model file not found")
 
     provider = await provider_service.get_provider(provider_id)
-    provider_client = create_provider_client(provider_id, {
-        "type": provider.type,
-        "credentials": provider.credentials,
-        "config": provider.config,
-        "container_config": provider.container_config or {}
-    })
 
     storage_path = f"models/{normalized_directory}/{filename}"
-    try:
-        await provider_client.get_file_proxy().delete_file(storage_path)
-    except Exception as exc:
-        logger.warning("provider_model_delete_failed", provider_id=provider_id, path=storage_path, error=str(exc))
+
+    from services.provider_runtime import resolve_provider_runtime_async
+    runtime = await resolve_provider_runtime_async(provider)
+    if getattr(runtime, "mode", "") == "in_process":
+        from services.engines.engine_factory import get_engine
+
+        engine = get_engine(provider_id, provider)
+        if engine is None:
+            logger.warning("provider_model_delete_no_engine", provider_id=provider_id, path=storage_path)
+        else:
+            try:
+                await engine.delete_file(storage_path)
+            except Exception as exc:
+                logger.warning("provider_model_delete_failed", provider_id=provider_id, path=storage_path, error=str(exc))
+    else:
+        provider_client = create_provider_client(provider_id, {
+            "type": provider.type,
+            "credentials": provider.credentials,
+            "config": provider.config,
+            "container_config": provider.container_config or {}
+        })
+
+        try:
+            await provider_client.get_file_proxy().delete_file(storage_path)
+        except Exception as exc:
+            logger.warning("provider_model_delete_failed", provider_id=provider_id, path=storage_path, error=str(exc))
 
     # `provider_name=` -> `provider_id=`. This call could never have succeeded:
     # `ModelServiceV2.update_provider_file_status` takes `provider_id`, so the
@@ -473,6 +516,14 @@ async def get_provider_deploy_status(
     from services.provider_runtime import resolve_provider_runtime_async
     runtime = await resolve_provider_runtime_async(provider)
     
+    if runtime.mode == "in_process":
+        return {
+            "status": "not_applicable",
+            "provider_id": provider_id,
+            "message": "In-process engines do not require deployment",
+            "mode": "in_process",
+        }
+    
     if runtime.mode == "discovery":
         http_client = get_http_client()
         try:
@@ -500,6 +551,18 @@ async def deploy_provider_app(
     - Provider credentials set as environment variables
     - Backend files mounted at /backend/ (via HOST_BACKEND_PATH volume)
     """
+    provider = await service.get_provider(provider_id)
+    from services.provider_runtime import resolve_provider_runtime_async
+    runtime = await resolve_provider_runtime_async(provider)
+    
+    if runtime.mode == "in_process":
+        return {
+            "status": "not_applicable",
+            "provider_id": provider_id,
+            "message": "In-process engines do not require deployment",
+            "mode": "in_process",
+        }
+    
     result = await service.deploy_provider_app(provider_id, container_manager)
     if result.get("status") == "already_running":
         raise ValidationError(result.get("message", "Deployment already running"))

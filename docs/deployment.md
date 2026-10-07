@@ -48,12 +48,11 @@ Key variables:
 The provided `docker-compose.yml` orchestrates the backend, frontend, and provider containers.
 
 ### Which env file is which
-Three files, and picking the wrong one is how a provider ends up half-configured:
+Two files, and picking the wrong one is how a provider ends up half-configured:
 
 | file | for | notes |
 |---|---|---|
-| `.env.example` → `.env` | the compose stack | Read by compose for interpolation *and* injected into the backend via `env_file:`. This is the one `cp` into place. |
-| `.env.example.backend` | **the backend's own variables** | **The canonical reference for every `COMFY_*` setting `backend_v2` reads** — its default, and what breaks when it is unset. Use it for a host-only run (`setup_jules.sh`, `uvicorn` without compose), where `env_file:` is not in play. It is not a template to copy over `.env`; it is documentation that happens to be copy-pasteable. |
+| `.env.example` → `.env` | the compose stack **and the backend's own variables** | Read by compose for interpolation *and* injected into the backend via `env_file:`. This is the one `cp` into place. **It is the canonical reference for every `COMFY_*` setting `backend_v2` reads** — its default, and what breaks when it is unset. It also documents variables for a host-only run (`setup_jules.sh`, `uvicorn` without compose), where `env_file:` is not in play. It is not a template to copy over `.env` blindly; it is documentation that happens to be copy-pasteable. |
 | `.env.example.provider.engines`, `.env.example.tts`, `.env.example.direct-url` | one file per provider container | Copied to `.env.<PROVIDER_ID>`, as below. |
 
 `scripts/preflight.sh` and `backend_v2/tests/test_env_contracts.py` both read these,
@@ -153,7 +152,7 @@ the compose stack and misleading for anyone reading `docker exec backend printen
 — and if you ever remove `POSTGRES_HOST`, that same line starts being obeyed and
 the backend comes up against an empty database. `scripts/preflight.sh` reports it
 as a `note` when it finds one. For a host-only run, use
-`.env.example.backend`, which documents the whole variable set.
+`.env.example`, which documents the whole variable set.
 
 ### Data Volumes
 The `./data` directory is mounted into all containers at `/data`. This shared volume contains:

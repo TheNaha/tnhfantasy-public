@@ -250,6 +250,19 @@ async def cancel_job(sid, data):
                                 logger.info(f"[WebSocket] Worker acknowledged cancel for {job_id}")
                         except Exception as cancel_err:
                             logger.warning(f"[WebSocket] Could not reach worker to cancel: {cancel_err}")
+                    elif runtime.mode == "in_process":
+                        # Reach the engine instance actually streaming the job;
+                        # the factory cache may hold a different instance.
+                        try:
+                            from services.engines.base import find_engine_for_job
+                            from services.engines.engine_factory import get_engine
+
+                            engine = find_engine_for_job(job_id) or get_engine(provider.id)
+                            if engine and hasattr(engine, "cancel_job"):
+                                await engine.cancel_job(job_id)
+                                logger.info(f"[WebSocket] In-process engine acknowledged cancel for {job_id}")
+                        except Exception as cancel_err:
+                            logger.warning(f"[WebSocket] Could not signal in-process engine to cancel: {cancel_err}")
                     elif runtime.mode == "external_worker":
                         try:
                             from infrastructure.worker_registry import request_worker_job_cancel

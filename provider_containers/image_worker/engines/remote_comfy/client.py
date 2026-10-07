@@ -340,22 +340,29 @@ class RemoteComfyProviderClient(BaseProviderClient):
         # `#` and the agent answered 404 for a file it is holding.
         url = f"{REMOTE_AGENT_URL}/get-file/{urllib.parse.quote(path, safe='/')}"
 
+        stream_cm = client.stream(
+            "GET",
+            url,
+            headers=self.get_agent_headers(),
+            timeout=_GET_FILE_TIMEOUT_SECONDS,
+        )
+        response = await stream_cm.__aenter__()
+        if response.status_code == 404:
+            await stream_cm.__aexit__(None, None, None)
+            raise HTTPException(status_code=404, detail=f"File not found: {path}")
+        if response.status_code >= 400:
+            await stream_cm.__aexit__(None, None, None)
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Remote agent returned {response.status_code} for {path}",
+            )
+
         async def _stream() -> AsyncIterator[bytes]:
-            async with client.stream(
-                "GET",
-                url,
-                headers=self.get_agent_headers(),
-                timeout=_GET_FILE_TIMEOUT_SECONDS,
-            ) as response:
-                if response.status_code == 404:
-                    raise HTTPException(status_code=404, detail=f"File not found: {path}")
-                if response.status_code >= 400:
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"Remote agent returned {response.status_code} for {path}",
-                    )
+            try:
                 async for chunk in response.aiter_bytes(_STREAM_CHUNK_BYTES):
                     yield chunk
+            finally:
+                await stream_cm.__aexit__(None, None, None)
 
         return StreamingResponse(_stream(), media_type="application/octet-stream")
 

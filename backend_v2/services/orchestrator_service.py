@@ -548,7 +548,7 @@ async def _tool_narrate_scene(
     # is created (not enqueued) so the _LLMReducer streams status/events and
     # the completion event persists the narration via world_integration.
     from services.load_balancer_factory import create_load_balancer
-    from services.provider_runtime import resolve_provider_runtime
+    from services.provider_runtime import resolve_provider_runtime_async
     from services.provider_client import (
         call_llm_provider,
         JobCancelledError,
@@ -573,8 +573,30 @@ async def _tool_narrate_scene(
                 return {"status": "error", "error": "No available LLM providers for narration"}
 
             try:
-                runtime = resolve_provider_runtime(provider)
-                if runtime.mode not in ("container_http", "discovery"):
+                runtime = await resolve_provider_runtime_async(provider)
+                timeout = get_job_timeout("llm")
+                if runtime.mode == "in_process":
+                    from services.engines.engine_factory import get_engine
+                    from services.provider_client import call_in_process_llm_provider
+
+                    engine = get_engine(provider.id, provider)
+                    if engine is None:
+                        await _job_service.update_job(
+                            job.id, status=JobStatus.FAILED,
+                            error=f"No in-process engine for provider {provider.id}",
+                        )
+                        _lb_released = True
+                        await load_balancer.release_job(provider.id)
+                        return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}
+                    final_result = await call_in_process_llm_provider(
+                        engine,
+                        workflow,
+                        job.id,
+                        _job_service,
+                        timeout,
+                        provider.id,
+                    )
+                elif runtime.mode not in ("container_http", "discovery"):
                     # Configuration issue, not a runtime failure: do NOT
                     # penalize the provider's failure counter. The provider is
                     # simply not usable in this mode. Only genuine runtime
@@ -584,16 +606,16 @@ async def _tool_narrate_scene(
                     await load_balancer.release_job(provider.id)
                     return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}
 
-                timeout = get_job_timeout("llm")
-                final_result = await call_llm_provider(
-                    worker_url=runtime.worker_url,
-                    workflow=workflow,
-                    job_id=job.id,
-                    job_service=_job_service,
-                    timeout=timeout,
-                    provider_id=provider.id,
-                    provider_type=provider.type,
-                )
+                else:
+                    final_result = await call_llm_provider(
+                        worker_url=runtime.worker_url,
+                        workflow=workflow,
+                        job_id=job.id,
+                        job_service=_job_service,
+                        timeout=timeout,
+                        provider_id=provider.id,
+                        provider_type=provider.type,
+                    )
 
                 await load_balancer.report_success(provider.id)
                 _lb_released = True

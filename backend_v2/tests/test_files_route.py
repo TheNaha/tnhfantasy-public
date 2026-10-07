@@ -85,16 +85,19 @@ class TestFilesRoute:
         assert data["files"][0]["name"] == "test.png"
         assert data["total"] == 1
 
-    @patch("services.model_service.ModelServiceV2.list_models_by_directory")
-    def test_list_files_models(self, mock_list_models_by_directory, client):
-        mock_list_models_by_directory.return_value = [
-            {
-                "name": "model1",
-                "versions": [{"is_default": True, "file": {"filename": "model1.safetensors"}}],
-                "stats": {},
-                "tags": []
-            }
-        ]
+    @patch("services.model_service.ModelServiceV2.list_models_page")
+    def test_list_files_models(self, mock_list_models_page, client):
+        mock_list_models_page.return_value = (
+            [
+                {
+                    "name": "model1",
+                    "versions": [{"is_default": True, "file": {"filename": "model1.safetensors"}}],
+                    "stats": {},
+                    "tags": []
+                }
+            ],
+            1,
+        )
 
         response = client.get("/api/files?directory=models/checkpoints")
         assert response.status_code == 200
@@ -145,11 +148,45 @@ UNRELATED_LORA = {
 }
 
 
-@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+def _mock_list_models_page(models):
+    def _fn(directory, *, search=None, tags=None, **kwargs):
+        results = []
+        for m in models:
+            if tags:
+                m_tags = [t.lower() for t in (m.get("tags") or [])]
+                if not all(t.lower() in m_tags for t in tags):
+                    continue
+            if search:
+                q = search.lower()
+                m_tags = [t.lower() for t in (m.get("tags") or [])]
+                desc = (m.get("description") or "").lower()
+                name = (m.get("name") or "").lower()
+                creator = ((m.get("creator") or {}).get("username") or "").lower()
+                versions = m.get("versions") or []
+                tw = [w.lower() for v in versions for w in (v.get("trained_words") or [])]
+                v_desc = [v.get("description", "").lower() for v in versions if v.get("description")]
+                v_files = [v.get("file", {}).get("filename", "").lower() for v in versions if v.get("file")]
+                matched = (
+                    q in name
+                    or q in desc
+                    or q in creator
+                    or any(q in t for t in m_tags)
+                    or any(q in w for w in tw)
+                    or any(q in d for d in v_desc)
+                    or any(q in f for f in v_files)
+                )
+                if not matched:
+                    continue
+            results.append(m)
+        return results, len(results)
+    return _fn
+
+
+@patch("services.model_service.ModelServiceV2.list_models_page")
 def test_list_files_models_search_covers_tags(mock_list, client):
     """The picker placeholder promised "name, tags, description" but only name
     and version filenames were searched, so a tag was not searchable at all."""
-    mock_list.return_value = [CHARACTER_LORA, UNRELATED_LORA]
+    mock_list.side_effect = _mock_list_models_page([CHARACTER_LORA, UNRELATED_LORA])
 
     response = client.get("/api/files?directory=models/loras&search=boob+tent")
     assert response.status_code == 200
@@ -157,48 +194,48 @@ def test_list_files_models_search_covers_tags(mock_list, client):
     assert names == ["unnamed_lora_v2.safetensors"]
 
 
-@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+@patch("services.model_service.ModelServiceV2.list_models_page")
 def test_list_files_models_search_covers_description(mock_list, client):
-    mock_list.return_value = [CHARACTER_LORA, UNRELATED_LORA]
+    mock_list.side_effect = _mock_list_models_page([CHARACTER_LORA, UNRELATED_LORA])
 
     response = client.get("/api/files?directory=models/loras&search=warmer+sunsets")
     assert [f["name"] for f in response.json()["files"]] == ["sunset_colors.safetensors"]
 
 
-@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+@patch("services.model_service.ModelServiceV2.list_models_page")
 def test_list_files_models_search_covers_trained_words(mock_list, client):
     """Trained words are the trigger vocabulary and the only tag an
     HF-sourced LoRA has, so they have to be searchable too."""
-    mock_list.return_value = [{**CHARACTER_LORA, "tags": []}, UNRELATED_LORA]
+    mock_list.side_effect = _mock_list_models_page([{**CHARACTER_LORA, "tags": []}, UNRELATED_LORA])
 
     response = client.get("/api/files?directory=models/loras&search=boob+tent")
     assert [f["name"] for f in response.json()["files"]] == ["unnamed_lora_v2.safetensors"]
 
 
-@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+@patch("services.model_service.ModelServiceV2.list_models_page")
 def test_list_files_models_search_is_case_insensitive_over_tags(mock_list, client):
-    mock_list.return_value = [CHARACTER_LORA, UNRELATED_LORA]
+    mock_list.side_effect = _mock_list_models_page([CHARACTER_LORA, UNRELATED_LORA])
 
     response = client.get("/api/files?directory=models/loras&search=Breasts")
     assert [f["name"] for f in response.json()["files"]] == ["unnamed_lora_v2.safetensors"]
 
 
-@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+@patch("services.model_service.ModelServiceV2.list_models_page")
 def test_list_files_models_search_survives_null_description_and_creator(mock_list, client):
     """description/creator are nullable on a real ModelV2; a naive join raises."""
-    mock_list.return_value = [
+    mock_list.side_effect = _mock_list_models_page([
         {**CHARACTER_LORA, "description": None, "creator": None, "tags": None, "stats": {}}
-    ]
+    ])
 
     response = client.get("/api/files?directory=models/loras&search=boob")
     assert response.status_code == 200
     assert [f["name"] for f in response.json()["files"]] == ["unnamed_lora_v2.safetensors"]
 
 
-@patch("services.model_service.ModelServiceV2.list_models_by_directory")
+@patch("services.model_service.ModelServiceV2.list_models_page")
 def test_list_files_models_tag_filter_still_ands(mock_list, client):
     """The pre-existing tag filter the picker was failing to send."""
-    mock_list.return_value = [CHARACTER_LORA, UNRELATED_LORA]
+    mock_list.side_effect = _mock_list_models_page([CHARACTER_LORA, UNRELATED_LORA])
 
     response = client.get("/api/files?directory=models/loras&tags=boob+tent,clothing")
     assert [f["name"] for f in response.json()["files"]] == ["unnamed_lora_v2.safetensors"]

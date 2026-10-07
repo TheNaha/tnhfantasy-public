@@ -56,6 +56,9 @@ services:
     volumes:
       - ./backend_v2:/app
       - ./data:/data
+      # Read-only mount of the project root for per-provider .env files
+      # (same rationale as the base compose file).
+      - ./:/comfyui:ro
 
   # ─── Frontend ────────────────────────────────────────────
   frontend_v2:

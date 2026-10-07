@@ -154,12 +154,26 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
                 yield json.dumps(build_error_response(message=message, retryable=False, code=422)) + "\n"
             return StreamingResponse(stream(), status_code=422, media_type="application/x-ndjson")
 
+        status_code = 422
+        if request.url.path.rstrip("/").endswith("/upload-file"):
+            # Chunked bodies carry no content-length, so they skip the
+            # route's 413 guard and die here on max_length instead: same
+            # over-cap condition, so answer the same 413 status.
+            for err in exc.errors():
+                if err.get("type") == "string_too_long" and tuple(err.get("loc", ()))[:2] == ("body", "content_base64"):
+                    status_code = 413
+                    message = (
+                        "Upload body is over the provider upload limit "
+                        "(chunked transfer has no content-length to pre-check)"
+                    )
+                    break
+
         return JSONResponse(
-            status_code=422,
+            status_code=status_code,
             content=build_error_response(
                 message=message,
                 retryable=False,
-                code=422,
+                code=status_code,
             )
         )
 
@@ -294,7 +308,18 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
         return await client.delete_file(target)
 
     @app.post("/upload-file", dependencies=protected)
-    async def upload_file(request: UploadFileRequest):
+    async def upload_file(request: UploadFileRequest, http_request: Request):
+        declared = http_request.headers.get("content-length")
+        if declared is not None:
+            try:
+                from .models import UPLOAD_MAX_BYTES_ENCODED
+                if int(declared) > UPLOAD_MAX_BYTES_ENCODED:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Upload body of {declared} bytes is over the {UPLOAD_MAX_BYTES_ENCODED} byte limit",
+                    )
+            except ValueError:
+                pass
         return await client.upload_file(request)
 
     @app.post("/deploy", dependencies=protected)

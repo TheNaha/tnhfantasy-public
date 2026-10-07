@@ -229,6 +229,22 @@ class TestCollectionsWorkspace:
         workspaces = sorted(c.get("workspace") for c in data["collections"])
         assert workspaces == ["chat", "story"]
 
+    def test_list_collections_filter_by_workspace(self, client):
+        client.post("/api/v2/collections", json={"name": "Story Art", "workspace": "story"})
+        client.post("/api/v2/collections", json={"name": "Chat Snaps", "workspace": "chat"})
+        client.post("/api/v2/collections", json={"name": "Legacy", "workspace": None})
+
+        story_only = client.get("/api/v2/collections?workspace=story").json()
+        assert len(story_only["collections"]) == 1
+        assert story_only["collections"][0]["name"] == "Story Art"
+
+        chat_only = client.get("/api/v2/collections?workspace=chat").json()
+        assert len(chat_only["collections"]) == 1
+        assert chat_only["collections"][0]["name"] == "Chat Snaps"
+
+        no_filter = client.get("/api/v2/collections").json()
+        assert len(no_filter["collections"]) == 3
+
 
 class TestCollectionsMove:
     """Tests for cross-workspace image moves (POST /api/v2/collections/move)."""

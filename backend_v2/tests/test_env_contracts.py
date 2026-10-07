@@ -359,26 +359,26 @@ class TestDirectionB:
             assert path.read_text(encoding="utf-8").strip(), f"{path} is empty"
 
 
-# ── `.env.example.backend` is the CANONICAL backend reference ────────────────
+# ── `.env.example` is the CANONICAL backend reference ────────────────────────
 # The two directions above check the union of every example file, which is the
 # right invariant but leaves a hole: a backend variable documented only in
-# `.env.example.provider.engines` counts as documented, so the backend reference
-# could be emptied out one variable at a time and stay green. It was very nearly
-# that: `.env.example.backend` was 230 lines and the only documentation for ~35
-# variables, referenced by nothing outside `.kilo/plans/` — no README, no doc, no
-# CI step — so nothing would have told the next reader it existed, and nothing
-# would have told them it was still current.
+# `.env.example.provider.engines` counts as documented, so the canonical backend
+# reference could be emptied out one variable at a time and stay green.
 #
 # Keeping it (rather than deleting it as a duplicate of `config.py`'s `Settings`)
 # is the right call: `Settings` declares a field and its pydantic default, and
 # says nothing about whether the variable gates a feature, what breaks when it is
 # unset, or which code reads it. This file is the only place that knowledge is.
+# It is also the compose `env_file` template (via `env_file: - .env` in
+# docker-compose.yml), so compose vars (POSTGRES_*, COMFY_FRONTEND_BIND,
+# COMFY_PROVIDER_TOKEN) appear as active values alongside the documented-but-
+# commented tunables.
 #
 # The scope rule is by CODE ROOT, not by prefix: `COMFY_` covers the backend, the
 # image worker, the LLM worker, the TTS worker and the remote agent, so prefix
 # alone would drag `MODAL_*` and the provider credentials in here.
 BACKEND_ROOT = "backend_v2"
-BACKEND_EXAMPLE = REPO / ".env.example.backend"
+BACKEND_EXAMPLE = REPO / ".env.example"
 
 
 class TestTheBackendExampleIsCanonical:
@@ -433,8 +433,8 @@ class TestTheBackendExampleIsCanonical:
             path = REPO / doc
             assert path.exists(), f"{doc} is missing entirely"
             text = path.read_text(encoding="utf-8")
-            assert ".env.example.backend" in text, (
-                f"{doc} never mentions .env.example.backend, so the only "
+            assert ".env.example" in text, (
+                f"{doc} never mentions .env.example, so the only "
                 "documentation for the backend's environment variables is "
                 "unreachable from the documentation"
             )
@@ -450,7 +450,7 @@ class TestTheBackendExampleIsCanonical:
         """
         text = BACKEND_EXAMPLE.read_text(encoding="utf-8")
         assert "env_file" in text, (
-            ".env.example.backend's database section must account for the fact "
+            ".env.example's database section must account for the fact "
             "that `env_file: - .env` can and does supply COMFY_DATABASE_URL"
         )
 

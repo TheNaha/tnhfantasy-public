@@ -221,28 +221,59 @@ async def get_object_info(
                 raise NotFoundError("Provider", provider_id)
 
             runtime = await resolve_provider_runtime_async(provider)
-            if not runtime.worker_url:
-                raise ValidationError(
-                    "Provider does not have a valid worker URL for extraction"
-                )
+            if getattr(runtime, "mode", "") == "in_process":
+                from services.engines.engine_factory import get_engine
 
-            try:
-                # Increase timeout because CPU extraction spins up ComfyUI
-                client = get_http_client()
-                response = await client.get(
-                    f"{runtime.worker_url}/object-info", timeout=120.0
-                )
-                response.raise_for_status()
-                graph = response.json()
-            except httpx.TimeoutException:
-                raise ProviderTimeoutError(
-                    provider_id,
-                    "Timeout while waiting for provider to extract node definitions",
-                )
-            except Exception as e:
-                raise ProviderError(
-                    provider_id, f"Failed to fetch object_info from provider: {e}"
-                )
+                engine = get_engine(provider_id, provider)
+                if engine is None:
+                    raise ValidationError(
+                        "Provider does not have an in-process engine for extraction"
+                    )
+                try:
+                    # Same 120s budget as the container path (CPU extraction
+                    # spins up ComfyUI); without it a wedged engine hangs the
+                    # request forever.
+                    graph = await asyncio.wait_for(engine.get_object_info(), timeout=120.0)
+                except (asyncio.TimeoutError, TimeoutError) as e:
+                    raise ProviderTimeoutError(
+                        provider_id,
+                        "Timeout while waiting for provider to extract node definitions",
+                    ) from e
+                except NotImplementedError as e:
+                    raise ValidationError(
+                        f"Provider engine does not support node extraction: {e}"
+                    )
+                except Exception as e:
+                    raise ProviderError(
+                        provider_id, f"Failed to fetch object_info from provider: {e}"
+                    )
+                if not isinstance(graph, dict):
+                    raise ProviderError(
+                        provider_id, "Provider returned a malformed object_info document"
+                    )
+            else:
+                if not runtime.worker_url:
+                    raise ValidationError(
+                        "Provider does not have a valid worker URL for extraction"
+                    )
+
+                try:
+                    # Increase timeout because CPU extraction spins up ComfyUI
+                    client = get_http_client()
+                    response = await client.get(
+                        f"{runtime.worker_url}/object-info", timeout=120.0
+                    )
+                    response.raise_for_status()
+                    graph = response.json()
+                except httpx.TimeoutException:
+                    raise ProviderTimeoutError(
+                        provider_id,
+                        "Timeout while waiting for provider to extract node definitions",
+                    )
+                except Exception as e:
+                    raise ProviderError(
+                        provider_id, f"Failed to fetch object_info from provider: {e}"
+                    )
 
             # Only an observed answer is cached. A failure leaves the key absent
             # so the next request retries, which is what the frontend's Retry

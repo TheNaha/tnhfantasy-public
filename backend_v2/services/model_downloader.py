@@ -77,7 +77,7 @@ class ModelDownloader:
             from services.provider_runtime import resolve_provider_runtime
             runtime = resolve_provider_runtime(provider)
 
-            if runtime.mode not in ("container_http", "discovery"):
+            if runtime.mode not in ("container_http", "discovery", "in_process"):
                 results["providers"].append({
                     "provider_id": provider.id,
                     "status": "skipped",
@@ -85,11 +85,48 @@ class ModelDownloader:
                 })
                 continue
 
-            if getattr(provider, "worker_type", "image") == "llm":
+            if getattr(provider, "worker_type", "image") == "llm" and getattr(runtime, "mode", "") != "in_process" and getattr(provider, "type", "") != "modal_vllm" and "vllm" not in getattr(provider, "id", ""):
                 results["providers"].append({
                     "provider_id": provider.id,
                     "status": "skipped",
                     "error": "LLM workers do not reconcile model files",
+                })
+                continue
+
+            if getattr(runtime, "mode", "") == "in_process":
+                from services.engines.engine_factory import get_engine
+                from services.in_process_reconciliation import trigger_in_process_reconciliation
+
+                engine = get_engine(provider.id, provider)
+                # Skip engines with no model tree (hosted LLM/TTS), same as
+                # the container path skipping llm worker_types — but keyed
+                # off the engine flag, not a "vllm" substring in the id, so
+                # a renamed ModalVLLM still reconciles. ModalVLLM keeps
+                # manages_model_files=True.
+                if engine is None or (
+                    not getattr(engine, "manages_model_files", False)
+                    and not getattr(engine, "supports_discovery_reconcile", False)
+                ):
+                    results["providers"].append({
+                        "provider_id": provider.id,
+                        "status": "skipped",
+                        "error": "LLM workers do not reconcile model files",
+                    })
+                    continue
+                # Same trigger the container path POSTs to /reconcile with no
+                # body: a full reconciliation, not a quick sync.
+                result = await trigger_in_process_reconciliation(
+                    provider.id,
+                    provider=provider,
+                    engine=engine,
+                    quick_sync=False,
+                )
+                if result.get("status") in ("started", "already_running"):
+                    results["triggered"] += 1
+                results["providers"].append({
+                    "provider_id": provider.id,
+                    "status": result.get("status", "reconciling"),
+                    "message": result.get("message"),
                 })
                 continue
 
@@ -160,7 +197,41 @@ class ModelDownloader:
             for provider in providers:
                 from services.provider_runtime import resolve_provider_runtime
                 runtime = resolve_provider_runtime(provider)
-                
+
+                if getattr(runtime, "mode", None) == "in_process":
+                    from services.engines.engine_factory import get_engine
+                    engine = get_engine(provider.id, provider)
+                    if engine is None:
+                        results["providers"].append({
+                            "provider_id": provider.id,
+                            "path": storage_path,
+                            "status": "error",
+                            "error": "No in-process engine available for provider",
+                        })
+                    else:
+                        try:
+                            # delete_model removes sidecars (.json,
+                            # .preview.png, .sha256) on Beam/Direct; fall
+                            # back to delete_file where it is absent.
+                            delete_model = getattr(engine, "delete_model", None)
+                            if callable(delete_model):
+                                deleted = await delete_model(storage_path)
+                            else:
+                                deleted = await engine.delete_file(storage_path)
+                            results["providers"].append({
+                                "provider_id": provider.id,
+                                "path": storage_path,
+                                "status": "deleted" if deleted else "not_found",
+                            })
+                        except Exception as exc:
+                            results["providers"].append({
+                                "provider_id": provider.id,
+                                "path": storage_path,
+                                "status": "error",
+                                "error": str(exc),
+                            })
+                    continue
+
                 if not runtime.worker_url:
                     continue
                 

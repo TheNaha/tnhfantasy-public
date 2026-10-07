@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Index, UniqueConstraint
+from sqlalchemy import JSON, Index, UniqueConstraint, BigInteger
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableList
@@ -407,7 +407,7 @@ class Asset(SQLModel, table=True):
     vae: str | None = Field(default=None)
     steps: int | None = Field(default=None)
     cfg: float | None = Field(default=None)
-    seed: int | None = Field(default=None)
+    seed: int | None = Field(default=None, sa_column=Column(BigInteger))
     metadata_version: str | None = Field(default=None)
     metadata_: dict | None = Field(default=None, sa_column=Column(JSONColumn), alias="metadata")
     generated_at: datetime | None = Field(default=None, index=True)  # image creation time (from PNG meta or mtime)

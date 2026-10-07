@@ -1725,6 +1725,21 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Undo one over-eager drop in 083: ix_model_files_civitai_file_id was the only index on that column, not a duplicate",
             apply_fn=_migration_084_restore_model_files_civitai_file_id_index,
         ),
+        MigrationStep(
+            version="085_hot_table_covering_indexes",
+            description="Add covering indexes on assets(checkpoint_name), asset_tags(tag_id), and lorebook_entries(embedding)",
+            apply_fn=_migration_085_hot_table_covering_indexes,
+        ),
+        MigrationStep(
+            version="086_fix_asset_tags_tag_index",
+            description="Repair 085: it indexed asset_tags(tag_id), a column that does not exist, so the step recorded applied without the index; index the real tag column instead",
+            apply_fn=_migration_086_fix_asset_tags_tag_index,
+        ),
+        MigrationStep(
+            version="087_asset_seed_bigint",
+            description="Widen assets.seed from INTEGER to BIGINT to hold ComfyUI 64-bit seeds",
+            apply_fn=_migration_087_asset_seed_bigint,
+        ),
     ]
 
 
@@ -3951,3 +3966,105 @@ def _migration_084_restore_model_files_civitai_file_id_index(conn) -> bool:
     conn.execute(text("ANALYZE model_files"))
     logger.info("migration_084_index_restored", index=name)
     return True
+
+
+def _migration_085_hot_table_covering_indexes(conn) -> bool:
+    """Add indexes on hot query dimensions identified in performance audits.
+
+    - `assets(checkpoint_name)`: facet queries previously seq-scanned 16k rows.
+    - `asset_tags(tag_id)`: tag search previously seq-scanned 331k rows.
+    - `lorebook_entries(embedding)`: pgvector HNSW index for cosine distance RAG.
+    """
+    tables = set(inspect(conn).get_table_names())
+    applied = False
+
+    if "assets" in tables:
+        try:
+            with conn.begin_nested():
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_assets_checkpoint_name ON assets (checkpoint_name)"))
+            applied = True
+        except Exception as exc:
+            logger.warning("migration_085_assets_checkpoint_index_failed", error=str(exc))
+
+    if "asset_tags" in tables:
+        try:
+            with conn.begin_nested():
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_asset_tags_tag_id ON asset_tags (tag_id)"))
+            applied = True
+        except Exception as exc:
+            logger.warning("migration_085_asset_tags_tag_id_index_failed", error=str(exc))
+
+    if conn.dialect.name == "postgresql" and "lorebook_entries" in tables:
+        try:
+            with conn.begin_nested():
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_lorebook_entries_embedding ON lorebook_entries "
+                    "USING hnsw (embedding vector_cosine_ops)"
+                ))
+            applied = True
+        except Exception as exc:
+            logger.warning("migration_085_lorebook_vector_index_failed", error=str(exc))
+
+    return applied
+
+
+def _migration_086_fix_asset_tags_tag_index(conn) -> bool:
+    """Index the column 085 meant.
+
+    085 asked for ``asset_tags(tag_id)``, which does not exist (the table
+    carries ``tag``), so that statement failed inside its savepoint and the
+    step was still recorded as applied. This step creates the intended tag
+    index idempotently; on installs where 073 already made
+    ``ix_asset_tags_tag`` it is a no-op.
+    """
+    tables = set(inspect(conn).get_table_names())
+    if "asset_tags" not in tables:
+        return False
+    try:
+        columns = {c["name"] for c in inspect(conn).get_columns("asset_tags")}
+    except Exception as exc:
+        logger.warning("migration_086_asset_tags_columns_failed", error=str(exc))
+        return False
+    # Literal column names, not an f-string template: the
+    # test_migration_indexes_exist sweep parses declared indexes out of this
+    # source and skips names followed by `{`.
+    try:
+        with conn.begin_nested():
+            if "tag" in columns:
+                conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS idx_asset_tags_tag_covering ON asset_tags (tag)")
+                )
+            elif "tag_id" in columns:
+                conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS idx_asset_tags_tag_covering ON asset_tags (tag_id)")
+                )
+            else:
+                logger.warning("migration_086_asset_tags_no_tag_column")
+                return False
+        return True
+    except Exception as exc:
+        logger.warning("migration_086_asset_tags_tag_index_failed", error=str(exc))
+        return False
+
+
+def _migration_087_asset_seed_bigint(conn) -> bool:
+    """Widen assets.seed from INTEGER to BIGINT.
+
+    ComfyUI seeds are 64-bit unsigned values (up to 2^64-1). The column was
+    created as INTEGER (31-bit signed on Postgres), which overflows on seeds
+    like 3173361303086572. ALTER TYPE ... USING handles existing data in-place.
+    """
+    tables = set(inspect(conn).get_table_names())
+    if "assets" not in tables:
+        return False
+    columns = {c["name"]: c for c in inspect(conn).get_columns("assets")}
+    if "seed" not in columns:
+        logger.warning("migration_087_seed_column_missing")
+        return False
+    try:
+        with conn.begin_nested():
+            conn.execute(text("ALTER TABLE assets ALTER COLUMN seed TYPE BIGINT USING seed::BIGINT"))
+        return True
+    except Exception as exc:
+        logger.warning("migration_087_asset_seed_bigint_failed", error=str(exc))
+        return False

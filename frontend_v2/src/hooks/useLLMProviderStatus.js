@@ -83,6 +83,8 @@ export function useLLMProviderStatus() {
     };
 }
 
+export const LLM_METADATA_STALE_TIME = 60_000;
+
 /**
  * Convenience hook: current default LLM provider config ({provider_id, model_id} | null).
  */
@@ -90,7 +92,7 @@ export function useLLMDefaultProvider() {
     return useQuery({
         queryKey: LLM_DEFAULT_KEY,
         queryFn: fetchLLMDefault,
-        staleTime: 5 * 60_000,
+        staleTime: LLM_METADATA_STALE_TIME,
     });
 }
 
@@ -101,7 +103,7 @@ export function useLLMAvailableModels() {
     return useQuery({
         queryKey: LLM_MODELS_KEY,
         queryFn: fetchLLMModels,
-        staleTime: 5 * 60_000,
+        staleTime: LLM_METADATA_STALE_TIME,
     });
 }
 

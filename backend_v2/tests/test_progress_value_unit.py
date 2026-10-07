@@ -96,6 +96,11 @@ async def test_every_worker_emits_the_unit_this_relies_on():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[2] / "provider_containers"
+    if not (root / "provider_core" / "utils.py").exists():
+        # Backend-only container mounts (backend_v2 -> /app) have no
+        # provider_containers tree; the assertion below needs the source.
+        # Host CI mounts the full repo, where it still runs.
+        pytest.skip("provider_containers tree not mounted in this environment")
     utils = (root / "provider_core" / "utils.py").read_text()
     models = (root / "provider_core" / "models.py").read_text()
     assert 'value_unit=PROGRESS_VALUE_UNIT' in utils, (
@@ -110,6 +115,18 @@ async def test_every_worker_emits_the_unit_this_relies_on():
         "TaskEvent no longer declares value_unit, so it cannot be read off the "
         "wire at all"
     )
+
+
+@pytest.mark.asyncio
+async def test_in_process_engines_emit_the_unit_this_relies_on():
+    """Same guarantee as above for the in-process engines: the shared legacy
+    translator must name value_unit="percent" on every progress event it
+    produces, since the reducer takes a declared percent at face value."""
+    from services.engines.base import translate_legacy_image_update
+
+    assert translate_legacy_image_update(
+        {"status": "progress", "value": 5, "max": 10}, "job-x"
+    ) == {"event": "progress", "job_id": "job-x", "value": 50, "value_unit": "percent"}
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-export const ONLINE_RUNTIME_STATES = new Set(['running', 'starting', 'active', 'connected', 'discovered']);
+export const ONLINE_RUNTIME_STATES = new Set(['running', 'starting', 'active', 'connected', 'discovered', 'in_process']);
 export const AVAILABLE_MODEL_STATES = new Set(['ready', 'installed', 'available', 'completed']);
 
 export function normalizeModelStatus(statusData) {

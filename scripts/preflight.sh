@@ -147,7 +147,7 @@ fi
 # the backend is actually using. POSTGRES_HOST decides, and the backend logs the
 # discarded value at boot, but "read the logs" is not a preflight.
 if grep -qE "^COMFY_DATABASE_URL=." .env 2>/dev/null; then
-  note ".env sets COMFY_DATABASE_URL, which POSTGRES_HOST overrides for this stack — remove the line unless you intend a non-compose run (see .env.example.backend)"
+  note ".env sets COMFY_DATABASE_URL, which POSTGRES_HOST overrides for this stack — remove the line unless you intend a non-compose run (see .env.example)"
 fi
 
 echo

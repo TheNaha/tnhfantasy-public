@@ -31,6 +31,7 @@ import {
 } from "../../utils/reuseParameters";
 import FeedCardDetails from "./feed-card/FeedCardDetails";
 import FeedCardActions from "./feed-card/FeedCardActions";
+import { refetchNewestGalleryPage } from "../../hooks/useGallery";
 
 /**
  * Ceiling for the intrinsic-size probe. A blob that decodes normally settles in
@@ -298,7 +299,7 @@ const FeedCard = memo(function FeedCard({
           copy_file: false,
         });
         toast.success("Asset moved", { icon: "📁" });
-        queryClient.invalidateQueries({ queryKey: ['gallery'] });
+        await refetchNewestGalleryPage(queryClient);
       } catch {
         toast.error("Failed to move asset");
       }
@@ -320,7 +321,7 @@ const FeedCard = memo(function FeedCard({
           copy_file: true,
         });
         toast.success("Asset copied", { icon: "📋" });
-        queryClient.invalidateQueries({ queryKey: ['gallery'] });
+        await refetchNewestGalleryPage(queryClient);
       } catch {
         toast.error("Failed to copy asset");
       }

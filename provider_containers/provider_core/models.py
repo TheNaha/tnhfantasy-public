@@ -3,9 +3,10 @@ Shared Pydantic models for provider workers.
 These models define the API contract for all provider worker endpoints.
 """
 
+import os
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class InferenceRequest(BaseModel):
@@ -131,10 +132,24 @@ class DeleteFileRequest(BaseModel):
     path: str
 
 
+def _upload_max_bytes() -> int:
+    """Parse PROVIDER_UPLOAD_MAX_BYTES defensively: a typo'd value must not
+    crash the worker at import (the backend twin get_upload_size_cap in
+    engines/base.py already degrades to the default)."""
+    try:
+        return int(os.getenv("PROVIDER_UPLOAD_MAX_BYTES", str(512 * 1024 * 1024)))
+    except (TypeError, ValueError):
+        return 512 * 1024 * 1024
+
+
+UPLOAD_MAX_BYTES = _upload_max_bytes()
+UPLOAD_MAX_BYTES_ENCODED = (UPLOAD_MAX_BYTES // 3) * 4 + 4096
+
+
 class UploadFileRequest(BaseModel):
     """Request for uploading a file to provider storage."""
     filename: str
-    content_base64: str
+    content_base64: str = Field(..., max_length=UPLOAD_MAX_BYTES_ENCODED)
     directory: str
 
 

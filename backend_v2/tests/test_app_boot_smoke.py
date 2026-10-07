@@ -64,6 +64,7 @@ EXPECTED_STARTUP_PHASES = [
     "scheduler",
     "data_cleanup",
     "civitai_resync",
+    "in_process_reconcile",
     "websocket",
     "world_integration",
 ]
@@ -85,12 +86,14 @@ EXPECTED_SHUTDOWN_PHASES = [
 # config ai.idleSimEnabled is set, and neither is set under test, so its absence
 # is the assertion that the opt-in branch was not taken by accident.
 from api.lifecycle import PROVIDER_HOST_REFRESH_SECONDS
+from services.in_process_reconciliation import IN_PROCESS_RECONCILE_INTERVAL_SECONDS
 
 EXPECTED_SCHEDULED_JOBS = {
     "database_vacuum": 86400,
     "preview_prefetch": PREVIEW_PREFETCH_INTERVAL_SECONDS,
     "cleanup": 3600,
     "civitai_resync_job": 86400,
+    "in_process_reconcile": IN_PROCESS_RECONCILE_INTERVAL_SECONDS,
     # Keeps the published provider-host set current. It belongs here rather than
     # on the request path: the address dialled can be a Docker container id that
     # changes on every recreate, and a boot-time snapshot plus a CRUD-triggered

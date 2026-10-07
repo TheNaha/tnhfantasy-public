@@ -53,4 +53,14 @@ describe('summarizeProviderStatus', () => {
         expect(summary.label).toBe('Disabled');
         expect(summary.message).toBe('Provider disabled');
     });
+
+    it('reports in-process providers as online', () => {
+        const summary = summarizeProviderStatus(buildProvider({
+            runtime_state: { status: 'in_process', connected: true, mode: 'in_process' },
+        }));
+
+        expect(summary.isOnline).toBe(true);
+        expect(summary.stage).toBe('online');
+        expect(summary.label).toBe('Running');
+    });
 });

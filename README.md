@@ -21,7 +21,7 @@ This project serves as a dynamic, containerized wrapper around ComfyUI that inte
 - **provider-workers** (Serverless instances on Modal or Beam, plus the long-running provider containers)
 
 ## Quick Start
-1. Copy `.env.example` to `.env` and configure the backend settings. **`.env.example.backend` is the canonical reference for the backend's own variables** — every `COMFY_*` setting the code reads, with its default and what breaks when it is unset. Use it for a host-only run (`setup_jules.sh`), where compose's `env_file` is not in play; use `.env.example` for the compose stack, where compose supplies most of them.
+1. Copy `.env.example` to `.env` and configure the backend settings. **`.env.example` is the canonical reference for every environment variable the code reads** — its default, and what breaks when it is unset. It serves as both the compose `env_file` template and the backend documentation for a host-only run (`setup_jules.sh`), where compose's `env_file` is not in play.
 2. **On a new host, run `scripts/preflight.sh` first.** Compose declares the `metrics` and `proxy` networks as external, so without it every `up` fails at network creation — for every service, with an error that does not name the cause. It also reports the config that silently disables features.
 3. Configure the providers you actually want. Each provider is opt-in via a Compose profile, so there is no one file to copy:
    - `--profile providers` enables six services: `modal-hp196`, `modal-stepmania`, `modal-zetsuke`, `tts-modal-hp196`, `llm-local` and `direct_url`. Compose reads **all six** `env_file`s when the profile is on, so all six must exist:

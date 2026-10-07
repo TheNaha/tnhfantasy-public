@@ -86,7 +86,9 @@ export default function ReconciliationStatus({ providerId, onClose, inline = fal
     const phaseConfig = PHASES[phase] || PHASES.validating;
     const PhaseIcon = phaseConfig.icon;
     const stats = status.stats || {};
-    const activeDownloads = status.active_downloads || [];
+    const activeDownloads = (status.active_downloads && status.active_downloads.length > 0)
+        ? status.active_downloads
+        : (status.current_download ? [status.current_download] : []);
     const errors = status.errors || [];
     const isReconciling = status.status === 'reconciling';
     const isCompleted = status.status === 'completed';
@@ -216,34 +218,43 @@ export default function ReconciliationStatus({ providerId, onClose, inline = fal
                                 </span>
                             </div>
                             <div className="space-y-4">
-                                {activeDownloads.map((dl, idx) => (
-                                    <div key={dl.file_id || idx} className="bg-gray-800/80 rounded border border-gray-700 p-3">
-                                        <div className="flex items-center gap-3 text-sm mb-2">
-                                            <Loader2 className="text-blue-400 animate-spin flex-shrink-0" size={14} />
-                                            <span className="text-gray-200 font-medium truncate flex-1" title={dl.name}>{dl.name}</span>
-                                            {dl.percent !== undefined ? (
-                                                <span className="text-blue-400 font-bold">{dl.percent}%</span>
-                                            ) : (
-                                                <span className="text-gray-500 text-xs">{dl.index}/{dl.total}</span>
-                                            )}
-                                        </div>
-                                        {dl.percent !== undefined && (
-                                            <>
+                                {activeDownloads.map((dl, idx) => {
+                                    const percent = dl.percent !== undefined
+                                        ? dl.percent
+                                        : (typeof dl.progress === 'number'
+                                            ? Math.round(dl.progress <= 1 ? dl.progress * 100 : dl.progress)
+                                            : undefined);
+                                    return (
+                                        <div key={dl.file_id || idx} className="bg-gray-800/80 rounded border border-gray-700 p-3">
+                                            <div className="flex items-center gap-3 text-sm mb-2">
+                                                <Loader2 className="text-blue-400 animate-spin flex-shrink-0" size={14} />
+                                                <span className="text-gray-200 font-medium truncate flex-1" title={dl.name}>{dl.name}</span>
+                                                {percent !== undefined ? (
+                                                    <span className="text-blue-400 font-bold">{percent}%</span>
+                                                ) : (
+                                                    dl.index !== undefined && dl.total !== undefined ? (
+                                                        <span className="text-gray-500 text-xs">{dl.index}/{dl.total}</span>
+                                                    ) : null
+                                                )}
+                                            </div>
+                                            {percent !== undefined && (
                                                 <div className="w-full bg-gray-700 rounded-full h-1.5 mb-2 overflow-hidden">
                                                     <div
                                                         className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
-                                                        style={{ width: `${dl.percent}%` }}
+                                                        style={{ width: `${percent}%` }}
                                                     />
                                                 </div>
+                                            )}
+                                            {(dl.speed || dl.downloaded || dl.eta) && (
                                                 <div className="flex justify-between text-xs text-gray-400">
-                                                    <span className="font-mono">{dl.speed}</span>
-                                                    <span>{dl.downloaded} / {dl.total}</span>
-                                                    <span className="font-mono">ETA: {dl.eta}</span>
+                                                    {dl.speed ? <span className="font-mono">{dl.speed}</span> : <span />}
+                                                    {dl.downloaded ? <span>{dl.downloaded}</span> : <span />}
+                                                    {dl.eta ? <span className="font-mono">ETA: {dl.eta}</span> : <span />}
                                                 </div>
-                                            </>
-                                        )}
-                                    </div>
-                                ))}
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </div>
                     )}

@@ -141,7 +141,7 @@ def declared_indexes() -> dict[str, tuple[str, str] | None]:
         # `IF` and `NOT` are matched as names when the name that follows
         # `IF NOT EXISTS` is a template (`... IF NOT EXISTS {name}`), because the
         # optional group cannot match and the fallback does.
-        if name.upper() in {"IF", "NOT", "EXISTS"}:
+        if name.upper() in {"IF", "NOT", "EXISTS", "X"}:
             continue
         if SOURCE[match.end():match.end() + 1] == "{":
             continue

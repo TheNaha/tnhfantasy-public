@@ -694,7 +694,9 @@ _AUDIO_OUTPUT_SUFFIXES = (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac", ".opu
 
 # A narration is tens of seconds of audio, not a 7 GB checkpoint, but the cap
 # still has to exist: the provider's `/get-file` returns the whole body and
-# there is nothing on this side refusing an unbounded one.
+# there is nothing on this side refusing an unbounded one. The TTS engines
+# (container worker and in-process ModalTTSEngine) enforce their own 64 MiB
+# ceiling first; this 128 MiB outer guard only catches a misbehaving path.
 _TTS_FETCH_MAX_BYTES = 128 * 1024 * 1024
 _TTS_FETCH_TIMEOUT_SECONDS = 120.0
 
@@ -716,11 +718,12 @@ def _resolve_tts_worker_base_sync(provider_id: str) -> str | None:
 
     base = None
     try:
-        from infrastructure.database import get_session_context
+        from infrastructure.database import get_session_sync
         from infrastructure.repositories.provider_repo import ProviderRepository
         from infrastructure.providers.runtime import get_provider_worker_base_url
 
-        with get_session_context() as session:
+        session = get_session_sync()
+        try:
             provider = ProviderRepository(session).get(provider_id)
             if provider is None:
                 return None
@@ -732,6 +735,11 @@ def _resolve_tts_worker_base_sync(provider_id: str) -> str | None:
                 or container_config.get("internal_url")
             )
             base = base or get_provider_worker_base_url(provider.id)
+        finally:
+            try:
+                session.close()
+            except Exception:
+                pass
     except Exception as exc:  # pragma: no cover - resolution is best-effort
         logger.warning("tts_worker_base_unresolved", provider_id=provider_id, error=str(exc))
         return None
@@ -797,8 +805,31 @@ async def _fetch_remote_tts_outputs(
         return await asyncio.to_thread(build_job_outputs, job, inline, provider_id)
 
     base = await asyncio.to_thread(_resolve_tts_worker_base_sync, provider_id)
+    engine = None
+    _provider_row = None
+    if base:
+        # Only serve a real in-process provider from the engine; falling
+        # back to a (usually nonexistent) container hostname lost outputs.
+        try:
+            from infrastructure.database import get_session_context
+            from infrastructure.repositories.provider_repo import ProviderRepository
+            from services.provider_runtime import resolve_provider_runtime
+
+            async with get_session_context() as session:
+                provider = ProviderRepository(session).get(provider_id)
+                _provider_row = provider
+                if provider is not None and resolve_provider_runtime(provider).mode == "in_process":
+                    base = None
+        except Exception:
+            pass
     if not base:
-        return []
+        try:
+            from services.engines.engine_factory import get_engine
+            engine = get_engine(provider_id, _provider_row)
+        except Exception:
+            pass
+        if not (engine and hasattr(engine, "get_file_stream")):
+            return []
 
     fetched: list[dict[str, Any]] = []
     for artifact in artifacts:
@@ -814,22 +845,47 @@ async def _fetch_remote_tts_outputs(
             else settings.output_dir
         )
         target_path = os.path.join(target_dir, filename)
-        remote_url = f"{base}/get-file/{quote(remote_path, safe='/')}"
 
-        try:
-            response = await http_get(remote_url, timeout=_TTS_FETCH_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            body = response.content
-        except Exception as exc:
-            # One unreadable artifact fails that artifact, not the job: the
-            # provider has already been paid and its work is not reproducible.
-            logger.warning(
-                "tts_output_fetch_failed",
-                provider_id=provider_id,
-                path=remote_path,
-                error=str(exc),
-            )
-            continue
+        body = None
+        if base:
+            remote_url = f"{base}/get-file/{quote(remote_path, safe='/')}"
+            try:
+                response = await http_get(remote_url, timeout=_TTS_FETCH_TIMEOUT_SECONDS)
+                response.raise_for_status()
+                body = response.content
+            except Exception as exc:
+                # One unreadable artifact fails that artifact, not the job: the
+                # provider has already been paid and its work is not reproducible.
+                logger.warning(
+                    "tts_output_fetch_failed",
+                    provider_id=provider_id,
+                    path=remote_path,
+                    error=str(exc),
+                )
+                continue
+        elif engine and hasattr(engine, "get_file_stream"):
+            try:
+                # Bounded like the container path: the engine enforces its
+                # own ceiling first, but accumulation here still stops at
+                # _TTS_FETCH_MAX_BYTES instead of buffering a wedged stream
+                # forever, inside the same fetch timeout the HTTP path uses.
+                chunks = []
+                total = 0
+                async with asyncio.timeout(_TTS_FETCH_TIMEOUT_SECONDS):
+                    async for chunk in engine.get_file_stream(remote_path):
+                        chunks.append(chunk)
+                        total += len(chunk)
+                        if total > _TTS_FETCH_MAX_BYTES:
+                            break
+                body = b"".join(chunks)
+            except Exception as exc:
+                logger.warning(
+                    "tts_output_fetch_failed",
+                    provider_id=provider_id,
+                    path=remote_path,
+                    error=str(exc),
+                )
+                continue
 
         if not body:
             logger.warning("tts_output_empty", provider_id=provider_id, path=remote_path)

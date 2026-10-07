@@ -5,6 +5,8 @@ from infrastructure.deps import get_session_sync
 from infrastructure.logging import get_logger
 from infrastructure.providers.runtime import provider_container_name
 
+import os
+
 logger = get_logger("provider_runtime")
 
 # Generous enough for a cold Docker socket, short enough that a wedged daemon
@@ -17,6 +19,49 @@ _RUNTIME_RESOLVE_TIMEOUT_SECONDS = 5.0
 # container. The resolution still degrades to the same unusable target either
 # way — this only makes the reason legible instead of guessing at it.
 RUNTIME_UNREACHABLE = "runtime_unreachable"
+
+
+_DEPRECATION_WARNED = False
+
+
+def use_in_process_engines() -> bool:
+    """Kill-switch for the in-process engine path (default on).
+
+    Deliberately env-only, like the other COMFY_* operational knobs
+    (health-check toggles, timeouts, autostart): it must be readable from
+    import-time and scheduler paths that never load config.json, and it is
+    evaluated on every call so tests can flip it with monkeypatch.setenv.
+    """
+    return os.getenv("COMFY_USE_IN_PROCESS_ENGINES", "true").lower() in ("true", "1", "yes")
+
+
+def _warn_container_deprecated(provider_id: str) -> None:
+    """Log a one-time deprecation warning when a provider falls back to container mode.
+
+    Provider containers are deprecated. The in-process engine
+    (``services/engines/``) is the preferred path and is on by default. When
+    ``COMFY_USE_IN_PROCESS_ENGINES`` is false, or a provider has
+    ``execution_mode: "container"`` in its config, the backend falls back to the
+    containerized path — which is kept only for the transition period.
+
+    Running containers can be safely stopped: providers with in-process-capable
+    engines will auto-resolve (``resolve_provider_runtime`` checks
+    ``can_create_engine`` first), and existing PENDING/RUNNING jobs re-enqueue on
+    the next backend restart and route to the in-process path.
+    """
+    global _DEPRECATION_WARNED
+    if not _DEPRECATION_WARNED:
+        _DEPRECATION_WARNED = True
+        logger.warning(
+            "provider_container_mode_deprecated",
+            provider_id=provider_id,
+            hint=(
+                "Provider containers are deprecated. Set COMFY_USE_IN_PROCESS_ENGINES=true "
+                "(default) or remove execution_mode='container' from the provider config. "
+                "Stop running provider containers with: "
+                "docker compose --profile providers stop"
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -46,6 +91,28 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
     # the `if container_config` block below may not run at all, and the final
     # target still has to be able to say which failure it was.
     runtime_unreachable = False
+
+    # Check for in-process compute engines (Modal, Direct ComfyUI)
+    use_in_process = use_in_process_engines()
+    explicit_container = isinstance(provider_config, dict) and provider_config.get("execution_mode") == "container"
+    if use_in_process and not explicit_container:
+        from services.engines.engine_factory import can_create_engine, engine_supports_setup
+        if can_create_engine(provider):
+            return ProviderRuntimeTarget(
+                provider_id=provider_id,
+                mode="in_process",
+                worker_url=None,
+                supports_setup=engine_supports_setup(provider),
+                supports_reconciliation=True,
+                connected=True,
+                status="in_process",
+                # Unknown until probed: resolve_* is sync and cannot call
+                # the async check_health. The load balancer probes
+                # in-process engines (with timeout) at dispatch time, so a
+                # hardcoded True here would mark bad-credential providers
+                # healthy on every status card.
+                healthy=None,
+            )
 
     if container_config:
         container_name = container_config.get("container_name", provider_container_name(provider_id))
@@ -87,6 +154,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
             )
 
         if docker_available and found:
+            _warn_container_deprecated(provider_id)
             port = container_config.get("port", 8000) if isinstance(container_config, dict) else 8000
             return ProviderRuntimeTarget(
                 provider_id=provider_id,
@@ -117,6 +185,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
     provider_config = getattr(provider, "config", None) or {}
     discovery_url = provider_config.get("discovery_url") if isinstance(provider_config, dict) else None
     if discovery_url:
+        _warn_container_deprecated(provider_id)
         return ProviderRuntimeTarget(
             provider_id=provider_id,
             mode="discovery",
