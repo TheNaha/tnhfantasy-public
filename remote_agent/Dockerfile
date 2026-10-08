@@ -6,10 +6,10 @@ WORKDIR /app
 COPY remote_agent/requirements.txt /app/remote_agent/requirements.txt
 RUN pip install --no-cache-dir -r /app/remote_agent/requirements.txt
 
-# Copy shared provider_core (NOT pip-installed — it is a local source package,
-# exactly like the worker image). It ships on PYTHONPATH so the agent can reuse
+# Copy shared provider_core (NOT pip-installed — it is a local source package
+# living under remote_agent/). It ships on PYTHONPATH so the agent can reuse
 # the same download/validation/path-safety primitives.
-COPY provider_containers/provider_core/ /app/provider_core/
+COPY remote_agent/provider_core/ /app/provider_core/
 
 # Copy the agent source.
 COPY remote_agent/ /app/remote_agent/
@@ -42,10 +42,8 @@ USER agent
 #
 # `$PORT`, not a literal. The app reads `os.getenv("PORT", "8001")` (server.py
 # `__main__`), so an operator who set PORT to something else — or a compose file
-# that does — got a container whose healthcheck probed a port nothing listened on:
-# reported unhealthy forever while the agent worked. All three worker Dockerfiles
-# read `$PORT` here for exactly this reason; this one hardcoded 8001, which is the
-# bug class the others were already fixed for.
+# that does — would otherwise get a container whose healthcheck probed a port
+# nothing listened on: reported unhealthy forever while the agent worked.
 #
 # Shell form, not exec form, so the CMD can expand the variable.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

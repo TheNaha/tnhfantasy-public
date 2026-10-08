@@ -29,13 +29,13 @@ import sys
 # absolute and the computed repo root is correct.
 HERE = SPECPATH
 REPO = os.path.dirname(HERE)            # repo root
-PROVIDER_CORE = os.path.join(REPO, "provider_containers", "provider_core")
+PROVIDER_CORE = os.path.join(REPO, "remote_agent", "provider_core")
 REMOTE_AGENT = os.path.join(REPO, "remote_agent")
 
 
 # provider_core must be importable both at *analysis* time and at *runtime*
 # inside the bundle. Pathex lets PyInstaller find it during collection.
-provider_root = os.path.dirname(PROVIDER_CORE)  # .../provider_containers  (parent so `import provider_core` resolves & auto-collects)
+provider_root = os.path.dirname(PROVIDER_CORE)  # .../remote_agent  (parent so `import provider_core` resolves & auto-collects)
 pathex = [provider_root, PROVIDER_CORE, REMOTE_AGENT]
 
 # Ship the whole provider_core package (no package-relative data reads, but it
@@ -45,9 +45,9 @@ datas = [
 ]
 
 # provider_core/__init__.py eagerly imports submodules (state, http_client,
-# reconciliation, background, router, logging, utils, downloads, validation,
-# models). Explicit hiddenimports make collection robust regardless of whether
-# PyInstaller's static scan traces every `from .x import` inside __init__.
+# reconciliation, logging, utils, downloads, validation, models). Explicit
+# hiddenimports make collection robust regardless of whether PyInstaller's
+# static scan traces every `from .x import` inside __init__.
 hiddenimports = [
     "provider_core",
     "provider_core.utils",
@@ -58,10 +58,8 @@ hiddenimports = [
     "provider_core.http_client",
     "provider_core.state",
     "provider_core.logging",
-    "provider_core.background",
-    "provider_core.router",
-    "provider_core.base_client",
-    "provider_core.deploy",
+    "provider_core.auth",
+    "provider_core.responses",
     "uvicorn",
     "uvicorn.main",
     "uvicorn.server",
