@@ -8,21 +8,22 @@ export default function DiagnosticsTab({ providerId, diagnostics, runtime, crede
     const errors = diagnostics.errors || [];
     const hasIssues = warnings.length > 0 || errors.length > 0 || providerFailures > 0;
 
-    const { data: metricsData, isLoading: metricsLoading } = useQuery({
-        queryKey: ['provider-live-metrics', providerId],
-        queryFn: () => providersApi.getLiveMetrics(providerId),
-        refetchInterval: 5000, // Poll every 5s while tab is open
+    const { data: diagData, isLoading: diagLoading } = useQuery({
+        queryKey: ['provider-diagnostics', providerId],
+        queryFn: () => providersApi.getDiagnostics(providerId),
+        refetchInterval: 20000, // Poll every 20s while tab is open (engine.check_health hits Modal/Beam/Direct)
         enabled: !!providerId,
     });
 
-    const metrics = metricsData;
+    const metrics = diagData;
 
     return (
         <>
             <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden mb-4">
+                <DataRow label="Engine Name" value={diagData?.engine_name || 'N/A'} />
+                <DataRow label="Runtime Mode" value={diagData?.runtime_mode || diagnostics.worker?.mode || runtime.mode} />
                 <DataRow label="Backend URL" value={diagnostics.worker?.backend_url} mono />
                 <DataRow label="Worker URL" value={diagnostics.worker?.worker_url} mono />
-                <DataRow label="Runtime Mode" value={diagnostics.worker?.mode || runtime.mode} />
                 <DataRow label="Credential Ready" value={credentialSummary.ready ? 'Yes' : 'Missing'} />
                 <DataRow label="GPU" value={diagnostics.worker?.gpu || runtime.gpu || 'N/A'} />
                 <DataRow label="Version" value={diagnostics.worker?.version || runtime.version || 'N/A'} />
@@ -35,18 +36,18 @@ export default function DiagnosticsTab({ providerId, diagnostics, runtime, crede
                 <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-medium text-blue-200 flex items-center gap-2">
                         <Activity size={16} className="text-blue-400" />
-                        Live Remote Metrics
+                        Live Engine Telemetry
                     </h3>
-                    {metricsLoading && <Loader2 size={14} className="text-blue-400 animate-spin" />}
+                    {diagLoading && <Loader2 size={14} className="text-blue-400 animate-spin" />}
                 </div>
-                {!metricsLoading && !metrics && (
-                    <div className="text-xs text-gray-500 italic">No metrics available.</div>
+                {!diagLoading && !metrics && (
+                    <div className="text-xs text-gray-500 italic">No telemetry available.</div>
                 )}
                 {metrics && (
                     <div className="grid grid-cols-2 gap-3 text-sm">
                         <div>
                             <div className="text-xs text-gray-500">Status</div>
-                            <div className={metrics.status === 'online' ? 'text-green-400' : 'text-red-400'}>
+                            <div className={metrics.status === 'healthy' || metrics.status === 'online' ? 'text-green-400' : 'text-red-400'}>
                                 {metrics.status}
                             </div>
                         </div>
@@ -54,16 +55,20 @@ export default function DiagnosticsTab({ providerId, diagnostics, runtime, crede
                             <div className="text-xs text-gray-500">Ping Latency</div>
                             <div className="text-gray-200">{metrics.latency_ms > 0 ? `${metrics.latency_ms} ms` : 'N/A'}</div>
                         </div>
-                        {metrics.info && (
+                        {metrics.telemetry && (
                             <>
-                                <div>
-                                    <div className="text-xs text-gray-500">Remote Version</div>
-                                    <div className="text-gray-200">{metrics.info.version || 'unknown'}</div>
-                                </div>
-                                <div>
-                                    <div className="text-xs text-gray-500">ComfyUI Mode</div>
-                                    <div className="text-gray-200">{metrics.info.comfy_mode || 'unknown'}</div>
-                                </div>
+                                {metrics.telemetry.app_name && (
+                                    <div>
+                                        <div className="text-xs text-gray-500">App Name</div>
+                                        <div className="text-gray-200">{metrics.telemetry.app_name}</div>
+                                    </div>
+                                )}
+                                {metrics.telemetry.api_base && (
+                                    <div>
+                                        <div className="text-xs text-gray-500">API Base</div>
+                                        <div className="text-gray-200 truncate">{metrics.telemetry.api_base}</div>
+                                    </div>
+                                )}
                             </>
                         )}
                         {metrics.error && (

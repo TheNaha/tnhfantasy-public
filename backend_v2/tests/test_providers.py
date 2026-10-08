@@ -19,7 +19,7 @@ def test_create_provider(client, sample_provider_data):
     assert data["type"] == "modal"
     assert data["enabled"] == True
     assert "credentials" not in data
-    assert data["credential_summary"]["configured_fields"] == ["username"]
+    assert data["credential_summary"]["configured_fields"] == ["token_id", "token_secret"]
 
 
 def test_get_provider(client, sample_provider_data):

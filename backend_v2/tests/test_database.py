@@ -464,3 +464,47 @@ class TestEngine:
         engine = db_module.create_test_engine()
         assert str(engine.url) == "sqlite://"
         assert isinstance(engine.pool, StaticPool)
+
+
+class TestMigration089FoldContainerConfig:
+    def _providers_table(self, conn):
+        conn.execute(text("""
+            CREATE TABLE providers (
+                id TEXT PRIMARY KEY,
+                config TEXT,
+                container_config TEXT
+            )
+        """))
+
+    def test_folds_legacy_keys_into_config(self):
+        import json
+
+        from infrastructure.migrations.steps import _migration_089_fold_container_config_into_config
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        with engine.begin() as conn:
+            self._providers_table(conn)
+            conn.execute(text("""
+                INSERT INTO providers (id, config, container_config) VALUES
+                    ('p1', '{}', '{"container_name": "tnhcomfy-p1", "port": 8000}'),
+                    ('p2', '{"container_name": "custom", "api_base": "http://x"}', '{"container_name": "stale", "port": 8000}'),
+                    ('p3', '{"api_base": "http://y"}', NULL)
+            """))
+            assert _migration_089_fold_container_config_into_config(conn) is True
+
+        with engine.connect() as conn:
+            rows = {r[0]: (r[1]) for r in conn.execute(text("SELECT id, config FROM providers")).all()}
+
+        p1 = json.loads(rows["p1"])
+        assert p1 == {"container_name": "tnhcomfy-p1", "port": 8000}
+        # config wins on conflict; absent legacy keys still fold in.
+        p2 = json.loads(rows["p2"])
+        assert p2 == {"container_name": "custom", "api_base": "http://x", "port": 8000}
+        assert json.loads(rows["p3"]) == {"api_base": "http://y"}
+
+    def test_missing_providers_table_is_noop(self):
+        from infrastructure.migrations.steps import _migration_089_fold_container_config_into_config
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        with engine.begin() as conn:
+            assert _migration_089_fold_container_config_into_config(conn) is False

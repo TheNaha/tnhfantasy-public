@@ -28,6 +28,8 @@ class TestProvidersBasic:
         payload = {
             "id": "test-provider-defaults",
             "type": "modal",
+            "credentials": {"token_id": "tok_123", "token_secret": "secret_456"},
+            "config": {"app_name": "test-app"},
         }
         response = client.post("/api/v2/providers", json=payload)
         assert response.status_code == 200

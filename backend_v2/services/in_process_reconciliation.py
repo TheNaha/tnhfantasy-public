@@ -63,8 +63,11 @@ def _max_concurrent_downloads(provider: Any = None) -> int:
             value = 0
         if value > 0:
             return value
-    # Same default the container workers reconcile under.
-    return 2
+    # Same default the container image workers reconciled under
+    # (`MAX_CONCURRENT_DOWNLOADS=5` in image_worker/worker.py; the base
+    # default of 2 never applied to them). Explicit per-provider
+    # `max_concurrent_downloads` or MAX_CONCURRENT_DOWNLOADS wins.
+    return 5
 
 
 def _safe_deletion_limit(total_files: int, orphaned_count: int) -> int:

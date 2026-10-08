@@ -10,10 +10,11 @@
 #   PUT    /api/v2/providers/load-balancing – Update LB strategy
 import asyncio
 import time
+import uuid
 from types import SimpleNamespace
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 
@@ -29,6 +30,7 @@ from infrastructure.background_tasks import start_background_task
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import api_logger
 from services.provider_runtime import resolve_provider_runtime_async
+from services.engines.registry import ui_schemas, validate_provider_payload
 from services.provider_service import ProviderService
 from services.provider_status_service import invalidate_provider_status_caches
 
@@ -98,6 +100,15 @@ class TestConnectionRequest(BaseModel):
     type: str
     credentials: dict[str, Any] = {}
     config: dict[str, Any] = {}
+
+
+def _is_healthy_status(health: dict[str, Any]) -> bool:
+    """Shared ready predicate for the connection test bench.
+
+    Accepts both "healthy" (engines) and "ok" (ping_provider's container
+    dialect): the bench used to disagree with ping about the same provider.
+    """
+    return bool(health.get("ready") or health.get("status") in ("healthy", "ok"))
 
 
 
@@ -172,7 +183,17 @@ async def wake_providers(session: Session = Depends(get_session)):
     """Ping enabled provider containers to wake them up from cold start."""
     service = get_provider_service(session)
     providers = service.get_enabled_providers()
-    active_providers = [provider for provider in providers if provider.container_config]
+    # Container placement may live under `config` (migration 089 folds the
+    # legacy key there) or still under `container_config` on un-migrated
+    # rows — the wake ping must find both.
+    def _has_container_placement(provider) -> bool:
+        legacy = getattr(provider, "container_config", None) or {}
+        current = getattr(provider, "config", None) or {}
+        if isinstance(legacy, dict) and legacy:
+            return True
+        return bool(isinstance(current, dict) and ("container_name" in current or "port" in current))
+
+    active_providers = [provider for provider in providers if _has_container_placement(provider)]
     
     if not active_providers:
         return {"status": "success", "message": "No active containerized providers to wake"}
@@ -419,155 +440,53 @@ async def ping_provider(provider_id: str, session: Session = Depends(get_session
 # ENGINE SCHEMAS & INTERACTIVE TEST BENCH
 # ============================================================================
 
-ENGINE_SCHEMAS: dict[str, dict[str, Any]] = {
-    "modal": {
-        "id": "modal",
-        "name": "Modal (ComfyUI)",
-        "category": "image",
-        "worker_type": "image",
-        "capabilities": ["image"],
-        "description": "Serverless ComfyUI execution on Modal cloud GPU workers with shared volume storage.",
-        "credentials": [
-            {"key": "token_id", "label": "Modal Token ID", "type": "password", "required": True, "placeholder": "ak-..."},
-            {"key": "token_secret", "label": "Modal Token Secret", "type": "password", "required": True, "placeholder": "as-..."},
-            {"key": "hf_token", "label": "HuggingFace Token", "type": "password", "required": False, "placeholder": "hf_..."},
-            {"key": "civitai_token", "label": "CivitAI Token", "type": "password", "required": False, "placeholder": "CivitAI API token"},
-        ],
-        "config": [
-            {"key": "app_name", "label": "Modal App Name", "type": "text", "default": "comfy-modal-stack", "placeholder": "comfy-modal-stack"},
-            {"key": "enable_memory_snapshot", "label": "Memory Snapshot", "type": "checkbox", "default": False, "help_text": "Use memory snapshot container if deployed"},
-        ],
-    },
-    "beam": {
-        "id": "beam",
-        "name": "Beam.cloud (ComfyUI)",
-        "category": "image",
-        "worker_type": "image",
-        "capabilities": ["image"],
-        "description": "Serverless ComfyUI execution on Beam.cloud GPU endpoints with persistent storage volume.",
-        "credentials": [
-            {"key": "api_key", "label": "Beam API Key", "type": "password", "required": True, "placeholder": "beam_..."},
-            {"key": "workspace_id", "label": "Workspace ID", "type": "text", "required": False, "placeholder": "Workspace ID"},
-            {"key": "hf_token", "label": "HuggingFace Token", "type": "password", "required": False, "placeholder": "hf_..."},
-            {"key": "civitai_token", "label": "CivitAI Token", "type": "password", "required": False, "placeholder": "CivitAI Token"},
-        ],
-        "config": [
-            {"key": "gpu_url", "label": "GPU Realtime / Webhook URL", "type": "text", "required": True, "placeholder": "https://...beam.run"},
-            {"key": "storage_url", "label": "Storage REST App URL", "type": "text", "required": True, "placeholder": "https://...beam.run"},
-            {"key": "download_url", "label": "Downloader URL (Optional)", "type": "text", "required": False, "placeholder": "Defaults to Storage URL"},
-            {"key": "gpu_type", "label": "GPU Accelerator Type", "type": "select", "default": "RTX4090", "options": ["RTX4090", "A10G", "A100", "H100"]},
-        ],
-    },
-    "direct_url": {
-        "id": "direct_url",
-        "name": "Direct ComfyUI Server",
-        "category": "image",
-        "worker_type": "image",
-        "capabilities": ["image"],
-        "description": "Direct HTTP & WebSocket connection to any running ComfyUI server instance.",
-        "credentials": [
-            {"key": "comfyui_api_key", "label": "ComfyUI API Key", "type": "password", "required": False, "placeholder": "Optional auth token"},
-            {"key": "agent_api_key", "label": "Remote Agent API Key", "type": "password", "required": False, "placeholder": "Optional agent auth token"},
-        ],
-        "config": [
-            {"key": "comfy_url", "label": "ComfyUI Server URL", "type": "text", "required": True, "default": "http://localhost:8188", "placeholder": "http://localhost:8188"},
-            {"key": "remote_agent_url", "label": "Remote Agent Sidecar URL", "type": "text", "required": False, "placeholder": "http://remote-host:8001"},
-        ],
-    },
-    "openai_compat": {
-        "id": "openai_compat",
-        "name": "OpenAI / Local LLM (Ollama, vLLM, OpenRouter)",
-        "category": "llm",
-        "worker_type": "llm",
-        "capabilities": ["llm"],
-        "description": "Standard OpenAI chat completion endpoint for local LLMs (Ollama, LM Studio) or hosted APIs.",
-        "credentials": [
-            {"key": "api_key", "label": "API Key", "type": "password", "required": False, "placeholder": "sk-... (leave empty for local Ollama)"},
-        ],
-        "config": [
-            {"key": "base_url", "label": "API Base URL", "type": "text", "required": True, "default": "http://localhost:11434/v1", "placeholder": "https://api.openai.com/v1"},
-            {"key": "model", "label": "Default Model ID", "type": "text", "required": False, "placeholder": "e.g. llama3.2, mistral, gpt-4o"},
-            {"key": "temperature", "label": "Default Temperature", "type": "number", "default": 0.7, "step": 0.05, "min": 0.0, "max": 2.0},
-            {"key": "max_output_tokens", "label": "Max Output Tokens", "type": "number", "default": 4096},
-        ],
-    },
-    "anthropic": {
-        "id": "anthropic",
-        "name": "Anthropic Claude",
-        "category": "llm",
-        "worker_type": "llm",
-        "capabilities": ["llm"],
-        "description": "Anthropic Claude Messages API (Claude 3.5 Sonnet, Claude 3.5 Haiku, etc.).",
-        "credentials": [
-            {"key": "api_key", "label": "Anthropic API Key", "type": "password", "required": True, "placeholder": "sk-ant-..."},
-        ],
-        "config": [
-            {"key": "model", "label": "Default Model ID", "type": "text", "default": "claude-3-5-sonnet-latest", "placeholder": "claude-3-5-sonnet-latest"},
-            {"key": "temperature", "label": "Default Temperature", "type": "number", "default": 0.7, "step": 0.05, "min": 0.0, "max": 1.0},
-            {"key": "max_output_tokens", "label": "Max Output Tokens", "type": "number", "default": 4096},
-        ],
-    },
-    "google": {
-        "id": "google",
-        "name": "Google Gemini",
-        "category": "llm",
-        "worker_type": "llm",
-        "capabilities": ["llm"],
-        "description": "Google Gemini API via Generative Language endpoints.",
-        "credentials": [
-            {"key": "api_key", "label": "Google AI API Key", "type": "password", "required": True, "placeholder": "AIza..."},
-        ],
-        "config": [
-            {"key": "model", "label": "Default Model ID", "type": "text", "default": "gemini-2.0-flash", "placeholder": "gemini-2.0-flash"},
-            {"key": "temperature", "label": "Default Temperature", "type": "number", "default": 0.7, "step": 0.05, "min": 0.0, "max": 2.0},
-            {"key": "max_output_tokens", "label": "Max Output Tokens", "type": "number", "default": 4096},
-        ],
-    },
-    "modal_vllm": {
-        "id": "modal_vllm",
-        "name": "Modal vLLM",
-        "category": "llm",
-        "worker_type": "llm",
-        "capabilities": ["llm"],
-        "description": "Serverless vLLM high-throughput engine on Modal cloud GPU volumes.",
-        "credentials": [
-            {"key": "token_id", "label": "Modal Token ID", "type": "password", "required": True, "placeholder": "ak-..."},
-            {"key": "token_secret", "label": "Modal Token Secret", "type": "password", "required": True, "placeholder": "as-..."},
-        ],
-        "config": [
-            {"key": "app_name", "label": "Modal App Name", "type": "text", "default": "comfy-modal-vllm", "placeholder": "comfy-modal-vllm"},
-            {"key": "model", "label": "Model ID", "type": "text", "placeholder": "Model ID"},
-        ],
-    },
-    "modal_tts": {
-        "id": "modal_tts",
-        "name": "Modal Kokoro / TTS",
-        "category": "tts",
-        "worker_type": "tts",
-        "capabilities": ["tts"],
-        "description": "Serverless Text-to-Speech audio synthesis powered by Kokoro on Modal.",
-        "credentials": [
-            {"key": "token_id", "label": "Modal Token ID", "type": "password", "required": True, "placeholder": "ak-..."},
-            {"key": "token_secret", "label": "Modal Token Secret", "type": "password", "required": True, "placeholder": "as-..."},
-        ],
-        "config": [
-            {"key": "app_name", "label": "Modal App Name", "type": "text", "default": "comfy-modal-tts", "placeholder": "comfy-modal-tts"},
-        ],
-    },
-}
+# Canonical provider UI schemas (single source of truth):
+# services/engines/registry.py ENGINE_SPECS. This alias preserves the
+# `crud.ENGINE_SCHEMAS` import path used by routes and tests.
+ENGINE_SCHEMAS: dict[str, dict[str, Any]] = ui_schemas()
 
 
 @router.get("/schemas")
-async def get_provider_schemas():
-    """Return declarative schemas and field definitions for supported provider engines."""
+def get_provider_schemas():
+    """Return declarative schemas and field definitions for supported provider engines.
+
+    Built per request from the registry (not the import-time ENGINE_SCHEMAS
+    alias, which exists only for the `crud.ENGINE_SCHEMAS` import path used
+    by routes and tests): the dict is small (11 specs) and a stale import
+    would serve a previous registry after an edit.
+    """
     return {
-        "engines": ENGINE_SCHEMAS,
+        "engines": ui_schemas(),
         "categories": [
             {"id": "image", "label": "Image Generation", "icon": "image"},
             {"id": "llm", "label": "Language Models (LLM)", "icon": "message-square"},
             {"id": "tts", "label": "Voice & Audio (TTS)", "icon": "mic"},
         ],
     }
+
+
+def _merged_save_config(*dicts: dict[str, Any] | None) -> dict[str, Any]:
+    """Merge legacy + current config keys into one dict for validation.
+
+    Providers have been written with `config`, `runtime_config`, and
+    `container_config` over time; validation must see the union so a URL
+    stored under any legacy key still satisfies its schema field.
+    """
+    merged: dict[str, Any] = {}
+    for part in dicts:
+        if part:
+            merged.update(part)
+    return merged
+
+
+def _raise_for_save_errors(
+    provider_type: str,
+    credentials: dict[str, Any] | None,
+    config: dict[str, Any] | None,
+) -> None:
+    errors = validate_provider_payload(provider_type, credentials or {}, config or {})
+    if errors:
+        raise HTTPException(status_code=422, detail={"errors": errors})
 
 
 @router.post("/test-connection")
@@ -577,7 +496,8 @@ async def test_provider_connection(request: TestConnectionRequest):
 
     schema = ENGINE_SCHEMAS.get(request.type)
     worker_type = schema.get("worker_type", "image") if schema else "image"
-    temp_id = f"__test_conn_{int(time.monotonic() * 1000)}__"
+    # uuid4: two rapid clicks on Test must never share a factory-cache key.
+    temp_id = f"__test_conn_{uuid.uuid4().hex}__"
     mock_provider = SimpleNamespace(
         id=temp_id,
         type=request.type,
@@ -608,7 +528,7 @@ async def test_provider_connection(request: TestConnectionRequest):
             }
 
         health = await asyncio.wait_for(engine.check_health(), timeout=15.0)
-        is_healthy = bool(health.get("ready") or health.get("status") == "healthy")
+        is_healthy = _is_healthy_status(health)
         return {
             "healthy": is_healthy,
             "status": health.get("status", "healthy" if is_healthy else "unhealthy"),
@@ -643,7 +563,11 @@ async def test_existing_provider(provider_id: str, session: Session = Depends(ge
         if engine:
             try:
                 health = await asyncio.wait_for(engine.check_health(), timeout=15.0)
-                is_healthy = bool(health.get("ready") or health.get("status") == "healthy")
+                # Deliberately NOT invalidated: this engine was built from the
+                # live DB row, so caching it warms dispatch; update/delete
+                # already invalidate on write. Only __test_conn_* temp ids
+                # must be evicted (handled in /test-connection's finally).
+                is_healthy = _is_healthy_status(health)
                 return {
                     "healthy": is_healthy,
                     "status": health.get("status", "healthy" if is_healthy else "unhealthy"),
@@ -665,6 +589,115 @@ async def test_existing_provider(provider_id: str, session: Session = Depends(ge
     return await ping_provider(provider_id, session)
 
 
+@router.get("/{provider_id}/models/discovered")
+async def get_provider_discovered_models(
+    provider_id: str,
+    session: Session = Depends(get_session)
+):
+    """Query live upstream models/voices exposed directly by the provider engine."""
+    provider = session.get(Provider, provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
+
+    from services.engines.engine_factory import can_create_engine, get_engine
+    if not can_create_engine(provider):
+        return {"provider_id": provider_id, "models": [], "count": 0, "error": "Provider not configured for in-process engine"}
+
+    engine = get_engine(provider_id, provider)
+    if not engine:
+        return {"provider_id": provider_id, "models": [], "count": 0, "error": "Could not instantiate engine"}
+
+    try:
+        models = []
+        worker_type = getattr(provider, "worker_type", "") or provider.type
+        if worker_type == "tts" or provider.type in ("modal_tts", "tts"):
+            # Kokoro / TTS voice catalogue (static: the TTS engine exposes no
+            # live voice-listing endpoint on either side — container returned
+            # {"models": []}, in-process returns []).
+            default_voices = [
+                {"name": "af_bella", "id": "af_bella", "type": "voice", "gender": "female", "accent": "American"},
+                {"name": "af_sarah", "id": "af_sarah", "type": "voice", "gender": "female", "accent": "American"},
+                {"name": "am_adam", "id": "am_adam", "type": "voice", "gender": "male", "accent": "American"},
+                {"name": "am_michael", "id": "am_michael", "type": "voice", "gender": "male", "accent": "American"},
+                {"name": "bf_emma", "id": "bf_emma", "type": "voice", "gender": "female", "accent": "British"},
+                {"name": "bf_isabella", "id": "bf_isabella", "type": "voice", "gender": "female", "accent": "British"},
+                {"name": "bm_george", "id": "bm_george", "type": "voice", "gender": "male", "accent": "British"},
+                {"name": "bm_lewis", "id": "bm_lewis", "type": "voice", "gender": "male", "accent": "British"},
+            ]
+            models = default_voices
+        elif worker_type == "llm" or provider.type in ("openai_compat", "ollama", "anthropic", "google", "modal_vllm", "modal_llm"):
+            models = await asyncio.wait_for(engine.list_models(), timeout=12.0)
+        else:
+            checkpoints = await asyncio.wait_for(engine.list_models("checkpoints"), timeout=15.0)
+            models = checkpoints
+
+        return {
+            "provider_id": provider_id,
+            "type": provider.type,
+            "models": models,
+            "count": len(models),
+            "source": "catalogue" if (getattr(provider, "worker_type", "") or provider.type) in ("tts",) or provider.type in ("modal_tts", "tts") else "live",
+        }
+    except Exception as exc:
+        logger.warning("provider_discovered_models_failed", provider_id=provider_id, error=str(exc))
+        return {
+            "provider_id": provider_id,
+            "type": provider.type,
+            "models": [],
+            "count": 0,
+            "error": str(exc),
+        }
+
+
+@router.get("/{provider_id}/diagnostics")
+async def get_provider_diagnostics(
+    provider_id: str,
+    session: Session = Depends(get_session)
+):
+    """Fetch deep real-time diagnostics, health probing, and system telemetry."""
+    provider = session.get(Provider, provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
+
+    from services.engines.engine_factory import can_create_engine, get_engine
+    from services.provider_runtime import resolve_provider_runtime_async
+
+    runtime = await resolve_provider_runtime_async(provider)
+    engine_constructible = can_create_engine(provider)
+
+    t0 = time.monotonic()
+    health_result: dict[str, Any] = {}
+    engine_name = "None"
+
+    if engine_constructible:
+        engine = get_engine(provider_id, provider)
+        if engine:
+            engine_name = engine.__class__.__name__
+            try:
+                health_result = await asyncio.wait_for(engine.check_health(), timeout=15.0)
+            except Exception as exc:
+                health_result = {"status": "unhealthy", "ready": False, "error": str(exc)}
+
+    latency_ms = health_result.get("latency_ms") or round((time.monotonic() - t0) * 1000, 2)
+    is_healthy = bool(health_result.get("ready") or health_result.get("status") == "healthy")
+
+    return {
+        "provider_id": provider_id,
+        "type": provider.type,
+        "worker_type": provider.worker_type,
+        "enabled": provider.enabled,
+        "priority": provider.priority,
+        "runtime_mode": getattr(runtime, "mode", "in_process"),
+        "engine_name": engine_name,
+        "healthy": is_healthy,
+        "status": "healthy" if is_healthy else "unhealthy",
+        "latency_ms": latency_ms,
+        "telemetry": health_result,
+        "capabilities": provider.capabilities or [provider.worker_type or "image"],
+        "timestamp": time.time(),
+    }
+
+
 @router.get("/")
 async def list_providers(session: Session = Depends(get_session)):
     """List all providers."""
@@ -681,6 +714,11 @@ async def create_provider(
     session: Session = Depends(get_session)
 ):
     """Create a new provider."""
+    _raise_for_save_errors(
+        request.type,
+        request.credentials,
+        _merged_save_config(request.config, request.runtime_config, request.container_config),
+    )
     service = get_provider_service(session)
     payload = request.model_dump()
     # The wire field is `declared_capabilities`; the service's normalizer and
@@ -712,6 +750,20 @@ async def update_provider(
     """Update a provider."""
     service = get_provider_service(session)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
+    if any(k in updates for k in ("type", "credentials", "config", "runtime_config", "container_config")):
+        existing = session.get(Provider, provider_id)
+        if existing is not None:
+            _raise_for_save_errors(
+                updates.get("type", existing.type),
+                updates.get("credentials", existing.credentials or {}),
+                _merged_save_config(
+                    (existing.config or {}),
+                    updates.get("config"),
+                    updates.get("runtime_config"),
+                    updates.get("container_config"),
+                ),
+            )
+    service = get_provider_service(session)
     if "declared_capabilities" in updates:
         updates["capabilities"] = updates.pop("declared_capabilities")
     provider = await service.update_provider(provider_id, updates)

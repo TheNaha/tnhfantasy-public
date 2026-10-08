@@ -80,6 +80,20 @@ LLM_FAILURE_STREAK_THRESHOLD = _parse_positive_int(
     3,
 )
 
+
+def streak_threshold_for(task_type: str) -> int:
+    """Circuit-breaker threshold for a task modality.
+
+    LLM providers are always-running API endpoints, so transient blips are
+    cheaper to ride out than a cold ComfyUI container start; each modality
+    gets its own knob (`COMFY_LLM_FAILURE_STREAK_THRESHOLD` vs
+    `COMFY_FAILURE_STREAK_THRESHOLD`). Centralized here so the health probe,
+    the LLM fast path, and the stats rollup can never disagree.
+    """
+    if task_type == "llm":
+        return LLM_FAILURE_STREAK_THRESHOLD
+    return _FAILURE_STREAK_THRESHOLD
+
 # Bound for the Docker-socket probe in `_check_provider_health`. The underlying
 # docker-py call still has no timeout of its own, so this `asyncio.wait_for` is
 # the only thing standing between a wedged daemon and a job submission that
@@ -394,7 +408,7 @@ class LoadBalancer:
         # Load shared state once per process/runtime container.
         LoadBalancer.load_state_from_db(session, self.runtime_state, state_id=self.state_id)
     
-    async def _check_provider_health(self, provider: Provider) -> bool:
+    async def _check_provider_health(self, provider: Provider, task_type: str = "image") -> bool:
         """Probe the container's status or health endpoint, caching the result for 15 seconds.
 
         The cache key includes the health URL (and container port) so config
@@ -404,9 +418,11 @@ class LoadBalancer:
         if provider.container_config and "port" in provider.container_config:
             port = provider.container_config["port"]
         cache_key = f"{provider.id}:{resolve_provider_health_url(provider, port)}"
-        
-        # Circuit-breaker: skip providers with a long failure streak.
-        if self.runtime_state.provider_failures.get(provider.id, 0) >= _FAILURE_STREAK_THRESHOLD:
+
+        # Circuit-breaker: skip providers with a long failure streak. The
+        # threshold is per-modality — an LLM endpoint mid-blip must not be
+        # judged by the container cold-start budget, and vice versa.
+        if self.runtime_state.provider_failures.get(provider.id, 0) >= streak_threshold_for(task_type):
             return False
 
         # In-process compute engine health probe
@@ -583,7 +599,7 @@ class LoadBalancer:
             eligible = [
                 p for p in providers
                 if p.id not in excluded
-                and self.runtime_state.provider_failures.get(p.id, 0) < LLM_FAILURE_STREAK_THRESHOLD
+                and self.runtime_state.provider_failures.get(p.id, 0) < streak_threshold_for(task_type)
             ]
             if not eligible:
                 # Every non-excluded provider is in a failure streak — fall back
@@ -660,7 +676,7 @@ class LoadBalancer:
         warm_candidates = []
         cold_candidates = []
         for p in candidates:
-            if await self._check_provider_health(p):
+            if await self._check_provider_health(p, task_type):
                 warm_candidates.append(p)
             else:
                 cold_candidates.append(p)
@@ -700,6 +716,23 @@ class LoadBalancer:
 
         Replaces the old synchronous up-to-30s poll that blocked the worker loop.
         """
+        from services.provider_runtime import use_in_process_engines
+        use_in_process = use_in_process_engines()
+        provider_config = getattr(provider, "config", None) or {}
+        explicit_container = isinstance(provider_config, dict) and provider_config.get("execution_mode") == "container"
+        if use_in_process and not explicit_container:
+            from services.engines.engine_factory import can_create_engine, get_engine
+            if can_create_engine(provider):
+                engine = get_engine(provider.id, provider)
+                if engine:
+                    try:
+                        res = await engine.check_health()
+                        is_ready = bool(res.get("ready") or res.get("status") == "healthy")
+                        _provider_health_cache[f"in_process:{provider.id}"] = is_ready
+                    except Exception as e:
+                        logger.warning("lb_in_process_warm_failed", provider_id=provider.id, error=str(e))
+                return
+
         from infrastructure.deps import get_container_manager
 
         try:
@@ -959,14 +992,29 @@ class LoadBalancer:
                 "id": p.id,
                 "enabled": p.enabled,
                 "priority": p.priority,
+                "worker_type": p.worker_type,
+                "capabilities": list(p.capabilities) if p.capabilities else ([p.worker_type] if p.worker_type else []),
                 "jobs_assigned": job_counts.get(p.id, 0),
                 "failures": failure_counts.get(p.id, 0),
             })
         
+        # Build per-modality routing stats
+        by_modality: dict[str, dict[str, Any]] = {}
+        for mod in ("image", "llm", "tts"):
+            mod_providers = [p for p in providers if p.serves(mod)]
+            threshold = streak_threshold_for(mod)
+            by_modality[mod] = {
+                "total_providers": len(mod_providers),
+                "active_jobs": sum(job_counts.get(p.id, 0) for p in mod_providers),
+                "failing_providers": sum(1 for p in mod_providers if failure_counts.get(p.id, 0) >= threshold),
+                "provider_ids": [p.id for p in mod_providers],
+            }
+
         return {
             "strategy": self.strategy,
             "total_providers": len(providers),
             "current_index": current_index,
             "total_jobs_assigned": total_jobs_assigned,
             "provider_stats": provider_stats,
+            "by_modality": by_modality,
         }

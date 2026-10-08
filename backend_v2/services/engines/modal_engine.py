@@ -428,13 +428,22 @@ class ModalEngine(InProcessEngine):
         bool contract reports False). files.py checks first, so this is the
         backstop for direct engine callers.
         """
-        client = await self.get_client_async()
+        from services.engines.base import get_upload_max_bytes_encoded
+
+        # Encoded-length pre-check first (parity with BeamEngine and the
+        # container router's 413): decoding a multi-hundred-MB base64 blob
+        # just to reject it OOMs the backend first — and a refused upload
+        # must not construct a Modal client either.
+        if len(content_base64) > get_upload_max_bytes_encoded():
+            logger.warning("modal_upload_over_cap", provider_id=self.provider_id, path=filename)
+            return False
         try:
             content = base64.b64decode(content_base64)
             cap = get_upload_size_cap()
             if cap and len(content) > cap:
                 logger.warning("modal_upload_over_cap", provider_id=self.provider_id, path=filename, size=len(content), cap=cap)
                 return False
+            client = await self.get_client_async()
             FileStorage = modal.Cls.from_name(self.app_name, "FileStorage", client=client)
             storage = FileStorage()
             path = f"{directory}/{filename}" if directory else filename

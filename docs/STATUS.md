@@ -27,9 +27,10 @@ one-account-one-container policy. Three pillars over one World Vault data layer
 
 | Layer | Path | Notes |
 |---|---|---|
-| Backend | `backend_v2/` | FastAPI + SQLModel. Services take a request-scoped `Session` and build repositories internally; routes resolve via `api/deps.py`. |
-| Frontend | `frontend_v2/` | React + Zustand (UI state only) + React Query (all server data). |
-| Providers | `provider_containers/` | `provider_core` is the shared library; `image_worker`, `llm_worker` and `tts_worker` are the three entrypoints. A new worker kind is "a directory with a Dockerfile in it" — the deploy orchestrator builds it by name, so TTS needed no new provider type and no new credentials. |
+| Backend | `backend_v2/` | FastAPI + SQLModel. Services take a request-scoped `Session` and build repositories internally; routes resolve via `api/deps.py`. In-process compute engines are the default runtime. |
+| Frontend | `frontend_v2/` | React + Zustand (UI state only) + React Query (all server data). Schema-driven provider management, model discovery & live diagnostics. |
+| In-Process Engines | `backend_v2/services/engines/` | Primary provider execution engine (Modal, Beam, DirectComfy, LLM, TTS) unified into the backend without container footprint. |
+| Provider Containers (Deprecated) | `provider_containers/` | Legacy containerized fallback behind `--profile providers` compose profile. Maintained for backwards compatibility. |
 | Agents | `remote_agent/` | Optional remote GPU rig, driven over HTTP by the backend. |
 | Migrations | `backend_v2/infrastructure/migrations/steps.py` | Ordered `MigrationStep` list, run at startup. No Alembic. |
 

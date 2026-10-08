@@ -137,3 +137,48 @@ def test_async_resolver_degrades_on_timeout():
     assert runtime.mode == "unavailable"
     assert runtime.status == "probe_timeout"
     assert runtime.connected is False
+
+
+def test_container_placement_in_config_resolves_without_legacy_key():
+    """Migration 089: container_name/port healed into `config` must resolve
+    identically to the legacy `container_config` placement."""
+    container_manager = MagicMock()
+    container_manager.get_container_snapshot.return_value = ContainerSnapshot(
+        name="custom-container", status="running", health="healthy"
+    )
+
+    provider = SimpleNamespace(
+        id="provider-1",
+        type="modal",
+        container_config=None,
+        config={"container_name": "custom-container", "port": 9000},
+    )
+
+    with patch("infrastructure.deps.get_container_manager", return_value=container_manager):
+        runtime = resolve_provider_runtime(provider)
+
+    assert runtime.mode == "container_http"
+    assert runtime.container_name == "custom-container"
+    assert runtime.worker_url == "http://custom-container:9000"
+    assert runtime.connected is True
+
+
+def test_config_wins_over_legacy_container_config():
+    """On conflict the newer `config` write path wins (migration 089 rule)."""
+    container_manager = MagicMock()
+    container_manager.get_container_snapshot.return_value = ContainerSnapshot(
+        name="new-container", status="running", health="healthy"
+    )
+
+    provider = SimpleNamespace(
+        id="provider-1",
+        type="modal",
+        container_config={"container_name": "old-container", "port": 8000},
+        config={"container_name": "new-container"},
+    )
+
+    with patch("infrastructure.deps.get_container_manager", return_value=container_manager):
+        runtime = resolve_provider_runtime(provider)
+
+    assert runtime.mode == "container_http"
+    assert runtime.container_name == "new-container"

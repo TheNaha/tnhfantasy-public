@@ -168,7 +168,11 @@ def can_create_engine(provider: Any) -> bool:
         base_url = (
             config.get("base_url")
             or config.get("api_base")
+            or config.get("endpoint_url")
+            or config.get("openai_api_base")
             or creds.get("base_url")
+            or creds.get("api_base")
+            or creds.get("endpoint_url")
             or env_vars.get("OPENAI_API_BASE")
             or env_vars.get("BASE_URL")
             or os.getenv("OPENAI_API_BASE")
@@ -444,7 +448,11 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
             or os.getenv("OPENAI_API_BASE")
             or config.get("base_url")
             or config.get("api_base")
+            or config.get("endpoint_url")
+            or config.get("openai_api_base")
             or creds.get("base_url")
+            or creds.get("api_base")
+            or creds.get("endpoint_url")
         )
         if base_url:
             api_key = (
@@ -454,6 +462,8 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
                 or env_vars.get("API_KEY")
                 or os.getenv("OPENAI_API_KEY")
             )
+            if not api_key and (provider_type == "ollama" or ":11434" in (base_url or "")):
+                api_key = "ollama"
             default_model = (
                 config.get("default_model")
                 or config.get("model")
@@ -590,13 +600,20 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
     ):
         comfy_url = (
             config.get("comfy_url")
+            or config.get("comfyui_url")
+            or config.get("endpoint_url")
+            or creds.get("comfy_url")
+            or creds.get("endpoint_url")
             or env_vars.get("COMFYUI_URL")
             or os.getenv("COMFYUI_URL")
             or "http://localhost:8188"
         )
         api_key = (
             creds.get("api_key")
+            or creds.get("comfyui_api_key")
+            or creds.get("agent_api_key")
             or config.get("api_key")
+            or config.get("comfyui_api_key")
             or env_vars.get("COMFYUI_API_KEY")
             or os.getenv("COMFYUI_API_KEY")
         )
@@ -612,7 +629,9 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
             stall_timeout = 300.0
         agent_url = (
             config.get("agent_url")
+            or config.get("remote_agent_url")
             or creds.get("agent_url")
+            or creds.get("remote_agent_url")
             or env_vars.get("REMOTE_AGENT_URL")
             or env_vars.get("COMFYUI_AGENT_URL")
             or os.getenv("REMOTE_AGENT_URL")
@@ -620,7 +639,9 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
         )
         agent_token = (
             creds.get("agent_token")
+            or creds.get("remote_agent_token")
             or config.get("agent_token")
+            or config.get("remote_agent_token")
             or env_vars.get("REMOTE_AGENT_TOKEN")
             or env_vars.get("COMFYUI_AGENT_TOKEN")
             or os.getenv("REMOTE_AGENT_TOKEN")

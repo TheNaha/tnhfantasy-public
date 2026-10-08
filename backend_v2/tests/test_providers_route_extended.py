@@ -138,7 +138,7 @@ class TestProvidersRouteCleanup:
 class TestProvidersRouteReconcile:
     @pytest.fixture(autouse=True)
     def setup_provider(self, client):
-        client.post("/api/v2/providers", json={"id": "test-provider", "type": "beam", "label": "Test"})
+        client.post("/api/v2/providers", json={"id": "test-provider", "type": "beam", "label": "Test", "credentials": {"api_key": "test-key"}, "config": {"gpu_url": "https://gpu.example.com", "storage_url": "https://storage.example.com"}})
 
     def test_reconcile_provider_not_found(self, client):
         response = client.post("/api/v2/providers/nonexistent/reconcile")
@@ -156,7 +156,7 @@ class TestProvidersRouteReconcile:
         assert response.status_code in (404, 200, 422)
 
     def test_reconcile_provider_conflict_when_already_running(self, client):
-        client.post("/api/v2/providers", json={"id": "test-provider", "type": "beam", "label": "Test"})
+        client.post("/api/v2/providers", json={"id": "test-provider", "type": "beam", "label": "Test", "credentials": {"api_key": "test-key"}, "config": {"gpu_url": "https://gpu.example.com", "storage_url": "https://storage.example.com"}})
         
         from api.deps import get_provider_lifecycle_service
         from api.main import app
@@ -256,7 +256,7 @@ class TestProvidersRouteReconcile:
             "type": "modal",
             "enabled": True,
             "priority": 1,
-            "credentials": {},
+            "credentials": {"token_id": "tok_123", "token_secret": "secret_456"},
             "config": {},
         }
         create_response = client.post("/api/v2/providers", json=payload)
@@ -323,7 +323,7 @@ class TestProvidersRouteReconcile:
             "type": "modal",
             "enabled": True,
             "priority": 1,
-            "credentials": {},
+            "credentials": {"token_id": "tok_123", "token_secret": "secret_456"},
             "config": {},
         }
         create_response = client.post("/api/v2/providers", json=payload)
@@ -332,7 +332,7 @@ class TestProvidersRouteReconcile:
         response = client.get("/api/v2/providers/deploy-status-provider/deploy-status")
         assert response.status_code == 200
         data = response.json()
-        assert data.get("status") in {"idle", "deploying", "failed", "succeeded"}
+        assert data.get("status") in {"idle", "deploying", "failed", "succeeded", "not_applicable"}
 
     def test_get_provider_status_card_route(self, client):
         payload = {
@@ -340,7 +340,7 @@ class TestProvidersRouteReconcile:
             "type": "modal",
             "enabled": True,
             "priority": 1,
-            "credentials": {},
+            "credentials": {"token_id": "tok_123", "token_secret": "secret_456"},
             "config": {},
         }
         create_response = client.post("/api/v2/providers", json=payload)
@@ -390,7 +390,7 @@ class TestProvidersRouteReconcile:
                 "type": "modal",
                 "enabled": True,
                 "priority": 1,
-                "credentials": {},
+                "credentials": {"token_id": "tok_123", "token_secret": "secret_456"},
                 "config": {},
             }
             create_response = client.post("/api/v2/providers", json=payload)
@@ -488,3 +488,24 @@ class TestProviderSchemasAndTestBench:
             assert data["healthy"] is True
             assert data["status"] == "healthy"
             assert data["latency_ms"] == 12.5
+
+    def test_discovered_models_endpoint(self, client):
+        client.post("/api/v2/providers", json={"id": "test-direct-disc", "type": "direct_url", "credentials": {}, "config": {"comfy_url": "http://127.0.0.1:8188"}})
+        with patch("services.engines.direct_comfy_engine.DirectComfyEngine.list_models", new=AsyncMock(return_value=[{"name": "v1-5-pruned.safetensors", "id": "v1-5-pruned.safetensors"}])):
+            response = client.get("/api/v2/providers/test-direct-disc/models/discovered")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["provider_id"] == "test-direct-disc"
+            assert data["count"] == 1
+            assert data["models"][0]["name"] == "v1-5-pruned.safetensors"
+
+    def test_diagnostics_endpoint(self, client):
+        client.post("/api/v2/providers", json={"id": "test-direct-diag", "type": "direct_url", "credentials": {}, "config": {"comfy_url": "http://127.0.0.1:8188"}})
+        with patch("services.engines.direct_comfy_engine.DirectComfyEngine.check_health", new=AsyncMock(return_value={"status": "healthy", "ready": True, "latency_ms": 15.0})):
+            response = client.get("/api/v2/providers/test-direct-diag/diagnostics")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["provider_id"] == "test-direct-diag"
+            assert data["healthy"] is True
+            assert data["engine_name"] == "DirectComfyEngine"
+            assert data["runtime_mode"] == "in_process"

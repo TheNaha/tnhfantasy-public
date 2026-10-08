@@ -1740,6 +1740,16 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Widen assets.seed from INTEGER to BIGINT to hold ComfyUI 64-bit seeds",
             apply_fn=_migration_087_asset_seed_bigint,
         ),
+        MigrationStep(
+            version="088_converge_hot_indexes_and_seed",
+            description="Re-issue the 085/086 hot indexes idempotently (085 recorded partial success as applied) and finish the 087 seed widening with a SQLite no-op and a skip-when-already-BIGINT guard",
+            apply_fn=_migration_088_converge_hot_indexes_and_seed,
+        ),
+        MigrationStep(
+            version="089_fold_container_config_into_config",
+            description="Copy providers.container_config keys into config wherever absent (config wins), so container_name/port survive under the single registry key; the legacy column stays for read-compat",
+            apply_fn=_migration_089_fold_container_config_into_config,
+        ),
     ]
 
 
@@ -4068,3 +4078,153 @@ def _migration_087_asset_seed_bigint(conn) -> bool:
     except Exception as exc:
         logger.warning("migration_087_asset_seed_bigint_failed", error=str(exc))
         return False
+
+
+def _migration_088_converge_hot_indexes_and_seed(conn) -> bool:
+    """Converge the 085/086/087 outcomes idempotently.
+
+    - 085 set `applied=True` per branch, so a host where `assets` succeeded
+      but the pgvector HNSW failed recorded the step as done and never
+      retried the missing index. Re-issue every 085/086 index with
+      `IF NOT EXISTS`: converged hosts no-op, partial hosts heal.
+    - 087 returns False on SQLite (`ALTER COLUMN TYPE` is Postgres-only), so
+      dev/test SQLite retries it every boot. SQLite integers are already
+      64-bit signed — there is nothing to widen — so the seed leg is a
+      no-op there. On Postgres the ALTER runs only while the column is
+      still INTEGER; re-running it on an already-BIGINT column would take
+      a pointless ACCESS EXCLUSIVE lock on the gallery table.
+    - Residual, deliberately out of scope: BIGINT is signed (max 2^63-1)
+      while ComfyUI seeds are u64. Holding the full u64 range needs a TEXT
+      retype plus entity churn (`statistics_service` compares `seed == -1`
+      numerically), so values above 2^63-1 still overflow.
+    - Returns True when every applicable target converged or was already
+      converged; False only when a DDL against an existing table failed
+      (retry next boot). Absent tables are not failure — fixtures and
+      pre-table databases simply have nothing to converge.
+    """
+    from sqlalchemy import BigInteger
+
+    ok = True
+
+    def _run(label: str, ddl: str) -> None:
+        nonlocal ok
+        try:
+            with conn.begin_nested():
+                conn.execute(text(ddl))
+        except Exception as exc:
+            logger.warning(f"migration_088_{label}_failed", error=str(exc))
+            ok = False
+
+    tables = set(inspect(conn).get_table_names())
+
+    if "assets" in tables:
+        _run(
+            "assets_checkpoint_index",
+            "CREATE INDEX IF NOT EXISTS idx_assets_checkpoint_name ON assets (checkpoint_name)",
+        )
+        columns = {c["name"]: c for c in inspect(conn).get_columns("assets")}
+        seed_col = columns.get("seed")
+        if seed_col is None:
+            logger.warning("migration_088_seed_column_missing")
+        elif conn.dialect.name != "postgresql":
+            # SQLite integers are 64-bit signed already: nothing to widen.
+            pass
+        elif isinstance(seed_col.get("type"), BigInteger):
+            # 087 (or create_all from the BigInteger entity) already landed.
+            pass
+        else:
+            _run(
+                "asset_seed_bigint",
+                "ALTER TABLE assets ALTER COLUMN seed TYPE BIGINT USING seed::BIGINT",
+            )
+
+    if "asset_tags" in tables:
+        try:
+            columns = {c["name"] for c in inspect(conn).get_columns("asset_tags")}
+        except Exception as exc:
+            logger.warning("migration_088_asset_tags_columns_failed", error=str(exc))
+            columns = set()
+        if "tag" in columns:
+            _run(
+                "asset_tags_tag_index",
+                "CREATE INDEX IF NOT EXISTS idx_asset_tags_tag_covering ON asset_tags (tag)",
+            )
+        elif "tag_id" in columns:
+            _run(
+                "asset_tags_tag_id_index",
+                "CREATE INDEX IF NOT EXISTS idx_asset_tags_tag_covering ON asset_tags (tag_id)",
+            )
+
+    if conn.dialect.name == "postgresql" and "lorebook_entries" in tables:
+        _run(
+            "lorebook_vector_index",
+            "CREATE INDEX IF NOT EXISTS idx_lorebook_entries_embedding ON lorebook_entries "
+            "USING hnsw (embedding vector_cosine_ops)",
+        )
+
+    return ok
+
+
+def _migration_089_fold_container_config_into_config(conn) -> bool:
+    """Fold ``providers.container_config`` into ``config`` (config wins).
+
+    Provider rows have been written with container placement under two keys
+    over time: ``container_config`` (``container_name``, ``port`` — the
+    legacy container path) and ``config`` (everything the registry schema
+    validates). The runtime and the wake filter must not depend on which
+    key a URL landed under, so every ``container_config`` entry is copied
+    into ``config`` wherever that key is absent. ``config`` wins on
+    conflict — it is the newer write path and the one the UI edits.
+
+    The ``container_config`` column itself stays: dropping a column is a
+    breaking change for old readers, and the save paths still accept it on
+    write (folded into the validation union). Returns True when every row
+    converged; a row whose JSON cannot be parsed is logged and skipped
+    (retry next boot via a False return).
+    """
+    inspector = inspect(conn)
+    if "providers" not in set(inspector.get_table_names()):
+        return False
+    columns = {c["name"] for c in inspector.get_columns("providers")}
+    if not {"config", "container_config"} <= columns:
+        return False
+
+    def _as_dict(raw):
+        if not raw:
+            return {}
+        if isinstance(raw, dict):
+            return dict(raw)
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        return dict(parsed) if isinstance(parsed, dict) else {}
+
+    ok = True
+    rows = conn.execute(text("SELECT id, config, container_config FROM providers")).all()
+    for row in rows:
+        provider_id, config_raw, container_config_raw = row[0], row[1], row[2]
+        legacy = _as_dict(container_config_raw)
+        if legacy is None:
+            logger.warning("migration_089_unparseable_container_config", provider_id=provider_id)
+            ok = False
+            continue
+        if not legacy:
+            continue
+        current = _as_dict(config_raw)
+        if current is None:
+            logger.warning("migration_089_unparseable_config", provider_id=provider_id)
+            ok = False
+            continue
+        merged = {**legacy, **current}
+        if merged != current:
+            conn.execute(
+                text("UPDATE providers SET config = :config WHERE id = :id"),
+                {"config": json.dumps(merged), "id": provider_id},
+            )
+            logger.info(
+                "migration_089_container_config_folded",
+                provider_id=provider_id,
+                keys=sorted(set(merged) - set(current)),
+            )
+    return ok

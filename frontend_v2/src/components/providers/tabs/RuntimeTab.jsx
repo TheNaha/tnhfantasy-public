@@ -85,6 +85,70 @@ function LLMRuntimePanel({ provider }) {
     );
 }
 
+function DiscoveredAssetsPanel({ provider }) {
+    const [assets, setAssets] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const handleDiscover = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await providersApi.getDiscoveredModels(provider.id);
+            setAssets(data?.models || []);
+        } catch (err) {
+            setError(err.message || 'Discovery failed');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const isImage = provider.worker_type === 'image' || !provider.worker_type;
+    const isVoice = provider.worker_type === 'tts' || provider.type?.includes('tts');
+    const assetTitle = isVoice ? 'Discovered Voices' : isImage ? 'Upstream Models' : 'Available Models';
+
+    return (
+        <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-white/[0.03] flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                    <Brain size={13} className="text-blue-400" />
+                    {assetTitle} {assets ? `(${assets.length})` : ''}
+                </span>
+                <button
+                    type="button"
+                    onClick={handleDiscover}
+                    disabled={loading}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded transition-colors disabled:opacity-50"
+                >
+                    {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    {loading ? 'Probing…' : assets ? 'Refresh' : 'Discover'}
+                </button>
+            </div>
+            {assets !== null && (
+                assets.length > 0 ? (
+                    <div className="max-h-48 overflow-y-auto divide-y divide-white/[0.02]">
+                        {assets.map((item, idx) => (
+                            <div key={idx} className="px-4 py-2 flex items-center justify-between text-xs text-gray-300 font-mono">
+                                <span className="truncate">{item.name || item.id || String(item)}</span>
+                                {item.accent && <span className="text-gray-500 text-[11px] uppercase ml-2">{item.gender} • {item.accent}</span>}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="px-4 py-3 text-xs text-gray-500 italic">
+                        No models discovered. Verify provider volume or credentials.
+                    </div>
+                )
+            )}
+            {error && (
+                <div className="px-4 py-2 text-xs text-red-400 bg-red-500/10 border-t border-red-500/20">
+                    {error}
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function RuntimeTab({
     runtime, runtimeStatus, provider, capabilities, loading,
     onSetup,
@@ -93,7 +157,13 @@ export default function RuntimeTab({
     const [pingStatus, setPingStatus] = useState(null); // null, 'loading', 'success', 'error'
     const [pingLatency, setPingLatency] = useState(null);
     const isLLM = provider.worker_type === 'llm';
-    const isInProcess = runtime.mode === 'in_process' || provider.execution_mode === 'in_process' || !provider.runtime_config?.container_name;
+    // Trust the backend's resolved mode: `in_process` is the in-process
+    // engine, `container_http` a Docker container, `discovery` / everything
+    // else a remote endpoint. The old `!container_name` fallback misread
+    // discovery and external-worker providers (which have no container_name)
+    // as in-process and hid their Worker URL.
+    const isInProcess = runtime.mode === 'in_process' || provider.execution_mode === 'in_process';
+    const isContainer = runtime.mode === 'container_http';
 
     const handlePingTest = async () => {
         setPingStatus('loading');
@@ -127,13 +197,15 @@ export default function RuntimeTab({
                 ) : (
                     <>
                         <DataRow label="Worker URL" value={runtime.worker_url} mono />
-                        <DataRow label="Container Port" value={String(provider.runtime_config?.port ?? 'n/a')} />
+                        {isContainer && (
+                            <DataRow label="Container Port" value={String(provider.runtime_config?.port ?? 'n/a')} />
+                        )}
                     </>
                 )}
                 <DataRow label="Jobs Assigned" value={String(jobsAssigned)} />
                 <DataRow label="Failures" value={String(providerFailures)} />
                 <DataRow label="Last Seen" value={runtime.last_seen_at ? formatTimestamp(runtime.last_seen_at) : 'N/A'} />
-                {!isLLM && !isInProcess && (
+                {!isLLM && isContainer && (
                     <>
                         <DataRow label="Container ID" value={runtime.container_id ? runtime.container_id.slice(0, 12) : 'N/A'} mono />
                         <DataRow label="Uptime" value={runtime.uptime ? Math.floor(runtime.uptime / 60) + 'm' : 'N/A'} />
@@ -141,8 +213,8 @@ export default function RuntimeTab({
                 )}
             </div>
 
-            {/* LLM-specific: Test Connection + Model List */}
-            {isLLM && <LLMRuntimePanel provider={provider} />}
+            {/* Model & Voice Discovery */}
+            <DiscoveredAssetsPanel provider={provider} />
 
             <div className="flex flex-wrap items-center gap-2">
                 {capabilities.setup && (

@@ -20,6 +20,7 @@ import websockets
 from infrastructure.logging import get_logger
 from services.engines.base import (
     EngineAuthError,
+    FileTooLargeError,
     InProcessEngine,
     clamp_timeout,
     get_file_size_cap,
@@ -367,7 +368,7 @@ class BeamEngine(InProcessEngine):
 
         Mirrors the container's get_file: a declared Content-Length over the
         cap fails fast with 413 semantics (FileNotFoundError carries the 404,
-        anything else is a RuntimeError); the base64-JSON variant is decoded
+        over-cap is FileTooLargeError, anything else is a RuntimeError); the base64-JSON variant is decoded
         under the cap; otherwise bytes are relayed with a cumulative ceiling.
         """
         http_client = self.get_http_client()
@@ -396,12 +397,12 @@ class BeamEngine(InProcessEngine):
             except (TypeError, ValueError):
                 declared_len = None
             if max_bytes and declared_len is not None and declared_len > max_bytes:
-                raise RuntimeError(f"File exceeds the {max_bytes} byte get-file limit: {path}")
+                raise FileTooLargeError(path, size=declared_len, cap=max_bytes)
 
             if "json" in content_type.lower():
                 body = await resp.aread()
                 if max_bytes and len(body) > max_bytes:
-                    raise RuntimeError(f"File exceeds the {max_bytes} byte get-file limit: {path}")
+                    raise FileTooLargeError(path, size=len(body), cap=max_bytes)
                 try:
                     payload = json.loads(body)
                 except ValueError:
@@ -410,7 +411,7 @@ class BeamEngine(InProcessEngine):
                 if isinstance(payload, dict) and payload.get("content_base64"):
                     decoded = base64.b64decode(payload["content_base64"])
                     if max_bytes and len(decoded) > max_bytes:
-                        raise RuntimeError(f"File exceeds the {max_bytes} byte get-file limit: {path}")
+                        raise FileTooLargeError(path, size=len(decoded), cap=max_bytes)
                     yield decoded
                     return
                 yield bytes(body)
@@ -420,7 +421,7 @@ class BeamEngine(InProcessEngine):
             async for chunk in resp.aiter_bytes(_STREAM_CHUNK_BYTES):
                 total += len(chunk)
                 if max_bytes and total > max_bytes:
-                    raise RuntimeError(f"File exceeds the {max_bytes} byte get-file limit: {path}")
+                    raise FileTooLargeError(path, size=total, cap=max_bytes)
                 yield chunk
         finally:
             await resp.aclose()

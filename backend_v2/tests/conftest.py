@@ -234,7 +234,7 @@ def sample_provider_data():
         "type": "modal",
         "enabled": True,
         "priority": 1,
-        "credentials": {"username": "test"},
+        "credentials": {"token_id": "tok_123", "token_secret": "secret_456"},
         "config": {"app_name": "test-app"}
     }
 

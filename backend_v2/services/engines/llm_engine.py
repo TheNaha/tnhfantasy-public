@@ -20,6 +20,7 @@ import httpx
 from infrastructure.logging import get_logger
 from services.engines.base import (
     EngineAuthError,
+    FileTooLargeError,
     InProcessEngine,
     clamp_timeout,
     get_file_size_cap,
@@ -332,16 +333,33 @@ class OpenAICompatLLMEngine(InProcessEngine):
             }
 
     async def list_models(self, directory: str = "") -> List[Dict[str, Any]]:
-        """List models available on the upstream endpoint."""
+        """List models available on the upstream endpoint.
+
+        A 401/403 raises EngineAuthError (like ModalVLLMEngine) so a revoked
+        key reads as unhealthy instead of an empty catalogue; any other
+        failure still answers [] — an LLM endpoint with no /models route is
+        common (e.g. bare Ollama) and must not fail discovery.
+        """
         client = self.get_http_client()
         try:
             resp = await client.get("/models", timeout=10.0)
+            if resp.status_code in (401, 403):
+                raise EngineAuthError(
+                    f"LLM endpoint rejected credentials for /models: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                )
             if resp.status_code == 200:
                 data = resp.json().get("data", [])
                 return [{"name": m.get("id"), "id": m.get("id"), "type": "llm"} for m in data if m.get("id")]
             return []
+        except EngineAuthError:
+            raise
         except Exception as exc:
             logger.warning("llm_list_models_failed", provider_id=self.provider_id, error=str(exc))
+            if is_auth_error(exc):
+                raise EngineAuthError(
+                    f"LLM endpoint rejected credentials for /models: {exc}",
+                ) from exc
             return []
 
     async def get_file_stream(self, path: str) -> AsyncIterator[bytes]:
@@ -629,7 +647,7 @@ class ModalVLLMEngine(InProcessEngine):
             raise FileNotFoundError(f"File not found on Modal volume: {path}")
         max_bytes = get_file_size_cap()
         if max_bytes and total_size > max_bytes:
-            raise RuntimeError(f"File exceeds the {max_bytes} byte get-file limit: {path}")
+            raise FileTooLargeError(path, size=total_size, cap=max_bytes)
         async with asyncio.timeout(self._GET_FILE_TIMEOUT_SECONDS):
             offset = 0
             while offset < total_size:
@@ -1117,8 +1135,14 @@ class AnthropicLLMEngine(InProcessEngine):
             resp.raise_for_status()
             models = [m.get("id", "") for m in resp.json().get("data", []) if m.get("id")]
             return [{"name": m, "id": m, "type": "llm"} for m in sorted(models)]
+        except EngineAuthError:
+            raise
         except Exception as exc:
             logger.warning("anthropic_list_models_failed", provider_id=self.provider_id, error=str(exc))
+            if is_auth_error(exc):
+                raise EngineAuthError(
+                    f"Anthropic rejected credentials for /v1/models: {exc}",
+                ) from exc
             return []
 
     async def get_file_stream(self, path: str) -> AsyncIterator[bytes]:
@@ -1337,9 +1361,15 @@ class GoogleLLMEngine(InProcessEngine):
                 if "generateContent" in (m.get("supportedGenerationMethods") or []):
                     models.append(name)
             return [{"name": m, "id": m, "type": "llm"} for m in sorted(models)]
+        except EngineAuthError:
+            raise
         except Exception as exc:
             logger.warning("google_list_models_failed", provider_id=self.provider_id,
                            error=redact_api_key(str(exc), self.api_key))
+            if is_auth_error(exc):
+                raise EngineAuthError(
+                    "Google rejected credentials for /models",
+                ) from exc
             return []
 
     async def get_file_stream(self, path: str) -> AsyncIterator[bytes]:

@@ -87,8 +87,19 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
     provider_id = provider.id
     provider_type = getattr(provider, "type", "")
     provider_config = getattr(provider, "config", None) or {}
+    # Registry-as-truth (migration 089): container placement may live under
+    # either `config` or the legacy `container_config` key. `config` wins —
+    # it is the newer write path — but a row healed by the migration (or
+    # written by an older client) must resolve identically.
+    if not isinstance(container_config, dict):
+        container_config = {}
+    if not isinstance(provider_config, dict):
+        provider_config = {}
+    container_settings = {**container_config, **{
+        k: provider_config[k] for k in ("container_name", "port") if k in provider_config
+    }}
     # Set when the container probe raised rather than answered. Function-scoped:
-    # the `if container_config` block below may not run at all, and the final
+    # the `if container_settings` block below may not run at all, and the final
     # target still has to be able to say which failure it was.
     runtime_unreachable = False
 
@@ -114,8 +125,8 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
                 healthy=None,
             )
 
-    if container_config:
-        container_name = container_config.get("container_name", provider_container_name(provider_id))
+    if container_settings:
+        container_name = container_settings.get("container_name", provider_container_name(provider_id))
         connected = False
         healthy = None
         status = "unknown"
@@ -155,7 +166,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
 
         if docker_available and found:
             _warn_container_deprecated(provider_id)
-            port = container_config.get("port", 8000) if isinstance(container_config, dict) else 8000
+            port = container_settings.get("port", 8000) if isinstance(container_settings, dict) else 8000
             return ProviderRuntimeTarget(
                 provider_id=provider_id,
                 mode="container_http",

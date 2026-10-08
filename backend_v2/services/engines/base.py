@@ -211,6 +211,29 @@ class EngineAuthError(RuntimeError):
         self.status_code = status_code
 
 
+class FileTooLargeError(ValueError):
+    """A provider file exceeds the get-file/streaming ceiling.
+
+    Subclasses ValueError so existing ``except ValueError`` sites keep
+    catching it, but carries the byte counts so a future HTTP route can map
+    it to 413 (like the containers' ``HTTPException(413)``) instead of the
+    500 an unmapped ValueError would produce. Raised for over-cap reads in
+    every engine's ``get_file_stream``; job_processing treats it like any
+    other fetch failure (skip that artifact, not the job).
+    """
+
+    def __init__(self, path: str, size: int | None = None, cap: int | None = None):
+        self.path = path
+        self.size = size
+        self.cap = cap
+        detail = f"'{path}'"
+        if size is not None and cap is not None:
+            detail += f" is {size} bytes; limit is {cap} bytes"
+        elif cap is not None:
+            detail += f" exceeds the {cap}-byte limit"
+        super().__init__(f"File {detail}")
+
+
 def get_upload_size_cap() -> int:
     """Ceiling for uploaded file bodies, mirroring provider_core.
 
@@ -558,6 +581,15 @@ class InProcessEngine(ABC):
     async def upload_file(self, filename: str, content_base64: str, directory: str = "") -> bool:
         """Upload a small file to provider storage. False when unsupported."""
         return False
+
+    async def deploy(self) -> dict[str, Any]:
+        """No-op deploy: in-process engines need no container deploy.
+
+        Present for parity with legacy container clients (`modal deploy` /
+        `beam deploy` of the worker app) so callers probing the method get
+        the `not_applicable` vocabulary the lifecycle route serves.
+        """
+        return {"status": "not_applicable", "mode": "in_process", "provider_id": self.provider_id}
 
     async def get_object_info(self) -> dict[str, Any]:
         """Extract ComfyUI node definitions. Raises when unsupported."""

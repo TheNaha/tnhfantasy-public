@@ -498,7 +498,7 @@ class TestProviderCapabilitiesAreWritable:
         and then returned a dict without it."""
         created = client.post(
             "/api/v2/providers",
-            json={"id": "p-caps", "type": "modal", "worker_type": "tts", "declared_capabilities": ["tts"]},
+            json={"id": "p-caps", "type": "modal", "worker_type": "tts", "declared_capabilities": ["tts"], "credentials": {"token_id": "t", "token_secret": "s"}},
         )
         assert created.status_code in (200, 201), created.text
 
@@ -512,7 +512,7 @@ class TestProviderCapabilitiesAreWritable:
         column answering "can this provider serve TTS" was the one missing."""
         client.post(
             "/api/v2/providers",
-            json={"id": "p-caps2", "type": "modal", "worker_type": "tts", "declared_capabilities": ["tts"]},
+            json={"id": "p-caps2", "type": "modal", "worker_type": "tts", "declared_capabilities": ["tts"], "credentials": {"token_id": "t", "token_secret": "s"}},
         )
         listed = {p["id"]: p for p in client.get("/api/v2/providers").json()["providers"]}
         row = listed["p-caps2"]
@@ -524,7 +524,7 @@ class TestProviderCapabilitiesAreWritable:
     def test_declared_capabilities_can_be_updated(self, client, session):
         client.post(
             "/api/v2/providers",
-            json={"id": "p-caps3", "type": "modal", "worker_type": "image", "declared_capabilities": ["image"]},
+            json={"id": "p-caps3", "type": "modal", "worker_type": "image", "declared_capabilities": ["image"], "credentials": {"token_id": "t", "token_secret": "s"}},
         )
         assert client.patch(
             "/api/v2/providers/p-caps3", json={"declared_capabilities": ["image", "tts"]}
@@ -537,7 +537,7 @@ class TestProviderCapabilitiesAreWritable:
     def test_an_unknown_declared_capability_is_a_422(self, client):
         response = client.post(
             "/api/v2/providers",
-            json={"id": "p-bad", "type": "modal", "declared_capabilities": ["banana"]},
+            json={"id": "p-bad", "type": "modal", "declared_capabilities": ["banana"], "credentials": {"token_id": "t", "token_secret": "s"}},
         )
         assert response.status_code == 422
 
@@ -549,7 +549,7 @@ class TestProviderCapabilitiesAreWritable:
         missing id the route 404s first and the assertion below would pass
         against a request that never reached the field.
         """
-        created = client.post("/api/v2/providers", json={"id": "p-wt", "type": "modal"})
+        created = client.post("/api/v2/providers", json={"id": "p-wt", "type": "modal", "credentials": {"token_id": "t", "token_secret": "s"}})
         assert created.status_code in (200, 201), created.text
 
         response = client.patch("/api/v2/providers/p-wt", json={"worker_type": "banana"})

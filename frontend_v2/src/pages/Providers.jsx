@@ -108,8 +108,6 @@ export default function Providers() {
                 || (filter === 'image' && (provider.worker_type === 'image' || (!provider.worker_type && !provider.capabilities?.length) || (Array.isArray(provider.capabilities) && provider.capabilities.includes('image'))))
                 || (filter === 'llm' && (provider.worker_type === 'llm' || (Array.isArray(provider.capabilities) && provider.capabilities.includes('llm'))))
                 || (filter === 'tts' && (provider.worker_type === 'tts' || (Array.isArray(provider.capabilities) && provider.capabilities.includes('tts'))))
-                || (filter === 'managed' && provider.capabilities?.managed_deploy)
-                || (filter === 'manual' && provider.capabilities?.manual_deploy)
                 || (filter === 'issues' && hasIssues)
             );
 

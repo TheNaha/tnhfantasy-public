@@ -2257,3 +2257,115 @@ class TestDirectComfyValidation:
             events = [ev async for ev in engine.inference(workflow={"1": {}}, job_id="job-no-hist")]
         assert events[-1]["event"] == "failed"
         assert "history" in events[-1]["message"]
+
+
+# ---------------------------------------------------------------------------
+# 12. Auth-fail-fast and over-cap parity (2026-10 audit fixes)
+# ---------------------------------------------------------------------------
+
+class TestEngineAuthAndCaps:
+    def test_file_too_large_is_value_error(self):
+        from services.engines.base import FileTooLargeError
+
+        err = FileTooLargeError("models/checkpoints/big.safetensors", size=600, cap=512)
+        assert isinstance(err, ValueError)
+        assert err.path == "models/checkpoints/big.safetensors"
+        assert err.size == 600
+        assert err.cap == 512
+
+    @pytest.mark.asyncio
+    async def test_direct_delete_model_auth_raises(self):
+        from services.engines.base import EngineAuthError
+
+        engine = DirectComfyEngine("direct-agent", "http://127.0.0.1:8188", agent_url="http://agent:8001")
+        mock_agent = AsyncMock()
+        mock_agent.post.return_value = MagicMock(status_code=401, text="unauthorized")
+        with patch.object(engine, "get_agent_client", return_value=mock_agent):
+            with pytest.raises(EngineAuthError):
+                await engine.delete_model("models/checkpoints/gone.safetensors")
+
+    @pytest.mark.asyncio
+    async def test_direct_delete_model_success(self):
+        engine = DirectComfyEngine("direct-agent", "http://127.0.0.1:8188", agent_url="http://agent:8001")
+        mock_agent = AsyncMock()
+        mock_agent.post.return_value = MagicMock(status_code=200, json=lambda: {"success": True})
+        with patch.object(engine, "get_agent_client", return_value=mock_agent):
+            assert await engine.delete_model("models/checkpoints/gone.safetensors") is True
+
+    @pytest.mark.asyncio
+    async def test_openai_compat_list_models_auth_raises(self):
+        from services.engines.base import EngineAuthError
+        from services.engines.llm_engine import OpenAICompatLLMEngine
+
+        engine = OpenAICompatLLMEngine("llm-test", api_base="http://localhost:11434/v1", api_key="bad-key")
+        mock_client = AsyncMock()
+        mock_client.get.return_value = MagicMock(status_code=401, json=lambda: {"data": []})
+        with patch.object(engine, "get_http_client", return_value=mock_client):
+            with pytest.raises(EngineAuthError):
+                await engine.list_models()
+
+    @pytest.mark.asyncio
+    async def test_openai_compat_list_models_server_error_returns_empty(self):
+        from services.engines.llm_engine import OpenAICompatLLMEngine
+
+        engine = OpenAICompatLLMEngine("llm-test", api_base="http://localhost:11434/v1", api_key="key")
+        mock_client = AsyncMock()
+        mock_client.get.return_value = MagicMock(status_code=500, json=lambda: {})
+        with patch.object(engine, "get_http_client", return_value=mock_client):
+            assert await engine.list_models() == []
+
+    @pytest.mark.asyncio
+    async def test_anthropic_list_models_auth_raises(self):
+        import httpx
+
+        from services.engines.base import EngineAuthError
+        from services.engines.llm_engine import AnthropicLLMEngine
+
+        engine = AnthropicLLMEngine("anthropic-test", api_key="bad-key")
+        mock_client = AsyncMock()
+        mock_resp = MagicMock(status_code=401)
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "401 Unauthorized", request=MagicMock(), response=MagicMock(status_code=401)
+        )
+        mock_client.get.return_value = mock_resp
+        with patch.object(engine, "get_http_client", return_value=mock_client):
+            with pytest.raises(EngineAuthError):
+                await engine.list_models()
+
+    @pytest.mark.asyncio
+    async def test_google_list_models_auth_raises(self):
+        import httpx
+
+        from services.engines.base import EngineAuthError
+        from services.engines.llm_engine import GoogleLLMEngine
+
+        engine = GoogleLLMEngine("google-test", api_key="bad-key")
+        mock_client = AsyncMock()
+        mock_resp = MagicMock(status_code=403)
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "403 Forbidden", request=MagicMock(), response=MagicMock(status_code=403)
+        )
+        mock_client.get.return_value = mock_resp
+        with patch.object(engine, "get_http_client", return_value=mock_client):
+            with pytest.raises(EngineAuthError):
+                await engine.list_models()
+
+    @pytest.mark.asyncio
+    async def test_modal_upload_encoded_precheck_refuses_without_decoding(self):
+        engine = ModalEngine("modal-test", "ak-123", "as-456")
+        # 100 chars of base64 over an 8-byte encoded cap: the verdict must be
+        # the pre-check, reached without touching the volume client.
+        with (
+            patch("services.engines.base.get_upload_max_bytes_encoded", return_value=8),
+            patch.object(engine, "get_client_async", side_effect=AssertionError("must not reach Modal")),
+        ):
+            assert await engine.upload_file("clip.bin", "QUJD" * 25, directory="models/clip") is False
+
+    @pytest.mark.asyncio
+    async def test_direct_upload_encoded_precheck_skips_agent(self):
+        engine = DirectComfyEngine("direct-agent", "http://127.0.0.1:8188", agent_url="http://agent:8001")
+        with (
+            patch("services.engines.base.get_upload_max_bytes_encoded", return_value=8),
+            patch.object(engine, "get_agent_client", side_effect=AssertionError("must not reach agent")),
+        ):
+            assert await engine.upload_file("clip.bin", "QUJD" * 25, directory="models/clip") is False

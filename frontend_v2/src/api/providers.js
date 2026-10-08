@@ -131,6 +131,12 @@ export const providersApi = {
 
     /** Test connection and health of an existing provider. */
     testProvider: (providerId) => api.post(`${P}/${providerId}/test`),
+
+    /** Fetch live models or voices discovered upstream from the in-process engine. */
+    getDiscoveredModels: (providerId, options = {}) => api.get(`${P}/${providerId}/models/discovered`, options),
+
+    /** Fetch deep real-time diagnostics and telemetry for a provider. */
+    getDiagnostics: (providerId, options = {}) => api.get(`${P}/${providerId}/diagnostics`, options),
 };
 
 export default providersApi;

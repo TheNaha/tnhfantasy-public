@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
@@ -7,7 +7,7 @@ import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { providersApi } from '../../api';
 
 const INPUT_CLASS = 'w-full rounded-lg border border-gray-700 bg-gray-800/80 px-4 py-3 text-white outline-none transition-colors focus:border-blue-500';
-const LLM_PROVIDER_TYPES = new Set(['ollama', 'openai_compat', 'anthropic', 'google', 'modal_llm']);
+const LLM_PROVIDER_TYPES = new Set(['ollama', 'openai_compat', 'anthropic', 'google', 'modal_llm', 'modal_vllm']);
 
 function defaultDeployConfig(type) {
     if (type === 'beam') {
@@ -20,7 +20,7 @@ function defaultDeployConfig(type) {
         };
     }
     
-    if (type === 'ollama' || type === 'openai_compat' || type === 'anthropic' || type === 'google' || type === 'modal_llm') {
+    if (type === 'ollama' || type === 'openai_compat' || type === 'anthropic' || type === 'google' || type === 'modal_llm' || type === 'modal_vllm') {
         return {
             deploy_mode: 'manual',
         };
@@ -66,6 +66,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
     // "Esc → Close modals" line in KeyboardShortcutsModal.
     useEscapeKey(onClose);
     const initialType = provider?.type || 'modal';
+    const [engineSchemas, setEngineSchemas] = useState(null);
     const [formData, setFormData] = useState({
         id: provider?.id || '',
         type: initialType,
@@ -75,9 +76,27 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         deploy_config: provider?.deploy_config || defaultDeployConfig(initialType),
         credentials: {},
     });
-    const [enableRuntime, setEnableRuntime] = useState(Boolean(provider?.runtime_config || !provider));
+    // New providers default to the in-process engine path with no container
+    // baggage (`runtime_config: null`): the backend resolves `in_process`
+    // whenever the engine is constructible. The legacy container runtime is
+    // opt-in per provider, and existing rows keep whatever they already have.
+    const [enableRuntime, setEnableRuntime] = useState(Boolean(provider?.runtime_config));
     const [testingConnection, setTestingConnection] = useState(false);
     const [testResult, setTestResult] = useState(null);
+
+    useEffect(() => {
+        let mounted = true;
+        providersApi.getSchemas()
+            .then((data) => {
+                if (mounted && data?.engines) {
+                    setEngineSchemas(data.engines);
+                }
+            })
+            .catch(() => {});
+        return () => { mounted = false; };
+    }, []);
+
+    const currentSchema = engineSchemas?.[formData.type];
 
     const handleTestConnection = async () => {
         setTestingConnection(true);
@@ -92,6 +111,8 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                     ...(formData.deploy_config || {}),
                 },
             };
+            if (rawCreds.base_url) payload.config.base_url = rawCreds.base_url;
+            // Legacy key from older wizard versions: same canonical home.
             if (rawCreds.endpoint_url) payload.config.base_url = rawCreds.endpoint_url;
             if (rawCreds.comfy_url) payload.config.comfy_url = rawCreds.comfy_url;
             if (rawCreds.remote_agent_url) payload.config.remote_agent_url = rawCreds.remote_agent_url;
@@ -116,16 +137,24 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
     const accountLabel = credentialSummary.account_label || null;
 
     const credentialFields = useMemo(() => {
+        if (currentSchema?.credentials) {
+            return currentSchema.credentials;
+        }
+
+        // Pre-schema fallbacks (shown only while /schemas is loading, or for an
+        // unknown type). Keys mirror the canonical registry field names so a
+        // save from this path validates and resolves exactly like the
+        // schema-driven form — no legacy `endpoint_url` credential key.
         if (formData.type === 'ollama') {
             return [
-                { key: 'endpoint_url', label: 'API Endpoint URL', type: 'text', placeholder: 'http://localhost:11434' },
+                { key: 'base_url', label: 'API Endpoint URL', type: 'text', placeholder: 'http://localhost:11434/v1' },
                 { key: 'api_key', label: 'API Key (Optional)', type: 'password', placeholder: 'sk-...' },
             ];
         }
 
         if (formData.type === 'openai_compat') {
             return [
-                { key: 'endpoint_url', label: 'API Base URL', type: 'text', placeholder: 'https://api.openai.com/v1' },
+                { key: 'base_url', label: 'API Base URL', type: 'text', placeholder: 'https://api.openai.com/v1' },
                 { key: 'api_key', label: 'API Key', type: 'password', placeholder: 'sk-...' },
             ];
         }
@@ -182,7 +211,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
             { key: 'hf_token', label: 'HuggingFace Token', type: 'password', placeholder: 'hf_...' },
             { key: 'civitai_token', label: 'CivitAI Token', type: 'password', placeholder: 'CivitAI token' },
         ];
-    }, [formData.type]);
+    }, [formData.type, currentSchema]);
 
     const handleTypeChange = (type) => {
         setFormData((current) => ({
@@ -245,17 +274,20 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         };
 
         const credentials = sanitizeCredentials(formData.credentials);
-        if (credentials.endpoint_url || credentials.comfy_url || credentials.remote_agent_url) {
-            payload.runtime_config = {
-                ...(payload.runtime_config || {}),
-                ...(credentials.endpoint_url ? { api_base: credentials.endpoint_url } : {}),
-                ...(credentials.comfy_url ? { comfy_url: credentials.comfy_url } : {}),
-                ...(credentials.remote_agent_url ? { remote_agent_url: credentials.remote_agent_url } : {}),
-            };
-            delete credentials.endpoint_url;
-            delete credentials.comfy_url;
-            delete credentials.remote_agent_url;
+        // URL-ish entries typed into the credentials section belong to the
+        // canonical config keys (the registry schemas render them there).
+        // `endpoint_url` is the pre-overhaul legacy key — still honoured.
+        const urlMoves = [];
+        if (credentials.base_url || credentials.endpoint_url) {
+            payload.config.base_url = credentials.base_url || credentials.endpoint_url;
+            urlMoves.push('base_url', 'endpoint_url');
         }
+        if (credentials.comfy_url || credentials.remote_agent_url) {
+            if (credentials.comfy_url) payload.config.comfy_url = credentials.comfy_url;
+            if (credentials.remote_agent_url) payload.config.remote_agent_url = credentials.remote_agent_url;
+            urlMoves.push('comfy_url', 'remote_agent_url');
+        }
+        for (const key of urlMoves) delete credentials[key];
         if (!provider || Object.keys(credentials).length > 0) {
             payload.credentials = credentials;
         }
@@ -319,16 +351,22 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                         <option value="remote_comfy">Remote ComfyUI Agent</option>
                                     </optgroup>
                                     <optgroup label="LLM Workers">
-                                        <option value="ollama">Local LLM Worker (Ollama / LM Studio)</option>
                                         <option value="openai_compat">OpenAI / OpenAI-Compatible API</option>
+                                        <option value="ollama">Local LLM Worker (Ollama / LM Studio)</option>
                                         <option value="anthropic">Anthropic (Claude)</option>
                                         <option value="google">Google AI (Gemini)</option>
+                                        <option value="modal_vllm">Modal vLLM (High-Throughput)</option>
                                         <option value="modal_llm">Modal LLM</option>
                                     </optgroup>
                                     <optgroup label="Voice & Audio (TTS)">
                                         <option value="modal_tts">Modal Kokoro / TTS</option>
                                     </optgroup>
                                 </select>
+                                {currentSchema?.description && (
+                                    <p className="mt-2 text-xs text-blue-300/80 bg-blue-950/40 border border-blue-800/30 rounded-lg p-2.5">
+                                        {currentSchema.description}
+                                    </p>
+                                )}
                             </Field>
 
                             <Field label="Priority">
@@ -438,7 +476,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                         </div>
                     </Section>
 
-                    <Section title="Deployment Settings">
+                    <Section title="Engine Configuration">
                         <div className="grid gap-4 md:grid-cols-2">
                             <Field label="Deploy Mode">
                                 <select
@@ -451,74 +489,96 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                 </select>
                             </Field>
 
-                            {formData.type === 'modal' || formData.type === 'modal_tts' ? (
-                                <Field label="App Name">
-                                    <input
-                                        type="text"
-                                        value={formData.deploy_config?.app_name || ''}
-                                        onChange={(event) => updateDeployConfig({ app_name: event.target.value })}
-                                        className={INPUT_CLASS}
-                                        placeholder={formData.type === 'modal_tts' ? 'comfy-modal-tts' : 'comfy-modal-stack'}
-                                    />
-                                </Field>
-                            ) : formData.type === 'beam' ? (
-                                <Field label="GPU Type">
-                                    <input
-                                        type="text"
-                                        value={formData.deploy_config?.gpu_type || ''}
-                                        onChange={(event) => updateDeployConfig({ gpu_type: event.target.value })}
-                                        className={INPUT_CLASS}
-                                        placeholder="RTX4090"
-                                    />
-                                </Field>
-                            ) : null}
-
-                            {formData.type === 'modal' ? (
-                                <Field label="Memory Snapshot">
-                                    <label className="inline-flex h-12 items-center gap-3 rounded-lg border border-gray-700 bg-gray-800/60 px-4 text-sm text-gray-200">
-                                        <input
-                                            type="checkbox"
-                                            checked={Boolean(formData.deploy_config?.enable_memory_snapshot)}
-                                            onChange={(event) => updateDeployConfig({ enable_memory_snapshot: event.target.checked })}
-                                        />
-                                        Enable experimental fast cold starts
-                                    </label>
-                                </Field>
-                            ) : formData.type === 'beam' ? (
+                            {currentSchema?.config ? (
+                                currentSchema.config.map((field) => {
+                                    const val = formData.deploy_config?.[field.key] ?? field.default ?? '';
+                                    if (field.type === 'checkbox') {
+                                        return (
+                                            <Field key={field.key} label={field.label}>
+                                                <label className="inline-flex h-12 items-center gap-3 rounded-lg border border-gray-700 bg-gray-800/60 px-4 text-sm text-gray-200 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={Boolean(val)}
+                                                        onChange={(event) => updateDeployConfig({ [field.key]: event.target.checked })}
+                                                        className="rounded border-gray-700 bg-gray-900 text-blue-600 focus:ring-blue-500"
+                                                    />
+                                                    <span>{field.help_text || field.label}</span>
+                                                </label>
+                                            </Field>
+                                        );
+                                    }
+                                    if (field.type === 'select') {
+                                        return (
+                                            <Field key={field.key} label={field.label}>
+                                                <select
+                                                    value={val}
+                                                    onChange={(event) => updateDeployConfig({ [field.key]: event.target.value })}
+                                                    className={INPUT_CLASS}
+                                                >
+                                                    {(field.options || []).map((opt) => (
+                                                        <option key={opt} value={opt}>{opt}</option>
+                                                    ))}
+                                                </select>
+                                            </Field>
+                                        );
+                                    }
+                                    if (field.type === 'number') {
+                                        return (
+                                            <Field key={field.key} label={field.label}>
+                                                <input
+                                                    type="number"
+                                                    min={field.min}
+                                                    max={field.max}
+                                                    step={field.step || 1}
+                                                    value={val}
+                                                    onChange={(event) => updateDeployConfig({ [field.key]: Number(event.target.value) })}
+                                                    className={INPUT_CLASS}
+                                                    placeholder={field.placeholder || ''}
+                                                />
+                                            </Field>
+                                        );
+                                    }
+                                    return (
+                                        <Field key={field.key} label={field.label}>
+                                            <input
+                                                type="text"
+                                                value={val}
+                                                onChange={(event) => updateDeployConfig({ [field.key]: event.target.value })}
+                                                className={INPUT_CLASS}
+                                                placeholder={field.placeholder || ''}
+                                            />
+                                        </Field>
+                                    );
+                                })
+                            ) : (
                                 <>
-                                    <Field label="GPU Endpoint URL">
-                                        <input
-                                            type="text"
-                                            value={formData.deploy_config?.gpu_url || ''}
-                                            onChange={(event) => updateDeployConfig({ gpu_url: event.target.value })}
-                                            className={INPUT_CLASS}
-                                            placeholder="https://beam.example/gpu"
-                                        />
-                                    </Field>
-                                    <Field label="Storage Endpoint URL">
-                                        <input
-                                            type="text"
-                                            value={formData.deploy_config?.storage_url || ''}
-                                            onChange={(event) => updateDeployConfig({ storage_url: event.target.value })}
-                                            className={INPUT_CLASS}
-                                            placeholder="https://beam.example/storage"
-                                        />
-                                    </Field>
-                                    <Field label="Download Endpoint URL">
-                                        <input
-                                            type="text"
-                                            value={formData.deploy_config?.download_url || ''}
-                                            onChange={(event) => updateDeployConfig({ download_url: event.target.value })}
-                                            className={INPUT_CLASS}
-                                            placeholder="https://beam.example/download"
-                                        />
-                                    </Field>
+                                    {formData.type === 'modal' || formData.type === 'modal_tts' ? (
+                                        <Field label="App Name">
+                                            <input
+                                                type="text"
+                                                value={formData.deploy_config?.app_name || ''}
+                                                onChange={(event) => updateDeployConfig({ app_name: event.target.value })}
+                                                className={INPUT_CLASS}
+                                                placeholder={formData.type === 'modal_tts' ? 'comfy-modal-tts' : 'comfy-modal-stack'}
+                                            />
+                                        </Field>
+                                    ) : formData.type === 'beam' ? (
+                                        <Field label="GPU Type">
+                                            <input
+                                                type="text"
+                                                value={formData.deploy_config?.gpu_type || ''}
+                                                onChange={(event) => updateDeployConfig({ gpu_type: event.target.value })}
+                                                className={INPUT_CLASS}
+                                                placeholder="RTX4090"
+                                            />
+                                        </Field>
+                                    ) : null}
                                 </>
-                            ) : null}
+                            )}
                         </div>
 
                         {formData.deploy_config?.deploy_mode === 'manual' && (
-                            <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/10 p-4 text-sm text-yellow-100">
+                            <div className="mt-4 rounded-xl border border-yellow-500/25 bg-yellow-500/10 p-4 text-sm text-yellow-100">
                                 Manual deploy mode disables the in-app deploy action. The provider can still run workloads if the runtime is reachable.
                             </div>
                         )}

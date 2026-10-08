@@ -12,7 +12,7 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from infrastructure.logging import get_logger
-from services.engines.base import InProcessEngine, clamp_timeout
+from services.engines.base import FileTooLargeError, InProcessEngine, clamp_timeout
 
 logger = get_logger("modal_tts_engine")
 
@@ -269,10 +269,7 @@ class ModalTTSEngine(InProcessEngine):
             raise FileNotFoundError(f"Audio not found on Modal volume: {path}")
         size = int(size)
         if size > _MAX_AUDIO_BYTES:
-            raise ValueError(
-                f"Audio file is {size} bytes; limit is {_MAX_AUDIO_BYTES}. "
-                "Use the image worker for large files."
-            )
+            raise FileTooLargeError(path, size=size, cap=_MAX_AUDIO_BYTES)
 
         try:
             data = await asyncio.wait_for(
@@ -289,10 +286,7 @@ class ModalTTSEngine(InProcessEngine):
         if len(data) > _MAX_AUDIO_BYTES:
             # Narrow race: the file grew between the size check and the read.
             # Refuse rather than stream an unbounded body.
-            raise ValueError(
-                f"Audio file is {len(data)} bytes; limit is {_MAX_AUDIO_BYTES}. "
-                "Use the image worker for large files."
-            )
+            raise FileTooLargeError(path, size=len(data), cap=_MAX_AUDIO_BYTES)
         # Yield in 1MB chunks
         chunk_size = 1024 * 1024
         for offset in range(0, len(data), chunk_size):

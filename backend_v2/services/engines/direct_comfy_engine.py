@@ -20,6 +20,7 @@ import websockets
 from infrastructure.logging import get_logger
 from services.engines.base import (
     EngineAuthError,
+    FileTooLargeError,
     InProcessEngine,
     MODEL_DIRECTORIES,
     clamp_timeout,
@@ -111,6 +112,21 @@ def _normalize_directory(directory: Optional[str]) -> str:
     return value
 
 
+def normalize_comfy_url(raw: str, default: str = "http://localhost:8188") -> str:
+    """Normalize a ComfyUI server URL, accepting scheme-less `host:port`.
+
+    Mirrors provider_containers `workflow_executor.py:32-36`: a bare
+    `host:port` gains an `http://` prefix instead of parsing to
+    `netloc=""` and silently targeting 127.0.0.1:8188.
+    """
+    value = (raw or "").strip().rstrip("/")
+    if not value:
+        return default
+    if "://" not in value:
+        value = f"http://{value}"
+    return value.rstrip("/")
+
+
 def _files_from(payload: Any) -> List[Dict[str, Any]]:
     """Extract a file list from an agent/storage listing body.
 
@@ -200,7 +216,7 @@ class DirectComfyEngine(InProcessEngine):
         civitai_token: Optional[str] = None,
     ):
         super().__init__(provider_id)
-        self.comfy_url = comfy_url.rstrip("/")
+        self.comfy_url = normalize_comfy_url(comfy_url)
         self.api_key = (api_key or "").strip()
         self.stall_timeout = max(1.0, float(stall_timeout))
         self.agent_url = (agent_url or "").strip().rstrip("/")
@@ -636,7 +652,7 @@ class DirectComfyEngine(InProcessEngine):
         if max_bytes and declared and declared.isdigit() and int(declared) > max_bytes:
             await resp.aread()
             await resp.aclose()
-            raise ValueError(f"File {path} is over the {max_bytes}-byte get-file cap")
+            raise FileTooLargeError(path, size=int(declared), cap=max_bytes)
 
         async def _capped() -> AsyncIterator[bytes]:
             total = 0
@@ -644,9 +660,7 @@ class DirectComfyEngine(InProcessEngine):
                 async for chunk in resp.aiter_bytes(_STREAM_CHUNK_BYTES):
                     total += len(chunk)
                     if max_bytes and total > max_bytes:
-                        raise ValueError(
-                            f"File {path} exceeded the {max_bytes}-byte get-file cap"
-                        )
+                        raise FileTooLargeError(path, size=total, cap=max_bytes)
                     yield chunk
 
         try:
@@ -705,12 +719,22 @@ class DirectComfyEngine(InProcessEngine):
         try:
             agent = self.get_agent_client()
             resp = await agent.post("/delete-model", json={"path": path}, timeout=60.0)
+            if resp.status_code in (401, 403):
+                raise EngineAuthError(
+                    f"Remote agent rejected credentials for /delete-model ({path}): "
+                    f"HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                )
             if resp.status_code != 200:
                 raise RuntimeError(
                     f"Remote agent /delete-model returned {resp.status_code}: {resp.text[:200]}"
                 )
             payload = resp.json()
             return not (isinstance(payload, dict) and payload.get("success") is False)
+        except EngineAuthError:
+            # Fail fast like delete_file: a rejected credential reproduces on
+            # every retry, so it must not read as a transient miss.
+            raise
         except Exception as exc:
             logger.warning("direct_comfy_agent_delete_model_failed", provider_id=self.provider_id, path=path, error=str(exc))
             return False
@@ -720,6 +744,17 @@ class DirectComfyEngine(InProcessEngine):
         if not self._has_agent:
             return False
         try:
+            from services.engines.base import get_upload_max_bytes_encoded
+
+            # Encoded-length pre-check first (parity with BeamEngine): never
+            # base64-decode a body the wire cap already rejects.
+            if len(content_base64) > get_upload_max_bytes_encoded():
+                logger.warning(
+                    "direct_comfy_upload_over_cap",
+                    provider_id=self.provider_id,
+                    path=filename,
+                )
+                return False
             cap = get_upload_size_cap()
             if cap:
                 try:

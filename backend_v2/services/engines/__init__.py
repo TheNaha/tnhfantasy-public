@@ -16,6 +16,14 @@ from services.engines.engine_factory import (
     clear_engine_cache,
     invalidate_engine,
 )
+from services.engines.registry import (
+    ENGINE_SPECS,
+    get_engine_spec,
+    list_engine_specs,
+    missing_provider_fields,
+    ui_schemas,
+    validate_provider_payload,
+)
 
 __all__ = [
     "InProcessEngine",
@@ -33,4 +41,10 @@ __all__ = [
     "register_engine",
     "clear_engine_cache",
     "invalidate_engine",
+    "ENGINE_SPECS",
+    "get_engine_spec",
+    "list_engine_specs",
+    "missing_provider_fields",
+    "ui_schemas",
+    "validate_provider_payload",
 ]

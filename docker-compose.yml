@@ -131,8 +131,13 @@ services:
       - COMFY_CORS_ORIGINS=${COMFY_CORS_ORIGINS:-["http://localhost:5174","http://localhost:8002","http://127.0.0.1:5174","https://comfy.lan.thenaha.my.id","https://100.150.0.4","http://100.150.0.4:5174"]}
       - COMFY_UVICORN_RELOAD=0
       - COMFY_PROVIDER_ENV_PATH=/comfyui
-      # TEMPORARY: modal installed to /data/modal_pkg for testing until the
-      # Dockerfile image is rebuilt with modal>=1.5.0 in requirements.txt.
+      # Modal is pip-installed to /data/modal_pkg in the running backend
+      # container (requirements.txt now declares modal>=1.5.0, and the
+      # Dockerfile installs requirements, so the next `docker compose build`
+      # bakes it into site-packages). Until that rebuilt image is deployed,
+      # removing this line breaks every Modal engine import — verify with
+      # `docker exec tnhcomfy-backend python3 -c "import modal"` after a
+      # rebuild WITHOUT this line before deleting it for good.
       - PYTHONPATH=/data/modal_pkg
     networks:
       - tnhcomfy

@@ -10,7 +10,6 @@ from core.entities import VALID_TASK_TYPES, Job, LoadBalancingConfig, Provider
 from core.events import EventType, emit_provider_event
 from core.exceptions import NotFoundError, ValidationError
 from infrastructure.logging import provider_logger
-from infrastructure.providers.provider_registry import ProviderRegistry
 from infrastructure.providers.runtime import provider_container_name
 from infrastructure.repositories import LoadBalancingRepository, ProviderRepository
 from services.provider_deploy_service import ProviderDeployService
@@ -187,7 +186,13 @@ class ProviderService:
         }
 
     def _summarize_credentials(self, provider_type: str, credentials: dict[str, Any], deploy_config: dict[str, Any], runtime: Any) -> dict[str, Any]:
-        validation = ProviderRegistry.validate_provider(provider_type, credentials, deploy_config)
+        # Required-field answers come from the engine registry (the in-process
+        # source of truth), not the container-era ProviderRegistry whose
+        # `required_credentials` still demand e.g. a Modal `username` nobody
+        # needs anymore. Validating the wrong contract marked healthy
+        # in-process providers `ready: false` on every status card.
+        from services.engines.registry import missing_provider_fields
+        validation = missing_provider_fields(provider_type, credentials, deploy_config)
         configured_fields = sorted(
             key for key, value in credentials.items()
             if value not in (None, "", [], {})
@@ -199,8 +204,8 @@ class ProviderService:
             or mask_secret(credentials.get("token_id"))
         )
         is_discovery = runtime and getattr(runtime, "mode", None) == "discovery"
-        missing_credentials = [] if is_discovery else validation.get("credentials", [])
-        missing_config = [] if is_discovery else validation.get("config", [])
+        missing_credentials = [] if is_discovery else validation["credentials"]
+        missing_config = [] if is_discovery else validation["config"]
         return {
             "configured_fields": configured_fields,
             "missing_required_credentials": missing_credentials,
@@ -626,7 +631,15 @@ class ProviderService:
             # different meanings on one field, where the one that answers "can
             # this provider serve TTS" was the one missing.
             "declared_capabilities": list(provider.capabilities or []),
-            "credential_summary": self._summarize_credentials(provider.type, clean_dict(provider.credentials), deploy_config, runtime),
+            # Validated against the union of config homes: pre-overhaul rows
+            # may hold URLs under `container_config` (the old wizard wrote
+            # `api_base` there), so the summary must see them too.
+            "credential_summary": self._summarize_credentials(
+                provider.type,
+                clean_dict(provider.credentials),
+                {**(provider.container_config or {}), **(provider.config or {}), **deploy_config},
+                runtime,
+            ),
         }
     
     def get_model_cache(self) -> dict[str, Any]:

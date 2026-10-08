@@ -132,6 +132,10 @@ class TestLoadBalancer:
         
         assert "strategy" in stats
         assert "provider_stats" in stats
+        assert "by_modality" in stats
+        assert "image" in stats["by_modality"]
+        assert "llm" in stats["by_modality"]
+        assert "tts" in stats["by_modality"]
 
     async def test_save_and_reload_state_round_trip(self, session: Session, providers):
         """Persisted state should survive a reset and reload from the database."""

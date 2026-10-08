@@ -97,8 +97,9 @@ async def test_load_balancer_health_checks(session: Session, monkeypatch):
     lb.health_check_enabled = True
     monkeypatch.setenv("COMFY_PROVIDER_AUTOSTART_ENABLED", "1")
 
-    # Mock health check function
-    async def mock_check_health(self_lb, provider):
+    # Mock health check function (task_type param added with the
+    # per-modality circuit-breaker thresholds).
+    async def mock_check_health(self_lb, provider, task_type="image"):
         # p1 is warm, p2 is cold
         return provider.id == "warm-provider"
 
