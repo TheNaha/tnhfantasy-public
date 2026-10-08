@@ -2369,3 +2369,70 @@ class TestEngineAuthAndCaps:
             patch.object(engine, "get_agent_client", side_effect=AssertionError("must not reach agent")),
         ):
             assert await engine.upload_file("clip.bin", "QUJD" * 25, directory="models/clip") is False
+
+    @pytest.mark.asyncio
+    async def test_direct_plain_validate_raises_instead_of_clean_sweep(self):
+        """A dead ComfyUI must raise, not return empty-valid (clean-sweep)."""
+        engine = DirectComfyEngine("direct-local", "http://127.0.0.1:8188")
+        with patch.object(engine, "_fetch_object_info", side_effect=ConnectionError("down")):
+            with pytest.raises(RuntimeError, match="Failed to query ComfyUI"):
+                await engine.validate_models(["models/checkpoints"])
+
+    @pytest.mark.asyncio
+    async def test_modal_vllm_upload_encoded_precheck_skips_client(self):
+        from services.engines.llm_engine import ModalVLLMEngine
+
+        engine = ModalVLLMEngine("vllm-test", "ak-123", "as-456")
+        with (
+            patch("services.engines.base.get_upload_max_bytes_encoded", return_value=8),
+            patch.object(engine, "get_client_async", side_effect=AssertionError("must not reach Modal")),
+        ):
+            assert await engine.upload_file("clip.bin", "QUJD" * 25, directory="models") is False
+
+    def test_modal_snapshot_flag_defaults_stable_and_config_wins(self):
+        from services.engines.engine_factory import get_engine
+
+        # Default: Stable (False) per registry schema, not container legacy True.
+        assert ModalEngine("m1", "ak", "as-").enable_memory_snapshot is False
+        assert ModalEngine("m2", "ak", "as-", enable_memory_snapshot=True).enable_memory_snapshot is True
+        # Factory wires per-provider config over env.
+        provider = SimpleNamespace(
+            id="modal-cfg",
+            type="modal",
+            worker_type="image",
+            capabilities=["image"],
+            credentials={"token_id": "ak", "token_secret": "as-"},
+            config={"app_name": "x", "enable_memory_snapshot": True},
+        )
+        assert get_engine("modal-cfg", provider).enable_memory_snapshot is True
+
+    @pytest.mark.asyncio
+    async def test_modal_get_file_auth_raises(self):
+        from services.engines.base import EngineAuthError
+
+        engine = ModalEngine("modal-test", "ak-123", "as-456")
+        storage = MagicMock()
+        storage.file_size.remote.aio = AsyncMock(side_effect=Exception("401 Unauthorized"))
+        with (
+            patch.object(engine, "get_client_async", new=AsyncMock()),
+            patch("services.engines.modal_engine.modal") as mock_modal,
+        ):
+            mock_modal.Cls.from_name.return_value = MagicMock(return_value=storage)
+            with pytest.raises(EngineAuthError):
+                async for _ in engine.get_file_stream("models/x.safetensors"):
+                    pass
+
+    @pytest.mark.asyncio
+    async def test_modal_delete_file_auth_raises(self):
+        from services.engines.base import EngineAuthError
+
+        engine = ModalEngine("modal-test", "ak-123", "as-456")
+        storage = MagicMock()
+        storage.delete_file.remote.aio = AsyncMock(side_effect=Exception("403 Forbidden"))
+        with (
+            patch.object(engine, "get_client_async", new=AsyncMock()),
+            patch("services.engines.modal_engine.modal") as mock_modal,
+        ):
+            mock_modal.Cls.from_name.return_value = MagicMock(return_value=storage)
+            with pytest.raises(EngineAuthError):
+                await engine.delete_file("models/x.safetensors")

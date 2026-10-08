@@ -546,9 +546,13 @@ class DirectComfyEngine(InProcessEngine):
         try:
             doc = await self._fetch_object_info()
         except Exception as exc:
-            return {"status": "error", "message": f"Failed to query ComfyUI: {exc}",
-                    "code": 502, "retryable": True,
-                    "valid": [], "invalid": [], "partial": [], "by_directory": {}}
+            # Raise (don't return an empty-valid envelope): reconciliation
+            # reads total_invalid/total_partial, so a returned dict with
+            # empty lists would read as "all valid" for a dead ComfyUI —
+            # the exact clean-sweep bug the container probes fixed by
+            # raising on non-200. The reconciler catches this into
+            # errors[] instead of silently passing.
+            raise RuntimeError(f"Failed to query ComfyUI: {exc}") from exc
         by_directory: Dict[str, List[str]] = {}
         available: List[str] = []
         for directory in directories:

@@ -62,6 +62,7 @@ class ModalEngine(InProcessEngine):
         app_name: str = "comfy-modal-stack",
         hf_token: Optional[str] = None,
         civitai_token: Optional[str] = None,
+        enable_memory_snapshot: Optional[bool] = None,
     ):
         super().__init__(provider_id)
         self.token_id = token_id.strip()
@@ -69,6 +70,15 @@ class ModalEngine(InProcessEngine):
         self.app_name = app_name or os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
         self.hf_token = hf_token or os.getenv("HF_TOKEN", "")
         self.civitai_token = civitai_token or os.getenv("CIVITAI_TOKEN", "")
+        # Canonical default False per registry schema + InferenceRequest.
+        # The deprecated container client fell back to "true" when the env
+        # was unset; the engine intentionally defaults to Stable unless the
+        # provider config opts into Snapshot. Factory resolves
+        # config > env > False so per-provider config is source of truth.
+        if enable_memory_snapshot is None:
+            raw = os.getenv("ENABLE_MEMORY_SNAPSHOT", "").strip().lower()
+            enable_memory_snapshot = raw in ("true", "1", "yes") if raw else False
+        self.enable_memory_snapshot = bool(enable_memory_snapshot)
         self._client: Optional[modal.Client] = None
         self._lock = asyncio.Lock()
 
@@ -138,10 +148,12 @@ class ModalEngine(InProcessEngine):
         Execute inference directly against Modal's ComfyUI class and stream TaskEvents.
         """
         if use_snapshot is None:
-            # Parity with container modal worker schema (models.py: InferenceRequest
-            # use_snapshot defaults False): an omitted flag means Stable, not Snapshot.
-            # ENABLE_MEMORY_SNAPSHOT opts in explicitly.
-            use_snapshot = os.getenv("ENABLE_MEMORY_SNAPSHOT", "false").strip().lower() in ("true", "1", "yes")
+            # Canonical default False per registry schema (enable_memory_snapshot
+            # default False) and InferenceRequest (use_snapshot=False). The
+            # deprecated container fell back to "true" when the env was unset;
+            # the engine resolves per-provider config > env > False at
+            # construction, so an omitted flag means Stable, not Snapshot.
+            use_snapshot = self.enable_memory_snapshot
         class_name = "ComfyUISnapshot" if use_snapshot else "ComfyUIStable"
         logger.info(
             "modal_inference_start",
@@ -309,10 +321,19 @@ class ModalEngine(InProcessEngine):
         FileStorage = modal.Cls.from_name(self.app_name, "FileStorage", client=client)
         storage = FileStorage()
 
-        total_size = await asyncio.wait_for(
-            storage.file_size.remote.aio(path),
-            timeout=_GET_FILE_TIMEOUT_SECONDS,
-        )
+        try:
+            total_size = await asyncio.wait_for(
+                storage.file_size.remote.aio(path),
+                timeout=_GET_FILE_TIMEOUT_SECONDS,
+            )
+        except FileNotFoundError:
+            raise
+        except Exception as exc:
+            if is_auth_error(exc):
+                raise EngineAuthError(
+                    f"Modal rejected credentials for get-file ({path}): {exc}",
+                ) from exc
+            raise
         if total_size is None or total_size < 0:
             raise FileNotFoundError(f"File not found on Modal volume: {path}")
 
@@ -468,6 +489,10 @@ class ModalEngine(InProcessEngine):
             storage = FileStorage()
             return bool(await storage.delete_file.remote.aio(path))
         except Exception as exc:
+            if is_auth_error(exc):
+                raise EngineAuthError(
+                    f"Modal rejected credentials for delete-file ({path}): {exc}",
+                ) from exc
             logger.error("modal_delete_file_failed", provider_id=self.provider_id, path=path, error=str(exc))
             return False
 

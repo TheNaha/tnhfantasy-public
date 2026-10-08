@@ -766,6 +766,15 @@ class ModalVLLMEngine(InProcessEngine):
     async def upload_file(self, filename: str, content_base64: str, directory: str = "") -> bool:
         if not HAS_MODAL or modal is None:
             return False
+        from services.engines.base import get_upload_max_bytes_encoded
+
+        # Encoded-length pre-check first (parity with ModalEngine/BeamEngine
+        # and the container router's 413): never base64-decode a body the
+        # wire cap already rejects — decoding a multi-hundred-MB blob just
+        # to reject it OOMs the backend first.
+        if len(content_base64) > get_upload_max_bytes_encoded():
+            logger.warning("modal_vllm_upload_over_cap", provider_id=self.provider_id, path=filename)
+            return False
         try:
             content = base64.b64decode(content_base64)
             cap = get_upload_size_cap()
