@@ -1952,7 +1952,7 @@ class TestEngineSupportsSetup:
             ("llm-anthropic", "anthropic", False),
             ("llm-google", "google", False),
             ("llm-vllm-1", "modal_vllm", True),  # full model lifecycle in-process
-            ("llm-modal-1", "modal_llm", False),
+            ("llm-modal-1", "modal_llm", True),  # same ModalVLLMEngine class, same models/ tree
             ("tts-1", "modal_tts", False),
             ("tts-x", "tts", False),
             ("whatever", "unknown", False),
@@ -1964,13 +1964,48 @@ class TestEngineSupportsSetup:
     def test_none_provider(self):
         assert engine_supports_setup(None) is False
 
-    def test_modal_llm_reports_false(self):
-        # The old runtime check (`type in ("modal", "modal_llm")`) said True
-        # for modal_llm, but neither ModalVLLMEngine nor OpenAICompatLLMEngine
-        # implements setup_models (base returns False, and setup_provider
-        # raises on False) — False matches engine reality.
+    def test_modal_llm_reports_true(self):
+        # modal_llm resolves to the same ModalVLLMEngine class as modal_vllm
+        # (registry ENGINE_SPECS), which implements setup_models
+        # (llm_engine.py) for its models/ volume tree — True matches engine
+        # reality. An earlier revision asserted False when the factory only
+        # built the vLLM engine for the modal_vllm type / vllm-in-id.
         provider = _setup_probe_provider("llm-modal-1", "modal_llm")
-        assert engine_supports_setup(provider) is False
+        assert engine_supports_setup(provider) is True
+
+
+class TestResolveProviderType:
+    """Registry routing is the single source of truth for all three
+    factory entry points — aliases, id prefixes, and capability
+    fallbacks must resolve identically everywhere."""
+
+    @pytest.mark.parametrize(
+        "kwargs,expected",
+        [
+            ({"provider_type": "modal"}, "modal"),
+            ({"provider_type": "tts"}, "modal_tts"),  # legacy alias
+            ({"provider_type": "openai"}, "openai_compat"),
+            ({"provider_type": "gemini"}, "google"),
+            ({"provider_type": "direct"}, "direct_url"),
+            ({"provider_type": "comfy_direct"}, "direct_url"),
+            ({"provider_id": "modal-foo"}, "modal"),  # prefix, empty type
+            ({"provider_id": "beam-x", "provider_type": "unknown-beam-x"}, "beam"),
+            ({"provider_id": "box-direct-2", "provider_type": "other"}, "direct_url"),
+            ({"provider_id": "remote-comfy-1"}, "remote_comfy"),
+            ({"provider_id": "llm-foo"}, "openai_compat"),
+            ({"provider_id": "tts-foo"}, "modal_tts"),
+            # vllm-in-id wins over a generic llm type.
+            ({"provider_id": "llm-vllm-1", "provider_type": "openai_compat"}, "modal_vllm"),
+            ({"capabilities": ["tts"]}, "modal_tts"),
+            ({"capabilities": ["llm"]}, "openai_compat"),
+            ({"worker_type": "llm"}, "openai_compat"),
+            ({"provider_type": "nope", "provider_id": "whatever"}, None),
+        ],
+    )
+    def test_resolve(self, kwargs, expected):
+        from services.engines.registry import resolve_provider_type
+
+        assert resolve_provider_type(**kwargs) == expected
 
 
 class TestEngineCacheTTL:

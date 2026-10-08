@@ -19,6 +19,10 @@ from services.engines.direct_comfy_engine import DirectComfyEngine
 from services.engines.llm_engine import ModalVLLMEngine, OpenAICompatLLMEngine, AnthropicLLMEngine, GoogleLLMEngine
 from services.engines.modal_engine import HAS_MODAL, ModalEngine
 from services.engines.modal_tts_engine import ModalTTSEngine
+from services.engines.registry import (
+    resolve_provider_type,
+    supports_setup as _registry_supports_setup,
+)
 
 logger = get_logger("engine_factory")
 
@@ -102,7 +106,12 @@ def get_provider_env(provider_id: str) -> Dict[str, str]:
 
 
 def can_create_engine(provider: Any) -> bool:
-    """Check if the necessary credentials or URLs exist to construct an in-process engine."""
+    """Check if the necessary credentials or URLs exist to construct an in-process engine.
+
+    Routing (which provider identity maps to which engine type) lives in
+    registry.resolve_provider_type — this function only checks that the
+    credentials/URLs the resolved type needs are present.
+    """
     if not provider:
         return False
     provider_id = getattr(provider, "id", "")
@@ -112,6 +121,10 @@ def can_create_engine(provider: Any) -> bool:
     creds = getattr(provider, "credentials", None) or {}
     config = getattr(provider, "config", None) or {}
     env_vars = get_provider_env(provider_id)
+
+    rtype = resolve_provider_type(provider_type, provider_id, worker_type, capabilities)
+    if rtype is None:
+        return False
 
     token_id = (
         creds.get("token_id")
@@ -128,43 +141,30 @@ def can_create_engine(provider: Any) -> bool:
         or os.getenv("MODAL_TOKEN_SECRET")
     )
 
-    # 1. TTS Provider
-    if (
-        provider_type in ("modal_tts", "tts")
-        or provider_id.startswith(("tts-", "tts_"))
-        or ("tts" in capabilities and "image" not in capabilities)
-    ):
+    # TTS: Modal credentials only.
+    if rtype == "modal_tts":
         return bool(HAS_MODAL and token_id and token_secret)
 
-    # 2. LLM Provider
-    if (
-        provider_type in ("openai_compat", "openai", "anthropic", "google", "gemini", "ollama", "modal_llm", "modal_vllm")
-        or worker_type == "llm"
-        or provider_id.startswith(("llm-", "llm_"))
-        or ("llm" in capabilities)
-    ):
-        if provider_type == "modal_vllm" or (token_id and token_secret and "vllm" in provider_id):
-            return bool(HAS_MODAL and token_id and token_secret)
-        # Hosted LLM APIs authenticate with a key, not a base_url — they must
-        # not fall through to the OpenAICompat base_url check below (which
-        # would misroute them to the wrong wire protocol when any base_url
-        # happens to be set, or refuse to create an engine at all).
-        if provider_type == "anthropic":
-            api_key = (
-                creds.get("api_key")
-                or creds.get("ANTHROPIC_API_KEY")
-                or env_vars.get("ANTHROPIC_API_KEY")
-                or os.getenv("ANTHROPIC_API_KEY")
-            )
-            return bool(api_key)
-        if provider_type in ("google", "gemini"):
-            api_key = (
-                creds.get("api_key")
-                or creds.get("GOOGLE_API_KEY")
-                or env_vars.get("GOOGLE_API_KEY")
-                or os.getenv("GOOGLE_API_KEY")
-            )
-            return bool(api_key)
+    # Hosted LLM: each wire protocol authenticates with its own key.
+    # (Checked before the OpenAICompat base_url fallback so a stray
+    # base_url can never misroute them to the wrong protocol.)
+    if rtype == "anthropic":
+        api_key = (
+            creds.get("api_key")
+            or creds.get("ANTHROPIC_API_KEY")
+            or env_vars.get("ANTHROPIC_API_KEY")
+            or os.getenv("ANTHROPIC_API_KEY")
+        )
+        return bool(api_key)
+    if rtype == "google":
+        api_key = (
+            creds.get("api_key")
+            or creds.get("GOOGLE_API_KEY")
+            or env_vars.get("GOOGLE_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+        )
+        return bool(api_key)
+    if rtype in ("openai_compat", "ollama"):
         base_url = (
             config.get("base_url")
             or config.get("api_base")
@@ -179,15 +179,17 @@ def can_create_engine(provider: Any) -> bool:
         )
         return bool(base_url)
 
-    # 3. Modal Image Provider
-    if (
-        provider_type in ("modal",)
-        or provider_id.startswith(("modal-", "modal_"))
-    ):
+    # Serverless LLM (vLLM on Modal): Modal credentials. Both the
+    # modal_vllm and modal_llm specs share the ModalVLLMEngine class.
+    if rtype in ("modal_vllm", "modal_llm"):
         return bool(HAS_MODAL and token_id and token_secret)
 
-    # 3b. Beam Image Provider (serverless REST + websocket, no modal package).
-    if provider_type == "beam" or provider_id.startswith(("beam-", "beam_")):
+    # Modal image.
+    if rtype == "modal":
+        return bool(HAS_MODAL and token_id and token_secret)
+
+    # Beam image (serverless REST + websocket, no modal package).
+    if rtype == "beam":
         beam_key = (
             creds.get("api_key")
             or creds.get("BEAM_API_KEY")
@@ -208,13 +210,8 @@ def can_create_engine(provider: Any) -> bool:
         )
         return bool(beam_key and gpu_url and storage_url)
 
-    # 4. Direct ComfyUI (plain) or RemoteComfy (ComfyUI + agent sidecar)
-    if (
-        provider_type in ("direct_url", "comfy_direct", "direct", "remote_comfy")
-        or "direct" in provider_id
-        or "remote-comfy" in provider_id
-        or "remote_comfy" in provider_id
-    ):
+    # Direct ComfyUI (plain) or RemoteComfy (ComfyUI + agent sidecar).
+    if rtype in ("direct_url", "remote_comfy"):
         # Parity with get_engine below which defaults unset URL to
         # http://localhost:8188: a Direct provider is always constructible.
         return True
@@ -225,60 +222,22 @@ def can_create_engine(provider: Any) -> bool:
 def engine_supports_setup(provider: Any) -> bool:
     """Whether the in-process engine for this provider implements setup.
 
-    Pure type routing (mirrors the branch order in get_engine): image
-    engines own storage that needs initialising — Modal and Beam always,
-    Direct/remote_comfy via the agent sidecar, trivially true for plain
-    ComfyUI (setup_models is a no-op success without an agent), and
-    modal_vllm (owns the models/ volume tree). Hosted LLM and
-    TTS engines inherit the base setup_models which reports False.
+    Routing lives in registry.resolve_provider_type and the per-type verdict
+    in registry.supports_setup — image engines and modal_vllm/modal_llm own
+    storage that needs initialising; Direct is trivially true (setup_models
+    is a no-op success without an agent); hosted LLM and TTS inherit the
+    base setup_models which reports False.
     Callers must still gate on can_create_engine first.
     """
     if not provider:
         return False
-    provider_id = getattr(provider, "id", "")
-    provider_type = getattr(provider, "type", "")
-    worker_type = getattr(provider, "worker_type", "")
-    capabilities = getattr(provider, "capabilities", None) or []
-
-    # 1. TTS Provider
-    if (
-        provider_type in ("modal_tts", "tts")
-        or provider_id.startswith(("tts-", "tts_"))
-        or ("tts" in capabilities and "image" not in capabilities)
-    ):
-        return False
-
-    # 2. LLM Provider (hosted APIs have no model tree; modal_vllm owns the
-    # ``models/`` volume tree with setup_models/download/validate parity).
-    if provider_type == "modal_vllm" or "vllm" in provider_id:
-        return True
-    if (
-        provider_type in ("openai_compat", "openai", "anthropic", "google", "gemini", "ollama", "modal_llm", "modal_vllm")
-        or worker_type == "llm"
-        or provider_id.startswith(("llm-", "llm_"))
-        or ("llm" in capabilities)
-    ):
-        return False
-
-    # 3. Modal / Beam image providers
-    if (
-        provider_type in ("modal",)
-        or provider_id.startswith(("modal-", "modal_"))
-        or provider_type == "beam"
-        or provider_id.startswith(("beam-", "beam_"))
-    ):
-        return True
-
-    # 4. Direct ComfyUI (plain) or RemoteComfy (ComfyUI + agent sidecar)
-    if (
-        provider_type in ("direct_url", "comfy_direct", "direct", "remote_comfy")
-        or "direct" in provider_id
-        or "remote-comfy" in provider_id
-        or "remote_comfy" in provider_id
-    ):
-        return True
-
-    return False
+    rtype = resolve_provider_type(
+        getattr(provider, "type", ""),
+        getattr(provider, "id", ""),
+        getattr(provider, "worker_type", ""),
+        getattr(provider, "capabilities", None) or [],
+    )
+    return _registry_supports_setup(rtype)
 
 
 def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InProcessEngine]:
@@ -310,6 +269,13 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
     config = getattr(provider, "config", None) or {} if provider else {}
     env_vars = get_provider_env(provider_id)
 
+    # Single routing decision for all three entry points (can_create /
+    # supports_setup / get_engine): registry owns the mapping, the blocks
+    # below only construct.
+    rtype = resolve_provider_type(provider_type, provider_id, worker_type, capabilities)
+    if rtype is None:
+        return None
+
     token_id = (
         creds.get("token_id")
         or creds.get("MODAL_TOKEN_ID")
@@ -326,11 +292,7 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
     )
 
     # 1. TTS Provider
-    if (
-        provider_type in ("modal_tts", "tts")
-        or provider_id.startswith(("tts-", "tts_"))
-        or ("tts" in capabilities and "image" not in capabilities)
-    ):
+    if rtype == "modal_tts":
         if token_id and token_secret:
             app_name = (
                 config.get("app_name")
@@ -361,14 +323,9 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
             _ENGINE_CACHE[provider_id] = engine
             return engine
 
-    # 2. LLM Provider
-    if (
-        provider_type in ("openai_compat", "openai", "anthropic", "google", "gemini", "ollama", "modal_llm", "modal_vllm")
-        or worker_type == "llm"
-        or provider_id.startswith(("llm-", "llm_"))
-        or ("llm" in capabilities)
-    ):
-        if provider_type == "modal_vllm" or (token_id and token_secret and "vllm" in provider_id):
+    # 2. LLM Provider (serverless vLLM, hosted APIs, OpenAI-compat local)
+    if rtype in ("openai_compat", "ollama", "anthropic", "google", "modal_vllm", "modal_llm"):
+        if rtype in ("modal_vllm", "modal_llm"):
             app_name = (
                 config.get("app_name")
                 or env_vars.get("MODAL_LLM_APP_NAME")
@@ -483,10 +440,7 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
             return engine
 
     # 3. Modal Image Provider
-    if (
-        provider_type in ("modal",)
-        or provider_id.startswith(("modal-", "modal_"))
-    ):
+    if rtype == "modal":
         app_name = (
             config.get("app_name")
             or env_vars.get("MODAL_APP_NAME")
@@ -530,7 +484,7 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
             return engine
 
     # 3b. Beam Image Provider (serverless REST + websocket, no modal package)
-    if provider_type == "beam" or provider_id.startswith(("beam-", "beam_")):
+    if rtype == "beam":
         beam_key = (
             creds.get("api_key")
             or creds.get("BEAM_API_KEY")
@@ -606,12 +560,7 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
         return None
 
     # 4. Direct Comfy Provider (plain, or + agent sidecar for remote_comfy)
-    if (
-        provider_type in ("direct_url", "comfy_direct", "direct", "remote_comfy")
-        or "direct" in provider_id
-        or "remote-comfy" in provider_id
-        or "remote_comfy" in provider_id
-    ):
+    if rtype in ("direct_url", "remote_comfy"):
         comfy_url = (
             config.get("comfy_url")
             or config.get("comfyui_url")

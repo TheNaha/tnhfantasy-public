@@ -308,6 +308,103 @@ def get_engine_spec(provider_type: str) -> Optional[Dict[str, Any]]:
     return ENGINE_SPECS.get(provider_type)
 
 
+# ---------------------------------------------------------------------------
+# Routing: single source of truth for provider → spec resolution.
+#
+# engine_factory.py previously repeated this routing in three places
+# (can_create_engine / engine_supports_setup / get_engine) with prefix and
+# capability fallbacks that could drift independently. All three now call
+# resolve_provider_type() so the mapping lives here, next to the specs.
+# ---------------------------------------------------------------------------
+
+#: Legacy / shorthand type names that never got their own spec.
+_TYPE_ALIASES: Dict[str, str] = {
+    "tts": "modal_tts",
+    "openai": "openai_compat",
+    "gemini": "google",
+    "direct": "direct_url",
+    "comfy_direct": "direct_url",
+}
+
+#: provider_id prefixes that imply a type when `type` is empty/unknown.
+#: Order matters: TTS before LLM before image, mirroring the old factory
+#: branch order (a tts+llm hybrid without image capability is TTS).
+_ID_PREFIXES = (
+    ("tts-", "modal_tts"),
+    ("tts_", "modal_tts"),
+    ("llm-", "openai_compat"),
+    ("llm_", "openai_compat"),
+    ("modal-", "modal"),
+    ("modal_", "modal"),
+    ("beam-", "beam"),
+    ("beam_", "beam"),
+)
+
+
+def _capability_fallback(capabilities, worker_type: str) -> Optional[str]:
+    caps = set(capabilities or [])
+    if "tts" in caps and "image" not in caps:
+        return "modal_tts"
+    if worker_type == "llm" or "llm" in caps:
+        return "openai_compat"
+    if "image" in caps:
+        return "direct_url"
+    return None
+
+
+def resolve_provider_type(
+    provider_type: str = "",
+    provider_id: str = "",
+    worker_type: str = "",
+    capabilities=None,
+) -> Optional[str]:
+    """Resolve any provider identity to a canonical ENGINE_SPECS key.
+
+    Precedence: exact spec hit → legacy alias → modal_vllm-by-id
+    (a `vllm` provider_id always means the Modal vLLM engine, whatever
+    `type` claims) → id prefix → worker_type/capability fallback.
+    Returns None when nothing matches.
+    """
+    if provider_type in ENGINE_SPECS:
+        # A vllm-named provider with a generic llm type still owns the
+        # models/ volume tree — route it to the vLLM engine, not hosted.
+        if "vllm" in (provider_id or "") and provider_type in (
+            "openai_compat", "openai", "ollama", "modal_llm",
+        ):
+            return "modal_vllm"
+        return provider_type
+    if provider_type in _TYPE_ALIASES:
+        return _TYPE_ALIASES[provider_type]
+    pid = provider_id or ""
+    if "vllm" in pid:
+        return "modal_vllm"
+    for prefix, target in _ID_PREFIXES:
+        if pid.startswith(prefix):
+            return target
+    lowered = pid.lower()
+    if "remote-comfy" in lowered or "remote_comfy" in lowered:
+        return "remote_comfy"
+    if "direct" in lowered:
+        return "direct_url"
+    return _capability_fallback(capabilities, worker_type)
+
+
+#: Resolved types whose engine implements setup (owns storage needing
+#: init, or no-op success). Hosted LLM and TTS engines inherit the base
+#: setup_models which reports False — they have no model tree.
+#: Note modal_llm is included: same ModalVLLMEngine class as modal_vllm,
+#: same models/ volume (the old factory returned False for a modal_llm
+#: id without "vllm" in it — that was a routing miss, not intent).
+_SUPPORTS_SETUP = frozenset({
+    "modal", "beam", "direct_url", "remote_comfy", "modal_vllm", "modal_llm",
+})
+
+
+def supports_setup(resolved_type: Optional[str]) -> bool:
+    """Whether the engine for a resolved type implements setup."""
+    return resolved_type in _SUPPORTS_SETUP
+
+
 def list_engine_specs() -> List[Dict[str, Any]]:
     """Return all canonical specs in registry order."""
     return list(ENGINE_SPECS.values())
