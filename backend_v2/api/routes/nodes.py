@@ -230,9 +230,8 @@ async def get_object_info(
                         "Provider does not have an in-process engine for extraction"
                     )
                 try:
-                    # Same 120s budget as the container path (CPU extraction
-                    # spins up ComfyUI); without it a wedged engine hangs the
-                    # request forever.
+                    # 120s budget because CPU extraction spins up ComfyUI;
+                    # without it a wedged engine hangs the request forever.
                     graph = await asyncio.wait_for(engine.get_object_info(), timeout=120.0)
                 except (asyncio.TimeoutError, TimeoutError) as e:
                     raise ProviderTimeoutError(
@@ -251,12 +250,7 @@ async def get_object_info(
                     raise ProviderError(
                         provider_id, "Provider returned a malformed object_info document"
                     )
-            else:
-                if not runtime.worker_url:
-                    raise ValidationError(
-                        "Provider does not have a valid worker URL for extraction"
-                    )
-
+            elif runtime.worker_url:
                 try:
                     # Increase timeout because CPU extraction spins up ComfyUI
                     client = get_http_client()
@@ -274,6 +268,10 @@ async def get_object_info(
                     raise ProviderError(
                         provider_id, f"Failed to fetch object_info from provider: {e}"
                     )
+            else:
+                raise ValidationError(
+                    "Provider does not have an in-process engine or a valid worker URL for extraction"
+                )
 
             # Only an observed answer is cached. A failure leaves the key absent
             # so the next request retries, which is what the frontend's Retry

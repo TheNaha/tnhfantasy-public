@@ -13,7 +13,6 @@ from core.entities import (
     is_unet_only_model,
 )
 from core.exceptions import NotFoundError
-from infrastructure.http_client import get_http_client
 from infrastructure.logging import model_logger
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 
@@ -72,12 +71,11 @@ class ModelDownloader:
         
         results = {"triggered": 0, "providers": []}
         
-        http_client = get_http_client()
         for provider in providers:
             from services.provider_runtime import resolve_provider_runtime
             runtime = resolve_provider_runtime(provider)
 
-            if runtime.mode not in ("container_http", "discovery", "in_process"):
+            if runtime.mode != "in_process":
                 results["providers"].append({
                     "provider_id": provider.id,
                     "status": "skipped",
@@ -138,33 +136,12 @@ class ModelDownloader:
                 })
                 continue
 
-            worker_url = runtime.worker_url
-            try:
-                response = await http_client.post(
-                    f"{worker_url}/reconcile",
-                    timeout=5.0,
-                )
-                if response.status_code == 200:
-                    results["triggered"] += 1
-                    results["providers"].append({
-                        "provider_id": provider.id,
-                        "status": "reconciling"
-                    })
-                else:
-                    logger.warning("provider_reconcile_trigger_failed", provider_id=provider.id, status=response.status_code)
-                    results["providers"].append({
-                        "provider_id": provider.id,
-                        "status": "failed",
-                        "error": f"Status {response.status_code}"
-                    })
-            except Exception as e:
-                logger.warning("provider_reconcile_trigger_error", provider_id=provider.id, error=str(e))
-                results["providers"].append({
-                    "provider_id": provider.id,
-                    "status": "error",
-                    "error": str(e)
-                })
-        
+            results["providers"].append({
+                "provider_id": provider.id,
+                "status": "skipped",
+                "error": f"Runtime unavailable ({runtime.mode})",
+            })
+
         return results
 
     async def trigger_delete_from_providers(self, model_id: int) -> dict[str, Any]:
@@ -186,7 +163,6 @@ class ModelDownloader:
         
         # Get all files for this model's versions
         versions = self.repo.get_versions_for_model(model_id)
-        http_client = get_http_client()
         for version in versions:
             file = self.repo.get_primary_file_for_version(version.id)
             if not file:
@@ -223,6 +199,8 @@ class ModelDownloader:
                                 "path": storage_path,
                                 "status": "deleted" if deleted else "not_found",
                             })
+                            if deleted:
+                                results["deleted"] += 1
                         except Exception as exc:
                             results["providers"].append({
                                 "provider_id": provider.id,
@@ -232,50 +210,13 @@ class ModelDownloader:
                             })
                     continue
 
-                if not runtime.worker_url:
-                    continue
-                
-                worker_url = runtime.worker_url
-                
-                try:
-                    if hasattr(http_client, "request"):
-                        response = await http_client.request(
-                            "DELETE",
-                            f"{worker_url}/delete-file",
-                            json={"path": storage_path},
-                            timeout=10.0,
-                        )
-                    else:
-                        import urllib.parse
-                        encoded_path = urllib.parse.quote(storage_path, safe="")
-                        response = await http_client.delete(
-                            f"{worker_url}/delete-file/{encoded_path}",
-                            timeout=10.0,
-                        )
-                    if response.status_code == 200:
-                        results["deleted"] += 1
-                        results["providers"].append({
-                            "provider_id": provider.id,
-                            "file_id": file.id,
-                            "path": storage_path,
-                            "status": "deleted"
-                        })
-                    else:
-                        results["providers"].append({
-                            "provider_id": provider.id,
-                            "file_id": file.id,
-                            "path": storage_path,
-                            "status": "not_found"
-                        })
-                except Exception as e:
-                    logger.warning("provider_delete_failed", provider_id=provider.id, error=str(e))
-                    results["providers"].append({
-                        "provider_id": provider.id,
-                        "file_id": file.id,
-                        "status": "error",
-                        "error": str(e)
-                    })
-        
+                results["providers"].append({
+                    "provider_id": provider.id,
+                    "path": storage_path,
+                    "status": "skipped",
+                    "error": f"Runtime unavailable ({runtime.mode})",
+                })
+
         return results
 
     async def add_custom_model(

@@ -4,55 +4,29 @@ on:
   push:
     branches: [ "main", "master" ]
     paths:
-      - 'provider_containers/**'
-      # `remote_agent/` is a 397-line HTTP surface with its own path-traversal
-      # gate, its own auth gate and its own storage dialect. It was in NO test
-      # job's path filter — only in the PyInstaller build, whose sole verification
-      # was a `/health` curl. So "did it boot" was the only thing standing between
-      # an inverted traversal gate and main.
+      # `remote_agent/` (incl. `remote_agent/provider_core/`) is the remaining
+      # provider-surface that still ships an image and runs its own tests via
+      # `compileall`. The four containerized workers and `provider_containers/`
+      # were removed in favor of in-process engines
+      # (`backend_v2/services/engines/`); nothing here builds them anymore.
       - 'remote_agent/**'
-      # The `build` job below is the only thing in CI that renders
-      # `docker-compose.yml` or builds the provider images, and these four globs
-      # are what it reads. Nothing watched them: adding `provider-tts-modal-hp196`
-      # with `env_file: - .env.tts-modal-hp196` made compose refuse to render on
-      # every clean checkout and no job noticed, because a change to the compose
-      # file triggered no job at all except the secret scan.
-      #
-      # GitHub has no job-level `paths:` — `on.<event>.paths` filters the whole
-      # workflow. So the `test` job above also runs on a compose-only change. It
-      # is a minute of Python and it is the cheaper mistake.
-      #
-      # No other workflow gets these: `backend-tests.yml` and `frontend-e2e.yml`
-      # bring up their own `pgvector` service and never read compose or `.env`,
-      # and `build-agent-binaries.yml` runs PyInstaller from `remote_agent/`.
+      # The `app-images` job below is the only thing in CI that renders
+      # `docker-compose.yml` or builds the backend/frontend images, and these
+      # globs are what it reads.
       - 'docker-compose*.yml'
       - 'scripts/**'
       - '.env.example*'
       - '.github/workflows/**'
-      # The `app-images` job below builds these two Dockerfiles. GitHub has no
-      # job-level `paths:`, so naming the files here is the only way to trigger
-      # it — and it means the whole workflow runs on a Dockerfile change, which
-      # is a few minutes and the cheaper mistake.
+      # The `app-images` job builds these two Dockerfiles.
       - 'backend_v2/Dockerfile'
       - 'frontend_v2/Dockerfile'
-      # The inputs that change what those images produce without changing the
-      # Dockerfile. A lockfile bump that breaks `npm ci`, or a requirements
-      # change that no longer resolves, is exactly the breakage no other job can
-      # see: `frontend-tests.yml` runs `npm ci` on the host and
-      # `backend-tests.yml` installs into a host venv, so neither would notice
-      # that the *image* no longer builds.
       - 'backend_v2/requirements.txt'
       - 'frontend_v2/package-lock.json'
-      # The root `.dockerignore` governs the remote agent's build context: the
-      # `build` job below builds it with `context: .`, so this one file decides
-      # what reaches the daemon — and it was the only file in that context
-      # triggering no workflow at all. A `COPY` pattern that started excluding a
-      # needed path would have failed the agent image with nothing watching.
+      # The root `.dockerignore` governs the remote agent's build context.
       - '.dockerignore'
   pull_request:
     branches: [ "main", "master" ]
     paths:
-      - 'provider_containers/**'
       - 'remote_agent/**'
       - 'docker-compose*.yml'
       - 'scripts/**'
@@ -65,13 +39,15 @@ on:
       - '.dockerignore'
 
 jobs:
-  test:
+  # ── the two application images ──────────────────────────────────────────────
+  # `backend_v2/Dockerfile` and `frontend_v2/Dockerfile` are what actually runs.
+  # This job is the only thing in CI that builds them: the host test suites run
+  # in a venv / `npm ci`, so a bad COPY, missing system package, broken lockfile
+  # resolves nothing, or a frontend `npm ci` that breaks on a lockfile bump all
+  # ship green in `backend-tests.yml` / `frontend-tests.yml` unless we build the
+  # image here. A green suite says nothing about whether the image builds.
+  app-images:
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: ./provider_containers
-
     steps:
     - uses: actions/checkout@v4
 
@@ -79,168 +55,25 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.13"
-        cache: 'pip'
-        cache-dependency-path: provider_containers/requirements-test.txt
 
-    - name: Install dependencies
+    - name: Compile remote_agent sources
+      # `provider_core` now lives under `remote_agent/` and is imported by the
+      # frozen binary + the agent image. A syntax error there reaches main only
+      # via the build-agent-binaries or app-images jobs; this compileall is the
+      # cheaper net.
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements-test.txt
+        cd remote_agent
+        python -m compileall -q provider_core server.py
         pip install ruff
-
-    - name: Put the repo root on sys.path
-      # `remote_agent` is a sibling of `provider_containers`, not a package inside
-      # it, and it imports `provider_core` from the provider tree. tests/conftest.py
-      # does this locally; without it `import remote_agent.server` is an
-      # ImportError and every agent test silently stops existing.
-      run: |
-        echo "REPO_ROOT=$PWD/.." >> "$GITHUB_ENV"
-        echo "PYTHONPATH=$PWD/..:$PYTHONPATH" >> "$GITHUB_ENV"
-
-    - name: Lint with ruff
-      # Mirrors backend-tests.yml, which has run `ruff check .` since the backend
-      # config was added. `provider_containers/ruff.toml` selects `F` only, and
-      # F401 is on: the dead imports in the Modal apps (a `compute_hashes` flag
-      # accepted and discarded, a `diagnostics_timeout` parameter never read) were
-      # exactly the shape of drift that cost the LLM worker its
-      # `max_concurrent_downloads`.
-      run: ruff check .
-
-    - name: Compile provider sources
-      # `tts_worker` was missing here while the `build` job below built its
-      # Dockerfile. A syntax error in it therefore reached main whenever the
-      # provider tests happened to pass — the build is a much later, slower net
-      # than a compile. All four entrypoints plus the shared library, which is
-      # what `remote_agent` imports.
-      run: python -m compileall -q provider_core image_worker llm_worker tts_worker ../remote_agent
-
-    - name: Run tests with pytest
-      run: |
-        pytest tests -v
-
-  # ── the images and the compose file, which nothing validated ────────────────
-  # No job built any provider image or rendered the compose file, so a broken
-  # Dockerfile (a bad COPY, a missing system package, a CMD that cannot start)
-  # shipped green, and so did a compose `depends_on` cycle.
-  #
-  # Four provider Dockerfiles now exist and all four are built here. `tts_worker`
-  # was the fourth and was built by nothing at all — it is the image
-  # `ProviderDeployOrchestrator` uses for every `task_type="tts"` deploy, so a
-  # broken COPY in it broke TTS deployment on every host while every job stayed
-  # green. The `test` job above compiles `provider_core`, `image_worker` and
-  # `llm_worker`; `tts_worker` is not in that list either, which is why the build
-  # step, not the compile step, is the only thing that would have caught it.
-  build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Create the env files compose requires
-      # `.env` and every `.env.*` are gitignored, so a clean checkout has none of
-      # them — and compose refuses to render while an `env_file:` is missing. That
-      # made this job exit 1 at its first step, so the `docker build`s below
-      # never ran and a broken provider Dockerfile shipped green, which is the
-      # exact thing this job exists to prevent. `docs/STATUS.md` claimed CI ran
-      # these builds; it did not, and could not.
-      #
-      # It then stopped working a second time: `provider-tts-modal-hp196` was
-      # added to the `providers` profile with `env_file: - .env.tts-modal-hp196`,
-      # and this list was not updated with it. The step exited 1 again, on the
-      # same clean checkout, for the same reason. The list below is now derived
-      # from the compose file's own `env_file:` entries rather than written by
-      # hand — `scripts/preflight.sh` already does this, stripping YAML comments
-      # first because grep cannot see them — so a new provider cannot be missed
-      # here either.
-      #
-      # Compose only needs the files to *exist* for `config --quiet`; it does not
-      # read their values. Seed each one from the example it mirrors so the tree
-      # looks like a developer's, and export the handful of variables the
-      # `environment:` blocks interpolate so `${VAR:-default}` has a real value.
-      run: |
-        cp .env.example .env
-        cp .env.example.direct-url .env.direct-url
-        cp .env.example.provider.engines .env.modal-hp196
-        cp .env.example.provider.engines .env.modal-stepmania
-        cp .env.example.provider.engines .env.modal-zetsuke
-        # There is no `.env.example.llm-local`; the LLM worker's variables are the
-        # provider ones. `.env.example.provider` is the all-commented stub, so it
-        # is the wrong source — that mistake is what `docs/deployment.md` used to
-        # tell people to copy.
-        cp .env.example.provider.engines .env.llm-local
-        # The TTS provider is its own container with its own env file, on the
-        # same Modal workspace as the image providers (so MODAL_TOKEN_* are
-        # literally the same credentials, not new ones) but its own app name,
-        # model directory, scale-down and timeout. Its own example exists because
-        # those are the values it ships with.
-        cp .env.example.tts .env.tts-modal-hp196
-        echo "seeded: $(ls -1 .env .env.* | tr '\n' ' ')"
-
-        # Fail here rather than at `config --quiet`, so the message names the
-        # omission. This is the check that was missing both times this job went
-        # red: the seeded list drifted from compose's `env_file:` entries.
-        missing=""
-        for f in $(sed -e 's/#.*//' docker-compose.yml | grep -oE '\.env\.[a-z0-9-]+' | sort -u); do
-          [[ -f "$f" ]] || missing="$missing $f"
-        done
-        if [[ -n "$missing" ]]; then
-          echo "compose declares env_file entries that were not seeded:$missing" >&2
-          exit 1
-        fi
-
-    - name: Validate the compose file
-      # Free once the env files exist. It stops it from *not* passing later,
-      # which is the point — a `depends_on` cycle or a bad interpolation is a hard
-      # `up` failure with a message that does not name the file that caused it.
-      run: |
-        docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers config --quiet
-        echo "compose OK"
-
-    - name: Build the image worker image
-      run: docker build -f provider_containers/image_worker/Dockerfile -t tnhcomfy-provider-test-image:latest provider_containers
-
-    - name: Build the LLM worker image
-      run: docker build -f provider_containers/llm_worker/Dockerfile -t tnhcomfy-provider-test-llm:latest provider_containers
-
-    - name: Build the TTS worker image
-      # Was the fourth Dockerfile with no job building it. Same build context as
-      # the other two: the orchestrator's deploy container builds it with
-      # `context=provider_containers`, so a context that works here works there.
-      run: docker build -f provider_containers/tts_worker/Dockerfile -t tnhcomfy-provider-test-tts:latest provider_containers
+        ruff check - --select F provider_core
 
     - name: Build the remote agent image
       run: docker build -f remote_agent/Dockerfile -t tnhcomfy-provider-test-agent:latest .
-
-  # ── the two application images, which nothing built ──────────────────────────
-  # `backend_v2/Dockerfile` and `frontend_v2/Dockerfile` are what actually runs
-  # in production and in every dev `up`, and until 2026-10-03 no workflow built
-  # either. That is a bigger hole than the missing `tts_worker` build this file
-  # already covers: a bad `COPY`, a missing system package, a `pip install` that
-  # no longer resolves, or a frontend `npm ci` that breaks on a lockfile bump all
-  # shipped green while both test suites — which run on the *host*, not in the
-  # image — stayed green too.
-  #
-  # A green suite says nothing about whether the image builds. This job is the
-  # cheapest thing that says something.
-  #
-  # It lives here rather than in `backend-tests.yml` / `frontend-tests.yml`
-  # because GitHub has no job-level `paths:`: `on.<event>.paths` filters the
-  # whole workflow, and `backend_v2/Dockerfile` needs `backend_v2/**` to be a
-  # trigger of whichever workflow builds it. Adding `backend_v2/Dockerfile` to
-  # this workflow's filter would fire it on every backend source change, which is
-  # most of them — so instead the filter names the Dockerfiles themselves plus the
-  # build inputs that change what they produce.
-  app-images:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
 
     - name: Build the backend image
       run: docker build -f backend_v2/Dockerfile -t tnhcomfy-backend-build-check:latest backend_v2
 
     - name: Build the frontend image (prod target)
-      # `prod`, not the default: the dev target is what the hot-reload stack runs,
-      # and it is a different `npm ci`. Both matter; prod is the one whose output
-      # is served.
       run: docker build --target prod -f frontend_v2/Dockerfile -t tnhcomfy-frontend-build-check:latest frontend_v2
 
     - name: Build the frontend image (dev target)

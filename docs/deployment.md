@@ -1,69 +1,34 @@
 # Deployment Guide
 
-Deploying TNHComfy is designed to be straightforward, leveraging Docker and Docker Compose to containerize the frontend, backend, and provider workers. The application relies on external serverless inference providers (Modal or Beam) for heavy computational tasks.
+Deploying TNHComfy uses Docker Compose for the frontend, backend, and PostgreSQL. Inference runs **in-process**: each provider is served by an engine in `backend_v2/services/engines/` (Modal, Beam, hosted LLM, Direct/ComfyUI, TTS), not by a sidecar container. Remote ComfyUI hosts attach through the optional `remote_agent/` stack.
 
 ## Prerequisites
 - Docker and Docker Compose installed on the host machine.
-- Accounts and API keys for Modal and/or Beam for serverless inference execution.
-- Optional: A domain name and SSL certificate if exposing to the public internet.
+- Accounts and API keys for the serverless provider(s) you intend to use (Modal, Beam, OpenAI/Anthropic/Google, or a Direct ComfyUI URL).
+- Optional: a domain name and SSL certificate if exposing to the public internet (Traefik config, not this guide).
 
 ## Configuration (.env)
-Before deploying, configure the backend environment and each provider environment file referenced by the Compose file:
+Before deploying, copy the stack env:
 ```bash
 cp .env.example .env
-cp .env.example.provider.engines .env.modal-hp196
 ```
-**Use `.env.example.provider.engines`, not `.env.example.provider`.** The latter is a
-35-line stub in which every assignment is commented out, so copying it produces a
-provider with no `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` that cannot start. The engines
-file is the canonical reference and says so at its own line 5.
+`.env.example` is the canonical reference for every `COMFY_*` setting `backend_v2` reads — its default, and what breaks when it is unset. It also documents variables for a host-only run (`setup_jules.sh`, `uvicorn` without compose), where compose's `env_file:` is not in play. It is documentation that happens to be copy-pasteable, not a template to copy blindly.
 
-With `--profile providers`, compose needs **all six** provider env files present
-(`.env.modal-zetsuke`, `.env.modal-hp196`, `.env.modal-stepmania`,
-`.env.tts-modal-hp196`, `.env.llm-local`, `.env.direct-url`) plus `.env`, and
-refuses to start if any is missing — `scripts/preflight.sh` hard-fails on exactly
-these, deriving the list from the compose file's own `env_file:` entries. There is
-no `.env.example.llm-local`; the LLM worker's variables are the provider ones.
-`.env.tts-modal-hp196` is the sixth and has its own example: the TTS provider is a
-separate container with its own Modal app name, model directory, scale-down
-window and timeout. It is the same Modal workspace as the image providers, so its
-`MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` are the same credentials, not a new account.
+Per-provider credentials are configured **through the Providers UI or `POST /api/v2/providers`**, not via per-worker env files. The backend passes each provider's credential row to its in-process engine; `preflight.sh` no longer demands a per-worker env file. If you prefer a file over the DB row, the backend resolves a per-provider `.env.<provider_id>` under `COMFY_PROVIDER_ENV_PATH` for engine credential discovery — see `.env.example`.
 
-```bash
-cp .env.example.provider.engines .env.modal-zetsuke
-cp .env.example.provider.engines .env.modal-stepmania
-cp .env.example.provider.engines .env.llm-local
-cp .env.example.tts           .env.tts-modal-hp196
-cp .env.example.direct-url     .env.direct-url
-```
-
-Keep all credential files out of version control.
-Key variables:
-- `HF_TOKEN`: Hugging Face API token for downloading models.
-- `CIVITAI_TOKEN`: Civitai API token for accessing specific models.
-- `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`: Modal provider credentials (required for Modal providers).
-- `BEAM_API_KEY`: Beam provider credentials (optional).
+Key variables surfaced by `.env.example`:
+- `HF_TOKEN` / `CIVITAI_TOKEN`: model download tokens.
+- `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`, `BEAM_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`: provider credentials.
+- `COMFY_PROVIDER_TOKEN`: bearer token that gates remote-agent registration and is attached to outbound calls to remote agents (allowlist via `COMFY_WORKER_HOSTS` / `COMFY_DISCOVERY_ALLOWED_HOSTS`).
+- `COMFY_PROVIDER_ENV_PATH=/comfyui`: in-compose mount root for per-provider `.env.<provider_id>` credential discovery.
 
 ## Using Docker Compose
-The provided `docker-compose.yml` orchestrates the backend, frontend, and provider containers.
-
-### Which env file is which
-Two files, and picking the wrong one is how a provider ends up half-configured:
-
-| file | for | notes |
-|---|---|---|
-| `.env.example` → `.env` | the compose stack **and the backend's own variables** | Read by compose for interpolation *and* injected into the backend via `env_file:`. This is the one `cp` into place. **It is the canonical reference for every `COMFY_*` setting `backend_v2` reads** — its default, and what breaks when it is unset. It also documents variables for a host-only run (`setup_jules.sh`, `uvicorn` without compose), where `env_file:` is not in play. It is not a template to copy over `.env` blindly; it is documentation that happens to be copy-pasteable. |
-| `.env.example.provider.engines`, `.env.example.tts`, `.env.example.direct-url` | one file per provider container | Copied to `.env.<PROVIDER_ID>`, as below. |
-
-`scripts/preflight.sh` and `backend_v2/tests/test_env_contracts.py` both read these,
-so a variable that no example file mentions fails a test rather than being
-discovered missing on a live stack.
+`docker-compose.yml` orchestrates the backend, frontend, and PostgreSQL.
 
 ### Architecture
 - **db**: PostgreSQL 16 with the `pgvector` extension. Everything else waits on its healthcheck. Published on `127.0.0.1:5432` by the dev override only.
-- **backend_v2**: FastAPI server on port 8002. Runs as `user: "1000:1000"`. Readiness check hits `/api/ready`. **Publishes no host port at all** — see "Backend reachability" below. Its DSN is assembled in-process from the discrete `POSTGRES_HOST`/`POSTGRES_PORT`/`POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` that compose passes it, because the URL is the only place a password can be percent-encoded. Compose's own `environment:` block does not set `COMFY_DATABASE_URL`, but `env_file: - .env` does if your `.env` has one — see "Which database the backend uses".
+- **backend_v2**: FastAPI server on port 8002. Runs as `user: "1000:1000"`. Readiness check hits `/api/ready`. Publishes no host port at all (see "Backend reachability"). Its DSN is assembled in-process from `POSTGRES_*`.
 - **frontend_v2**: React/Vite dev server or Nginx (prod). Depends on backend health. Proxied via Traefik.
-- **providers** (DEPRECATED legacy fallback, all in the `providers` profile, off by default): `provider-modal-zetsuke`, `provider-modal-hp196`, `provider-modal-stepmania`, `provider-tts-modal-hp196`, `provider-llm-local`, `provider-direct-url`. In-process engines in `backend_v2/services/engines/` are the default runtime (`COMFY_USE_IN_PROCESS_ENGINES=true`); these containers only start with `docker compose --profile providers up` or per-provider `execution_mode: "container"`. Each is a long-running worker container that self-registers with the backend by heartbeat and holds its own credentials; `provider-tts-modal-hp196` additionally serves as the deploy container for the `comfy-modal-tts` Modal app. Container names must be `tnhcomfy-{PROVIDER_ID}` — the backend derives the name it looks for from the provider id — and they depend on backend health.
 
 ### Backend reachability
 
@@ -77,8 +42,7 @@ of job history, and on 2026-10-03 that is what prompted removing the publish.
 The API is reached two ways, and neither is a host port:
 
 - **Traefik**, over the external `proxy` Docker network. Two routers, both on
-  the `websecure` entrypoint (443, TLS), both declared as labels in
-  `docker-compose.yml`:
+  the `websecure` entrypoint (443, TLS):
   | router | host | service |
   |---|---|---|
   | `comfyui-frontend` | `comfy.lan.thenaha.my.id` or `100.150.0.4` | `frontend_v2` on 5174 |
@@ -94,140 +58,43 @@ The API is reached two ways, and neither is a host port:
   docker compose exec backend_v2 curl -s localhost:8002/api/live
   ```
 
-Who may reach it from outside is therefore governed by **the NetBird ACL on the
-reverse proxy**, not by anything in this repository. If you add a router, you are
-adding an unauthenticated endpoint — put it behind the ACL you have already got,
-and expect `docs/STATUS.md` to need updating in the same commit.
-
-`http://localhost:8002` on the host answers `000` (connection refused). That is
-the security boundary working, not a misconfiguration, and it is the single most
-useful thing to know when a document, a curl command or a support answer tells
-you to try it.
+Who may reach it from outside is governed by **the NetBird ACL on the reverse proxy**.
 
 ### Frontend reachability — the same boundary applies
 
-**The frontend is a reverse proxy to that API, so its bind address is the API's
-reach.** `frontend_v2/nginx.conf` has `server_name _` and forwards
-`location /api/` to `backend_v2:8002` with no host check, and `vite.config.js`
-does the same in dev. Publishing the frontend therefore publishes every route
-above, and the "no host port" boundary above is undone at the proxy in front of it.
+**The frontend is a reverse proxy to that API, so its bind address is the API's reach.** `frontend_v2/nginx.conf` and `vite.config.js` forward `location /api/` to `backend_v2:8002`. Publishing the frontend therefore publishes every route above.
 
-It was published on `0.0.0.0:5174` until 2026-10-04, with a comment arguing that
-binding it bought nothing because the backend was the exposure. Measured on the
-running stack at the time:
-
-```bash
-curl http://192.168.1.28:5174/api/ready   # 200  — the API, on the plain LAN
-curl http://192.168.1.28:8002/api/ready   # 000  — as designed
-```
-
-The bind now comes from `COMFY_FRONTEND_BIND` in `.env`:
-
-| value | serves |
-|---|---|
-| unset (default) | `127.0.0.1` and `127.0.0.2` — loopback only, nothing reachable from a network |
-| `COMFY_FRONTEND_BIND=100.150.0.4` | loopback **plus** that one VPN address |
-| `COMFY_FRONTEND_BIND=0.0.0.0` | **every interface — the hole above.** `preflight.sh` fails on it. |
-
-Two bindings, because one host address cannot be both `localhost` and a VPN
-address and losing `http://localhost:5174` is not a trade worth making. Traefik
-needs no host port at all — it reaches the service on the `proxy` network — so the
-documented deployment can leave the variable unset.
-
-Naming a VPN or LAN address is a deliberate widening: it makes the API reachable
-by anything that can route there, which on a home LAN means every device on the
-wifi. Prefer leaving it unset and using `https://comfy.lan.thenaha.my.id`.
+The bind comes from `COMFY_FRONTEND_BIND` in `.env`: `unset` → loopback only (`127.0.0.1`/`127.0.0.2`); `COMFY_FRONTEND_BIND=100.150.0.4` → plus that one VPN address; `COMFY_FRONTEND_BIND=0.0.0.0` → every interface (preflight fails on it). Leave unset behind the remote proxy.
 
 ### Which database the backend uses
-
-`POSTGRES_HOST` is not a fallback — it is the deployment stating which database it
-uses. When it is set, the backend assembles the DSN from `POSTGRES_*` and any
-`COMFY_DATABASE_URL` is not consulted, **and the discarded value is logged at
-boot** as `database_url_from_postgres_env_overrides_comfy_database_url`. Compose
-always sets `POSTGRES_HOST=db`, so in this stack the answer is always Postgres.
-
-Therefore: **do not put `COMFY_DATABASE_URL` in `.env`** unless you intend to
-override it for a non-compose run. A leftover `sqlite:///...` there is inert for
-the compose stack and misleading for anyone reading `docker exec backend printenv`
-— and if you ever remove `POSTGRES_HOST`, that same line starts being obeyed and
-the backend comes up against an empty database. `scripts/preflight.sh` reports it
-as a `note` when it finds one. For a host-only run, use
-`.env.example`, which documents the whole variable set.
+Compose always sets `POSTGRES_HOST=db`, so in this stack the answer is Postgres. Do not put `COMFY_DATABASE_URL` in `.env` unless you intend a non-compose override — `preflight.sh` reports a leftover one as a `note`.
 
 ### Data Volumes
-The `./data` directory is mounted into all containers at `/data`. This shared volume contains:
-- Models (`data/models/`)
-- Input files (`data/input/`)
-- Output images (`data/output/`)
-- PostgreSQL data (`data/pgdata`)
+The `./data` directory is mounted into all containers at `/data`. Contains models (`data/models/`), inputs (`data/input/`), output images (`data/output/`), and PostgreSQL data (`data/pgdata`).
 
 ### Start the Application
-There are two ways to run the application: Production and Development.
+There are two ways to run: Production and Development.
 
 **Production Mode:**
-Runs the optimized, pre-built frontend and backend without hot-reloading.
-1. Run `scripts/preflight.sh` first. It creates the `metrics` and `proxy` networks that `docker-compose.yml` declares `external: true`, and reports the config that silently disables features. Without it the command below fails at network creation for *every* service, with an error that does not name the cause.
-2. Ensure the `.env` file is properly configured.
-3. Run the following command from the root directory:
-   ```bash
-   docker compose -f docker-compose.yml --profile providers up -d --build -V
-   ```
+1. Run `scripts/preflight.sh` first. It creates the `metrics` and `proxy` networks that `docker-compose.yml` declares `external: true`.
+2. Ensure `.env` is configured.
+3. `docker compose -f docker-compose.yml up -d --build -V`
 
-**Development Mode:**
-Runs the application with hot-reloading for both backend and frontend. The provider containers are omitted by default to save resources, but can be included using the `--profile providers` flag.
-1. Start core only (Backend + Frontend):
-   ```bash
-   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
-   ```
-2. Start with providers included:
-   ```bash
-   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
-   ```
+**Development Mode** (hot-reload for backend + frontend):
+1. `docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d`
 
-`-V` (`--renew-anon-volumes`) is **required in dev, not optional**. The frontend's
-`node_modules` is an *anonymous* volume seeded from the image, and the dev
-override mounts `package.json` and `package-lock.json` into the running
-container. So a lockfile bump is picked up by the container while the dependency
-tree it needs is not: `npm` resolves against the *previous* `node_modules` and
-serves it, with no error anywhere. `docker volume ls -f dangling=true` will find
-the volume. This is why `README.md`, `AGENTS.md` and the header of
-`docker-compose.dev.yml` all say `-V`.
+`-V` (`--renew-anon-volumes`) is **required in dev**: the frontend's `node_modules` is an anonymous volume seeded from the image, and without `-V` a lockfile bump leaves the old dependency tree served with no error.
 
-The application should now be accessible.
-   - **Frontend:** Port 5174 in both modes. There is no port 80 anywhere. Both Traefik routers (frontend and api) are on the `websecure` entrypoint. The host publish is `127.0.0.1:5174` plus `${COMFY_FRONTEND_BIND}:5174` — see "Frontend reachability" above before changing it; the default exposes nothing to a network.
-   - **Backend:** No host port in either mode. See "Backend reachability" above — it is reached through Traefik on the `proxy` network or from inside the container, and `http://localhost:8002` is `000` by design.
+The application is accessible at **Port 5174** (frontend). The backend has no host port — see "Backend reachability".
 
-### Adding a Provider
-`ProviderDeployOrchestrator.start_attempt_container` builds its deploy container
-from `dockerfile=f"{worker_kind}_worker/Dockerfile"` against `provider_containers`
-as the build context, and `backend_v2/infrastructure/providers/runtime.py` looks the
-runtime container up by the name `tnhcomfy-{PROVIDER_ID}`. So a new provider is a
-block in `docker-compose.yml`, an env example, and the two names inside it that
-have to agree:
+### Adding a Provider (in-process engine)
+A new provider is a row in the DB, not a compose service. Either:
+- create it in the UI: **Providers → + Add Provider**, pick an engine type, and fill its credential fields; or
+- `POST /api/v2/providers` with `{ "type": "modal"|"beam"|"openai_compat"|..., "worker_type": "image"|"llm"|"tts"|"direct", "enabled": true, ...credentials }`.
 
-1. Copy the `provider-llm-local` block — it has no Modal- or Beam-specific
-   settings, so it is the one to start from — and paste it into the `providers`
-   profile.
-2. Set a unique `PROVIDER_ID`. `_infer_discovery_type` in
-   `backend_v2/api/routes/providers/crud.py` reads the name, not the image or the
-   environment, and falls through to `direct_url`/`image` for anything it does not
-   recognise — which registers the provider as an image worker and offers it
-   checkpoint jobs its container cannot run. It matches `modal-`, `beam-`, the
-   exact string `direct-url`, and the substrings `llm` and `tts`. `tts` is checked
-   first, deliberately: `tts-modal-<name>` would otherwise be read as `modal-`.
-3. Set `container_name` to `tnhcomfy-{PROVIDER_ID}`, **verbatim** — the underscore
-   in `direct_url` is part of the id, not a typo to normalise — and point
-   `env_file:` at a `.env.<PROVIDER_ID>` you also add as `.env.example.<PROVIDER_ID>`
-   so `scripts/preflight.sh` and the CI compose check can find it.
-4. If it needs a credential, copy `.env.example.provider.engines` (never
-   `.env.example.provider`, which is an all-commented stub) to
-   `.env.<PROVIDER_ID>`.
-5. `bash scripts/preflight.sh` and
-   `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers config --quiet`
-   both read compose's `env_file:` entries, so a new service with no env file fails
-   both. CI does the second one on every change to `docker-compose*.yml`,
-   `scripts/**` or `.env.example*`.
+The schema for each type is served by `GET /api/v2/schemas` (`ProviderModal.jsx` is fully schema-driven — type options, credential fields, and config are all rendered from it; save payload is schema-only). An added provider with a live credential resolves on next reconcile to an `InProcessEngine` and can receive jobs immediately; with no credential it is marked `connected:false` until one is supplied. No compose change, no `--profile`, no per-worker env file.
 
+### Remote Agent
 ### Remote Agent
 The optional remote ComfyUI agent is a **separate stack** with its own compose
 file, its own env file, and its own required variable:

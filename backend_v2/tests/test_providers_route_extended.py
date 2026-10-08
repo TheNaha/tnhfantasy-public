@@ -111,18 +111,20 @@ class TestProvidersRouteLoadBalancing:
 
 class TestProvidersRouteContainers:
     def test_list_containers_no_manager(self, client):
+        # Container worker layer removed: the endpoint is gone.
         response = client.get("/api/v2/providers/containers/list")
-        assert response.status_code in (200, 500)
+        assert response.status_code == 404
 
     def test_container_status_no_manager(self, client):
         response = client.get("/api/v2/providers/containers/status")
-        assert response.status_code in (200, 500)
+        assert response.status_code == 404
 
 
 class TestProvidersRouteWake:
     def test_wake_no_providers(self, client):
+        # Container wake removed: POST /wake is not a route (405 from /{id} POST).
         response = client.post("/api/v2/providers/wake")
-        assert response.status_code in (200, 422)
+        assert response.status_code in (404, 405)
 
 
 class TestProvidersRouteCleanup:
@@ -294,45 +296,18 @@ class TestProvidersRouteReconcile:
 
     def test_deploy_provider_not_found(self, client):
         response = client.post("/api/v2/providers/nonexistent/deploy")
-        assert response.status_code in (404, 500, 200)
+        assert response.status_code == 404
 
     def test_deploy_returns_conflict_when_already_running(self, client, monkeypatch):
-        from api.deps import get_provider_service
-        # Force the container branch: with in-process engines enabled the
-        # route short-circuits to 200 not_applicable before reaching the
-        # service, so the already_running -> 400 mapping would not execute.
-        monkeypatch.setenv("COMFY_USE_IN_PROCESS_ENGINES", "false")
-        mock_service = AsyncMock()
-        mock_service.deploy_provider_app = AsyncMock(
-            return_value={
-                "status": "already_running",
-                "message": "Deployment already in progress for this provider",
-            }
-        )
-        
-        client.app.dependency_overrides[get_provider_service] = lambda: mock_service
-
+        # Deploy route removed with the container worker layer.
         response = client.post("/api/v2/providers/test-provider/deploy")
 
-        assert response.status_code == 400
-        del client.app.dependency_overrides[get_provider_service]
+        assert response.status_code == 404
 
     def test_get_provider_deploy_status_route(self, client):
-        payload = {
-            "id": "deploy-status-provider",
-            "type": "modal",
-            "enabled": True,
-            "priority": 1,
-            "credentials": {"token_id": "tok_123", "token_secret": "secret_456"},
-            "config": {},
-        }
-        create_response = client.post("/api/v2/providers", json=payload)
-        assert create_response.status_code == 200
-
+        # Deploy-status route removed with the container worker layer.
         response = client.get("/api/v2/providers/deploy-status-provider/deploy-status")
-        assert response.status_code == 200
-        data = response.json()
-        assert data.get("status") in {"idle", "deploying", "failed", "succeeded", "not_applicable"}
+        assert response.status_code == 404
 
     def test_get_provider_status_card_route(self, client):
         payload = {

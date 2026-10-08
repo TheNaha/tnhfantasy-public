@@ -39,7 +39,6 @@ vi.mock('../api/websocket', () => ({
     ...websocketMock,
     EventTypes: {
         PROVIDER_STATUS: 'provider.status',
-        PROVIDER_CONTAINER_STATUS: 'provider.container_status',
         PROVIDER_STATS_UPDATE: 'provider.stats_update',
         RECONCILIATION_STARTED: 'reconciliation.started',
         RECONCILIATION_PROGRESS: 'reconciliation.progress',
@@ -85,7 +84,6 @@ describe('useProvidersPageData', () => {
                 enabled: true,
                 priority: 1,
                 runtime_state: { status: 'stopped', connected: true },
-                deploy_state: { status: 'idle' },
                 reconciliation_state: { status: 'idle' },
                 model_sync: {
                     total_models: 1,
@@ -133,19 +131,6 @@ describe('useProvidersPageData', () => {
         expect(websocketMock.connect).toHaveBeenCalledTimes(1);
         expect(websocketMock.subscribe).toHaveBeenCalledTimes(1);
 
-        await act(async () => {
-            websocketMock.emit('provider.container_status', {
-                provider_id: 'provider-1',
-                status: 'running',
-                running: true,
-                healthy: true,
-            });
-        });
-
-        await waitFor(() => {
-            expect(first.result.current.providers[0].runtime_state.status).toBe('running');
-            expect(second.result.current.providers[0].runtime_state.status).toBe('running');
-        });
 
         second.unmount();
         expect(websocketMock.unsubscribe).not.toHaveBeenCalled();

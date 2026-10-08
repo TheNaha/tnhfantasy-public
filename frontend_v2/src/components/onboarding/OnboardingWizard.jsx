@@ -3,9 +3,8 @@ import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import {
-    Sparkles, Server, Cpu, PartyPopper, ScanSearch, Plus, ArrowRight, ArrowLeft, X, CheckCircle2,
+    Sparkles, Server, Cpu, PartyPopper, Plus, ArrowRight, ArrowLeft, X, CheckCircle2,
 } from 'lucide-react';
-import { providersApi } from '../../api';
 import useProvidersPageData from '../../hooks/useProvidersPageData';
 import { useModelDirectories } from '../../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../../constants/modelDirectories';
@@ -25,32 +24,12 @@ export default function OnboardingWizard({ onClose }) {
     useEscapeKey(onClose);
     const navigate = useNavigate();
     const [stepIndex, setStepIndex] = useState(0);
-    const [scanning, setScanning] = useState(false);
     const { providers, isLoading: providersLoading } = useProvidersPageData();
     const { modelsByKey, loading: modelsLoading } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
 
     const step = STEPS[stepIndex];
     const providerCount = providers?.length ?? 0;
     const checkpointCount = modelsByKey.checkpoints?.length ?? 0;
-
-    const handleScan = async () => {
-        setScanning(true);
-        try {
-            const result = await providersApi.detect();
-            const created = result?.created ?? [];
-            const already = result?.already ?? [];
-            const message = created.length
-                ? `Detected ${created.length} new container${created.length > 1 ? 's' : ''}: ${created.join(', ')}`
-                : already.length
-                    ? `No new containers — ${already.length} provider${already.length > 1 ? 's' : ''} already registered (via heartbeat).`
-                    : 'No provider containers detected.';
-            toast.success(message);
-        } catch (e) {
-            toast.error(`Detection failed: ${e.message}`);
-        } finally {
-            setScanning(false);
-        }
-    };
 
     const finish = () => {
         markSetupComplete();
@@ -114,8 +93,9 @@ export default function OnboardingWizard({ onClose }) {
                     {step.id === 'providers' && (
                         <div className="space-y-4">
                             <p className="text-gray-400 text-sm leading-relaxed">
-                                Inference runs on serverless workers (Modal, Beam) or local
-                                containers. Detect running containers, or add a provider manually.
+                                Inference runs on serverless engines (Modal, Beam, hosted LLMs)
+                                through the in-process provider engine. Add a provider manually
+                                to get started.
                             </p>
                             <div className="rounded-2xl border border-white/10 bg-black/30 p-4 flex items-center justify-between">
                                 <div className="flex items-center gap-3">
@@ -129,18 +109,10 @@ export default function OnboardingWizard({ onClose }) {
                                             {providersLoading ? 'Checking...' : `${providerCount} provider${providerCount === 1 ? '' : 's'} configured`}
                                         </p>
                                         <p className="text-xs text-gray-500">
-                                            {providerCount > 0 ? 'Workers can receive jobs.' : 'None yet — let us look for them.'}
+                                            {providerCount > 0 ? 'Engines can receive jobs.' : 'None yet — add one below.'}
                                         </p>
                                     </div>
                                 </div>
-                                <button
-                                    onClick={handleScan}
-                                    disabled={scanning}
-                                    className="flex items-center gap-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-sm font-bold px-4 py-2 rounded-xl transition-all disabled:opacity-50"
-                                >
-                                    <ScanSearch size={16} className={scanning ? 'animate-spin' : ''} />
-                                    {scanning ? 'Scanning...' : 'Scan for containers'}
-                                </button>
                             </div>
                             <button
                                 onClick={() => navigate('/providers')}

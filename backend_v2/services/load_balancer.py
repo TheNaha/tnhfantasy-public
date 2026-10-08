@@ -3,7 +3,6 @@ import asyncio
 import os
 import random
 import threading
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -14,15 +13,13 @@ from sqlmodel import Session, select
 
 from core.entities import (
     ACTIVE_JOB_STATUSES,
-    CONTAINER_TASK_TYPES,
+    ENGINE_TASK_TYPES,
     Job,
     LoadBalancerState,
     Provider,
 )
 from infrastructure.background_tasks import start_background_task
-from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
-from infrastructure.providers.runtime import provider_container_name, resolve_provider_health_url
 from infrastructure.repositories import ProviderRepository
 
 logger = get_logger("load_balancer")
@@ -94,41 +91,12 @@ def streak_threshold_for(task_type: str) -> int:
         return LLM_FAILURE_STREAK_THRESHOLD
     return _FAILURE_STREAK_THRESHOLD
 
-# Bound for the Docker-socket probe in `_check_provider_health`. The underlying
-# docker-py call still has no timeout of its own, so this `asyncio.wait_for` is
-# the only thing standing between a wedged daemon and a job submission that
-# never returns. Generous enough for a cold socket, short enough that routing
-# degrades to "unhealthy" instead of hanging. The 15s health cache means this
-# only applies to the first caller to miss.
-_CONTAINER_PROBE_TIMEOUT_SECONDS = _parse_positive_float(
-    os.getenv("COMFY_LB_CONTAINER_PROBE_TIMEOUT_SECONDS"),
+# Bound for the in-process engine health probe in `_check_provider_health`.
+# The 15s health cache means this only applies to the first caller to miss.
+_ENGINE_HEALTH_PROBE_TIMEOUT_SECONDS = _parse_positive_float(
+    os.getenv("COMFY_LB_ENGINE_HEALTH_TIMEOUT_SECONDS"),
     5.0,
 )
-
-# HTTP /health probe timeout. NOTE: this was 2.0s and is intentionally left at
-# 2.0s — it is a separate tuning question from the blocking-socket problem, and
-# a cold ComfyUI container can legitimately take longer than 2s to answer /health.
-# Cold candidates are selected anyway (see `get_next_provider`), so a tight value
-# here costs a wasted HTTP round trip rather than a routing failure. Raise it via
-# COMFY_LB_HTTP_PROBE_TIMEOUT_SECONDS if cold-start routing misbehaves.
-_HTTP_HEALTH_PROBE_TIMEOUT_SECONDS = _parse_positive_float(
-    os.getenv("COMFY_LB_HTTP_PROBE_TIMEOUT_SECONDS"),
-    2.0,
-)
-
-
-def _host_port_for_container(container_manager, provider_id: str, container_name: str, port: int) -> str | None:
-    """Resolve the host-published port for a provider container.
-
-    Blocking: reads `container.ports` from the Docker socket with no timeout.
-    Callers MUST run this via `asyncio.to_thread` under a bounded `wait_for`.
-    """
-    container = container_manager.client.containers.get(container_name)
-    ports = container.ports or {}
-    tcp_port_info = ports.get(f"{port}/tcp") or ports.get("8000/tcp")
-    if not tcp_port_info:
-        return None
-    return tcp_port_info[0].get("HostPort") or None
 
 
 @dataclass
@@ -409,118 +377,30 @@ class LoadBalancer:
         LoadBalancer.load_state_from_db(session, self.runtime_state, state_id=self.state_id)
     
     async def _check_provider_health(self, provider: Provider, task_type: str = "image") -> bool:
-        """Probe the container's status or health endpoint, caching the result for 15 seconds.
-
-        The cache key includes the health URL (and container port) so config
-        changes invalidate stale health results.
-        """
-        port = 8000
-        if provider.container_config and "port" in provider.container_config:
-            port = provider.container_config["port"]
-        cache_key = f"{provider.id}:{resolve_provider_health_url(provider, port)}"
+        """Probe the provider's in-process engine health, caching the result for 15 seconds."""
+        cache_key = f"in_process:{provider.id}"
 
         # Circuit-breaker: skip providers with a long failure streak. The
         # threshold is per-modality — an LLM endpoint mid-blip must not be
-        # judged by the container cold-start budget, and vice versa.
+        # judged by the image cold-start budget, and vice versa.
         if self.runtime_state.provider_failures.get(provider.id, 0) >= streak_threshold_for(task_type):
             return False
 
         # In-process compute engine health probe
-        from services.provider_runtime import use_in_process_engines
-        use_in_process = use_in_process_engines()
-        provider_config = getattr(provider, "config", None) or {}
-        explicit_container = isinstance(provider_config, dict) and provider_config.get("execution_mode") == "container"
-        if use_in_process and not explicit_container:
-            from services.engines.engine_factory import can_create_engine, get_engine
-            if can_create_engine(provider):
-                in_proc_key = f"in_process:{provider.id}"
-                if in_proc_key in _provider_health_cache:
-                    return _provider_health_cache[in_proc_key]
-                engine = get_engine(provider.id, provider)
-                if engine:
-                    try:
-                        res = await asyncio.wait_for(engine.check_health(), timeout=_CONTAINER_PROBE_TIMEOUT_SECONDS)
-                        is_ready = bool(res.get("ready") or res.get("status") == "healthy")
-                        _provider_health_cache[in_proc_key] = is_ready
-                        return is_ready
-                    except Exception as exc:
-                        logger.warning("in_process_health_failed", provider_id=provider.id, error=str(exc))
-                        _provider_health_cache[in_proc_key] = False
-                        return False
-
-        # Check cache
+        from services.engines.engine_factory import can_create_engine, get_engine
+        if not can_create_engine(provider):
+            return False
         if cache_key in _provider_health_cache:
             return _provider_health_cache[cache_key]
-
-        is_healthy = False
-        
-        # 1. First try container_manager container status (if containerized)
-        #
-        # `get_next_provider` awaits this for every candidate in a serial loop, and
-        # this used to call `cm.client.containers.get()` directly — a blocking
-        # docker-py round trip with NO timeout kwarg (docker-py defaults to 60s) —
-        # on the event loop. On a health-cache miss, one dead provider cost up to
-        # 60s of a wedged loop before the job was even submitted. `get_container_snapshot`
-        # is the sanctioned accessor for this (its docstring says the same thing)
-        # and adds a 2s TTL cache, so the probe goes through `to_thread` with a
-        # bounded wait.
-        if provider.container_config:
-            try:
-                from infrastructure.deps import get_container_manager
-                cm = get_container_manager()
-                if cm and cm.client:
-                    container_name = provider_container_name(provider.id)
-                    try:
-                        snapshot = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                cm.get_container_snapshot, provider.id, container_name
-                            ),
-                            timeout=_CONTAINER_PROBE_TIMEOUT_SECONDS,
-                        )
-                        if snapshot is not None and snapshot.status != "running":
-                            _provider_health_cache[cache_key] = False
-                            return False
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "health_container_probe_timeout",
-                            provider_id=provider.id,
-                            timeout=_CONTAINER_PROBE_TIMEOUT_SECONDS,
-                        )
-                    except Exception:
-                        logger.debug("health_container_probe_failed", provider_id=provider.id)
-            except Exception as exc:
-                logger.debug("health_docker_check_failed", provider_id=provider.id, error=str(exc))
-
-        # 2. Probe /health endpoint via HTTP
         try:
-            url = resolve_provider_health_url(provider, port)
-            
-            client = get_http_client()
-            response = await client.get(url, timeout=_HTTP_HEALTH_PROBE_TIMEOUT_SECONDS)
-            if response.status_code == 200:
-                is_healthy = True
-        except Exception:
-            # Try localhost fallback via Docker host port mapping
-            try:
-                from infrastructure.deps import get_container_manager
-                cm = get_container_manager()
-                if cm and cm.client:
-                    container_name = provider_container_name(provider.id)
-                    # Second blocking Docker read for the host port mapping: same
-                    # to_thread + bounded-wait treatment as step 1.
-                    host_port = await asyncio.wait_for(
-                        asyncio.to_thread(_host_port_for_container, cm, provider.id, container_name, port),
-                        timeout=_CONTAINER_PROBE_TIMEOUT_SECONDS,
-                    )
-                    if host_port:
-                        client = get_http_client()
-                        response = await client.get(f"http://localhost:{host_port}/health", timeout=_HTTP_HEALTH_PROBE_TIMEOUT_SECONDS)
-                        if response.status_code == 200:
-                            is_healthy = True
-            except asyncio.TimeoutError:
-                logger.debug("health_localhost_probe_timeout", provider_id=provider.id, cache_key=cache_key)
-            except Exception:
-                logger.debug("health_localhost_probe_failed", provider_id=provider.id, cache_key=cache_key)
+            engine = get_engine(provider.id, provider)
+            if engine is None:
+                return False
+            res = await asyncio.wait_for(engine.check_health(), timeout=_ENGINE_HEALTH_PROBE_TIMEOUT_SECONDS)
+            is_healthy = bool(res.get("ready") or res.get("status") == "healthy")
+        except Exception as exc:
+            logger.warning("in_process_health_failed", provider_id=provider.id, error=str(exc))
+            is_healthy = False
 
         _provider_health_cache[cache_key] = is_healthy
         return is_healthy
@@ -562,14 +442,14 @@ class LoadBalancer:
         if not providers:
             return None
 
-        # A ComfyUI-container task type (`image`, `tts`) that nobody can serve.
+        # A ComfyUI-engine task type (`image`, `tts`) that nobody can serve.
         # Returning None here is indistinguishable from "no provider is healthy",
         # so the failure is reported as an empty pool by the caller. Log the
         # capability sets so the cause is visible in the log rather than
         # inferred — this is the failure the whole column exists to prevent,
         # since before it a `tts` job was simply handed to an image worker that
         # has no TTS nodes and failed inside the graph.
-        if task_type in CONTAINER_TASK_TYPES:
+        if task_type in ENGINE_TASK_TYPES:
             capable = [
                 p.id
                 for p in self.repo.get_enabled()
@@ -712,84 +592,23 @@ class LoadBalancer:
         return None
 
     async def _warm_provider_in_background(self, provider: Provider) -> None:
-        """Fire-and-forget container startup + health poll for a cold provider.
+        """Fire-and-forget engine health fill for a cold provider.
 
-        Replaces the old synchronous up-to-30s poll that blocked the worker loop.
+        Engines need no startup — this just pre-populates the health cache so
+        the next routing decision does not pay for the first probe.
         """
-        from services.provider_runtime import use_in_process_engines
-        use_in_process = use_in_process_engines()
-        provider_config = getattr(provider, "config", None) or {}
-        explicit_container = isinstance(provider_config, dict) and provider_config.get("execution_mode") == "container"
-        if use_in_process and not explicit_container:
-            from services.engines.engine_factory import can_create_engine, get_engine
-            if can_create_engine(provider):
-                engine = get_engine(provider.id, provider)
-                if engine:
-                    try:
-                        res = await engine.check_health()
-                        is_ready = bool(res.get("ready") or res.get("status") == "healthy")
-                        _provider_health_cache[f"in_process:{provider.id}"] = is_ready
-                    except Exception as e:
-                        logger.warning("lb_in_process_warm_failed", provider_id=provider.id, error=str(e))
-                return
-
-        from infrastructure.deps import get_container_manager
-
+        from services.engines.engine_factory import can_create_engine, get_engine
+        if not can_create_engine(provider):
+            return
+        engine = get_engine(provider.id, provider)
+        if engine is None:
+            return
         try:
-            from services.provider_lifecycle_service import ProviderLifecycleService
-            lifecycle_service = ProviderLifecycleService(
-                self.session,
-                container_manager=get_container_manager(),
-                invalidate_caches=self.invalidate_model_availability_cache,
-            )
-            await lifecycle_service.start_container(provider.id)
-        except Exception as start_err:
-            logger.warning("lb_cold_start_trigger_failed", provider_id=provider.id, error=str(start_err))
-
-        port = 8000
-        if provider.container_config and "port" in provider.container_config:
-            port = provider.container_config["port"]
-        url = resolve_provider_health_url(provider, port)
-        cache_key = f"{provider.id}:{url}"
-        client = get_http_client()
-
-        start_time = time.monotonic()
-        while time.monotonic() - start_time < 30.0:
-            try:
-                res = await client.get(url, timeout=1.0)
-                if res.status_code == 200:
-                    _provider_health_cache[cache_key] = True
-                    logger.info("lb_cold_start_polled", provider_id=provider.id, success=True, duration=time.monotonic() - start_time)
-                    return
-            except Exception:
-                try:
-                    # Localhost fallback via Docker host port mapping.
-                    # Same blocking-socket problem as `_check_provider_health`:
-                    # `containers.get()` is off-loop here too, and this poll runs
-                    # once a second for up to 30s.
-                    cm = get_container_manager()
-                    if cm and cm.client:
-                        host_port = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                _host_port_for_container,
-                                cm,
-                                provider.id,
-                                provider_container_name(provider.id),
-                                port,
-                            ),
-                            timeout=_CONTAINER_PROBE_TIMEOUT_SECONDS,
-                        )
-                        if host_port:
-                            res = await client.get(f"http://localhost:{host_port}/health", timeout=1.0)
-                            if res.status_code == 200:
-                                _provider_health_cache[cache_key] = True
-                                logger.info("lb_cold_start_polled", provider_id=provider.id, success=True, duration=time.monotonic() - start_time)
-                                return
-                except Exception:
-                    logger.debug("health_poll_probe_failed", provider_id=provider.id)
-            await asyncio.sleep(1.0)
-
-        logger.info("lb_cold_start_polled", provider_id=provider.id, success=False, duration=time.monotonic() - start_time)
+            res = await engine.check_health()
+            is_ready = bool(res.get("ready") or res.get("status") == "healthy")
+            _provider_health_cache[f"in_process:{provider.id}"] = is_ready
+        except Exception as e:
+            logger.warning("lb_in_process_warm_failed", provider_id=provider.id, error=str(e))
 
     
     async def _track_job(self, provider_id: str):

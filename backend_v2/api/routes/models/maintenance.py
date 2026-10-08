@@ -490,7 +490,6 @@ async def backfill_provider_statuses(
     Backfill provider_statuses for all models by querying each provider.
     Useful for migrating existing models or after worker issues.
     """
-    from infrastructure.http_client import get_http_client
     from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
     from services.provider_runtime import resolve_provider_runtime_async
 
@@ -516,8 +515,6 @@ async def backfill_provider_statuses(
         "errors": []
     }
     
-    http_client = get_http_client()
-    
     MODEL_DIRECTORIES = [
         f"models/{d}" for d in _DIRECTORY_TO_MODEL_TYPE
     ]
@@ -525,22 +522,6 @@ async def backfill_provider_statuses(
     import asyncio
     
     tasks = []
-
-    async def check_directory(provider_id, directory, worker_url):
-        try:
-            response = await http_client.post(
-                f"{worker_url}/list-models",
-                json={"directory": directory},
-                timeout=60.0
-            )
-            if response.status_code != 200:
-                return []
-            
-            data = response.json()
-            return _collect_ready_updates(provider_id, directory, data.get("files", []))
-        except Exception as e:
-            results["errors"].append(f"Failed to query {provider_id} at {directory}: {e!s}")
-            return []
 
     def _collect_ready_updates(provider_id, directory, provider_files):
         updates = []
@@ -591,20 +572,7 @@ async def backfill_provider_statuses(
                 tasks.append(check_directory_engine(provider.id, directory, engine))
             continue
 
-        if runtime.mode not in ("container_http", "discovery"):
-            continue
-
-        # LLM workers don't manage image model files; querying them wastes
-        # upstream API calls (one per image directory).
-        if getattr(provider, "worker_type", "image") == "llm":
-            continue
-
-        worker_url = runtime.worker_url
-        
-        results["providers_checked"] += 1
-        
-        for directory in MODEL_DIRECTORIES:
-            tasks.append(check_directory(provider.id, directory, worker_url))
+        # Only in-process engines can be queried; anything else is skipped.
             
     all_updates = await asyncio.gather(*tasks)
     

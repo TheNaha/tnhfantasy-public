@@ -26,7 +26,7 @@ from api.deps import (
 )
 from core.entities import JobStatus
 from core.events import EventType
-from infrastructure.http_client import get_http_client
+
 from services.job_queue import queue_manager
 from services.provider_runtime import resolve_provider_runtime_async
 
@@ -238,19 +238,7 @@ async def cancel_job(sid, data):
                     provider = await provider_service.get_provider(job.provider_id)
                     runtime = await resolve_provider_runtime_async(provider)
 
-                    if runtime.mode in ("container_http", "discovery"):
-                        try:
-                            http_client = get_http_client()
-                            response = await http_client.post(
-                                f"{runtime.worker_url}/cancel-job",
-                                json={"job_id": job_id},
-                                timeout=5.0
-                            )
-                            if response.status_code == 200:
-                                logger.info(f"[WebSocket] Worker acknowledged cancel for {job_id}")
-                        except Exception as cancel_err:
-                            logger.warning(f"[WebSocket] Could not reach worker to cancel: {cancel_err}")
-                    elif runtime.mode == "in_process":
+                    if runtime.mode == "in_process":
                         # Reach the engine instance actually streaming the job;
                         # the factory cache may hold a different instance.
                         try:

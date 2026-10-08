@@ -354,9 +354,13 @@ class ProviderStatusService:
         provider_id: str,
         provider: Any | None = None,
     ) -> dict[str, Any]:
-        """Return the latest known deploy state without synchronous HTTP polling."""
-        persisted_state = await self.provider_service.get_provider_deploy_state(provider_id)
-        return persisted_state
+        """Deploys no longer exist — in-process engines need none.
+
+        Returns a stable idle payload so the status-card shape (and the
+        frontend DeployTab reading it) keeps working until the UI cleanup
+        lands.
+        """
+        return {"status": "idle"}
 
     @staticmethod
     def build_provider_diagnostics(

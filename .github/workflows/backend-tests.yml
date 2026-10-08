@@ -10,8 +10,9 @@ on:
       # drift-checks it in both directions. Neither ran on a change to the
       # document alone, so the one file whose entire job is to track the API was
       # the one file that could drift silently. The generator itself lives under
-      # `scripts/**`, which triggers `provider-tests.yml` — a workflow that does
-      # not run the backend suite — so the check had no trigger at all.
+      # `scripts/**`, which triggers `provider-tests.yml` — a workflow whose
+      # app-images job renders the compose file but does not run the backend
+      # suite — so the check had no trigger at all.
       - 'docs/api.md'
       - '.github/workflows/backend-tests.yml'
   pull_request:
@@ -23,8 +24,9 @@ on:
       # drift-checks it in both directions. Neither ran on a change to the
       # document alone, so the one file whose entire job is to track the API was
       # the one file that could drift silently. The generator itself lives under
-      # `scripts/**`, which triggers `provider-tests.yml` — a workflow that does
-      # not run the backend suite — so the check had no trigger at all.
+      # `scripts/**`, which triggers `provider-tests.yml` — a workflow whose
+      # app-images job renders the compose file but does not run the backend
+      # suite — so the check had no trigger at all.
       - 'docs/api.md'
       - '.github/workflows/backend-tests.yml'
 

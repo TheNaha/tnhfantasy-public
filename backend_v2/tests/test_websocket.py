@@ -158,10 +158,10 @@ async def test_cancel_job_pending(mock_get_session, mock_job_service_cls, mock_q
 @patch("api.routes.websocket.queue_manager")
 @patch("api.routes.websocket.get_job_service")
 @patch("api.routes.websocket.get_provider_service")
-@patch("api.routes.websocket.get_http_client")
+@patch("services.engines.base.find_engine_for_job")
 @patch("api.routes.websocket.resolve_provider_runtime_async")
 @patch("infrastructure.database.get_session_context")
-async def test_cancel_job_active(mock_get_session, mock_resolve_provider_runtime, mock_get_http, mock_get_provider_service, mock_get_job_service, mock_queue_manager, mock_sio):
+async def test_cancel_job_active(mock_get_session, mock_resolve_provider_runtime, mock_find_engine, mock_get_provider_service, mock_get_job_service, mock_queue_manager, mock_sio):
     sid = "test_sid"
     job_id = "job1"
 
@@ -185,22 +185,19 @@ async def test_cancel_job_active(mock_get_session, mock_resolve_provider_runtime
     mock_provider = MagicMock()
     mock_provider.id = "p1"
     mock_provider.type = "modal"
-    mock_provider.container_config = {"container_name": "c1"}
     mock_provider_service.get_provider = AsyncMock(return_value=mock_provider)
 
     mock_runtime = MagicMock()
-    mock_runtime.mode = "container_http"
-    mock_runtime.worker_url = "http://test"
+    mock_runtime.mode = "in_process"
     mock_resolve_provider_runtime.return_value = mock_runtime
 
-    # Mock HTTP client
-    mock_http = AsyncMock()
-    mock_http.post.return_value.status_code = 200
-    mock_get_http.return_value = mock_http
+    # Mock engine holding the streaming job
+    mock_engine = AsyncMock()
+    mock_find_engine.return_value = mock_engine
 
     await cancel_job(sid, {"job_id": job_id})
-    
-    mock_http.post.assert_called_once()
+
+    mock_engine.cancel_job.assert_called_once_with(job_id)
     mock_job_service.update_job.assert_called_once()
     mock_sio.emit.assert_called_with('cancel_job_ack', ANY, room=sid)
 

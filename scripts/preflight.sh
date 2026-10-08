@@ -65,17 +65,21 @@ echo "==> Provider env files"
 # but commented out, so the raw extraction demanded an env file for a service
 # compose will not start. A shipped script that refuses to pass on a valid
 # checkout is worse than the note it replaced.
-provider_env_files=$(sed -e 's/#.*//' docker-compose.yml | grep -oE '\.env\.[a-z0-9-]+' | sort -u)
-for f in $provider_env_files; do
-  [[ -f "$f" ]] && ok "$f" || bad "$f missing — docker compose will refuse to start (create it or remove the service)"
+# No per-worker env files: containerized providers are gone. The only env the
+# compose stack needs beyond the root .env is nothing — engines resolve
+# credentials from provider rows + COMFY_PROVIDER_ENV_PATH.
+for f in .env.modal-zetsuke .env.modal-hp196 .env.modal-stepmania .env.llm-local .env.tts-modal-hp196 .env.direct-url .env.remote-comfy; do
+  if [[ -f "$f" ]]; then
+    note "$f: leftover from containerized providers — safe to delete (engines no longer read it)"
+  fi
 done
 
 echo
 echo "==> Auth tokens"
-# One secret, both directions. Both ends fail CLOSED without it: a container
-# answers 503 on every protected route, and the backend refuses unauthenticated
-# provider registration. This check exists because that failure is otherwise
-# only visible as `discovery_token_not_configured` in the container logs.
+# One secret, both directions. The backend refuses unauthenticated remote-agent
+# registration, and the agent refuses untokened inbound requests. This check
+# exists because that failure is otherwise only visible as a 401 in the agent
+# logs.
 if [[ -f .env ]]; then
   value=$(grep -E "^COMFY_PROVIDER_TOKEN=." .env | head -1 | cut -d= -f2-)
   if [[ -n "$value" ]]; then
@@ -134,10 +138,10 @@ esac
 
 echo
 echo "==> Autostart path"
+# No more provider autostart/deploy from the backend: containerized providers
+# are gone, and in-process engines are constructed on demand — no HOST_BACKEND_PATH.
 if grep -qE "^HOST_BACKEND_PATH=." .env 2>/dev/null; then
-  ok "HOST_BACKEND_PATH is set (needed only for COMFY_PROVIDER_AUTOSTART_ENABLED=1 / deploy)"
-else
-  note "HOST_BACKEND_PATH unset — backend-driven provider autostart and deploy will raise ValueError"
+  note "HOST_BACKEND_PATH is set but unused (containerized providers were removed)"
 fi
 
 # `.env` is injected into the backend verbatim by `env_file:`, so a value written
@@ -264,9 +268,6 @@ gate COMFY_IDLE_SIM_ENABLED \
 gate COMFY_LB_HEALTH_CHECKS_ENABLED \
   "defaults to on; set 0 only to silence provider probes" \
   "LB health checks on"
-gate COMFY_PROVIDER_AUTOSTART_ENABLED \
-  "backend-driven provider autostart and deploy are off (also needs HOST_BACKEND_PATH)" \
-  "provider autostart on"
 gate COMFY_ASSET_MIGRATION_FORCE \
   "off by default; set 1 to force a full asset re-scan on boot" \
   "forced asset re-scan on EVERY boot"
@@ -280,11 +281,11 @@ gate COMFY_DB_POOL_TIMEOUT \
   "defaults to 30s; this is how long a request waits before the pool gives up" \
   "DB pool wait"
 gate COMFY_WORKER_HOSTS \
-  "no exclusions; provider hosts are resolved from the provider table instead, so this only matters for a genuinely external host that must NOT receive the shared token" \
+  "no exclusions; remote-agent hosts are allowlisted for token attach here" \
   "hosts excluded from token attachment"
 gate COMFY_DISCOVERY_ALLOWED_HOSTS \
-  "no allowlist, so any provider may register. Setting it is a RESTRICTION: a provider whose hostname is not listed is refused with 422" \
-  "discovery host allowlist (restrictive)"
+  "no allowlist, so any remote agent may register. Setting it is a RESTRICTION: a host whose hostname is not listed is refused with 422" \
+  "remote-agent host allowlist (restrictive)"
 gate COMFY_UVICORN_WORKERS \
   "single worker, which is required: >1 raises at boot (the websocket broadcast is in-process)" \
   "requested uvicorn workers"

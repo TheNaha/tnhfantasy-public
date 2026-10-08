@@ -19,19 +19,15 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from api.deps import (
-    get_container_manager,
     get_provider_service,
     get_provider_status_service,
-    get_provider_worker_url,
     get_session,
 )
 from core.entities import Provider
-from infrastructure.background_tasks import start_background_task
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import api_logger
 from services.provider_runtime import resolve_provider_runtime_async
 from services.engines.registry import ui_schemas, validate_provider_payload
-from services.provider_service import ProviderService
 from services.provider_status_service import invalidate_provider_status_caches
 
 logger = api_logger()
@@ -178,48 +174,6 @@ async def update_load_balancing_alias(
 # ============================================================================
 
 
-@router.post("/wake")
-async def wake_providers(session: Session = Depends(get_session)):
-    """Ping enabled provider containers to wake them up from cold start."""
-    service = get_provider_service(session)
-    providers = service.get_enabled_providers()
-    # Container placement may live under `config` (migration 089 folds the
-    # legacy key there) or still under `container_config` on un-migrated
-    # rows — the wake ping must find both.
-    def _has_container_placement(provider) -> bool:
-        legacy = getattr(provider, "container_config", None) or {}
-        current = getattr(provider, "config", None) or {}
-        if isinstance(legacy, dict) and legacy:
-            return True
-        return bool(isinstance(current, dict) and ("container_name" in current or "port" in current))
-
-    active_providers = [provider for provider in providers if _has_container_placement(provider)]
-    
-    if not active_providers:
-        return {"status": "success", "message": "No active containerized providers to wake"}
-
-    async def ping_containers():
-        http_client = get_http_client()
-
-        async def ping_worker(provider_id: str):
-            try:
-                await http_client.get(
-                    f"{get_provider_worker_url(provider_id)}/health",
-                    timeout=5.0,
-                )
-            except Exception as exc:
-                logger.debug("worker_ping_failed", provider_id=provider_id, error=str(exc))
-
-        await asyncio.gather(
-            *(ping_worker(provider.id) for provider in active_providers),
-            return_exceptions=True,
-        )
-
-    start_background_task(ping_containers(), task_name="wake_provider_containers")
-    
-    return {"status": "success", "message": f"Wake signal sent to {len(active_providers)} providers"}
-
-
 async def _republish_known_provider_hosts() -> None:
     """Re-read the provider table after a write, so the token attachment is not stale.
 
@@ -240,128 +194,9 @@ async def _republish_known_provider_hosts() -> None:
         logger.warning("provider_host_republish_failed", error=str(exc))
 
 
-def _infer_discovery_type(provider_id: str) -> tuple[str, str]:
-    """Map a container-derived provider id to (provider_type, worker_type).
-
-    Mirrors what the provider containers themselves heartbeat (see
-    image_worker/worker.py and llm_worker/worker.py) so a detected row
-    matches what discovery would eventually create.
-    """
-    if provider_id == "llm-local" or "llm" in provider_id:
-        return "openai_compat", "llm"
-    # TTS before the `modal-` branch, because a TTS provider is named
-    # `tts-modal-<name>` and would otherwise be registered as an image worker —
-    # offered checkpoint jobs its container cannot run. Checked before `llm` too
-    # for the same reason: the substring test on "llm" is loose enough to catch
-    # any name containing it, and order is what makes the specific cases win.
-    if "tts" in provider_id:
-        return "modal", "tts"
-    if provider_id.startswith("modal-"):
-        return "modal", "image"
-    if provider_id.startswith("beam-"):
-        return "beam", "image"
-    if provider_id == "direct-url":
-        return "direct_url", "image"
-    return "direct_url", "image"
-
-
-@router.post("/detect")
-async def detect_provider_containers(
-    container_manager = Depends(get_container_manager),
-    service: ProviderService = Depends(get_provider_service),
-):
-    """Register running provider containers that are not yet providers.
-
-    Scans deployment-managed containers (label comfy-provider=true) and
-    compose-managed `tnhcomfy-*` containers when a container runtime socket
-    is available, upserting the missing ones via the same path discovery
-    heartbeats use. When no socket is available (typical compose setup),
-    container workers self-register through their heartbeat — this endpoint
-    then reports what is already known.
-    """
-    container_runtime_available = container_manager is not None
-    existing = {p.id for p in service.repo.get_all()}
-    candidates: dict[str, str] = {}
-
-    if container_manager:
-        # Both of these are synchronous Docker socket reads with no timeout, on
-        # the event loop of an `async def` handler. `list_containers` is a raw
-        # `client.containers.list()` with no TTL cache, so this was a blocking
-        # round-trip to the daemon on every call, stalling every other
-        # in-flight request for its duration. `container_manager`'s own
-        # docstring says to call it from `asyncio.to_thread`.
-        #
-        # The session work below stays on the loop: it is bounded, indexed, and
-        # moving a request-scoped `Session` into a worker thread is the pattern
-        # that breaks the moment anything else uses it concurrently.
-        def _scan() -> tuple[list[dict], bool, object, str | None]:
-            entries, runtime_available = container_manager.list_containers()
-            try:
-                raw = container_manager.client.containers.list(all=False)
-            except Exception as exc:
-                return entries, runtime_available, [], str(exc)
-            return entries, runtime_available, raw, None
-
-        entries, list_runtime_available, raw, scan_error = await asyncio.to_thread(_scan)
-        container_runtime_available = container_runtime_available and list_runtime_available
-
-        for entry in entries:
-            name = entry.get("name") or ""
-            provider_id = entry.get("provider_id") or (
-                name[len("tnhcomfy-"):] if name.startswith("tnhcomfy-") else None
-            )
-            if provider_id:
-                candidates[provider_id] = name
-
-        if scan_error is not None:
-            logger.warning("detect_container_scan_failed", error=scan_error)
-            container_runtime_available = False
-
-        skip_prefixes = ("tnhcomfy-backend", "tnhcomfy-frontend", "tnhcomfy-db", "tnhcomfy-deploy-")
-        for container in raw:
-            name = container.name
-            if not name.startswith("tnhcomfy-"):
-                continue
-            if name.startswith(skip_prefixes):
-                continue
-            provider_id = (container.labels or {}).get("provider-id") or name[len("tnhcomfy-"):]
-            candidates[provider_id] = name
-
-    created: list[str] = []
-    for provider_id, container_name in sorted(candidates.items()):
-        if provider_id in existing:
-            continue
-        provider_type, worker_type = _infer_discovery_type(provider_id)
-        await service.upsert_provider_from_discovery(
-            provider_id=provider_id,
-            provider_type=provider_type,
-            worker_type=worker_type,
-            internal_url=f"http://{container_name}:8000",
-        )
-        # Container SCAN has no heartbeat payload, so capabilities come from the
-        # inferred worker_type alone — a scanned `tts-modal-*` container gets
-        # `[worker_type]` from the upsert default, which is correct. The heartbeat
-        # path, when the container is reachable, overrides with what it declares.
-        created.append(provider_id)
-
-    already = sorted(existing)
-    logger.info("providers_detected", created=created, already=already,
-                container_runtime_available=container_runtime_available)
-    return {
-        "created": created,
-        "already": already,
-        "container_runtime_available": container_runtime_available,
-    }
-
-
 @router.post("/{provider_id}/ping")
 async def ping_provider(provider_id: str, session: Session = Depends(get_session)):
-    """Ping a provider worker from the backend network and report latency.
-
-    Browsers cannot resolve docker-internal worker hostnames (tnhcomfy-<id>),
-    so the health probe is proxied through the backend instead of being
-    fetched directly from the client.
-    """
+    """Probe a provider's in-process engine and report latency."""
     provider = session.get(Provider, provider_id)
     if not provider:
         return {
@@ -379,12 +214,10 @@ async def ping_provider(provider_id: str, session: Session = Depends(get_session
         engine = get_engine(provider_id, provider)
         if engine:
             try:
-                # Bounded like the container /health probe below; an engine
-                # whose upstream hangs must answer unhealthy, not hang ping.
+                # Bounded: an engine whose upstream hangs must answer
+                # unhealthy, not hang ping.
                 health = await asyncio.wait_for(engine.check_health(), timeout=10.0)
             except Exception as exc:
-                # Parity with container path which returned {healthy:false}
-                # instead of 500 on probe failure.
                 return {
                     "healthy": False,
                     "worker_url": "in_process",
@@ -405,8 +238,6 @@ async def ping_provider(provider_id: str, session: Session = Depends(get_session
 
     if runtime.worker_url:
         base_url = runtime.worker_url.rstrip("/")
-    elif provider.container_config:
-        base_url = get_provider_worker_url(provider_id).rstrip("/")
     if not base_url:
         return {
             "healthy": False,
@@ -612,8 +443,7 @@ async def get_provider_discovered_models(
         worker_type = getattr(provider, "worker_type", "") or provider.type
         if worker_type == "tts" or provider.type in ("modal_tts", "tts"):
             # Kokoro / TTS voice catalogue (static: the TTS engine exposes no
-            # live voice-listing endpoint on either side — container returned
-            # {"models": []}, in-process returns []).
+            # live voice-listing endpoint, so in-process returns [].).
             default_voices = [
                 {"name": "af_bella", "id": "af_bella", "type": "voice", "gender": "female", "accent": "American"},
                 {"name": "af_sarah", "id": "af_sarah", "type": "voice", "gender": "female", "accent": "American"},

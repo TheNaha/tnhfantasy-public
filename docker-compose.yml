@@ -76,9 +76,7 @@ services:
     volumes:
       - ./data:/data
       # Read-only mount of the project root so in-process engines can resolve
-      # per-provider credential files (.env.modal-zetsuke, .env.modal-hp196, etc.).
-      # Without this, can_create_engine() cannot find the tokens and providers
-      # silently fall back to the deprecated container path.
+      # per-provider credential files (.env.<provider-id>) via COMFY_PROVIDER_ENV_PATH.
       - ./:/comfyui:ro
     env_file:
       - .env

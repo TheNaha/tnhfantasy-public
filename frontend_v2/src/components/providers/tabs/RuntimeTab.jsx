@@ -158,12 +158,8 @@ export default function RuntimeTab({
     const [pingLatency, setPingLatency] = useState(null);
     const isLLM = provider.worker_type === 'llm';
     // Trust the backend's resolved mode: `in_process` is the in-process
-    // engine, `container_http` a Docker container, `discovery` / everything
-    // else a remote endpoint. The old `!container_name` fallback misread
-    // discovery and external-worker providers (which have no container_name)
-    // as in-process and hid their Worker URL.
-    const isInProcess = runtime.mode === 'in_process' || provider.execution_mode === 'in_process';
-    const isContainer = runtime.mode === 'container_http';
+    // engine, everything else a remote endpoint (external worker).
+    const isInProcess = runtime.mode === 'in_process';
 
     const handlePingTest = async () => {
         setPingStatus('loading');
@@ -195,22 +191,11 @@ export default function RuntimeTab({
                         {provider.config?.comfy_url && <DataRow label="ComfyUI URL" value={provider.config.comfy_url} mono />}
                     </>
                 ) : (
-                    <>
-                        <DataRow label="Worker URL" value={runtime.worker_url} mono />
-                        {isContainer && (
-                            <DataRow label="Container Port" value={String(provider.runtime_config?.port ?? 'n/a')} />
-                        )}
-                    </>
+                    <DataRow label="Worker URL" value={runtime.worker_url} mono />
                 )}
                 <DataRow label="Jobs Assigned" value={String(jobsAssigned)} />
                 <DataRow label="Failures" value={String(providerFailures)} />
                 <DataRow label="Last Seen" value={runtime.last_seen_at ? formatTimestamp(runtime.last_seen_at) : 'N/A'} />
-                {!isLLM && isContainer && (
-                    <>
-                        <DataRow label="Container ID" value={runtime.container_id ? runtime.container_id.slice(0, 12) : 'N/A'} mono />
-                        <DataRow label="Uptime" value={runtime.uptime ? Math.floor(runtime.uptime / 60) + 'm' : 'N/A'} />
-                    </>
-                )}
             </div>
 
             {/* Model & Voice Discovery */}

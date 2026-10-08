@@ -9,7 +9,6 @@
 #   GET    /api/v2/providers/load-balancing – Current LB strategy
 #   PUT    /api/v2/providers/load-balancing – Update LB strategy
 #   POST   /api/v2/providers/{id}/reconcile – Trigger model sync
-#   GET/POST /api/v2/providers/{id}/container/* – Container lifecycle management
 import asyncio
 from typing import Any
 
@@ -128,9 +127,8 @@ async def push_reconciliation_event(
     event_bus = Depends(get_event_bus)
 ):
     """
-    Receive reconciliation events from worker containers.
+    Receive reconciliation events from the in-process reconciliation loop.
     Emits them via WebSocket to connected frontends.
-    Called by workers during reconciliation to push real-time updates.
     """
     # Map status to event type
     status_to_event = {

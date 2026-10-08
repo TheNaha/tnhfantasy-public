@@ -446,12 +446,7 @@ export const EventTypes = {
 
     // Provider events
     PROVIDER_STATUS: 'provider.status',
-    PROVIDER_CONTAINER_STATUS: 'provider.container_status',
     PROVIDER_STATS_UPDATE: 'provider.stats_update',
-    PROVIDER_DEPLOY_STARTED: 'provider.deploy_started',
-    PROVIDER_DEPLOY_PROGRESS: 'provider.deploy_progress',
-    PROVIDER_DEPLOY_COMPLETED: 'provider.deploy_completed',
-    PROVIDER_DEPLOY_FAILED: 'provider.deploy_failed',
 
     // Model status events (replaces sync-status polling)
     MODEL_STATUS_UPDATE: 'model.status_update',
@@ -461,7 +456,7 @@ export const EventTypes = {
     RECONCILIATION_PROGRESS: 'reconciliation.progress',
     RECONCILIATION_COMPLETED: 'reconciliation.completed',
     // Was missing here while the backend emitted it and listed it in
-    // `TERMINAL_EVENT_TYPES`. A worker failure therefore left the provider card
+    // `TERMINAL_EVENT_TYPES`. An engine failure therefore left the provider card
     // reading "reconciling" with no toast and no error, until a manual refetch,
     // while the database already held the correct status — the UI and the DB
     // disagreed until reload. `eventContractInvariants.test.js` fails if an

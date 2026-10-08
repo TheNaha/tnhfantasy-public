@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from core.entities import JobStatus, Provider
 from core.exceptions import NotFoundError
 from core.workflow_parser import extract_models_from_workflow
-from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from services.job_processing import finalize_successful_job
 # Imported for its side effect of being reachable as `services.job_runner
@@ -200,26 +199,6 @@ async def signal_provider_cancellation(*, runtime, provider_id: str, job_id: str
                 )
             return bool(cancelled)
 
-        if runtime.mode in ("container_http", "discovery") and runtime.worker_url:
-            http_client = get_http_client()
-            response = await http_client.post(
-                f"{runtime.worker_url}/cancel-job",
-                json={"job_id": job_id},
-                timeout=5.0,
-            )
-            if getattr(response, "status_code", None) == 200:
-                logger.info("provider_cancel_signaled", job_id=job_id, provider=provider_id, mode=runtime.mode)
-                return True
-
-            logger.warning(
-                "provider_cancel_unacknowledged",
-                job_id=job_id,
-                provider=provider_id,
-                mode=runtime.mode,
-                status=getattr(response, "status_code", None),
-            )
-            return False
-
         if runtime.mode == "external_worker":
             from infrastructure.worker_registry import request_worker_job_cancel
 
@@ -230,6 +209,14 @@ async def signal_provider_cancellation(*, runtime, provider_id: str, job_id: str
             else:
                 logger.warning("provider_cancel_not_connected", job_id=job_id, provider=provider_id, mode=runtime.mode)
             return cancelled
+
+        logger.warning(
+            "provider_cancel_wrong_mode",
+            job_id=job_id,
+            provider=provider_id,
+            mode=runtime.mode,
+        )
+        return False
     except Exception as exc:
         logger.warning(
             "provider_cancel_signal_failed",
@@ -283,8 +270,6 @@ async def execute_job(
     preferred_provider_id: str | None = None,
     *,
     session_context_manager,
-    call_image_provider_fn,
-    call_llm_provider_fn,
     process_image_background_fn,
     get_timeout_fn,
     get_max_retries_fn,
@@ -394,9 +379,9 @@ async def execute_job(
                     attempt=attempt,
                 )
 
-                # Off the event loop: the sync resolver does a blocking,
-                # timeout-less Docker-socket read, and this is the hottest
-                # coroutine in the app — every job, every attempt.
+                # Off the event loop: the sync resolver reads the database, and
+                # this is the hottest coroutine in the app — every job, every
+                # attempt.
                 runtime = await resolve_provider_runtime_async(current_provider)
                 if not runtime.connected:
                     logger.warning("provider_runtime_unavailable", job_id=job_id, provider=current_provider.id, mode=runtime.mode)
@@ -457,31 +442,6 @@ async def execute_job(
 
                             final_result = await call_in_process_image_provider(
                                 engine=engine,
-                                workflow=job.workflow,
-                                job_id=job_id,
-                                job_service=job_service,
-                                total_nodes=total_nodes,
-                                timeout=timeout,
-                                use_snapshot=use_snapshot,
-                                provider_id=current_provider.id,
-                            )
-                    elif runtime.mode in ("container_http", "discovery"):
-                        # Route to the correct provider function based on task type.
-                        # call_*_provider_fn already enforces stream/client timeout semantics.
-                        # Avoid double-wrapping with asyncio.wait_for to keep timeout ownership clear.
-                        if task_type == "llm":
-                            final_result = await call_llm_provider_fn(
-                                worker_url=runtime.worker_url,
-                                workflow=job.workflow,
-                                job_id=job_id,
-                                job_service=job_service,
-                                timeout=timeout,
-                                provider_id=current_provider.id,
-                                provider_type=current_provider.type,
-                            )
-                        else:
-                            final_result = await call_image_provider_fn(
-                                worker_url=runtime.worker_url,
                                 workflow=job.workflow,
                                 job_id=job_id,
                                 job_service=job_service,

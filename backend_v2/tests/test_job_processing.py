@@ -70,32 +70,40 @@ async def _wait_for_provider_stats(session: Session, provider_id: str, expected_
     return {item["id"]: item for item in stats["provider_stats"]}
 
 
+def _in_process_runtime(provider_id):
+    return SimpleNamespace(
+        provider_id=provider_id,
+        mode="in_process",
+        connected=True,
+        worker_url=None,
+        status="running",
+        healthy=True,
+    )
+
+
+def _unavailable_runtime(provider_id):
+    return SimpleNamespace(
+        provider_id=provider_id,
+        mode="unavailable",
+        connected=False,
+        worker_url=None,
+        status="unavailable",
+        healthy=False,
+    )
+
+
 @pytest.fixture(autouse=True)
-def _stub_container_runtime(monkeypatch):
+def _stub_engine_runtime(monkeypatch):
     async def fake_resolve_provider_runtime(provider):
         container_config = getattr(provider, "container_config", None) or {}
         if not container_config:
-            return SimpleNamespace(
-                provider_id=provider.id,
-                mode="unavailable",
-                connected=False,
-                worker_url=None,
-                status="unavailable",
-                healthy=False,
-            )
+            return _unavailable_runtime(provider.id)
+        return _in_process_runtime(provider.id)
 
-        return SimpleNamespace(
-            provider_id=provider.id,
-            mode="container_http",
-            connected=True,
-            worker_url=f"http://tnhcomfy-{provider.id}:8000",
-            status="running",
-            healthy=True,
-        )
-
-    # job_runner awaits the non-blocking resolver so the blocking Docker-socket
-    # read it performs stays off the event loop.
     monkeypatch.setattr("services.job_runner.resolve_provider_runtime_async", fake_resolve_provider_runtime)
+    # execute_job resolves an engine per attempt; tests that drive the
+    # provider call fake the engine-level transport instead.
+    monkeypatch.setattr("services.engines.engine_factory.get_engine", lambda *args, **kwargs: SimpleNamespace())
 
 
 @pytest.mark.asyncio
@@ -108,26 +116,16 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
 
     async def fake_call_image_provider(**kwargs):
-        assert kwargs["worker_url"] == "http://tnhcomfy-provider-2:8000"
+        assert kwargs["provider_id"] == "provider-2"
         return {"images": []}
 
     async def fake_resolve_provider_runtime(provider):
         if provider.id == "provider-1":
-            return SimpleNamespace(
-                provider_id=provider.id,
-                mode="unavailable",
-                connected=False,
-                worker_url=None,
-            )
-        return SimpleNamespace(
-            provider_id=provider.id,
-            mode="container_http",
-            connected=True,
-            worker_url="http://tnhcomfy-provider-2:8000",
-        )
+            return _unavailable_runtime(provider.id)
+        return _in_process_runtime(provider.id)
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
+    monkeypatch.setattr("services.provider_client.call_in_process_image_provider", fake_call_image_provider)
     monkeypatch.setattr("services.job_runner.resolve_provider_runtime_async", fake_resolve_provider_runtime)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
@@ -155,13 +153,12 @@ async def test_process_job_falls_back_after_non_retryable_provider_error(session
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
 
     async def fake_call_image_provider(**kwargs):
-        worker_url = kwargs["worker_url"]
-        if worker_url == "http://tnhcomfy-provider-1:8000":
+        if kwargs["provider_id"] == "provider-1":
             raise ProviderCallError("bad workflow", provider_id="provider-1", is_retryable=False)
         return {"images": []}
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
+    monkeypatch.setattr("services.provider_client.call_in_process_image_provider", fake_call_image_provider)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
 
@@ -208,7 +205,7 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
         return None
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
+    monkeypatch.setattr("services.provider_client.call_in_process_image_provider", fake_call_image_provider)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main._process_image_background", fake_process_image_background)
     monkeypatch.setattr("services.job_processing.os.path.relpath", lambda target, base: ".")
@@ -257,7 +254,7 @@ async def test_process_job_respects_cancelled_status_before_finalize(session: Se
         return {"images": []}
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
+    monkeypatch.setattr("services.provider_client.call_in_process_image_provider", fake_call_image_provider)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job_id)
@@ -280,21 +277,18 @@ async def test_process_job_timeout_signals_provider_cancel(session: Session, sam
     async def fake_call_image_provider(**kwargs):
         raise JobTimeoutError("timed out")
 
-    mock_http_client = AsyncMock()
-    mock_http_client.post = AsyncMock(return_value=SimpleNamespace(status_code=200))
+    fake_engine = SimpleNamespace(cancel_job=AsyncMock(return_value=True))
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
+    monkeypatch.setattr("services.provider_client.call_in_process_image_provider", fake_call_image_provider)
     monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
-    monkeypatch.setattr("services.job_runner.get_http_client", lambda: mock_http_client)
+    monkeypatch.setattr("services.engines.engine_factory.get_engine", lambda *args, **kwargs: fake_engine)
+    monkeypatch.setattr("services.engines.base.find_engine_for_job", lambda job_id: None)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job.id)
 
-    assert mock_http_client.post.await_count >= 1
-    cancel_call = mock_http_client.post.await_args_list[0]
-    assert cancel_call.args[0].endswith("/cancel-job")
-    assert cancel_call.kwargs["json"]["job_id"] == job.id
+    fake_engine.cancel_job.assert_awaited_once_with(job.id)
 
     updated_job = await _get_job_from_fresh_session(session, job.id)
     assert updated_job.status == JobStatus.FAILED
@@ -334,7 +328,7 @@ async def test_process_job_persists_base64_image_to_workspace_partition(session:
         return None
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
+    monkeypatch.setattr("services.provider_client.call_in_process_image_provider", fake_call_image_provider)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main._process_image_background", fake_process_image_background)
     monkeypatch.setattr("services.job_processing.os.path.relpath", lambda target, base: str(tmp_path))
@@ -408,13 +402,9 @@ async def test_process_job_fails_after_all_providers_exhausted(session: Session,
         call_attempts.append(provider_id)
         raise ProviderCallError(f"{provider_id} hard failure", provider_id=provider_id, is_retryable=False)
 
-    mock_http_client = AsyncMock()
-    mock_http_client.post = AsyncMock(return_value=SimpleNamespace(status_code=200))
-
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
+    monkeypatch.setattr("services.provider_client.call_in_process_image_provider", fake_call_image_provider)
     monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
-    monkeypatch.setattr("services.job_runner.get_http_client", lambda: mock_http_client)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job.id)

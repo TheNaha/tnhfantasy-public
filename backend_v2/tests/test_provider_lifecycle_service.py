@@ -1,314 +1,212 @@
+"""ProviderLifecycleService over in-process engines.
+
+Providers execute via ``services/engines/``; this service is the seam over
+engine setup and the in-process reconciler. There is no container to start,
+no worker URL to POST to, and no Docker daemon to classify: setup and
+reconciliation go through the engine, and status reads the persisted row.
+"""
+
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import docker
-import httpx
 import pytest
 
-from core.events import EventType
-from core.exceptions import ProviderError, ServiceUnavailableError
+from core.exceptions import ProviderError
 from services.provider_lifecycle_service import ProviderLifecycleService
 
 
-@pytest.mark.asyncio
-async def test_start_container_emits_event_and_invalidates_cache():
+def _service(provider: SimpleNamespace) -> ProviderLifecycleService:
     provider_service = MagicMock()
-    provider_service.get_provider = AsyncMock(
-        return_value=SimpleNamespace(
-            id="provider-1",
-            type="modal",
-            container_config={"port": 8000},
-        )
+    provider_service.get_provider = AsyncMock(return_value=provider)
+    written: list[dict] = []
+
+    def _upsert(provider_id, state):
+        written.append(state)
+        return {"provider_id": provider_id, **state}
+
+    provider_service.upsert_reconciliation_state = _upsert
+    provider_service.get_provider_reconciliation_state = AsyncMock(
+        return_value={"provider_id": provider.id, "status": "idle"}
     )
-    provider_service.build_provider_environment.return_value = {"MODAL_TOKEN_ID": "abc"}
-
-    container = MagicMock(short_id="container-123")
-    container_manager = MagicMock()
-    container_manager.start_container = AsyncMock(return_value=container)
-
-    invalidate = MagicMock()
-
-    service = ProviderLifecycleService(
+    svc = ProviderLifecycleService(
         session=MagicMock(),
         provider_service=provider_service,
-        container_manager=container_manager,
-        invalidate_caches=invalidate,
+    )
+    svc.status_service = MagicMock()
+    svc.status_service.normalize_reconciliation_for_card = lambda state: state
+    svc.written = written
+    return svc
+
+
+def _provider(**extra) -> SimpleNamespace:
+    base = {"id": "provider-1", "type": "modal", "worker_type": "image"}
+    base.update(extra)
+    return SimpleNamespace(**base)
+
+
+def _in_process():
+    return patch(
+        "services.provider_lifecycle_service.resolve_provider_runtime_async",
+        AsyncMock(return_value=SimpleNamespace(mode="in_process")),
     )
 
-    with patch("services.provider_lifecycle_service.emit_provider_event", new=AsyncMock()) as mock_emit:
-        result = await service.start_container("provider-1")
 
-    assert result["container_id"] == "container-123"
-    provider_service.build_provider_environment.assert_called_once_with(
-        provider_service.get_provider.return_value
-    )
-    container_manager.start_container.assert_called_once()
-    invalidate.assert_called_once_with("provider-1")
-    mock_emit.assert_awaited_once_with(
-        EventType.PROVIDER_CONTAINER_STATUS,
-        "provider-1",
-        {"status": "running"},
-    )
+# ---------------------------------------------------------------------------
+# setup_provider
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_trigger_reconciliation_short_circuits_when_already_running():
-    provider_service = MagicMock()
-    provider_service.get_provider = AsyncMock(
-        return_value=SimpleNamespace(id="provider-1", type="modal", container_config={"port": 8000})
-    )
-    provider_service.start_reconciliation_session = AsyncMock(
-        return_value={
-            "accepted": False,
-            "state": {"status": "queued"},
-            "message": "Reconciliation already in progress for this provider",
-        }
-    )
-
-    service = ProviderLifecycleService(
-        session=MagicMock(),
-        provider_service=provider_service,
-        container_manager=MagicMock(),
-    )
-
+async def test_setup_provider_refuses_non_in_process_runtime():
+    svc = _service(_provider())
     with patch(
         "services.provider_lifecycle_service.resolve_provider_runtime_async",
-        return_value=SimpleNamespace(supports_reconciliation=True, mode="container_http", worker_url="http://worker"),
+        AsyncMock(return_value=SimpleNamespace(mode="external_worker", worker_url="http://agent:8001")),
     ):
-        result = await service.trigger_reconciliation("provider-1")
-
-    assert result["status"] == "already_running"
-    assert result["message"] == "Reconciliation already in progress for this provider"
+        with pytest.raises(ProviderError, match="in-process engine"):
+            await svc.setup_provider("provider-1")
 
 
 @pytest.mark.asyncio
-async def test_get_reconciliation_status_returns_warning_when_worker_unreachable():
-    provider_service = MagicMock()
-    provider_service.get_provider = AsyncMock(
-        return_value=SimpleNamespace(id="provider-1", type="modal", container_config={"port": 8000})
-    )
-    provider_service.get_provider_reconciliation_state = AsyncMock(return_value={"status": "idle"})
+async def test_setup_provider_skips_engines_without_a_model_tree():
+    """Hosted-LLM/TTS engines own no model tree; setup is a no-op success."""
+    svc = _service(_provider(type="google", worker_type="llm"))
+    with _in_process(), patch(
+        "services.engines.engine_factory.engine_supports_setup", return_value=False
+    ):
+        result = await svc.setup_provider("provider-1")
 
-    http_client = MagicMock()
-    http_client.get = AsyncMock(side_effect=httpx.ConnectError("boom"))
-
-    service = ProviderLifecycleService(
-        session=MagicMock(),
-        provider_service=provider_service,
-        container_manager=MagicMock(),
-    )
-
-    with patch(
-        "services.provider_lifecycle_service.resolve_provider_runtime_async",
-        return_value=SimpleNamespace(mode="container_http", worker_url="http://worker"),
-    ), patch("services.provider_lifecycle_service.get_http_client", return_value=http_client):
-        result = await service.get_reconciliation_status("provider-1")
-
-    assert result["status"] == "idle"
-    assert "Cannot reach worker" in result["warning"]
+    assert result["status"] == "success"
+    assert result["result"]["status"] == "skipped"
 
 
 @pytest.mark.asyncio
-async def test_setup_provider_returns_accepted_for_queued_worker_response():
-    provider_service = MagicMock()
-    provider_service.get_provider = AsyncMock(
-        return_value=SimpleNamespace(id="provider-1", type="modal", container_config={"port": 8000})
-    )
+async def test_setup_provider_runs_engine_setup_models():
+    engine = MagicMock()
+    engine.setup_models = AsyncMock(return_value=True)
+    svc = _service(_provider())
+    with _in_process(), patch(
+        "services.engines.engine_factory.engine_supports_setup", return_value=True
+    ), patch("services.engines.engine_factory.get_engine", return_value=engine):
+        result = await svc.setup_provider("provider-1")
 
-    http_client = MagicMock()
-    response = MagicMock()
-    response.raise_for_status.return_value = None
-    response.json.return_value = {
-        "status": "queued",
-        "message": "Setup queued",
-        "provider": "provider-1",
-    }
-    http_client.post = AsyncMock(return_value=response)
+    assert result["status"] == "success"
+    engine.setup_models.assert_awaited_once()
 
-    service = ProviderLifecycleService(
-        session=MagicMock(),
-        provider_service=provider_service,
-        container_manager=MagicMock(),
-    )
 
-    with patch(
-        "services.provider_lifecycle_service.resolve_provider_runtime_async",
-        return_value=SimpleNamespace(supports_setup=True, mode="container_http", worker_url="http://worker"),
-    ), patch("services.provider_lifecycle_service.get_http_client", return_value=http_client):
-        result = await service.setup_provider("provider-1")
-
-    assert result["status"] == "accepted"
-    assert result["message"] == "Setup queued"
-    assert result["result"]["status"] == "queued"
-    http_client.post.assert_awaited_once_with("http://worker/setup", timeout=30.0)
+@pytest.mark.asyncio
+async def test_setup_provider_reports_engine_failure():
+    engine = MagicMock()
+    engine.setup_models = AsyncMock(return_value=False)
+    svc = _service(_provider())
+    with _in_process(), patch(
+        "services.engines.engine_factory.engine_supports_setup", return_value=True
+    ), patch("services.engines.engine_factory.get_engine", return_value=engine):
+        with pytest.raises(ProviderError, match="reported failure"):
+            await svc.setup_provider("provider-1")
 
 
 @pytest.mark.asyncio
 async def test_setup_provider_wraps_timeout_with_provider_error():
-    provider_service = MagicMock()
-    provider_service.get_provider = AsyncMock(
-        return_value=SimpleNamespace(id="provider-1", type="modal", container_config={"port": 8000})
-    )
+    async def _hang():
+        await asyncio.sleep(60)
 
-    http_client = MagicMock()
-    http_client.post = AsyncMock(side_effect=httpx.ReadTimeout("", request=MagicMock()))
+    engine = MagicMock()
+    engine.setup_models = _hang
+    svc = _service(_provider())
+    with _in_process(), patch(
+        "services.engines.engine_factory.engine_supports_setup", return_value=True
+    ), patch("services.engines.engine_factory.get_engine", return_value=engine):
+        with pytest.raises(ProviderError, match="timed out"):
+            await svc.setup_provider("provider-1")
 
-    service = ProviderLifecycleService(
-        session=MagicMock(),
-        provider_service=provider_service,
-        container_manager=MagicMock(),
-    )
 
+# ---------------------------------------------------------------------------
+# trigger_reconciliation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_trigger_reconciliation_refuses_non_in_process_runtime():
+    svc = _service(_provider())
     with patch(
         "services.provider_lifecycle_service.resolve_provider_runtime_async",
-        return_value=SimpleNamespace(supports_setup=True, mode="container_http", worker_url="http://worker"),
-    ), patch("services.provider_lifecycle_service.get_http_client", return_value=http_client):
-        with pytest.raises(ProviderError, match="Setup request to worker timed out"):
-            await service.setup_provider("provider-1")
+        AsyncMock(return_value=SimpleNamespace(mode="external_worker", worker_url="http://agent:8001")),
+    ):
+        with pytest.raises(ProviderError, match="in-process engine"):
+            await svc.trigger_reconciliation("provider-1")
 
 
 @pytest.mark.asyncio
-async def test_get_container_status_uses_async_health_probe_when_container_is_running():
-    provider_service = MagicMock()
-    provider_service.get_provider = AsyncMock(
-        return_value=SimpleNamespace(id="provider-1", type="modal", container_config={"port": 8000})
-    )
+async def test_trigger_reconciliation_records_in_flight_as_reconciling():
+    svc = _service(_provider())
+    with _in_process(), patch(
+        "services.engines.engine_factory.get_engine", return_value=MagicMock()
+    ), patch(
+        "services.in_process_reconciliation.trigger_in_process_reconciliation",
+        AsyncMock(return_value={"status": "running", "message": "working"}),
+    ):
+        result = await svc.trigger_reconciliation("provider-1")
 
-    container = MagicMock()
-    container.status = "running"
-    container.short_id = "container-123"
-    container.ports = {"8000/tcp": [{"HostPort": "18000"}]}
-    container.attrs = {"State": {"Health": {}}}
-    container.reload.return_value = None
+    assert result["status"] == "triggered"
+    assert svc.written[0]["status"] == "reconciling"
 
-    container_manager = MagicMock()
-    container_manager.client.containers.get.return_value = container
-    container_manager.running_containers = {}
 
-    response = MagicMock()
-    response.status_code = 200
+@pytest.mark.asyncio
+async def test_trigger_reconciliation_records_terminal_outcome():
+    svc = _service(_provider())
+    with _in_process(), patch(
+        "services.engines.engine_factory.get_engine", return_value=MagicMock()
+    ), patch(
+        "services.in_process_reconciliation.trigger_in_process_reconciliation",
+        AsyncMock(return_value={"status": "completed", "message": "done"}),
+    ):
+        result = await svc.trigger_reconciliation("provider-1")
 
-    async_client = MagicMock()
-    async_client.get = AsyncMock(return_value=response)
+    assert result["status"] == "completed"
+    assert svc.written[0]["status"] == "completed"
 
-    service = ProviderLifecycleService(
-        session=MagicMock(),
-        provider_service=provider_service,
-        container_manager=container_manager,
-    )
 
-    with patch("services.provider_lifecycle_service.get_http_client", return_value=async_client):
-        result = await service.get_container_status("provider-1")
+@pytest.mark.asyncio
+async def test_sync_provider_models_forces_quick_sync():
+    svc = _service(_provider())
+    with _in_process(), patch(
+        "services.engines.engine_factory.get_engine", return_value=MagicMock()
+    ), patch(
+        "services.in_process_reconciliation.trigger_in_process_reconciliation",
+        AsyncMock(return_value={"status": "completed"}),
+    ) as reconciler:
+        await svc.sync_provider_models("provider-1")
 
-    assert result["status"] == "running"
-    assert result["running"] is True
-    assert result["healthy"] is True
-    async_client.get.assert_awaited_once_with("http://localhost:18000/health", timeout=2.0)
+    _, kwargs = reconciler.call_args
+    assert kwargs["force"] is True
+    assert kwargs["quick_sync"] is True
 
 
 # ---------------------------------------------------------------------------
-# Container status: "stopped" must mean stopped, not "Docker is unreachable"
+# get_reconciliation_status
 # ---------------------------------------------------------------------------
 
 
-def _status_service_for(container_manager):
-    provider_service = MagicMock()
-    provider_service.get_provider = AsyncMock(
-        return_value=SimpleNamespace(
-            id="provider-1",
-            type="modal",
-            container_config={"port": 8000},
-        )
-    )
-    return ProviderLifecycleService(
-        session=MagicMock(),
-        provider_service=provider_service,
-        container_manager=container_manager,
+@pytest.mark.asyncio
+async def test_get_reconciliation_status_returns_persisted_state():
+    """The persisted row IS the live state — there is no worker to poll."""
+    svc = _service(_provider())
+    svc.provider_service.get_provider_reconciliation_state = AsyncMock(
+        return_value={"provider_id": "provider-1", "status": "completed"}
     )
 
+    result = await svc.get_reconciliation_status("provider-1")
 
-@pytest.mark.asyncio
-async def test_get_container_status_reports_stopped_only_on_a_genuine_not_found():
-    """`docker.errors.NotFound` is the one failure that means "not running"."""
-    container_manager = MagicMock()
-    container_manager.client.containers.get.side_effect = docker.errors.NotFound("no such container")
-
-    result = await _status_service_for(container_manager).get_container_status("provider-1")
-
-    assert result["status"] == "stopped"
-    assert result["running"] is False
+    assert result["status"] == "completed"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "failure",
-    [
-        pytest.param(docker.errors.DockerException("daemon unreachable"), id="daemon-down"),
-        pytest.param(ConnectionError("socket gone"), id="socket-missing"),
-        pytest.param(PermissionError("permission denied"), id="permission-denied"),
-        pytest.param(docker.errors.APIError("tls handshake failed"), id="tls-failure"),
-    ],
-)
-async def test_get_container_status_refuses_to_call_an_unreachable_runtime_stopped(failure):
-    """A host-wide Docker outage must not read as N stopped containers.
+async def test_get_reconciliation_status_defaults_to_idle():
+    svc = _service(_provider())
+    svc.provider_service.get_provider_reconciliation_state = AsyncMock(return_value={})
 
-    The bare `except Exception` this replaces answered "the container is
-    stopped" for every way the daemon can fail *other than* reporting the
-    container absent — daemon down, socket permission denied, TLS failure, a
-    context that no longer exists. A caller could not tell a real stop from a
-    broken runtime, and there was no degraded signal to say "this answer is not
-    trustworthy". So a Docker outage produced a clean-looking, entirely false
-    answer instead of one that says the dependency is down.
-    """
-    container_manager = MagicMock()
-    container_manager.client.containers.get.side_effect = failure
+    result = await svc.get_reconciliation_status("provider-1")
 
-    with pytest.raises(ServiceUnavailableError) as excinfo:
-        await _status_service_for(container_manager).get_container_status("provider-1")
-
-    assert excinfo.value.service == "container_runtime"
-    assert excinfo.value.code == "SERVICE_UNAVAILABLE"
-    # Chained to the original so the log names the real cause.
-    assert excinfo.value.__cause__ is failure
-
-
-@pytest.mark.asyncio
-async def test_get_container_status_unreachable_is_503_not_500():
-    """`ComfyError` maps to 500; "your dependency is down" is a retry, not a bug."""
-    container_manager = MagicMock()
-    container_manager.client.containers.get.side_effect = docker.errors.DockerException("boom")
-
-    with pytest.raises(ServiceUnavailableError) as excinfo:
-        await _status_service_for(container_manager).get_container_status("provider-1")
-
-    assert excinfo.value.status_code == 503
-
-
-@pytest.mark.asyncio
-async def test_get_container_status_logs_the_real_cause_before_raising():
-    """The replaced branch swallowed the cause with no log at all.
-
-    The project logs through structlog, which pytest's caplog does not see, so
-    the logger is spied on directly.
-    """
-    container_manager = MagicMock()
-    container_manager.client.containers.get.side_effect = docker.errors.DockerException(
-        "Cannot connect to the Docker daemon"
-    )
-
-    import services.provider_lifecycle_service as lifecycle_module
-
-    calls: list[tuple] = []
-    original_error = lifecycle_module.logger.error
-    lifecycle_module.logger.error = lambda event, **kw: calls.append((event, kw))
-    try:
-        with pytest.raises(ServiceUnavailableError):
-            await _status_service_for(container_manager).get_container_status("provider-1")
-    finally:
-        lifecycle_module.logger.error = original_error
-
-    assert calls, "an unreachable runtime must be logged, not silently reshaped"
-    event, kwargs = calls[0]
-    assert event == "container_runtime_unreachable"
-    assert kwargs["provider_id"] == "provider-1"
-    assert "Cannot connect to the Docker daemon" in kwargs["error"]
+    assert result["status"] == "idle"

@@ -1,6 +1,5 @@
 from copy import deepcopy
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from core.entities import Provider
@@ -8,8 +7,6 @@ from infrastructure.logging import get_logger
 
 logger = get_logger("provider_utils")
 
-DEPLOY_STATE_KEY = "deploy_state"
-DEPLOY_IN_PROGRESS_TTL = 1800  # 30 minutes in seconds
 RECONCILIATION_STATE_KEY = "reconciliation_state"
 RECONCILIATION_IN_PROGRESS_TTL = 10800  # 180 minutes in seconds
 RECONCILIATION_IN_PROGRESS_STATUSES = {"queued", "reconciling"}
@@ -17,11 +14,9 @@ RECONCILIATION_TERMINAL_STATUSES = {"completed", "failed", "idle"}
 RUNTIME_CONFIG_KEY = "runtime_config"
 DEPLOY_CONFIG_KEY = "deploy_config"
 
-
-def _get_supported_managed_deploy_types():
-    """Lazily resolve supported deploy types from the provider registry."""
-    from infrastructure.providers.provider_registry import ProviderRegistry
-    return set(ProviderRegistry.get_all().keys())
+# Engine-config keys that pre-overhaul rows may hold top-level on `config`
+# (the old wizard wrote them there). Still honoured on read so old rows
+# resolve identically; new writes go through `deploy_config`.
 LEGACY_DEPLOY_CONFIG_FIELDS = {
     "app_name",
     "enable_memory_snapshot",
@@ -66,249 +61,19 @@ def mask_secret(value: str | None) -> str | None:
     return f"{value[:3]}***{value[-3:]}"
 
 
-def default_deploy_mode(provider_type: str) -> str:
-    return "managed" if provider_type in _get_supported_managed_deploy_types() else "manual"
+def extract_runtime_config(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Legacy runtime placement, read-only.
 
-
-def default_deploy_targets(provider_type: str, worker_type: str = "image") -> list[dict[str, Any]]:
-    if provider_type == "modal" and worker_type == "tts":
-        # A TTS provider is `type="modal"` with `worker_type="tts"`: its own
-        # Dockerfile, its own Modal app, its own container. Routing on
-        # `provider_type` alone sent the Deploy button on a TTS provider to
-        # `image_worker/Dockerfile` and re-ran `modal deploy` on the *image*
-        # app, so `comfy-modal-tts` was never deployed by the product at all
-        # while the Providers page showed an active action for it.
-        return [
-            {
-                "name": "tts_app",
-                "entrypoint": "/app/tts_worker/engines/modal/modal_app.py",
-                "command": ["modal", "deploy", "/app/tts_worker/engines/modal/modal_app.py"],
-            },
-        ]
-    if provider_type == "modal":
-        # ONE target: the image app.
-        #
-        # A `tts_app` target briefly sat here, on the theory that a TTS worker
-        # could be a second Modal app deployed from the same image provider. That
-        # is wrong on the codebase's own model — one provider is one container —
-        # and it put a TTS app in the deploy path of every image provider, so
-        # deploying `modal-hp196` would also build speech it never registered to
-        # serve. TTS is its own provider row with its own Dockerfile, its own
-        # container and its own deploy target; see `tts_worker/`.
-        return [
-            {
-                "name": "modal_app",
-                "entrypoint": "/app/image_worker/engines/modal/modal_app.py",
-                "command": ["modal", "deploy", "/app/image_worker/engines/modal/modal_app.py"],
-            },
-        ]
-    if provider_type == "modal_llm":
-        return [
-            {
-                "name": "modal_llm_app",
-                "entrypoint": "/app/llm_worker/engines/modal/modal_app.py",
-                "command": ["modal", "deploy", "/app/llm_worker/engines/modal/modal_app.py"],
-            }
-        ]
-    if provider_type == "beam":
-        return [
-            {
-                "name": "comfy_gpu",
-                "entrypoint": "/app/image_worker/engines/beam/beam_app.py:comfy_gpu",
-                "command": ["beta9", "deploy", "image_worker/engines/beam/beam_app.py:comfy_gpu"],
-            },
-            {
-                "name": "comfy_storage",
-                "entrypoint": "/app/image_worker/engines/beam/beam_app.py:comfy_storage",
-                "command": ["beta9", "deploy", "image_worker/engines/beam/beam_app.py:comfy_storage"],
-            },
-            {
-                "name": "comfy_download",
-                "entrypoint": "/app/image_worker/engines/beam/beam_app.py:comfy_download",
-                "command": ["beta9", "deploy", "image_worker/engines/beam/beam_app.py:comfy_download"],
-            },
-        ]
-    return []
-
-
-def normalize_beam_handler_spec(handler: str) -> str:
-    if ":" not in handler:
-        return handler
-
-    module_path, object_name = handler.split(":", 1)
-    if module_path.startswith("/app/"):
-        module_path = module_path[len("/app/") :]
-    elif module_path.startswith("./app/"):
-        module_path = module_path[len("./app/") :]
-    elif module_path.startswith("/"):
-        module_path = module_path.lstrip("/")
-
-    return f"{module_path}:{object_name}"
-
-
-def normalize_deploy_step_command(provider_type: str, command: list[str]) -> list[str]:
-    if provider_type != "beam" or not command:
-        return command
-
-    normalized_command = ["beta9", *command[1:]] if command[0] == "beam" else list(command)
-    if len(normalized_command) < 3:
-        return normalized_command
-
-    if normalized_command[0] == "beta9" and normalized_command[1] == "deploy":
-        for index in range(2, len(normalized_command)):
-            token = normalized_command[index]
-            if isinstance(token, str) and ":" in token and token.split(":", 1)[0].endswith(".py"):
-                normalized_command[index] = normalize_beam_handler_spec(token)
-                break
-
-    return normalized_command
-
-
-def extract_runtime_config(provider_type: str, container_config: Any, config: dict[str, Any]) -> dict[str, Any] | None:
+    `runtime_config` is no longer written and no backend path consumes it;
+    this preserves whatever an old row carries so the record round-trips
+    without loss.
+    """
     runtime_config = clean_dict(config.get(RUNTIME_CONFIG_KEY))
-    if not runtime_config:
-        runtime_config = clean_dict(container_config)
-    if not runtime_config:
-        return None
-
-    worker_config = clean_dict(config.get("worker"))
-    if worker_config and "worker" not in runtime_config:
-        runtime_config["worker"] = worker_config
-
-    runtime_config.setdefault("mode", "container")
-    if provider_type in _get_supported_managed_deploy_types():
-        runtime_config.setdefault("port", runtime_config.get("port", 8000))
-    return runtime_config
+    return runtime_config or None
 
 
-def _provider_containers_dir() -> Path | None:
-    """Locate `provider_containers/`, or None when this process cannot see it.
-
-    Found by walking up from this file rather than by a fixed depth. The first
-    version used `Path(__file__).parents[2]`, which is the repo root on a
-    developer machine and `/` inside the backend container — where the backend
-    lives at `/app` and there is no `provider_containers` at all. Every call
-    therefore resolved to a non-existent path, `_entrypoint_exists` returned
-    False for perfectly good targets, and the provider reconciliation loop —
-    which reads provider config every few seconds — logged a pair of
-    `deploy_target_entrypoint_missing_using_default` warnings on every pass,
-    naming an entrypoint and a "replacement" that were byte-identical.
-
-    So: search upward, and report None when there is nothing to search. The
-    caller treats None as "cannot validate", which is the honest answer.
-    """
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "provider_containers"
-        if candidate.is_dir():
-            return candidate
-    return None
-
-
-def _entrypoint_exists(entrypoint: str | None) -> bool:
-    """Whether a stored deploy target's entrypoint still exists in the source tree.
-
-    Deploy targets are persisted per provider in `config.deploy_config.targets`,
-    and a stored list WINS over `default_deploy_targets`. That is the right
-    precedence — it is how a user overrides a command — but it means a target
-    recorded against an older layout silently keeps pointing at a file that has
-    moved, and the deploy fails inside the container with a `FileNotFoundError`
-    that says nothing about the cause.
-
-    Returns True when the source tree is not visible (a deployed backend), since
-    "I cannot check" must not be reported as "it is missing". Validation is a
-    development-time convenience; it has no business failing a production log.
-    """
-    if not entrypoint:
-        return False
-    base = _provider_containers_dir()
-    if base is None:
-        return True
-    rel = str(entrypoint).lstrip("/")
-    if rel.startswith("app/"):
-        rel = rel[len("app/"):]
-    # `beta9` targets use `path:handler`; the file half is what exists.
-    return (base / rel.split(":", 1)[0]).exists()
-
-
-
-def _repair_stored_targets(
-    stored: list[dict[str, Any]], defaults: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Merge stored deploy targets over the current defaults.
-
-    Two jobs, both of which come from the same real problem: a stored list wins
-    over `default_deploy_targets`, and the stored lists in this deployment were
-    written against a layout that has since changed.
-
-    1. REPAIR. A target whose entrypoint no longer exists is replaced by the
-       current default of the same name. Every deployed Modal provider carried
-       `entrypoint: /app/modal_app.py`, which has not existed since the engine
-       code moved under `engines/<engine>/`; the deploy would have failed inside
-       the container with a `FileNotFoundError` that says nothing about the
-       cause.
-
-    2. ADD. A default target with no stored counterpart is appended. This is what
-       lets a new worker kind — the TTS app — be deployed by the same
-       `POST /providers/{id}/deploy` call without hand-editing every provider
-       row's `deploy_config` in the database.
-
-    The cost is that *removing* a default target does not stick: it is re-added
-    on the next write. That is the right trade here, because the alternative is a
-    new capability silently requiring a manual database edit per provider, which
-    is exactly how a feature ends up half-deployed. A provider that must not
-    build a target sets its `deploy.targets` explicitly with the entrypoints it
-    wants and accepts that the defaults are the base.
-
-    Ordering is preserved: stored targets keep their position, appended defaults
-    go last, so a deploy runs image worker first and TTS second.
-    """
-    by_name = {d.get("name"): d for d in defaults}
-    merged: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    repaired = False
-
-    for target in stored:
-        name = target.get("name")
-        if _entrypoint_exists(target.get("entrypoint")):
-            merged.append(target)
-            seen.add(name)
-            continue
-        fallback = by_name.get(name)
-        if fallback:
-            logger.warning(
-                "deploy_target_entrypoint_missing_using_default",
-                target_name=name,
-                entrypoint=target.get("entrypoint"),
-                replacement=fallback.get("entrypoint"),
-            )
-            merged.append(dict(fallback))
-            seen.add(name)
-        else:
-            logger.warning(
-                "deploy_target_entrypoint_missing_dropped",
-                target_name=name,
-                entrypoint=target.get("entrypoint"),
-            )
-        repaired = True
-
-    for default in defaults:
-        if default.get("name") not in seen:
-            logger.info(
-                "deploy_target_added_from_defaults",
-                target_name=default.get("name"),
-                entrypoint=default.get("entrypoint"),
-            )
-            merged.append(dict(default))
-            repaired = True
-
-    return merged if repaired else stored
-
-
-def extract_deploy_config(
-    provider_type: str,
-    config: dict[str, Any],
-    worker_type: str = "image",
-) -> dict[str, Any]:
+def extract_deploy_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Engine config for a provider: stored `deploy_config` plus legacy top-level keys."""
     deploy_config = clean_dict(config.get(DEPLOY_CONFIG_KEY))
 
     for key in LEGACY_DEPLOY_CONFIG_FIELDS:
@@ -318,16 +83,6 @@ def extract_deploy_config(
     functions_config = clean_dict(config.get("functions"))
     if functions_config and "functions" not in deploy_config:
         deploy_config["functions"] = functions_config
-
-    deploy_config.setdefault("deploy_mode", default_deploy_mode(provider_type))
-    defaults = default_deploy_targets(provider_type, worker_type)
-    stored = deploy_config.get("targets")
-    if stored:
-        deploy_config["targets"] = _repair_stored_targets(
-            [t for t in stored if isinstance(t, dict)], defaults
-        )
-    else:
-        deploy_config["targets"] = defaults
     return deploy_config
 
 
@@ -336,7 +91,6 @@ def compose_config(
     base_config: dict[str, Any] | None,
     runtime_config: dict[str, Any] | None,
     deploy_config: dict[str, Any],
-    deploy_state: dict[str, Any] | None = None,
     reconciliation_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     config = clean_dict(base_config)
@@ -354,11 +108,6 @@ def compose_config(
         if key in deploy_config:
             config[key] = deploy_config[key]
 
-    if deploy_state is not None:
-        config[DEPLOY_STATE_KEY] = deploy_state
-    elif DEPLOY_STATE_KEY not in config:
-        config[DEPLOY_STATE_KEY] = {"status": "idle"}
-
     if reconciliation_state is not None:
         config[RECONCILIATION_STATE_KEY] = reconciliation_state
     elif RECONCILIATION_STATE_KEY not in config:
@@ -366,15 +115,12 @@ def compose_config(
 
     return config
 
-def read_deploy_state(provider: Provider) -> dict[str, Any]:
-    config = provider.config if isinstance(provider.config, dict) else {}
-    state = config.get(DEPLOY_STATE_KEY)
-    return state if isinstance(state, dict) else {"status": "idle"}
 
 def read_reconciliation_state(provider: Provider) -> dict[str, Any]:
     config = provider.config if isinstance(provider.config, dict) else {}
     state = config.get(RECONCILIATION_STATE_KEY)
     return state if isinstance(state, dict) else {"status": "idle"}
+
 
 def normalize_reconciliation_status(status: str | None) -> str:
     if status in {"started", "queued"}:

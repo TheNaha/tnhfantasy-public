@@ -1,12 +1,10 @@
 import asyncio
-import codecs
 import json
 import time
 
 from core.entities import JobStatus
 from core.events import emit_job_event, EventType
 from core.progress import coerce_worker_percent
-from infrastructure.http_client import get_streaming_client
 from infrastructure.logging import get_logger
 
 logger = get_logger("provider_client")
@@ -78,104 +76,6 @@ def validate_image_outputs(payload: dict) -> None:
             raise ValueError(f"image outputs[{index}] must be an object")
         if img.get("data") is None and img.get("filename") is None:
             raise ValueError(f"image outputs[{index}] missing data or filename")
-
-
-async def stream_task_events(
-    worker_url: str,
-    payload: dict,
-    job_id: str,
-    *,
-    task_type: str,
-    job_service,
-    timeout: float,
-    provider_id: str = "",
-    total_nodes: int = 0,
-    reducer=None,
-):
-    """Single, unified reader for ALL worker streams.
-
-    Workers emit a unified ``TaskEvent`` NDJSON schema (see
-    provider_core.models.TaskEvent). This coroutine resolves the HTTP stream,
-    parses each line into a TaskEvent, and delegates handling to ``reducer``
-    (per task_type). Returns whatever ``reducer`` returns on ``completed``.
-    """
-    import httpx
-
-    async with get_streaming_client(timeout=timeout) as client:
-        try:
-            # The task type travels with the request so a worker that hosts more
-            # than one app can pick the right one. It is already an argument
-            # here, used to choose the reducer — but it was never put in the
-            # payload, so the worker could not see it, and a provider hosting
-            # separate image and TTS apps would send both to the same one.
-            # `stream_task_events` is the only caller of this POST, so adding it
-            # at the single call site is enough; it is set unconditionally rather
-            # than only for `tts` so a worker can key on anything.
-            wire_payload = payload if payload.get("task_type") == task_type else {**payload, "task_type": task_type}
-            async with client.stream(
-                "POST",
-                f"{worker_url}/inference",
-                json=wire_payload,
-                timeout=timeout,
-            ) as response:
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    is_retryable = response.status_code >= 500
-                    try:
-                        p = json.loads(error_text.decode())
-                        if isinstance(p, dict) and "retryable" in p:
-                            is_retryable = bool(p["retryable"])
-                    except Exception as exc:
-                        logger.debug("error_body_parse_failed", error=str(exc))
-                    raise ProviderCallError(
-                        format_worker_http_error(response.status_code, error_text.decode()),
-                        provider_id=provider_id,
-                        is_retryable=is_retryable,
-                    )
-
-                await job_service.update_job(job_id, status=JobStatus.CONNECTED, message="Connected to provider...")
-
-                buffer = ""
-                decoder = codecs.getincrementaldecoder("utf-8")()
-
-                async def process_line(raw: str) -> None:
-                    line = raw.strip()
-                    if not line:
-                        return
-                    try:
-                        update = json.loads(line)
-                    except json.JSONDecodeError as error:
-                        logger.warning("job_parse_error", job_id=job_id, error=str(error))
-                        return
-                    result = await reducer(update)
-                    if result is not None:
-                        # Reducers return a value on terminal ``completed`` events
-                        # (e.g. the LLM reducer). Capture it so it isn't lost when
-                        # we also call finalize() below.
-                        nonlocal _terminal_result
-                        _terminal_result = result
-
-                _terminal_result = None
-                async for chunk in response.aiter_bytes():
-                    buffer += decoder.decode(chunk, final=False)
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        await process_line(line)
-                buffer += decoder.decode(b"", final=True)
-                if buffer.strip():
-                    await process_line(buffer)
-
-                if _terminal_result is not None:
-                    return _terminal_result
-                return reducer.finalize()
-
-        except httpx.TimeoutException:
-            raise JobTimeoutError(f"Job timed out after {timeout}s")
-        except httpx.ConnectError as error:
-            raise ProviderCallError(f"Failed to connect to worker: {error}", provider_id=provider_id, is_retryable=True)
-        except httpx.HTTPError as error:
-            is_retryable = not isinstance(error, httpx.LocalProtocolError)
-            raise ProviderCallError(f"HTTP error: {error}", provider_id=provider_id, is_retryable=is_retryable)
 
 
 class _ImageReducer:
@@ -364,30 +264,6 @@ class _LLMReducer:
         raise ProviderCallError("No completed event received from worker", provider_id=self.provider_id, is_retryable=True)
 
 
-async def call_image_provider(
-    worker_url: str,
-    workflow: dict,
-    job_id: str,
-    job_service,
-    total_nodes: int,
-    timeout: float,
-    use_snapshot: bool = False,
-    provider_id: str = "",
-) -> dict:
-    reducer = _ImageReducer(job_id, job_service, total_nodes, provider_id)
-    return await stream_task_events(
-        worker_url,
-        {"workflow": workflow, "use_snapshot": use_snapshot, "job_id": job_id, "timeout_seconds": timeout},
-        job_id,
-        task_type="image",
-        job_service=job_service,
-        timeout=timeout,
-        provider_id=provider_id,
-        total_nodes=total_nodes,
-        reducer=reducer,
-    )
-
-
 async def call_in_process_image_provider(
     engine,
     workflow: dict,
@@ -506,47 +382,3 @@ async def call_in_process_llm_provider(
             raise ProviderCallError(str(exc), provider_id=provider_id, is_retryable=False) from exc
         raise
     return reducer.finalize()
-
-
-async def call_llm_provider(
-    worker_url: str,
-    workflow: dict,
-    job_id: str,
-    job_service,
-    timeout: float,
-    provider_id: str = "",
-    provider_type: str = "modal",
-) -> dict:
-    reducer = _LLMReducer(job_id, job_service, provider_id, workflow)
-    try:
-        from config import get_config
-        global_ai = ((get_config() or {}).get("ai") or {})
-    except Exception:
-        global_ai = {}
-
-    def _resolve(key: str):
-        # Per-job override wins; otherwise the global default (may be None).
-        return workflow.get(key) if workflow.get(key) is not None else global_ai.get(key)
-
-    payload = {
-        "messages": workflow.get("messages"),
-        "tools": workflow.get("tools"),
-        "model": workflow.get("model"),
-        "temperature": _resolve("temperature"),
-        "top_p": _resolve("top_p"),
-        "max_output_tokens": _resolve("max_output_tokens"),
-        "frequency_penalty": _resolve("frequency_penalty"),
-        "presence_penalty": _resolve("presence_penalty"),
-        "job_id": job_id,
-        "timeout_seconds": timeout,
-    }
-    return await stream_task_events(
-        worker_url,
-        payload,
-        job_id,
-        task_type="llm",
-        job_service=job_service,
-        timeout=timeout,
-        provider_id=provider_id,
-        reducer=reducer,
-    )

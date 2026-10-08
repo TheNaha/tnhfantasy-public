@@ -471,16 +471,12 @@ SYNC_CHAINED = {
         "ProviderLifecycleService.setup_provider — worker CLI setup that still "
         "opens its session synchronously inline"
     ),
-    "deploy_provider_app": "ProviderService.deploy_provider_app — same shape",
     "get_reconciliation_status": (
         "ProviderLifecycleService.get_reconciliation_status — same shape"
     ),
     "get_object_info": (
         "ProviderService.get_provider — a proxy for the provider HTTP fetch, "
         "which the resolver cannot see through infrastructure.http_client.get"
-    ),
-    "handle_provider_discovery": (
-        "ProviderService.upsert_provider_from_discovery — same shape"
     ),
     "reconcile_chat_replies": (
         "world_integration_service.reconcile_unpersisted_chat_replies — a "

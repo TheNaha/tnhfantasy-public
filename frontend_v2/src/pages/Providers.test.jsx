@@ -7,7 +7,6 @@ const mockUseProvidersPageData = vi.hoisted(() => vi.fn());
 
 const mutationsState = vi.hoisted(() => ({
     actionLoading: {},
-    deployProvider: vi.fn(),
     reconcileProvider: vi.fn(),
     setupProvider: vi.fn(),
     resetProviderModelStatus: vi.fn(),
@@ -45,10 +44,8 @@ vi.mock('../components/ConfirmationModal', () => ({
 vi.mock('../hooks/useActiveJobs', () => ({ useActiveJobs: () => ({ data: [] }) }));
 vi.mock('../components/dashboard/JobCard', () => ({ default: () => null }));
 vi.mock('../components/providers/tabs/RuntimeTab', () => ({ default: () => <div data-testid="runtime-tab" /> }));
-vi.mock('../components/providers/tabs/DeployTab', () => ({ default: () => null }));
 vi.mock('../components/providers/tabs/SyncTab', () => ({ default: () => null }));
 vi.mock('../components/providers/tabs/DiagnosticsTab', () => ({ default: () => null }));
-vi.mock('../components/providers/tabs/LiveConsoleTab', () => ({ default: () => null }));
 
 function buildProvider(overrides = {}) {
     return {
@@ -56,33 +53,20 @@ function buildProvider(overrides = {}) {
         type: 'modal',
         enabled: true,
         priority: 1,
-        runtime_config: { port: 8000 },
-        deploy_config: { deploy_mode: 'managed', app_name: 'comfy-modal-stack' },
         runtime_state: {
-            mode: 'container_http',
+            mode: 'in_process',
             connected: true,
-            status: 'running',
-            worker_url: 'http://comfy-provider-modal-primary:8000',
-        },
-        deploy_state: { status: 'idle', message: '' },
-        reconciliation_state: {
-            status: 'idle', phase: null, message: '',
-            stats: {}, active_downloads: [], errors: [],
-        },
+            status: 'running',        },
         model_sync: { total_models: 4, stats: { installed: 3, pending: 1, downloading: 0, failed: 0 } },
         storage: { total: 4, by_directory: { checkpoints: 2, loras: 2 } },
         capabilities: {
-            managed_deploy: true, deploy: true,
-            start_container: true, stop_container: true, restart_container: true,
-            view_logs: true, setup: true, reconcile: true, reset_status: true,
+            setup: true, reconcile: true, reset_status: true,
         },
         capability_reasons: {},
         diagnostics: {
             warnings: [], errors: [],
             worker: {
-                backend_url: 'http://backend_v2:8002',
-                worker_url: 'http://comfy-provider-modal-primary:8000',
-                mode: 'container_http',
+                backend_url: 'http://backend_v2:8002',                mode: 'in_process',
             },
         },
         credential_summary: {

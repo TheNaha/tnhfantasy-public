@@ -47,17 +47,8 @@ Tests run on push/PR to `main`/`master` only when the relevant directory changes
 - `backend_v2/**` -> `backend-tests.yml` (Python 3.13, pytest + ruff)
 - `frontend_v2/**` -> `frontend-tests.yml` (Node 20, vitest + eslint + build)
 - `frontend_v2/**` or `backend_v2/**` -> `frontend-e2e.yml` (Playwright)
-- `provider_containers/**` or `remote_agent/**` -> `provider-tests.yml`
-- `docker-compose*.yml`, `scripts/**`, `.env.example*`, `backend_v2/Dockerfile`,
-  `frontend_v2/Dockerfile`, `backend_v2/requirements.txt`,
-  `frontend_v2/package-lock.json` or `.github/workflows/**` -> also
-  `provider-tests.yml`, whose `build` job renders compose, builds the four
-  provider Dockerfiles and the remote agent, and whose `app-images` job builds
-  the backend and frontend images (both targets). Nothing else in CI builds
-  those two, and both test suites run on the host rather than in the image.
-- `remote_agent/**` or `provider_containers/provider_core/**` ->
-  `build-agent-binaries.yml` (PyInstaller, push/release only). The agent imports
-  `provider_core`, so a change there changes every frozen binary.
+- `remote_agent/**` -> `provider-tests.yml` (builds the remote-agent image + backend/frontend app images) and
+  `build-agent-binaries.yml`.
 - any path -> `secret-scan.yml` (gitleaks)
 
 ## Backend conventions
@@ -142,29 +133,21 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 
 ## Provider contract
 
-- Default path is in-process: `backend_v2/services/engines/` (Modal, Beam,
-  DirectComfy, LLM, TTS) + `backend_v2/services/in_process_reconciliation.py`,
-  gated by `COMFY_USE_IN_PROCESS_ENGINES` (default true). Engine contract:
+- Default (and only) path is in-process: `backend_v2/services/engines/` (Modal, Beam,
+  DirectComfy, LLM, TTS) + `backend_v2/services/in_process_reconciliation.py`. Engine contract:
   `services/engines/base.py` (`InProcessEngine`, `translate_legacy_image_update`,
-  `normalize_validation_result`, `EngineAuthError`, `MODEL_DIRECTORIES`).
-- DEPRECATED — Legacy fallback is containerized: `provider_containers/`
-  (retained only for `COMFY_USE_IN_PROCESS_ENGINES=false` or per-provider
-  `execution_mode: "container"`). Do not add features there; parity fixes go in
-  `services/engines/`. To migrate running containers:
-  `docker compose --profile providers stop`.
-- Provider containers are behind the `--profile providers` compose profile and
-  do not start with a plain `docker compose up`. The backend emits a one-time
-  deprecation warning when a provider resolves to `container_http` or `discovery`
-  mode.
+   `normalize_validation_result`, `EngineAuthError`, `MODEL_DIRECTORIES`). The `COMFY_USE_IN_PROCESS_ENGINES`
+   gate and the containerized `provider_containers/` workers (plus the `--profile providers`
+   compose profile) were removed on 2026-10-08. Providers that live in a separate runtime
+   (remote ComfyUI, a hosted agent) connect via `external_worker` / `remote_agent/`.
 - `POST /inference` streams NDJSON progress lines, finishes with a success or error JSON payload.
 - Model directories: `models/checkpoints`, `models/loras`, `models/vae`, `models/controlnet`, `models/unet`, `models/clip`.
 
 ## Docker gotchas
 
-- Container name for providers must be `tnhcomfy-{PROVIDER_ID}` so the backend can detect them (see `infrastructure/providers/runtime.py`).
 - Backend runs as `user: "1000:1000"`.
 - Frontend file watching in Docker uses polling via Vite (`usePolling: true` in `vite.config.js`) — no `CHOKIDAR_USEPOLLING` needed.
-- `docker compose up -d` starts backend, then frontend (depends_on with healthcheck), then providers.
+- `docker compose up -d` starts backend (then frontend on its healthcheck). The compose stack no longer includes provider services.
 
 ## Never
 

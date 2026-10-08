@@ -41,7 +41,7 @@ def _parse_positive_float(raw: str | None, default: float) -> float:
 # invalidate_engine() for the immediate path. Frozen at import by design
 # (TTLCache takes ttl once): changing COMFY_ENGINE_CACHE_TTL_SECONDS
 # requires a process restart. Env-only like the other COMFY_* operational
-# knobs — see use_in_process_engines() in provider_runtime.py.
+# knobs.
 ENGINE_CACHE_TTL_SECONDS = _parse_positive_float(
     os.getenv("COMFY_ENGINE_CACHE_TTL_SECONDS"), 1800.0
 )
@@ -51,10 +51,8 @@ _ENGINE_CACHE: TTLCache = TTLCache(maxsize=128, ttl=ENGINE_CACHE_TTL_SECONDS)
 #
 # The /comfyui path is where the Docker volume mount of the project root lives
 # (read-only). Without it, per-provider credential files like .env.modal-zetsuke
-# — which sit at the host project root and are only referenced by the *now
-# deprecated* provider container services as env_file — are invisible to the
-# backend, and can_create_engine() returns False for the existing Modal/Beam
-# providers, causing them to silently fall back to container_http mode.
+# — which sit at the host project root — are invisible to the backend, and
+# can_create_engine() returns False for the existing Modal/Beam providers.
 # A non-existent path is harmless (Path.is_file() returns False).
 _ENV_SEARCH_PATHS = [
     Path.cwd(),

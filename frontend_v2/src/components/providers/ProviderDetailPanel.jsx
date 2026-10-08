@@ -11,10 +11,8 @@ import JobCard from '../dashboard/JobCard';
 import { useActiveJobs } from '../../hooks/useActiveJobs';
 
 import RuntimeTab from './tabs/RuntimeTab';
-import DeployTab from './tabs/DeployTab';
 import SyncTab from './tabs/SyncTab';
 import DiagnosticsTab from './tabs/DiagnosticsTab';
-import LiveConsoleTab from './tabs/LiveConsoleTab';
 import { statusDotClass, humanize } from './tabs/utils';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 
@@ -23,17 +21,15 @@ const EMPTY_OBJECT = Object.freeze({});
 const TABS = [
     { id: 'runtime', label: 'Runtime' },
     { id: 'jobs', label: 'Active Jobs' },
-    { id: 'deploy', label: 'Deploy' },
     { id: 'sync', label: 'Model Sync' },
     { id: 'diagnostics', label: 'Diagnostics' },
-    { id: 'console', label: 'Live Console' },
 ];
 
 export default function ProviderDetailPanel({
     provider,
     onClose,
     loading,
-    onDeploy, onReconcile, onQuickSync, onResetStatus, onSetup,
+    onReconcile, onQuickSync, onResetStatus, onSetup,
     providerFailures = 0,
     jobsAssigned = 0,
 }) {
@@ -62,24 +58,15 @@ export default function ProviderDetailPanel({
     }, [baseJobs, provider.id]);
 
     const runtime = provider.runtime_state ?? EMPTY_OBJECT;
-    const deploy = provider.deploy_state ?? EMPTY_OBJECT;
     const reconciliation = provider.reconciliation_state ?? EMPTY_OBJECT;
     const modelSync = provider.model_sync ?? EMPTY_OBJECT;
     const storage = provider.storage ?? EMPTY_OBJECT;
     const storageLoaded = provider.storage != null;
     const diagnostics = provider.diagnostics ?? EMPTY_OBJECT;
     const capabilities = provider.capabilities ?? EMPTY_OBJECT;
-    const capabilityReasons = provider.capability_reasons ?? EMPTY_OBJECT;
     const credentialSummary = provider.credential_summary ?? EMPTY_OBJECT;
 
     const runtimeStatus = runtime.status ?? (runtime.connected ? 'active' : 'stopped');
-
-    const deployBadge = useMemo(() => {
-        if (capabilities.managed_deploy) return 'Managed Deploy';
-        if (capabilities.manual_deploy) return 'Manual Deploy';
-        if (capabilities.runtime_only) return 'Runtime Only';
-        return 'Provider';
-    }, [capabilities]);
 
     const statusSummary = useMemo(
         () => summarizeProviderStatus(provider, {
@@ -167,9 +154,6 @@ export default function ProviderDetailPanel({
                         <span className="metric-chip">
                             P{provider.priority}
                         </span>
-                        <span className="metric-chip">
-                            {deployBadge}
-                        </span>
                         {provider.worker_type !== 'llm' && statusSummary.downloadsActive > 0 && (
                             <span className="metric-chip text-cyan-300 border-cyan-500/20">
                                 {statusSummary.downloadsActive} downloading
@@ -198,10 +182,7 @@ export default function ProviderDetailPanel({
                     {/* Tab bar */}
                     <div className="tab-bar -mx-6 px-6">
                         {TABS.filter(tab => {
-                            if (provider.worker_type === 'llm' && (tab.id === 'deploy' || tab.id === 'sync')) {
-                                return false;
-                            }
-                            if (runtime.mode === 'in_process' && tab.id === 'deploy') {
+                            if (provider.worker_type === 'llm' && tab.id === 'sync') {
                                 return false;
                             }
                             return true;
@@ -250,17 +231,6 @@ export default function ProviderDetailPanel({
                             )}
                         </div>
                     )}
-                    {activeTab === 'deploy' && (
-                        <DeployTab
-                            deploy={deploy}
-                            deployBadge={deployBadge}
-                            capabilities={capabilities}
-                            capabilityReasons={capabilityReasons}
-                            loading={loading}
-                            onDeploy={onDeploy}
-                            provider={provider}
-                        />
-                    )}
                     {activeTab === 'sync' && (
                         <SyncTab
                             modelSync={modelSync}
@@ -283,9 +253,6 @@ export default function ProviderDetailPanel({
                             credentialSummary={credentialSummary}
                             providerFailures={providerFailures}
                         />
-                    )}
-                    {activeTab === 'console' && (
-                        <LiveConsoleTab providerId={provider.id} />
                     )}
                 </div>
             </motion.div>

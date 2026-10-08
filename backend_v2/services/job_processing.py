@@ -705,50 +705,6 @@ def _is_audio_path(value: str) -> bool:
     return str(value).lower().endswith(_AUDIO_OUTPUT_SUFFIXES)
 
 
-def _resolve_tts_worker_base_sync(provider_id: str) -> str | None:
-    """The base URL a TTS provider's own `/get-file` is served from.
-
-    Resolved the way `resolve_provider_health_url` resolves the health URL: a
-    serverless deployment has no Docker-DNS name, so the provider's configured
-    `worker_url` wins and the container hostname is only the fallback. Runs
-    synchronously and is called through `asyncio.to_thread` — it reads the
-    database, and this is an `async def` caller on the event loop.
-    """
-    from infrastructure.providers.runtime import _publish_provider_host
-
-    base = None
-    try:
-        from infrastructure.database import get_session_sync
-        from infrastructure.repositories.provider_repo import ProviderRepository
-        from infrastructure.providers.runtime import get_provider_worker_base_url
-
-        session = get_session_sync()
-        try:
-            provider = ProviderRepository(session).get(provider_id)
-            if provider is None:
-                return None
-            config = provider.config or {}
-            container_config = provider.container_config or {}
-            base = (
-                config.get("worker_url")
-                or config.get("discovery_url")
-                or container_config.get("internal_url")
-            )
-            base = base or get_provider_worker_base_url(provider.id)
-        finally:
-            try:
-                session.close()
-            except Exception:
-                pass
-    except Exception as exc:  # pragma: no cover - resolution is best-effort
-        logger.warning("tts_worker_base_unresolved", provider_id=provider_id, error=str(exc))
-        return None
-
-    base = base.rstrip("/")
-    _publish_provider_host(base)
-    return base
-
-
 def _safe_output_subdir(subfolder: str) -> str:
     """A provider-supplied subfolder, confined to the output directory.
 
@@ -786,11 +742,10 @@ async def _fetch_remote_tts_outputs(
     `SaveAudio` already namespaces by the `filename_prefix` the workflow asked
     for (`voice_preview/<id>`, `chat_tts/<chat>/<msg>`), and rewriting it here
     would lose the one piece of structure that makes the output findable.
+
+    Audio is pulled through the provider's in-process engine (`get_file_stream`);
+    there is no worker HTTP endpoint anymore.
     """
-    from urllib.parse import quote
-
-    from infrastructure.http_client import get as http_get
-
     artifacts = [
         a
         for a in ((final_result.get("outputs") or []) + (final_result.get("images") or []))
@@ -804,32 +759,19 @@ async def _fetch_remote_tts_outputs(
     if inline:
         return await asyncio.to_thread(build_job_outputs, job, inline, provider_id)
 
-    base = await asyncio.to_thread(_resolve_tts_worker_base_sync, provider_id)
     engine = None
-    _provider_row = None
-    if base:
-        # Only serve a real in-process provider from the engine; falling
-        # back to a (usually nonexistent) container hostname lost outputs.
-        try:
-            from infrastructure.database import get_session_context
-            from infrastructure.repositories.provider_repo import ProviderRepository
-            from services.provider_runtime import resolve_provider_runtime
+    try:
+        from infrastructure.database import get_session_context
+        from infrastructure.repositories.provider_repo import ProviderRepository
+        from services.engines.engine_factory import get_engine
 
-            async with get_session_context() as session:
-                provider = ProviderRepository(session).get(provider_id)
-                _provider_row = provider
-                if provider is not None and resolve_provider_runtime(provider).mode == "in_process":
-                    base = None
-        except Exception:
-            pass
-    if not base:
-        try:
-            from services.engines.engine_factory import get_engine
-            engine = get_engine(provider_id, _provider_row)
-        except Exception:
-            pass
-        if not (engine and hasattr(engine, "get_file_stream")):
-            return []
+        async with get_session_context() as session:
+            provider = ProviderRepository(session).get(provider_id)
+            engine = get_engine(provider_id, provider)
+    except Exception:
+        pass
+    if not (engine and hasattr(engine, "get_file_stream")):
+        return []
 
     fetched: list[dict[str, Any]] = []
     for artifact in artifacts:
@@ -847,45 +789,28 @@ async def _fetch_remote_tts_outputs(
         target_path = os.path.join(target_dir, filename)
 
         body = None
-        if base:
-            remote_url = f"{base}/get-file/{quote(remote_path, safe='/')}"
-            try:
-                response = await http_get(remote_url, timeout=_TTS_FETCH_TIMEOUT_SECONDS)
-                response.raise_for_status()
-                body = response.content
-            except Exception as exc:
-                # One unreadable artifact fails that artifact, not the job: the
-                # provider has already been paid and its work is not reproducible.
-                logger.warning(
-                    "tts_output_fetch_failed",
-                    provider_id=provider_id,
-                    path=remote_path,
-                    error=str(exc),
-                )
-                continue
-        elif engine and hasattr(engine, "get_file_stream"):
-            try:
-                # Bounded like the container path: the engine enforces its
-                # own ceiling first, but accumulation here still stops at
-                # _TTS_FETCH_MAX_BYTES instead of buffering a wedged stream
-                # forever, inside the same fetch timeout the HTTP path uses.
-                chunks = []
-                total = 0
-                async with asyncio.timeout(_TTS_FETCH_TIMEOUT_SECONDS):
-                    async for chunk in engine.get_file_stream(remote_path):
-                        chunks.append(chunk)
-                        total += len(chunk)
-                        if total > _TTS_FETCH_MAX_BYTES:
-                            break
-                body = b"".join(chunks)
-            except Exception as exc:
-                logger.warning(
-                    "tts_output_fetch_failed",
-                    provider_id=provider_id,
-                    path=remote_path,
-                    error=str(exc),
-                )
-                continue
+        try:
+            # Bounded: the engine enforces its own ceiling first, but
+            # accumulation here still stops at _TTS_FETCH_MAX_BYTES instead
+            # of buffering a wedged stream forever, inside the same fetch
+            # timeout the old HTTP path used.
+            chunks = []
+            total = 0
+            async with asyncio.timeout(_TTS_FETCH_TIMEOUT_SECONDS):
+                async for chunk in engine.get_file_stream(remote_path):
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total > _TTS_FETCH_MAX_BYTES:
+                        break
+            body = b"".join(chunks)
+        except Exception as exc:
+            logger.warning(
+                "tts_output_fetch_failed",
+                provider_id=provider_id,
+                path=remote_path,
+                error=str(exc),
+            )
+            continue
 
         if not body:
             logger.warning("tts_output_empty", provider_id=provider_id, path=remote_path)

@@ -698,10 +698,6 @@ async def run_periodic_in_process_reconciliation() -> dict[str, Any]:
     (returning immediately when one is already running), so a slow volume
     never blocks the next tick.
     """
-    from services.provider_runtime import use_in_process_engines
-
-    if not use_in_process_engines():
-        return {"status": "skipped", "reason": "in-process engines disabled"}
     from api import deps as api_deps
     from infrastructure.models.provider import Provider
     from sqlmodel import select

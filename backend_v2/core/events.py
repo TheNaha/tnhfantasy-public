@@ -133,14 +133,7 @@ class EventType(str, Enum):
 
     # Provider events
     PROVIDER_STATUS = "provider.status"
-    PROVIDER_CONTAINER_STATUS = "provider.container_status"
     PROVIDER_STATS_UPDATE = "provider.stats_update"  # Modal stats, sync counts
-    
-    # Deployment events
-    PROVIDER_DEPLOY_STARTED = "provider.deploy_started"
-    PROVIDER_DEPLOY_PROGRESS = "provider.deploy_progress"
-    PROVIDER_DEPLOY_COMPLETED = "provider.deploy_completed"
-    PROVIDER_DEPLOY_FAILED = "provider.deploy_failed"
     
     # Model status events (for frontend cache invalidation)
     MODEL_STATUS_UPDATE = "model.status_update"  # Per-provider model status changes
@@ -166,8 +159,6 @@ TERMINAL_EVENT_TYPES = {
     EventType.RECONCILIATION_FAILED,
     EventType.MODEL_SYNC_COMPLETED,
     EventType.MODEL_SYNC_FAILED,
-    EventType.PROVIDER_DEPLOY_COMPLETED,
-    EventType.PROVIDER_DEPLOY_FAILED,
 }
 
 # Terminal events whose payload IS the result. `EventBus._preserve_terminal_event`

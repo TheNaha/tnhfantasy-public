@@ -30,14 +30,21 @@ one-account-one-container policy. Three pillars over one World Vault data layer
 | Backend | `backend_v2/` | FastAPI + SQLModel. Services take a request-scoped `Session` and build repositories internally; routes resolve via `api/deps.py`. In-process compute engines are the default runtime. |
 | Frontend | `frontend_v2/` | React + Zustand (UI state only) + React Query (all server data). Schema-driven provider management, model discovery & live diagnostics. |
 | In-Process Engines | `backend_v2/services/engines/` | Primary provider execution engine (Modal, Beam, DirectComfy, LLM, TTS) unified into the backend without container footprint. |
-| Provider Containers (Deprecated) | `provider_containers/` | Legacy containerized fallback behind `--profile providers` compose profile. Maintained for backwards compatibility. |
-| Agents | `remote_agent/` | Optional remote GPU rig, driven over HTTP by the backend. |
+| Agents | `remote_agent/` | Optional remote GPU rig (ComfyUI host), driven over HTTP by the backend. `remote_agent/provider_core/` is the shared HTTP/auth/storage helper library the agent imports. |
 | Migrations | `backend_v2/infrastructure/migrations/steps.py` | Ordered `MigrationStep` list, run at startup. No Alembic. |
+
+> Container removal (2026-10-08): the `provider_containers/` tree
+> (`image_worker/`, `llm_worker/`, `tts_worker/`, and the shared `provider_core/`)
+> and the `--profile providers` compose profile have been removed. Provider
+> workers were folded into in-process engines; `provider_core` relocated to
+> `remote_agent/provider_core`. `EventType.PROVIDER_CONTAINER_STATUS`,
+> `PROVIDER_DEPLOY_*`, the discovery/health/deploy worker HTTP endpoints, and the
+> `tnhcomfy-{ID}` container-naming convention are all gone.
 
 Conventions live in `AGENTS.md` and are worth reading before changing anything:
 error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 `metadata` on the wire, config precedence `COMFY_*` env > `config.json` >
-`DEFAULT_CONFIG`, and container naming `tnhcomfy-{PROVIDER_ID}`.
+`DEFAULT_CONFIG`, and provider naming derived from the provider row type.
 
 ## Verified state
 
@@ -48,10 +55,17 @@ All three suites green as of **2026-10-04**, re-measured after the second
 |---|---|---|
 | Backend | **3054 passed, 9 skipped** (515 s) | `cd backend_v2 && .venv/bin/python -m pytest` |
 | Frontend | **1604 passed across 175 files** (213 s) | `cd frontend_v2 && npm test` |
-| Providers | **1012 passed, 5 skipped** (106 s) | `cd provider_containers && venv/bin/python -m pytest` |
 
-`npm run lint` is **0 errors / 6 warnings** (was 11) and `ruff check .` is clean in
-both Python trees.
+`npm run lint` is **0 errors / 6 warnings** (was 11) and `ruff check .` is clean.
+
+> Container removal (2026-10-08): the `provider_containers/` tree
+> (`image_worker/`, `llm_worker/`, `tts_worker/`, and the shared `provider_core/`)
+> and the `--profile providers` compose profile have been removed. Provider
+> workers were folded into in-process engines; `provider_core` relocated to
+> `remote_agent/provider_core`. `EventType.PROVIDER_CONTAINER_STATUS`,
+> `PROVIDER_DEPLOY_*`, the discovery/health/deploy worker HTTP endpoints, and the
+> `tnhcomfy-{ID}` container-naming convention are all gone. `COMFY_USE_IN_PROCESS_ENGINES`
+> no longer exists — in-process is the only runtime.
 
 > **The "known flaky" backend test was not flaky.** This section previously carried
 > `test_lifespan_runs_every_declared_startup_phase` as a load-sensitive flake that
@@ -123,21 +137,19 @@ state had drifted from the measured state while both kept looking authoritative.
 The compose defect in the next paragraph is the same failure in a different place:
 CI had been green — or red — about a file the suites never read.
 
-Lint: `ruff check .` clean in the backend **and** in `provider_containers` (which
-now has its own `ruff.toml` selecting `F`, with F401 on and zero blanket ignores).
-`npm run lint` reports **0 errors and 12 warnings**: eleven
-`react-hooks/exhaustive-deps` in `src/contexts/ChatWorkspaceContext.jsx` and
-`src/pages/BatchGenerate.jsx`, plus one `react-hooks/incompatible-library` each in
+Lint: `ruff check .` clean in the backend. `npm run lint` reports **0 errors and 12
+warnings**: eleven `react-hooks/exhaustive-deps` in `src/contexts/ChatWorkspaceContext.jsx`
+and `src/pages/BatchGenerate.jsx`, plus one `react-hooks/incompatible-library` each in
 `src/hooks/useScrollRoot.js` (TanStack Virtual's `useVirtualizer()`) and
 `src/pages/StorySandbox.jsx`. `npm run build` is clean.
 
-Compose: `docker compose -f docker-compose.yml -f docker-compose.dev.yml
---profile providers config --quiet` exits 0 once the env files exist, and the
-`build` job in `.github/workflows/provider-tests.yml` runs it plus a build of
-**four** provider Dockerfiles — `image_worker`, `llm_worker`, `tts_worker` and the
-remote agent's. That job went red at its first step on every clean checkout
-**twice, for the same reason** — a compose `env_file:` with no file seeded next to
-it — and on two different occasions:
+Compose: `docker compose config --quiet` (the deprecated `--profile providers` is
+gone; provider workers are in-process now) exits 0, and the `app-images` job in
+`.github/workflows/provider-tests.yml` renders compose plus a build of the remote agent's
+image, the backend, and the frontend (prod + dev). That job goes red on a broken compose
+render or a broken image `COPY`/system-package/install — the part of the stack no test
+suite covers. A compose `env_file:` with no file seeded next to it used to make it exit 1
+on every clean checkout **twice**, for the same reason:
 
 - First (2026-09-28, fixed): compose refuses to render while an `env_file:` is
   missing, and every `.env*` is gitignored, so the step exited 1 and the
@@ -145,6 +157,10 @@ it — and on two different occasions:
 - Second (until 2026-09-29): `provider-tts-modal-hp196` was added to the
   `providers` profile with `env_file: - .env.tts-modal-hp196` and the seeding list
   was not updated, so the step exited 1 again.
+
+With the containerized workers removed, `docker-compose.yml` no longer carries any
+`env_file:` entries beyond the root `.env`, and `preflight.sh` only notes stale
+per-worker env files rather than failing on them.
 
 Both times the job was the *only* thing that could have caught the change it
 tripped on, and it was not triggered at all by a change to `docker-compose.yml`,
@@ -683,7 +699,7 @@ investigated and is not worth doing as described:
 # reports the config that silently disables features.
 bash scripts/preflight.sh
 
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
 ```
 
 The frontend serves on **:5174** (not 5173) and proxies `/api` and

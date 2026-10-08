@@ -22,7 +22,7 @@ input/
 # Dependency trees. `remote_agent/docker-compose.yml` builds with `context: ..`,
 # so without these the whole repo — including multi-GB venvs and node_modules —
 # is shipped to the daemon on every remote-agent build, while the Dockerfile only
-# needs remote_agent/ and provider_containers/provider_core/.
+# needs remote_agent/ (incl. remote_agent/provider_core/). provider_containers/ is gone.
 node_modules/
 **/node_modules/
 .venv/

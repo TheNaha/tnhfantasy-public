@@ -10,7 +10,6 @@ from fastapi.responses import Response as FastAPIResponse
 from api.error_handlers import register_exception_handlers
 from api.routes import (
     collections,
-    discovery,
     files,
     generation,
     health,
@@ -114,7 +113,6 @@ def configure_app(app: FastAPI):
     app.include_router(collections.router)
     app.include_router(nodes.router)
     app.include_router(worker_ws.router)
-    app.include_router(discovery.router)
     app.include_router(world_vault.router)
 
     app.mount("/socket.io", socket_app)

@@ -10,22 +10,16 @@ from core.entities import VALID_TASK_TYPES, Job, LoadBalancingConfig, Provider
 from core.events import EventType, emit_provider_event
 from core.exceptions import NotFoundError, ValidationError
 from infrastructure.logging import provider_logger
-from infrastructure.providers.runtime import provider_container_name
 from infrastructure.repositories import LoadBalancingRepository, ProviderRepository
-from services.provider_deploy_service import ProviderDeployService
-from services.provider_env_builder import build_provider_environment
 from services.provider_reconciliation_service import ProviderReconciliationService
 from services.provider_runtime import resolve_provider_runtime
 from services.provider_utils import (
-    _get_supported_managed_deploy_types,
     clean_dict,
     compose_config,
-    default_deploy_mode,
     extract_deploy_config,
     extract_runtime_config,
     mask_secret,
     normalize_reconciliation_status,
-    read_deploy_state,
     read_reconciliation_state,
 )
 
@@ -109,7 +103,6 @@ class ProviderService:
         self.session = session
         self.repo = ProviderRepository(session)
         self.lb_repo = LoadBalancingRepository(session)
-        self.deploy_service = ProviderDeployService(self.repo)
         self.reconciliation_service = ProviderReconciliationService(self.repo)
 
     def _normalize_provider_for_storage(self, provider_data: dict[str, Any], existing: Provider | None = None) -> dict[str, Any]:
@@ -133,39 +126,27 @@ class ProviderService:
         merged_config = clean_dict(existing_config)
         merged_config.update(clean_dict(payload.get("config")))
 
-        raw_runtime_config = payload.get("runtime_config")
-        if raw_runtime_config is None and "container_config" in payload:
-            raw_runtime_config = payload.get("container_config")
-        if raw_runtime_config is None:
-            raw_runtime_config = extract_runtime_config(
-                provider_type,
-                getattr(existing, "container_config", None),
-                merged_config,
-            )
+        # `runtime_config` is legacy placement: an explicit payload value
+        # (including null, which is what the current UI sends) wins, otherwise
+        # the stored value round-trips untouched.
+        if "runtime_config" in payload or "container_config" in payload:
+            raw_runtime_config = payload.get("runtime_config", payload.get("container_config"))
+            runtime_config = clean_dict(raw_runtime_config) or None
         else:
-            raw_runtime_config = clean_dict(raw_runtime_config)
+            runtime_config = extract_runtime_config(merged_config)
 
-        raw_deploy_config = payload.get("deploy_config")
-        if raw_deploy_config is None:
-            raw_deploy_config = extract_deploy_config(provider_type, merged_config, worker_type)
-        else:
-            raw_deploy_config = clean_dict(raw_deploy_config)
-
+        raw_deploy_config = clean_dict(payload.get("deploy_config"))
         deploy_config = extract_deploy_config(
-            provider_type,
             {
                 **merged_config,
                 "deploy_config": raw_deploy_config,
             },
-            worker_type,
         )
 
-        runtime_config = raw_runtime_config or None
         config = compose_config(
             base_config=merged_config,
             runtime_config=runtime_config,
             deploy_config=deploy_config,
-            deploy_state=read_deploy_state(existing) if existing else None,
             reconciliation_state=read_reconciliation_state(existing) if existing else None,
         )
 
@@ -176,7 +157,9 @@ class ProviderService:
             "enabled": payload.get("enabled", getattr(existing, "enabled", True)),
             "priority": payload.get("priority", getattr(existing, "priority", 1)),
             "credentials": clean_dict(payload.get("credentials", getattr(existing, "credentials", {}))),
-            "container_config": runtime_config,
+            # Legacy column, always cleared on write; placement now lives
+            # under `config` (migration 089 healed old rows there).
+            "container_config": None,
             "config": config,
             # Column name, so `repo.create`/`repo.update` (which splat this
             # dict into the model) persist it rather than dropping a kwarg it
@@ -203,15 +186,14 @@ class ProviderService:
             or mask_secret(credentials.get("api_key"))
             or mask_secret(credentials.get("token_id"))
         )
-        is_discovery = runtime and getattr(runtime, "mode", None) == "discovery"
-        missing_credentials = [] if is_discovery else validation["credentials"]
-        missing_config = [] if is_discovery else validation["config"]
+        missing_credentials = validation["credentials"]
+        missing_config = validation["config"]
         return {
             "configured_fields": configured_fields,
             "missing_required_credentials": missing_credentials,
             "missing_required_config": missing_config,
             "account_label": account_label,
-            "has_credentials": bool(configured_fields) or is_discovery,
+            "has_credentials": bool(configured_fields),
             "ready": not missing_credentials and not missing_config,
         }
 
@@ -223,48 +205,17 @@ class ProviderService:
         runtime_config: dict[str, Any] | None,
         deploy_config: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, str | None]]:
-        deploy_mode = deploy_config.get("deploy_mode", default_deploy_mode(provider.type))
-        managed_deploy = deploy_mode == "managed" and provider.type in _get_supported_managed_deploy_types()
-        runtime_available = runtime_config is not None
-
         capabilities = {
-            "container": runtime_available,
-            "start_container": False,
-            "stop_container": False,
-            "restart_container": False,
-            "view_logs": False,
-            "deploy": runtime_available,
-            "setup": provider.type in ("modal", "modal_llm") and runtime_available,
+            "setup": runtime.supports_setup,
             "reconcile": runtime.supports_reconciliation,
             "reset_status": True,
-            "manual_deploy": deploy_mode == "manual",
-            "managed_deploy": False,
-            "runtime_only": runtime_available,
         }
 
         reasons = {
-            "deploy": None if managed_deploy else (
-                "Provider is configured for manual deploy"
-                if deploy_mode == "manual"
-                else "Managed deploy is unavailable for this provider"
-            ),
-            "setup": None if capabilities["setup"] else "Setup is only available for Modal providers with a runtime container",
+            "setup": None if capabilities["setup"] else "Setup is only available for Modal providers with an in-process engine",
             "reconcile": None if capabilities["reconcile"] else "Runtime worker is unavailable",
         }
         return capabilities, reasons
-
-    # DELEGATED METHODS
-    
-    def build_provider_environment(self, provider: Provider) -> dict[str, str]:
-        return build_provider_environment(provider)
-
-    async def get_provider_deploy_state(self, provider_id: str) -> dict[str, Any]:
-        provider = await self.get_provider(provider_id)
-        return await self.deploy_service.get_provider_deploy_state(provider)
-
-    async def deploy_provider_app(self, provider_id: str, container_manager: Any) -> dict[str, Any]:
-        provider = await self.get_provider(provider_id)
-        return await self.deploy_service.deploy_provider_app(provider, container_manager)
 
     async def get_provider_reconciliation_state(self, provider_id: str) -> dict[str, Any]:
         provider = await self.get_provider(provider_id)
@@ -331,12 +282,7 @@ class ProviderService:
     async def list_providers(self) -> list[dict[str, Any]]:
         providers = self.repo.get_all()
         result = [self._provider_to_dict(p) for p in providers]
-        # Sort: discovered (live) providers first, then by priority
-        result.sort(key=lambda d: (
-            0 if d.get("runtime_state", {}).get("discovered") else 1,
-            d.get("runtime_state", {}).get("last_seen_at", "") or "",
-            d.get("priority", 1),
-        ))
+        result.sort(key=lambda d: d.get("priority", 1))
         return result
     
     def get_enabled_providers(self) -> list[Provider]:
@@ -479,99 +425,6 @@ class ProviderService:
         
         return True
     
-    async def upsert_provider_from_discovery(
-        self,
-        provider_id: str,
-        provider_type: str,
-        internal_url: str,
-        worker_type: str = "image",
-        capabilities: list[str] | None = None,
-    ) -> Provider:
-        """Create or update a provider record from a live discovery heartbeat.
-        
-        This is the mechanism by which external provider containers register
-        themselves with the backend. Providers that are never discovered are
-        excluded from the active provider list.
-        """
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-
-        container_name = provider_container_name(provider_id)
-        container_config = {"container_name": container_name}
-
-        # A worker heartbeat states what it can run. Absent, the provider is
-        # treated as serving its own `worker_type` alone, which is what every
-        # worker sent before this — so an older container registers exactly as it
-        # did. Declared, it is authoritative and re-asserted on every heartbeat,
-        # so a container that gains or loses a capability converges without a
-        # manual edit.
-        declared = list(capabilities) if capabilities else [worker_type]
-
-        existing = self.repo.get(provider_id)
-        if existing:
-            updates: dict[str, Any] = {}
-            if existing.worker_type != worker_type:
-                updates["worker_type"] = worker_type
-            if list(existing.capabilities or []) != declared:
-                updates["capabilities"] = declared
-            config = dict(existing.config or {})
-            config["last_seen_at"] = now
-            config["discovery_url"] = internal_url
-            updates["config"] = config
-            if not existing.container_config:
-                updates["container_config"] = container_config
-            updated = self.repo.update(provider_id, updates)
-            logger.info("provider_discovery_updated", provider_id=provider_id, url=internal_url)
-            # `enabled` is deliberately not re-asserted here, so a heartbeat
-            # never undoes an operator's decision on the Providers page. The
-            # flip side is that a provider registered disabled stays disabled
-            # until someone enables it by hand — which is the correct direction
-            # for a control that exists to be seen.
-            return updated or existing
-
-        provider = self.repo.create({
-            "id": provider_id,
-            "type": provider_type,
-            "worker_type": worker_type,
-            "capabilities": declared,
-            # Enabled on registration. There was a
-            # `COMFY_DISCOVERY_ALLOW_NEW_PROVIDERS` gate here, defaulting to 0, and
-            # it was not a security control:
-            #
-            #   * All providers authenticate to this endpoint with the same bearer
-            #     token (`discovery.py` -> `hmac.compare_digest`), and every
-            #     provider container already holds it. The token is the whole
-            #     boundary and cannot tell `modal-zetsuke` from an impostor, so
-            #     anything the flag withheld was already reachable to a token
-            #     holder by other means.
-            #   * The update path above never consulted it, and that path
-            #     overwrites `discovery_url` unconditionally — which is the
-            #     *first-priority* dispatch base URL (`job_processing.py`). One
-            #     authenticated heartbeat could redirect every subsequent job's
-            #     full workflow wherever it liked with the flag set to either
-            #     value.
-            #   * The only thing it actually prevented was a provider container
-            #     restarting on its own quietly starting to take paid inference
-            #     traffic.
-            #
-            # So it cost a silent capacity-and-billing surprise, and a variable
-            # whose name demanded a security argument it could not survive. It is
-            # gone rather than defaulted: "should this provider take my jobs" is
-            # a real question with a real answer, and it lives on the provider row
-            # where you can see it and change it, not in an env var nobody reads.
-            "enabled": True,
-
-            "priority": 1,
-            "container_config": container_config,
-            "config": {
-                "last_seen_at": now,
-                "discovery_url": internal_url,
-                "discovered": True,
-            },
-        })
-        logger.info("provider_discovery_created", provider_id=provider_id, type=provider_type, url=internal_url)
-        return provider
-
     def get_load_balancing_config(self) -> LoadBalancingConfig:
         return self.lb_repo.get()
     
@@ -580,12 +433,9 @@ class ProviderService:
     
     def _provider_to_dict(self, provider: Provider) -> dict[str, Any]:
         runtime = resolve_provider_runtime(provider)
-        deploy_state = read_deploy_state(provider)
         reconciliation_state = read_reconciliation_state(provider)
-        runtime_config = extract_runtime_config(provider.type, provider.container_config, provider.config or {})
-        deploy_config = extract_deploy_config(
-            provider.type, provider.config or {}, provider.worker_type or "image"
-        )
+        runtime_config = extract_runtime_config(provider.config or {})
+        deploy_config = extract_deploy_config(provider.config or {})
         capabilities, capability_reasons = self._build_capabilities(
             provider=provider,
             runtime=runtime,
@@ -607,7 +457,6 @@ class ProviderService:
             "priority": provider.priority,
             "runtime_config": runtime_config,
             "deploy_config": deploy_config,
-            "deploy_state": deploy_state,
             "reconciliation_state": reconciliation_state,
             "has_worker_token": has_worker_token,
             "runtime_state": {
@@ -618,10 +467,6 @@ class ProviderService:
                 "supports_setup": runtime.supports_setup,
                 "supports_reconciliation": runtime.supports_reconciliation,
                 "worker_url": runtime.worker_url,
-                "container_name": runtime.container_name,
-                "discovered": bool(provider_config.get("discovered") or provider_config.get("last_seen_at")),
-                "last_seen_at": provider_config.get("last_seen_at"),
-                "discovery_url": provider_config.get("discovery_url"),
             },
             "capabilities": capabilities,
             "capability_reasons": capability_reasons,
@@ -631,13 +476,12 @@ class ProviderService:
             # different meanings on one field, where the one that answers "can
             # this provider serve TTS" was the one missing.
             "declared_capabilities": list(provider.capabilities or []),
-            # Validated against the union of config homes: pre-overhaul rows
-            # may hold URLs under `container_config` (the old wizard wrote
-            # `api_base` there), so the summary must see them too.
+            # Validated against the engine config: credentials plus the union
+            # of stored config and engine settings.
             "credential_summary": self._summarize_credentials(
                 provider.type,
                 clean_dict(provider.credentials),
-                {**(provider.container_config or {}), **(provider.config or {}), **deploy_config},
+                {**(provider.config or {}), **deploy_config},
                 runtime,
             ),
         }

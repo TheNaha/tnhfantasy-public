@@ -550,7 +550,6 @@ async def _tool_narrate_scene(
     from services.load_balancer_factory import create_load_balancer
     from services.provider_runtime import resolve_provider_runtime_async
     from services.provider_client import (
-        call_llm_provider,
         JobCancelledError,
         JobTimeoutError,
         ProviderCallError,
@@ -596,7 +595,7 @@ async def _tool_narrate_scene(
                         timeout,
                         provider.id,
                     )
-                elif runtime.mode not in ("container_http", "discovery"):
+                else:
                     # Configuration issue, not a runtime failure: do NOT
                     # penalize the provider's failure counter. The provider is
                     # simply not usable in this mode. Only genuine runtime
@@ -605,17 +604,6 @@ async def _tool_narrate_scene(
                     _lb_released = True
                     await load_balancer.release_job(provider.id)
                     return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}
-
-                else:
-                    final_result = await call_llm_provider(
-                        worker_url=runtime.worker_url,
-                        workflow=workflow,
-                        job_id=job.id,
-                        job_service=_job_service,
-                        timeout=timeout,
-                        provider_id=provider.id,
-                        provider_type=provider.type,
-                    )
 
                 await load_balancer.report_success(provider.id)
                 _lb_released = True

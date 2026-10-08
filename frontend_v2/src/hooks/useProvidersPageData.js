@@ -56,24 +56,6 @@ function patchProviders(currentProviders, providerId, patcher) {
     ));
 }
 
-function mergeRuntimeState(currentProviders, event) {
-    const payload = unwrapEventData(event);
-    const providerId = extractProviderId(payload);
-    if (!providerId || !payload.status) {
-        return currentProviders;
-    }
-
-    return patchProviders(currentProviders, providerId, (provider) => ({
-        ...provider,
-        runtime_state: {
-            ...(provider.runtime_state || {}),
-            status: payload.status,
-            running: payload.running ?? ['running', 'starting'].includes(payload.status),
-            healthy: payload.healthy ?? provider.runtime_state?.healthy,
-        },
-    }));
-}
-
 function mergeReconciliationState(currentProviders, event) {
     const payload = unwrapEventData(event);
     const providerId = extractProviderId(payload);
@@ -175,13 +157,6 @@ async function ensureProvidersRealtime(queryClient) {
             }
         }));
 
-        unsubs.push(ws.on(ws.EventTypes.PROVIDER_CONTAINER_STATUS, (event) => {
-            queryClient.setQueryData(
-                PROVIDERS_PAGE_QUERY_KEYS.providers,
-                (current) => mergeRuntimeState(current, event),
-            );
-        }));
-
         unsubs.push(ws.on(ws.EventTypes.PROVIDER_STATS_UPDATE, (event) => {
             queryClient.setQueryData(
                 PROVIDERS_PAGE_QUERY_KEYS.providers,
@@ -201,16 +176,16 @@ async function ensureProvidersRealtime(queryClient) {
         unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_PROGRESS, patchReconciliation));
         unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_COMPLETED, patchReconciliation));
         unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_FAILED, () => {
-            // A worker failure has no progress payload to patch in, so
+            // An engine failure has no progress payload to patch in, so
             // `patchReconciliation` would be a no-op. Refetch instead: the card
             // must not keep reading "reconciling" while the database already
-            // holds the failed status. The sibling `provider.deploy_failed` was
-            // already handled, so this was an oversight rather than a policy.
+            // must not keep reading "reconciling" while the database already
+            // holds the failed status.
             // There is no separate `reconciliation` query — the state rides on
             // the providers list (`reconciliation_state` per provider), so
             // invalidating `providers` is the whole refetch.
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
-            toast.error('Provider reconciliation failed. Check the provider logs.');
+            toast.error('Provider reconciliation failed. Check the provider Diagnostics tab.');
         }));
 
         unsubs.push(ws.on(ws.EventTypes.MODEL_STATUS_UPDATE, (event) => {
@@ -241,28 +216,6 @@ async function ensureProvidersRealtime(queryClient) {
                 queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
             }
         }));
-
-        const patchDeployState = (event) => {
-            const payload = unwrapEventData(event);
-            const providerId = extractProviderId(payload);
-            if (!providerId) return;
-
-            queryClient.setQueryData(
-                PROVIDERS_PAGE_QUERY_KEYS.providers,
-                (current) => patchProviders(current, providerId, (provider) => ({
-                    ...provider,
-                    deploy_state: {
-                        ...(provider.deploy_state || {}),
-                        ...payload,
-                    },
-                }))
-            );
-        };
-
-        unsubs.push(ws.on(ws.EventTypes.PROVIDER_DEPLOY_STARTED, patchDeployState));
-        unsubs.push(ws.on(ws.EventTypes.PROVIDER_DEPLOY_PROGRESS, patchDeployState));
-        unsubs.push(ws.on(ws.EventTypes.PROVIDER_DEPLOY_COMPLETED, patchDeployState));
-        unsubs.push(ws.on(ws.EventTypes.PROVIDER_DEPLOY_FAILED, patchDeployState));
 
         realtimeState.cleanup = () => {
             unsubs.forEach((unsub) => unsub?.());
@@ -422,7 +375,7 @@ export function useProviderMutations() {
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers }),
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.loadBalancer }),
             // `['installed-models']` here matched no query, so after any provider
-            // action (deploy, wake, sync, delete) the installed-model list stayed
+            // action (setup, sync, delete) the installed-model list stayed
             // stale. The list's real key is `modelListKey(...)` under `['models']`.
             queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] }),
             // `objectInfo`, keyed `['objectInfo', providerId]`. Repo-wide before
@@ -457,13 +410,6 @@ export function useProviderMutations() {
 
     return {
         actionLoading,
-        async deployProvider(providerId) {
-            return mutate.mutateAsync({
-                providerId,
-                action: 'deploying',
-                callback: () => providersApi.deploy(providerId),
-            });
-        },
         async reconcileProvider(providerId) {
             return mutate.mutateAsync({
                 providerId,

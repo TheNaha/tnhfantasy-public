@@ -5,8 +5,6 @@
 #   Core only (backend + frontend):
 #     docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V
 #
-#   With providers:
-#     docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V
 #
 #   `-V` is not optional in dev: the frontend's node_modules is an ANONYMOUS
 #   volume seeded from the image (see the mount list below), so without
@@ -130,37 +128,3 @@ services:
       retries: 3
       start_period: 20s
 
-  # ─── Provider (opt-in: --profile providers) ─────────────
-  provider-modal-zetsuke:
-    profiles:
-      - providers
-    # Generous limits for dev — remove to inherit base compose limits
-    deploy:
-      resources:
-        limits:
-          memory: 16G
-          cpus: "8"
-  provider-modal-stepmania:
-    profiles:
-      - providers
-    # Generous limits for dev — remove to inherit base compose limits
-    deploy:
-      resources:
-        limits:
-          memory: 16G
-          cpus: "8"
-  # Was the one image provider missing from this list, so it kept the base's
-  # 8G/4cpu while its two Modal siblings were raised. That is not a deliberate
-  # asymmetry: hp196 is the account that also backs `tts-modal-hp196`, so the
-  # provider with the *most* work on it had the *least* headroom. Raised to match
-  # its siblings rather than commented out as intentional, because the block it
-  # would have documented was simply forgotten.
-  provider-modal-hp196:
-    profiles:
-      - providers
-    # Generous limits for dev — remove to inherit base compose limits
-    deploy:
-      resources:
-        limits:
-          memory: 16G
-          cpus: "8"

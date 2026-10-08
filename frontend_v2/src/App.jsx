@@ -30,7 +30,6 @@ import { useShallow } from 'zustand/react/shallow';
 import { migrateLegacyCollections } from './hooks/useCollections';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
-import { providersApi } from './api/providers';
 import { formatBytes } from './utils/bytes';
 import * as ws from './api/websocket';
 // Lazy-loaded pages to minimise initial JS bundle
@@ -226,19 +225,6 @@ function GlobalHooks() {
         });
     }, []);
 
-    // Gate to ensure provider wake is only called once per mount
-    const hasRequestedProviderWake = useRef(false);
-
-    useEffect(() => {
-        if (hasRequestedProviderWake.current) {
-            return;
-        }
-        hasRequestedProviderWake.current = true;
-
-        providersApi.wake().catch((error) => {
-            console.warn('Failed to warm providers:', error);
-        });
-    }, []);
 
     return null;
 }

@@ -9,9 +9,6 @@
 #       session: Session = Depends(get_session)
 #   Then creates services via:
 #       service = get_job_service(session)
-#
-# The ContainerManager is a singleton because it holds a Docker/Podman client
-# connection that is expensive to create on every request.
 from collections.abc import AsyncIterator, Generator
 from contextlib import asynccontextmanager
 
@@ -19,7 +16,7 @@ from fastapi import Depends, Request
 from sqlmodel import Session
 
 from core.events import EventBus, event_bus
-from infrastructure.deps import get_container_manager, get_session_context as _infra_get_session_context, get_session_sync as _infra_get_session_sync
+from infrastructure.deps import get_session_context as _infra_get_session_context, get_session_sync as _infra_get_session_sync
 from infrastructure.database import (
     get_session as db_get_session,
 )
@@ -86,14 +83,12 @@ def get_job_submission_service(session: Session = Depends(get_session)):
 
 
 def get_provider_lifecycle_service(
-    request: Request,
     session: Session = Depends(get_session)
 ):
     from services.provider_lifecycle_service import ProviderLifecycleService
     from services.provider_status_service import invalidate_provider_status_caches
     return ProviderLifecycleService(
         session,
-        container_manager=get_container_manager(request),
         invalidate_caches=invalidate_provider_status_caches,
     )
 
@@ -106,11 +101,6 @@ def get_provider_status_service(session: Session = Depends(get_session)):
 def get_model_civitai_sync_service(session: Session = Depends(get_session)):
     from services.model_civitai_sync import ModelCivitaiSyncService
     return ModelCivitaiSyncService(session)
-
-
-def get_provider_worker_url(provider_id: str) -> str:
-    from infrastructure.providers.runtime import get_provider_worker_base_url
-    return get_provider_worker_base_url(provider_id)
 
 
 def get_collection_repo(session: Session = Depends(get_session)):

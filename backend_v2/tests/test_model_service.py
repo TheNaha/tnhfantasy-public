@@ -279,10 +279,7 @@ class _FakeHttpClient:
 
 class TestModelServiceV2NetworkEfficiency:
     @pytest.mark.asyncio
-    async def test_trigger_download_reuses_single_http_session(self, service):
-        _FakeHttpClient.created = 0
-        _FakeHttpClient.post_calls = []
-
+    async def test_trigger_download_reconciles_each_in_process_provider(self, service):
         providers = [SimpleNamespace(id="p1"), SimpleNamespace(id="p2")]
         model = SimpleNamespace(directory="checkpoints")
         version = SimpleNamespace(id=101, is_enabled=True)
@@ -294,21 +291,27 @@ class TestModelServiceV2NetworkEfficiency:
         service.repo.update_provider_status = lambda **kwargs: None
         service.session.exec = lambda *args, **kwargs: SimpleNamespace(all=lambda: providers)
 
-        fake_http_client = _FakeHttpClient()
-        with patch("services.model_downloader.get_http_client", return_value=fake_http_client):
-            with patch("services.provider_runtime.resolve_provider_runtime") as mock_resolve:
-                mock_resolve.return_value = SimpleNamespace(mode="container_http", worker_url="http://fake:8000")
-                result = await service.trigger_download_to_providers(model_id=1)
+        fake_engine = SimpleNamespace(manages_model_files=True)
+        reconciled = []
 
-        assert _FakeHttpClient.created == 1
+        async def _fake_reconcile(provider_id, **kwargs):
+            reconciled.append(provider_id)
+            return {"status": "started"}
+
+        with patch("services.provider_runtime.resolve_provider_runtime") as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(mode="in_process")
+            with patch("services.engines.engine_factory.get_engine", return_value=fake_engine):
+                with patch(
+                    "services.in_process_reconciliation.trigger_in_process_reconciliation",
+                    side_effect=_fake_reconcile,
+                ):
+                    result = await service.trigger_download_to_providers(model_id=1)
+
         assert result["triggered"] == 2
-        assert len(_FakeHttpClient.post_calls) == 2
+        assert sorted(reconciled) == ["p1", "p2"]
 
     @pytest.mark.asyncio
-    async def test_trigger_delete_reuses_single_http_session(self, service):
-        _FakeHttpClient.created = 0
-        _FakeHttpClient.delete_calls = []
-
+    async def test_trigger_delete_uses_engine_delete(self, service):
         providers = [SimpleNamespace(id="p1"), SimpleNamespace(id="p2")]
         model = SimpleNamespace(directory="loras")
         version = SimpleNamespace(id=501)
@@ -319,12 +322,16 @@ class TestModelServiceV2NetworkEfficiency:
         service.repo.get_primary_file_for_version = lambda version_id: file_obj
         service.session.exec = lambda *args, **kwargs: SimpleNamespace(all=lambda: providers)
 
-        fake_http_client = _FakeHttpClient()
-        with patch("services.model_downloader.get_http_client", return_value=fake_http_client):
-            with patch("services.provider_runtime.resolve_provider_runtime") as mock_resolve:
-                mock_resolve.return_value = SimpleNamespace(worker_url="http://fake:8000")
+        deleted_paths = []
+
+        fake_engine = SimpleNamespace(
+            delete_model=AsyncMock(side_effect=lambda path: deleted_paths.append(path) or True),
+        )
+
+        with patch("services.provider_runtime.resolve_provider_runtime") as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(mode="in_process")
+            with patch("services.engines.engine_factory.get_engine", return_value=fake_engine):
                 result = await service.trigger_delete_from_providers(model_id=1)
 
-        assert _FakeHttpClient.created == 1
         assert result["deleted"] == 2
-        assert len(_FakeHttpClient.delete_calls) == 2
+        assert deleted_paths == ["models/loras/style.safetensors"] * 2

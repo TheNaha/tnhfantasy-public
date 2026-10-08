@@ -11,7 +11,7 @@ on:
   push:
     paths:
       - "remote_agent/**"
-      - "provider_containers/provider_core/**"
+      - "remote_agent/provider_core/**"
       - ".github/workflows/build-agent-binaries.yml"
     branches: [main, master]
 

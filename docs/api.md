@@ -217,7 +217,7 @@ The prefix is `/llm`, not `/llm-config`; this file used to document both, and th
 - `PUT /api/v2/llm/default-provider` — Set the default LLM provider.
 - `GET /api/v2/llm/available-models` — Models exposed by the configured LLM provider.
 - `GET /api/v2/llm/providers` — Available LLM providers for chat/story narration.
-- `POST /api/v2/llm/providers/{provider_id}/test` — **Test Connection**: pings the provider worker's local health endpoint (Vision #4: checks the LOCAL worker `worker_url`, never a remote engine) and returns health + available models.
+- `POST /api/v2/llm/providers/{provider_id}/test` — **Test Connection**: instantiates the provider's in-process engine and runs its `health`/`object_info`/list path, returning liveness and available models (no remote worker URL involved).
 
 ### Worlds (`/api/v2/worlds`)
 
@@ -289,7 +289,6 @@ Real-time job lifecycle, downloads, reconciliation, and provider status (replace
 - `PUT /api/v2/providers/{id}`: Update provider config/credentials.
 - `PATCH /api/v2/providers/{id}`: Update provider (alias for PUT).
 - `DELETE /api/v2/providers/{id}`: Remove provider.
-- `POST /api/v2/providers/wake`: Warm/ensure providers are ready.
 - `GET /api/v2/providers/load-balancing`: Current load-balancer strategy (alias).
 - `PUT /api/v2/providers/load-balancing`: Update load-balancer strategy (alias).
 - `GET /api/v2/providers/config/load-balancing`: Current load-balancer configuration with stats.
@@ -298,8 +297,6 @@ Real-time job lifecycle, downloads, reconciliation, and provider status (replace
 - `POST /api/v2/providers/{id}/reconcile`: Trigger model sync for a provider.
 - `GET /api/v2/providers/{id}/reconciliation-status`: Get reconciliation status for a provider.
 - `POST /api/v2/providers/{id}/reconciliation-event`: Trigger a reconciliation event.
-- `GET /api/v2/providers/containers/list`: List all provider containers.
-- `GET /api/v2/providers/containers/status`: Get status of all provider containers (cached 10s).
 - `GET /api/v2/providers/status-cards`: Canonical status payloads for all providers.
 - `GET /api/v2/providers/{id}/status-card`: Status payload for a single provider.
 - `GET /api/v2/providers/{id}/modal-stats`: Provider storage/model counts (cached 30s).
@@ -308,14 +305,8 @@ Real-time job lifecycle, downloads, reconciliation, and provider status (replace
 - `DELETE /api/v2/providers/{id}/models`: Delete a model file from a provider.
 - `POST /api/v2/providers/models/custom`: Create a custom model entry and trigger downloads.
 - `POST /api/v2/providers/{id}/setup`: Run provider setup (initialize directories).
-- `GET /api/v2/providers/{id}/deploy-status`: Get persisted deploy state.
-- `POST /api/v2/providers/{id}/deploy`: Deploy provider app (Modal or Beam).
 - `POST /api/v2/providers/cleanup-orphaned-statuses`: Clean up orphaned provider status records.
 - `POST /api/v2/providers/state/cleanup`: Maintenance cleanup for provider state.
-
-### Provider Discovery (`/api/v2/providers`)
-
-- `POST /api/v2/providers/discovery`: Self-discovery endpoint for provider containers to register themselves.
 
 ### Collections (`/api/v2/collections`)
 
@@ -396,7 +387,6 @@ GET /api/files/proxy/{provider_id}/{path}    (does not exist)
 This was three endpoints: `/api/health` was a second name for the constant that
 `/api/live` returns, with no callers outside a test, while the provider workers
 exposed `/live` and the compose healthcheck used `/api/ready`. The provider
-containers' `/live` and the backend's are now the same name for the same idea.
 
 ### Metrics
 
@@ -614,10 +604,6 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET`, `POST` `/api/v2/providers/`
 - `POST` `/api/v2/providers/cleanup-orphaned-statuses`
 - `GET`, `PUT` `/api/v2/providers/config/load-balancing`
-- `GET` `/api/v2/providers/containers/list`
-- `GET` `/api/v2/providers/containers/status`
-- `POST` `/api/v2/providers/detect`
-- `POST` `/api/v2/providers/discovery`
 - `GET` `/api/v2/providers/load-balancer/stats`
 - `GET`, `PUT` `/api/v2/providers/load-balancing`
 - `GET` `/api/v2/providers/model-cache`
@@ -625,12 +611,8 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `POST` `/api/v2/providers/models/custom`
 - `POST` `/api/v2/providers/state/cleanup`
 - `GET` `/api/v2/providers/status-cards`
-- `POST` `/api/v2/providers/wake`
 - `GET`, `PUT`, `PATCH`, `DELETE` `/api/v2/providers/{provider_id}`
-- `POST` `/api/v2/providers/{provider_id}/deploy`
-- `GET` `/api/v2/providers/{provider_id}/deploy-status`
 - `GET` `/api/v2/providers/{provider_id}/live-metrics`
-- `GET` `/api/v2/providers/{provider_id}/logs`
 - `GET` `/api/v2/providers/{provider_id}/modal-stats`
 - `GET`, `DELETE` `/api/v2/providers/{provider_id}/models`
 - `POST` `/api/v2/providers/{provider_id}/models/sync`

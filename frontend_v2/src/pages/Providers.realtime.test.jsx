@@ -36,7 +36,6 @@ vi.mock('../api/websocket', () => ({
     }),
     EventTypes: {
         PROVIDER_STATUS: 'provider.status',
-        PROVIDER_CONTAINER_STATUS: 'provider.container_status',
         PROVIDER_STATS_UPDATE: 'provider.stats_update',
         RECONCILIATION_STARTED: 'reconciliation.started',
         RECONCILIATION_PROGRESS: 'reconciliation.progress',
@@ -77,19 +76,10 @@ function createProviderRecord() {
         type: 'modal',
         enabled: true,
         priority: 1,
-        runtime_config: { port: 8000 },
-        deploy_config: { deploy_mode: 'managed', app_name: 'comfy-modal-stack' },
         runtime_state: {
-            mode: 'container_http',
+            mode: 'in_process',
             connected: true,
-            status: 'running',
-            worker_url: 'http://comfy-provider-modal-primary:8000',
-        },
-        deploy_state: {
-            status: 'idle',
-            message: '',
-            steps: [],
-        },
+            status: 'running',        },
         reconciliation_state: {
             status: 'idle',
             phase: null,
@@ -115,12 +105,6 @@ function createProviderRecord() {
             },
         },
         capabilities: {
-            managed_deploy: true,
-            deploy: true,
-            start_container: true,
-            stop_container: true,
-            restart_container: true,
-            view_logs: true,
             setup: true,
             reconcile: true,
             reset_status: true,
@@ -130,9 +114,6 @@ function createProviderRecord() {
             warnings: [],
             errors: [],
             worker: {
-                backend_url: 'http://backend_v2:8002',
-                worker_url: 'http://comfy-provider-modal-primary:8000',
-                mode: 'container_http',
             },
         },
         credential_summary: {

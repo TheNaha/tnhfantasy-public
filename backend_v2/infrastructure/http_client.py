@@ -9,9 +9,13 @@ from urllib.parse import urlparse
 import httpx
 
 from infrastructure.logging import http_logger
-from infrastructure.provider_naming import PROVIDER_CONTAINER_PREFIX
 
 logger = http_logger()
+
+# Historical container-name prefix, kept locally (infrastructure.provider_naming
+# is gone): legacy provider rows may still carry a `tnhcomfy-{id}` container
+# name in config, and host recognition must keep matching them.
+_PROVIDER_CONTAINER_PREFIX = "tnhcomfy-"
 
 # Singleton HTTP client instance
 _client: httpx.AsyncClient | None = None
@@ -129,7 +133,7 @@ def load_known_provider_hosts(*, force: bool = False) -> frozenset[str] | None:
                 for candidate in (
                     container_config.get("container_name"),
                     runtime_config.get("container_name") if isinstance(runtime_config, dict) else None,
-                    f"{PROVIDER_CONTAINER_PREFIX}{provider.id}",
+                    f"{_PROVIDER_CONTAINER_PREFIX}{provider.id}",
                     config.get("discovery_url"),
                 ):
                     if not candidate:
@@ -175,7 +179,7 @@ def _is_known_provider_host(
     by COMFY_WORKER_HOSTS for genuinely external hosts.
     """
     host = hostname.lower()
-    if host.startswith(PROVIDER_CONTAINER_PREFIX):
+    if host.startswith(_PROVIDER_CONTAINER_PREFIX):
         return True
     if host in allowed_hosts:
         return False
@@ -225,7 +229,7 @@ def _provider_token_headers(url: str, headers: dict[str, str] | None) -> dict[st
             url=str(url),
             hostname=hostname,
             hint=(
-                f"host does not match the {PROVIDER_CONTAINER_PREFIX!r} prefix and is "
+                f"host does not match the {_PROVIDER_CONTAINER_PREFIX!r} prefix and is "
                 "not listed in COMFY_WORKER_HOSTS; the provider will answer 401"
             ),
         )

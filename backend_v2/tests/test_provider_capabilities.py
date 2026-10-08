@@ -176,45 +176,6 @@ class TestTheTtsProviderIsItsOwnThing:
     apps while being entirely blind to the TTS one.
     """
 
-    def test_discovery_recognises_a_tts_provider_id(self):
-        """Without this, `tts-modal-hp196` falls through to `direct_url`/`image`
-        and the provider is offered checkpoint jobs its container cannot run."""
-        from api.routes.providers.crud import _infer_discovery_type
-
-        assert _infer_discovery_type("tts-modal-hp196") == ("modal", "tts")
-
-    def test_it_does_not_shadow_the_other_prefixes(self):
-        from api.routes.providers.crud import _infer_discovery_type
-
-        assert _infer_discovery_type("modal-hp196") == ("modal", "image")
-        assert _infer_discovery_type("llm-local") == ("openai_compat", "llm")
-        assert _infer_discovery_type("direct_url") == ("direct_url", "image")
-
-    def test_discovery_accepts_a_tts_worker_type(self):
-        """It did not. `worker_type not in {"image", "llm"}` was a 422, so a TTS
-        worker could never register at all — the closed set the load balancer and
-        `VALID_TASK_TYPES` had already learned about, in the one place that had
-        not been updated."""
-        from api.routes.discovery import DiscoveryPayload
-
-        assert DiscoveryPayload(
-            provider_id="tts-modal-hp196", provider_type="modal",
-            worker_type="tts", status="online",
-            internal_url="http://tnhcomfy-tts-modal-hp196:8000",
-            hostname="tts-modal-hp196",
-        ).worker_type == "tts"
-
-    def test_a_tts_worker_can_state_its_capability(self):
-        from api.routes.discovery import DiscoveryPayload
-
-        payload = DiscoveryPayload(
-            provider_id="tts-modal-hp196", provider_type="modal",
-            worker_type="tts", status="online",
-            internal_url="http://tnhcomfy-tts-modal-hp196:8000",
-            hostname="tts-modal-hp196", capabilities=["tts"],
-        )
-        assert payload.capabilities == ["tts"]
-
     def test_the_database_constraint_allows_tts(self):
         """The enum lived in three places and the database was the one missed.
 

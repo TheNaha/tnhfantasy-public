@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from config import get_config
-from core.entities import CONTAINER_TASK_TYPES
+from core.entities import ENGINE_TASK_TYPES
 from infrastructure.background_tasks import start_background_task
 from infrastructure.database import database_url
 from infrastructure.logging import get_logger
@@ -709,7 +709,7 @@ class QueueManager:
         self.image: JobQueue = JobQueue(
             max_workers=1,
             task_type="image",
-            claim_task_types=CONTAINER_TASK_TYPES,
+            claim_task_types=ENGINE_TASK_TYPES,
         )
         self.llm: JobQueue = JobQueue(max_workers=1, task_type="llm")
         self._processor: Callable[[str, str | None], Awaitable[None]] | None = None
@@ -731,17 +731,16 @@ class QueueManager:
 
         There are two physical queues, not one per task type, because there are
         two kinds of execution: an always-on HTTP endpoint (LLM) and a ComfyUI
-        container that has to cold-start (image, tts). `tts` belongs with `image`
-        because it is the same container and the same `max_containers` budget —
-        it differs only in the workflow graph, so a TTS job and an image job
-        contend for one Modal container exactly as they should when the class is
-        capped at one.
+        engine job (image, tts). `tts` belongs with `image` because it is the
+        same engine pool and the same concurrency budget — it differs only in
+        the workflow graph, so a TTS job and an image job contend for the same
+        workers exactly as they should when the class is capped at one.
 
-        Stated with `CONTAINER_TASK_TYPES` rather than left as "anything that
-        isn't llm", so adding a fourth container-backed task type later does not
+        Stated with `ENGINE_TASK_TYPES` rather than left as "anything that
+        isn't llm", so adding a fourth engine-backed task type later does not
         silently default onto the image queue by omission.
         """
-        if task_type in CONTAINER_TASK_TYPES:
+        if task_type in ENGINE_TASK_TYPES:
             return self.image
         return self.llm
 

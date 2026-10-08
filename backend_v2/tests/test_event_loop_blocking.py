@@ -25,8 +25,7 @@ import inspect
 import textwrap
 import threading
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlmodel import Session, select
@@ -254,7 +253,7 @@ class TestRemoveProviderStateLockScope:
 # 7. Health probe must not touch the Docker socket on the event loop
 # ---------------------------------------------------------------------------
 
-class TestHealthProbeIsOffLoop:
+class TestHealthProbeCachesEngineResult:
     @pytest.fixture
     def provider(self, session: Session):
         provider = Provider(
@@ -264,7 +263,6 @@ class TestHealthProbeIsOffLoop:
             priority=1,
             credentials={},
             config={},
-            container_config={"port": 8001},
         )
         session.add(provider)
         session.commit()
@@ -276,84 +274,48 @@ class TestHealthProbeIsOffLoop:
         yield
         LoadBalancer.reset_state()
 
-    async def test_snapshot_accessor_runs_on_a_worker_thread(
+    def _engine(self, health: dict):
+        engine = MagicMock()
+        engine.check_health = AsyncMock(return_value=health)
+        return engine
+
+    async def test_healthy_engine_result_is_cached(
         self, session: Session, provider, monkeypatch
     ):
+        """The 15s health cache means only the first caller pays for a probe."""
         lb = LoadBalancer(session, strategy="round-robin")
         lb.health_check_enabled = True
         lb_module._provider_health_cache.clear()
 
-        loop_thread = threading.get_ident()
-        seen: dict = {}
-
-        cm = MagicMock()
-
-        def fake_snapshot(provider_id, container_name=None):
-            seen["thread"] = threading.get_ident()
-            return SimpleNamespace(status="running", health="healthy")
-
-        cm.get_container_snapshot.side_effect = fake_snapshot
-        monkeypatch.setattr("infrastructure.deps.get_container_manager", lambda: cm)
-
-        async def unreachable(*args, **kwargs):
-            raise AssertionError("HTTP health probe should not be reached")
-
+        engine = self._engine({"status": "healthy"})
         monkeypatch.setattr(
-            lb_module, "get_http_client", lambda: SimpleNamespace(get=unreachable)
+            "services.engines.engine_factory.can_create_engine", lambda _p: True
+        )
+        monkeypatch.setattr(
+            "services.engines.engine_factory.get_engine", lambda _pid, _p: engine
         )
 
-        await lb._check_provider_health(provider)
+        assert await lb._check_provider_health(provider) is True
+        assert await lb._check_provider_health(provider) is True
+        assert lb_module._provider_health_cache["in_process:p1"] is True
+        engine.check_health.assert_awaited_once()
 
-        assert "thread" in seen
-        assert seen["thread"] != loop_thread
-
-    async def test_non_running_container_short_circuits_to_unhealthy(
+    async def test_unconstructible_engine_short_circuits_to_unhealthy(
         self, session: Session, provider, monkeypatch
     ):
+        """A provider with no buildable engine is not routable — no probe runs."""
         lb = LoadBalancer(session, strategy="round-robin")
         lb.health_check_enabled = True
         lb_module._provider_health_cache.clear()
 
-        cm = MagicMock()
-        cm.get_container_snapshot.return_value = SimpleNamespace(status="exited", health=None)
-        monkeypatch.setattr("infrastructure.deps.get_container_manager", lambda: cm)
+        get_engine = MagicMock(side_effect=AssertionError("must not be reached"))
+        monkeypatch.setattr(
+            "services.engines.engine_factory.can_create_engine", lambda _p: False
+        )
+        monkeypatch.setattr("services.engines.engine_factory.get_engine", get_engine)
 
         assert await lb._check_provider_health(provider) is False
-
-        cache_key = f"p1:{lb_module.resolve_provider_health_url(provider, 8001)}"
-        assert lb_module._provider_health_cache[cache_key] is False
-
-    async def test_missing_container_is_not_treated_as_down(
-        self, session: Session, provider, monkeypatch
-    ):
-        """`get_container_snapshot` returns None for "no such container".
-
-        The old code saw that as an exception and fell through to the HTTP
-        probe. A missing container must still fall through rather than
-        short-circuiting to unhealthy, so a container created between requests
-        is not locked out of routing.
-        """
-        lb = LoadBalancer(session, strategy="round-robin")
-        lb.health_check_enabled = True
-        lb_module._provider_health_cache.clear()
-
-        cm = MagicMock()
-        cm.get_container_snapshot.return_value = None
-        monkeypatch.setattr("infrastructure.deps.get_container_manager", lambda: cm)
-
-        probed = {"count": 0}
-
-        class _Response:
-            status_code = 200
-
-        async def ok(*args, **kwargs):
-            probed["count"] += 1
-            return _Response()
-
-        monkeypatch.setattr(lb_module, "get_http_client", lambda: SimpleNamespace(get=ok))
-
-        assert await lb._check_provider_health(provider) is True
-        assert probed["count"] == 1
+        get_engine.assert_not_called()
 
     async def test_failure_streak_short_circuits_before_any_probe(
         self, session: Session, provider, monkeypatch
@@ -362,152 +324,19 @@ class TestHealthProbeIsOffLoop:
         lb.health_check_enabled = True
         lb_module._provider_health_cache.clear()
 
-        cm = MagicMock()
-        monkeypatch.setattr("infrastructure.deps.get_container_manager", lambda: cm)
+        can_create = MagicMock(side_effect=AssertionError("must not be reached"))
+        monkeypatch.setattr("services.engines.engine_factory.can_create_engine", can_create)
 
         lb.runtime_state.provider_failures["p1"] = lb_module._FAILURE_STREAK_THRESHOLD
 
         assert await lb._check_provider_health(provider) is False
-        cm.get_container_snapshot.assert_not_called()
+        can_create.assert_not_called()
 
     def test_probe_timeout_is_bounded(self):
-        assert lb_module._CONTAINER_PROBE_TIMEOUT_SECONDS > 0
-        # docker-py defaults to a 60s socket timeout, which is exactly what this
-        # bound exists to replace.
-        assert lb_module._CONTAINER_PROBE_TIMEOUT_SECONDS <= 30
-
-    def test_http_probe_timeout_is_configurable(self):
-        assert lb_module._HTTP_HEALTH_PROBE_TIMEOUT_SECONDS == 2.0
-
-
-# ---------------------------------------------------------------------------
-# 10. /containers/status goes through the cached snapshot on worker threads
-# ---------------------------------------------------------------------------
-
-class TestContainerStatusesOffLoop:
-    def test_status_payload_shape_preserved(self):
-        from api.routes.providers import lifecycle as lifecycle_module
-
-        cm = MagicMock()
-        cm.running_containers = {}
-        cm.get_container_snapshot.return_value = SimpleNamespace(
-            status="running", health="healthy"
-        )
-        cm.client.containers.get.return_value = SimpleNamespace(short_id="abc123456789")
-
-        status = lifecycle_module._container_status_sync(cm, "p1")
-        assert status == {
-            "status": "running",
-            "running": True,
-            "healthy": True,
-            "container_id": "abc123456789",
-        }
-        # running_containers bookkeeping still happens.
-        assert "p1" in cm.running_containers
-
-    def test_unhealthy_running_container(self):
-        from api.routes.providers import lifecycle as lifecycle_module
-
-        cm = MagicMock()
-        cm.get_container_snapshot.return_value = SimpleNamespace(
-            status="running", health="starting"
-        )
-        cm.client.containers.get.return_value = SimpleNamespace(short_id="abc123456789")
-
-        status = lifecycle_module._container_status_sync(cm, "p1")
-        assert status["running"] is True
-        assert status["healthy"] is False
-
-    def test_down_container_costs_only_the_cached_snapshot(self):
-        from api.routes.providers import lifecycle as lifecycle_module
-
-        cm = MagicMock()
-        cm.get_container_snapshot.return_value = SimpleNamespace(status="exited", health=None)
-
-        status = lifecycle_module._container_status_sync(cm, "p1")
-        assert status["status"] == "exited"
-        assert status["running"] is False
-        assert status["healthy"] is False
-        # No extra socket round trip for a container that is not running.
-        cm.client.containers.get.assert_not_called()
-
-    def test_absent_container_reports_stopped(self):
-        from api.routes.providers import lifecycle as lifecycle_module
-
-        cm = MagicMock()
-        cm.get_container_snapshot.return_value = None
-
-        status = lifecycle_module._container_status_sync(cm, "p1")
-        assert status["status"] == "stopped"
-        assert status["running"] is False
-
-    def test_snapshot_failure_is_not_reported_as_stopped(self):
-        """A probe that *raised* is not an answer about this container.
-
-        This test previously asserted the opposite — that a raising
-        `get_container_snapshot` resolves to `"status": "stopped"` — which is
-        the defect itself: it made a host-wide Docker outage render as N
-        independent, individually-actionable "this container is stopped"
-        verdicts, and the route then cached that for 10 s while still
-        reporting `container_runtime_available: true`.
-        `provider_lifecycle_service.get_container_status` already separates
-        `NotFound` from every other failure; this is the same split.
-        """
-        from api.routes.providers import lifecycle as lifecycle_module
-
-        cm = MagicMock()
-        cm.get_container_snapshot.side_effect = RuntimeError("docker socket down")
-
-        status = lifecycle_module._container_status_sync(cm, "p1")
-        assert status == {
-            "status": "unreachable",
-            "running": False,
-            "healthy": False,
-            "container_id": None,
-        }
-
-    def test_route_does_not_cache_or_assert_availability_when_probes_raise(
-        self, client, session
-    ):
-        """`container_runtime_available` must mean "a snapshot was taken"."""
-        from api.deps import get_container_manager
-        from api.main import app
-        from api.routes.providers import lifecycle as lifecycle_module
-        from core.entities import Provider
-
-        # A provider has to exist or `statuses` is empty and the assertion below
-        # is vacuous — and `get_container_manager` reads `request.app.state`, so
-        # it has to be overridden as a dependency, not patched as an attribute.
-        session.add(Provider(id="p1", type="modal", enabled=True))
-        session.commit()
-
-        lifecycle_module._container_status_cache.clear()
-        cm = MagicMock()
-        cm.get_container_snapshot.side_effect = RuntimeError("docker socket down")
-        app.dependency_overrides[get_container_manager] = lambda: cm
-
-        body = client.get("/api/v2/providers/containers/status").json()
-
-        assert set(body) == {"statuses", "cached", "container_runtime_available"}
-        assert body["statuses"]["p1"]["status"] == "unreachable"
-        assert body["container_runtime_available"] is False
-        # Nothing observed, so nothing may be served from cache for the next 10s.
-        assert "all_statuses" not in lifecycle_module._container_status_cache
-        lifecycle_module._container_status_cache.clear()
-
-    def test_route_returns_the_same_payload(self, client, monkeypatch):
-        from api.routes.providers import lifecycle as lifecycle_module
-
-        lifecycle_module._container_status_cache.clear()
-        cm = MagicMock()
-        cm.get_container_snapshot.return_value = None
-        monkeypatch.setattr("api.deps.get_container_manager", lambda: cm)
-
-        response = client.get("/api/v2/providers/containers/status")
-        assert response.status_code == 200
-        body = response.json()
-        assert set(body) == {"statuses", "cached", "container_runtime_available"}
-        lifecycle_module._container_status_cache.clear()
+        assert lb_module._ENGINE_HEALTH_PROBE_TIMEOUT_SECONDS > 0
+        # The 15s health cache means only the first caller to miss pays this,
+        # so it must stay well under a request budget.
+        assert lb_module._ENGINE_HEALTH_PROBE_TIMEOUT_SECONDS <= 30
 
 
 # ---------------------------------------------------------------------------

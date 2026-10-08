@@ -254,28 +254,23 @@ async def _sync_file_to_providers(session: Session, filename: str, content: byte
             if getattr(runtime, "mode", "") == "in_process":
                 active_providers.append({"id": p_id, "engine": True})
                 continue
-            if not runtime.worker_url:
-                continue
-
-            active_providers.append({"id": p_id, "worker_url": runtime.worker_url})
+            # No other runtime carries a writable model tree.
 
         if active_providers:
             from services.engines.base import get_upload_max_bytes_encoded, get_upload_size_cap
 
             # Raw cap for the fail-fast (avoids base64-encoding a 7 GB body
             # just to discover it is over), encoded cap for the wire verdict
-            # (container pydantic max_length counts the base64 text, ~33%
-            # overhead). Either over answers sync_failed like the 413 path.
+            # (base64 text carries ~33% overhead). Either over answers
+            # sync_failed like the 413 path.
             upload_cap = get_upload_size_cap()
             encoded_cap = get_upload_max_bytes_encoded()
             encoded_len = ((len(content) + 2) // 3) * 4
             if (upload_cap and len(content) > upload_cap) or (
                 encoded_cap and encoded_len > encoded_cap
             ):
-                # The containers answer 413 past PROVIDER_UPLOAD_MAX_BYTES
-                # (models.py:135-142, router.py:296-309). Fail fast here for
-                # both transports instead of pushing the bytes at every
-                # provider first.
+                # Engines answer 413 past PROVIDER_UPLOAD_MAX_BYTES. Fail fast
+                # here instead of pushing the bytes at every provider first.
                 logger.warning(
                     "sync_provider_over_cap",
                     size=len(content),
@@ -287,77 +282,41 @@ async def _sync_file_to_providers(session: Session, filename: str, content: byte
                     "synced_count": 0,
                     "failed_count": len(active_providers),
                 }
-            from infrastructure.http_client import get_http_client
-            http = get_http_client()
-            payload = {
-                "filename": filename,
-                "content_base64": base64.b64encode(content).decode(),
-                "directory": directory,
-            }
-
             for provider in active_providers:
-                worker_url = provider.get("worker_url")
                 provider_id = provider["id"]
 
-                if not worker_url:
-                    # In-process engine: same UploadFileRequest shape the
-                    # workers accept, delivered as a method call.
-                    # Engines without a model tree (LLM, TTS, plain Direct)
-                    # have no storage to sync to — skip them like
-                    # maintenance.py does instead of counting their
-                    # upload_file()->False as a failed provider.
-                    try:
-                        from services.engines.engine_factory import get_engine
-
-                        engine = get_engine(provider_id)
-                        if engine is not None and not getattr(
-                            engine, "manages_model_files", False
-                        ):
-                            continue
-                        uploaded = (
-                            await engine.upload_file(
-                                filename=filename,
-                                content_base64=base64.b64encode(content).decode(),
-                                directory=directory,
-                            )
-                            if engine is not None
-                            else False
-                        )
-                    except NotImplementedError:
-                        uploaded = False
-                    except Exception as e:
-                        failed_count += 1
-                        logger.warning("sync_provider_error", provider_id=provider_id, error=str(e))
-                        continue
-                    if uploaded:
-                        synced_count += 1
-                    else:
-                        failed_count += 1
-                        logger.warning("sync_provider_failed", provider_id=provider_id, reason="engine upload unsupported or failed")
-                    continue
-
+                # In-process engine upload. Engines without a model tree
+                # (LLM, TTS, plain Direct) have no storage to sync to — skip
+                # them like maintenance.py does instead of counting their
+                # upload_file()->False as a failed provider.
                 try:
-                    response = await http.post(
-                        f"{worker_url}/upload-file",
-                        json=payload,
-                        timeout=30.0,
+                    from services.engines.engine_factory import get_engine
+
+                    engine = get_engine(provider_id)
+                    if engine is not None and not getattr(
+                        engine, "manages_model_files", False
+                    ):
+                        continue
+                    uploaded = (
+                        await engine.upload_file(
+                            filename=filename,
+                            content_base64=base64.b64encode(content).decode(),
+                            directory=directory,
+                        )
+                        if engine is not None
+                        else False
                     )
-                    if response.status_code == 200:
-                        try:
-                            response_body = response.json()
-                        except ValueError:
-                            response_body = {}
-                        if response_body.get("status") == "error":
-                            failed_count += 1
-                            logger.warning("sync_provider_failed", provider_id=provider_id, reason=response_body.get("message"))
-                        else:
-                            synced_count += 1
-                    else:
-                        failed_count += 1
-                        logger.warning("sync_provider_failed", provider_id=provider_id, status=response.status_code)
+                except NotImplementedError:
+                    uploaded = False
                 except Exception as e:
                     failed_count += 1
                     logger.warning("sync_provider_error", provider_id=provider_id, error=str(e))
+                    continue
+                if uploaded:
+                    synced_count += 1
+                else:
+                    failed_count += 1
+                    logger.warning("sync_provider_failed", provider_id=provider_id, reason="engine upload unsupported or failed")
 
             if synced_count > 0:
                 sync_status = "synced"

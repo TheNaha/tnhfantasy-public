@@ -17,7 +17,7 @@ TNHComfy is a serverless ComfyUI wrapper with three parts:
 
 - `backend_v2/`: FastAPI + PostgreSQL/pgvector (SQLite-compatible tests) + async job queue
 - `frontend_v2/`: React + Vite + Tailwind
-- `provider_containers/`: provider workers (`image_worker/`, `llm_worker/`) plus shared `provider_core/`
+- `remote_agent/`: optional remote agent daemon (ComfyUI host side); its shared library `provider_core/` now lives under `remote_agent/provider_core/`. Provider inference engines run in-process inside `backend_v2`.
 
 Main request flow:
 
@@ -35,7 +35,7 @@ bash setup_jules.sh
 # preflight.sh first on a new host: compose declares `metrics` and `proxy` as
 # external, and without them `up` fails for every service at network creation.
 bash scripts/preflight.sh
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # Backend (from backend_v2/)
 .venv/bin/pip install -r requirements.txt
@@ -69,10 +69,7 @@ npm test
 - Use `src/api/client.js` for HTTP requests and `src/api/websocket.js` for socket usage.
 - Keep store tests close to stores and use Vitest + Testing Library patterns already present.
 
-### Provider Contract (`provider_containers/`)
-
-- Shared API models live in `provider_containers/provider_core/models.py`.
-- `POST /inference` must stream NDJSON progress and finish with a success or error payload.
+- `POST /inference` streams NDJSON progress and finishes with a success or error payload (served by backend in-process engines in `backend_v2/services/engines/`).
 - Keep model directory conventions unchanged:
   `models/checkpoints`, `models/loras`, `models/vae`, `models/controlnet`, `models/unet`, `models/clip`.
 

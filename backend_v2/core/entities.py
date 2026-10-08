@@ -78,10 +78,10 @@ TERMINAL_JOB_STATUSES = (
 # handed. Splitting those two questions is the point.
 VALID_TASK_TYPES = {"image", "llm", "tts"}
 
-# Capabilities that imply a ComfyUI container (and therefore the container
-# cold-start, health-check and model-volume machinery) rather than a plain HTTP
-# endpoint to an always-running service.
-CONTAINER_TASK_TYPES = {"image", "tts"}
+# Task types served by ComfyUI engines (image/TTS workloads with model files)
+# rather than a plain HTTP endpoint to an always-running LLM service.
+ENGINE_TASK_TYPES = {"image", "tts"}
+CONTAINER_TASK_TYPES = ENGINE_TASK_TYPES  # backward-compat alias
 
 
 class Job(SQLModel, table=True):

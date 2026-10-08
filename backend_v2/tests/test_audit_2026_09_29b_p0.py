@@ -91,35 +91,59 @@ class TestTTSOutputTransport:
         assert _safe_output_subdir("/abs/path/") == "abs/path"
         assert _safe_output_subdir("") == ""
 
-    def test_a_provider_output_is_fetched_and_written_to_disk(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("services.job_processing.settings.output_dir", str(tmp_path))
+    @staticmethod
+    def _engine_ctx(monkeypatch, stream_fn=None):
+        """Resolve the provider's in-process engine to a fake stream source.
+
+        `_fetch_remote_tts_outputs` looks the engine up through the DB
+        session + `engine_factory.get_engine`; stub both seams. `stream_fn`
+        is an async generator function taking the remote path.
+        """
+        from types import SimpleNamespace
+
+        async def _default_stream(path):
+            yield b"audio"
+
+        engine = SimpleNamespace(get_file_stream=stream_fn or _default_stream)
         monkeypatch.setattr(
-            "services.job_processing._resolve_tts_worker_base_sync",
-            lambda provider_id: "http://tnhcomfy-tts-modal-hp196:8000",
+            "services.engines.engine_factory.get_engine", lambda *args, **kwargs: engine
         )
 
-        response = MagicMock()
-        response.content = b"RIFF----WAVEfmt fake audio"
-        response.raise_for_status = MagicMock()
+        class _FakeSessionCtx:
+            async def __aenter__(self):
+                return MagicMock()
 
-        with patch("infrastructure.http_client.get", AsyncMock(return_value=response)) as get:
-            outputs = _run(
-                _fetch_remote_tts_outputs(
-                    job=MagicMock(metadata_={"type": "chat_tts"}),
-                    provider_id="tts-modal-hp196",
-                    final_result={
-                        "outputs": [
-                            {
-                                "filename": "narration_00001_.wav",
-                                "subfolder": "chat_tts/chat1/msg1",
-                                "type": "output",
-                            }
-                        ]
-                    },
-                )
+            async def __aexit__(self, *args):
+                return False
+
+        monkeypatch.setattr(
+            "infrastructure.database.get_session_context", lambda: _FakeSessionCtx()
+        )
+        monkeypatch.setattr(
+            "infrastructure.repositories.provider_repo.ProviderRepository",
+            lambda session: SimpleNamespace(get=lambda provider_id: SimpleNamespace(id=provider_id)),
+        )
+        return engine
+
+    def test_a_provider_output_is_fetched_and_written_to_disk(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("services.job_processing.settings.output_dir", str(tmp_path))
+        self._engine_ctx(monkeypatch)
+
+        outputs = _run(
+            _fetch_remote_tts_outputs(
+                job=MagicMock(metadata_={"type": "chat_tts"}),
+                provider_id="tts-modal-hp196",
+                final_result={
+                    "outputs": [
+                        {
+                            "filename": "narration_00001_.wav",
+                            "subfolder": "chat_tts/chat1/msg1",
+                            "type": "output",
+                        }
+                    ]
+                },
             )
-
-        assert get.await_count == 1
+        )
         # The provider's subfolder is the ComfyUI SaveAudio `filename_prefix`,
         # so rewriting it here would destroy the only thing that makes the
         # output findable.
@@ -132,32 +156,25 @@ class TestTTSOutputTransport:
                 "type": "output",
             }
         ]
-        assert (tmp_path / "chat_tts" / "chat1" / "msg1" / "narration_00001_.wav").read_bytes() == response.content
+        assert (tmp_path / "chat_tts" / "chat1" / "msg1" / "narration_00001_.wav").read_bytes() == b"audio"
 
     def test_the_path_is_never_observed_half_written(self, tmp_path, monkeypatch):
         """Reconciliation polls for the path, so it must never exist empty."""
         monkeypatch.setattr("services.job_processing.settings.output_dir", str(tmp_path))
-        monkeypatch.setattr(
-            "services.job_processing._resolve_tts_worker_base_sync",
-            lambda provider_id: "http://worker:8000",
-        )
-        response = MagicMock()
-        response.content = b"audio"
-        response.raise_for_status = MagicMock()
         seen: list[bool] = []
 
-        def _peek(_url, **_kwargs):
+        async def _peeking_stream(path):
             seen.append((tmp_path / "chat_tts" / "a.wav").exists())
-            return response
+            yield b"audio"
 
-        with patch("infrastructure.http_client.get", AsyncMock(side_effect=_peek)):
-            _run(
-                _fetch_remote_tts_outputs(
-                    job=MagicMock(metadata_={}),
-                    provider_id="tts-modal-hp196",
-                    final_result={"outputs": [{"filename": "a.wav", "subfolder": "chat_tts"}]},
-                )
+        self._engine_ctx(monkeypatch, stream_fn=_peeking_stream)
+        _run(
+            _fetch_remote_tts_outputs(
+                job=MagicMock(metadata_={}),
+                provider_id="tts-modal-hp196",
+                final_result={"outputs": [{"filename": "a.wav", "subfolder": "chat_tts"}]},
             )
+        )
         assert seen == [False]
         assert (tmp_path / "chat_tts" / "a.wav").read_bytes() == b"audio"
         assert not (tmp_path / "chat_tts" / "a.wav.partial").exists()
@@ -165,56 +182,67 @@ class TestTTSOutputTransport:
     def test_an_unreadable_artifact_fails_that_artifact_not_the_job(self, tmp_path, monkeypatch):
         """The provider has already been paid; a retry re-bills it."""
         monkeypatch.setattr("services.job_processing.settings.output_dir", str(tmp_path))
-        monkeypatch.setattr(
-            "services.job_processing._resolve_tts_worker_base_sync",
-            lambda provider_id: "http://worker:8000",
-        )
-        ok = MagicMock()
-        ok.content = b"audio"
-        ok.raise_for_status = MagicMock()
-        with patch(
-            "infrastructure.http_client.get",
-            AsyncMock(side_effect=[RuntimeError("provider said 500"), ok]),
-        ):
-            outputs = _run(
-                _fetch_remote_tts_outputs(
-                    job=MagicMock(metadata_={}),
-                    provider_id="tts-modal-hp196",
-                    final_result={
-                        "outputs": [
-                            {"filename": "gone.wav", "subfolder": "chat_tts"},
-                            {"filename": "here.wav", "subfolder": "chat_tts"},
-                        ]
-                    },
-                )
+
+        async def _flaky_stream(path):
+            if "gone" in path:
+                raise RuntimeError("provider said 500")
+            yield b"audio"
+
+        self._engine_ctx(monkeypatch, stream_fn=_flaky_stream)
+        outputs = _run(
+            _fetch_remote_tts_outputs(
+                job=MagicMock(metadata_={}),
+                provider_id="tts-modal-hp196",
+                final_result={
+                    "outputs": [
+                        {"filename": "gone.wav", "subfolder": "chat_tts"},
+                        {"filename": "here.wav", "subfolder": "chat_tts"},
+                    ]
+                },
             )
+        )
         assert [o["filename"] for o in outputs] == ["here.wav"]
 
     def test_an_empty_body_is_not_persisted(self, tmp_path, monkeypatch):
         monkeypatch.setattr("services.job_processing.settings.output_dir", str(tmp_path))
-        monkeypatch.setattr(
-            "services.job_processing._resolve_tts_worker_base_sync",
-            lambda provider_id: "http://worker:8000",
-        )
-        empty = MagicMock()
-        empty.content = b""
-        empty.raise_for_status = MagicMock()
-        with patch("infrastructure.http_client.get", AsyncMock(return_value=empty)):
-            outputs = _run(
-                _fetch_remote_tts_outputs(
-                    job=MagicMock(metadata_={}),
-                    provider_id="tts-modal-hp196",
-                    final_result={"outputs": [{"filename": "silent.wav", "subfolder": "chat_tts"}]},
-                )
+
+        async def _empty_stream(path):
+            if False:
+                yield b""
+            return
+
+        self._engine_ctx(monkeypatch, stream_fn=_empty_stream)
+        outputs = _run(
+            _fetch_remote_tts_outputs(
+                job=MagicMock(metadata_={}),
+                provider_id="tts-modal-hp196",
+                final_result={"outputs": [{"filename": "silent.wav", "subfolder": "chat_tts"}]},
             )
+        )
         assert outputs == []
         assert not (tmp_path / "chat_tts" / "silent.wav").exists()
 
-    def test_no_worker_base_yields_no_outputs_rather_than_a_wrong_path(self, tmp_path, monkeypatch):
+    def test_no_engine_yields_no_outputs_rather_than_a_wrong_path(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
         monkeypatch.setattr("services.job_processing.settings.output_dir", str(tmp_path))
         monkeypatch.setattr(
-            "services.job_processing._resolve_tts_worker_base_sync",
-            lambda provider_id: None,
+            "services.engines.engine_factory.get_engine", lambda *args, **kwargs: None
+        )
+
+        class _FakeSessionCtx:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, *args):
+                return False
+
+        monkeypatch.setattr(
+            "infrastructure.database.get_session_context", lambda: _FakeSessionCtx()
+        )
+        monkeypatch.setattr(
+            "infrastructure.repositories.provider_repo.ProviderRepository",
+            lambda session: SimpleNamespace(get=lambda provider_id: SimpleNamespace(id=provider_id)),
         )
         outputs = _run(
             _fetch_remote_tts_outputs(
@@ -446,51 +474,6 @@ class TestWorldOwnership:
 # ---------------------------------------------------------------------------
 
 
-class TestTTSDeployPath:
-    def test_a_tts_provider_gets_the_tts_app_target_not_the_image_app(self):
-        from services.provider_utils import default_deploy_targets
-
-        names = [t["name"] for t in default_deploy_targets("modal", "tts")]
-        assert names == ["tts_app"]
-        entrypoint = default_deploy_targets("modal", "tts")[0]["entrypoint"]
-        assert entrypoint.startswith("/app/tts_worker/")
-
-    def test_an_image_modal_provider_still_gets_exactly_one_target(self):
-        from services.provider_utils import default_deploy_targets
-
-        names = [t["name"] for t in default_deploy_targets("modal", "image")]
-        assert names == ["modal_app"]
-
-    def test_the_worker_image_is_selected_by_worker_type(self):
-        from infrastructure.providers import ProviderRegistry
-
-        tts_image = ProviderRegistry.get_worker_image("modal", "tts")
-        image_image = ProviderRegistry.get_worker_image("modal", "image")
-        assert tts_image != image_image
-        assert "tts" in tts_image
-
-    def test_the_tts_dockerfile_is_the_one_selected_for_a_tts_provider(self, tmp_path):
-        from services.container_manager import ContainerManager
-
-        manager = ContainerManager.__new__(ContainerManager)
-        manager.containers_dir = tmp_path
-        try:
-            ContainerManager.build_worker_image(manager, "modal", "tts")
-        except ValueError as exc:
-            assert "tts_worker" in str(exc), str(exc)
-        else:  # pragma: no cover - only if the path check ever changes
-            raise AssertionError("expected the tts_worker directory to be required")
-
-    def test_an_image_modal_provider_selects_the_image_dockerfile(self, tmp_path):
-        from services.container_manager import ContainerManager
-
-        manager = ContainerManager.__new__(ContainerManager)
-        manager.containers_dir = tmp_path
-        with pytest.raises(ValueError) as exc:
-            ContainerManager.build_worker_image(manager, "modal", "image")
-        assert "image_worker" in str(exc.value)
-
-
 class TestProviderCapabilitiesAreWritable:
     def test_declared_capabilities_are_persisted(self, client, session):
         """The column the load balancer's `serves()` reads had no write path:
@@ -519,7 +502,7 @@ class TestProviderCapabilitiesAreWritable:
         assert row["declared_capabilities"] == ["tts"]
         # The action map is still there and is still a map, not a list.
         assert isinstance(row["capabilities"], dict)
-        assert "deploy" in row["capabilities"]
+        assert "setup" in row["capabilities"]
 
     def test_declared_capabilities_can_be_updated(self, client, session):
         client.post(

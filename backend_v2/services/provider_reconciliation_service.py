@@ -13,7 +13,6 @@ from services.provider_utils import (
     extract_runtime_config,
     normalize_reconciliation_status,
     parse_utc_timestamp,
-    read_deploy_state,
     read_reconciliation_state,
     utcnow_iso,
 )
@@ -26,9 +25,8 @@ class ProviderReconciliationService:
     def _persist_reconciliation_state(self, provider: Provider, state: dict[str, Any]) -> dict[str, Any]:
         config = compose_config(
             base_config=provider.config,
-            runtime_config=extract_runtime_config(provider.type, provider.container_config, provider.config or {}),
-            deploy_config=extract_deploy_config(provider.type, provider.config or {}, provider.worker_type or "image"),
-            deploy_state=read_deploy_state(provider),
+            runtime_config=extract_runtime_config(provider.config or {}),
+            deploy_config=extract_deploy_config(provider.config or {}),
             reconciliation_state=state,
         )
         updated = self.repo.update(provider.id, {"config": config})

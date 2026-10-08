@@ -261,7 +261,9 @@ class TestRuntimeResolution:
         assert runtime.healthy is None
         assert runtime.worker_url is None
 
-    def test_explicit_container_override(self):
+    def test_container_override_is_ignored(self):
+        # The legacy container path is gone: a stale
+        # config.execution_mode="container" no longer diverts resolution.
         provider = SimpleNamespace(
             id="modal-test",
             type="modal",
@@ -269,9 +271,8 @@ class TestRuntimeResolution:
             container_config={"port": 8000},
             config={"execution_mode": "container"},
         )
-        with patch("infrastructure.deps.get_container_manager", return_value=None):
-            runtime = resolve_provider_runtime(provider)
-            assert runtime.mode == "unavailable"
+        runtime = resolve_provider_runtime(provider)
+        assert runtime.mode == "in_process"
 
 
 # ---------------------------------------------------------------------------

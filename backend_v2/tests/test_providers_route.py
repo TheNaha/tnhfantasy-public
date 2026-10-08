@@ -102,19 +102,22 @@ class TestProvidersLoadBalancing:
 
 class TestProvidersContainers:
     def test_list_containers(self, client):
+        # Container worker endpoints were removed with the container path.
         response = client.get("/api/v2/providers/containers/list")
-        assert response.status_code == 200
+        assert response.status_code == 404
 
     def test_container_status(self, client):
         response = client.get("/api/v2/providers/containers/status")
-        assert response.status_code == 200
+        assert response.status_code == 404
 
 
 class TestProvidersWake:
     def test_wake_endpoint(self, client):
         response = client.post("/api/v2/providers/wake")
-        # Should return 200 or other valid status
-        assert response.status_code in (200, 202, 503)
+        # The container wake handler is gone; "wake" now falls through to
+        # the /{provider_id} routes, which allow no POST (405), or misses
+        # routing entirely (404).
+        assert response.status_code in (404, 405)
 
 
 class TestProvidersPatch:

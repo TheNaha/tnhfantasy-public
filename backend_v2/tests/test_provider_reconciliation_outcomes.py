@@ -1,35 +1,11 @@
-"""A worker that answered must not leave the backend claiming it is still busy.
+"""An engine that answered must not leave the backend claiming it is still busy.
 
-`ProviderLifecycleService.trigger_reconciliation` used to treat any HTTP 200 from
-`POST /reconcile` as "work started" and persist:
-
-    status  "reconciling"
-    phase   "starting"
-    message "Reconciliation started in worker"
-
-That is true for `image_worker`, which spawns a task and then POSTs progress to
-`/api/v2/providers/{id}/reconciliation-event` until it finishes. It is false for
-the LLM and TTS workers, which have no model tree to reconcile: they answer
-`{"status": "ok"}` or `{"status": "skipped", "note": ...}` with counts,
-synchronously, and never push a terminal state — so nothing ever moves the row
-off "reconciling".
-
-Live proof on the running stack, two providers frozen at
-`status: "reconciling", phase: "starting", message: "Reconciliation started in
-worker"` with `updated_at` unchanged:
-
-    llm-local          worker_type "llm"   total_models 0
-    tts-modal-hp196    worker_type "tts"   total_models 0
-
-`RECONCILIATION_IN_PROGRESS_TTL` is 10800s — three hours — so each manual
-trigger produced three hours of a provider card claiming to be busy while the
-worker had answered in milliseconds. The same file's `setup_models`, twenty
-lines away, already read `worker_status` and branched on it.
-
-The property: **the state written on a 200 is a function of the worker's own
-`status` field, not of the HTTP code alone.** Parametrised over the whole
-vocabulary the three workers actually use, so a new status has to be classified
-rather than silently defaulting to one of two answers.
+`ProviderLifecycleService.trigger_reconciliation` runs the in-process
+reconciler and persists a state derived from the reconciler's own `status`
+field — never from a transport detail. The property: **the state written is a
+function of the engine's `status`, not of how it was invoked.**
+Parametrised over the whole vocabulary the reconciler actually returns, so a
+new status has to be classified rather than silently defaulting.
 """
 
 from types import SimpleNamespace
@@ -49,8 +25,8 @@ def _service(worker_type: str = "llm") -> ProviderLifecycleService:
 
     Built through `__init__` rather than `__new__` so the test exercises the same
     object the route gets; `trigger_reconciliation` reads `self.provider_service`,
-    `self.status_service` and the module-level `get_http_client` /
-    `resolve_provider_runtime_async`, and patching those four is the whole seam.
+    `self.status_service` and the module-level `resolve_provider_runtime_async` /
+    `trigger_in_process_reconciliation`, and patching those is the whole seam.
     """
     provider_service = MagicMock()
     provider_service.get_provider = AsyncMock(
@@ -58,11 +34,7 @@ def _service(worker_type: str = "llm") -> ProviderLifecycleService:
             id="llm-local",
             type="llm-local",
             worker_type=worker_type,
-            container_config={"port": 8001},
         )
-    )
-    provider_service.start_reconciliation_session = AsyncMock(
-        return_value={"accepted": True, "already_running": False}
     )
 
     # `upsert_reconciliation_state` records what the caller decided, so the test
@@ -81,59 +53,42 @@ def _service(worker_type: str = "llm") -> ProviderLifecycleService:
     svc = ProviderLifecycleService(
         session=MagicMock(),
         provider_service=provider_service,
-        container_manager=MagicMock(),
     )
     svc.status_service = status_service
     svc.written = written
     return svc
 
 
-async def _trigger(svc: ProviderLifecycleService, response):
-    """Call `trigger_reconciliation` with the worker's answer in place.
+async def _trigger(svc: ProviderLifecycleService, status, **extra):
+    """Call `trigger_reconciliation` with the reconciler's answer in place.
 
     `await`ed *inside* the patch context on purpose: returning the coroutine
     would let both patches expire before it ran, and the real resolver would
     answer — which fails for an `llm-local` fake, since an LLM provider has no
     model tree and reports `supports_reconciliation` accordingly.
     """
-    http_client = MagicMock()
-    http_client.post = AsyncMock(return_value=response)
+    result = {"status": status, "message": extra.pop("message", f"reconciler said {status}")}
+    result.update(extra)
     with patch(
         "services.provider_lifecycle_service.resolve_provider_runtime_async",
-        return_value=SimpleNamespace(
-            supports_reconciliation=True,
-            mode="container_http",
-            worker_url="http://worker:8000",
-        ),
+        return_value=SimpleNamespace(mode="in_process"),
     ), patch(
-        "services.provider_lifecycle_service.get_http_client",
-        return_value=http_client,
+        "services.in_process_reconciliation.trigger_in_process_reconciliation",
+        AsyncMock(return_value=result),
     ):
         return await svc.trigger_reconciliation("llm-local")
 
 
-def _response(status: str | None, **extra) -> MagicMock:
-    body: dict = {}
-    if status is not None:
-        body["status"] = status
-    body.update(extra)
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = body
-    return resp
-
-
-class TestTheWorkerStatusDecidesTheStoredState:
+class TestTheEngineStatusDecidesTheStoredState:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", sorted(_RECONCILIATION_IN_FLIGHT_STATUSES))
     async def test_an_in_flight_status_stays_reconciling(self, status):
         svc = _service()
-        resp = _response(status)
 
-        result = await _trigger(svc, resp)
+        result = await _trigger(svc, status)
 
         assert result["status"] == "triggered", (
-            f"{status!r} means the worker is working and will report back, so the "
+            f"{status!r} means the reconciler is working, so the "
             "provider is legitimately busy"
         )
         assert svc.written[0]["status"] == "reconciling"
@@ -143,14 +98,13 @@ class TestTheWorkerStatusDecidesTheStoredState:
         "status", ["ok", "skipped", "completed", "already-reconciled", "not_supported"]
     )
     async def test_a_terminal_status_does_not_leave_the_provider_busy(self, status):
-        """The defect. `ok` and `skipped` are what the LLM and TTS workers send."""
+        """The defect. `ok` and `skipped` are what engines with no model tree send."""
         svc = _service()
-        resp = _response(status, note="nothing to reconcile")
 
-        result = await _trigger(svc, resp)
+        result = await _trigger(svc, status, message="nothing to reconcile")
 
         assert result["status"] == "completed", (
-            f"worker answered {status!r}, which is a finished answer, but the "
+            f"reconciler answered {status!r}, which is a finished answer, but the "
             "provider was recorded as 'reconciling' for three hours"
         )
         assert svc.written[0]["status"] == "completed"
@@ -160,9 +114,8 @@ class TestTheWorkerStatusDecidesTheStoredState:
     @pytest.mark.parametrize("status", sorted(_RECONCILIATION_FAILED_STATUSES))
     async def test_an_error_status_is_recorded_as_failed(self, status):
         svc = _service()
-        resp = _response(status, message="storage container unreachable")
 
-        result = await _trigger(svc, resp)
+        result = await _trigger(svc, status, message="storage unreachable")
 
         assert result["status"] == "failed"
         assert svc.written[0]["status"] == "failed"
@@ -173,59 +126,62 @@ class TestTheWorkerStatusDecidesTheStoredState:
 
         Defaulting an unrecognised status to "reconciling" is what produced a
         three-hour lie; defaulting it to a terminal state can at worst lose a
-        progress bar, and the message names the worker's own word so an operator
+        progress bar, and the message names the reconciler's own word so an operator
         can see what happened.
         """
         svc = _service()
-        resp = _response("something-new")
 
-        result = await _trigger(svc, resp)
+        result = await _trigger(svc, "something-new")
 
         assert result["status"] == "completed"
         assert "something-new" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_a_200_with_no_json_object_is_not_read_as_busy(self):
-        """A proxy can answer 200 with an HTML error page, and an older worker
-        can answer 200 with a bare list. Neither justifies "still working"."""
+    async def test_a_statusless_answer_is_not_read_as_busy(self):
+        """A reconciler answer with no status field must not leave the provider
+        busy — it is recorded terminal, not in flight."""
         svc = _service()
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.side_effect = ValueError("not json")
-
-        result = await _trigger(svc, resp)
+        with patch(
+            "services.provider_lifecycle_service.resolve_provider_runtime_async",
+            return_value=SimpleNamespace(mode="in_process"),
+        ), patch(
+            "services.in_process_reconciliation.trigger_in_process_reconciliation",
+            AsyncMock(return_value={"message": "empty answer"}),
+        ):
+            result = await svc.trigger_reconciliation("llm-local")
 
         assert result["status"] == "completed"
         assert svc.written[0]["status"] == "completed"
 
     @pytest.mark.asyncio
-    async def test_the_workers_note_is_surfaced_verbatim(self):
+    async def test_the_reconcilers_note_is_surfaced_verbatim(self):
         """`skipped` carries a `note` explaining what was skipped. An operator
-        staring at a provider card needs that sentence, not "Reconciliation
-        started in worker"."""
+        staring at a provider card needs that sentence, not "reconciliation
+        started"."""
         svc = _service()
         note = "no model storage configured; nothing to reconcile"
-        resp = _response("skipped", note=note)
 
-        result = await _trigger(svc, resp)
+        result = await _trigger(svc, "skipped", message=note)
 
         assert result["message"] == note
 
     @pytest.mark.asyncio
-    async def test_a_non_200_is_recorded_as_failed_and_still_raises(self):
-        """A worker that cannot be reached is a failure worth persisting, not a
-        silent success — so this asserts the state is written AND that the
-        caller still learns about it."""
+    async def test_a_reconciler_crash_propagates_without_a_busy_write(self):
+        """An engine that raises is a failure worth surfacing, not a silent
+        success — so this asserts the caller still learns about it AND that no
+        "reconciling" state was persisted."""
         svc = _service()
-        resp = MagicMock()
-        resp.status_code = 502
-        resp.json.return_value = {}
+        with patch(
+            "services.provider_lifecycle_service.resolve_provider_runtime_async",
+            return_value=SimpleNamespace(mode="in_process"),
+        ), patch(
+            "services.in_process_reconciliation.trigger_in_process_reconciliation",
+            AsyncMock(side_effect=RuntimeError("engine blew up")),
+        ):
+            with pytest.raises(RuntimeError):
+                await svc.trigger_reconciliation("llm-local")
 
-        with pytest.raises(Exception):
-            await _trigger(svc, resp)
-
-        assert svc.written, "a trigger that failed to reach the worker is a failure"
-        assert svc.written[0]["status"] == "failed"
+        assert not svc.written, "a crashed trigger must not record the provider as busy"
 
 
 class TestOnlyImageProvidersReportImageModelCounts:

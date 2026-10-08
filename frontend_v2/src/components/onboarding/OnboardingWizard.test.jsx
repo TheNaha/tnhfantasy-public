@@ -5,7 +5,6 @@ import OnboardingWizard from './OnboardingWizard';
 import { SETUP_COMPLETE_KEY, isSetupComplete, markSetupComplete } from '../../utils/setupComplete';
 
 const mockNavigate = vi.hoisted(() => vi.fn());
-const mockDetect = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', async (importOriginal) => {
     const actual = await importOriginal();
@@ -13,7 +12,6 @@ vi.mock('react-router-dom', async (importOriginal) => {
 });
 
 vi.mock('../../api', () => ({
-    providersApi: { detect: mockDetect },
 }));
 
 vi.mock('../../hooks/useProvidersPageData', () => ({
@@ -80,7 +78,6 @@ describe('OnboardingWizard', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         localStorage.clear();
-        mockDetect.mockResolvedValue({ created: [], already: [], container_runtime_available: false });
     });
 
     it('walks through all steps and finishes', () => {
@@ -119,20 +116,7 @@ describe('OnboardingWizard', () => {
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it('scan calls the detect endpoint and confirms registration', async () => {
-        renderWizard();
-        fireEvent.click(screen.getByText('Continue'));
-        fireEvent.click(screen.getByText('Scan for containers'));
-        await waitFor(() => expect(mockDetect).toHaveBeenCalledTimes(1));
-    });
 
-    it('scan with new containers reports them', async () => {
-        mockDetect.mockResolvedValue({ created: ['alpha', 'beta'], already: [] });
-        renderWizard();
-        fireEvent.click(screen.getByText('Continue'));
-        fireEvent.click(screen.getByText('Scan for containers'));
-        await waitFor(() => expect(mockDetect).toHaveBeenCalledTimes(1));
-    });
 
     it('back button returns to the previous step', () => {
         renderWizard();

@@ -7,12 +7,10 @@
 #   JobService       – Job CRUD, status transitions, ETA calculation
 #   JobQueue         – Async in-process queue (worker pool)
 #   ProviderService  – Provider CRUD and load-balancer config
-#   ContainerManager – Docker/Podman container lifecycle
 #   LoadBalancer     – Route jobs across providers (round-robin, least-conn, etc.)
 #   ModelAvailabilityService – Pre-flight check: are required models ready?
 
 __all__ = [
-    "ContainerManager",
     "JobQueue",
     "JobService",
     "LoadBalancer",

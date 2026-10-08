@@ -1,9 +1,10 @@
 /**
  * providers.js - Provider management API helpers
  *
- * A "provider" is a serverless compute backend (e.g. Modal, Beam) that runs
- * ComfyUI inside a container.  Multiple providers can be configured, and the
- * load balancer routes jobs between them.
+ * A "provider" is a compute backend (e.g. Modal, Beam, a local ComfyUI
+ * instance, an LLM API) that executes jobs through an in-process engine in
+ * the backend. Multiple providers can be configured, and the load balancer
+ * routes jobs between them.
  */
 
 import api, { API_V2_BASE } from './client';
@@ -91,34 +92,15 @@ export const providersApi = {
     /** Clean orphaned provider state and stale downloading entries. */
     cleanupState: () => api.post(`${P}/state/cleanup`),
 
-    /**
-     * Scan running containers (tnhcomfy-* naming) and register any that are
-     * missing as providers. Also reports containers already known to the
-     * backend. Safe to call any time; heartbeats self-register compose workers.
-     */
-    detect: () => api.post(`${P}/detect`),
-
-    /** Ping enabled provider containers to wake them from cold start. */
-    wake: () => api.post(`${P}/wake`),
-
     // -------------------------------------------------------------------------
-    // Modal-specific operations
+    // Engine operations
     // -------------------------------------------------------------------------
 
-    /** Fetch live metrics directly from the remote provider container. */
+    /** Fetch live metrics for the provider's in-process engine. */
     getLiveMetrics: (providerId, options = {}) => api.get(`${P}/${providerId}/live-metrics`, options),
 
-    /** Fetch container logs for the provider. */
-    getLogs: (providerId, options = {}) => api.get(`${P}/${providerId}/logs`, options),
-
     /**
-     * Deploy the latest provider app from the backend orchestrator.
-     * Beam runs three deploy steps: comfy_gpu, comfy_storage, and comfy_download.
-     */
-    deploy: (providerId) => api.post(`${P}/${providerId}/deploy`),
-
-    /**
-     * Run initial Modal setup (create volumes, upload base files, etc.).
+     * Run initial engine setup (create volumes, upload base files, etc.).
      * Only needed once when a Modal provider is first configured.
      */
     setup: (providerId) => api.post(`${P}/${providerId}/setup`),

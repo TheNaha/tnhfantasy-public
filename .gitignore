@@ -1,5 +1,8 @@
 # Environments
 .env
+.env.*
+!.env.example*
+!.env.example.provider*
 backend_venv/
 backend_v2/venv/
 node_modules/
@@ -37,9 +40,8 @@ backend_v2/patch_*.py
 *.pyc
 *.db
 
-# Provider envs
-provider_containers/**/.env.*
-!provider_containers/**/.env.example
+# (deleted: provider_containers/**/.env.* — containerized providers are gone;
+#  per-provider credentials live in provider rows now)
 # The remote agent's live token file. `.env` (line 2) matches at any depth but
 # NOT `.env.agent`, and `docs/deployment.md`, `remote_agent/README.md` and
 # `remote_agent/docker-compose.yml` all instruct you to create it holding a real
@@ -58,22 +60,6 @@ jules.log
 test_async_gen.py
 provider_fixes.patch
 
-.env.modal-zetsuke
-.env.zetsuke
-.env.modal-*
-# The TTS provider's env file. Listed separately because `.env.modal-*` does NOT
-# cover it: the file is `.env.tts-modal-hp196`, which starts `tts-`, not `modal-`.
-# It holds the same live MODAL_TOKEN_ID / MODAL_TOKEN_SECRET / PROVIDER_WORKER_TOKEN
-# as the other providers, so failing to match it means committing credentials.
-# An earlier version of this change did exactly that.
-.env.tts-*
-.env.beam
-.env.beam-*
-.env.direct-url
-.env.llm-*
-# .env.remote-comfy matched no rule and is the provider env file a user is
-# expected to fill with a REMOTE_AGENT_TOKEN / CIVITAI_TOKEN / HF_TOKEN.
-.env.remote-comfy
 models/models/ultralytics/bbox/face_yolov8n.pt
 models/models/ultralytics/bbox/face_yolov8s.pt
 models/models/ultralytics/bbox/hand_yolov8n.pt

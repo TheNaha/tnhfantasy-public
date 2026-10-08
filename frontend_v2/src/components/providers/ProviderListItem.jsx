@@ -30,13 +30,6 @@ function statusColorByTone(tone) {
     return map[tone] || map.offline;
 }
 
-function deployBadgeText(capabilities) {
-    if (capabilities?.managed_deploy) return 'Managed';
-    if (capabilities?.manual_deploy) return 'Manual';
-    if (capabilities?.runtime_only) return 'Runtime Only';
-    return 'Provider';
-}
-
 /**
  * A three-point sparkline, in eight lines of SVG.
  *
@@ -104,13 +97,11 @@ function ProviderListItem({
     jobsAssigned = 0,
 }) {
     const runtime = provider.runtime_state ?? EMPTY_OBJECT;
-    const capabilities = provider.capabilities ?? EMPTY_OBJECT;
     const credentialSummary = provider.credential_summary ?? EMPTY_OBJECT;
     const diagnostics = provider.diagnostics ?? EMPTY_OBJECT;
     const reconciliation = provider.reconciliation_state ?? EMPTY_OBJECT;
 
     const runtimeStatus = runtime.status || (runtime.connected ? 'active' : 'stopped');
-    const deployBadge = useMemo(() => deployBadgeText(capabilities), [capabilities]);
     const currentAction = actionLabel || loading || null;
 
     const statusSummary = useMemo(
@@ -191,9 +182,6 @@ function ProviderListItem({
                         </h3>
                         <span className="flex-shrink-0 rounded-lg bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-indigo-300 shadow-inner">
                             P{provider.priority}
-                        </span>
-                        <span className="flex-shrink-0 rounded-lg bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-purple-300 shadow-inner">
-                            {deployBadge}
                         </span>
                         {!provider.enabled && (
                             <span className="flex-shrink-0 rounded-lg bg-gray-500/10 border border-gray-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-gray-400 shadow-inner">
