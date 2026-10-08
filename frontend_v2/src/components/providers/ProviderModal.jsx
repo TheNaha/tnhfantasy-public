@@ -7,50 +7,47 @@ import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { providersApi } from '../../api';
 
 const INPUT_CLASS = 'w-full rounded-lg border border-gray-700 bg-gray-800/80 px-4 py-3 text-white outline-none transition-colors focus:border-blue-500';
-const LLM_PROVIDER_TYPES = new Set(['ollama', 'openai_compat', 'anthropic', 'google', 'modal_llm', 'modal_vllm']);
 
-function defaultDeployConfig(type) {
-    if (type === 'beam') {
-        return {
-            deploy_mode: 'managed',
-            gpu_url: '',
-            storage_url: '',
-            download_url: '',
-            gpu_type: 'RTX4090',
-        };
+// Static fallback type list: rendered only while GET /schemas is loading
+// (or if it fails). The canonical source is the backend registry served by
+// that endpoint — adding a provider type must never require editing this
+// file again.
+const FALLBACK_TYPE_OPTIONS = [
+    { group: 'Image Workers', options: [
+        { value: 'modal', label: 'Modal (ComfyUI)' },
+        { value: 'beam', label: 'Beam.cloud (ComfyUI)' },
+        { value: 'direct_url', label: 'Direct URL (ComfyUI)' },
+        { value: 'remote_comfy', label: 'Remote ComfyUI Agent' },
+    ] },
+    { group: 'LLM Workers', options: [
+        { value: 'openai_compat', label: 'OpenAI / OpenAI-Compatible API' },
+        { value: 'ollama', label: 'Local LLM Worker (Ollama / LM Studio)' },
+        { value: 'anthropic', label: 'Anthropic (Claude)' },
+        { value: 'google', label: 'Google AI (Gemini)' },
+        { value: 'modal_vllm', label: 'Modal vLLM (High-Throughput)' },
+        { value: 'modal_llm', label: 'Modal LLM' },
+    ] },
+    { group: 'Voice & Audio (TTS)', options: [
+        { value: 'modal_tts', label: 'Modal Kokoro / TTS' },
+    ] },
+];
+
+// Worker-type fallback for the save payload before schemas load.
+const FALLBACK_WORKER_TYPE = {
+    modal_tts: 'tts',
+    ollama: 'llm', openai_compat: 'llm', anthropic: 'llm',
+    google: 'llm', modal_llm: 'llm', modal_vllm: 'llm',
+};
+
+// Defaults contributed by a schema's config fields (checkboxes, selects,
+// app names). Render and save both fall back to these so an untouched
+// form still carries the registry defaults.
+function schemaConfigDefaults(schema) {
+    const out = {};
+    for (const field of schema?.config || []) {
+        if (field && field.key !== undefined && 'default' in field) out[field.key] = field.default;
     }
-    
-    if (type === 'ollama' || type === 'openai_compat' || type === 'anthropic' || type === 'google' || type === 'modal_llm' || type === 'modal_vllm') {
-        return {
-            deploy_mode: 'manual',
-        };
-    }
-
-    if (type === 'direct_url' || type === 'remote_comfy') {
-        return {
-            deploy_mode: 'manual',
-        };
-    }
-
-    if (type === 'modal_tts') {
-        return {
-            deploy_mode: 'manual',
-            app_name: 'comfy-modal-tts',
-        };
-    }
-
-    return {
-        deploy_mode: 'managed',
-        app_name: 'comfy-modal-stack',
-        enable_memory_snapshot: false,
-    };
-}
-
-function defaultRuntimeConfig() {
-    return {
-        mode: 'container',
-        port: 8000,
-    };
+    return out;
 }
 
 function sanitizeCredentials(credentials, preserveEmpty = false) {
@@ -72,15 +69,14 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         type: initialType,
         enabled: provider?.enabled ?? true,
         priority: provider?.priority ?? 1,
-        runtime_config: provider?.runtime_config || defaultRuntimeConfig(),
-        deploy_config: provider?.deploy_config || defaultDeployConfig(initialType),
+        deploy_config: provider?.deploy_config || {},
         credentials: {},
     });
-    // New providers default to the in-process engine path with no container
-    // baggage (`runtime_config: null`): the backend resolves `in_process`
-    // whenever the engine is constructible. The legacy container runtime is
-    // opt-in per provider, and existing rows keep whatever they already have.
-    const [enableRuntime, setEnableRuntime] = useState(Boolean(provider?.runtime_config));
+    // In-process engines are the only runtime: new providers carry no
+    // runtime_config (the backend resolves `in_process` whenever the engine
+    // is constructible). Existing rows keep whatever they already have —
+    // the legacy container runtime has no UI anymore.
+    const preservedRuntimeConfig = provider?.runtime_config ?? null;
     const [testingConnection, setTestingConnection] = useState(false);
     const [testResult, setTestResult] = useState(null);
 
@@ -136,101 +132,34 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
     const configuredFields = credentialSummary.configured_fields || [];
     const accountLabel = credentialSummary.account_label || null;
 
-    const credentialFields = useMemo(() => {
-        if (currentSchema?.credentials) {
-            return currentSchema.credentials;
-        }
+    // Schema-only credential fields. There is intentionally no hardcoded
+    // fallback list per type: the registry served by GET /schemas is the
+    // single source of truth, and a duplicated list here would drift again
+    // (the same class of bug the backend factory dedup just fixed).
+    const credentialFields = useMemo(() => currentSchema?.credentials || [], [currentSchema]);
+    const schemasLoaded = engineSchemas != null;
 
-        // Pre-schema fallbacks (shown only while /schemas is loading, or for an
-        // unknown type). Keys mirror the canonical registry field names so a
-        // save from this path validates and resolves exactly like the
-        // schema-driven form — no legacy `endpoint_url` credential key.
-        if (formData.type === 'ollama') {
-            return [
-                { key: 'base_url', label: 'API Endpoint URL', type: 'text', placeholder: 'http://localhost:11434/v1' },
-                { key: 'api_key', label: 'API Key (Optional)', type: 'password', placeholder: 'sk-...' },
-            ];
+    // Type options grouped by schema category (image/llm/tts). Static
+    // fallback only while schemas load.
+    const typeOptions = useMemo(() => {
+        if (!engineSchemas) return FALLBACK_TYPE_OPTIONS;
+        const groups = new Map();
+        for (const [key, schema] of Object.entries(engineSchemas)) {
+            const group = `${(schema.category || schema.worker_type || 'other')[0].toUpperCase()}${(schema.category || schema.worker_type || 'other').slice(1)} Workers`;
+            if (!groups.has(group)) groups.set(group, []);
+            groups.get(group).push({ value: key, label: schema.name || key });
         }
-
-        if (formData.type === 'openai_compat') {
-            return [
-                { key: 'base_url', label: 'API Base URL', type: 'text', placeholder: 'https://api.openai.com/v1' },
-                { key: 'api_key', label: 'API Key', type: 'password', placeholder: 'sk-...' },
-            ];
-        }
-
-        if (formData.type === 'anthropic') {
-            return [
-                { key: 'api_key', label: 'Anthropic API Key', type: 'password', placeholder: 'sk-ant-...' },
-            ];
-        }
-
-        if (formData.type === 'google') {
-            return [
-                { key: 'api_key', label: 'Google AI API Key', type: 'password', placeholder: 'AIza...' },
-            ];
-        }
-
-        if (formData.type === 'beam') {
-            return [
-                { key: 'api_key', label: 'API Key', type: 'password', placeholder: 'beam_...' },
-                { key: 'workspace_id', label: 'Workspace ID', type: 'text', placeholder: 'workspace-id' },
-                { key: 'hf_token', label: 'HuggingFace Token', type: 'password', placeholder: 'hf_...' },
-                { key: 'civitai_token', label: 'CivitAI Token', type: 'password', placeholder: 'CivitAI token' },
-            ];
-        }
-
-        if (formData.type === 'direct_url') {
-            return [
-                { key: 'comfy_url', label: 'ComfyUI URL', type: 'text', placeholder: 'http://localhost:8188' },
-                { key: 'comfyui_api_key', label: 'ComfyUI API Key (Optional)', type: 'password', placeholder: 'API key' },
-            ];
-        }
-
-        if (formData.type === 'remote_comfy') {
-            return [
-                { key: 'remote_agent_url', label: 'Remote Agent URL', type: 'text', placeholder: 'http://remote-agent:8001' },
-                { key: 'remote_agent_token', label: 'Remote Agent Token', type: 'password', placeholder: 'Agent token' },
-                { key: 'comfyui_api_key', label: 'ComfyUI API Key (Optional)', type: 'password', placeholder: 'API key' },
-                { key: 'hf_token', label: 'HuggingFace Token', type: 'password', placeholder: 'hf_...' },
-                { key: 'civitai_token', label: 'CivitAI Token', type: 'password', placeholder: 'CivitAI token' },
-            ];
-        }
-
-        if (formData.type === 'modal_tts') {
-            return [
-                { key: 'token_id', label: 'Modal Token ID', type: 'password', placeholder: 'ak-...' },
-                { key: 'token_secret', label: 'Modal Token Secret', type: 'password', placeholder: 'as-...' },
-            ];
-        }
-
-        return [
-            { key: 'token_id', label: 'Token ID', type: 'text', placeholder: 'ak-...' },
-            { key: 'token_secret', label: 'Token Secret', type: 'password', placeholder: 'as-...' },
-            { key: 'username', label: 'Username', type: 'text', placeholder: 'modal-username' },
-            { key: 'hf_token', label: 'HuggingFace Token', type: 'password', placeholder: 'hf_...' },
-            { key: 'civitai_token', label: 'CivitAI Token', type: 'password', placeholder: 'CivitAI token' },
-        ];
-    }, [formData.type, currentSchema]);
+        return [...groups.entries()].map(([group, options]) => ({ group, options }));
+    }, [engineSchemas]);
 
     const handleTypeChange = (type) => {
         setFormData((current) => ({
             ...current,
             type,
             deploy_config: provider?.type === type
-                ? (provider.deploy_config || defaultDeployConfig(type))
-                : defaultDeployConfig(type),
+                ? (provider.deploy_config || {})
+                : schemaConfigDefaults(engineSchemas?.[type]),
             credentials: {},
-        }));
-    };
-
-    const updateRuntimeConfig = (updates) => {
-        setFormData((current) => ({
-            ...current,
-            runtime_config: {
-                ...(current.runtime_config || defaultRuntimeConfig()),
-                ...updates,
-            },
         }));
     };
 
@@ -238,7 +167,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         setFormData((current) => ({
             ...current,
             deploy_config: {
-                ...(current.deploy_config || defaultDeployConfig(current.type)),
+                ...(current.deploy_config || {}),
                 ...updates,
             },
         }));
@@ -247,7 +176,13 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
     const handleSubmit = async (event) => {
         event.preventDefault();
 
-        const effectiveWorkerType = formData.type === 'modal_tts' ? 'tts' : (LLM_PROVIDER_TYPES.has(formData.type) ? 'llm' : 'image');
+        const effectiveWorkerType = currentSchema?.worker_type
+            || FALLBACK_WORKER_TYPE[formData.type]
+            || 'image';
+        const engineConfig = { ...(formData.deploy_config || {}) };
+        // Container-era baggage is never written: the backend resolves
+        // in-process engines from credentials + engine config alone.
+        delete engineConfig.deploy_mode;
         const payload = {
             id: formData.id.trim(),
             type: formData.type,
@@ -256,21 +191,11 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
             enabled: formData.enabled,
             priority: Number(formData.priority) || 1,
             config: {
-                ...(formData.deploy_config || {}),
-                ...(formData.type === 'modal' || formData.type === 'modal_tts'
-                    ? { app_name: formData.deploy_config?.app_name || (formData.type === 'modal_tts' ? 'comfy-modal-tts' : 'comfy-modal-stack') }
-                    : {}),
+                ...schemaConfigDefaults(currentSchema),
+                ...engineConfig,
             },
-            runtime_config: enableRuntime
-                ? {
-                    ...(formData.runtime_config || defaultRuntimeConfig()),
-                    port: Number(formData.runtime_config?.port || 8000),
-                }
-                : null,
-            deploy_config: {
-                ...(formData.deploy_config || defaultDeployConfig(formData.type)),
-                deploy_mode: formData.deploy_config?.deploy_mode || 'managed',
-            },
+            runtime_config: preservedRuntimeConfig,
+            deploy_config: engineConfig,
         };
 
         const credentials = sanitizeCredentials(formData.credentials);
@@ -344,23 +269,13 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                     onChange={(event) => handleTypeChange(event.target.value)}
                                     className={INPUT_CLASS}
                                 >
-                                    <optgroup label="Image Workers">
-                                        <option value="modal">Modal (ComfyUI)</option>
-                                        <option value="beam">Beam.cloud (ComfyUI)</option>
-                                        <option value="direct_url">Direct URL (ComfyUI)</option>
-                                        <option value="remote_comfy">Remote ComfyUI Agent</option>
-                                    </optgroup>
-                                    <optgroup label="LLM Workers">
-                                        <option value="openai_compat">OpenAI / OpenAI-Compatible API</option>
-                                        <option value="ollama">Local LLM Worker (Ollama / LM Studio)</option>
-                                        <option value="anthropic">Anthropic (Claude)</option>
-                                        <option value="google">Google AI (Gemini)</option>
-                                        <option value="modal_vllm">Modal vLLM (High-Throughput)</option>
-                                        <option value="modal_llm">Modal LLM</option>
-                                    </optgroup>
-                                    <optgroup label="Voice & Audio (TTS)">
-                                        <option value="modal_tts">Modal Kokoro / TTS</option>
-                                    </optgroup>
+                                    {typeOptions.map((group) => (
+                                        <optgroup key={group.group} label={group.group}>
+                                            {group.options.map((opt) => (
+                                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                            ))}
+                                        </optgroup>
+                                    ))}
                                 </select>
                                 {currentSchema?.description && (
                                     <p className="mt-2 text-xs text-blue-300/80 bg-blue-950/40 border border-blue-800/30 rounded-lg p-2.5">
@@ -410,6 +325,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                             </div>
                         )}
 
+                        {credentialFields.length > 0 ? (
                         <div className="grid gap-4 md:grid-cols-2">
                             {credentialFields.map((field) => (
                                 <Field key={field.key} label={field.label}>
@@ -429,68 +345,21 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                 </Field>
                             ))}
                         </div>
-                    </Section>
-
-                    <Section title="Engine & Execution Mode">
-                        <div className="space-y-3">
-                            <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3.5 text-xs text-blue-200">
-                                <span className="font-semibold text-blue-300">In-Process Engine Active:</span> This provider executes directly within the backend without separate Docker container overhead, port bindings, or socket proxying.
-                            </div>
-                            <details className="text-xs text-gray-400 group">
-                                <summary className="cursor-pointer hover:text-gray-300 select-none py-1">
-                                    Advanced / Legacy Container Settings
-                                </summary>
-                                <div className="mt-3 space-y-3 pl-2 border-l border-gray-800">
-                                    <label className="inline-flex items-center gap-2 text-gray-300">
-                                        <input
-                                            type="checkbox"
-                                            checked={enableRuntime}
-                                            onChange={(event) => setEnableRuntime(event.target.checked)}
-                                        />
-                                        Enable legacy container runtime (Deprecated)
-                                    </label>
-                                    {enableRuntime && (
-                                        <div className="grid gap-4 md:grid-cols-2 pt-2">
-                                            <Field label="Runtime Port">
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    value={formData.runtime_config?.port || 8000}
-                                                    onChange={(event) => updateRuntimeConfig({ port: Number(event.target.value) })}
-                                                    className={INPUT_CLASS}
-                                                />
-                                            </Field>
-                                            <Field label="Container Name">
-                                                <input
-                                                    type="text"
-                                                    value={formData.runtime_config?.container_name || ''}
-                                                    onChange={(event) => updateRuntimeConfig({ container_name: event.target.value })}
-                                                    className={INPUT_CLASS}
-                                                    placeholder={`tnhcomfy-${formData.id || formData.type}`}
-                                                />
-                                            </Field>
-                                        </div>
-                                    )}
-                                </div>
-                            </details>
-                        </div>
+                        ) : (
+                            <p className="text-sm text-gray-400">
+                                {schemasLoaded
+                                    ? 'This provider type needs no credentials — everything is configured below.'
+                                    : 'Loading engine schema…'}
+                            </p>
+                        )}
                     </Section>
 
                     <Section title="Engine Configuration">
+                        {!schemasLoaded ? (
+                            <p className="text-sm text-gray-400">Loading engine schema…</p>
+                        ) : (currentSchema?.config?.length > 0 ? (
                         <div className="grid gap-4 md:grid-cols-2">
-                            <Field label="Deploy Mode">
-                                <select
-                                    value={formData.deploy_config?.deploy_mode || 'managed'}
-                                    onChange={(event) => updateDeployConfig({ deploy_mode: event.target.value })}
-                                    className={INPUT_CLASS}
-                                >
-                                    <option value="managed">Managed</option>
-                                    <option value="manual">Manual</option>
-                                </select>
-                            </Field>
-
-                            {currentSchema?.config ? (
-                                currentSchema.config.map((field) => {
+                            {currentSchema.config.map((field) => {
                                     const val = formData.deploy_config?.[field.key] ?? field.default ?? '';
                                     if (field.type === 'checkbox') {
                                         return (
@@ -549,39 +418,13 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                             />
                                         </Field>
                                     );
-                                })
-                            ) : (
-                                <>
-                                    {formData.type === 'modal' || formData.type === 'modal_tts' ? (
-                                        <Field label="App Name">
-                                            <input
-                                                type="text"
-                                                value={formData.deploy_config?.app_name || ''}
-                                                onChange={(event) => updateDeployConfig({ app_name: event.target.value })}
-                                                className={INPUT_CLASS}
-                                                placeholder={formData.type === 'modal_tts' ? 'comfy-modal-tts' : 'comfy-modal-stack'}
-                                            />
-                                        </Field>
-                                    ) : formData.type === 'beam' ? (
-                                        <Field label="GPU Type">
-                                            <input
-                                                type="text"
-                                                value={formData.deploy_config?.gpu_type || ''}
-                                                onChange={(event) => updateDeployConfig({ gpu_type: event.target.value })}
-                                                className={INPUT_CLASS}
-                                                placeholder="RTX4090"
-                                            />
-                                        </Field>
-                                    ) : null}
-                                </>
-                            )}
+                                })}
                         </div>
-
-                        {formData.deploy_config?.deploy_mode === 'manual' && (
-                            <div className="mt-4 rounded-xl border border-yellow-500/25 bg-yellow-500/10 p-4 text-sm text-yellow-100">
-                                Manual deploy mode disables the in-app deploy action. The provider can still run workloads if the runtime is reachable.
-                            </div>
-                        )}
+                        ) : (
+                            <p className="text-sm text-gray-400">
+                                This provider type has no engine settings — credentials above are everything it needs.
+                            </p>
+                        ))}
                     </Section>
 
                     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-800 pt-4">
