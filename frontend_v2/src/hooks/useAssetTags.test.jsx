@@ -142,8 +142,24 @@ describe('there is exactly one tag-vocabulary query', () => {
 
         const keys = queryClient.getQueryCache().findAll({ queryKey: ['gallery', 'tags'] }).map((q) => q.queryKey);
         expect(keys.sort()).toEqual([
-            ['gallery', 'tags', '', 'hair'],
-            ['gallery', 'tags', 'blo', ''],
+            ['gallery', 'tags', '', 'hair', 12],
+            ['gallery', 'tags', 'blo', '', 12],
+        ]);
+    });
+
+    it('is keyed per limit too, so a 24-row and a 12-row vocabulary cannot collide', async () => {
+        // `limit` was missing from the key while the fetcher used it, so the two
+        // live call sites (GalleryFilterPanel asks for 24, AssetTagEditor the
+        // default 12) shared one cache entry and the first to render won.
+        renderHook(() => useTagVocabulary({ prefix: 'blo', limit: 24 }), { wrapper });
+        await waitFor(() => expect(assetsApi.tagVocabulary).toHaveBeenCalledTimes(1));
+        renderHook(() => useTagVocabulary({ prefix: 'blo', limit: 12 }), { wrapper });
+        await waitFor(() => expect(assetsApi.tagVocabulary).toHaveBeenCalledTimes(2));
+
+        const keys = queryClient.getQueryCache().findAll({ queryKey: ['gallery', 'tags'] }).map((q) => q.queryKey);
+        expect(keys.sort()).toEqual([
+            ['gallery', 'tags', 'blo', '', 12],
+            ['gallery', 'tags', 'blo', '', 24],
         ]);
     });
 
@@ -160,10 +176,10 @@ describe('there is exactly one tag-vocabulary query', () => {
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
         const keys = queryClient.getQueryCache().findAll({ queryKey: ['gallery', 'tags'] }).map((q) => q.queryKey);
-        expect(keys).toEqual([['gallery', 'tags', '', '']]);
+        expect(keys).toEqual([['gallery', 'tags', '', '', 12]]);
         // ...which is the same entry an unprefixed query occupies, so the
         // unfiltered answer is what the next unprefixed query reads back too.
-        expect(keys).toContainEqual(['gallery', 'tags', '', '']);
+        expect(keys).toContainEqual(['gallery', 'tags', '', '', 12]);
         expect(result.current.data).toEqual({ tags: [{ tag: 'blonde hair', count: 4 }] });
     });
 

@@ -97,6 +97,11 @@ OUTPUT_DIR = settings.output_dir
 # this endpoint imposes on top of it.
 DEFAULT_PAGE_LIMIT = 24
 MAX_PAGE_LIMIT = 200
+# Ceiling on every `search`/`q`/`prefix`/`lora*` query parameter here, in
+# characters. Same reason as `files.MAX_SEARCH_LENGTH`: the value flows into an
+# ILIKE against `metadata_`, a ~4 KB jsonb blob holding the whole ComfyUI
+# workflow, and the routes below are unauthenticated.
+MAX_SEARCH_LENGTH = 200
 
 # Facet counts are one query per DIMENSION (never per value), so the cost is
 # bounded by how many dimensions the client asks for. Three is enough to build
@@ -270,8 +275,14 @@ def remove_asset_tag(asset_id: str, tag: str, session: Session = Depends(get_ses
 
 @router.get("/tags", response_model=TagVocabularyOut)
 def list_tag_vocabulary(
-    prefix: str | None = Query(None, description="Anchored prefix — the autocomplete's mode."),
-    q: str | None = Query(None, description="Unanchored substring, for a looser search."),
+    prefix: str | None = Query(
+        None, max_length=MAX_SEARCH_LENGTH,
+        description="Anchored prefix — the autocomplete's mode.",
+    ),
+    q: str | None = Query(
+        None, max_length=MAX_SEARCH_LENGTH,
+        description="Unanchored substring, for a looser search.",
+    ),
     limit: int = Query(50, ge=1, le=500),
     session: Session = Depends(get_session),
 ):
@@ -330,6 +341,11 @@ class AssetFacetFilters:
     workspace: str | None = None
     character_id: str | None = None
     story_id: str | None = None
+    # A plain `None` default, NOT `Query(None, max_length=...)`: this is a
+    # dataclass the builder is also handed directly by the facet-count path, not
+    # a FastAPI parameter, so a `Query` object here becomes the search term and
+    # `escape_like` calls `.replace` on it. The route below is where the bound is
+    # declared; this is only the shape that carries the value.
     search: str | None = None
     date_from: datetime | None = None
     date_to: datetime | None = None
@@ -815,17 +831,31 @@ def facet_assets(
     workspace: str | None = None,
     character_id: str | None = None,
     story_id: str | None = None,
-    search: str | None = None,
+    search: str | None = Query(
+        None, max_length=MAX_SEARCH_LENGTH,
+        description="ILIKE substring match against metadata_.",
+    ),
     sort: str = Query("date_desc"),
     lora: str | None = Query(
-        None, description="Comma-separated CivitAI model ids (asset_loras.civitai_model_id)."
+        None, max_length=MAX_SEARCH_LENGTH,
+        description="Comma-separated CivitAI model ids (asset_loras.civitai_model_id).",
     ),
     lora_model: str | None = Query(
-        None, description="Comma-separated internal models_v2 ids (asset_loras.model_id)."
+        None, max_length=MAX_SEARCH_LENGTH,
+        description="Comma-separated internal models_v2 ids (asset_loras.model_id).",
     ),
-    tag: str | None = Query(None, description="Comma-separated tags. OR-ed within the facet."),
-    checkpoint: str | None = Query(None, description="Comma-separated assets.checkpoint_name values."),
-    session_id: str | None = Query(None, description="Comma-separated session ids."),
+    tag: str | None = Query(
+        None, max_length=MAX_SEARCH_LENGTH,
+        description="Comma-separated tags. OR-ed within the facet.",
+    ),
+    checkpoint: str | None = Query(
+        None, max_length=MAX_SEARCH_LENGTH,
+        description="Comma-separated assets.checkpoint_name values.",
+    ),
+    session_id: str | None = Query(
+        None, max_length=MAX_SEARCH_LENGTH,
+        description="Comma-separated session ids.",
+    ),
     date_from: str | None = Query(None, description="ISO-8601 lower bound, inclusive."),
     date_to: str | None = Query(None, description="ISO-8601 upper bound, inclusive."),
     date_column: str = Query(
@@ -834,6 +864,7 @@ def facet_assets(
     ),
     group_by: str | None = Query(
         None,
+        max_length=MAX_SEARCH_LENGTH,
         description=f"Comma-separated dimensions to count, from: {', '.join(FACET_DIMENSIONS)}. "
         f"Maximum {MAX_FACET_DIMENSIONS}; one query per dimension.",
     ),

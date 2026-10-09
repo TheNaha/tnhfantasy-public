@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 import os
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from pydantic import BaseModel, model_validator
 from sqlmodel import Session, select, func
 
@@ -23,6 +23,8 @@ import config as app_config
 router = APIRouter()
 
 MAX_LOCATION_IMAGE_BYTES = MAX_AVATAR_SIZE_MB * 1024 * 1024
+# Ceiling on the location search term, in characters.
+MAX_SEARCH_LENGTH = 200
 
 
 class LocationCreate(BaseModel):
@@ -74,13 +76,22 @@ def create_location(location_in: LocationCreate, session: Session = Depends(get_
 
 
 @router.get("/search", response_model=list[Location])
-def search_locations(q: str, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
+def search_locations(
+    q: str = Query(..., max_length=MAX_SEARCH_LENGTH),
+    limit: int = Query(100, ge=1, le=500),
+    session: Session = Depends(get_session),
+    location_repo: LocationRepository = Depends(get_location_repo),
+):
     pattern = func.lower(like_contains(q))
+    # `.limit(limit)` is the point of the parameter that was added above it.
+    # Without it a bare `.all()` returns every matching location — on a large
+    # world vault that is the whole table, JSON-serialised into the response,
+    # for an autocomplete.
     return session.exec(
         select(Location).where(
             func.lower(Location.name).like(pattern, escape=LIKE_ESCAPE_CHAR)
             | func.lower(Location.description).like(pattern, escape=LIKE_ESCAPE_CHAR)
-        ).order_by(Location.name)
+        ).order_by(Location.name).limit(limit)
     ).all()
 
 

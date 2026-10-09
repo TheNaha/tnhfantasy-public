@@ -17,7 +17,7 @@ from services.engines.base import InProcessEngine
 from services.engines.beam_engine import BeamEngine
 from services.engines.direct_comfy_engine import DirectComfyEngine
 from services.engines.llm_engine import ModalVLLMEngine, OpenAICompatLLMEngine, AnthropicLLMEngine, GoogleLLMEngine
-from services.engines.modal_engine import HAS_MODAL, ModalEngine
+from services.engines.modal_engine import HAS_MODAL, ModalEngine, resolve_enable_memory_snapshot
 from services.engines.modal_tts_engine import ModalTTSEngine
 from services.engines.registry import (
     resolve_provider_type,
@@ -455,19 +455,11 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
             or env_vars.get("CIVITAI_TOKEN")
             or os.getenv("CIVITAI_TOKEN")
         )
-        # Per-provider config is source of truth for the snapshot flag
-        # (registry default False); env is fallback for legacy deployments.
-        if "enable_memory_snapshot" in config:
-            raw_snapshot = config.get("enable_memory_snapshot")
-            if isinstance(raw_snapshot, str):
-                enable_snapshot: bool | None = raw_snapshot.strip().lower() in ("true", "1", "yes")
-            elif raw_snapshot is None:
-                enable_snapshot = None
-            else:
-                enable_snapshot = bool(raw_snapshot)
-        else:
-            raw_env = (env_vars.get("ENABLE_MEMORY_SNAPSHOT") or os.getenv("ENABLE_MEMORY_SNAPSHOT") or "").strip().lower()
-            enable_snapshot = raw_env in ("true", "1", "yes") if raw_env else False
+        # Per-provider config is the source of truth for the snapshot flag, with
+        # the per-provider env file and the process env as fallbacks. All three
+        # live in `resolve_enable_memory_snapshot`, which `ModalEngine.__init__`
+        # also calls — there was a second copy of this block here that had
+        # already drifted from the engine's on string coercion.
         if token_id and token_secret:
             engine = ModalEngine(
                 provider_id=provider_id,
@@ -476,7 +468,7 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
                 app_name=app_name,
                 hf_token=hf_token,
                 civitai_token=civitai_token,
-                enable_memory_snapshot=enable_snapshot,
+                enable_memory_snapshot=resolve_enable_memory_snapshot(config, env_vars),
             )
             _ENGINE_CACHE[provider_id] = engine
             return engine

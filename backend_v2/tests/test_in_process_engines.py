@@ -2329,6 +2329,46 @@ class TestEngineAuthAndCaps:
             assert await engine.delete_model("models/checkpoints/gone.safetensors") is True
 
     @pytest.mark.asyncio
+    async def test_direct_delete_file_auth_raises_and_a_404_is_not_swallowed(self):
+        """Both failure modes the old selector-shaped `except` hid.
+
+        `except (RuntimeError, Exception) as exc:` is a one-element tuple —
+        `RuntimeError` is already a subclass of `Exception`, so the second entry
+        only ever matches the exact class `Exception`, never a subclass. The
+        clause then re-checked `isinstance(exc, (EngineAuthError, RuntimeError))`
+        and the catch-all `except Exception` after it swallowed both anyway.
+
+        Measured against a 404 from the agent, the method answered `False` —
+        indistinguishable from "the file was already gone" — and the reconciler
+        counted nothing, because `deletions_failed` did not exist either. Both
+        facts matter: an auth failure reproduces on every retry, and a 404 means
+        the agent route is not there at all.
+        """
+        from services.engines.base import EngineAuthError
+        from services.engines.direct_comfy_engine import DirectComfyEngine
+
+        # 1. A rejected credential must raise, not return False.
+        engine = DirectComfyEngine("direct-1", "http://127.0.0.1:8188", agent_url="http://agent:8001")
+        mock_agent = AsyncMock()
+        mock_agent.post.return_value = MagicMock(status_code=403, text="forbidden")
+        with patch.object(engine, "get_agent_client", return_value=mock_agent):
+            with pytest.raises(EngineAuthError):
+                await engine.delete_file("models/checkpoints/x.safetensors")
+
+        # 2. A 404 must raise too. Same selector, opposite answer before the fix.
+        mock_404 = AsyncMock()
+        mock_404.post.return_value = MagicMock(status_code=404, text="not found")
+        with patch.object(engine, "get_agent_client", return_value=mock_404):
+            with pytest.raises(RuntimeError):
+                await engine.delete_file("models/checkpoints/x.safetensors")
+
+        # 3. A transport error is still a False, not a raise.
+        mock_dead = AsyncMock()
+        mock_dead.post.side_effect = ConnectionRefusedError("agent is down")
+        with patch.object(engine, "get_agent_client", return_value=mock_dead):
+            assert await engine.delete_file("models/checkpoints/x.safetensors") is False
+
+    @pytest.mark.asyncio
     async def test_openai_compat_list_models_auth_raises(self):
         from services.engines.base import EngineAuthError
         from services.engines.llm_engine import OpenAICompatLLMEngine

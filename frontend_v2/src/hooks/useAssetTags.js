@@ -48,7 +48,14 @@ export function useAssetTags(assetId, options = {}) {
  */
 export function useTagVocabulary({ prefix = '', q = '', limit = 12 } = {}, options = {}) {
     return useQuery({
-        queryKey: ['gallery', 'tags', prefix, q],
+        // `limit` BELONGS IN THE KEY. It was omitted, and the key builds a JSON
+        // array, so `['gallery','tags','blo','',12]` and
+        // `['gallery','tags','blo','']` are two unrelated strings — neither a
+        // collision, but an unrelated-cache-entry: the two live call sites ask
+        // for different limits (24 and the default 12) and got the same stored
+        // entry. Whichever rendered first won, and the other silently rendered
+        // the wrong vocabulary until a refetch.
+        queryKey: ['gallery', 'tags', prefix, q, limit],
         queryFn: () => assetsApi.tagVocabulary({ prefix, q, limit }),
         // A vocabulary fetch on every keystroke of the tag input is a request
         // per character; 30s is short enough that a stale dropdown is never the

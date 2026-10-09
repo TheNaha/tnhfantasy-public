@@ -579,9 +579,12 @@ SYNCED_SERVICE_METHODS = [
 # publish or a provider HTTP call — and so must reach the synchronous service
 # work through `asyncio.to_thread`.
 OFFLOADING_HANDLERS = [
-    ("api.routes.models.provider_sync", "update_file_provider_status"),
-    ("api.routes.models.provider_sync", "batch_update_status"),
-    ("api.routes.models.provider_sync", "receive_batch_sync_progress"),
+    # The three `api.routes.models.provider_sync` entries that used to sit here
+    # were `update_file_provider_status`, `batch_update_status` and
+    # `receive_batch_sync_progress`. They went with the worker-facing half of
+    # that module on 2026-10-09; `in_process_reconciliation` now awaits those
+    # service calls through `asyncio.to_thread` itself, which the register below
+    # covers.
     ("api.routes.models.crud", "add_model"),
     ("api.routes.models.maintenance", "check_dependencies"),
     ("api.routes.providers.lifecycle", "remove_model_from_provider"),
@@ -682,8 +685,6 @@ class TestOffloadingHandlersUseAWorkerThread:
     @pytest.mark.parametrize(
         "module,name",
         [
-            ("api.routes.models.provider_sync", "_apply_batch_status_updates"),
-            ("api.routes.models.provider_sync", "_apply_batch_sync_progress"),
             ("api.routes.models.crud", "_split_already_installed_versions"),
         ],
     )

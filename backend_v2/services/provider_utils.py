@@ -30,6 +30,12 @@ LEGACY_DEPLOY_CONFIG_FIELDS = {
     "api_port",
     "beta9_gateway_host",
     "beta9_gateway_port",
+    # `direct_url` / `remote_comfy` engines resolve their ComfyUI root from the
+    # provider row's `config` (`engine_factory.py:568` reads
+    # `config.get("comfy_url")`). It was missing here, so the Providers page's
+    # Runtime tab read `provider.config?.comfy_url` — a key the status card never
+    # emits — and could not show it under any name.
+    "comfy_url",
 }
 
 

@@ -63,6 +63,10 @@ MAX_CHAT_IMPORT_BYTES = MAX_CARD_SIZE_MB * 1024 * 1024
 # for more than a page; `list_messages` allows 1000, so the chat list allows
 # fewer — it is a navigation list, not a fetch.
 MAX_CHAT_PAGE_SIZE = 200
+# Ceiling on the chat-list `q` search term, in characters. An ILIKE against the
+# chat table's title and character names; unbounded before, and the reader is
+# unauthenticated.
+MAX_SEARCH_LENGTH = 200
 
 # Distinguishes "no world_id in this PATCH" from "detach from the world".
 _WORLD_ID_UNSET = object()
@@ -218,7 +222,7 @@ def list_chats(
     limit: int = Query(50, ge=1, le=MAX_CHAT_PAGE_SIZE),
     offset: int = Query(0, ge=0),
     workspace: str | None = None,
-    q: str | None = None,):
+    q: str | None = Query(None, max_length=MAX_SEARCH_LENGTH),):
     # Capped because `list_messages` 380 lines below this one already is, in the
     # same file, with an explicit range check. A bare `limit: int = 50` meant
     # `?limit=100000` read the whole chat table, and a reader had no local signal
@@ -685,7 +689,7 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session), chat_repo
 
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
-def list_messages(chat_id: str, branch_id: str | None = None, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo),   limit: int = 100, offset: int = 0, q: str | None = None, tail: bool = False):
+def list_messages(chat_id: str, branch_id: str | None = None, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo),   limit: int = 100, offset: int = 0, q: str | None = Query(None, max_length=MAX_SEARCH_LENGTH), tail: bool = False):
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
@@ -1529,22 +1533,54 @@ async def _cancel_inflight_chat_jobs(session: Session, chat_id: str, *, reason: 
     return cancelled
 
 
+def _rollback_prep_sync(
+    session: Session, chat_repo: ChatRepository, chat_id: str, message_id: str | None
+):
+    """Resolve the anchor and delete from it onward. Returns the deleted count.
+
+    Synchronous on purpose, and for the same reason `_regenerate_prep_sync` is:
+    the route has to stay `async def` because it awaits
+    `_cancel_inflight_chat_jobs`, and every one of these reads is a synchronous
+    SQLModel call. Left inline they run on the event loop, and this route issues
+    a bulk DELETE against up to CHAT_HISTORY_HARD_CAP (5000) messages plus a
+    commit — the single largest blocking span of any route in this file.
+    """
+    from sqlalchemy import delete
+
+    chat = chat_repo.get(chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+
+    anchor = session.get(Message, message_id)
+    if not anchor or anchor.chat_id != chat_id:
+        raise NotFoundError("Message", message_id)
+
+    # Delete at the SQL level — never loads the full chat history into Python.
+    result = session.execute(
+        delete(Message).where(
+            Message.chat_id == chat_id,
+            Message.created_at >= anchor.created_at,
+            *_branch_scope(anchor),
+        )
+    )
+    deleted = result.rowcount
+    session.commit()
+    return deleted
+
+
 @router.post("/{chat_id}/rollback")
 async def rollback_chat(
     chat_id: str,
     req: RollbackRequest,
     session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), ):
     """Delete the target message and everything after it (undo mistakes)."""
-    from sqlalchemy import delete
-    chat = chat_repo.get(chat_id)
-    if not chat:
-        raise NotFoundError("Chat", chat_id)
+    # Everything synchronous — the anchor read, the DELETE and the commit — runs
+    # in a worker thread, so only the job cancellation below is on the loop.
+    deleted = await asyncio.to_thread(
+        _rollback_prep_sync, session, chat_repo, chat_id, req.message_id
+    )
 
-    anchor = session.get(Message, req.message_id)
-    if not anchor or anchor.chat_id != chat_id:
-        raise NotFoundError("Message", req.message_id)
-
-    # Stop any reply that is still in flight BEFORE deleting the messages it is
+    # Stop any reply that is still in flight AFTER deleting the messages it is
     # replying to.
     #
     # Neither this nor `regenerate_reply` looked at the job table at all. The
@@ -1558,22 +1594,20 @@ async def rollback_chat(
     # the provider is signalled too. An LLM job mid-generation is
     # mid-generation; cancelling only the local record leaves the token spend
     # running on the provider.
+    #
+    # Ordered AFTER the delete deliberately: cancelling first would leave a
+    # window where the in-flight job's handler re-reads the messages it is about
+    # to have removed and appends against a tail that still exists. The delete is
+    # committed before the cancel is issued, so a reply that lands between the
+    # two finds nothing to append to.
     await _cancel_inflight_chat_jobs(session, chat_id, reason="chat rollback")
 
-    # Delete at the SQL level — never loads the full chat history into Python.
-    result = session.execute(
-        delete(Message).where(
-            Message.chat_id == chat_id,
-            Message.created_at >= anchor.created_at,
-            *_branch_scope(anchor),
-        )
-    )
-    deleted = result.rowcount
-    session.commit()
+    def _kept_count() -> int:
+        return session.exec(
+            select(func.count(Message.id)).where(Message.chat_id == chat_id)
+        ).one()
 
-    kept = session.exec(
-        select(func.count(Message.id)).where(Message.chat_id == chat_id)
-    ).one()
+    kept = await asyncio.to_thread(_kept_count)
     return {"deleted": deleted, "kept": kept}
 
 @router.post("/{chat_id}/regenerate")

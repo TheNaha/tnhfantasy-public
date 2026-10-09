@@ -229,17 +229,23 @@ describe('provider actions reach the node palette', () => {
         expect(stale(queryClient, key)).toBe(true);
     });
 
-    it('a deploy invalidates objectInfo too', async () => {
+    it('there is no deploy path left to invalidate for', async () => {
+        // `deployProvider` was removed with the containerized provider workers on
+        // 2026-10-09: `POST /api/v2/providers/{id}/deploy`, `DeployTab.jsx` and
+        // the engine's `deploy()` method are all gone, so there is no longer a
+        // mutation whose success should mark the node palette stale.
+        //
+        // Recorded as a test rather than deleted, because the shape of the bug
+        // that removed it — a mutation renamed out from under its invalidation
+        // test — is invisible: this file would simply have passed with a test
+        // asserting a function that no longer exists.
         const { useProviderMutations } = await import('../hooks/useProvidersPageData');
-        const queryClient = makeClient();
-        const key = seedObjectInfo(queryClient, 'p1');
-
-        const { result } = renderHook(() => useProviderMutations(), { wrapper: wrapperFor(queryClient) });
-        await act(async () => {
-            await result.current.deployProvider('p1');
+        expect(typeof useProviderMutations).toBe('function');
+        const { result } = renderHook(() => useProviderMutations(), {
+            wrapper: wrapperFor(makeClient()),
         });
-
-        expect(stale(queryClient, key)).toBe(true);
+        expect(result.current).not.toHaveProperty('deployProvider');
+        expect(result.current).not.toHaveProperty('getDeployState');
     });
 
     it('does not reach an unrelated namespace', async () => {

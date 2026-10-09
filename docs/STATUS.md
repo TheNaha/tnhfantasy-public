@@ -48,15 +48,19 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of **2026-10-04**, re-measured after the second
-2026-10-04 pass (`docs/audit-2026-10-04b.md`) completed:
+All three suites green as of **2026-10-09**, re-measured after the
+consolidation-cleanup pass recorded under "The 2026-10-09 pass" below:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **3054 passed, 9 skipped** (515 s) | `cd backend_v2 && .venv/bin/python -m pytest` |
-| Frontend | **1604 passed across 175 files** (213 s) | `cd frontend_v2 && npm test` |
+| Backend | **3161 passed, 9 skipped** (~480 s, 3190 collected) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Frontend | **1779 passed across 192 files** (~160 s) | `cd frontend_v2 && npm test` |
 
-`npm run lint` is **0 errors / 6 warnings** (was 11) and `ruff check .` is clean.
+`npm run lint` is **0 errors / 2 warnings** and `ruff check .` is clean.
+
+Both suites were **red** at the start of that pass — 4 failed + 5 errored on the
+backend, 2 failed on the frontend, 2 lint errors — all caused by `9a91e6f2`
+deleting code without updating its consumers. See the entry below.
 
 > Container removal (2026-10-08): the `provider_containers/` tree
 > (`image_worker/`, `llm_worker/`, `tts_worker/`, and the shared `provider_core/`)
@@ -240,6 +244,103 @@ themselves. See the audit.
 >   offenders are fixed; the architectural cause is not.
 
 ## What was actually wrong, and is now fixed
+
+### The 2026-10-09 consolidation-cleanup pass
+
+`9a91e6f2` ("remove containerized provider path") was a correct change that
+broke both suites, because it deleted code without going through its consumers.
+This pass started by measuring that rather than reading for it, then fixed what
+the measurement showed.
+
+**Both suites were red at HEAD.** Backend 4 failed / 5 errored (3160 passed was
+the ceiling the broken tests allowed); frontend 2 failed (1770 passed).
+
+What was actually broken, in the order it cost the most:
+
+1. **The bootstrap test guarded a module that no longer exists.**
+   `test_app_boot_smoke.py` patched `infrastructure.deps._global_container_manager`,
+   deleted with the container manager. All 5 boot tests errored, so the lifespan
+   — every startup phase, the worker pool, the scheduler registrations, the
+   shutdown requeue — had no coverage at all while 3142 tests passed around it.
+
+2. **The env contract had 55 actions wired to nothing and 6 knobs documented
+   nowhere.** `.env.example` and `.env.example.provider.engines` still announced
+   the container runtime. The fail-open direction was harmless; the fail-closed
+   direction was six live settings with no documentation, including
+   `ENABLE_MEMORY_SNAPSHOT`.
+
+3. **`docker-compose.yml` still declared six provider services with
+   `context: ./provider_containers` — a deleted directory.** `--profile
+   providers build` failed outright, while `AGENTS.md` and this file both said
+   the profile was removed.
+
+4. **A 703-line module and its nine routes were production-dead.**
+   `remote_agent/provider_core/reconciliation.py` had one surviving symbol,
+   `determine_download_token`, used by the agent's own download path. Nine
+   backend routes served it; none had a caller.
+
+**The correctness bugs behind the dead code:**
+
+- `enable_memory_snapshot` was resolved **twice**, and the two copies had
+  already drifted. Worse, `job_runner` read the provider row and passed an
+  explicit `bool`, which made `ModalEngine`'s own resolution unreachable — so
+  `ENABLE_MEMORY_SNAPSHOT` was a documented setting nothing could read. Now
+  there is one helper (`resolve_enable_memory_snapshot`) and the dispatcher
+  passes `None` to hand the decision to the engine that owns it.
+- `DiagnosticsTab` destructured only `{ data, isLoading }` from its own
+  `useQuery`, so a **failed probe rendered a green "All diagnostics clear"
+  panel** next to "Credential Ready: Missing" — an actionable lie. The
+  `queryErrorInvariants` guard could not see it, because its emptiness shapes
+  (`No ... found`) do not match a health claim; its vocabulary now includes
+  `All ... clear`, which catches the file when the fix is reverted.
+- `Providers.jsx` rendered a failed fetch as **"No providers configured"** with
+  a working CTA, because `useProvidersPageData` published `providers: []` and
+  no error channel. The hook now publishes `isError`/`error` and the page
+  renders `QueryErrorState`.
+- `rollback_chat` was the last `async def` route doing synchronous SQLModel
+  work on the event loop, including a bulk DELETE over up to 5000 messages.
+  Its sync prologue now runs in `asyncio.to_thread`, and the cancel is ordered
+  *after* the delete so a reply that lands in between finds nothing to append
+  to.
+- `RuntimeTab` read `provider.config?.app_name`, `provider.config?.comfy_url`
+  and `runtime.last_seen_at` — three keys the status card never emits. The
+  ComfyUI root now reaches `deploy_config` via `LEGACY_DEPLOY_CONFIG_FIELDS`.
+- `DirectComfyEngine.delete_file` used `except (RuntimeError, Exception) as
+  exc:` — a **one-element tuple**, since `RuntimeError` is a subclass of
+  `Exception` and the second entry only ever matches the exact class. The
+  `isinstance` re-check inside it then re-raised, and the catch-all after it
+  swallowed both. Against a 404 from the agent the method answered `False`,
+  identical to "the file was already gone". Both paths now re-raise.
+- `translate_legacy_image_update` applied a `value <= 1` fraction heuristic and
+  then **declared `value_unit="percent"`**. A canonical percent producer's
+  `value == 1` — one percent done, the first step of every image job — came out
+  as 100, in the one number the user watches. The heuristic is gone; a real
+  fraction is declared on the wire, and the reducer honours it.
+- The prompt-cache key used `string_agg` with **no ORDER BY**, so the same
+  table produced two different hashes depending on the query plan, and the
+  cache missed on unchanged data — the entire 1.4s rebuild paid for a key that
+  was read once.
+- No `search`/`q`/`tags` parameter had a `max_length`, so a 1 MB ILIKE term
+  ran against `metadata_` (~4 KB of ComfyUI workflow per row) unauthenticated.
+  Every search parameter is now bounded, plus the three list routes that had no
+  page ceiling at all.
+
+**The dead contracts that were not dead:**
+
+- `MODEL_SYNC_*` was a four-member event family with four frontend toasts and
+  **one producer: a route nothing called**. Rather than delete a UI that already
+  exists, `in_process_reconciliation` now emits all four as it works — the
+  `download.*` failure mode that the project removed a week earlier, one level
+  up. `progress` is the fraction of the *queue*, labelled `progress_scope:
+  "batch"`, because `download_file` has no per-byte callback and a per-file
+  fraction is not observable.
+
+**Verification.** Every fix above has a test that fails when the fix is
+reverted — reverted and confirmed, not assumed. The guard tests that were
+themselves blind (the `provider_containers` root that silently narrowed what
+`test_env_contracts` could see; the `refetchPage` skip; the empty-state
+vocabulary that could not read a health claim) are fixed first, because a guard
+that cannot see the code it guards is the same failure as no guard.
 
 ### The second 2026-10-04 pass
 

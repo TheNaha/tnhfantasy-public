@@ -26,7 +26,7 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, field_validator
 
 from api.deps import (
@@ -48,6 +48,8 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 # job.metadata (see JobService._job_to_dict), so a large page is cheap, but an
 # unbounded one still forces a full-table scan.
 MAX_JOBS_PAGE_SIZE = 200
+# Ceiling on the job search term, in characters.
+MAX_SEARCH_LENGTH = 200
 
 MAX_FAILED_PAGE_SIZE = 100
 
@@ -231,7 +233,7 @@ async def list_jobs(
 
 @router.get("/search")
 async def search_jobs(
-    q: str,
+    q: str = Query(..., max_length=MAX_SEARCH_LENGTH),
     limit: int = 25,
     service: JobService = Depends(get_job_service)
 ):

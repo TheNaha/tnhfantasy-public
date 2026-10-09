@@ -167,3 +167,36 @@ describe('useChatWorkspaceData surfaces every query failure', () => {
         expect(Object.keys(current.queryErrors)).toHaveLength(16);
     });
 });
+describe('the messages query limit is a pure function of messagePageCount', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        queryState.current = {};
+        useChats.mockReturnValue({ data: [], isError: false, error: null, refetch: vi.fn() });
+        useSearchChats.mockReturnValue({ data: null, isError: false, error: null, refetch: vi.fn() });
+    });
+
+    it('asks for one page of history per unit of the counter', () => {
+        renderHook(() => useChatWorkspaceData({ ...args, messagePageCount: 1 }), { wrapper });
+        expect(useMessagesMock()).toHaveBeenLastCalledWith(
+            'chat-1',
+            expect.objectContaining({ limit: 100 })
+        );
+    });
+
+    it('scales the limit with the counter, which is the whole point of it', () => {
+        renderHook(() => useChatWorkspaceData({ ...args, messagePageCount: 8 }), { wrapper });
+        expect(useMessagesMock()).toHaveBeenLastCalledWith(
+            'chat-1',
+            expect.objectContaining({ limit: 800 })
+        );
+    });
+});
+
+/**
+ * `useMessages` is called through the mocked `useWorldVault`, so it is captured
+ * by name from the shared mock object rather than imported directly — importing
+ * it would bind the mock at import time and miss the later `mockReturnValue`.
+ */
+function useMessagesMock() {
+    return worldVaultMock.useMessages;
+}

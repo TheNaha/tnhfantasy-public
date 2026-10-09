@@ -305,6 +305,29 @@ class TestProviderToDict:
         assert "deploy_config" in d
         assert "credentials" not in d
 
+    async def test_legacy_engine_fields_reach_the_frontend_through_deploy_config(
+        self, service, sample_provider_data
+    ):
+        """Engine settings set on the provider row must survive onto the dict.
+
+        `build_provider_record` emits `deploy_config`, never `config`, so a row
+        written with `config={"comfy_url": ...}` reaches the browser under that
+        key only because `LEGACY_DEPLOY_CONFIG_FIELDS` backfills it. The Providers
+        page's Runtime tab read `provider.config?.comfy_url` — a key that is not
+        emitted — so the row was blank for every direct_url / remote_comfy
+        provider no matter what was configured.
+        """
+        payload = dict(sample_provider_data)
+        payload["config"] = {"comfy_url": "http://gpu-box:8188", "app_name": "comfy-modal-stack"}
+        provider = await service.create_provider(payload)
+
+        d = service._provider_to_dict(provider)
+        assert d["deploy_config"]["comfy_url"] == "http://gpu-box:8188"
+        assert d["deploy_config"]["app_name"] == "comfy-modal-stack"
+        # The alias is an alias, not a second field: the row's own config is not
+        # duplicated onto the wire, so there is still exactly one place to read.
+        assert "config" not in d
+
 
 
 class TestProviderServiceReconciliationState:

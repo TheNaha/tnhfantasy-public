@@ -537,6 +537,32 @@ async def emit_model_status_update(provider_id: str, file_id: int, status: str, 
     await event_bus.publish(Event(type=EventType.MODEL_STATUS_UPDATE, data=data))
 
 
+async def emit_model_sync_event(
+    event_type: EventType,
+    provider_id: str,
+    file_id: int | None = None,
+    **fields: Any,
+) -> None:
+    """Publish one `model.sync_*` lifecycle event for a file being reconciled.
+
+    The whole family used to have exactly one producer: `POST
+    /api/v2/models/sync-progress`, a route the deleted container worker called
+    and nothing in this repository does. The frontend subscribes to all four
+    members (`App.jsx`) and renders a per-download toast, so the contract was
+    implemented by neither side — the `download.*` failure mode one level up.
+
+    `in_process_reconciliation.download_single` now emits these as it works, so
+    the family describes what the in-process path actually does. `fields` is the
+    per-event payload: the frontend reads `progress` (0-100), `model_name`,
+    `directory`, `size_bytes` and `error_message`.
+    """
+    data: dict[str, Any] = {"provider_id": provider_id}
+    if file_id is not None:
+        data["file_id"] = file_id
+    data.update(fields)
+    await event_bus.publish(Event(type=event_type, data=data))
+
+
 def _read_job_terminal_state_sync(job_id: str) -> tuple[str, dict | None] | None:
     """Read one job row synchronously and return its terminal state, if any.
 

@@ -304,9 +304,19 @@ export function useProvidersPageData({ realtime = true } = {}) {
         lbConfig: loadBalancerQuery.data?.config || null,
         lbStats: loadBalancerQuery.data?.stats || null,
         isLoading: providersQuery.isLoading || loadBalancerQuery.isLoading,
+        // Published so a failed list can be reported as a failure. Before this,
+        // the hook answered only `providers: []`, and `pages/Providers.jsx` had
+        // no way to tell an outage from an empty vault — so it rendered
+        // "No providers configured" with a working "Add Provider" CTA next to a
+        // live stack, which is the same defect class as the seven pages fixed in
+        // the 2026-10-03 pass, on the one page that owns the feature.
+        isError: providersQuery.isError,
+        error: providersQuery.error,
         refreshAll: stableRefreshAll,
     }), [
         providersQuery.data,
+        providersQuery.isError,
+        providersQuery.error,
         loadBalancerQuery.data,
         providersQuery.isLoading,
         loadBalancerQuery.isLoading,

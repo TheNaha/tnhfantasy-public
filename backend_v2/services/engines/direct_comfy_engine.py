@@ -255,7 +255,9 @@ class DirectComfyEngine(InProcessEngine):
         return headers
 
     def download_token_for_url(self, url: str) -> Optional[str]:
-        """Mirror provider_core.reconciliation.determine_download_token.
+        """Which registry token authenticates this download URL.
+
+        Same predicate as `provider_core.utils.determine_download_token`,
 
         The old remote_comfy client resolved HF/Civitai tokens for agent
         downloads; without this, authenticated downloads 401.
@@ -682,8 +684,6 @@ class DirectComfyEngine(InProcessEngine):
             agent = self.get_agent_client()
             resp = await agent.post("/delete-file", json={"path": path}, timeout=60.0)
             if resp.status_code in (401, 403):
-                from services.engines.base import EngineAuthError
-
                 raise EngineAuthError(
                     f"Remote agent rejected credentials for /delete-file ({path}): "
                     f"HTTP {resp.status_code}",
@@ -699,11 +699,22 @@ class DirectComfyEngine(InProcessEngine):
             # flag is in the body, not the status.
             payload = resp.json()
             return not (isinstance(payload, dict) and payload.get("success") is False)
-        except (RuntimeError, Exception) as exc:
-            from services.engines.base import EngineAuthError
-
-            if isinstance(exc, (EngineAuthError, RuntimeError)):
-                raise
+        except (EngineAuthError, RuntimeError):
+            # Fail fast like delete_model: a rejected credential reproduces on
+            # every retry, so it must not read as a transient miss.
+            #
+            # This was `except (RuntimeError, Exception) as exc`, which needs
+            # explaining: it is a one-element tuple. `RuntimeError` is a subclass
+            # of `Exception`, so `(RuntimeError, Exception)` reduces to
+            # `(RuntimeError,)` — the second entry only matches the exact class
+            # `Exception`, never a subclass of it. The clause then did an
+            # `isinstance(exc, (EngineAuthError, RuntimeError))` re-check to
+            # decide what to re-raise, and the catch-all `except Exception` after
+            # it swallowed both anyway. Measured against a 404 from the agent:
+            # the raise never fired and the method answered `False` — identical
+            # to "the file was already gone".
+            raise
+        except Exception as exc:
             logger.warning("direct_comfy_agent_delete_failed", provider_id=self.provider_id, path=path, error=str(exc))
             return False
 

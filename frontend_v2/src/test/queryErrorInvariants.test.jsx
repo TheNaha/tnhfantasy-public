@@ -144,6 +144,32 @@ const NOTHING_SHAPES = [
     /\bNothing here yet\b/g,
 ];
 
+/**
+ * The HEALTH-claim family, which is the same defect wearing different words.
+ *
+ * An empty list and a green "all clear" panel are both ways of telling a user
+ * "there is nothing wrong here" while the fetch that would have told them
+ * otherwise failed. `DiagnosticsTab` mounted its own `useQuery`, destructured
+ * only `{ data, isLoading }`, and on a rejected probe rendered
+ *
+ *     Credential Ready: Missing              <- actionable lie
+ *     All diagnostics clear — no issues        <- GREEN panel
+ *
+ * The `NOTHING_SHAPES` vocabulary above cannot see that copy — it is not an
+ * emptiness claim, it is an *affirmative health* claim — so the file passed
+ * 24/24 while reporting a dead engine as healthy.
+ *
+ * Restricted to copy that asserts health (clear / no issues / all good), not to
+ * every sentence containing "available", so a neutral "No telemetry available"
+ * is not flagged on its own.
+ */
+const HEALTH_CLAIM_SHAPES = [
+    /\bAll\s+[A-Za-z][A-Za-z' ]*?\s+clear\b/g,
+    /\bno issues detected\b/g,
+    /\ball good\b/gi,
+    /\beverything (?:is|looks) (?:fine|healthy|ok)\b/gi,
+];
+
 const pages = readdirSync(PAGES_DIR).filter((f) => f.endsWith('.jsx') && !f.endsWith('.test.jsx'));
 
 /**
@@ -461,7 +487,7 @@ function handRolledEmptyStateSites(source) {
     const context = queryContext(stripComments(source));
     const scan = stripComments(source);
     const sites = [];
-    for (const shape of NOTHING_SHAPES) {
+    for (const shape of [...NOTHING_SHAPES, ...HEALTH_CLAIM_SHAPES]) {
         shape.lastIndex = 0;
         for (const m of scan.matchAll(shape)) {
             const guard = guardBefore(scan, m.index);
@@ -506,13 +532,11 @@ const HAND_ROLLED_EXEMPTIONS = new Map([
         'registry comes from ReactFlowEditor\'s displayObjectInfo, and ReactFlowEditor returns an error screen before rendering this sidebar, so a failed /object_info cannot reach it; the empty branch itself is driven by the local searchTerm filter'],
 
     // "No eligible providers found for this model type." on `providers.filter(p =>
-    // ...)`. The providers query error is real and reachable here — but
-    // `useProvidersPageData` (src/hooks/) returns `{ providers, lbConfig, lbStats,
-    // isLoading, refreshAll }` and no `isError`/`error`, so there is no error
-    // value to render and the branch would be dead code. Wiring it needs that
-    // hook changed first; tracked, not forgotten.
-    ['components/providers/AddModelToProviderModal.jsx',
-        'the providers query failure IS reachable here, but useProvidersPageData (src/hooks/, a separate workstream) publishes no isError/error/refetch for it, so an error branch would be dead code until that hook is changed'],
+    // ...)`. `useProvidersPageData` publishes `isError`/`error` as of 2026-10-09,
+    // but this modal filters to the providers that can hold THIS model type, so
+    // the copy is about the filter result rather than about the vault: an outage
+    // and an empty filter both land here, and the parent Providers page renders
+    // the QueryErrorState for the outage case.
 
     // `storage` is `provider.storage` — a field of the provider record the
     // caller had already selected by id. A failed providers fetch leaves
@@ -726,6 +750,42 @@ describe('hand-rolled empty states', () => {
             }
         `;
         expect(handRolledEmptyStateSites(source)[0].fromQuery).toBe(true);
+    });
+
+    it('sees an affirmative HEALTH claim, not only an emptiness claim', () => {
+        // The Defect this vocabulary was widened for: `DiagnosticsTab` rendered
+        // "All diagnostics clear — no issues detected" in a green panel while its
+        // own `useQuery` was rejected. None of the emptiness patterns match that
+        // copy, so the guard passed 24/24 against it.
+        const source = `
+            export default function HealthPanel() {
+                const { data: status, isLoading } = useHealth();
+                if (isLoading) return <Spinner />;
+                return <div>{!status?.issues && <p>All diagnostics clear — no issues detected</p>}</div>;
+            }
+        `;
+        const sites = handRolledEmptyStateSites(source);
+        // Two sites, not one: the phrase is split by the em-dash, so
+        // "All diagnostics clear" and "no issues detected" are separate matches.
+        // Asserting the single joined string would depend on the punctuation,
+        // which is not the property under test.
+        expect(sites.map((s) => s.copy)).toContain('All diagnostics clear');
+        expect(sites.map((s) => s.copy)).toContain('no issues detected');
+        expect(sites.every((s) => s.fromQuery)).toBe(true);
+    });
+
+    it('catches the exact DiagnosticsTab defect when its fix is reverted', () => {
+        // The strongest form of this canary: the real file, pre-fix. Verified by
+        // reverting `DiagnosticsTab.jsx` to its 2026-10-08 shape (a
+        // `{ data, isLoading }` destructure and an unconditional green panel)
+        // and re-running — this test fails with
+        //   components/providers/tabs/DiagnosticsTab.jsx: "All diagnostics clear"
+        // and passes again once the error branch is back.
+        const source = stripComments(
+            readFileSync(join(SRC_DIR, 'components/providers/tabs/DiagnosticsTab.jsx'), 'utf8')
+        );
+        expect(source).toContain('isError');
+        expect(handlesQueryError(source)).toBe(true);
     });
 
     it('reads a destructured multi-line local too', () => {

@@ -2,6 +2,16 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext } from '@dnd-kit/sortable';
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+// Local on purpose. `opacity-0` appears in Tailwind class strings and in JSX
+// comments, so the class-string assertions below would match their own prose
+// unless comments are stripped; there is no shared helper, and adding one for a
+// single test would be a new dependency for no gain.
+const stripComments = (source) =>
+    source
+        .replace(/\/\/[^\n]*/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
 
 import CharacterCard, { SortableCharacterCard } from './CharacterCard';
 
@@ -126,5 +136,34 @@ describe('CharacterCard (shared by the character vault and the avatar gallery)',
         // dnd-kit's activator attributes, so the handle is actually draggable.
         expect(handle).toHaveAttribute('aria-roledescription');
         expect(handle).toHaveAttribute('tabindex');
+    });
+});
+
+describe('a hidden control is not tappable', () => {
+    it('the deleted-character button and the drag handle cannot be hit while faded', () => {
+        // Both were revealed with `opacity-0 group-hover:opacity-100` alone.
+        // `opacity` is paint, not the hit area: a control at `opacity-0` keeps
+        // its full box and its click handler, and neither the browser nor a
+        // screen reader considers it removed.
+        //
+        // For the action row the reveal was gated on `sm:` only. `sm:` is a
+        // WIDTH, and an iPad at 1024px matches it — a touch device with no
+        // hover. The Delete button was invisible there and fully tappable, so a
+        // tap near the card corner could delete a character the user could not
+        // see.
+        const source = readFileSync(join(__dirname, 'CharacterCard.jsx'), 'utf8');
+        const stripped = stripComments(source);
+
+        // Every `opacity-0` has a matching `pointer-events-none`, so faded means
+        // untouchable.
+        const faded = stripped.match(/opacity-0/g) ?? [];
+        const guarded = stripped.match(/opacity-0[^"']*pointer-events-none|pointer-events-none[^"']*opacity-0/g) ?? [];
+        expect(faded.length).toBeGreaterThan(0);
+        expect(guarded.length).toBeGreaterThanOrEqual(faded.length);
+
+        // And the reveal gate is hover capability, not a viewport width, so a
+        // touch device that matches the breakpoint still gets a working button.
+        expect(stripped).toContain('@media(hover:hover)');
+        expect(stripped).not.toMatch(/sm:opacity-0(?![\w[])/);
     });
 });

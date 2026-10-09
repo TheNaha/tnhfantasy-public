@@ -95,12 +95,14 @@ async def test_every_worker_emits_the_unit_this_relies_on():
     """
     import pathlib
 
-    root = pathlib.Path(__file__).resolve().parents[2] / "provider_containers"
+    # `provider_containers/provider_core` moved to `remote_agent/provider_core`
+    # on 2026-10-09. The path was `parents[2] / "provider_containers"`, and a
+    # missing directory makes `rglob`/`exists()` answer False without raising —
+    # so this test skipped on every environment, including CI, while reading as
+    # coverage. It now resolves the tree that actually exists.
+    root = pathlib.Path(__file__).resolve().parents[2] / "remote_agent"
     if not (root / "provider_core" / "utils.py").exists():
-        # Backend-only container mounts (backend_v2 -> /app) have no
-        # provider_containers tree; the assertion below needs the source.
-        # Host CI mounts the full repo, where it still runs.
-        pytest.skip("provider_containers tree not mounted in this environment")
+        pytest.skip("remote_agent/provider_core tree not mounted in this environment")
     utils = (root / "provider_core" / "utils.py").read_text()
     models = (root / "provider_core" / "models.py").read_text()
     assert 'value_unit=PROGRESS_VALUE_UNIT' in utils, (
@@ -127,6 +129,73 @@ async def test_in_process_engines_emit_the_unit_this_relies_on():
     assert translate_legacy_image_update(
         {"status": "progress", "value": 5, "max": 10}, "job-x"
     ) == {"event": "progress", "job_id": "job-x", "value": 50, "value_unit": "percent"}
+
+
+class TestTheLegacyTranslatorDoesNotGuessTheUnit:
+    """`translate_legacy_image_update` must not apply a fraction heuristic to a
+    number it then labels as percent.
+
+    The three-window defect: a bare `value` with no `max` was multiplied by 100
+    when it was `<= 1`, and the same function declared `value_unit="percent"` on
+    the result. A canonical percent producer's `value == 1` — one percent done,
+    the first step of every image job — came out as 100, in the one number the
+    user watches. The reducer then read `value_unit == "percent"` and took the
+    100 at face value, so both halves agreed on a wrong number.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        [0, 0.01, 0.25, 0.5, 0.99, 1, 1.0, 1.5, 2, 42, 99, 100],
+    )
+    def test_a_bare_value_is_a_percent_not_a_fraction(self, value):
+        from services.engines.base import translate_legacy_image_update
+
+        out = translate_legacy_image_update({"value": value}, "job-x")
+        assert out["value"] == value, (
+            f"value={value!r} was rescaled, which is the fraction heuristic "
+            "firing on a percent producer's number"
+        )
+        assert out["value_unit"] == "percent"
+
+    @pytest.mark.parametrize(
+        "value,max_v",
+        [(5, 10), (1, 100), (0, 10), (10, 10), (3, 4)],
+    )
+    def test_a_value_max_pair_still_becomes_a_percentage(self, value, max_v):
+        """The one branch that is unambiguous, and must keep working: dividing is
+        the only way to turn a pair into a percentage."""
+        from services.engines.base import translate_legacy_image_update
+
+        out = translate_legacy_image_update(
+            {"value": value, "max": max_v}, "job-x"
+        )
+        assert out["value"] == round(value / max_v * 100)
+        assert out["value_unit"] == "percent"
+
+    def test_the_fraction_heuristic_is_not_in_the_source(self):
+        """Read from the module text so a re-added heuristic fails by name.
+
+        Asserting the behaviour alone would pass for a heuristic restricted to
+        values the parametrisation above does not cover.
+        """
+        import inspect
+
+        from services.engines import base as base_module
+
+        # Strip comments first: this test's own explanation in `base.py` quotes
+        # the expression it removed, and a substring scan would match its prose.
+        src = "\n".join(
+            line
+            for line in inspect.getsource(
+                base_module.translate_legacy_image_update
+            ).splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        assert "value * 100" not in src, (
+            "the `value <= 1` fraction heuristic is back; a percent producer's "
+            "1% becomes 100% again"
+        )
+        assert "value <= 1" not in src
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ import { useConfirmation } from '../store/confirmationStore';
 import { providersApi } from '../api';
 import { summarizeProviderStatus } from '../utils/providerStatus';
 import useProvidersPageData, { useProviderMutations } from '../hooks/useProvidersPageData';
+import { QueryErrorState } from '../components/common/QueryState';
 
 const FILTERS = [
     { id: 'all', label: 'All' },
@@ -35,6 +36,8 @@ export default function Providers() {
         lbConfig,
         lbStats,
         isLoading,
+        isError,
+        error,
         refreshAll: refreshProviderData,
     } = useProvidersPageData();
     const {
@@ -248,6 +251,12 @@ export default function Providers() {
                         <div className="text-sm font-bold text-gray-400 tracking-wider uppercase">Loading providers...</div>
                     </div>
                 </div>
+            ) : isError ? (
+                <QueryErrorState
+                    error={error}
+                    noun="providers"
+                    onRetry={() => refreshProviderData()}
+                />
             ) : filteredProviders.length > 0 ? (
                 <div className="space-y-8">
                     {filteredProviders.some(p => p.worker_type !== 'llm') && (

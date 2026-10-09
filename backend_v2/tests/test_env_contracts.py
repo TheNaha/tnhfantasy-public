@@ -42,7 +42,15 @@ REPO = Path(__file__).resolve().parents[2]
 
 # Roots whose Python is application code. `tests` is excluded because a test may
 # legitimately set a variable to exercise a path.
-CODE_ROOTS = ("backend_v2", "provider_containers", "remote_agent")
+#
+# `provider_containers` was here until 2026-10-09, when the tree was deleted and
+# its workers folded into `backend_v2/services/engines/`. `Path.rglob` on a
+# missing directory returns empty without raising, so the stale entry cost
+# nothing visible — it silently narrowed what this guard could see, which is the
+# same failure shape as every other guard in this repo that "cannot see the code
+# it is guarding". The assertion in `_python_files` makes the next deletion fail
+# loudly instead.
+CODE_ROOTS = ("backend_v2", "remote_agent")
 EXCLUDE_PARTS = {"tests", ".venv", "venv", "__pycache__", "node_modules", ".git", "dist"}
 
 EXAMPLE_FILES = sorted(
@@ -99,6 +107,13 @@ DYNAMIC_READS = {
 
 
 def _python_files() -> list[Path]:
+    # A code root that no longer exists must fail here, not silently shrink the
+    # scan. `rglob` on a missing directory returns empty and raises nothing.
+    missing = [root for root in CODE_ROOTS if not (REPO / root).is_dir()]
+    assert not missing, (
+        f"CODE_ROOTS names directories that do not exist: {missing}. "
+        "Deleting a code root silently narrows what this guard can see."
+    )
     out = []
     for root in CODE_ROOTS:
         for path in (REPO / root).rglob("*.py"):
@@ -458,16 +473,21 @@ class TestTheBackendExampleIsCanonical:
 # Deliberately NOT documented in an example file, with the reason. Keep this
 # short and keep the reasons real: an entry here is a decision someone can
 # challenge, not a bucket.
+#
+# The prior two Modal entries (`MODAL_VOLUME_NAME`, `MODAL_BUILD_GPU_TYPE`)
+# described a `modal deploy` parameter that only the deleted container worker
+# read; the in-process engines resolve their app names from the provider row.
+# They were removed rather than re-justified, because "an allowlist entry for a
+# variable nothing reads" is exactly the stale exemption this list is not allowed
+# to become.
 _ALLOWLISTED_UNDOCUMENTED: dict[str, str] = {
     # Set by docker-compose for the containers, not for a human to tune, and
     # already documented in the compose file's own environment block.
     "POSTGRES_HOST": "compose-only; the DSN is assembled from POSTGRES_* at database.py:71",
     "POSTGRES_PORT": "compose-only; see POSTGRES_HOST",
-    # Build arguments to the images, read at module import in the worker.
+    # Build argument to the image, read at module import in the remote agent.
     "MODAL_APP_NAME": "Modal deploy parameter, not an operator knob",
-    "MODAL_VOLUME_NAME": "Modal deploy parameter, not an operator knob",
-    "MODAL_BUILD_GPU_TYPE": "Modal deploy parameter, not an operator knob",
-    "REMOTE_AGENT_ALLOW_INSECURE": "documented in docker-compose.yml:456; defaults False",
+    "REMOTE_AGENT_ALLOW_INSECURE": "documented in docker-compose.yml; defaults False",
 }
 
 

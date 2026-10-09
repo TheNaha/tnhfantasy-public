@@ -5,7 +5,7 @@ from io import BytesIO
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, delete, select
@@ -30,6 +30,10 @@ from services.world_integration_service import TTS_BEAT_ROLE
 
 logger = get_logger("stories_route")
 router = APIRouter()
+
+# Page ceiling for the story list. Every sibling list route in this app is
+# bounded and documents why; this one was not.
+MAX_STORIES_PAGE_SIZE = 200
 
 
 class StoryContinueRequest(BaseModel):
@@ -200,7 +204,21 @@ def _chapter_panel_images(ch: StoryChapter, story_asset_paths: list[str], asset_
 
 
 @router.get("", response_model=list[Story])
-def list_stories(session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), limit: int = 100, offset: int = 0):
+def list_stories(
+    session: Session = Depends(get_session),
+    story_repo: StoryRepository = Depends(get_story_repo),
+    # Bound at the declaration, not inside the handler: this route has a bound
+    # at `le=10000`, and the list route 15 lines above it documents the rule —
+    # "the strict bound is the house style for a reason" — so the gap is a
+    # documentation/maintenance divergence, not a missing opinion. A bare
+    # `limit: int = 100` accepts `?limit=100000000` and reads the whole story
+    # table, which on a long campaign is a second of blocking I/O per request.
+    #
+    # `list_active` is clamped defensively below too, because it is also reachable
+    # from `StoryRepository` directly by other services.
+    limit: int = Query(100, ge=1, le=MAX_STORIES_PAGE_SIZE),
+    offset: int = Query(0, ge=0),
+):
     return story_repo.list_active(limit=limit, offset=offset)
 
 @router.post("", response_model=Story)

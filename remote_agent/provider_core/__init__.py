@@ -34,16 +34,9 @@ from .http_client import (
     get_file_size_cap,
     HttpClientConfig,
 )
-from .reconciliation import (
-    report_file_status_v2,
-    batch_update_file_status_v2,
-    push_reconciliation_event,
-    get_pending_downloads,
-    get_all_expected_paths,
-    determine_download_token,
-    calculate_safe_deletion_limit,
-    run_reconciliation_v2,
-)
+# `provider_core.reconciliation` was deleted on 2026-10-09 with the container
+# workers it served — the backend's `services/in_process_reconciliation.py` is
+# its replacement. The one surviving symbol moved to `utils.py`.
 from .auth import bearer_from_header, token_matches
 from .utils import (
     get_safe_path,

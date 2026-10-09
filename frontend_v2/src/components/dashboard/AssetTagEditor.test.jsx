@@ -190,11 +190,15 @@ describe('the vocabulary query key is the one the invalidation targets', () => {
         const { renderHook, act } = await import('@testing-library/react');
         const { createElement } = await import('react');
 
+        // `limit` is part of the key, so the default 12 appears in it. That is the
+        // 2026-10-09 fix: the key omitted it while the fetcher used it, so the
+        // two live call sites (this editor asks for 12, GalleryFilterPanel for
+        // 24) shared one cache entry and whichever rendered first won.
         renderHook(() => useTagVocabulary({ prefix: '' }), {
             wrapper: ({ children }) => createElement(QueryClientProvider, { client: queryClient }, children),
         });
         await waitFor(() => {
-            expect(queryClient.getQueryState(['gallery', 'tags', '', ''])?.status).toBe('success');
+            expect(queryClient.getQueryState(['gallery', 'tags', '', '', 12])?.status).toBe('success');
         });
 
         // The invalidation that existed before this query did. It is a prefix
@@ -204,6 +208,6 @@ describe('the vocabulary query key is the one the invalidation targets', () => {
             queryClient.getQueryCache().findAll({ queryKey: ['gallery', 'tags'] })
                 .forEach((q) => q.invalidate());
         });
-        expect(queryClient.getQueryState(['gallery', 'tags', '', ''])?.isInvalidated).toBe(true);
+        expect(queryClient.getQueryState(['gallery', 'tags', '', '', 12])?.isInvalidated).toBe(true);
     });
 });

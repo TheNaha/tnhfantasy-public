@@ -287,6 +287,7 @@ export default function ReconciliationStatus({ providerId, onClose, inline = fal
                                         {completed} models downloaded
                                         {failed > 0 && `, ${failed} failed`}
                                         {stats.deletions_completed > 0 && `, ${stats.deletions_completed} deleted`}
+                                        {stats.deletions_failed > 0 && `, ${stats.deletions_failed} deletions failed`}
                                     </p>
                                 </div>
                             </div>

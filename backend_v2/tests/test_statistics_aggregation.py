@@ -13,6 +13,7 @@ Everything here runs on the same SQLite dialect as production Postgres because
 compile to `->>` on Postgres and `JSON_EXTRACT` on SQLite.
 """
 
+
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -480,6 +481,63 @@ def test_prompt_cache_is_invalidated_when_a_prompt_changes(session: Session):
     updated = statistics_service.get_detailed_statistics("all")["prompts"]
     assert "gamma" not in updated["keywords"]
     assert updated["keywords"].get("delta") == 1
+
+
+def test_the_prompt_signature_orders_the_aggregate_on_postgres():
+    """`string_agg` without ORDER BY emits rows in executor order.
+
+    Stable for a sequential scan, not for a parallel or index-driven plan — so
+    the same table produced two different hashes, the cache missed on unchanged
+    data, and the entire 1.4s rebuild was paid for a key that was read once.
+
+    Behaviour testing cannot see this on SQLite: SQLite's own `string_agg`
+    happens to follow scan order, so the caveat is invisible locally. Pinned by
+    reading the production source instead, which is the only place the difference
+    is observable from here.
+
+    An earlier version of this test built its own statement and asserted ORDER BY
+    on it, which passed whether or not production ordered anything — it was
+    testing SQLAlchemy's compiler, not this code.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from services import statistics_service
+
+    # Strip comments AND docstrings, and normalise indentation: the function's
+    # own explanation quotes `aggregate_order_by` at length, so a plain
+    # `inspect.getsource` substring check matches its prose and passes whether or
+    # not the ordering survived. `ast.walk` over docstring-stripped statements
+    # leaves only what executes.
+    tree = ast.parse(textwrap.dedent(inspect.getsource(statistics_service._prompt_signature)))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if (
+                node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            ):
+                node.body = node.body[1:] or [ast.Pass()]
+    src = ast.unparse(tree)
+
+    assert "aggregate_order_by" in src, (
+        "the ordered string_agg is gone, so the prompt cache key depends on the "
+        "query plan again and misses on unchanged data"
+    )
+    # And it must be gated on the dialect: the construct cannot be compiled by
+    # any other dialect, so an unconditional one is a compile-time crash on the
+    # SQLite the test suite runs, not a better hash.
+    # `ast.unparse` normalises quote style, so assert on the rendered form.
+    assert "'postgresql'" in src, (
+        "aggregate_order_by is no longer gated on the dialect"
+    )
+    # The plain form must still exist for the other branch.
+    assert "func.string_agg(pair, literal(''))" in src, (
+        "the non-Postgres branch no longer has a plain string_agg, so the "
+        "ordered form is unconditional and the SQLite suite fails at compile time"
+    )
 
 
 def test_prompt_cache_is_scoped_per_time_range(session: Session):

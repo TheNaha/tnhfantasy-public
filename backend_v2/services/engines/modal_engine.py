@@ -45,6 +45,41 @@ _GET_FILE_TIMEOUT_SECONDS = float(os.getenv("MODAL_GET_FILE_TIMEOUT_SECONDS", "3
 # bounds cancel latency when the Modal stream goes quiet.
 _CANCEL_POLL_SECONDS = 2.0
 
+_TRUTHY = ("true", "1", "yes")
+
+
+def resolve_enable_memory_snapshot(
+    config: dict | None = None,
+    env_vars: dict | None = None,
+) -> bool:
+    """Whether a Modal image job asks for the `ComfyUISnapshot` class.
+
+    The single resolution point for `enable_memory_snapshot`. There used to be
+    two — `engine_factory` and this constructor — and they had already drifted
+    on string coercion and on whether the env fallback applied, so the same
+    provider could be built Snapshot and dispatched Stable.
+
+    Precedence is provider-row config, then the per-provider `.env.<id>` file,
+    then the process environment, then False. An explicit `None` in the config
+    means "not decided here" and falls through, which is what keeps the env
+    fallback reachable for a legacy deployment.
+
+    Defaulting to False rather than True is deliberate: the deprecated container
+    client fell back to "true" when the env was unset, so an unset variable
+    silently rented the larger snapshot image.
+    """
+    raw = (config or {}).get("enable_memory_snapshot")
+    if isinstance(raw, str):
+        return raw.strip().lower() in _TRUTHY
+    if raw is not None:
+        return bool(raw)
+    for source in ((env_vars or {}), os.environ):
+        candidate = source.get("ENABLE_MEMORY_SNAPSHOT")
+        if candidate is None or str(candidate).strip() == "":
+            continue
+        return str(candidate).strip().lower() in _TRUTHY
+    return False
+
 
 class ModalEngine(InProcessEngine):
     """In-process compute engine for Modal serverless workers."""
@@ -70,15 +105,14 @@ class ModalEngine(InProcessEngine):
         self.app_name = app_name or os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
         self.hf_token = hf_token or os.getenv("HF_TOKEN", "")
         self.civitai_token = civitai_token or os.getenv("CIVITAI_TOKEN", "")
-        # Canonical default False per registry schema + InferenceRequest.
-        # The deprecated container client fell back to "true" when the env
-        # was unset; the engine intentionally defaults to Stable unless the
-        # provider config opts into Snapshot. Factory resolves
-        # config > env > False so per-provider config is source of truth.
-        if enable_memory_snapshot is None:
-            raw = os.getenv("ENABLE_MEMORY_SNAPSHOT", "").strip().lower()
-            enable_memory_snapshot = raw in ("true", "1", "yes") if raw else False
-        self.enable_memory_snapshot = bool(enable_memory_snapshot)
+        # Resolved through the shared helper so the engine's view and the
+        # dispatcher's view cannot disagree. Passing None means "not decided by
+        # the caller", which is what makes the env fallback reachable at all —
+        # `job_runner` used to pass an explicit False, which made this whole
+        # branch dead and the env var inert.
+        self.enable_memory_snapshot = resolve_enable_memory_snapshot(
+            {"enable_memory_snapshot": enable_memory_snapshot}
+        )
         self._client: Optional[modal.Client] = None
         self._lock = asyncio.Lock()
 
@@ -148,11 +182,12 @@ class ModalEngine(InProcessEngine):
         Execute inference directly against Modal's ComfyUI class and stream TaskEvents.
         """
         if use_snapshot is None:
-            # Canonical default False per registry schema (enable_memory_snapshot
-            # default False) and InferenceRequest (use_snapshot=False). The
-            # deprecated container fell back to "true" when the env was unset;
-            # the engine resolves per-provider config > env > False at
-            # construction, so an omitted flag means Stable, not Snapshot.
+            # The engine is the authority on its own snapshot class, resolved
+            # once at construction from provider-row config > per-provider env
+            # file > process env > False. A caller that passes an explicit bool
+            # (as `job_runner` used to) silently overrides all of that, which is
+            # how `ENABLE_MEMORY_SNAPSHOT` became a documented variable that
+            # nothing could read.
             use_snapshot = self.enable_memory_snapshot
         class_name = "ComfyUISnapshot" if use_snapshot else "ComfyUIStable"
         logger.info(
@@ -347,7 +382,9 @@ class ModalEngine(InProcessEngine):
                 yield chunk
 
     def download_token_for_url(self, url: str) -> Optional[str]:
-        """Mirror provider_core.reconciliation.determine_download_token."""
+        """Which registry token authenticates this download URL.
+
+        Same predicate as `provider_core.utils.determine_download_token`."""
         lowered = (url or "").lower()
         if "huggingface.co" in lowered:
             return self.hf_token or None

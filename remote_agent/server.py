@@ -11,13 +11,17 @@ from pydantic import BaseModel, Field
 from provider_core.auth import bearer_from_header, token_matches
 from provider_core.http_client import get_file_size_cap
 from provider_core.responses import failed, from_upstream, ok
-from provider_core.utils import get_safe_path, is_model_candidate, is_transient_artifact
+from provider_core.utils import (
+    determine_download_token,
+    get_safe_path,
+    is_model_candidate,
+    is_transient_artifact,
+)
 from provider_core.downloads import (
     download_model_to_path,
     pending_download_paths,
     pipeline_artifacts,
 )
-from provider_core.reconciliation import determine_download_token
 from provider_core.validation import validate_downloaded_file
 from provider_core.models import MODEL_DIRECTORIES
 

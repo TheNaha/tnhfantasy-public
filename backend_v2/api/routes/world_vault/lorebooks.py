@@ -27,6 +27,11 @@ logger = get_logger("lorebooks_route")
 LOREBOOK_ENTRY_PAGE_DEFAULT_LIMIT = 1000
 LOREBOOK_ENTRY_PAGE_MAX_LIMIT = 2000
 router = APIRouter()
+# Ceiling on any `search`/`q`/`query` term this module accepts, in characters.
+# The routes below ILIKE it against application-owned text, and the reader is
+# unauthenticated, so an unbounded term is a free full scan.
+MAX_SEARCH_LENGTH = 200
+
 
 
 class LorebookUpdate(BaseModel):
@@ -135,7 +140,8 @@ def delete_lorebook(lorebook_id: str, session: Session = Depends(get_session), l
 @router.get("/{lorebook_id}/search", response_model=list[LorebookEntry])
 def search_entries(
     lorebook_id: str, 
-    q: str, 
+    q: str = Query(..., max_length=MAX_SEARCH_LENGTH),
+
     limit: int = 5,
     session: Session = Depends(get_session),
     lorebook_repo: LorebookRepository = Depends(get_lorebook_repo),

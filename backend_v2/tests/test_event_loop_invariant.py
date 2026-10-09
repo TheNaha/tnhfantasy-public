@@ -399,6 +399,16 @@ def test_every_searched_directory_exists_and_is_indexed():
 # `reconciliation.py`); those four are no longer entries here because they are
 # no longer offenders.
 #
+# Three entries were removed on 2026-10-09 rather than updated:
+# `get_provider_statuses`, `register_discovered_models` and
+# `receive_sync_progress` named routes in
+# `api/routes/models/provider_sync.py` that were deleted with the container
+# workers they served. The service methods behind two of them still exist —
+# `ModelServiceV2.get_model_provider_statuses` and
+# `ModelReconciliationService.register_discovered_files` — and are now called
+# directly by `services/in_process_reconciliation.py`, which is the point: the
+# HTTP hop is gone, so there is no handler left to be on the wrong thread.
+#
 # Every reason must name a resolvable `Owner.method`, and
 # `test_every_register_reason_names_a_method_that_still_exists` holds them to
 # it. Several entries below previously named a method that does not exist
@@ -424,16 +434,6 @@ SYNC_CHAINED = {
     "get_versions": "ModelServiceV2.get_versions — same shape",
     "set_default_version_modern": "ModelServiceV2.set_default_version — same shape",
     "toggle_version_enabled": "ModelServiceV2.toggle_version_enabled — same shape",
-    "get_provider_statuses": (
-        "ModelServiceV2.get_model_provider_statuses — delegates to "
-        "ModelDownloader.get_model_provider_statuses, a bare repository read "
-        "behind two decorative async defs"
-    ),
-    "register_discovered_models": (
-        "ModelServiceV2.register_discovered_files — "
-        "ModelReconciliationService.register_discovered_files does its session "
-        "writes inline"
-    ),
     "search_autopopulate_candidates": (
         "ExternalModelService.search_civitai — outbound provider HTTP the "
         "resolver cannot see. The synchronous repo.get_model() model-existence "
@@ -496,14 +496,6 @@ SYNC_CHAINED = {
     ),
     "search_huggingface": (
         "ExternalModelService.search_huggingface — provider HTTP, needs a real await"
-    ),
-    # Known false positive, deliberately kept. Pure in-memory event
-    # construction plus event_bus.publish, which bottoms out at an
-    # uncontended asyncio.Lock (core/events.py:308) — no DB, no file, no HTTP.
-    "receive_sync_progress": (
-        "EventBus.publish — no real suspension, and none needed: builds an Event "
-        "from the request and publishes it. Nothing here touches the database "
-        "or the filesystem, so there is nothing to move off the loop."
     ),
     # Not a defect either. One dict lookup under an uncontended
     # asyncio.Lock in infrastructure/worker_registry._get_live_worker.

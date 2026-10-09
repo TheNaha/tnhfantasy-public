@@ -45,6 +45,10 @@ router = APIRouter()
 
 MAX_LIST_LIMIT = 100
 DEFAULT_LIST_LIMIT = 24
+# Ceiling on the `search` term, in characters. The route ILIKEs it against
+# `metadata_` — a ~4 KB jsonb blob holding the whole ComfyUI workflow per row —
+# and is unauthenticated, so an unbounded term is an unauthenticated full scan.
+MAX_SEARCH_LENGTH = 200
 MAX_MEMBER_PAGE = 500
 DEFAULT_MEMBER_PAGE = 200
 
@@ -339,7 +343,7 @@ def list_sessions(
     workspace: str | None = None,
     auto_detected: bool | None = None,
     locked: bool | None = None,
-    search: str | None = None,
+    search: str | None = Query(None, max_length=MAX_SEARCH_LENGTH),
     limit: int = Query(DEFAULT_LIST_LIMIT, ge=1, le=MAX_LIST_LIMIT),
     offset: int = Query(0, ge=0),
     repo: SessionRepository = Depends(get_session_repo),

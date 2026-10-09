@@ -399,8 +399,13 @@ async def execute_job(
                     continue
 
                 total_nodes = len(job.workflow) if isinstance(job.workflow, dict) else 0
-                provider_config = current_provider.config or {}
-                use_snapshot = provider_config.get("enable_memory_snapshot", False)
+                # Deliberately NOT read here. This used to be
+                # `provider_config.get("enable_memory_snapshot", False)` passed
+                # as an explicit bool, which is why `ModalEngine`'s own
+                # resolution — provider config > per-provider env file > process
+                # env > False — never ran and `ENABLE_MEMORY_SNAPSHOT` was inert.
+                # Passing None hands the decision to the engine, which owns it.
+                use_snapshot = None
 
                 try:
                     if runtime.mode == "in_process":

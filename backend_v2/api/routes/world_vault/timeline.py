@@ -36,14 +36,21 @@ EVENT_TYPE_ALIASES = {
 router = APIRouter()
 
 
+MAX_FILTER_LENGTH = 200
+
+
 @router.get("/timeline")
 def get_timeline(
-    character_id: str | None = Query(default=None),
-    story_id: str | None = Query(default=None),
-    chat_id: str | None = Query(default=None),
-    location: str | None = Query(default=None),
-    world_id: str | None = Query(default=None),
-    types: str | None = Query(default=None),
+    # Filters are ids, not search text, so a modest bound. They are equality /
+    # IN-list predicates rather than ILIKE, so an oversized one is not a full scan
+    # — but an unbounded `types` list is still parsed and passed to `IN(...)` with
+    # one bind per element.
+    character_id: str | None = Query(default=None, max_length=64),
+    story_id: str | None = Query(default=None, max_length=64),
+    chat_id: str | None = Query(default=None, max_length=64),
+    location: str | None = Query(default=None, max_length=MAX_FILTER_LENGTH),
+    world_id: str | None = Query(default=None, max_length=64),
+    types: str | None = Query(default=None, max_length=MAX_FILTER_LENGTH),
     limit: int = Query(default=100, le=500),
     offset: int = Query(default=0, ge=0, le=MAX_TIMELINE_OFFSET),
     session: Session = Depends(get_session),

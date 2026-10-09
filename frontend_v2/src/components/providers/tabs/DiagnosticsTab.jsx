@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle, XCircle, Activity, Loader2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { DataRow } from './Shared';
+import { QueryErrorState } from '../../common/QueryState';
 import { providersApi } from '../../../api';
 
 export default function DiagnosticsTab({ providerId, diagnostics, runtime, credentialSummary, providerFailures }) {
@@ -8,7 +9,13 @@ export default function DiagnosticsTab({ providerId, diagnostics, runtime, crede
     const errors = diagnostics.errors || [];
     const hasIssues = warnings.length > 0 || errors.length > 0 || providerFailures > 0;
 
-    const { data: diagData, isLoading: diagLoading } = useQuery({
+    const {
+        data: diagData,
+        isLoading: diagLoading,
+        isError: diagIsError,
+        error: diagError,
+        refetch: diagRefetch,
+    } = useQuery({
         queryKey: ['provider-diagnostics', providerId],
         queryFn: () => providersApi.getDiagnostics(providerId),
         refetchInterval: 20000, // Poll every 20s while tab is open (engine.check_health hits Modal/Beam/Direct)
@@ -16,12 +23,23 @@ export default function DiagnosticsTab({ providerId, diagnostics, runtime, crede
     });
 
     const metrics = diagData;
+    // The live query is the authority on telemetry, not the caller's snapshot.
+    // Every value in the telemetry panel below is prefixed with this for that
+    // reason: when the probe is not answering there is nothing to report, and
+    // the difference matters.
+    const probeAnswered = !diagLoading && !diagIsError && !!metrics;
 
     return (
         <>
+            {diagIsError && (
+                <div className="mb-4">
+                    <QueryErrorState error={diagError} noun="engine telemetry" onRetry={() => diagRefetch()} />
+                </div>
+            )}
+
             <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden mb-4">
-                <DataRow label="Engine Name" value={diagData?.engine_name || 'N/A'} />
-                <DataRow label="Runtime Mode" value={diagData?.runtime_mode || diagnostics.worker?.mode || runtime.mode} />
+                <DataRow label="Engine Name" value={metrics?.engine_name || 'N/A'} />
+                <DataRow label="Runtime Mode" value={metrics?.runtime_mode || diagnostics.worker?.mode || runtime.mode} />
                 <DataRow label="Backend URL" value={diagnostics.worker?.backend_url} mono />
                 <DataRow label="Worker URL" value={diagnostics.worker?.worker_url} mono />
                 <DataRow label="Credential Ready" value={credentialSummary.ready ? 'Yes' : 'Missing'} />
@@ -40,7 +58,13 @@ export default function DiagnosticsTab({ providerId, diagnostics, runtime, crede
                     </h3>
                     {diagLoading && <Loader2 size={14} className="text-blue-400 animate-spin" />}
                 </div>
-                {!diagLoading && !metrics && (
+                {diagIsError && (
+                    <div className="text-xs text-amber-300/90">
+                        The live probe is not answering, so there is no telemetry to show. The
+                        values below are from the last provider record, not from the engine.
+                    </div>
+                )}
+                {!diagLoading && !diagIsError && !metrics && (
                     <div className="text-xs text-gray-500 italic">No telemetry available.</div>
                 )}
                 {metrics && (
@@ -99,10 +123,19 @@ export default function DiagnosticsTab({ providerId, diagnostics, runtime, crede
                         <span className="text-sm text-yellow-200">{msg}</span>
                     </div>
                 ))}
-                {!hasIssues && (
+                {!hasIssues && !diagIsError && probeAnswered && (
                     <div className="flex items-center gap-3 rounded-lg border border-green-500/20 bg-green-500/8 p-3">
                         <CheckCircle size={16} className="text-green-400 flex-shrink-0" />
                         <span className="text-sm text-green-200">All diagnostics clear — no issues detected</span>
+                    </div>
+                )}
+                {diagIsError && (
+                    <div className="flex items-center gap-3 rounded-lg border border-red-500/20 bg-red-500/8 p-3">
+                        <XCircle size={16} className="text-red-400 flex-shrink-0" />
+                        <span className="text-sm text-red-200">
+                            Diagnostics could not be collected. Treat this provider as unverified
+                            until the probe answers — a silent engine is not a healthy one.
+                        </span>
                     </div>
                 )}
             </div>

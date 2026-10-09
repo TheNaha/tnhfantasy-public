@@ -160,6 +160,19 @@ export default function RuntimeTab({
     // Trust the backend's resolved mode: `in_process` is the in-process
     // engine, everything else a remote endpoint (external worker).
     const isInProcess = runtime.mode === 'in_process';
+    // The engine-relevant settings live on `deploy_config`, which the status card
+    // emits and which `LEGACY_DEPLOY_CONFIG_FIELDS` backfills from the provider
+    // row's own `config`. This used to read `provider.config?.app_name` directly —
+    // a key the card never sends — so the two rows below were always blank.
+    const engineConfig = provider.deploy_config || {};
+    // `runtime.last_seen_at` was never emitted either: it was a worker
+    // self-report from the deleted container path. `reconciliation_state` is the
+    // live equivalent and is stamped every time the reconciler contacts the
+    // provider.
+    const lastContact =
+        provider.reconciliation_state?.last_contact_at ||
+        provider.reconciliation?.last_contact_at ||
+        null;
 
     const handlePingTest = async () => {
         setPingStatus('loading');
@@ -187,15 +200,15 @@ export default function RuntimeTab({
                 {isInProcess ? (
                     <>
                         <DataRow label="Engine Mode" value="In-Process Engine" />
-                        {provider.config?.app_name && <DataRow label="Modal App" value={provider.config.app_name} />}
-                        {provider.config?.comfy_url && <DataRow label="ComfyUI URL" value={provider.config.comfy_url} mono />}
+                        {engineConfig.app_name && <DataRow label="Modal App" value={engineConfig.app_name} />}
+                        {engineConfig.comfy_url && <DataRow label="ComfyUI URL" value={engineConfig.comfy_url} mono />}
                     </>
                 ) : (
                     <DataRow label="Worker URL" value={runtime.worker_url} mono />
                 )}
                 <DataRow label="Jobs Assigned" value={String(jobsAssigned)} />
                 <DataRow label="Failures" value={String(providerFailures)} />
-                <DataRow label="Last Seen" value={runtime.last_seen_at ? formatTimestamp(runtime.last_seen_at) : 'N/A'} />
+                <DataRow label="Last Contact" value={lastContact ? formatTimestamp(lastContact) : 'N/A'} />
             </div>
 
             {/* Model & Voice Discovery */}

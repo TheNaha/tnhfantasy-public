@@ -1,13 +1,11 @@
 """In-process model reconciliation runner.
 
-Parity port of `provider_core.reconciliation.run_reconciliation_v2` for
-providers whose engine runs inside backend_v2 instead of a sidecar
-container. The container worker pulls its inputs over HTTP
+The container worker this replaced pulled its inputs over HTTP
 (`pending-downloads`, `all-storage-paths`, `batch-status-update`,
-`reconciliation-event`) and pushes progress back the same way; here the
-backend IS the backend, so the same steps run against the services and
-repository directly, with WebSocket fan-out through the in-process event
-bus.
+`reconciliation-event`) and pushed progress back the same way. That worker and
+its routes were deleted on 2026-10-09; here the backend IS the backend, so the
+same steps run against the services and repository directly, with WebSocket
+fan-out through the in-process event bus.
 
 Step mapping to the container flow:
   0. validate existing models (skipped on quick sync)
@@ -23,6 +21,7 @@ import asyncio
 import os
 from typing import Any, Optional
 
+from core.events import emit_model_status_update, emit_model_sync_event
 from infrastructure.logging import get_logger
 from services.engines.base import EngineAuthError, MODEL_DIRECTORIES
 
@@ -34,7 +33,7 @@ logger = get_logger("in_process_reconciliation")
 _RUNNING: set[str] = set()
 # Strong refs for spawned reconciliation tasks. A bare create_task result is
 # only weakly held by the loop: a multi-GB download task was once collected
-# mid-run (provider_core/background.py documents exactly this), so the task
+# mid-run, so the task
 # lives here until its done-callback fires.
 _RECONCILE_TASKS: set["asyncio.Task"] = set()
 
@@ -44,9 +43,9 @@ _RECONCILE_TASKS: set["asyncio.Task"] = set()
 # mass delete in a single tick. Same rule as the container flow.
 _PREVIOUS_ORPHANS: dict[str, set[str]] = {}
 
-# Bulk status-write chunk: mirrors the container's 500-row
-# batch-status-update batches (provider_core/reconciliation.py). One giant
-# loop holds a DB thread for the whole catalogue on large fleets.
+# Bulk status-write chunk: the container's batch-status-update route used
+# 500-row chunks. One giant loop holds a DB thread for the whole catalogue on
+# large fleets.
 _BULK_WRITE_CHUNK = 500
 
 
@@ -71,7 +70,7 @@ def _max_concurrent_downloads(provider: Any = None) -> int:
 
 
 def _safe_deletion_limit(total_files: int, orphaned_count: int) -> int:
-    """Mirror provider_core.reconciliation.calculate_safe_deletion_limit."""
+    """Same 20%-or-20 guard the container's sweep applied to orphan deletion."""
     max_deletions = max(20, total_files // 5)
     if orphaned_count > max_deletions > 0:
         logger.warning(
@@ -156,7 +155,7 @@ async def trigger_in_process_reconciliation(
 async def _push_with_retry(provider_service: Any, provider_id: str, updates: dict[str, Any]) -> None:
     """Persist reconciliation state with container-parity retries.
 
-    Mirrors provider_core push_reconciliation_event (3 attempts, 0.5s
+    Same push contract the container worker used (3 attempts, 0.5s
     backoff): a transient DB hiccup mid-run must not lose the whole state.
     Raises on final failure so the run fails loudly instead of stalling.
     """
@@ -173,6 +172,25 @@ async def _push_with_retry(provider_service: Any, provider_id: str, updates: dic
                 await asyncio.sleep(0.5)
     if last_exc is not None:
         raise last_exc
+
+
+def _batch_progress(index: int, total: int, complete: bool) -> int:
+    """Percentage of the download QUEUE drained, for `model.sync_progress`.
+
+    `engines.base.download_file` awaits a single remote call and returns a status
+    dict — there is no per-byte callback, so the fraction of a single 7 GB
+    checkpoint is not observable from here and must not be invented. What IS
+    observable is how far through the queue we are, so that is what the event
+    carries, labelled with `progress_scope: "batch"` so a consumer cannot mistake
+    it for "this model is 40% downloaded".
+
+    Adding a real byte callback would mean changing `download_file` on all six
+    engines; that is out of scope for making this family live.
+    """
+    if total <= 0:
+        return 0
+    done = index + 1 if complete else index
+    return max(0, min(100, round(done * 100 / total)))
 
 
 async def _run_reconciliation(
@@ -197,6 +215,7 @@ async def _run_reconciliation(
             "downloads_completed": 0,
             "downloads_failed": 0,
             "deletions_completed": 0,
+            "deletions_failed": 0,
             "invalid_cleaned": 0,
             "total_models": 0,
             "missing_reported": 0,
@@ -458,6 +477,8 @@ async def _run_reconciliation(
             if already_ready:
                 await asyncio.to_thread(_bulk_mark_ready, already_ready)
 
+            # `progress` below comes from the module-level `_batch_progress`.
+
             # Safety net: every expected file present on storage reads ready,
             # even without a status row (post-cleanup, provider id change).
             ready_paths = {item["storage_path"] for item in already_ready}
@@ -535,6 +556,35 @@ async def _run_reconciliation(
                     await push_state("reconciling", phase="downloading", message=f"Downloading {display_name}...")
                     logger.info("in_process_reconcile_download_start", provider_id=provider_id, path=storage_path)
 
+                    # `model.sync_*` is the only channel the browser has for
+                    # per-file download progress. Its producer used to be
+                    # `POST /api/v2/models/sync-progress`, which the deleted
+                    # container worker called and nothing in this repo does —
+                    # so the four enum members, the four frontend constants and
+                    # the four `App.jsx` toasts all described a contract neither
+                    # side implemented. Emitting here is what makes them real.
+                    await emit_model_sync_event(
+                        EventType.MODEL_SYNC_PROGRESS,
+                        provider_id=provider_id,
+                        file_id=file_id,
+                        model_name=display_name,
+                        directory=file_info.get("directory"),
+                        size_bytes=int((file_info.get("size_kb") or 0) * 1024),
+                        progress=_batch_progress(index, total_downloads, False),
+                        progress_scope="batch",
+                        completed=index,
+                        total=total_downloads,
+                    )
+                    await emit_model_sync_event(
+                        EventType.MODEL_SYNC_STARTED,
+                        provider_id=provider_id,
+                        file_id=file_id,
+                        model_name=display_name,
+                        directory=file_info.get("directory"),
+                        size_bytes=int((file_info.get("size_kb") or 0) * 1024),
+                        progress=0,
+                    )
+
                     def _mark_downloading() -> None:
                         model_service.repo.update_provider_status(
                             file_id=file_id,
@@ -561,6 +611,31 @@ async def _run_reconciliation(
                             )
 
                         await asyncio.to_thread(_mark_ready)
+                        # The DB row says `ready`; without this the reconciler's
+                        # result was written and never read, so the Installed
+                        # Models tab kept showing pre-reconciliation status
+                        # until a manual reload.
+                        await emit_model_status_update(
+                            provider_id=provider_id,
+                            file_id=file_id,
+                            status="ready",
+                            extra={
+                                "storage_path": storage_path,
+                                "size_bytes": int((file_info.get("size_kb") or 0) * 1024),
+                            },
+                        )
+                        await emit_model_sync_event(
+                            EventType.MODEL_SYNC_COMPLETED,
+                            provider_id=provider_id,
+                            file_id=file_id,
+                            model_name=display_name,
+                            directory=file_info.get("directory"),
+                            size_bytes=int((file_info.get("size_kb") or 0) * 1024),
+                            progress=_batch_progress(index, total_downloads, True),
+                            progress_scope="batch",
+                            completed=min(index + 1, total_downloads),
+                            total=total_downloads,
+                        )
                     except Exception as exc:
                         stats["downloads_failed"] += 1
                         errors.append(f"{display_name}: {exc}")
@@ -577,6 +652,21 @@ async def _run_reconciliation(
                             )
 
                         await asyncio.to_thread(_mark_failed)
+                        await emit_model_status_update(
+                            provider_id=provider_id,
+                            file_id=file_id,
+                            status="failed",
+                            extra={"storage_path": storage_path, "error_message": str(exc)},
+                        )
+                        await emit_model_sync_event(
+                            EventType.MODEL_SYNC_FAILED,
+                            provider_id=provider_id,
+                            file_id=file_id,
+                            model_name=display_name,
+                            directory=file_info.get("directory"),
+                            error_message=str(exc),
+                            progress=0,
+                        )
                     finally:
                         async with active_lock:
                             active_downloads[:] = [
@@ -633,6 +723,12 @@ async def _run_reconciliation(
                             _PREVIOUS_ORPHANS[provider_id] = {c["path"] for c in deletion_candidates}
                             candidates = candidates[: _safe_deletion_limit(len(existing_files), len(candidates))]
                             for orphan in candidates:
+                                # The reason a delete failed, kept so the counter
+                                # below can carry it. A boolean `deleted=False`
+                                # and a raised exception are different facts:
+                                # the first is "the engine says it did not
+                                # happen", the second is "we could not ask".
+                                reason: str | None = None
                                 try:
                                     delete_model = getattr(engine, "delete_model", None)
                                     if callable(delete_model):
@@ -641,26 +737,43 @@ async def _run_reconciliation(
                                     else:
                                         deleted = await engine.delete_file(orphan["path"])
                                     if deleted is False:
+                                        reason = "engine reported the delete did not happen"
                                         logger.error(
                                             "in_process_reconcile_delete_failed",
                                             provider_id=provider_id,
                                             path=orphan["path"],
+                                            reason=reason,
                                         )
+                                        stats["deletions_failed"] += 1
                                         continue
                                     stats["deletions_completed"] += 1
                                 except Exception as exc:
+                                    stats["deletions_failed"] += 1
                                     logger.error(
                                         "in_process_reconcile_delete_failed",
                                         provider_id=provider_id,
                                         path=orphan["path"],
                                         error=str(exc),
                                     )
+                            # `deletions_failed` is the whole point of counting
+                            # them. Before this, both branches above only logged,
+                            # so a provider whose agent answered 404 for every
+                            # delete produced a reconciliation that reported
+                            # `deletions_completed: 0` and looked exactly like a
+                            # healthy run with nothing to sweep.
                             logger.info(
                                 "in_process_reconcile_orphans_deleted",
                                 provider_id=provider_id,
                                 deleted=stats["deletions_completed"],
+                                failed=stats["deletions_failed"],
                                 candidates=len(candidates),
                             )
+                            if stats["deletions_failed"]:
+                                errors.append(
+                                    f"{stats['deletions_failed']} orphaned "
+                                    f"{'file' if stats['deletions_failed'] == 1 else 'files'} "
+                                    "could not be deleted"
+                                )
                         else:
                             # Dry run only logs (container parity): promoting
                             # here would delete on the next tick after the
@@ -687,7 +800,7 @@ async def _run_reconciliation(
 
 
 #: Mirror the legacy worker's 2h force-reconcile interval
-#: (provider_core/background.py:145), driven by the app scheduler.
+#: driven by the app scheduler.
 IN_PROCESS_RECONCILE_INTERVAL_SECONDS = 7200
 
 

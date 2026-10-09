@@ -14,6 +14,11 @@ from core.exceptions import NotFoundError
 
 logger = get_logger("memories_route")
 router = APIRouter()
+# Ceiling on any `search`/`q`/`query` term this module accepts, in characters.
+# The routes below ILIKE it against application-owned text, and the reader is
+# unauthenticated, so an unbounded term is a free full scan.
+MAX_SEARCH_LENGTH = 200
+
 
 # Row caps. `GET /api/v2/memories` was a bare `SELECT` over the whole
 # character_memories table, so a large vault serialised every memory —
@@ -280,7 +285,7 @@ def delete_memory(memory_id: str, session: Session = Depends(get_session), chara
 @router.get("/search/semantic")
 def search_memories(
     character_id: str = Query(...),
-    query: str = Query(...),
+    query: str = Query(..., max_length=MAX_SEARCH_LENGTH),
     limit: int = Query(default=10, le=50),
     session: Session = Depends(get_session),
 ):

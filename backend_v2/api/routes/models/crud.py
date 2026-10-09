@@ -1,7 +1,7 @@
 
 import asyncio
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from api.deps import (
     get_model_repo_v2,
@@ -42,18 +42,6 @@ def list_models(service: ModelServiceV2 = Depends(get_model_service_v2)):
 async def list_all_models(service: ModelServiceV2 = Depends(get_model_service_v2)):
     """List all models as flat list."""
     return await service.list_models()
-
-
-@router.get("/all-storage-paths")
-def get_all_storage_paths(repo: ModelRepositoryV2 = Depends(get_model_repo_v2)):
-    """
-    Get all expected storage paths from the V2 database.
-    Used by worker to determine what files should exist vs what to delete.
-    Returns paths like: models/checkpoints/model_v1_12345.safetensors
-    """
-    paths = repo.get_all_storage_paths()
-    
-    return {"paths": paths, "count": len(paths)}
 
 
 @router.get("/check-installed/{civitai_model_id}")
@@ -275,7 +263,7 @@ async def list_models_by_directory(
 
 @router.get("/search")
 async def search_models(
-    q: str = "",
+    q: str = Query("", max_length=200),
     type: str | None = None,
     base_model: str | None = None,
     service: ModelServiceV2 = Depends(get_model_service_v2)

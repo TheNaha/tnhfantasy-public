@@ -46,7 +46,6 @@ const ROUTED = [
     ['components/story/StoryContextPanel.jsx', 'parseGalleryDate'],
     ['components/chat/MemoriesPanel.jsx', 'parseGalleryDate'],
     ['components/generator/PromptCard.jsx', 'parseGalleryDate'],
-    ['components/providers/tabs/DeployTab.jsx', 'formatTimestamp'],
     ['components/providers/tabs/RuntimeTab.jsx', 'formatTimestamp'],
 ];
 

@@ -216,6 +216,13 @@ export function ChatWorkspaceProvider({ children }) {
             setTargetCharacterId('');
             setMessageSearch('');
             setActiveBranchState(null);
+            // `messagePageCount` is how far back THIS chat has been scrolled, so
+            // it is per-chat state and was the only field this reset did not
+            // clear. `useChatWorkspaceData` keys its query on it, so a user who
+            // scrolled back in a long chat and then opened a 12-message one left
+            // the counter at 8 and opened with `limit=400` — eight pages of
+            // history fetched for twelve messages, re-run on every switch.
+            setMessagePageCount(1);
         }
         previousChatIdRef.current = activeChatId;
     }, [activeChatId]);
@@ -380,7 +387,7 @@ export function ChatWorkspaceProvider({ children }) {
                 );
             }
         }
-    }, [location.state?.characterId, characters, activeChatId, createChatMutation, setActiveChatId]);
+    }, [location.state?.characterId, characters, activeChatId, createChatMutation, setActiveChatId, selectChat]);
 
     // Bootstrap only: no chat is open and the list has one. Deliberately the raw
     // setter, because the URL is empty here and the effect above turns the store
@@ -546,7 +553,7 @@ export function ChatWorkspaceProvider({ children }) {
         } catch {
             toast.error('Failed to send message');
         }
-    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, setActiveChatId, generatorCheckpoint, updateChatMutation, suggestReplyMutation, activeCommand, targetCharacterId]);
+    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, generatorCheckpoint, updateChatMutation, suggestReplyMutation, activeCommand, targetCharacterId, selectChat]);
 
     const handleSuggestClick = useCallback(async () => {
         if (!activeChatId) return;
@@ -754,7 +761,7 @@ export function ChatWorkspaceProvider({ children }) {
                 }
             );
         }
-    }, [createChatMutation, characters, setActiveChatId, setMobileTab, setGreetingModal, setShowNewChatModal]);
+    }, [createChatMutation, characters, setMobileTab, setGreetingModal, setShowNewChatModal, selectChat]);
 
     const handleAttachmentChange = useCallback(async (e) => {
         const file = e.target.files?.[0];
@@ -967,7 +974,7 @@ export function ChatWorkspaceProvider({ children }) {
         } catch (err) {
             toast.error(err.message || 'Failed to import chat');
         }
-    }, [importChatMutation, queryClient, setActiveChatId]);
+    }, [importChatMutation, queryClient, selectChat]);
 
     const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
 

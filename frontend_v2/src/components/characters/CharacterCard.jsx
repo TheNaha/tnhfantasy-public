@@ -178,7 +178,7 @@ export default function CharacterCard({
             {drag?.handleProps && (
                 <button
                     type="button"
-                    className="absolute -top-1.5 -right-1.5 z-10 p-1 rounded-full bg-gray-800 border border-white/10 text-gray-500 opacity-0 group-hover:opacity-100 hover:text-white hover:bg-gray-700 transition-all cursor-grab active:cursor-grabbing"
+                    className="absolute -top-1.5 -right-1.5 z-10 p-1 rounded-full bg-gray-800 border border-white/10 text-gray-500 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto hover:text-white hover:bg-gray-700 transition-all cursor-grab active:cursor-grabbing"
                     aria-label={`Reorder ${character.name}`}
                     {...drag.handleProps}
                 >
@@ -240,8 +240,22 @@ export default function CharacterCard({
             )}
 
             <div
+                // Hidden means not tappable. Both reasons this row ever disappears
+                // are hover-shaped, so it is gated on the device actually having
+                // hover rather than on a width:
+                //   * `sm:` matches an iPad at 1024px, which is a touch device.
+                //     The Delete button was invisible there but kept its
+                //     hit area, so a tap near the card's corner could delete a
+                //     character the user could not see.
+                //   * `pointer-events-none` while faded means the same hazard
+                //     cannot come back through a future hover variant that the
+                //     media query misses; `group-hover`/`focus-visible` restore
+                //     both paint and pointer events together, so hovering the
+                //     card is still what reveals it.
                 className={`flex items-center gap-2 mt-4 transition-opacity ${
-                    isManagementCard ? 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100' : 'opacity-100'
+                    isManagementCard
+                        ? 'opacity-100 sm:[@media(hover:hover)]:opacity-0 sm:[@media(hover:hover)]:group-hover:opacity-100 sm:[@media(hover:hover)]:pointer-events-none sm:[@media(hover:hover)]:group-hover:pointer-events-auto sm:[@media(hover:hover)]:focus-within:opacity-100 sm:[@media(hover:hover)]:focus-within:pointer-events-auto'
+                        : 'opacity-100'
                 }`}
             >
                 {actionButtons}

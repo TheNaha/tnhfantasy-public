@@ -52,6 +52,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Sequence
 
 from sqlalchemy import String, and_, case, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import Session
 
@@ -353,16 +354,44 @@ def _prompt_signature(session: Session, where: ColumnElement[bool] | None) -> st
     # ASCII unit separator, bound as a parameter rather than interpolated. It
     # keeps the concatenation injective — a separator that occurs inside prompts
     # could let two different prompt sets produce the same hash.
+    #
+    # `ORDER BY` matters, and it was missing. `string_agg` without it emits the
+    # rows in whatever order the executor visits them, which for a seq scan is
+    # stable but is NOT for a parallel or index-driven plan — so the same table
+    # produced two different hashes depending on the plan. The cache then misses
+    # on data that has not changed, which is the entire 1.4s rebuild paid for a
+    # key that was only ever read once. Sorting on the same pair keeps it
+    # injective and deterministic at the same time.
     separator = literal(chr(31), type_=String)
     pair = func.concat(
         func.coalesce(_meta("prompt"), ""),
         separator,
         func.coalesce(_meta("negativePrompt"), ""),
     )
+    # Ordered on Postgres, unordered on anything else.
+    #
+    # `string_agg(pair, sep ORDER BY pair)` is Postgres syntax, and
+    # `sqlalchemy.dialects.postgresql.aggregate_order_by` cannot be rendered by
+    # any other dialect — including the SQLite the test suite runs on, which
+    # fails at COMPILE time rather than execution. So the ordering is applied
+    # only where it can be expressed, which is the only place it matters:
+    #
+    # An unordered `string_agg` emits rows in executor order. That is stable for
+    # a sequential scan and NOT for a parallel or index-driven plan, so the same
+    # table produced two different hashes depending on the plan the planner
+    # picked. The cache then missed on data that had not changed, which is the
+    # whole 1.4s rebuild paid for a key that was read once.
+    #
+    # The `_day_bucket` branch a few hundred lines below is the same call: one
+    # definition of the truth, one dialect-specific rendering of it.
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        agg = func.string_agg(pair, literal(""), aggregate_order_by(pair, pair))
+    else:
+        agg = func.string_agg(pair, literal(""))
     stmt = select(
         func.count(),
         func.coalesce(
-            func.md5(func.coalesce(func.string_agg(pair, literal("")), literal(""))),
+            func.md5(func.coalesce(agg, literal(""))),
             literal(""),
         ),
     ).where(_IN_PLAY)

@@ -1,6 +1,8 @@
 # EventBus Unit Tests
 import asyncio
 
+import re
+
 import pytest
 
 from core.events import Event, EventBus, EventType, emit_job_event
@@ -434,11 +436,12 @@ class TestEmitProviderFunctions:
 async def test_model_status_update_carries_the_failure_reason():
     """`error_message` must reach the browser, not just the row.
 
-    `POST /provider-sync/{file_id}/status` wrote `error_message` onto the
-    `ProviderVersionStatus` row but emitted `model.status_update` with only
-    `storage_path` and `size_bytes`. The event exists to replace polling, so the
-    one field explaining *why* a download failed stopped at the database and the
-    UI had to re-poll the row it had just been told about.
+    The route that used to write `error_message` onto the
+    `ProviderVersionStatus` row while emitting `model.status_update` with only
+    `storage_path` and `size_bytes` was deleted on 2026-10-09 with the worker it
+    served. The defect is not gone, it moved: `in_process_reconciliation` now
+    does both writes, so the emit site it has to be right at is there — see
+    `test_the_reconciler_emit_carries_the_failure_reason` below.
     """
     from core.events import EventType, emit_model_status_update
 
@@ -475,16 +478,40 @@ async def test_model_status_update_carries_the_failure_reason():
     assert event.data["file_id"] == 42
 
 
-def test_the_provider_sync_route_passes_error_message_into_the_event():
-    """Structural: the extra dict at the emit site must name the field.
+def test_the_reconciler_emit_carries_the_failure_reason():
+    """Structural: the extra dict at EVERY emit site must name the field.
 
-    A behavioural test would have to stand up the route, its dependency overrides
-    and a captured event bus; asserting on the call site keeps the pin honest for
-    a fraction of the cost, and the field name is the whole contract.
+    `provider_sync.py` was where this used to live, and it was deleted on
+    2026-10-09. The emit moved to `services/in_process_reconciliation.py`, which
+    is now the only production producer of `model.status_update` — so the pin has
+    to follow it there, or it becomes a test that passes because it is reading a
+    file with no emit in it.
+
+    Every call site, not the first: there are two (the ready path and the failed
+    path) and only the second one is the reason this test exists.
     """
-    from api.routes.models import provider_sync
+    import services.in_process_reconciliation as reconciler
 
-    source = open(provider_sync.__file__).read()
-    emit_index = source.index("await emit_model_status_update(")
-    call = source[emit_index : source.index(")", emit_index) + 1]
-    assert '"error_message"' in call, f"the emit does not carry the failure reason: {call}"
+    source = open(reconciler.__file__).read()
+    sites = [
+        m.start()
+        for m in re.finditer(r"await\s+emit_model_status_update\(", source)
+    ]
+    assert sites, (
+        "in_process_reconciliation no longer emits model.status_update at all, so a "
+        "failed download reaches nobody and the Installed Models tab shows "
+        "pre-reconciliation status until a manual reload"
+    )
+    failed_emits = 0
+    for start in sites:
+        end = source.index(")", start)
+        call = source[start:end]
+        if 'status="failed"' not in call:
+            continue
+        failed_emits += 1
+        assert '"error_message"' in call or "'error_message'" in call, (
+            f"the failed emit does not carry the failure reason: {call}"
+        )
+    assert failed_emits, (
+        "no emit names status=failed, so the failure path is not published at all"
+    )

@@ -161,10 +161,10 @@ def is_auth_error(exc: BaseException) -> bool:
 def parse_sse_json(data_str: str) -> dict[str, Any] | None:
     """Parse one SSE data frame into a dict, or None when skippable.
 
-    Parity with provider_core.sse.parse_sse_json: non-dict JSON (list/str)
-    and decode failures return None so the caller skips the frame instead
-    of raising AttributeError on ``.get``. Catches ValueError+TypeError
-    like the container helper, not just JSONDecodeError.
+    Non-dict JSON (list/str) and decode failures return None so the caller skips
+    the frame instead of raising AttributeError on ``.get``. Catches
+    ValueError+TypeError, not just JSONDecodeError, so a malformed UTF-8 frame
+    is skipped rather than killing the stream.
     """
     import json
 
@@ -386,6 +386,8 @@ def translate_legacy_image_update(update: Any, job_id: str | None) -> dict[str, 
     value = update.get("value")
     max_v = update.get("max") or 0
     if value is not None and max_v:
+        # A (value, max) PAIR is a fraction by construction: dividing is the only
+        # way to get a percentage out of it, so this branch is always right.
         value = round(value / max_v * 100)
     elif value is None:
         progress = update.get("progress")
@@ -393,12 +395,22 @@ def translate_legacy_image_update(update: Any, job_id: str | None) -> dict[str, 
             p_max = progress.get("max") or 0
             p_cur = progress.get("value") or 0
             value = round(p_cur / p_max * 100) if p_max else None
-    elif value is not None and value <= 1:
-        # Defensive: legacy workers may emit a 0..1 fraction; canonical is percent 0..100.
-        value = round(value * 100)
 
-    # Named on the wire: the backend re-applies a legacy heuristic that
-    # reads `value <= 1` as a fraction, so the unit is stated, not inferred.
+    # A bare `value` with no `max` is taken at face value as a percent.
+    #
+    # This used to be followed by `elif value is not None and value <= 1: value =
+    # round(value * 100)`, "defensive: legacy workers may emit a 0..1 fraction".
+    # That branch is why the declared unit below is a lie: it is a heuristic, and
+    # for a canonical percent producer `value == 1` — one percent done — became
+    # 100, in the same frame the reducer reads `value_unit == "percent"` and
+    # takes at face value. The single most-watched number in the UI jumped to
+    # full on the first render step.
+    #
+    # The branch was also unreachable in its own terms: the only way to reach it
+    # was `value is not None and not max_v`, i.e. a frame with no `max` at all,
+    # which is exactly the shape a percent producer sends and a fraction producer
+    # cannot disambiguate. A real fraction is declared — `value_unit: "fraction"`
+    # is the wire contract and the reducer honours it — not guessed at.
     return {"event": "progress", "job_id": job_id, "value": value, "value_unit": "percent"}
 
 

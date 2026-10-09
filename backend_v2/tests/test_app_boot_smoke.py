@@ -32,7 +32,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import infrastructure.background_tasks as background_tasks
-import infrastructure.deps as infra_deps
 from api.main import app, lifespan
 from core.events import EventType, event_bus
 from infrastructure.scheduler import get_scheduler
@@ -218,8 +217,6 @@ def boot_fixture(monkeypatch):
     """Yield a helper that runs the real lifespan with its effects stubbed.
 
     Stubs exactly the effects a unit test cannot perform, and nothing else:
-      * Docker  — ``ContainerManager()`` opens a socket to a daemon that does not
-        exist in CI and may block.
       * disk   — the asset migration walks the real output tree.
       * network— the preview prefetch fetches remote images, and the CivitAI
         resync hits the CivitAI API.
@@ -235,26 +232,6 @@ def boot_fixture(monkeypatch):
 
     def sink(name: str) -> list:
         return calls.setdefault(name, [])
-
-    # The lifespan publishes a ContainerManager into two process-wide slots that
-    # nothing else rewrites. monkeypatch only undoes the constructor patch, so
-    # without this the sentinel would still be installed when the next test
-    # file runs and every `get_container_manager()` caller would get it.
-    had_state = hasattr(app.state, "container_manager")
-    previous_state = getattr(app.state, "container_manager", None)
-    previous_global = infra_deps._global_container_manager
-
-    # `api.main.lifespan` imports ContainerManager inside the function body, so
-    # the late-bound name is what needs replacing. A sentinel (rather than an
-    # exception) keeps the happy path under test: app.state and the module
-    # global must both end up holding the instance the lifespan built.
-    container_manager = object()
-
-    def _container_manager(*args, **kwargs):
-        sink("container_manager").append((args, kwargs))
-        return container_manager
-
-    monkeypatch.setattr("services.container_manager.ContainerManager", _container_manager)
 
     # `startup_application` binds these at import time, so `api.lifecycle` is
     # where they are looked up.
@@ -304,13 +281,7 @@ def boot_fixture(monkeypatch):
 
         return await asyncio.wait_for(_run(), timeout=BOOT_TIMEOUT_SECONDS)
 
-    yield _boot, calls, recorder, container_manager
-
-    if had_state:
-        app.state.container_manager = previous_state
-    else:
-        del app.state.container_manager
-    infra_deps.set_global_container_manager(previous_global)
+    yield _boot, calls, recorder
 
 
 def _scheduler_jobs() -> dict:
@@ -323,7 +294,7 @@ async def _event_bus_baseline() -> dict[str, int]:
 
 async def test_lifespan_runs_every_declared_startup_phase(boot, session):
     """Entering the lifespan reaches every phase the code declares, in order."""
-    _run_boot, calls, recorder, container_manager = boot
+    _run_boot, calls, recorder = boot
 
     baseline = await _event_bus_baseline()
 
@@ -353,13 +324,6 @@ async def test_lifespan_runs_every_declared_startup_phase(boot, session):
 
     assert recorder.phases("startup_init") == EXPECTED_STARTUP_PHASES
     assert recorder.events_named("startup_complete"), "startup never reported completion"
-
-    # The ContainerManager the lifespan built has to reach both the app state
-    # and the module-level fallback that background tasks read, or provider
-    # status routes silently see "no container manager".
-    assert calls["container_manager"], "lifespan never constructed a ContainerManager"
-    assert app.state.container_manager is container_manager
-    assert infra_deps.get_container_manager() is container_manager
 
     # Each stubbed effect was reached with the arguments the lifespan intends.
     # `skip_orphan_cleanup=True` is the one that matters: on first boot the
@@ -401,7 +365,7 @@ async def test_lifespan_runs_every_declared_startup_phase(boot, session):
 
 async def test_shutdown_stops_everything_startup_started(boot):
     """Exiting the lifespan cancels what it started and stops the bus."""
-    _run_boot, calls, recorder, _cm = boot
+    _run_boot, calls, recorder = boot
 
     baseline = await _event_bus_baseline()
     await _run_boot()
@@ -441,7 +405,7 @@ async def test_shutdown_stops_everything_startup_started(boot):
 
 async def test_scheduler_registers_jobs_without_running_the_slow_ones(boot):
     """Jobs land with the intended intervals; the daily/hourly ones stay idle."""
-    _run_boot, calls, recorder, _cm = boot
+    _run_boot, calls, recorder = boot
 
     # The scheduler is inspected *inside* the boot window: `shutdown_application`
     # calls `stop_scheduler()`, which drops the module global, so reading it
@@ -476,12 +440,12 @@ async def test_scheduler_registers_jobs_without_running_the_slow_ones(boot):
 
 async def test_app_serves_requests_after_boot(client, boot):
     """Routes are mounted and the readiness probe answers through a TestClient."""
-    _run_boot, _calls, _recorder, _cm = boot
+    _run_boot, _calls, _recorder = boot
 
     await _run_boot()
 
     spec = app.openapi()
-    # 254 unique paths / 334 operations, counted from the code rather than
+    # 236 unique paths / 316 operations, counted from the code rather than
     # guessed — regenerate with:
     #   python -c "from api.main import app; s=app.openapi(); \
     #     print(len(s['paths']), sum(len(v) for v in s['paths'].values()))"
@@ -491,11 +455,15 @@ async def test_app_serves_requests_after_boot(client, boot):
     # An exact count, so a route that stops being registered is caught. It has to
     # be bumped when routes are ADDED on purpose — the provider schemas, test,
     # models/discovered, and diagnostics endpoints took it from 249 / 329.
-    assert len(spec["paths"]) == 254, (
+    # It moved DOWN to 236 / 316 in this pass, which removed the ten
+    # worker-facing routes that had no caller anywhere in the repo: nine in
+    # `api/routes/models/provider_sync.py` and `GET /all-storage-paths` in
+    # `models/crud.py`. Dropping rather than rising is the expected direction now
+    # that the container workers they served are gone.
+    assert len(spec["paths"]) == 236, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    # Bumped for provider schema, connection test, discovered models, and diagnostics endpoints.
-    assert sum(len(ops) for ops in spec["paths"].values()) == 334
+    assert sum(len(ops) for ops in spec["paths"].values()) == 316
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 
@@ -514,7 +482,7 @@ async def test_two_boots_in_sequence(boot):
     a dirty state, so this is a regression test for the teardown above as much
     as for startup.
     """
-    _run_boot, _calls, recorder, _cm = boot
+    _run_boot, _calls, recorder = boot
 
     baseline = await _event_bus_baseline()
 

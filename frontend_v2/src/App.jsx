@@ -15,7 +15,7 @@
  *     top-right with a dark theme matching the overall UI.
  */
 
-import { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
@@ -30,7 +30,6 @@ import { useShallow } from 'zustand/react/shallow';
 import { migrateLegacyCollections } from './hooks/useCollections';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
-import { formatBytes } from './utils/bytes';
 import * as ws from './api/websocket';
 // Lazy-loaded pages to minimise initial JS bundle
 const RoleplayWorkspace = lazy(() => import('./pages/RoleplayWorkspace'));
@@ -190,22 +189,28 @@ function GlobalHooks() {
         unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_STARTED, (e) => toastFor('Model sync', e)));
         unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_COMPLETED, (e) => toastFor('Model sync', e)));
         unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_FAILED, (e) => toastFor('Model sync', e)));
-        // The worker POSTs this on every download heartbeat (0-100 plus the byte
-        // count), so it was being published to nobody: the enum member and the
-        // frontend constant both existed, which reads as "download progress is
-        // already pushed" and is how the dead `download.*` family survived next
-        // to it. Keyed by provider+model so a burst of heartbeats for one
-        // download replaces its own toast instead of stacking.
+        // `services/in_process_reconciliation` emits this now, and the number is
+        // the fraction of the QUEUE that has been drained, not of the file in
+        // flight: `engines.base.download_file` awaits a single remote call with
+        // no per-byte callback, so "this checkpoint is 40% down" is not
+        // observable from the backend and must not be implied. The event carries
+        // `progress_scope: 'batch'` for exactly this reason, and the copy below
+        // says it.
+        //
+        // Keyed by provider+directory so a burst for one provider's sync replaces
+        // its own toast instead of stacking.
         unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_PROGRESS, (event) => {
             const d = event?.data || {};
             const pct = typeof d.progress === 'number' ? Math.round(d.progress) : null;
-            const label = d.model_name || d.directory || 'Model';
-            const size = typeof d.size_bytes === 'number' && d.size_bytes > 0
-                ? ` · ${formatBytes(d.size_bytes)}`
-                : '';
+            const label = d.model_name || d.directory || 'models';
+            const done = typeof d.completed === 'number' ? d.completed : null;
+            const total = typeof d.total === 'number' ? d.total : null;
+            const counts = done !== null && total !== null ? ` · ${done}/${total}` : '';
             toast.loading(
-                pct === null ? `Downloading ${label}` : `Downloading ${label} — ${pct}%${size}`,
-                { id: `sync-progress:${d.provider_id || ''}:${d.directory || ''}:${label}` },
+                pct === null
+                    ? `Syncing ${label}...`
+                    : `Syncing ${label} — ${pct}%${counts}`,
+                { id: `sync-progress:${d.provider_id || ''}:${d.directory || ''}` },
             );
         }));
 

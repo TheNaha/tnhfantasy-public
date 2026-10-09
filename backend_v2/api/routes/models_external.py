@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from api.deps import get_external_model_service
@@ -52,8 +52,11 @@ async def get_civitai_tags(
 
 @router.get("/civitai")
 async def search_civitai(
-    query: str = "",
-    limit: int = 20,
+    # Ceiling on the upstream CivitAI search term. Unbounded before: the
+    # value is forwarded to CivitAI and also used to filter locally, and a
+    # megabyte of text costs nothing to send and everything to check.
+    query: str = Query("", max_length=200),
+    limit: int = Query(20, ge=1, le=100),
     types: str = None,
     sort: str = None,
     baseModels: str = None,

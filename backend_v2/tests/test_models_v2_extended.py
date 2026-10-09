@@ -60,26 +60,15 @@ class TestModelsV2Extended:
         assert response.status_code == 200
 
     def test_get_model_cache(self, client):
+        """`GET /cache` returned a 1.5 MB dump of the whole model library to a
+        caller that did not exist — five endpoints served the same payload and
+        none had a frontend caller. It is gone; the model list is what the UI
+        reads, and it is scoped and paginated."""
         response = client.get("/api/v2/models/cache")
-        assert response.status_code == 200
-        assert "models" in response.json()
+        assert response.status_code == 404
 
     def test_cleanup_orphans(self, client):
         response = client.post("/api/v2/models/maintenance/cleanup-orphans")
-        assert response.status_code == 200
-
-    def test_get_all_storage_paths(self, client):
-        response = client.get("/api/v2/models/all-storage-paths")
-        assert response.status_code == 200
-
-    def test_pending_downloads(self, client):
-        response = client.get("/api/v2/models/providers/modal-primary/pending-downloads")
-        assert response.status_code == 200
-
-    def test_get_provider_status(self, client, sample_model_v2_data):
-        create_resp = client.post("/api/v2/models", json=sample_model_v2_data)
-        model_id = create_resp.json()["id"]
-        response = client.get(f"/api/v2/models/{model_id}/provider-status")
         assert response.status_code == 200
 
     def test_get_generation_info(self, client, sample_model_v2_data):
@@ -105,35 +94,20 @@ class TestModelsV2Extended:
         )
         assert response.status_code == 200
 
-    def test_batch_status_update(self, client):
-        payload = {
-            "provider_name": "modal-primary",
-            "updates": []
-        }
-        response = client.post("/api/v2/models/providers/batch-status-update", json=payload)
-        assert response.status_code in (200, 422)
-
-    def test_batch_status_update_accepts_provider_id(self, client):
-        payload = {
-            "provider_id": "modal-primary",
-            "updates": []
-        }
-        response = client.post("/api/v2/models/providers/batch-status-update", json=payload)
-        assert response.status_code in (200, 422)
+    def test_batch_status_update_route_is_gone(self, client):
+        """`POST /providers/batch-status-update` answered to a worker that no
+        longer exists; `in_process_reconciliation` writes these statuses
+        directly. It must stay deleted, or the two writers drift."""
+        response = client.post(
+            "/api/v2/models/providers/batch-status-update",
+            json={"provider_id": "modal-primary", "updates": []},
+        )
+        assert response.status_code == 404
 
     def test_reset_provider_status(self, client):
         response = client.delete("/api/v2/models/providers/modal-primary/reset-status")
         assert response.status_code == 200
 
-    def test_sync_progress(self, client):
-        payload = {
-            "provider_name": "modal-primary",
-            "model_name": "test.safetensors",
-            "directory": "checkpoints",
-            "status": "installed"
-        }
-        response = client.post("/api/v2/models/sync-progress", json=payload)
-        assert response.status_code in (200, 422)
 
     def test_external_parse_civitai(self, client):
         response = client.post(

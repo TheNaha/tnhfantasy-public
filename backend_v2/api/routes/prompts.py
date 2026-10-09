@@ -30,6 +30,11 @@ logger = get_logger("prompts_route")
 
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
+# Ceiling on any `search`/`q`/`query` term this module accepts, in characters.
+# The routes below ILIKE it against application-owned text, and the reader is
+# unauthenticated, so an unbounded term is a free full scan.
+MAX_SEARCH_LENGTH = 200
+
 
 
 # Request/Response models
@@ -71,7 +76,7 @@ class PromptMagicRequest(BaseModel):
 
 @router.get("")
 def list_prompts(
-    q: str | None = Query(None, description="Search query for FTS5"),
+    q: str | None = Query(None, max_length=MAX_SEARCH_LENGTH, description="Search query for FTS5"),
     category: str | None = Query(None, description="Filter by category"),
     favorite: bool | None = Query(None, description="Filter favorites only"),
     limit: int = Query(100, ge=1, le=500),

@@ -306,3 +306,26 @@ async def translate_task_events(
         te = comfy_status_to_task_event(parsed, job_id=job_id)
         if te is not None:
             yield te.to_ndjson()
+
+
+def determine_download_token(
+    url: str, hf_token: str, civitai_token: str
+) -> Optional[str]:
+    """Which of the two registry tokens authenticates this download URL.
+
+    Lives here rather than in its own module because it is the only surviving
+    part of `provider_core.reconciliation`, which was deleted on 2026-10-09
+    together with the container workers it served: the backend replaced it with
+    `services/in_process_reconciliation.py`, and this predicate is the one piece
+    `remote_agent/server.py` still needs on its own download path.
+
+    Returns None for a URL neither registry hosts, which is the correct answer
+    for an unauthenticated mirror — not a signal to send a token anyway.
+    """
+    if not url:
+        return None
+    if "huggingface.co" in url:
+        return hf_token
+    if "civitai.com" in url or "civitai.red" in url:
+        return civitai_token
+    return None

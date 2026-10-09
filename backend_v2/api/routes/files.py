@@ -98,6 +98,19 @@ MAX_UPLOAD_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 MAX_EXPORT_FILE_BYTES = MAX_EXPORT_FILE_MB * 1024 * 1024
 MAX_EXPORT_TOTAL_BYTES = MAX_EXPORT_TOTAL_MB * 1024 * 1024
 MAX_PATH_LENGTH = 1024
+# Ceiling on any `search`/`q`/`tag` query parameter, in characters.
+#
+# Unbounded on purpose by omission: the value flows straight into
+# `like_contains`, which is an ILIKE against `metadata_` — a jsonb blob averaging
+# ~4 KB and holding the whole ComfyUI workflow. A 1 MB term is millions of
+# comparisons per row against ~16k rows, and it is unauthenticated, so one
+# request can pin the event loop for minutes.
+#
+# 200 characters is a generous search box. It is NOT arbitrary: the longest
+# practical prompt-word query is a handful of tokens, and a legitimate search
+# that needs more is a filter, which this app has (`base_model`, `model_type`,
+# `tags`, `directory`).
+MAX_SEARCH_LENGTH = 200
 # Every item in an asset page carries its `metadata_` jsonb blob, so a page
 # size is a payload budget and not just a row count. The other list routes in
 # this app cap at 100-200; the asset page is the widest row in the schema, so it
@@ -107,6 +120,27 @@ MAX_ASSETS_PAGE_SIZE = 200
 # Streaming chunk for asset copies. Whole-file reads on the copy path used to
 # buffer an entire generated image into a `bytes` object in the event-loop process.
 _COPY_CHUNK_BYTES = 1024 * 1024
+
+
+def _bounded_search(
+    description: str = "Search term (ILIKE substring match)",
+    default: str | None = None,
+):
+    """A `search`/`q` parameter that is clamped at the declaration.
+
+    Preferable to a check inside the handler: an HTTPException raised there needs
+    a preceding `await` and a mutable `request`, where this one answers 422
+    during validation before the handler runs at all.
+
+    Deliberately no return annotation. `-> Query | None` reads fine on Python
+    3.14, where PEP 649 defers annotation evaluation, and is a hard TypeError at
+    import on 3.13 — which is what the deployed backend container runs — because
+    `fastapi.Query` is a function, not a type, and `function | None` cannot be
+    evaluated. The local venv is 3.14, so this failed only in the container.
+    """
+    if default is None:
+        return Query(None, max_length=MAX_SEARCH_LENGTH, description=description)
+    return Query(default, max_length=MAX_SEARCH_LENGTH, description=description)
 
 
 def _cancel_checker(request: Request):
@@ -690,7 +724,7 @@ def _query_gallery_files(
     limit: int = 20,
     offset: int = 0,
     sort: str = "date_desc",
-    search: str | None = None,
+    search: str | None = _bounded_search(),
     workspace: str | None = None,
     character_id: str | None = None,
     story_id: str | None = None,
@@ -905,7 +939,7 @@ def _list_assets_sync(
     workspace: str | None = None,
     character_id: str | None = None,
     story_id: str | None = None,
-    search: str | None = None,
+    search: str | None = _bounded_search(),
     sort: str = "date_desc",
     on_or_before: str | None = None,
     since: str | None = None,
@@ -1046,7 +1080,7 @@ async def list_assets(
     workspace: str | None = None,
     character_id: str | None = None,
     story_id: str | None = None,
-    search: str | None = None,
+    search: str | None = _bounded_search(),
     sort: str = "date_desc",
     on_or_before: str | None = None,
     since: str | None = None,
@@ -1088,7 +1122,7 @@ async def asset_date_histogram(
     workspace: str | None = None,
     character_id: str | None = None,
     story_id: str | None = None,
-    search: str | None = None,
+    search: str | None = _bounded_search(),
 ):
     """Per-day image counts for the gallery timeline scrubber.
 
@@ -1266,7 +1300,7 @@ async def get_v2_gallery(
     limit: int = Query(20, ge=1, le=MAX_BATCH_ITEMS),
     offset: int = Query(0, ge=0),
     sort: str = "date_desc", 
-    search: str | None = None,
+    search: str | None = _bounded_search(),
     workspace: str | None = None,
     character_id: str | None = None,
     story_id: str | None = None,
@@ -1290,11 +1324,16 @@ async def list_files_endpoint(
     limit: int = Query(20, ge=1, le=MAX_BATCH_ITEMS),
     offset: int = Query(0, ge=0),
     sort: str = "date_desc", 
-    search: str | None = None,
+    search: str | None = _bounded_search(),
     base_model: str | None = None,
     model_type: str | None = None,
     show_nsfw: bool = True,
-    tags: str | None = None,
+    # A comma-separated list of tags, each an ILIKE term against the same jsonb
+    # column as `search`. Unbounded both per item and overall, so a long list of
+    # long tags multiplies the cost of the search term without a length cap
+    # anywhere. Bounded with `max_length` on the whole parameter, which is the
+    # conservative bound: it admits up to 200 chars of tag list.
+    tags: str | None = _bounded_search("Comma-separated tag filters"),
     workspace: str | None = None,
     character_id: str | None = None,
     story_id: str | None = None,
