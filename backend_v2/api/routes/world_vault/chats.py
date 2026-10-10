@@ -1691,6 +1691,9 @@ async def regenerate_reply(
         job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
         await asyncio.to_thread(session.commit)
         await queue_manager.enqueue(job.id, task_type="llm")
+    except ComfyError:
+        await asyncio.to_thread(session.rollback)
+        raise
     except Exception as e:
         await asyncio.to_thread(session.rollback)
         raise ComfyError(str(e))
@@ -1876,6 +1879,8 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
         )
         await queue_manager.enqueue(imp_job.id, task_type="llm")
         return {"job_id": imp_job.id}
+    except ComfyError:
+        raise
     except Exception as e:
         raise ComfyError(str(e))
 
@@ -2025,6 +2030,8 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
         await queue_manager.enqueue(job.id, task_type="llm")
         return {"job_id": job.id}
         
+    except ComfyError:
+        raise
     except Exception as e:
         raise ComfyError(str(e))
 

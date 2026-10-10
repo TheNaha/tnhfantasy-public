@@ -340,7 +340,8 @@ async def call_in_process_llm_provider(
     try:
         from config import get_config
         global_ai = ((get_config() or {}).get("ai") or {})
-    except Exception:
+    except Exception as exc:
+        logger.warning("global_ai_config_read_failed", job_id=job_id, error=str(exc))
         global_ai = {}
 
     def _resolve(key: str):

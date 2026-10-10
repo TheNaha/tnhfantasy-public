@@ -122,6 +122,8 @@ def list_prompts(
             "count": len(prompts)
         }
     
+    except ComfyError:
+        raise
     except Exception as e:
         raise ComfyError(str(e))
 

@@ -112,8 +112,8 @@ class _AdvisoryRunLock:
         finally:
             try:
                 self._session.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("scheduler_session_close_failed", job_id=self._job_id, error=str(exc))
 
 
 def _guarded(func: Callable, job_id: str) -> Callable:

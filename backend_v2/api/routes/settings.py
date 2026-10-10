@@ -50,6 +50,8 @@ def get_settings() -> dict[str, Any]:
             "status": "success",
             "settings": app_config.get_config()
         }
+    except ComfyError:
+        raise
     except Exception as e:
         raise ComfyError(str(e))
 
@@ -552,6 +554,8 @@ async def update_settings(updates: SettingsUpdate) -> dict[str, Any]:
         }
     except ValueError as e:
         raise ValidationError(str(e))
+    except ComfyError:
+        raise
     except Exception as e:
         raise ComfyError(str(e))
 
@@ -588,6 +592,8 @@ async def update_system_prompts(request: SystemPromptsRequest) -> dict[str, Any]
         merged = {**current, **updates}
         await asyncio.to_thread(app_config.update_config, {"system_prompts": merged}, True)
         return {"status": "success", "blocks": merged}
+    except ComfyError:
+        raise
     except Exception as e:
         raise ComfyError(str(e))
 
@@ -607,6 +613,8 @@ async def reset_settings() -> dict[str, Any]:
             "message": "Settings reset to defaults",
             "settings": default_config
         }
+    except ComfyError:
+        raise
     except Exception as e:
         raise ComfyError(str(e))
 

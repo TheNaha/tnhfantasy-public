@@ -2087,6 +2087,8 @@ async def delete_single_file(filename: str):
         raise ValidationError("Invalid filename")
     except NotFoundError:
         raise
+    except ComfyError:
+        raise
     except Exception as e:
         raise ComfyError(str(e))
 

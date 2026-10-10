@@ -210,6 +210,8 @@ async def autopopulate_all_models(
                 "count": len(models_to_process),
                 "results": results
             }
+        except ComfyError:
+            raise
         except Exception as e:
             raise ComfyError(str(e))
     else:

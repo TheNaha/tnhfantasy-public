@@ -297,13 +297,13 @@ async def finalize_persisted_job_outputs(
                             path = candidate
                     if path and output.get("type") == "image":
                         try:
-                            from services.asset_reconciler import reconcile_asset
+                                from services.asset_reconciler import reconcile_asset
 
-                            await asyncio.to_thread(
-                                reconcile_asset,
-                                reconcile_session,
-                                path,
-                                user_id="default_user",
+                                await asyncio.to_thread(
+                                    reconcile_asset,
+                                    reconcile_session,
+                                    path,
+                                    user_id=settings.default_user_id,
                                 workspace=(job.metadata_ or {}).get("workspace", "main"),
                                 character_id=(job.metadata_ or {}).get("character_id"),
                                 story_id=(job.metadata_ or {}).get("story_id"),
@@ -768,8 +768,8 @@ async def _fetch_remote_tts_outputs(
         async with get_session_context() as session:
             provider = ProviderRepository(session).get(provider_id)
             engine = get_engine(provider_id, provider)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("provider_engine_resolution_failed", provider_id=provider_id, error=str(exc))
     if not (engine and hasattr(engine, "get_file_stream")):
         return []
 
