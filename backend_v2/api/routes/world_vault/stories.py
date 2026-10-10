@@ -19,7 +19,6 @@ from infrastructure.repositories.story_revision_repo import StoryChapterRevision
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Story, StoryBeatRole, StoryChapter, StoryChapterRevision, Lorebook, Character, Location, Scenario, Asset, AssetKind
 from core.exceptions import ComfyError, NotFoundError, ValidationError
-from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow, sampler_overrides
 from services.rag_pipeline import search_lorebook_entries
 from services.job_service import JobService
@@ -49,6 +48,20 @@ router = APIRouter()
 # Page ceiling for the story list. Every sibling list route in this app is
 # bounded and documents why; this one was not.
 MAX_STORIES_PAGE_SIZE = 200
+
+
+
+def _model_for_kind(kind: str, override: str | None, session):
+    """Resolve the model for a job kind, honouring a per-chat/Story pin.
+
+    Thin wrapper over `services.llm_config.resolve_model_for_kind` so the route
+    files do not each re-import it, and so the name at the call site says what
+    is being decided (a *kind* of work) rather than which default was reached
+    for.
+    """
+    from services.llm_config import resolve_model_for_kind
+
+    return resolve_model_for_kind(kind, session=session, override=override)
 
 
 class StoryContinueRequest(BaseModel):
@@ -1134,7 +1147,7 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
         type_="story_continue",
         story_id=story_id,
         chapter_id=chapter.id,
-        model=((story.llm_model if story else None) or _get_default_llm_model()),
+        model=_model_for_kind("story_continue", story.llm_model if story else None, session),
         workspace="story",
         samplers=sampler_overrides(story),
         extra_metadata={
@@ -1319,7 +1332,7 @@ async def story_ai_action(story_id: str, chapter_id: str, data: StoryActionReque
         type_="story_action",
         story_id=story_id,
         chapter_id=chapter_id,
-        model=(story.llm_model if story else None) or _get_default_llm_model(),
+        model=_model_for_kind("story_action", story.llm_model if story else None, session),
         workspace="story",
         samplers=sampler_overrides(story),
     )
@@ -1798,7 +1811,7 @@ async def illustrate_chapter(
         type_="story_illustrate_prompt",
         story_id=story_id,
         chapter_id=chapter_id,
-        model=(story.llm_model if story else None) or _get_default_llm_model(),
+        model=_model_for_kind("story_illustrate_prompt", story.llm_model if story else None, session),
         workspace="story",
         samplers=sampler_overrides(story),
         source="story_illustrate_prompt",
@@ -2062,7 +2075,7 @@ Return a strictly valid JSON object in this format:
         ],
         chat_id=None,
         character_id=None,
-        model=_get_default_llm_model(),
+        model=_model_for_kind("story_parse", None, session),
         type_="story_parse"
     )
     metadata["story_id"] = req.story_id

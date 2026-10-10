@@ -128,6 +128,20 @@ def _chat_context_prep_sync(
     return chat, past_messages, chat_context_kwargs(chat, characters=characters, session=session)
 
 
+
+def _model_for_kind(kind: str, override: str | None, session):
+    """Resolve the model for a job kind, honouring a per-chat/Story pin.
+
+    Thin wrapper over `services.llm_config.resolve_model_for_kind` so the route
+    files do not each re-import it, and so the name at the call site says what
+    is being decided (a *kind* of work) rather than which default was reached
+    for.
+    """
+    from services.llm_config import resolve_model_for_kind
+
+    return resolve_model_for_kind(kind, session=session, override=override)
+
+
 class UpdateChatRequest(BaseModel):
     name: str | None = None
     # See `CreateChatRequest.world_id`. `None` here means "not supplied" (the
@@ -851,9 +865,12 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
 
 
 # ---------------------------------------------------------------------------
-# Helper: resolve default LLM model id from llm_config.json
+# Model resolution.
+#
+# `_model_for_kind` is defined above, near the other request-scoped helpers; the
+# bare `get_default_llm_model` import that used to live here is used only inside
+# `resolve_model_for_kind` now, so a route file never names it directly.
 # ---------------------------------------------------------------------------
-from services.llm_config import get_default_llm_model as _get_default_llm_model
 
 # ---------------------------------------------------------------------------
 # Helper: resolve effective context window for a chat
@@ -994,7 +1011,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                     chat_id=chat_id,
                     character_id=request.target_character_id or chat.character_id,
                     system_prompt=system_prompt or None,
-                    model=chat.llm_model or _get_default_llm_model(),
+                    model=_model_for_kind("narrator", chat.llm_model, session),
                     samplers=sampler_overrides(chat),
                     type_="narrator",
                     source="narrator",
@@ -1005,7 +1022,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                     chat_id=chat_id,
                     character_id=request.target_character_id or chat.character_id,
                     system_prompt=system_prompt or None,
-                    model=chat.llm_model or _get_default_llm_model(),
+                    model=_model_for_kind("suggest_reply", chat.llm_model, session),
                     samplers=sampler_overrides(chat),
                 )
 
@@ -1308,7 +1325,7 @@ async def generate_swipe(
         chat_id=chat_id,
         character_id=chat.character_id,
         system_prompt=system_prompt or None,
-        model=chat.llm_model or _get_default_llm_model(),
+        model=_model_for_kind("chat_reply", chat.llm_model, session),
         samplers=sampler_overrides(chat),
         extra_metadata={
             "is_swipe": True,
@@ -1646,7 +1663,7 @@ async def regenerate_reply(
         chat_id=chat_id,
         character_id=anchor_character_id or chat.character_id,
         system_prompt=system_prompt or None,
-        model=chat.llm_model or _get_default_llm_model(),
+        model=_model_for_kind("chat_reply", chat.llm_model, session),
         samplers=sampler_overrides(chat),
         extra_metadata={
             "regenerated": True,
@@ -1858,7 +1875,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
             messages=all_msgs,
             chat_id=chat_id,
             character_id=chat.character_id,
-            model=chat.llm_model or _get_default_llm_model(),
+            model=_model_for_kind("suggest_reply", chat.llm_model, session),
             samplers=sampler_overrides(chat),
             type_="suggest_reply",
             source="suggest_reply",
@@ -2016,7 +2033,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
             messages=all_msgs,
             chat_id=chat_id,
             character_id=chat.character_id,
-            model=chat.llm_model or _get_default_llm_model(),
+            model=_model_for_kind("suggest_reply", chat.llm_model, session),
             samplers=sampler_overrides(chat),
             type_="suggest_reply",
             extra_metadata={"is_suggestion": True, "max_agentic_depth": chat.max_agentic_depth},
@@ -2164,7 +2181,7 @@ def _scene_job_prep_sync(
         ],
         chat_id=chat_id,
         character_id=chat.character_id,
-        model=chat.llm_model or _get_default_llm_model(),
+        model=_model_for_kind("chat_reply", chat.llm_model, session),
         samplers=sampler_overrides(chat),
         type_="chat_reply",
         workspace="roleplay",

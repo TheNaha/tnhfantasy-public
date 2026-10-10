@@ -134,6 +134,91 @@ def resolve_default_provider(session: Session) -> tuple[str, str] | None:
     return selected.id, get_default_llm_model()
 
 
+# ---------------------------------------------------------------------------
+# Job-kind aware model resolution (the rp/util router).
+#
+# `get_default_llm_model()` answers "which model serves LLM work", which was the
+# whole story when there was one model. With a two-role registry the right
+# question is "which *kind* of work is this", because an rp model is chosen for
+# prose and a util model for structure, and neither is good at the other's job.
+#
+# This is deliberately layered on top of the existing single-model answer rather
+# than replacing it: a deployment with one provider and no per-role setup keeps
+# resolving exactly as it did, and the router only takes over once a provider
+# actually serves the model the registry names.
+# ---------------------------------------------------------------------------
+def _served_models(session: Session) -> set[str]:
+    """Model ids an enabled LLM provider is willing to serve.
+
+    Read from each provider's `config.default_model`, which is what the engine
+    actually sends upstream. A model no provider declares cannot be routed to,
+    so the caller falls back to the single-model answer instead of dispatching a
+    job to a model nothing serves.
+    """
+    served: set[str] = set()
+    try:
+        providers = session.exec(
+            select(Provider).where(
+                Provider.worker_type == "llm",
+                Provider.enabled == True,  # noqa: E712
+            )
+        ).all()
+    except Exception as exc:
+        logger.warning("llm_served_models_query_failed", error=str(exc))
+        return served
+    for provider in providers:
+        config = getattr(provider, "config", None) or {}
+        for key in ("default_model", "model"):
+            value = config.get(key)
+            if value:
+                served.add(str(value))
+    return served
+
+
+def resolve_model_for_kind(
+    kind: str | None,
+    *,
+    session: Session,
+    override: str | None = None,
+) -> str:
+    """The model id a job of this kind should run on.
+
+    Precedence, highest first:
+      1. `override` — a per-chat or per-story pin. The user chose it, so it wins
+         over every automatic decision, and it is honoured even if the registry
+         disagrees.
+      2. The rp/util router's primary model for the kind — but only when a real
+         provider serves it. That condition is what keeps a one-provider
+         deployment on its existing model instead of routing it to a model
+         nothing can reach.
+      3. `get_default_llm_model()` — the previous behaviour, unchanged.
+
+    An unknown `kind` routes to the router's default role rather than raising,
+    for the same reason the router does: a new workflow kind should still
+    produce a reply.
+    """
+    if override:
+        return override
+
+    try:
+        from services.llm_router import get_router
+
+        router = get_router()
+        model = router.primary_for_kind(kind)
+        if model.id in _served_models(session):
+            return model.id
+    except Exception as exc:
+        # The registry being absent or malformed must degrade to the old answer,
+        # not break every chat message.
+        logger.warning(
+            "llm_router_resolution_failed",
+            kind=kind,
+            error=str(exc),
+        )
+
+    return get_default_llm_model()
+
+
 def set_default_provider(provider_id: str, model_id: str) -> None:
     """Persist the user-selected default LLM provider/model to llm_config.json.
 
