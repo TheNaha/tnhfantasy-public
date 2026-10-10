@@ -19,6 +19,7 @@ import websockets
 
 from infrastructure.logging import get_logger
 from services.engines.base import (
+    TERMINAL_EVENTS,
     EngineAuthError,
     FileTooLargeError,
     InProcessEngine,
@@ -264,7 +265,7 @@ class BeamEngine(InProcessEngine):
                         if event is None:
                             continue
                         yield event
-                        if event.get("event") in ("completed", "failed", "cancelled"):
+                        if event.get("event") in TERMINAL_EVENTS:
                             task.cancel()
                             return
                 finally:

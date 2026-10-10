@@ -12,7 +12,7 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from infrastructure.logging import get_logger
-from services.engines.base import FileTooLargeError, InProcessEngine, clamp_timeout
+from services.engines.base import FileTooLargeError, InProcessEngine, TERMINAL_EVENTS, clamp_timeout
 
 logger = get_logger("modal_tts_engine")
 
@@ -36,9 +36,6 @@ _TTS_FILE_TIMEOUT_SECONDS = 120.0
 # these has been seen — that is exactly how a failure came to be reported
 # as a green job on the container path
 # (tts_worker/engines/modal/client.py::_TERMINAL_EVENTS).
-_TERMINAL_EVENTS = frozenset({"completed", "failed", "cancelled"})
-
-
 def _task_event_for_update(update: Any, job_id: str | None) -> dict[str, Any] | None:
     """Translate one event from the TTS Modal app into the unified dialect.
 
@@ -88,7 +85,7 @@ def _task_event_for_update(update: Any, job_id: str | None) -> dict[str, Any] | 
         return {"event": "cancelled", "job_id": job_id, "message": update.get("message") or "cancelled"}
     if status == "running":
         return None
-    if status in _TERMINAL_EVENTS:
+    if status in TERMINAL_EVENTS:
         return {
             "event": status,
             "job_id": job_id,
@@ -381,10 +378,10 @@ class ModalTTSEngine(InProcessEngine):
                     task_event = _task_event_for_update(update, job_id)
                     if task_event is None:
                         continue
-                    if task_event.get("event") in _TERMINAL_EVENTS:
+                    if task_event.get("event") in TERMINAL_EVENTS:
                         seen_terminal = True
                     yield task_event
-                    if task_event.get("event") in _TERMINAL_EVENTS:
+                    if task_event.get("event") in TERMINAL_EVENTS:
                         return
 
         except TimeoutError:

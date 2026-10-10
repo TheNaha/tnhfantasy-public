@@ -1052,11 +1052,11 @@ class AnthropicLLMEngine(InProcessEngine):
         self,
         provider_id: str,
         api_key: Optional[str] = None,
-        default_model: str = "claude-3-haiku-20240307",
+        default_model: str = "claude-3-5-sonnet-latest",
     ):
         super().__init__(provider_id)
         self.api_key = (api_key or "").strip()
-        self.default_model = default_model or "claude-3-haiku-20240307"
+        self.default_model = default_model or "claude-3-5-sonnet-latest"
         self._http: Optional[httpx.AsyncClient] = None
 
 
@@ -1279,11 +1279,11 @@ class GoogleLLMEngine(InProcessEngine):
         self,
         provider_id: str,
         api_key: Optional[str] = None,
-        default_model: str = "gemini-1.5-flash",
+        default_model: str = "gemini-2.0-flash",
     ):
         super().__init__(provider_id)
         self.api_key = (api_key or "").strip()
-        self.default_model = default_model or "gemini-1.5-flash"
+        self.default_model = default_model or "gemini-2.0-flash"
         self._http: Optional[httpx.AsyncClient] = None
 
 

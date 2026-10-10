@@ -363,7 +363,7 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
                     config.get("default_model")
                     or config.get("model")
                     or env_vars.get("ANTHROPIC_MODEL")
-                    or "claude-3-haiku-20240307"
+                     or "claude-3-5-sonnet-latest"
                 )
                 engine = AnthropicLLMEngine(
                     provider_id=provider_id,
@@ -386,7 +386,7 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
                     config.get("default_model")
                     or config.get("model")
                     or env_vars.get("GOOGLE_MODEL")
-                    or "gemini-1.5-flash"
+                    or "gemini-2.0-flash"
                 )
                 engine = GoogleLLMEngine(
                     provider_id=provider_id,

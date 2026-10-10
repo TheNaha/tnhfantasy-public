@@ -20,6 +20,7 @@ except ImportError:
 
 from infrastructure.logging import get_logger
 from services.engines.base import (
+    TERMINAL_EVENTS,
     EngineAuthError,
     InProcessEngine,
     MODEL_DIRECTORIES,
@@ -248,7 +249,7 @@ class ModalEngine(InProcessEngine):
                         if event is None:
                             continue
                         yield event
-                        if event.get("event") in ("completed", "failed", "cancelled"):
+                        if event.get("event") in TERMINAL_EVENTS:
                             return
                 finally:
                     task.cancel()

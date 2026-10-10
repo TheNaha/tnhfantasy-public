@@ -10,8 +10,11 @@ from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
 import base64
+import logging
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 #: The OpenAI-style end-of-stream sentinel, compared against the payload.
@@ -293,6 +296,14 @@ CANONICAL_EVENT_KINDS = frozenset({
     "started", "progress", "delta", "node", "cached_nodes",
     "completed", "failed", "cancelled",
 })
+
+#: Events that end a job's stream — used by every engine's fetcher loop to know
+#: when to stop listening. Centralised here so a new terminal kind (e.g.
+#: ``"timeout"``) updates all three engines at once instead of being silently
+#: missed in one of them — the old per-engine tuple drift let a ``cancelled``
+#: frame be reported as ``completed`` by beam but correctly as ``cancelled``
+#: by modal, because beam_engine omitted ``cancelled`` from its inline set.
+TERMINAL_EVENTS = frozenset({"completed", "failed", "cancelled"})
 
 #: Legacy statuses that carry no progress and translate to nothing,
 #: mirroring provider_core.utils.comfy_status_to_task_event.
@@ -624,7 +635,8 @@ class InProcessEngine(ABC):
         for directory in MODEL_DIRECTORIES:
             try:
                 entries = await self.list_models(directory)
-            except Exception:
+            except Exception as exc:
+                logger.warning("engine_list_models_failed", provider_id=self.provider_id, directory=directory, error=str(exc))
                 entries = []
             count = len([e for e in entries if isinstance(e, dict) and e.get("name")])
             by_directory[directory] = count
