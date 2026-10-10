@@ -23,6 +23,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from core.entities import Asset
+from config import DEFAULT_USER_ID_FALLBACK
 from infrastructure.image_processor import (
     encode_blurhash,
     generate_thumbnails,
@@ -33,7 +34,18 @@ from infrastructure.logging import get_logger
 
 logger = get_logger("asset_reconciler")
 
-DEFAULT_USER_ID = "default_user"
+DEFAULT_USER_ID = DEFAULT_USER_ID_FALLBACK
+
+
+def _get_default_user_id() -> str:
+    """Resolve the default user partition from config, falling back to the
+    single-tenant constant. Called at runtime (not import time) so a
+    COMFY_DEFAULT_USER_ID change on the running stack takes effect."""
+    try:
+        from config import get_config
+        return (get_config() or {}).get("default_user_id") or DEFAULT_USER_ID_FALLBACK
+    except Exception:
+        return DEFAULT_USER_ID_FALLBACK
 
 # Schema version stamped onto every asset row's `metadata_` by
 # `_compact_metadata`. Bump when the compacted shape changes incompatibly.
@@ -358,7 +370,8 @@ def _extract_meta(path: str) -> dict:
     """Read image metadata (embedded PNG or sidecar JSON fallback)."""
     try:
         return read_image_metadata(path) or {}
-    except Exception:
+    except Exception as exc:
+        logger.warning("metadata_read_failed", path=path, error=str(exc))
         return {}
 
 
@@ -391,7 +404,8 @@ def _workspace_from_job(job_id: str | None, session) -> tuple[str, str | None, s
             md.get("character_id"),
             md.get("story_id"),
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("workspace_resolution_failed", job_id=str(job_id) if job_id else None, error=str(exc))
         return "main", None, None
 
 

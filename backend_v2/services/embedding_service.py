@@ -1,3 +1,4 @@
+import os
 import threading
 
 import structlog
@@ -17,7 +18,8 @@ class EmbeddingService:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
                 cls._instance._model = None
-                cls._instance._model_name = "all-MiniLM-L6-v2"
+                cls._instance._model_name = os.environ.get("COMFY_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+                cls._instance._dimension = None
                 cls._instance._model_lock = threading.Lock()
         return cls._instance
 
@@ -32,6 +34,11 @@ class EmbeddingService:
                         # Device usually defaults to CPU if no GPU is available, which is perfect for Ryzen 5300U
                         self._model = SentenceTransformer(self._model_name, device="cpu")
                         logger.info("embedding_model_loaded", model=self._model_name)
+                        # Derive the dimension from the loaded model instead of a
+                        # hardcoded constant — swapping the model (via
+                        # COMFY_EMBEDDING_MODEL) used to leave the dimension stale,
+                        # so similarity scores silently mismatched the DB column.
+                        self._dimension = self._model.get_sentence_embedding_dimension()
                     except Exception as e:
                         logger.error("embedding_model_load_failed", error=str(e))
                         raise RuntimeError(f"Failed to load embedding model: {e}")
@@ -39,10 +46,11 @@ class EmbeddingService:
 
     def generate_embedding(self, text: str) -> list[float]:
         """
-        Generate a 384-dimensional embedding for the given text.
+        Generate an embedding for the given text.
         """
         if not text or not text.strip():
-            return [0.0] * 384  # Return zero vector for empty text
+            dim = self._dimension or 384
+            return [0.0] * dim  # Return zero vector for empty text
             
         model = self._get_model()
         try:

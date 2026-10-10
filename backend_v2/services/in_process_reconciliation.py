@@ -795,8 +795,8 @@ async def _run_reconciliation(
         _RUNNING.discard(provider_id)
         try:
             session.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("reconciler_session_close_failed", provider_id=provider_id, error=str(exc))
 
 
 #: Mirror the legacy worker's 2h force-reconcile interval
@@ -821,8 +821,8 @@ async def run_periodic_in_process_reconciliation() -> dict[str, Any]:
     finally:
         try:
             session.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("periodic_reconcile_session_close_failed", error=str(exc))
     started: list[str] = []
     skipped: list[str] = []
     for provider in providers:

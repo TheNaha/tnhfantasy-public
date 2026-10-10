@@ -59,6 +59,8 @@ import logging
 import re
 from typing import Any
 
+from services.asset_reconciler import _coerce_float, _coerce_int
+
 logger = logging.getLogger(__name__)
 
 # Upper bound on the CivitAI tag list copied onto each reference. CivitAI orders
@@ -102,33 +104,6 @@ def _first(entry: dict, keys: tuple[str, ...], default: Any = None) -> Any:
             continue
         return value
     return default
-
-
-def _coerce_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped.lstrip("-").isdigit():
-            return int(stripped)
-    return None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value.strip())
-        except ValueError:
-            return None
-    return None
 
 
 def _strip_html(value: Any) -> str | None:

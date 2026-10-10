@@ -73,7 +73,7 @@ async def _process_image_background_for_recovery(image_path: str, job_id: str) -
                 reconcile_asset,
                 session,
                 image_path,
-                user_id="default_user",
+                 user_id=settings.default_user_id,
                 workspace=(job_metadata or {}).get("workspace", "main"),
                 character_id=(job_metadata or {}).get("character_id"),
                 story_id=(job_metadata or {}).get("story_id"),
@@ -105,7 +105,8 @@ def requeue_inflight_jobs_for_shutdown() -> int:
             # between the initial query and shutdown requeue mutation.
             try:
                 session.refresh(job)
-            except Exception:
+            except Exception as exc:
+                logger.warning("shutdown_job_refresh_failed", job_id=str(getattr(job, "id", "?")), error=str(exc))
                 continue
 
             # NARROWER THAN ACTIVE_JOB_STATUSES, on purpose: a POST_PROCESSING or
@@ -219,7 +220,7 @@ def _run_asset_migration() -> None:
 
         output_dir = settings.output_dir
         with get_session_sync():
-            moved = move_existing_assets(output_dir, lambda: get_session_sync(), user_id="default_user")
+            moved = move_existing_assets(output_dir, lambda: get_session_sync(), user_id=settings.default_user_id)
         logger.info("asset_migration_complete", moved=moved)
     except Exception as exc:
         logger.warning("asset_migration_failed", error=str(exc))

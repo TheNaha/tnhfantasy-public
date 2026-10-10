@@ -129,10 +129,14 @@ def read_reconciliation_state(provider: Provider) -> dict[str, Any]:
 
 
 def normalize_reconciliation_status(status: str | None) -> str:
-    if status in {"started", "queued"}:
+    if status in {"started", "queued", "already_running", "pending"}:
         return "queued"
     if status in {"progress", "running", "reconciling"}:
         return "reconciling"
+    if status in {"skipped", "ok", "not_supported", "already-reconciled"}:
+        return "completed"
+    if status in {"error"}:
+        return "failed"
     if status in {"completed", "failed", "idle"}:
         return status
     return "idle"

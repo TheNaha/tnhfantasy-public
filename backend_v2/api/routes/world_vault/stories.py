@@ -28,6 +28,21 @@ from services.world_ownership import link_story_to_world, require_world
 from services.model_availability_service import ModelAvailabilityService
 from services.world_integration_service import TTS_BEAT_ROLE
 
+# Comic/webtoon export layout dimensions — extracted from the inline literals so
+# the values cannot silently drift between the comic and webtoon branches.
+_COMIC_PANEL_W, _COMIC_PANEL_H = 800, 1200
+_COMIC_MARGIN = 40
+_WEBTOON_W = 800
+_WEBTOON_MARGIN = 40
+
+# Font path for comic/webtoon PDF text rendering. Overridable via env var so a
+# deployment without DejaVu fonts (e.g. slim containers) can point at any
+# installed TTF.
+_COMIC_FONT_PATH = os.environ.get(
+    "COMFY_COMIC_FONT_PATH",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+)
+
 logger = get_logger("stories_route")
 router = APIRouter()
 
@@ -434,8 +449,8 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
 
     if format == "comic":
         comic_pages = []
-        panel_w, panel_h = 800, 1200
-        margin = 40
+        panel_w, panel_h = _COMIC_PANEL_W, _COMIC_PANEL_H
+        margin = _COMIC_MARGIN
         title = story.title or "Untitled Story"
 
         # Gather real story illustration images (verified on disk) once; chapters
@@ -458,7 +473,7 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
             page = Image.new("RGB", (panel_w, panel_h), (30, 30, 30))
             draw = ImageDraw.Draw(page)
             try:
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
+                font = ImageFont.truetype(_COMIC_FONT_PATH, 28)
             except Exception:
                 font = ImageFont.load_default()
 
@@ -499,11 +514,11 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
         )
 
     if format == "webtoon":
-        webtoon_w = 800
-        margin = 40
+        webtoon_w = _WEBTOON_W
+        margin = _WEBTOON_MARGIN
         title = story.title or "Untitled Story"
         try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
+            font = ImageFont.truetype(_COMIC_FONT_PATH, 28)
         except Exception:
             font = ImageFont.load_default()
 

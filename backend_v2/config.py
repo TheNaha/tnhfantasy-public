@@ -41,6 +41,10 @@ _cfg_logger = structlog.get_logger().bind(logger_name="config")
 # ============================================================================
 DEFAULT_CHECKPOINT = "sd_xl_base_1.0.safetensors"
 
+#: Fallback for the single-tenant default user partition. `AppConfig.default_user_id`
+#: (COMFY_DEFAULT_USER_ID) overrides this at runtime for multi-tenant deployments.
+DEFAULT_USER_ID_FALLBACK = "default_user"
+
 DEFAULT_CONFIG = {
     "worker": {
         "poll_interval": 0.3,
@@ -244,7 +248,9 @@ class Settings(BaseSettings):
     reconciliation_interval: int = 120
 
     # Directories
-    # Introduce /{user_id}/ root partitions for multi-tenancy (hardcoded default_user for now)
+    # Introduce /{user_id}/ root partitions for multi-tenancy. Configurable so a
+    # multi-user deployment can set COMFY_DEFAULT_USER_ID without code changes.
+    default_user_id: str = "default_user"
     output_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/output"))
     input_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/input"))
     character_avatar_dir: str = "/data/characters"

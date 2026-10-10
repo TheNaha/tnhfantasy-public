@@ -23,7 +23,7 @@ def _safe_component(value: str, default: str) -> str:
 
 
 
-def get_output_path(base_dir: str = None, subdir: str = None, user_id: str = "default_user", workspace: str = "main") -> str:
+def get_output_path(base_dir: str = None, subdir: str = None, user_id: str = None, workspace: str = "main") -> str:
     """
     Generate a partitioned, date-based output path.
 
@@ -37,7 +37,7 @@ def get_output_path(base_dir: str = None, subdir: str = None, user_id: str = "de
     Args:
         base_dir: Base output directory (defaults to OUTPUT_DIR env or ./output)
         subdir: Optional subdirectory (e.g., 'thumb')
-        user_id: Owner partition (default "default_user")
+        user_id: Owner partition (default from COMFY_DEFAULT_USER_ID or "default_user")
         workspace: Workspace partition (main / roleplay / story)
 
     Returns:
@@ -45,12 +45,14 @@ def get_output_path(base_dir: str = None, subdir: str = None, user_id: str = "de
     """
     if base_dir is None:
         base_dir = app_config.settings.output_dir
+    if user_id is None:
+        user_id = app_config.settings.default_user_id
 
     # Partition: /{user_id}/{workspace}/  (skip empty segments)
     base_dir = os.path.realpath(os.path.abspath(base_dir))
     partition = os.path.join(
         base_dir,
-        _safe_component(user_id, "default_user"),
+        _safe_component(user_id, app_config.settings.default_user_id),
         _safe_component(workspace, "main"),
     )
     if subdir:
