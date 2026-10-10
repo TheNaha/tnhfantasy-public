@@ -231,6 +231,16 @@ class ModalEngine(InProcessEngine):
                         await queue.put(exc)
 
                 task = asyncio.create_task(_fetcher())
+                # A user cancel must interrupt the *read*, not wait for the next
+                # update. The flag is only checked between updates, so a quiet
+                # provider (long denoise step, model still loading) kept
+                # generating — and billing — until the next frame. Cancelling the
+                # fetcher closes the remote generator, which is the strongest
+                # lever `remote_gen` exposes: Modal publishes no public
+                # `FunctionCall` handle for a generator function, so the upstream
+                # function is signalled by the input stream closing rather than by
+                # an explicit cancel call.
+                self.register_abort(job_id, task.cancel)
                 try:
                     while True:
                         if job_id and job_id in self._cancelled_jobs:

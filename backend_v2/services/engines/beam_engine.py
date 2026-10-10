@@ -229,6 +229,12 @@ class BeamEngine(InProcessEngine):
                         await queue.put(exc)
 
                 task = asyncio.create_task(_fetcher())
+                # Cancelling the fetcher exits `async with ws_ctx` (above), which
+                # closes the websocket to the Beam endpoint — a real upstream stop,
+                # not just a local flag. Without this a cancel is only seen between
+                # stream frames, so a quiet run kept the billed GPU-side handler
+                # running until the next frame or the caller's timeout.
+                self.register_abort(job_id, task.cancel)
                 try:
                     while True:
                         try:

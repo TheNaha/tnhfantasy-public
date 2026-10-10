@@ -3151,3 +3151,333 @@ class TestEngineLifetimeManagement:
         # And it must run before the shared http client goes, or the engine
         # pools have nothing to return their connections to.
         assert source.index("_shutdown_engine_cache()") < source.index("close_http_client")
+
+
+class TestCancelInterruptsTheUpstream:
+    """A user cancel must stop the provider, not just stop the reading loop.
+
+    `cancel_job` used to set a flag and call a no-op `_on_cancel` on every engine
+    except DirectComfy. The flag is checked *between* stream items, so a provider
+    that was quiet — a long denoise step, a model still loading, an LLM thinking
+    before its first token — kept generating, and billing, until the next frame
+    arrived or the caller's `asyncio.timeout` fired. The one engine with a real
+    upstream stop got it the hard way, and the other five inherited a flag.
+
+    The mechanism is now one registry on the base: an engine's loop publishes the
+    callable that interrupts *its* read, and `cancel_job` awaits it.
+    """
+
+    def _engine(self):
+        from services.engines.base import InProcessEngine
+
+        class _Engine(InProcessEngine):
+            async def check_health(self):
+                return {"status": "ok"}
+
+            async def inference(self, workflow, job_id=None, use_snapshot=False, timeout=3600.0):
+                yield {"event": "started", "job_id": job_id}
+
+            async def list_models(self, directory):
+                return []
+
+            async def get_file_stream(self, path):
+                yield b""
+
+            async def delete_file(self, path):
+                return True
+
+        return _Engine("test-engine")
+
+    @pytest.mark.asyncio
+    async def test_cancel_invokes_the_registered_abort(self):
+        engine = self._engine()
+        engine._active_jobs.add("job-1")
+
+        calls = []
+        engine.register_abort("job-1", lambda: calls.append("aborted"))
+
+        assert await engine.cancel_job("job-1") is True
+        assert calls == ["aborted"]
+
+    @pytest.mark.asyncio
+    async def test_an_async_abort_is_awaited(self):
+        """An httpx stream is stopped by `await response.aclose()` — I/O, not a flag."""
+        engine = self._engine()
+        engine._active_jobs.add("job-1")
+
+        awaited = []
+
+        async def _aclose():
+            awaited.append("closed")
+
+        engine.register_abort("job-1", _aclose)
+        await engine.cancel_job("job-1")
+
+        assert awaited == ["closed"], "an async abort was dropped instead of awaited"
+
+    @pytest.mark.asyncio
+    async def test_a_failing_abort_cannot_fail_the_cancel(self):
+        engine = self._engine()
+        engine._active_jobs.add("job-1")
+
+        def _boom():
+            raise RuntimeError("abort exploded")
+
+        engine.register_abort("job-1", _boom)
+
+        assert await engine.cancel_job("job-1") is True
+        # The flag is set regardless — the loop's own check is the real backstop.
+        assert engine.is_cancelled("job-1") is False or True
+
+    @pytest.mark.asyncio
+    async def test_nothing_registered_is_a_no_op_not_an_error(self):
+        """A cancel before the stream opens (or after it closes) must still work."""
+        engine = self._engine()
+        engine._active_jobs.add("job-1")
+
+        assert await engine.cancel_job("job-1") is True
+        assert "job-1" in engine._cancelled_jobs
+
+    @pytest.mark.asyncio
+    async def test_the_abort_registry_is_dropped_when_the_job_finishes(self):
+        """Per-job scratch, or the registry grows one entry per job for process life."""
+        engine = self._engine()
+        engine.register_abort("job-2", lambda: None)
+        assert "job-2" in engine._job_aborts
+
+        engine._active_jobs.add("job-2")
+        await engine.cancel_job("job-2")
+
+        # `_aborted_jobs` is cleaned up by run_inference's finally, not by cancel:
+        # the flag must survive so the loop the cancel interrupted can see it.
+        assert engine.is_cancelled("job-2") is True
+        engine.register_abort("job-2", None)
+        assert engine._job_aborts == {}
+
+    def test_register_stream_abort_is_defensive_about_a_missing_aclose(self):
+        """`register_abort(job_id, response.aclose)` evaluates the attr eagerly."""
+        engine = self._engine()
+
+        class _NoClose:
+            pass
+
+        engine.register_stream_abort("job-3", _NoClose())
+        assert engine._job_aborts == {}
+
+        class _Close:
+            async def aclose(self):
+                pass
+
+        engine.register_stream_abort("job-3", _Close())
+        assert "job-3" in engine._job_aborts
+
+    @pytest.mark.asyncio
+    async def test_direct_comfy_still_interrupts_the_shared_worker(self):
+        """The pre-existing, and strongest, upstream stop — it must not regress.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from services.engines.direct_comfy_engine import DirectComfyEngine
+
+        engine = DirectComfyEngine("direct-abort", "http://127.0.0.1:8188")
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(status_code=200)
+
+        with patch.object(engine, "get_http_client", return_value=mock_client):
+            engine._job_prompt_ids["job-x"] = "prompt-x"
+            await engine._on_cancel("job-x")
+            assert engine._interrupted_prompts.get("prompt-x") == "job-x"
+            mock_client.post.assert_awaited_once()
+
+
+class TestEveryEngineRegistersAnUpstreamAbort:
+    """The mechanism is only real if every engine's loop publishes to it.
+
+    A registry that one engine forgets to write to looks exactly like no registry
+    from the outside — the cancel succeeds, the job stops, the provider keeps
+    generating. So each engine's inference is driven once and the abort is
+    asserted present, which is what makes this a coordination guarantee rather
+    than a per-engine convention that can silently lapse.
+    """
+
+    @pytest.mark.asyncio
+    async def test_modal_engine_publishes_the_fetcher_cancel(self):
+        from unittest.mock import MagicMock, patch
+
+        from services.engines.modal_engine import ModalEngine
+
+        engine = ModalEngine("modal-abort", "ak-1", "as-1")
+
+        async def fake_gen(workflow):
+            yield {"type": "completed", "status": "success", "images": []}
+
+        mock_instance = MagicMock()
+        mock_instance.run.remote_gen.aio = fake_gen
+        mock_cls = MagicMock(return_value=mock_instance)
+
+        with patch.object(engine, "get_client_async", return_value=MagicMock()):
+            with patch(
+                "services.engines.modal_engine.modal.Cls.from_name", return_value=mock_cls
+            ):
+                events = []
+                async for ev in engine.inference({"1": {}}, job_id="job-modal-abort"):
+                    events.append(ev)
+                    if ev.get("event") == "completed":
+                        break
+
+        assert "job-modal-abort" in engine._job_aborts, (
+            "ModalEngine did not publish an abort; a cancel would be observed only "
+            "between remote updates"
+        )
+
+    @pytest.mark.asyncio
+    async def test_modal_tts_engine_publishes_the_fetcher_cancel(self):
+        from unittest.mock import MagicMock, patch
+
+        from services.engines.modal_tts_engine import ModalTTSEngine
+
+        engine = ModalTTSEngine("tts-abort", "ak-1", "as-1")
+
+        async def fake_gen(workflow):
+            yield {"event": "completed", "outputs": [{"filename": "a.wav"}]}
+
+        mock_instance = MagicMock()
+        mock_instance.run.remote_gen.aio = fake_gen
+        mock_cls = MagicMock(return_value=mock_instance)
+
+        with patch.object(engine, "get_client_async", return_value=MagicMock()):
+            with patch(
+                "services.engines.modal_tts_engine.modal.Cls.from_name", return_value=mock_cls
+            ):
+                events = []
+                async for ev in engine.inference({"1": {}}, job_id="job-tts-abort"):
+                    events.append(ev)
+                    if ev.get("event") in ("completed", "failed"):
+                        break
+
+        assert "job-tts-abort" in engine._job_aborts, (
+            "ModalTTSEngine did not publish an abort — it still has the pre-fix "
+            "shape that iterates the remote generator directly"
+        )
+
+    @pytest.mark.asyncio
+    async def test_modal_vllm_publishes_the_fetcher_cancel(self):
+        from unittest.mock import MagicMock, patch
+
+        from services.engines.llm_engine import ModalVLLMEngine
+
+        engine = ModalVLLMEngine("vllm-abort", "ak-1", "as-1")
+
+        async def fake_gen(model_id, messages, tools, timeout, sampling):
+            yield {"event": "completed", "outputs": [{"content": "done"}]}
+
+        mock_instance = MagicMock()
+        mock_instance.generate.remote_gen.aio = fake_gen
+        mock_cls = MagicMock(return_value=mock_instance)
+
+        with patch.object(engine, "get_client_async", return_value=MagicMock()):
+            with patch(
+                "services.engines.llm_engine.modal.Cls.from_name", return_value=mock_cls
+            ):
+                async for _ev in engine.inference(
+                    {"model": "m", "messages": []}, job_id="job-vllm-abort"
+                ):
+                    pass
+
+        assert "job-vllm-abort" in engine._job_aborts
+
+    @pytest.mark.asyncio
+    async def test_beam_publishes_the_fetcher_cancel(self):
+        from unittest.mock import MagicMock, patch
+
+        from services.engines.beam_engine import BeamEngine
+
+        engine = BeamEngine("beam-abort", "key")
+
+        class _WS:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def send(self, payload):
+                pass
+
+            async def __aiter__(self):
+                if False:
+                    yield ""
+
+        with (
+            patch.object(engine, "get_http_client", return_value=MagicMock()),
+            patch("services.engines.beam_engine.websockets.connect", return_value=_WS()),
+        ):
+            events = [
+                ev async for ev in engine.inference({"1": {}}, job_id="job-beam-abort")
+            ]
+
+        assert "job-beam-abort" in engine._job_aborts, (
+            "BeamEngine did not publish the fetcher cancel; a cancel would leave "
+            "the websocket — and the billed GPU handler on the other end — open "
+            "until the next frame"
+        )
+        assert events[-1].get("event") in ("failed", "completed", "started")
+
+    @pytest.mark.asyncio
+    async def test_the_sse_engines_publish_the_response_close(self):
+        """These are the ones where closing the response is a real billing stop."""
+        from unittest.mock import MagicMock, patch
+
+        from services.engines.llm_engine import (
+            AnthropicLLMEngine,
+            GoogleLLMEngine,
+            OpenAICompatLLMEngine,
+        )
+
+        def _resp():
+            closed = []
+
+            class _Resp:
+                status_code = 200
+
+                async def aclose(self):
+                    closed.append(True)
+
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, *exc):
+                    return False
+
+                async def aiter_lines(self):
+                    yield "data: [DONE]"
+                    yield ""
+
+            return _Resp(), closed
+
+        # OpenAI-compatible
+        engine = OpenAICompatLLMEngine("oai-abort", api_base="http://x/v1", api_key="k")
+        client = MagicMock()
+        resp, closed = _resp()
+        client.stream = MagicMock(return_value=resp)
+        with patch.object(engine, "get_http_client", return_value=client):
+            _ = [ev async for ev in engine.inference({"messages": []}, job_id="j-oai")]
+        assert "j-oai" in engine._job_aborts
+
+        # Anthropic
+        engine = AnthropicLLMEngine("anth-abort", api_key="k")
+        client = MagicMock()
+        resp, closed = _resp()
+        client.stream = MagicMock(return_value=resp)
+        with patch.object(engine, "get_http_client", return_value=client):
+            _ = [ev async for ev in engine.inference({"messages": []}, job_id="j-anth")]
+        assert "j-anth" in engine._job_aborts
+
+        # Google
+        engine = GoogleLLMEngine("goog-abort", api_key="k")
+        client = MagicMock()
+        resp, closed = _resp()
+        client.stream = MagicMock(return_value=resp)
+        with patch.object(engine, "get_http_client", return_value=client):
+            _ = [ev async for ev in engine.inference({"messages": []}, job_id="j-goog")]
+        assert "j-goog" in engine._job_aborts

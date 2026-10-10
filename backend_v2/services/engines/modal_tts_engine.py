@@ -377,28 +377,62 @@ class ModalTTSEngine(InProcessEngine):
             instance = TTSClass()
 
             async with asyncio.timeout(timeout):
-                async for update in instance.run.remote_gen.aio(workflow):
-                    if job_id and job_id in self._cancelled_jobs:
-                        self._cancelled_jobs.discard(job_id)
-                        seen_terminal = True
-                        # The wording stays the in-process family's "Job cancelled
-                        # by user" rather than the container's bare "cancelled":
-                        # both contain "cancelled", which is all
-                        # `job_service.classify_failure` and the
-                        # `provider_client` reducers key on (they default a
-                        # missing message to this same string), so unifying on
-                        # the family wording loses no signal.
-                        yield {"event": "cancelled", "job_id": job_id, "message": "Job cancelled by user"}
-                        return
+                # Fetcher-task + queue, matching ModalEngine's shape: cancelling
+                # the fetcher closes the remote generator, which is the only way
+                # to interrupt a stream that is parked in `__anext__`. The flag
+                # the old loop checked between updates could not be observed
+                # while nothing was being produced, so a quiet TTS run kept the
+                # provider's GPU busy to completion after the user cancelled.
+                queue: asyncio.Queue = asyncio.Queue()
 
-                    task_event = _task_event_for_update(update, job_id)
-                    if task_event is None:
-                        continue
-                    if task_event.get("event") in TERMINAL_EVENTS:
-                        seen_terminal = True
-                    yield task_event
-                    if task_event.get("event") in TERMINAL_EVENTS:
-                        return
+                async def _fetcher() -> None:
+                    try:
+                        async for update in instance.run.remote_gen.aio(workflow):
+                            await queue.put(update)
+                        await queue.put(None)
+                    except Exception as exc:
+                        await queue.put(exc)
+
+                task = asyncio.create_task(_fetcher())
+                self.register_abort(job_id, task.cancel)
+                try:
+                    while True:
+                        if job_id and job_id in self._cancelled_jobs:
+                            self._cancelled_jobs.discard(job_id)
+                            seen_terminal = True
+                            # The wording stays the in-process family's "Job
+                            # cancelled by user" rather than the container's bare
+                            # "cancelled": both contain "cancelled", which is all
+                            # `job_service.classify_failure` and the
+                            # `provider_client` reducers key on (they default a
+                            # missing message to this same string), so unifying
+                            # on the family wording loses no signal.
+                            yield {"event": "cancelled", "job_id": job_id, "message": "Job cancelled by user"}
+                            return
+
+                        try:
+                            update = await asyncio.wait_for(queue.get(), timeout=2.0)
+                        except asyncio.TimeoutError:
+                            continue
+                        if update is None:
+                            break
+                        if isinstance(update, Exception):
+                            raise update
+
+                        task_event = _task_event_for_update(update, job_id)
+                        if task_event is None:
+                            continue
+                        if task_event.get("event") in TERMINAL_EVENTS:
+                            seen_terminal = True
+                        yield task_event
+                        if task_event.get("event") in TERMINAL_EVENTS:
+                            return
+                finally:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
         except TimeoutError:
             logger.warning("modal_tts_timeout", provider_id=self.provider_id, job_id=job_id)

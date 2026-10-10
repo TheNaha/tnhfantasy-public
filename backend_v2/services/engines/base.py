@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
 import base64
+import inspect
 import logging
 
 import httpx
@@ -505,6 +506,70 @@ class InProcessEngine(ABC):
         self.provider_id = provider_id
         self._active_jobs: set[str] = set()
         self._cancelled_jobs: set[str] = set()
+        # Per-job upstream abort, registered by each engine's inference loop when
+        # it opens its stream and dropped when the stream closes. See
+        # `register_abort`. Cancel without this only sets the promise of a flag,
+        # which a parked stream cannot observe — see `_on_cancel`.
+        self._job_aborts: dict[str, Any] = {}
+
+    def register_abort(self, job_id: str | None, abort: Any) -> None:
+        """Publish the callable that stops THIS job's upstream work.
+
+        Every engine's inference loop is a stream, and a user cancel has to
+        interrupt the *read*, not wait for the next item to arrive. Without a
+        registered abort a cancel only sets `_cancelled_jobs`, which the loop
+        checks between items — so a provider that is quiet (a long denoise
+        step, a model still loading, an LLM idle between tokens) keeps
+        generating, and billing, until the next frame or the caller's timeout.
+        Only one abort per job; registering again replaces the previous one.
+        """
+        if not job_id:
+            return
+        if abort is None:
+            self._job_aborts.pop(job_id, None)
+        else:
+            self._job_aborts[job_id] = abort
+
+    def register_stream_abort(self, job_id: str | None, response: Any) -> None:
+        """Register a stream response's `aclose` as this job's upstream abort.
+
+        Closing the response terminates the HTTP request itself, which is the only
+        thing that actually stops an upstream generation — and what stops it being
+        billed. The flag the inference loop checks is the *fallback* either side of
+        this registration; an idle stream (a provider thinking before its first
+        token) would otherwise sit there until the caller's timeout, which is the
+        whole defect this closes.
+
+        Registered defensively: `aclose` is read through `getattr` rather than
+        resolved eagerly, because `register_abort(job_id, response.aclose)`
+        evaluates the attribute at the call and would take the whole inference
+        down if it is missing. `_abort_job` already swallows a failing abort, but
+        not a failing attribute access while registering one.
+        """
+        aclose = getattr(response, "aclose", None)
+        if aclose is None:
+            return
+        self.register_abort(job_id, aclose)
+
+    def _abort_job(self, job_id: str | None) -> Any:
+        """Invoke the registered abort, swallowing anything it raises.
+
+        Returns whatever the abort returned so the caller can await it — the
+        sync form (`task.cancel`) and the async form (`response.aclose`, for a
+        stream that has to be torn down over the network) both live in this one
+        registry. A failing abort is never allowed to fail the cancel call the
+        user made: the flag still stops the loop, so this is an optimisation on
+        top of a correct baseline.
+        """
+        if not job_id:
+            return None
+        abort = self._job_aborts.get(job_id)
+        if abort is None:
+            return None
+        try:
+            return abort()
+        except Exception:
+            return None
 
     async def run_inference(
         self,
@@ -535,6 +600,7 @@ class InProcessEngine(ABC):
             if job_id:
                 self._active_jobs.discard(job_id)
                 self._cancelled_jobs.discard(job_id)
+                self.register_abort(job_id, None)
                 if _ACTIVE_JOB_ENGINES.get(job_id) is self:
                     _ACTIVE_JOB_ENGINES.pop(job_id, None)
             # If this engine was invalidated mid-job (credentials rotated, provider
@@ -610,10 +676,24 @@ class InProcessEngine(ABC):
         Only jobs currently streaming through ``run_inference`` are flagged,
         like the container's /cancel-job which answered ``not_found`` for an
         inactive job. Flagging an inactive id would poison the next attempt.
+
+        The abort runs *before* `_on_cancel`, and is awaited: an LLM stream is
+        stopped by closing its HTTP response, which is I/O and cannot be a
+        fire-and-forget task. Engines that keep a fetcher task register
+        `task.cancel` instead. Without either, a cancel only sets a flag the
+        loop checks between items — so a provider that is quiet keeps
+        generating, and billing, until the next frame or the caller's timeout.
         """
         if not self.is_job_active(job_id):
             return False
         self._cancelled_jobs.add(job_id)
+        try:
+            result = self._abort_job(job_id)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            # Never let the abort path fail the cancel the user asked for.
+            pass
         await self._on_cancel(job_id)
         return True
 

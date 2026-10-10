@@ -55,7 +55,7 @@ delta audit recorded in `docs/audit-2026-10-10.md`:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **3225 passed, 9 skipped** (~8.5 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Backend | **3237 passed, 9 skipped** (~6 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
 | Frontend | **1783 passed across 193 files** (~3.5 min) | `cd frontend_v2 && npx vitest run` |
 | remote_agent | exports clean (no tests of its own) | covered by `tests/test_in_process_engines.py` contract tests |
 
@@ -415,6 +415,17 @@ A second pass, scoped to the compute tier `9a91e6f2` made the only execution pat
 - **Engine clients were closed never correctly.** `clear_engine_cache()` had no
   production caller, `invalidate_engine` closed a client an in-flight job was
   streaming on, and the close task was dropped without a reference.
+- **A cancel that did not reach the provider.** `cancel_job` set a flag and called
+  a no-op `_on_cancel` on every engine but DirectComfy, and the flag is checked
+  *between* stream items — so a quiet provider (a long denoise, a model still
+  loading, an LLM thinking before its first token) kept generating, and billing,
+  until the next frame or the caller's timeout. One abort registry on the base
+  class now: each engine's loop publishes its interrupt (a fetcher-task cancel for
+  the four task engines, `response.aclose` for the three SSE engines, which
+  terminates the HTTP request — the only lever that actually stops an upstream
+  generation), `cancel_job` awaits it, and a test drives each engine's loop to
+  assert it registered. ModalTTS moved to the fetcher shape the other Modal
+  engines already used, because that is what gave it a lever at all.
 
 **Open after the pass** — the audit's §2. Its top item is
 `remote_agent/provider_core/downloads.py:899`, which puts the CivitAI token in

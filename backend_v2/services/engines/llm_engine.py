@@ -475,6 +475,14 @@ class OpenAICompatLLMEngine(InProcessEngine):
                 json=payload,
                 timeout=timeout,
             ) as response:
+                # Closing the response terminates the HTTP request itself, which
+                # is the only thing that actually stops the upstream generation —
+                # and what stops it being billed. The flag the loop checks is a
+                # *fallback* for the window before this registration and after the
+                # stream closes; an idle stream (a provider thinking before its
+                # first token) would otherwise sit there until the caller's
+                # timeout. `aclose` is awaited by the base, not fired as a task.
+                self.register_stream_abort(job_id, response)
                 if response.status_code != 200:
                     err_text = await response.aread()
                     err_msg = f"LLM upstream returned {response.status_code}: {err_text.decode('utf-8', 'ignore')}"
@@ -950,6 +958,11 @@ class ModalVLLMEngine(InProcessEngine):
                         await queue.put(_exc)
 
                 _task = asyncio.create_task(_fetcher())
+                # Interrupt the read on cancel, not just flag it: the flag is
+                # checked between updates, so a vLLM run that is slow to stream
+                # its first token kept generating after the user cancelled.
+                # Cancelling the fetcher closes the remote generator.
+                self.register_abort(job_id, _task.cancel)
                 try:
                     while True:
                         if job_id and job_id in self._cancelled_jobs:
@@ -1266,6 +1279,10 @@ class AnthropicLLMEngine(InProcessEngine):
                 json=payload,
                 timeout=timeout,
             ) as response:
+                # See OpenAICompatLLMEngine: closing the response is the only
+                # lever that stops the upstream generation and its billing; the
+                # flag the loop checks is the fallback around this registration.
+                self.register_stream_abort(job_id, response)
                 if response.status_code != 200:
                     err_text = await response.aread()
                     err_msg = f"Anthropic returned {response.status_code}: {err_text.decode('utf-8', 'ignore')}"
@@ -1507,6 +1524,9 @@ class GoogleLLMEngine(InProcessEngine):
                 json=payload,
                 timeout=timeout,
             ) as response:
+                # See OpenAICompatLLMEngine: closing the response is the only
+                # lever that stops the upstream generation and its billing.
+                self.register_stream_abort(job_id, response)
                 if response.status_code != 200:
                     err_text = await response.aread()
                     err_msg = redact_api_key(
