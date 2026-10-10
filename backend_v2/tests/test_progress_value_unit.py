@@ -90,29 +90,22 @@ async def test_a_declared_fraction_is_honoured_explicitly(reducer):
 async def test_every_worker_emits_the_unit_this_relies_on():
     """The backend's branch above is only sound if workers actually send it.
 
-    Parsed from the source rather than imported, because the emitting module is
-    the provider tier's and is not importable here.
+    The provider tier's `provider_core/utils.py` used to emit
+    `value_unit=PROGRESS_VALUE_UNIT` from `comfy_status_to_task_event`, but those
+    functions were dead code (removed 2026-10-09): `server.py` imports
+    `determine_download_token` and path helpers from the same module but never the
+    event translators. The in-process engines are the only live emission path,
+    and they are covered by `test_in_process_engines_emit_the_unit_this_relies_on`.
+
+    `TaskEvent` itself still declares `value_unit`, so the field is present on the
+    wire — the guard below checks that.
     """
     import pathlib
 
-    # `provider_containers/provider_core` moved to `remote_agent/provider_core`
-    # on 2026-10-09. The path was `parents[2] / "provider_containers"`, and a
-    # missing directory makes `rglob`/`exists()` answer False without raising —
-    # so this test skipped on every environment, including CI, while reading as
-    # coverage. It now resolves the tree that actually exists.
     root = pathlib.Path(__file__).resolve().parents[2] / "remote_agent"
-    if not (root / "provider_core" / "utils.py").exists():
+    if not (root / "provider_core" / "models.py").exists():
         pytest.skip("remote_agent/provider_core tree not mounted in this environment")
-    utils = (root / "provider_core" / "utils.py").read_text()
     models = (root / "provider_core" / "models.py").read_text()
-    assert 'value_unit=PROGRESS_VALUE_UNIT' in utils, (
-        "the single progress emission point no longer names the unit, so the "
-        "backend falls back to the heuristic this test exists to constrain"
-    )
-    assert 'PROGRESS_VALUE_UNIT = "percent"' in utils, (
-        "the unit sent is no longer 'percent'; the backend's face-value branch "
-        "would be wrong for whatever replaced it"
-    )
     assert "value_unit" in models, (
         "TaskEvent no longer declares value_unit, so it cannot be read off the "
         "wire at all"
