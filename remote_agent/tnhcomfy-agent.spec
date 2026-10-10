@@ -44,8 +44,8 @@ datas = [
     (PROVIDER_CORE, "provider_core"),
 ]
 
-# provider_core/__init__.py eagerly imports submodules (state, http_client,
-# reconciliation, logging, utils, downloads, validation, models). Explicit
+# provider_core/__init__.py eagerly imports submodules (http_client,
+# logging, utils, downloads, validation, models). Explicit
 # hiddenimports make collection robust regardless of whether PyInstaller's
 # static scan traces every `from .x import` inside __init__.
 hiddenimports = [
@@ -56,7 +56,6 @@ hiddenimports = [
     "provider_core.validation",
     "provider_core.models",
     "provider_core.http_client",
-    "provider_core.state",
     "provider_core.logging",
     "provider_core.auth",
     "provider_core.responses",

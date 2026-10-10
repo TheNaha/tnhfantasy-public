@@ -17,7 +17,7 @@ MIN_MODEL_SIZE = 10 * 1024
 # File signatures that we consider recognized for download validation.
 VALID_FILE_HEADERS = {
     b'{"__metadata__': "safetensors",
-    b"{": "safetensors/json",
+    b"{": "json",
     b"PK": "zip/ckpt",
     b"\x80\x04": "pickle",
     b"\x80\x05": "pickle5",
@@ -137,7 +137,7 @@ def validate_downloaded_file(
             validation_errors.append(f"Error reading header: {exc}")
             indeterminate = True
 
-    if "safetensors" in detected_format or path.endswith(".safetensors"):
+    if detected_format == "safetensors" or path.endswith(".safetensors"):
         if actual_size >= MIN_MODEL_SIZE and not validation_errors:
             try:
                 with open(path, 'rb') as f:

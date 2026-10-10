@@ -5,7 +5,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Query, Depends
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from provider_core.auth import bearer_from_header, token_matches
@@ -24,6 +24,9 @@ from provider_core.downloads import (
 )
 from provider_core.validation import validate_downloaded_file
 from provider_core.models import MODEL_DIRECTORIES
+from provider_core.logging import get_logger
+
+logger = get_logger("server")
 
 app = FastAPI(title="TNHComfy Remote Agent")
 
@@ -34,7 +37,12 @@ if not TOKEN and not ALLOW_INSECURE:
     raise RuntimeError("REMOTE_AGENT_TOKEN must be set unless REMOTE_AGENT_ALLOW_INSECURE=1")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
-DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "1800"))
+
+try:
+    DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "1800"))
+except ValueError:
+    logger.warning("DOWNLOAD_TIMEOUT is not an integer; falling back to 1800")
+    DOWNLOAD_TIMEOUT = 1800
 
 # The default bind was 0.0.0.0 (here, agentctl.sh:71, and
 # remote_agent/docker-compose.yml publishing 8001 on all interfaces), and
@@ -76,13 +84,12 @@ def _warn_insecure_bind() -> None:
     if not ALLOW_INSECURE:
         return
     requested = os.getenv("HOST", "0.0.0.0").strip() or "0.0.0.0"
-    print(
-        "WARNING: REMOTE_AGENT_ALLOW_INSECURE is set. The agent has NO "
-        "authentication: /delete-model, /delete-file, /upload-file and "
-        "/download-model will accept any caller that can reach it, and DATA_DIR is "
-        f"read-write. HOST={requested!r} -> binding {_resolve_bind_host()!r}. "
-        "Set REMOTE_AGENT_TOKEN to open it up; this flag is for local dev only.",
-        flush=True,
+    logger.warning(
+        "REMOTE_AGENT_ALLOW_INSECURE is set. The agent has NO authentication: "
+        "/delete-model, /delete-file, /upload-file and /download-model will accept "
+        "any caller that can reach it, and DATA_DIR is read-write. "
+        f"HOST={requested!r} -> binding {_resolve_bind_host()!r}. "
+        "Set REMOTE_AGENT_TOKEN to open it up; this flag is for local dev only."
     )
 
 # Concurrent /setup seeds. Below the 8 default seed URLs, and well below the
@@ -158,11 +165,10 @@ async def _bounded_to_thread(fn, /, *args, timeout_seconds: Optional[float] = No
         try:
             return await asyncio.wait_for(work, timeout=limit)
         except asyncio.TimeoutError as exc:
-            print(
+            logger.warning(
                 f"[thread] {getattr(fn, '__name__', fn)!r} exceeded {limit}s; "
                 f"the thread cannot be cancelled and will finish on its own, but "
-                f"this caller stops waiting",
-                flush=True,
+                f"this caller stops waiting"
             )
             raise ThreadCallTimeout(
                 f"off-thread call {getattr(fn, '__name__', fn)!r} did not finish "
@@ -174,7 +180,11 @@ async def _bounded_to_thread(fn, /, *args, timeout_seconds: Optional[float] = No
 # route's real traffic (input images, masks) and still finite. The JSON field is
 # checked at the encoded length (4/3 of this plus slack for the rest of the
 # document), because that is what Pydantic has in hand.
-UPLOAD_MAX_BYTES = int(os.getenv("REMOTE_AGENT_UPLOAD_MAX_BYTES", str(512 * 1024 * 1024)))
+try:
+    UPLOAD_MAX_BYTES = int(os.getenv("REMOTE_AGENT_UPLOAD_MAX_BYTES", str(512 * 1024 * 1024)))
+except (TypeError, ValueError):
+    logger.warning("REMOTE_AGENT_UPLOAD_MAX_BYTES is not an integer; falling back to 512 MiB")
+    UPLOAD_MAX_BYTES = 512 * 1024 * 1024
 UPLOAD_MAX_BYTES_ENCODED = (UPLOAD_MAX_BYTES // 3) * 4 + 4096
 
 
@@ -327,7 +337,7 @@ async def setup():
             try:
                 await _bounded_to_thread(_do)
             except Exception as e:
-                print(f"[setup] failed to seed {path}: {e}")
+                logger.warning(f"[setup] failed to seed {path}: {e}")
 
     await asyncio.gather(*[_seed(u, p) for u, p in zip(default_models, default_paths)])
     return ok("Setup complete", directories=directories)
@@ -353,8 +363,8 @@ async def download_model(req: DownloadRequest):
         try:
             with open(progress_file, "w") as f:
                 json.dump(payload, f)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"progress_callback: could not write {progress_file}: {exc}")
 
     def _do():
         try:
@@ -373,8 +383,8 @@ async def download_model(req: DownloadRequest):
     if os.path.exists(progress_file):
         try:
             os.remove(progress_file)
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.warning(f"could not remove progress file {progress_file}: {exc}")
     # `from_upstream`, not a bare pass-through: `download_model_to_path` answers
     # `{"status": "error", ...}` for a real failure, and forwarding that verbatim is
     # one of the dialects the shared response module exists to remove. A non-dict
@@ -476,8 +486,10 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
                     continue
                 invalid.append(model_info)
                 if delete_invalid:
-                    try: os.remove(full_path)
-                    except Exception: pass
+                    try:
+                        os.remove(full_path)
+                    except OSError as exc:
+                        logger.warning(f"could not delete invalid file {full_path}: {exc}")
                 # Was `else: continue` as the last statement of the loop body, so
                 # it was unreachable and `valid.append` below was the only thing
                 # that ran when the file *was* valid.
@@ -514,7 +526,6 @@ async def list_models(req: ListModelsRequest):
 
 
 @app.post("/delete-model", dependencies=[Depends(verify_token)])
-@app.post("/delete-file", dependencies=[Depends(verify_token)])
 async def delete_model(req: DeleteModelRequest):
     full_path = _data_path(req.path)
     if not os.path.exists(full_path) and not list(pending_download_paths(full_path)):
@@ -570,6 +581,35 @@ async def delete_model(req: DeleteModelRequest):
     return ok(f"Deleted {req.path}")
 
 
+@app.post("/delete-file", dependencies=[Depends(verify_token)])
+async def delete_file(req: DeleteModelRequest):
+    """Delete a single file only — no sidecar or pipeline-artifact sweep.
+
+    The backend's `direct_comfy_engine.py` calls `/delete-file` when it wants a
+    single path removed (e.g. a stale checkpoint the operator selected). The old
+    route shared a handler with `/delete-model`, which also removed `.json`,
+    `.preview.png`, `.sha256` sidecars and pipeline temp files — fine for a model
+    directory sweep, wrong for a single-file delete that the backend expects to
+    touch exactly one path.
+    """
+    full_path = _data_path(req.path)
+    if not os.path.exists(full_path) and not list(pending_download_paths(full_path)):
+        return failed("File not found", code=404)
+
+    def _do_remove(path: str):
+        if os.path.isdir(path):
+            return
+        os.remove(path)
+
+    try:
+        await _bounded_to_thread(_do_remove, full_path)
+    except FileNotFoundError:
+        return failed("File not found", code=404)
+    except OSError as exc:
+        return failed(f"Delete failed: {exc}")
+    return ok(f"Deleted {req.path}")
+
+
 @app.get("/get-file/{path:path}", dependencies=[Depends(verify_token)])
 async def get_file(path: str, type: str = Query(default="output"), subfolder: str = Query(default="")):
     """Stream a file from DATA_DIR.
@@ -591,11 +631,14 @@ async def get_file(path: str, type: str = Query(default="output"), subfolder: st
     for.
     """
     full_path = _data_path(os.path.join(subfolder, path) if subfolder else path)
-    if not os.path.exists(full_path) or not os.path.isfile(full_path):
+    if not os.path.isfile(full_path):
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
     max_bytes = get_file_size_cap()
-    size = os.path.getsize(full_path)
+    try:
+        size = os.path.getsize(full_path)
+    except OSError:
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
     if max_bytes >= 0 and size > max_bytes:
         raise HTTPException(
             status_code=413,

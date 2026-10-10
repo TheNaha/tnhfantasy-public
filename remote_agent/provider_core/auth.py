@@ -70,6 +70,10 @@ def bearer_from_header(value: str | None) -> str:
     Returns "" for a missing, empty, or non-Bearer value, so the caller always
     compares a string and never has to branch on the header's shape.
     """
-    if not value or not value.startswith("Bearer "):
+    if not value:
         return ""
-    return value[len("Bearer "):]
+    prefix = "bearer "
+    lowered = value[:len(prefix)].lower()
+    if lowered != prefix:
+        return ""
+    return value[len(prefix):]

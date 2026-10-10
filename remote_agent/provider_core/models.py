@@ -3,56 +3,9 @@ Shared Pydantic models for provider workers.
 These models define the API contract for all provider worker endpoints.
 """
 
-import os
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
-
-
-class InferenceRequest(BaseModel):
-    """Unified inference request for ALL worker types (image, llm, audio, video).
-
-    The worker dispatches on which payload fields are present:
-      - image jobs: ``workflow`` holds the ComfyUI graph.
-      - llm jobs: ``messages`` / ``tools`` / ``model`` hold the chat payload.
-    This replaces the old ComfyUI-shaped contract where LLM messages were
-    smuggled inside ``workflow``.
-    """
-    workflow: Optional[Dict[str, Any]] = None
-    messages: Optional[List[Dict[str, Any]]] = None
-    tools: Optional[List[Dict[str, Any]]] = None
-    model: Optional[str] = None
-    temperature: Optional[float] = None
-    # Extended sampling controls (LLM workers only; engines map what they support)
-    top_p: Optional[float] = None
-    max_output_tokens: Optional[int] = None
-    frequency_penalty: Optional[float] = None
-    presence_penalty: Optional[float] = None
-    use_snapshot: bool = False
-    job_id: Optional[str] = None
-    timeout_seconds: Optional[float] = None
-
-    # Which app to run this on, for providers that host more than one.
-    #
-    # `workflow` alone does not say: an image job and a TTS job are both a
-    # ComfyUI graph, differing only in the node types. The worker needs to be told
-    # or it sends both to the same Modal app — so a TTS job would land on the
-    # image worker and fail inside a container naming nodes that image image
-    # does not have. The backend already knows this (it is the `Job.task_type`
-    # it is dispatching) and sets it; a worker that does not host a second app
-    # ignores it.
-    #
-    # Optional rather than required, so an older backend talking to a newer
-    # worker — or any other caller of this schema — keeps working unchanged.
-    task_type: Optional[str] = None
-
-    @model_validator(mode="after")
-    def _ensure_payload_present(self):
-        if not (self.workflow or self.messages or self.tools or self.model):
-            raise ValueError(
-                "InferenceRequest requires at least one of: workflow, messages, tools, or model"
-            )
-        return self
+from pydantic import BaseModel
 
 
 class TaskEvent(BaseModel):
@@ -100,73 +53,6 @@ class TaskEvent(BaseModel):
 
     def to_ndjson(self) -> str:
         return self.model_dump_json() + "\n"
-
-
-class CancelJobRequest(BaseModel):
-    """Request for cancelling a running job."""
-    job_id: str
-
-
-class DownloadRequest(BaseModel):
-    """Request for downloading a model file."""
-    url: str
-    path: str
-    token: Optional[str] = None
-    preview_url: Optional[str] = None
-    metadata: Optional[Dict] = None
-    info: Optional[Dict] = None  # Deprecated: use `metadata` instead. Kept for backwards compatibility.
-
-
-class ListModelsRequest(BaseModel):
-    """Request for listing models in a directory."""
-    directory: str
-
-
-class DeleteModelRequest(BaseModel):
-    """Request for deleting a model file."""
-    path: str
-
-
-class DeleteFileRequest(BaseModel):
-    """Request for deleting a file."""
-    path: str
-
-
-def _upload_max_bytes() -> int:
-    """Parse PROVIDER_UPLOAD_MAX_BYTES defensively: a typo'd value must not
-    crash the worker at import (the backend twin get_upload_size_cap in
-    engines/base.py already degrades to the default)."""
-    try:
-        return int(os.getenv("PROVIDER_UPLOAD_MAX_BYTES", str(512 * 1024 * 1024)))
-    except (TypeError, ValueError):
-        return 512 * 1024 * 1024
-
-
-UPLOAD_MAX_BYTES = _upload_max_bytes()
-UPLOAD_MAX_BYTES_ENCODED = (UPLOAD_MAX_BYTES // 3) * 4 + 4096
-
-
-class UploadFileRequest(BaseModel):
-    """Request for uploading a file to provider storage."""
-    filename: str
-    content_base64: str = Field(..., max_length=UPLOAD_MAX_BYTES_ENCODED)
-    directory: str
-
-
-class ValidateModelsRequest(BaseModel):
-    """Request for validating models in one or more directories."""
-    directory: Union[str, List[str]]
-    delete_invalid: bool = False
-
-    @property
-    def directories(self) -> List[str]:
-        """Normalized list of directories to validate."""
-        return [self.directory] if isinstance(self.directory, str) else self.directory
-
-
-class ReconcileRequest(BaseModel):
-    """Request for reconciling models."""
-    quick_sync: bool = False
 
 
 class ErrorResponse(BaseModel):
