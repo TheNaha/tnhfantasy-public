@@ -77,6 +77,7 @@ EXPECTED_SHUTDOWN_PHASES = [
     "scheduler",
     "job_queue",
     "job_requeue",
+    "engines",
     "http_client",
 ]
 

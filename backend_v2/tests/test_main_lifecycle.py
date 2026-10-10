@@ -101,3 +101,57 @@ class TestMainLifecycle:
         finalize_mock.assert_awaited_once()
         assert finalize_mock.await_args.kwargs["job_id"] == job_id
         assert finalize_mock.await_args.kwargs["provider_id"] == "provider-a"
+
+
+class TestStartupRecoveryOrder:
+    """Mid-finalisation recovery must run before the claim sweep.
+
+    `QueueManager.recover`'s Postgres path runs `_reset_claims_and_requeue_sync`,
+    whose UPDATE includes POST_PROCESSING (it is in `ACTIVE_JOB_STATUSES`) and sets
+    those rows back to PENDING with no claim markers — and PENDING-with-no-claim
+    is the claim predicate. Run the sweep first and `recover_post_processing_jobs`
+    then queries `status == POST_PROCESSING` and finds nothing: the job that had
+    already paid for its images is queued and regenerated from scratch, and the
+    outputs the first finalization was mid-way through writing get overwritten.
+
+    Shutdown deliberately protects these rows on the way out
+    (`requeue_inflight_jobs_for_shutdown` excludes POST_PROCESSING/RETRYING), so
+    starting in the wrong order undoes that protection on every single boot.
+    """
+
+    @pytest.mark.asyncio
+    async def test_post_processing_recovery_runs_before_the_claim_sweep(self, monkeypatch):
+        import api.lifecycle as lifecycle
+
+        order = []
+
+        async def _fake_post_processing(*args, **kwargs):
+            order.append("post_processing")
+            return 0
+
+        async def _fake_pending(*args, **kwargs):
+            order.append("claim_sweep")
+            return 0
+
+        monkeypatch.setattr(
+            lifecycle, "recover_post_processing_jobs", _fake_post_processing
+        )
+        monkeypatch.setattr(lifecycle, "recover_pending_jobs", _fake_pending)
+
+        await lifecycle._run_job_recovery_phase()
+
+        assert order == ["post_processing", "claim_sweep"], (
+            "the claim sweep resets POST_PROCESSING rows to PENDING, so running it "
+            f"first empties the post-processing recovery pass (got {order})"
+        )
+
+    def test_the_claim_sweep_really_does_include_post_processing(self):
+        """The premise of the ordering, asserted directly rather than assumed.
+
+        If POST_PROCESSING is ever dropped from ACTIVE_JOB_STATUSES the ordering
+        stops mattering — and the comment above the call would be lying, which is
+        the failure mode this whole pass exists to catch.
+        """
+        from core.entities import ACTIVE_JOB_STATUSES, JobStatus
+
+        assert JobStatus.POST_PROCESSING in ACTIVE_JOB_STATUSES

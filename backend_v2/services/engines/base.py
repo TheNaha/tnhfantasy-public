@@ -537,6 +537,18 @@ class InProcessEngine(ABC):
                 self._cancelled_jobs.discard(job_id)
                 if _ACTIVE_JOB_ENGINES.get(job_id) is self:
                     _ACTIVE_JOB_ENGINES.pop(job_id, None)
+            # If this engine was invalidated mid-job (credentials rotated, provider
+            # PATCHed), its close was deferred to here — closing it earlier would
+            # have aborted the stream on a connection the provider had already been
+            # paid for. Import is local: base must not import engine_factory, which
+            # imports base.
+            if not self._active_jobs:
+                try:
+                    from services.engines.engine_factory import drain_pending_engine_closes
+
+                    drain_pending_engine_closes(self)
+                except Exception:
+                    pass
 
     #: A rig the engine cannot write to (plain Direct ComfyUI) still gets a
     #: reconciliation pass: list what is loadable and mark those registry

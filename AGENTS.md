@@ -160,9 +160,11 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 
 - `docs/` has architecture, backend, frontend, deployment, and API reference.
  - `docs/STATUS.md` is the authoritative project status and what-is-still-open list.
-   `docs/audit-2026-10-10.md` is the most recent code audit — a *delta* pass scoped
-   to what the 2026-10-08 engine consolidation left behind. For anything that
-   predates 10-08, `docs/audit-2026-10-05.md` remains the reference; it in turn
+   `docs/audit-2026-10-10b.md` is the most recent code audit — a pass scoped to the
+   in-process compute tier (`services/engines/`) that the 10-08 consolidation made
+   the only execution path. `docs/audit-2026-10-10.md` is the *delta* pass scoped
+   to what the 10-08 consolidation left behind in the rest of the tree. For anything
+   that predates 10-08, `docs/audit-2026-10-05.md` remains the reference; it in turn
    supersedes `docs/audit-2026-10-04b.md` and `docs/audit-2026-10-04.md`; all three
    supersede `docs/audit-2026-10-03b.md`, `docs/audit-2026-10-03.md`,
    `docs/audit-2026-10-01.md`, `docs/audit-2026-09-29b.md`,

@@ -875,8 +875,17 @@ class TestStartupRecoveryOrder:
         import re
 
         src = inspect.getsource(lifecycle.startup_application)
-        order = re.findall(r"await (recover_\w+)\(\)", src)
-        assert order == ["recover_pending_jobs", "recover_post_processing_jobs"], (
+        order = re.findall(r"(?:await )?(recover_\w+)\(\)", src)
+        # This assertion used to read ["recover_pending_jobs",
+        # "recover_post_processing_jobs"] — the failing order, asserted against
+        # its own docstring. The calls moved into `_run_job_recovery_phase`, so
+        # read that function too: a guard pinned to one symbol stops guarding
+        # the moment the code is refactored, which is the failure mode this
+        # whole audit class exists to catch.
+        phase_src = inspect.getsource(lifecycle._run_job_recovery_phase)
+        phase_order = re.findall(r"await (recover_\w+)\(\)", phase_src)
+        order = phase_order or order
+        assert order == ["recover_post_processing_jobs", "recover_pending_jobs"], (
             "recover_pending_jobs() resets POST_PROCESSING rows to PENDING with the "
             "claim cleared, so it must run AFTER the post-processing jobs have "
             f"been finalised; startup order is {order}"

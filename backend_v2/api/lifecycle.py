@@ -299,24 +299,7 @@ async def startup_application(process_job, ws_manager):
     )
 
     logger.info("startup_init", phase="job_recovery")
-    # Order is load-bearing, and it is the opposite of how it read.
-    #
-    # `recover_pending_jobs` calls `QueueManager.recover`, whose Postgres path runs
-    # `_reset_claims_and_requeue_sync`: an UPDATE that sets every job in
-    # SENT_TO_PROVIDER / CONNECTED / PRE_GENERATION / GENERATING /
-    # **POST_PROCESSING** / RETRYING back to PENDING and clears its claim markers
-    # (`services/job_queue.py`). PENDING-with-no-claim IS the claim predicate, so
-    # once that sweep has run, a live worker will pick the job up and re-run the
-    # entire PAID generation.
-    #
-    # So the jobs that were mid-finalisation must be finished or failed BEFORE the
-    # sweep. Run the other way round, a job that died part-way through
-    # post-processing — outputs already persisted on the provider, reconciliation
-    # not yet done — was first reset to PENDING and then queued, and the worker
-    # re-generated the images that were already paid for and overwrote the
-    # outputs the first finalization was in the middle of writing.
-    await recover_pending_jobs()
-    await recover_post_processing_jobs()
+    await _run_job_recovery_phase()
 
     logger.info("startup_init", phase="scheduler")
     start_scheduler()
@@ -422,6 +405,29 @@ async def startup_application(process_job, ws_manager):
     }
 
 
+async def _shutdown_engine_cache() -> None:
+    """Close every cached engine's client before the shared HTTP client goes.
+
+    Every cached engine owns its own httpx or Modal client — Beam, DirectComfy,
+    the LLM engines, and the two Modal engines. `clear_engine_cache` had **no
+    production caller at all**: its docstring named this shutdown path, and the
+    path did not exist. Those pools were leaked until the process exited, and
+    with a 30-minute engine TTL they accumulated across every credential
+    rotation on top of that.
+
+    An engine that still has a job streaming through it is deferred, not closed,
+    so this cannot abort a generation the provider already billed — the close
+    lands when the last job finishes. Never raises: shutdown must reach the
+    http-client step below.
+    """
+    try:
+        from services.engines.engine_factory import clear_engine_cache
+
+        clear_engine_cache()
+    except Exception as exc:
+        logger.warning("shutdown_engine_cache_failed", error=str(exc))
+
+
 async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task) -> None:
     """Run application shutdown side effects in a controlled order."""
     logger.info("shutdown", phase="websocket")
@@ -455,10 +461,36 @@ async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task
     except Exception as exc:
         logger.warning("shutdown_job_requeue_failed", error=str(exc))
 
+    logger.info("shutdown", phase="engines")
+    await _shutdown_engine_cache()
+
     logger.info("shutdown", phase="http_client")
     await close_http_client()
 
     logger.info("shutdown_complete")
+
+
+async def _run_job_recovery_phase() -> None:
+    """Resume interrupted jobs at boot — post-processing first, then the sweep.
+
+    Order is load-bearing. `recover_pending_jobs` calls `QueueManager.recover`,
+    whose Postgres path runs `_reset_claims_and_requeue_sync`: an UPDATE that sets
+    every job in SENT_TO_PROVIDER / CONNECTED / PRE_GENERATION / GENERATING /
+    POST_PROCESSING / RETRYING back to PENDING and clears its claim markers. That
+    includes POST_PROCESSING, and PENDING-with-no-claim IS the claim predicate, so
+    once the sweep has run a live worker picks the job up and re-runs the entire
+    PAID generation.
+
+    So the jobs that were mid-finalisation must be finished or failed BEFORE the
+    sweep — otherwise `recover_post_processing_jobs` queries `status ==
+    POST_PROCESSING` and finds nothing, because the sweep just moved them all. The
+    images that were already paid for get regenerated and the outputs the first
+    finalization was mid-way through writing get overwritten. Shutdown protects
+    these rows on the way out (`requeue_inflight_jobs_for_shutdown` excludes
+    POST_PROCESSING/RETRYING); starting in the wrong order undoes that protection.
+    """
+    await recover_post_processing_jobs()
+    await recover_pending_jobs()
 
 
 async def recover_post_processing_jobs(process_image_background_fn=None) -> int:

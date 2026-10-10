@@ -232,6 +232,12 @@ class DirectComfyEngine(InProcessEngine):
         self._object_info_cache: Optional[tuple[float, Dict[str, Any]]] = None
         self._object_info_lock = asyncio.Lock()
         self._object_info_ttl = _object_info_cache_ttl()
+        # job_id -> prompt_id, and prompt_id -> job_id for interrupts. ComfyUI's
+        # `/interrupt` is global to the instance, so a cancel has to be attributed
+        # to the prompt that was streaming, or a sibling job's cancel is reported
+        # as this job's and a real completion looks like a cancellation.
+        self._job_prompt_ids: Dict[str, str] = {}
+        self._interrupted_prompts: Dict[str, str] = {}
 
     @property
     def _has_agent(self) -> bool:
@@ -283,11 +289,20 @@ class DirectComfyEngine(InProcessEngine):
         this for jobs currently streaming through ``run_inference`` — the
         old override fired unconditionally and could kill another job's
         prompt (remote_comfy legacy interrupted only its active job)."""
+        # Attribute the interrupt to this job's prompt before POSTing, so the
+        # loop's post-break check can tell "my cancel arrived" from "a sibling
+        # job's interrupt arrived" — ComfyUI answers /interrupt with the same
+        # `executing {node: null}` frame either way.
+        prompt_id = self._job_prompt_ids.get(job_id)
+        if prompt_id:
+            self._interrupted_prompts[prompt_id] = job_id
         client = self.get_http_client()
         try:
             await client.post("/interrupt", timeout=5.0)
         except Exception as exc:
             logger.warning("direct_comfy_interrupt_failed", provider_id=self.provider_id, job_id=job_id, error=str(exc))
+            if prompt_id:
+                self._interrupted_prompts.pop(prompt_id, None)
 
     def get_http_client(self) -> httpx.AsyncClient:
         """Lazily initialize or retrieve the shared httpx.AsyncClient."""
@@ -441,7 +456,19 @@ class DirectComfyEngine(InProcessEngine):
                     choices = model_list[0] if isinstance(model_list[0], list) else model_list
                     for model_name in choices:
                         if isinstance(model_name, str) and model_name:
-                            paths.append(f"{target_dir}/{model_name}")
+                            # `models/`-prefixed, matching what every consumer of
+                            # this list expects: `get_all_storage_paths` builds
+                            # `models/{model.directory}/{filename}` and matches on
+                            # it (`model_repo_v2.py`), the maintenance scan uses the
+                            # same shape, and the agent branch reports `path` as
+                            # `os.path.relpath(..., DATA_DIR)` which already carries
+                            # the prefix. `target_dir` is bare after
+                            # `_normalize_directory`, so without the prefix the
+                            # no-agent rig's discovery matched nothing at all — files
+                            # stayed pending forever and counted as orphaned on every
+                            # tick, and `_storage_path_for_entry` had to undo the
+                            # damage one level up.
+                            paths.append(f"models/{target_dir}/{model_name}")
         return sorted(set(paths))
 
     async def list_models(self, directory: str) -> List[Dict[str, Any]]:
@@ -488,7 +515,16 @@ class DirectComfyEngine(InProcessEngine):
             doc = await self._fetch_object_info()
             paths = self._iter_object_info_model_paths(doc, directory)
             return [
-                {"name": path.split("/", 1)[-1], "path": path, "type": "file", "size": 0}
+                # Basename, not "everything after the first segment": `path` now
+                # carries `models/` as well as the directory, so a split-from-the-left
+                # would leave `name` as `checkpoints/foo.safetensors` — a filename
+                # no consumer can match, and one the reconciler would store.
+                {
+                    "name": os.path.basename(path),
+                    "path": path,
+                    "type": "file",
+                    "size": 0,
+                }
                 for path in paths
             ]
         except EngineAuthError:
@@ -938,6 +974,12 @@ class DirectComfyEngine(InProcessEngine):
                     err_msg = data.get("error", "No prompt_id returned by ComfyUI")
                     yield {"event": "failed", "job_id": job_id, "message": str(err_msg), "retryable": True}
                     return
+                # Remember which prompt belongs to this job. `/interrupt` is
+                # global to the ComfyUI instance, so it is the frame *arriving
+                # interval*, not the flag, that says whether THIS prompt died;
+                # a sibling job's interrupt must not be reported as this one.
+                if job_id:
+                    self._job_prompt_ids[job_id] = prompt_id
 
                 # Last node seen: the stall message names it, as the old
                 # workflow_executor did, so a hung graph is diagnosable.
@@ -1016,6 +1058,25 @@ class DirectComfyEngine(InProcessEngine):
                         elif msg_type == "execution_error":
                             yield {"event": "failed", "job_id": job_id, "message": str(msg_data), "retryable": False}
                             return
+
+                # Re-check the cancel flag before treating a broken loop as
+                # "Completed". `cancel_job` sets the flag and `_on_cancel` POSTs
+                # /interrupt, which makes ComfyUI emit `executing {node: null}` —
+                # the same frame a finished prompt emits. That hits the `break`
+                # above and falls straight through to the history fetch and
+                # `completed`, so a cancelled job was finalised as a SUCCESS with
+                # its outputs persisted, while the caller believed it had stopped
+                # the provider. The loop-top check never runs again after a break.
+                if job_id and job_id in self._cancelled_jobs:
+                    self._cancelled_jobs.discard(job_id)
+                    yield {"event": "cancelled", "job_id": job_id, "message": "Job cancelled"}
+                    return
+                if job_id and self._interrupted_prompts.get(prompt_id) == job_id:
+                    # This job's own interrupt arrived, but the flag was already
+                    # consumed by the loop-top check on a previous iteration.
+                    self._interrupted_prompts.pop(prompt_id, None)
+                    yield {"event": "cancelled", "job_id": job_id, "message": "Job cancelled"}
+                    return
 
                 # Completed: fetch results from /history/{prompt_id}
                 hist_resp = await client.get(f"/history/{prompt_id}", timeout=10.0)
@@ -1110,3 +1171,11 @@ class DirectComfyEngine(InProcessEngine):
                     "code": int(code) if isinstance(code, int) else 500,
                     "details": {"reason": "websocket_error", "prompt_id": locals().get("prompt_id")},
                 }
+        finally:
+            # `_job_prompt_ids` and `_interrupted_prompts` are per-job scratch:
+            # without this they grow for the life of the process, one entry per
+            # job ever run through this engine.
+            if job_id:
+                prompt_id = self._job_prompt_ids.pop(job_id, None)
+                if prompt_id:
+                    self._interrupted_prompts.pop(prompt_id, None)

@@ -102,6 +102,15 @@ def translate_messages_anthropic(raw_messages: Any) -> tuple[List[Dict[str, Any]
     Assistant ``tool_calls`` become ``tool_use`` blocks; ``role == "tool"``
     results become ``tool_result`` blocks on a user turn. System turns are
     folded into a separate system prompt string.
+
+    The result is normalised to Anthropic's alternating-role requirement *here*,
+    not at the call site. OpenAI history permits consecutive same-role turns and
+    SillyTavern produces them freely, but Anthropic rejects the first such pair
+    with HTTP 400 — which `retryable_for_status(400)` does not mark retryable,
+    so the job failed permanently on any history with two parallel tool results
+    (two consecutive `tool` rows) or two adjacent user turns. All the
+    `tool_result` blocks of one assistant `tool_use` turn also have to travel in
+    a *single* user message, or the same 400 comes back.
     """
     system_prompt = ""
     messages: List[Dict[str, Any]] = []
@@ -147,7 +156,56 @@ def translate_messages_anthropic(raw_messages: Any) -> tuple[List[Dict[str, Any]
             })
             continue
         messages.append(m)
-    return messages, system_prompt
+    return _normalize_anthropic_messages(messages), system_prompt
+
+
+def _normalize_anthropic_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Coerce a translated message list to Anthropic's alternating-role contract.
+
+    Three rules, all enforced by the API's 400 rather than by the transport:
+
+    1. Consecutive same-role turns are merged. User turns concatenate their
+       content blocks — which is how the `tool_result` blocks of one assistant
+       `tool_use` turn end up in a single message — and assistant turns
+       concatenate their text.
+    2. The first message must be a user turn. A history that opens with
+       `tool`/`assistant` (a resumed conversation, a tool result for a call from
+       before the window) gets a placeholder user turn in front of it rather than
+       being reordered: reordering tool results away from their assistant turn
+       would fail the pairing instead.
+    3. Empty turns are dropped, which Anthropic also rejects.
+
+    Called from `translate_messages_anthropic` so every caller of the translator
+    gets it; keeping it out of the per-engine loops is what stops the next engine
+    copy from re-introducing the bug.
+    """
+    if not messages:
+        return messages
+
+    merged: List[Dict[str, Any]] = []
+    for msg in messages:
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = msg.get("content")
+        if content in (None, "", []):
+            continue
+        if merged and merged[-1]["role"] == role:
+            previous = merged[-1]
+            previous_content = previous.get("content")
+            incoming = content if isinstance(content, list) else [{"type": "text", "text": content}]
+            if isinstance(previous_content, list):
+                previous_content.extend(incoming)
+            elif previous_content is None:
+                previous["content"] = incoming
+            else:
+                previous["content"] = [{"type": "text", "text": previous_content}] + incoming
+            continue
+        merged.append({"role": role, "content": content})
+
+    if merged and merged[0]["role"] != "user":
+        merged.insert(0, {"role": "user", "content": [{"type": "text", "text": "."}]})
+    return merged
 
 
 def translate_tools_google(tools: Any) -> List[Dict[str, Any]]:

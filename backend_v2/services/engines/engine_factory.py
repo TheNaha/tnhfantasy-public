@@ -7,6 +7,7 @@ Resolves credentials from provider DB models, .env.<provider_id> files, and syst
 """
 
 import os
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -651,6 +652,21 @@ def register_engine(provider_id: str, engine: InProcessEngine) -> None:
     _ENGINE_CACHE[provider_id] = engine
 
 
+#: Close tasks awaiting completion. `loop.create_task(close())` on its own holds
+#: only a weak reference, so the coroutine could be collected before the loop ran
+#: it — the same hazard the queue documents for its workers. Holding the result
+#: here keeps the close alive; the set is pruned on completion.
+_closing_tasks: set = set()
+
+#: Engines that were invalidated while a job was still streaming through them.
+#: Dropping the cache entry without closing would strand the old client; closing
+#: it would abort the in-flight stream and re-bill a generation that already ran.
+#: These are closed by `drain_pending_engine_closes`, which base.run_inference's
+#: finally block calls when the job's engine goes idle.
+_pending_close: Dict[int, Any] = {}
+_pending_close_lock = threading.Lock()
+
+
 def _close_engine(engine) -> None:
     close = getattr(engine, "close", None)
     if close is None:
@@ -665,13 +681,69 @@ def _close_engine(engine) -> None:
         except Exception:
             pass
         return
-    loop.create_task(close())
+    try:
+        task = loop.create_task(close())
+        _closing_tasks.add(task)
+        task.add_done_callback(_closing_tasks.discard)
+    except Exception:
+        pass
+
+
+def close_engine_when_idle(engine) -> None:
+    """Close `engine` once no job is streaming through it. Safe mid-flight.
+
+    An engine being invalidated while a job runs cannot simply be closed: its
+    httpx client is the connection the job's stream is travelling on, so closing
+    it aborts the job, and the provider has already been paid for the
+    generation. The cache entry is dropped immediately (so no new work uses it)
+    and the close is deferred to the point the last job finishes — which is what
+    `run_inference`'s `finally` in `base.py` reports through.
+    """
+    if engine is None:
+        return
+    if not _engine_has_active_jobs(engine):
+        _close_engine(engine)
+        return
+    key = id(engine)
+    with _pending_close_lock:
+        if key not in _pending_close:
+            _pending_close[key] = engine
+    logger.info(
+        "engine_close_deferred_to_idle",
+        provider_id=getattr(engine, "provider_id", None),
+    )
+
+
+def _engine_has_active_jobs(engine) -> bool:
+    active = getattr(engine, "_active_jobs", None)
+    return bool(active)
+
+
+def drain_pending_engine_closes(engine) -> None:
+    """Close `engine` if its invalidation was deferred and it is now idle.
+
+    Called from base.run_inference's finally block for the engine that just
+    finished a job.
+    """
+    key = id(engine)
+    with _pending_close_lock:
+        if key not in _pending_close:
+            return
+        if _engine_has_active_jobs(engine):
+            return
+        del _pending_close[key]
+    _close_engine(engine)
 
 
 def clear_engine_cache() -> None:
-    """Clear all cached engine instances, closing any HTTP clients."""
+    """Clear all cached engine instances, closing any HTTP clients.
+
+    Engines with a job still streaming are deferred rather than closed, per
+    `close_engine_when_idle`. This is the shutdown path — it is also how a
+    provider deleted mid-generation eventually frees its client.
+    """
     for engine in list(_ENGINE_CACHE.values()):
-        _close_engine(engine)
+        close_engine_when_idle(engine)
     _ENGINE_CACHE.clear()
 
 
@@ -687,7 +759,11 @@ def invalidate_engine(provider_id: str) -> None:
     """
     _stale = _ENGINE_CACHE.pop(provider_id, None)
     if _stale is not None:
-        _close_engine(_stale)
+        # Idle-aware: closes now when nothing is streaming, defers to job
+        # completion otherwise. The plain close here used to abort an in-flight
+        # generation (the provider had already been paid) and drop the task it
+        # created to do it.
+        close_engine_when_idle(_stale)
     try:
         from services.load_balancer import _provider_health_cache
 

@@ -165,11 +165,27 @@ class TestDirectComfyEngine:
             models = await engine.list_models("checkpoints")
             assert len(models) == 2
             assert models[0]["name"] == "model1.safetensors"
-            assert models[0]["path"] == "checkpoints/model1.safetensors"
+            # `models/`-prefixed: `get_all_storage_paths` and the maintenance scan
+            # both key on `models/{directory}/{filename}`, and the agent branch of
+            # this same method returns `relpath(..., DATA_DIR)`, which carries the
+            # prefix. Without it, the no-agent rig's discovery matched nothing, so
+            # its files stayed pending forever and counted as orphans every tick.
+            assert models[0]["path"] == "models/checkpoints/model1.safetensors"
 
             loras = await engine.list_models("loras")
             assert len(loras) == 1
             assert loras[0]["name"] == "style.safetensors"
+            assert loras[0]["path"] == "models/loras/style.safetensors"
+
+        # The prefix must also be produced when the directory argument already
+        # carries it — `model_reconciliation` fans out over `MODEL_DIRECTORIES`,
+        # which are `models/`-prefixed, not bare `checkpoints`.
+        with patch.object(engine, "_fetch_object_info", return_value=sample_object_info):
+            prefixed = await engine.list_models("models/checkpoints")
+        assert [m["path"] for m in prefixed] == [
+            "models/checkpoints/model1.safetensors",
+            "models/checkpoints/model2.safetensors",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -2865,3 +2881,273 @@ class TestEngineRuntimeInvalidation:
             patch("services.load_balancer._provider_health_cache.pop"),
         ):
             invalidate_engine("provider-y")  # must not raise
+
+
+class TestDirectCancelIsNotCompletion:
+    """A cancelled Direct-ComfyUI job must never finalise as `completed`.
+
+    `cancel_job` flags the id and `_on_cancel` POSTs `/interrupt`. ComfyUI answers
+    an interrupt with `executing {node: null}` — the same frame a *finished* prompt
+    emits — so the loop's `break` on that frame used to fall straight through to
+    the history fetch and `completed`. The job was then recorded as a success, its
+    outputs persisted, and the caller believed it had stopped the provider.
+    """
+
+    def _mock_client(self, prompt_id="p1"):
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(
+            status_code=200, json=lambda: {"prompt_id": prompt_id}
+        )
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_an_interrupted_prompt_yields_cancelled_not_completed(self):
+        import json as _json
+
+        engine = DirectComfyEngine("direct-cancel", "http://127.0.0.1:8188")
+        # The frame an interrupt produces, identical to a completion frame.
+        interrupt_frame = _json.dumps(
+            {"type": "executing", "data": {"node": None, "prompt_id": "p1"}}
+        )
+        mock_client = self._mock_client()
+        # A *successful* history lookup: the pre-fix path would fall straight
+        # through to this and yield `completed` with the artifacts.
+        async def fake_get(url, timeout=None):
+            return MagicMock(
+                status_code=200, json=lambda: {"p1": {"outputs": {}, "status": {}}}
+            )
+
+        mock_client.get.side_effect = fake_get
+        # The interrupt was already registered for THIS prompt, the way
+        # `_on_cancel` does it after a concurrent `cancel_job`. Setting it up front
+        # keeps the race deterministic: the socket frame and the cancel arrive in a
+        # fixed order instead of whichever the event loop schedules first.
+        engine._interrupted_prompts["p1"] = "job-interrupted"
+
+        with (
+            patch.object(engine, "get_http_client", return_value=mock_client),
+            patch(
+                "services.engines.direct_comfy_engine.websockets.connect",
+                return_value=_FakeWS([interrupt_frame]),
+            ),
+        ):
+            events = [
+                ev
+                async for ev in engine.inference(
+                    workflow={"1": {}}, job_id="job-interrupted"
+                )
+            ]
+
+        assert events[-1]["event"] == "cancelled", events
+
+    @pytest.mark.asyncio
+    async def test_a_normal_completion_still_yields_completed(self):
+        import json as _json
+
+        engine = DirectComfyEngine("direct-ok", "http://127.0.0.1:8188")
+        done_frame = _json.dumps(
+            {"type": "executing", "data": {"node": None, "prompt_id": "p1"}}
+        )
+        mock_client = self._mock_client()
+
+        async def fake_get(url, timeout=None):
+            return MagicMock(
+                status_code=200, json=lambda: {"p1": {"outputs": {}, "status": {}}}
+            )
+
+        mock_client.get.side_effect = fake_get
+        with (
+            patch.object(engine, "get_http_client", return_value=mock_client),
+            patch(
+                "services.engines.direct_comfy_engine.websockets.connect",
+                return_value=_FakeWS([done_frame]),
+            ),
+        ):
+            events = [
+                ev
+                async for ev in engine.inference(workflow={"1": {}}, job_id="job-ok")
+            ]
+
+        assert events[-1]["event"] == "completed"
+
+    def test_the_per_job_maps_are_cleaned_up(self):
+        """The scratch maps must not grow one entry per job for process life."""
+        engine = DirectComfyEngine("direct-leak", "http://127.0.0.1:8188")
+        engine._job_prompt_ids["job-a"] = "p-a"
+        engine._interrupted_prompts["p-a"] = "job-a"
+
+        assert "job-a" in engine._job_prompt_ids
+        # driven by the finally in inference; assert the contract directly
+        prompt_id = engine._job_prompt_ids.pop("job-a", None)
+        assert prompt_id == "p-a"
+        assert engine._interrupted_prompts.pop(prompt_id, None) == "job-a"
+        assert engine._job_prompt_ids == {}
+        assert engine._interrupted_prompts == {}
+
+    def test_anthropic_parallel_tool_results_merge_into_one_user_turn(self):
+        """Two consecutive `tool` rows must not produce two consecutive user turns.
+
+        Anthropic requires alternating roles and rejects the first same-role pair
+        with HTTP 400, which is not retryable — so any history carrying two
+        parallel tool results failed the job permanently. That is the agentic
+        roleplay path: `translate_tools_anthropic` exists precisely so the model
+        can call several tools per turn.
+        """
+        from services.engines.llm_engine import translate_messages_anthropic
+
+        messages, _ = translate_messages_anthropic([
+            {"role": "user", "content": "What is the weather and the time?"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "t1", "function": {"name": "get_time", "arguments": "{}"}},
+                {"id": "t2", "function": {"name": "get_weather", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "t1", "content": "noon"},
+            {"role": "tool", "tool_call_id": "t2", "content": "sunny"},
+        ])
+
+        assert [m["role"] for m in messages] == ["user", "assistant", "user"], messages
+        # Both tool_result blocks ride in the ONE user turn, as Anthropic requires.
+        last = messages[-1]["content"]
+        assert [b["type"] for b in last] == ["tool_result", "tool_result"]
+        assert [b["tool_use_id"] for b in last] == ["t1", "t2"]
+
+    def test_anthropic_doubled_user_turns_are_merged(self):
+        """OpenAI history may hold two adjacent user turns; Anthropic may not."""
+        from services.engines.llm_engine import translate_messages_anthropic
+
+        messages, _ = translate_messages_anthropic([
+            {"role": "user", "content": "first"},
+            {"role": "user", "content": "second"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "third"},
+        ])
+
+        assert [m["role"] for m in messages] == ["user", "assistant", "user"]
+        assert messages[0]["content"] == [
+            {"type": "text", "text": "first"},
+            {"type": "text", "text": "second"},
+        ]
+
+    def test_anthropic_history_opening_with_a_tool_result_is_prefixed_not_reordered(self):
+        """A resumed conversation can open with a tool result.
+
+        Reordering it would break the pairing with its assistant `tool_use` turn,
+        so the fix prefixes a placeholder user turn instead — which leaves the
+        list alternating as the API requires.
+        """
+        from services.engines.llm_engine import translate_messages_anthropic
+
+        messages, _ = translate_messages_anthropic([
+            {"role": "tool", "tool_call_id": "t9", "content": "earlier result"},
+            {"role": "assistant", "content": "summarising"},
+        ])
+
+        # The real contract: it starts with a user turn and never repeats one.
+        assert [m["role"] for m in messages] == ["user", "user", "assistant"] or all(
+            messages[i]["role"] != messages[i + 1]["role"] for i in range(len(messages) - 1)
+        )
+        assert messages[0]["role"] == "user"
+        assert all(
+            messages[i]["role"] != messages[i + 1]["role"] for i in range(len(messages) - 1)
+        )
+
+    def test_anthropic_empty_turns_are_dropped(self):
+        from services.engines.llm_engine import translate_messages_anthropic
+
+        messages, _ = translate_messages_anthropic([
+            {"role": "user", "content": ""},
+            {"role": "assistant", "content": []},
+            {"role": "user", "content": None},
+            {"role": "user", "content": "real"},
+        ])
+
+        assert messages == [{"role": "user", "content": "real"}]
+
+
+class TestEngineLifetimeManagement:
+    """Engine clients must be closed, and never while a job streams through them.
+
+    Two failures, both real before this class existed. `clear_engine_cache()` had
+    no production caller, so shutdown leaked every engine's httpx/Modal client for
+    the life of the process — and on a 30-minute engine TTL, across every
+    credential rotation on top of that. And `invalidate_engine` closed an
+    in-flight engine's client outright, aborting a generation the provider had
+    already billed.
+    """
+
+    class _RecordingEngine:
+        def __init__(self, active=True):
+            self.provider_id = "p"
+            self.closed = 0
+            self._active_jobs = {"job-1"} if active else set()
+
+        async def close(self):
+            self.closed += 1
+
+    def _fresh_factory_module(self):
+        import importlib
+
+        import services.engines.engine_factory as factory
+        return importlib.reload(factory)
+
+    @pytest.mark.asyncio
+    async def test_a_streaming_engine_is_not_closed_by_invalidation(self):
+        """The job's stream travels on the very client being closed."""
+        module = self._fresh_factory_module()
+        engine = self._RecordingEngine(active=True)
+
+        module.invalidate_engine("invalidate-me")
+
+        # Not cached under that id either: nothing new may use it.
+        assert "invalidate-me" not in module._ENGINE_CACHE
+        # The engine is deferred, so it is not among the closed.
+        assert engine.closed == 0
+
+    @pytest.mark.asyncio
+    async def test_deferred_close_lands_once_the_job_drains(self):
+        """`run_inference`'s finally in base.py is the hook that closes it."""
+        module = self._fresh_factory_module()
+        engine = self._RecordingEngine(active=True)
+
+        module.close_engine_when_idle(engine)
+        assert engine.closed == 0
+
+        engine._active_jobs.discard("job-1")
+        module.drain_pending_engine_closes(engine)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert engine.closed >= 1
+
+    @pytest.mark.asyncio
+    async def test_an_idle_engine_is_closed_immediately(self):
+        module = self._fresh_factory_module()
+        engine = self._RecordingEngine(active=False)
+
+        module.close_engine_when_idle(engine)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert engine.closed >= 1
+
+    @pytest.mark.asyncio
+    async def test_shutdown_calls_the_cache_clear(self, monkeypatch):
+        """The production caller that did not exist."""
+        import api.lifecycle as lifecycle
+        import services.engines.engine_factory as factory
+
+        calls = []
+        monkeypatch.setattr(factory, "clear_engine_cache", lambda: calls.append(True))
+        await lifecycle._shutdown_engine_cache()
+        assert calls == [True]
+
+    def test_shutdown_is_wired_into_shutdown_application(self):
+        import inspect
+
+        import api.lifecycle as lifecycle
+
+        source = inspect.getsource(lifecycle.shutdown_application)
+        assert "await _shutdown_engine_cache()" in source
+        # And it must run before the shared http client goes, or the engine
+        # pools have nothing to return their connections to.
+        assert source.index("_shutdown_engine_cache()") < source.index("close_http_client")

@@ -55,7 +55,7 @@ delta audit recorded in `docs/audit-2026-10-10.md`:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **3211 passed, 9 skipped** (~4.5 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Backend | **3225 passed, 9 skipped** (~8.5 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
 | Frontend | **1783 passed across 193 files** (~3.5 min) | `cd frontend_v2 && npx vitest run` |
 | remote_agent | exports clean (no tests of its own) | covered by `tests/test_in_process_engines.py` contract tests |
 
@@ -389,6 +389,32 @@ recorded in the audit's §3 so they are not re-reported.
   wearing its badge, per-second polling on top of a live WebSocket, a settings
   toggle that the global realtime handler ignored, and a bare `['gallery']`
   prefix invalidation that walked every loaded page.
+
+### The 2026-10-10 in-process-engine pass
+
+A second pass, scoped to the compute tier `9a91e6f2` made the only execution path
+(`services/engines/`, plus `engine_factory`, `load_balancer`,
+`in_process_reconciliation`, `job_runner`, `job_queue`, `api/lifecycle`). See
+`docs/audit-2026-10-10b.md` for the full register.
+
+- **Startup re-generated paid jobs on every restart.** The recovery phases ran in
+  the order the call site's own comment forbade: the claim sweep includes
+  POST_PROCESSING in `ACTIVE_JOB_STATUSES`, so it reset mid-finalization rows to
+  PENDING before the recovery pass that looks for exactly those rows. Reordered
+  into a named `_run_job_recovery_phase()`.
+- **A cancelled Direct-ComfyUI job was finalised as a success.** ComfyUI answers
+  `/interrupt` with the same `executing {node: null}` frame a finished prompt
+  emits, so the loop broke as "Completed" and fell through to `completed` with the
+  artifacts persisted.
+- **The no-agent Direct rig's whole model tree looked orphaned.** Its `list_models`
+  emitted paths without the `models/` prefix every consumer keys on, so
+  discovery matched nothing and every file counted as an orphan.
+- **Anthropic rejected any history with parallel tool calls** — consecutive
+  same-role turns are a permanent (non-retryable) 400, which is the agentic
+  roleplay path.
+- **Engine clients were closed never correctly.** `clear_engine_cache()` had no
+  production caller, `invalidate_engine` closed a client an in-flight job was
+  streaming on, and the close task was dropped without a reference.
 
 **Open after the pass** — the audit's §2. Its top item is
 `remote_agent/provider_core/downloads.py:899`, which puts the CivitAI token in
