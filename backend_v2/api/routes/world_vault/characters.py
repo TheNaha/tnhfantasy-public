@@ -126,6 +126,13 @@ class CharacterUpdateRequest(BaseModel):
     lora: str | None = None
     default_time: str | None = None
     default_location: str | None = None
+    # Same three fields `CharacterCreateRequest` accepts. Without them a
+    # SillyTavern card's version and creator notes are write-once, and the
+    # v3 `group_greetings` list is uneditable after import — pydantic's
+    # default `extra='ignore'` dropped them and the route answered 200.
+    group_greetings: list[str] | None = None
+    creator: str | None = None
+    character_version: str | None = None
     sort_order: int | None = None
 
 

@@ -296,7 +296,7 @@ def list_tag_vocabulary(
     rows = tag_service.list_tag_vocabulary(
         session, prefix=prefix, query=q, limit=limit
     )
-    return {"tags": rows, "limit": limit, "truncated": len(rows) > limit}
+    return {"tags": list(rows), "limit": limit, "truncated": rows.truncated}
 
 
 @router.post("/assets/auto-tag")

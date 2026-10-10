@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from config import get_config
-from core.entities import ENGINE_TASK_TYPES
+from core.entities import ACTIVE_JOB_STATUSES, ENGINE_TASK_TYPES
 from infrastructure.background_tasks import start_background_task
 from infrastructure.database import database_url
 from infrastructure.logging import get_logger
@@ -366,6 +366,21 @@ class JobQueue:
         task_types = sorted(self._claim_task_types)
         type_predicate = "task_type IN (" + ", ".join(f":tt_{i}" for i in range(len(task_types))) + ")"
         type_params = {f"tt_{i}": value for i, value in enumerate(task_types)}
+        # The status list is interpolated from the same `ACTIVE_JOB_STATUSES`
+        # the Python paths use, not re-typed as SQL string literals: a seventh
+        # status added to the enum would otherwise make the queue's own
+        # headroom arithmetic disagree with the runners that populate it.
+        active_status_placeholders = "(" + ", ".join(
+            f":as_{i}" for i in range(len(ACTIVE_JOB_STATUSES))
+        ) + ")"
+        # `.name`, not `.value`: SQLAlchemy persists a Python Enum under its
+        # NAME ('GENERATING'), and these literals were originally written by
+        # hand as the uppercase name. Reading `.value` here would send
+        # 'generating', match nothing, and report a clean queue that is
+        # saturated — silently, on the one statement no test executed.
+        type_params.update(
+            {f"as_{i}": status.name for i, status in enumerate(ACTIVE_JOB_STATUSES)}
+        )
 
         claim_sql = text(
             """
@@ -381,10 +396,7 @@ class JobQueue:
                 FROM jobs
                 WHERE {type_predicate}
                   AND (
-                    status IN (
-                      'SENT_TO_PROVIDER', 'CONNECTED', 'PRE_GENERATION',
-                      'GENERATING', 'POST_PROCESSING', 'RETRYING'
-                    )
+                    status IN {active_status_placeholders}
                     -- A claim sets claimed_at but not status; without this the
                     -- row the previous claimer took is not yet counted.
                     OR (status = 'PENDING' AND claimed_at IS NOT NULL)
@@ -893,17 +905,29 @@ class QueueManager:
         """
         from sqlalchemy import text
 
+        from core.entities import ACTIVE_JOB_STATUSES
         from infrastructure.database import engine
+
+        # Same expanding-placeholder form as the claim query, and for the same
+        # documented reason: a bound list needs an array adapter SQLite's
+        # driver does not provide, and a reset that only runs on Postgres is a
+        # reset that never gets tested.
+        placeholders = "(" + ", ".join(f":as_{i}" for i in range(len(ACTIVE_JOB_STATUSES))) + ")"
+        params = {
+            f"as_{i}": status.name for i, status in enumerate(ACTIVE_JOB_STATUSES)
+        }
 
         with engine.begin() as conn:
             conn.execute(text(
                 """
                 UPDATE jobs
                 SET status = 'PENDING', started_at = NULL, claimed_at = NULL
-                WHERE status IN ('SENT_TO_PROVIDER', 'CONNECTED', 'PRE_GENERATION', 'GENERATING', 'POST_PROCESSING', 'RETRYING')
+                WHERE status IN """
+                f"{placeholders}"
+                """
                    OR (status = 'PENDING' AND claimed_at IS NOT NULL)
                 """
-            ))
+            ), params)
 
     # ---- Delegate properties for backwards-compat callers ----
 

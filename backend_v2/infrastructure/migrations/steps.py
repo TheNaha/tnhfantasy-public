@@ -4201,7 +4201,12 @@ def _migration_089_fold_container_config_into_config(conn) -> bool:
         return dict(parsed) if isinstance(parsed, dict) else {}
 
     ok = True
-    rows = conn.execute(text("SELECT id, config, container_config FROM providers")).all()
+    # `IS NOT NULL`: the common case is a provider that never carried
+    # container_config at all, and there is no reason to pull every such row
+    # through json.loads on every boot just to skip it.
+    rows = conn.execute(
+        text("SELECT id, config, container_config FROM providers WHERE container_config IS NOT NULL")
+    ).all()
     for row in rows:
         provider_id, config_raw, container_config_raw = row[0], row[1], row[2]
         legacy = _as_dict(container_config_raw)

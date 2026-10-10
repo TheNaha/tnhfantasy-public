@@ -5,7 +5,9 @@ Validates ModalEngine, DirectComfyEngine, EngineFactory, runtime resolution,
 load balancing rotation, and end-to-end execution.
 """
 
+import asyncio
 import base64
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,7 +26,9 @@ from services.engines.engine_factory import (
     invalidate_engine,
     register_engine,
 )
+from services.engines.beam_engine import BeamEngine
 from services.engines.modal_engine import ModalEngine
+from services.engines.llm_engine import ModalVLLMEngine
 from services.load_balancer import LoadBalancer, LoadBalancerRuntimeState
 from services.provider_client import call_in_process_image_provider
 from services.provider_runtime import resolve_provider_runtime
@@ -1440,6 +1444,17 @@ class TestModalTTSEngineParity:
 
     @pytest.mark.asyncio
     async def test_get_file_stream_enforces_64mb_cap(self):
+        """The streamed-read cap, and it has to be the shared one.
+
+        `get_file_stream` bounds the body with `PROVIDER_GET_FILE_MAX_BYTES` — the
+        same knob the `/view` and agent branches of DirectComfyEngine read —
+        rather than the 64 MiB upload number that used to govern it. Binding to
+        the upload number made the operator's knob a no-op for audio, and left
+        two different, undocumented ceilings in one engine.
+
+        The cap is patched, not `_MAX_AUDIO_BYTES`, so the test fails if the
+        read path is ever re-tied to the upload contract.
+        """
         import services.engines.modal_tts_engine as tts_module
 
         engine = _make_tts_engine()
@@ -1448,13 +1463,46 @@ class TestModalTTSEngineParity:
         storage.read_file.remote.aio = AsyncMock(return_value=b"x" * 11)
         with (
             patch("services.engines.modal_tts_engine.modal") as mock_modal,
-            patch.object(tts_module, "_MAX_AUDIO_BYTES", 10),
+            patch.object(tts_module, "get_file_size_cap", return_value=10),
         ):
             mock_modal.Cls.from_name.return_value = MagicMock(return_value=storage)
             with pytest.raises(ValueError, match="limit is 10"):
                 [chunk async for chunk in engine.get_file_stream("a.mp3")]
             # Refused on size alone: the bytes are never fetched.
             storage.read_file.remote.aio.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_tts_upload_keeps_its_own_contract(self):
+        """Upload is a different budget from read, and both stay visible.
+
+        The upload path's 64 MiB is container parity (the container answers 413
+        there), so it is not folded into the read knob. Uploading over it is a
+        logged `False`, per the engine's bool contract.
+        """
+        import services.engines.modal_tts_engine as tts_module
+
+        engine = _make_tts_engine()
+        with patch.object(tts_module, "_MAX_AUDIO_BYTES", 4):
+            refused = await engine.upload_file(
+                "b.mp3", base64.b64encode(b"x" * 5).decode(), directory="audio"
+            )
+        assert refused is False
+
+    @pytest.mark.asyncio
+    async def test_tts_upload_refuses_without_touching_storage(self):
+        """The refusal is the pre-check, not a modal round-trip."""
+        import services.engines.modal_tts_engine as tts_module
+
+        engine = _make_tts_engine()
+        with (
+            patch.object(tts_module, "_MAX_AUDIO_BYTES", 4),
+            patch("services.engines.modal_tts_engine.modal") as mock_modal,
+        ):
+            refused = await engine.upload_file(
+                "b.mp3", base64.b64encode(b"x" * 5).decode(), directory="audio"
+            )
+        assert refused is False
+        mock_modal.Cls.from_name.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_file_stream_small_audio_passes(self):
@@ -2427,6 +2475,129 @@ class TestEngineAuthAndCaps:
                 await engine.list_models()
 
     @pytest.mark.asyncio
+    async def test_anthropic_inference_propagates_cancellation(self):
+        """A CancelledError arriving mid-stream is the timeout carrier.
+
+        `provider_client` wraps the engine stream in `asyncio.timeout`, which
+        delivers the deadline by cancelling the task. The engine used to
+        catch that CancelledError and yield a `cancelled` event instead of
+        re-raising, so the timeout never became a TimeoutError: the job was
+        finalised as "cancelled by user" and the retry a timeout is allowed
+        never happened. A real user cancel is delivered cooperatively by the
+        `_cancelled_jobs` check inside the SSE loop, so this handler owns
+        nothing but the propagate case.
+        """
+        from unittest.mock import MagicMock
+
+        from services.engines.llm_engine import AnthropicLLMEngine
+
+        engine = AnthropicLLMEngine("anthropic-cancel", api_key="k")
+
+        class _Resp:
+            status_code = 200
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def aiter_lines(self):
+                raise asyncio.CancelledError()
+                yield  # pragma: no cover - makes this an async generator
+
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_Resp())
+
+        with patch.object(engine, "get_http_client", return_value=client):
+            events = []
+            with pytest.raises(asyncio.CancelledError):
+                async for event in engine.inference({"messages": [{"role": "user", "content": "hi"}]}, job_id="j1"):
+                    events.append(event)
+
+        assert not any(e.get("event") == "cancelled" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_google_inference_propagates_cancellation(self):
+        """Same contract on the Google engine: the timeout carrier must raise."""
+        from unittest.mock import MagicMock
+
+        from services.engines.llm_engine import GoogleLLMEngine
+
+        engine = GoogleLLMEngine("google-cancel", api_key="k")
+
+        class _Resp:
+            status_code = 200
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def aiter_lines(self):
+                raise asyncio.CancelledError()
+                yield  # pragma: no cover - makes this an async generator
+
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_Resp())
+
+        with patch.object(engine, "get_http_client", return_value=client):
+            events = []
+            with pytest.raises(asyncio.CancelledError):
+                async for event in engine.inference({"messages": [{"role": "user", "content": "hi"}]}, job_id="j1"):
+                    events.append(event)
+
+        assert not any(e.get("event") == "cancelled" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_anthropic_user_cancel_still_yields_cancelled(self):
+        """The cooperative path is what a real user cancel must keep using."""
+        from unittest.mock import MagicMock
+
+        from services.engines.llm_engine import AnthropicLLMEngine
+
+        engine = AnthropicLLMEngine("anthropic-usercancel", api_key="k")
+
+        class _Resp:
+            status_code = 200
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def aiter_lines(self):
+                # One content frame, then the user cancels, then the next
+                # frame is where the loop's cooperative check fires. Each
+                # SSE frame needs its blank-line terminator.
+                yield 'data: {"type": "content_block_delta", "delta": {"text": "Hel"}}'
+                yield ""
+                engine._cancelled_jobs.add("j1")
+                yield 'data: {"type": "content_block_delta", "delta": {"text": "lo"}}'
+                yield ""
+
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_Resp())
+
+        with patch.object(engine, "get_http_client", return_value=client):
+            events = [
+                event
+                async for event in engine.inference(
+                    {"messages": [{"role": "user", "content": "hi"}]}, job_id="j1"
+                )
+            ]
+
+        cancelled = [e for e in events if e.get("event") == "cancelled"]
+        assert len(cancelled) == 1
+        # The loop checks the flag before consuming the next frame, so "lo"
+        # is never read. Parity with the openai_compat and vLLM engines is
+        # that the partial content is preserved rather than zeroed — which
+        # is the whole point of the cooperative path.
+        assert cancelled[0]["outputs"][0]["content"] == "Hel"
+
+    @pytest.mark.asyncio
     async def test_modal_upload_encoded_precheck_refuses_without_decoding(self):
         engine = ModalEngine("modal-test", "ak-123", "as-456")
         # 100 chars of base64 over an 8-byte encoded cap: the verdict must be
@@ -2436,6 +2607,58 @@ class TestEngineAuthAndCaps:
             patch.object(engine, "get_client_async", side_effect=AssertionError("must not reach Modal")),
         ):
             assert await engine.upload_file("clip.bin", "QUJD" * 25, directory="models/clip") is False
+
+    @pytest.mark.asyncio
+    async def test_encoded_upload_over_cap_disabled_allows_any_body(self):
+        """A cap of 0 is the documented *disable* value, not a zero-byte limit.
+
+        `get_upload_max_bytes_encoded()` returns 0 for a disabled cap, and the
+        engines' pre-check was `len(body) > encoded_cap` — true for every
+        non-empty body. Setting PROVIDER_UPLOAD_MAX_BYTES=0 therefore refused
+        every upload, the exact opposite of what the env var documents.
+        """
+        from services.engines.base import encoded_upload_over_cap
+
+        with patch("services.engines.base.get_upload_max_bytes_encoded", return_value=0):
+            assert encoded_upload_over_cap(0) is False
+            assert encoded_upload_over_cap(1) is False
+            assert encoded_upload_over_cap(512 * 1024 * 1024) is False
+
+        with patch("services.engines.base.get_upload_max_bytes_encoded", return_value=8):
+            assert encoded_upload_over_cap(8) is False
+            assert encoded_upload_over_cap(9) is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "engine_factory",
+        [
+            lambda: ModalEngine("modal-cap-test", "ak-1", "as-1"),
+            lambda: BeamEngine("beam-cap-test", "ak-1"),
+            lambda: ModalVLLMEngine("vllm-cap-test", "ak-1", "as-1"),
+            lambda: DirectComfyEngine(
+                "direct-cap-test",
+                "http://127.0.0.1:8188",
+                agent_url="http://127.0.0.1:8001",
+                agent_token="tok",
+            ),
+        ],
+        ids=["modal", "beam", "modal_vllm", "direct_comfy"],
+    )
+    async def test_every_engine_upload_uses_the_shared_precheck(self, engine_factory):
+        """All four upload paths must consult the one encoded-cap predicate.
+
+        The four engines each had their own copy of the comparison, and the
+        copy is what let the disabled-cap inversion ship in all four at once.
+        Making the predicate raise proves the engine reaches it — the call sits
+        before each engine's own `try`, so nothing swallows it.
+        """
+        engine = engine_factory()
+        with patch(
+            "services.engines.base.encoded_upload_over_cap",
+            side_effect=AssertionError("engine did not consult the shared precheck"),
+        ):
+            with pytest.raises(AssertionError, match="shared precheck"):
+                await engine.upload_file("clip.bin", "QUJD" * 8, directory="models/clip")
 
     @pytest.mark.asyncio
     async def test_direct_upload_encoded_precheck_skips_agent(self):
@@ -2512,3 +2735,133 @@ class TestEngineAuthAndCaps:
             mock_modal.Cls.from_name.return_value = MagicMock(return_value=storage)
             with pytest.raises(EngineAuthError):
                 await engine.delete_file("models/x.safetensors")
+
+    @pytest.mark.asyncio
+    async def test_a_bad_env_value_does_not_crash_the_engine(self):
+        """Operational knobs must fail open, not take the backend down.
+
+        `float(os.getenv("WS_MAX_SIZE_MB"))` and its siblings execute at
+        import, so a typo in a deployment env file was a boot crash — the
+        opposite of what a tunable should do. They now read through
+        `config.env_positive_*`, which falls back to the default.
+        """
+        import importlib
+
+        for var, wrong in (
+            ("WS_MAX_SIZE_MB", "twenty"),
+            ("WS_OPEN_TIMEOUT", "1;20"),
+            ("MODAL_GET_FILE_TIMEOUT_SECONDS", "-1"),
+            ("PROVIDER_MAX_BACKGROUND_TASKS", ""),
+        ):
+            with patch.dict(os.environ, {var: wrong}):
+                # A fresh import of the module must not raise.
+                module = importlib.import_module("services.engines.beam_engine")
+                assert module is not None
+
+                from config import env_positive_int, env_positive_float
+
+                fallback_int = env_positive_int(wrong, 20)
+                fallback_float = env_positive_float(wrong, 3600.0)
+                assert fallback_int == 20
+                assert fallback_float == 3600.0
+
+
+class TestModelDirectoryContract:
+    """The three model-directory enumerations must be the same list.
+
+    `services/engines/base.py` defines the canonical `MODEL_DIRECTORIES` (16
+    entries) that every engine reconciles. The maintenance scan used to
+    re-derive its list from `model_reconciliation._DIRECTORY_TO_MODEL_TYPE` — a
+    directory -> model *type* map with 14 entries — so `models/clip_vision` and
+    both `models/ultralytics/*` trees were absent from the sweep. Those files
+    were never marked found, and because the reconciler matches on the same
+    keying rule they stayed pending on every tick while the UI reported them
+    missing.
+    """
+
+    def test_maintenance_sweeps_the_canonical_list(self):
+        import inspect
+
+        from api.routes.models import maintenance
+        from services.engines.base import MODEL_DIRECTORIES
+
+        src = inspect.getsource(maintenance)
+        assert "from services.engines.base import MODEL_DIRECTORIES" in src
+        # The sweep list must not be re-derived from the type map. The map
+        # itself is still used for what it is for — resolving a directory to
+        # a model type — so only the derivation is forbidden.
+        assert "for d in _DIRECTORY_TO_MODEL_TYPE" not in src
+        assert len(MODEL_DIRECTORIES) == 16
+
+    def test_the_directory_type_map_covers_every_directory(self):
+        """A directory with no type is one the sweep cannot classify.
+
+        `_DIRECTORY_TO_MODEL_TYPE` is allowed to be smaller than
+        MODEL_DIRECTORIES — not every directory maps to a model type — but
+        every directory that DOES map must be a real directory, or the
+        maintenance path records an update for a path nothing will ever find.
+        """
+        from services.engines.base import MODEL_DIRECTORIES
+        from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
+
+        canonical = {d[len("models/"):] for d in MODEL_DIRECTORIES}
+        for directory in _DIRECTORY_TO_MODEL_TYPE:
+            assert directory in canonical, (
+                f"{directory} has a model type but is not a reconciled directory"
+            )
+
+    def test_direct_comfy_never_names_an_unreconcilable_directory(self):
+        """`NODE_TO_DIRECTORY` values must exist in `MODEL_DIRECTORIES`.
+
+        The values are handed to `list_models`, which the reconciler fans out
+        from `MODEL_DIRECTORIES` alone, so a value outside that list can never
+        be fetched. `"DiffusersLoader": "diffusers"` was exactly that: no
+        `models/diffusers` exists, so the branch was unreachable by
+        construction.
+        """
+        from services.engines.base import MODEL_DIRECTORIES
+        from services.engines.direct_comfy_engine import NODE_TO_DIRECTORY
+
+        canonical = {d[len("models/"):] for d in MODEL_DIRECTORIES}
+        unreachable = sorted(set(NODE_TO_DIRECTORY.values()) - canonical)
+        assert not unreachable, (
+            f"NODE_TO_DIRECTORY names directories no lister can fetch: {unreachable}"
+        )
+
+
+class TestEngineRuntimeInvalidation:
+    """Every cache keyed on a provider's runtime must be dropped together.
+
+    `invalidate_engine` is the one funnel for "this provider's runtime changed"
+    (PATCH /api/v2/providers/{id}, token refresh). Three things are keyed on
+    that identity and all three used to be dropped here — but the ComfyUI node
+    graph cache was not, and its own docstring named this path. A provider that
+    came back from a restart with a different install then served the
+    pre-restart `/object_info` for the whole TTL.
+    """
+
+    def test_invalidate_engine_drops_the_object_info_graph(self):
+        from unittest.mock import patch
+
+        from services.engines.engine_factory import invalidate_engine
+
+        with (
+            patch("api.routes.nodes.invalidate_object_info_cache") as invalidate,
+            patch("services.load_balancer._provider_health_cache.pop"),
+        ):
+            invalidate_engine("provider-x")
+
+        assert invalidate.called
+        assert invalidate.call_args[0][0] == "provider-x"
+
+    def test_invalidate_engine_still_works_when_the_graph_cache_cannot_import(self):
+        """A cache-clearing path must never fail a config update."""
+        from unittest.mock import patch
+
+        from services.engines.engine_factory import invalidate_engine
+
+        with (
+            patch("api.routes.nodes.invalidate_object_info_cache", side_effect=RuntimeError("boom")),
+            patch("services.load_balancer._provider_health_cache.pop"),
+        ):
+            invalidate_engine("provider-y")  # must not raise

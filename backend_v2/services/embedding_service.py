@@ -49,7 +49,13 @@ class EmbeddingService:
         Generate an embedding for the given text.
         """
         if not text or not text.strip():
-            dim = self._dimension or 384
+            # `_dimension` is None until the model has been loaded once, so an
+            # empty text asked-for first would fall back to a hardcoded 384 —
+            # and 384 is wrong the moment `COMFY_EMBEDDING_MODEL` selects a
+            # 768-dimensional model. Force the real dimension instead; the
+            # zero vector it returns is meant to be a same-shaped no-op, not a
+            # 384-long no-op.
+            dim = self._dimension or self._get_model().get_sentence_embedding_dimension()
             return [0.0] * dim  # Return zero vector for empty text
             
         model = self._get_model()

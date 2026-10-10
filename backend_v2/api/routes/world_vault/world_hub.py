@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select, func
 
 from api.deps import get_session
+from api.routes.world_vault.lorebooks import MAX_SEARCH_LENGTH
 from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from core.entities import (
     Character, Chat, Lorebook, LorebookEntry,
@@ -241,8 +242,10 @@ def get_relationships(
 
 @router.get("/search")
 def search_entities(
-    q: str = Query(..., min_length=2),
-    type: str | None = Query(default=None, description="Filter by entity type: character, chat, story, lorebook, scenario, voice, memory"),
+    # Bounded like every sibling search route: an unbounded ILIKE term is a
+    # free full scan over five text columns on an unauthenticated route.
+    q: str = Query(..., min_length=2, max_length=MAX_SEARCH_LENGTH),
+    type: str | None = Query(default=None, max_length=64, description="Filter by entity type: character, chat, story, lorebook, scenario, voice, memory"),
     session: Session = Depends(get_session),
 ):
     """Unified search across characters, chats, stories, lorebooks, scenarios, voices."""

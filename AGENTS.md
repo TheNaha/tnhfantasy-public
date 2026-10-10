@@ -160,13 +160,17 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 
 - `docs/` has architecture, backend, frontend, deployment, and API reference.
  - `docs/STATUS.md` is the authoritative project status and what-is-still-open list.
-   `docs/audit-2026-10-05.md` is the most recent code audit, and it supersedes
-   `docs/audit-2026-10-04b.md` and `docs/audit-2026-10-04.md`; all three supersede
-   `docs/audit-2026-10-03b.md`, `docs/audit-2026-10-03.md`, `docs/audit-2026-10-01.md`,
-   `docs/audit-2026-09-29b.md`, `docs/audit-2026-09-29.md`, `docs/audit-2026-09-28.md`,
-   `docs/audit-2026-09-27.md`, `docs/audit-2026-09-26.md` and
-   `docs/audit-2026-09-26-followup.md` for everything it marks fixed. Read
-   STATUS.md and the 2026-10-04 audit before large-scale changes.
+   `docs/audit-2026-10-10.md` is the most recent code audit — a *delta* pass scoped
+   to what the 2026-10-08 engine consolidation left behind. For anything that
+   predates 10-08, `docs/audit-2026-10-05.md` remains the reference; it in turn
+   supersedes `docs/audit-2026-10-04b.md` and `docs/audit-2026-10-04.md`; all three
+   supersede `docs/audit-2026-10-03b.md`, `docs/audit-2026-10-03.md`,
+   `docs/audit-2026-10-01.md`, `docs/audit-2026-09-29b.md`,
+   `docs/audit-2026-09-29.md`, `docs/audit-2026-09-28.md`, `docs/audit-2026-09-27.md`,
+   `docs/audit-2026-09-26.md` and `docs/audit-2026-09-26-followup.md` for everything
+   they mark fixed. Read STATUS.md and the 2026-10-04 audit before large-scale
+   changes. The 2026-10-10 audit's §3 lists the candidates that did not survive
+   verification — read it before re-reporting one.
    `docs/archive/` holds superseded planning docs —
    historical only, and they contradict each other.
 - `.github/instructions/backend.instructions.md` has backend-specific rules scoped to `backend_v2/**`.

@@ -23,6 +23,30 @@
 import copy
 import json
 import os
+
+
+def env_positive_int(raw_value: str | None, default: int) -> int:
+    """Read an int env var, falling back to `default` on a bad value.
+
+    The bare `int(os.getenv(...))` form crashes the whole process at import
+    when the value is misspelled — a typo in a deployment env file is then a
+    boot failure instead of a logged warning and a working default, which is
+    the opposite of what an operational knob should do.
+    """
+    try:
+        parsed = int(raw_value) if raw_value is not None else default
+    except (TypeError, ValueError):
+        parsed = default
+    return parsed if parsed > 0 else default
+
+
+def env_positive_float(raw_value: str | None, default: float) -> float:
+    """Float counterpart of `env_positive_int`, same failure mode."""
+    try:
+        parsed = float(raw_value) if raw_value is not None else default
+    except (TypeError, ValueError):
+        parsed = default
+    return parsed if parsed > 0 else default
 from functools import lru_cache
 from typing import Any
 

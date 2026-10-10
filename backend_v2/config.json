@@ -30,12 +30,7 @@
   "modal": {
     "timeout": 300,
     "max_containers": 1,
-    "scaledown_window": 5,
-    "vllm": {
-      "gpu_type": "A100",
-      "timeout_seconds": 3600,
-      "max_model_len": 8192
-    }
+    "scaledown_window": 5
   },
   "api": {
     "gzip_minimum_size": 1000,

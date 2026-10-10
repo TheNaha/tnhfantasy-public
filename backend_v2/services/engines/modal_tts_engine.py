@@ -12,7 +12,13 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from infrastructure.logging import get_logger
-from services.engines.base import FileTooLargeError, InProcessEngine, TERMINAL_EVENTS, clamp_timeout
+from services.engines.base import (
+    FileTooLargeError,
+    InProcessEngine,
+    TERMINAL_EVENTS,
+    clamp_timeout,
+    get_file_size_cap,
+)
 
 logger = get_logger("modal_tts_engine")
 
@@ -23,6 +29,11 @@ except ImportError:
     modal = None  # type: ignore
     HAS_MODAL = False
 
+#: Upload ceiling, contract parity with the container TTS client: it answers an
+#: over-cap upload with 413, so this engine answers `False`. The upload
+#: number is deliberately NOT `PROVIDER_GET_FILE_MAX_BYTES` — that knob governs
+#: streamed *reads* (see `fetch_audio_file` below), and an upload budget and a
+#: read budget are different decisions. Audio fetch uses the shared read cap.
 _MAX_AUDIO_BYTES = 64 * 1024 * 1024
 
 # Timeout for the Modal volume RPCs (file_size/read_file/put_file). Matches
@@ -265,8 +276,13 @@ class ModalTTSEngine(InProcessEngine):
         if size is None or size < 0:
             raise FileNotFoundError(f"Audio not found on Modal volume: {path}")
         size = int(size)
-        if size > _MAX_AUDIO_BYTES:
-            raise FileTooLargeError(path, size=size, cap=_MAX_AUDIO_BYTES)
+        # The streamed-read cap, not the upload cap: this is the same body the
+        # `/view` and agent branches of `get_file_stream` bound, and the
+        # operator knob that governs it is `PROVIDER_GET_FILE_MAX_BYTES`. Using
+        # the upload number here would have made that knob a no-op for audio.
+        cap = get_file_size_cap()
+        if cap and size > cap:
+            raise FileTooLargeError(path, size=size, cap=cap)
 
         try:
             data = await asyncio.wait_for(
@@ -280,10 +296,10 @@ class ModalTTSEngine(InProcessEngine):
             raise RuntimeError(f"Failed to read audio from Modal volume: {path} ({exc})") from exc
         if not data:
             raise FileNotFoundError(f"Audio not found on Modal volume: {path}")
-        if len(data) > _MAX_AUDIO_BYTES:
+        if get_file_size_cap() and len(data) > get_file_size_cap():
             # Narrow race: the file grew between the size check and the read.
             # Refuse rather than stream an unbounded body.
-            raise FileTooLargeError(path, size=len(data), cap=_MAX_AUDIO_BYTES)
+            raise FileTooLargeError(path, size=len(data), cap=get_file_size_cap())
         # Yield in 1MB chunks
         chunk_size = 1024 * 1024
         for offset in range(0, len(data), chunk_size):

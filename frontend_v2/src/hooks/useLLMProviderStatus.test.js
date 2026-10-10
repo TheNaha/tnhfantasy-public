@@ -136,7 +136,7 @@ describe('useLLMProviderStatus mutations', () => {
         expect(apiMock.post).toHaveBeenCalledWith('/api/v2/llm/providers/llm-local/test');
     });
 
-    it('useSetLLMDefault PUTs the selection and invalidates default + models keys', async () => {
+    it('useSetLLMDefault PUTs the selection and invalidates default + models + providers keys', async () => {
         apiMock.put.mockResolvedValue({ ok: true });
         const { wrapper, queryClient } = createWrapper();
         const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
@@ -148,5 +148,8 @@ describe('useLLMProviderStatus mutations', () => {
         });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: LLM_DEFAULT_KEY });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: LLM_MODELS_KEY });
+        // The providers list carries `is_default` per row: without this the
+        // old winner keeps its badge while the new winner gets none.
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: LLM_PROVIDERS_KEY });
     });
 });

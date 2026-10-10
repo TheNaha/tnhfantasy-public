@@ -265,6 +265,18 @@ def get_upload_max_bytes_encoded() -> int:
     return (cap // 3) * 4 + 4096 if cap else 0
 
 
+def encoded_upload_over_cap(encoded_len: int) -> bool:
+    """Is a base64 body over the upload cap?
+
+    The one place the encoded-length verdict is made. `get_upload_size_cap`
+    answers 0 for *disabled*, so a bare `encoded_len > cap` is true for every
+    non-empty body — which is how four engines came to refuse all uploads for
+    an operator who set PROVIDER_UPLOAD_MAX_BYTES=0 to turn the cap off.
+    """
+    cap = get_upload_max_bytes_encoded()
+    return bool(cap) and encoded_len > cap
+
+
 #: Model directories every image engine reconciles, mirroring
 #: provider_core.models.MODEL_DIRECTORIES. Kept here (not imported from
 #: provider_containers) so the backend never depends on the containers it

@@ -284,3 +284,58 @@ async def test_status_card_propagates_in_process_runtime_status(session, status_
 
 async def _async_value(value):
     return value
+
+
+@pytest.mark.asyncio
+async def test_every_tracked_row_lands_in_a_bucket(session, status_service):
+    """`total_models` must equal the sum of the four buckets.
+
+    `ModelDownloaderService.trigger_download` used to write status
+    `not_installed` for external-host providers — a value outside the
+    documented `pending / downloading / ready / failed` vocabulary. The reader
+    keeps the raw value when it is not a key in the stats dict, so those rows
+    counted toward `total_models` while every bucket read zero: the provider
+    showed "9 assigned" next to "0 installed, 0 pending, 0 failed, 0
+    downloading", which paints as nothing being assigned at all.
+
+    The writer now uses `pending`, which is both in the vocabulary and the
+    accurate answer — the file is expected and discovery marks it ready. This
+    pins the invariant that made the drift visible: no row may escape the
+    buckets.
+    """
+    file_a = _make_file(session, "delta.safetensors")
+    file_b = _make_file(session, "epsilon.safetensors")
+    _make_provider(session, "external-host", worker_type="image")
+
+    _track(session, file_a, "external-host", "pending")
+    _track(session, file_b, "external-host", "pending")
+
+    stats = await status_service.get_provider_sync_stats("external-host")
+
+    assert stats["total_models"] == 2
+    assert sum(stats["stats"].values()) == stats["total_models"]
+
+
+def test_the_status_vocabulary_is_the_documented_four():
+    """One shared definition of the statuses a row may hold.
+
+    `ProviderVersionStatus.status` documents `pending, downloading, ready,
+    failed`; `_EMPTY_SYNC_STATS` derives the buckets the UI renders from the
+    same four. A fifth value written by any producer is a display bug by
+    construction, so the producer's value has to be checked against the
+    vocabulary rather than against whichever reader was remembered.
+    """
+    import re
+
+    from services.provider_status_service import _EMPTY_SYNC_STATS
+
+    # `installed` is the reader's display name for the stored `ready`.
+    assert set(_EMPTY_SYNC_STATS) == {"installed", "pending", "downloading", "failed"}
+
+    source = open("services/model_downloader.py").read()
+    written = set(re.findall(r'status:\s*"([a-z_]+)"', source)) | set(
+        re.findall(r'status="([a-z_]+)"', source)
+    )
+    assert written <= {"pending", "downloading", "ready", "failed"}, (
+        f"model_downloader writes a status outside the documented vocabulary: {written}"
+    )

@@ -1,13 +1,15 @@
 # TNHComfy — Project Status
 
 **The single authoritative status document.** Everything here was verified
-against the code on **2026-10-04**, not carried over from an earlier plan.
+against the code on **2026-10-10**, not carried over from an earlier plan.
 
 If you are about to make a decision about what to work on next, read this file
-and then the **most recent** audit, which is `docs/audit-2026-10-05.md`. Each
-audit supersedes its predecessors for everything it marks fixed; reading an
-older one tells you about defects that no longer exist. The other planning
-documents that used to sit at the repo root are historical and live in
+and then the **most recent** audit, which is `docs/audit-2026-10-10.md`. That
+audit is a *delta* pass scoped to what the 2026-10-08 engine consolidation left
+behind; for anything that predates 10-08, `docs/audit-2026-10-05.md` remains the
+reference. Each audit supersedes its predecessors for everything it marks fixed;
+reading an older one tells you about defects that no longer exist. The other
+planning documents that used to sit at the repo root are historical and live in
 `docs/archive/` — they are kept for provenance, not for guidance.
 
 ## What this is
@@ -48,15 +50,21 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of **2026-10-09**, re-measured after the
-consolidation-cleanup pass recorded under "The 2026-10-09 pass" below:
+All three suites green as of **2026-10-10**, re-measured after the
+delta audit recorded in `docs/audit-2026-10-10.md`:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **3161 passed, 9 skipped** (~480 s, 3190 collected) | `cd backend_v2 && .venv/bin/python -m pytest` |
-| Frontend | **1779 passed across 192 files** (~160 s) | `cd frontend_v2 && npm test` |
+| Backend | **3211 passed, 9 skipped** (~4.5 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Frontend | **1783 passed across 193 files** (~3.5 min) | `cd frontend_v2 && npx vitest run` |
+| remote_agent | exports clean (no tests of its own) | covered by `tests/test_in_process_engines.py` contract tests |
 
 `npm run lint` is **0 errors / 2 warnings** and `ruff check .` is clean.
+
+Stack verified live after the changes: `localhost:5174` → 200,
+`/api/live` and `/api/ready` → 200, and the negative-`limit` probes that used to
+answer a 500 (or an unbounded SQLite dump) now answer 200. The backend container
+mounts `backend_v2` at `/app`, so a plain restart picks the changes up.
 
 Both suites were **red** at the start of that pass — 4 failed + 5 errored on the
 backend, 2 failed on the frontend, 2 lint errors — all caused by `9a91e6f2`
@@ -341,6 +349,52 @@ themselves blind (the `provider_containers` root that silently narrowed what
 `test_env_contracts` could see; the `refetchPage` skip; the empty-state
 vocabulary that could not read a health claim) are fixed first, because a guard
 that cannot see the code it guards is the same failure as no guard.
+
+### The 2026-10-10 delta pass
+
+The 10-08 consolidation was correct and left the tree with dead code, duplicated
+copies of deleted constants, and several silently-dead subsystems. Six read-only
+sub-agents swept disjoint scopes, and every candidate was reproduced by hand
+before it was accepted — five candidates were disproved that way and are
+recorded in the audit's §3 so they are not re-reported.
+
+**Fixed** (full register with `file:line` in `docs/audit-2026-10-10.md`):
+
+- **Failover was unreachable for pinned jobs** (`load_balancer.get_next_provider`
+  answered `None` when the pinned provider was already exhausted, which
+  `job_runner.select_next_provider` reads as "all providers failed").
+- **The upload cap inverted** — `PROVIDER_UPLOAD_MAX_BYTES=0`, the documented way
+  to *disable* the cap, made every upload fail. Unified into one predicate,
+  `encoded_upload_over_cap`, in `services/engines/base.py`.
+- **A timeout was reported as a user cancellation** in the Anthropic and Google
+  LLM engines: their `except asyncio.CancelledError` swallowed the timeout
+  carrier instead of re-raising.
+- **Nested model files never matched**, so they were re-marked pending and
+  reported as orphans on every reconcile tick.
+- **The model-availability cache had no invalidation path at all** — its
+  `clear_available_models_cache` had zero production callers.
+- **Routes accepted impossible input**: negative `limit`s, an unbounded search
+  term, and a tag vocabulary that returned `limit + 1` rows.
+- **Request bodies with fields the handlers ignored** (`scenarios`,
+  `characters`, `stories/parse`), and a dead `modal.vllm` config block.
+- **Two test guards that could not fail**: the LIKE-escaping sweep's attribute
+  set was computed as `".like(".lstrip(".")` → `"like("`, so it collected zero
+  calls and passed vacuously against every unescaped pattern in the tree; and
+  the `job_queue` restart-reset statement was never executed under SQLite.
+- **Runtime drift**: six import-time `int()`/`float()` env reads that crash the
+  process on a typo, a silently-truncated Modal stream on a short read, a leaked
+  Modal client on `close()`, an unbounded agent stream, and a hardcoded 64 MiB
+  TTS cap shadowing the documented `PROVIDER_GET_FILE_MAX_BYTES`.
+- **Frontend query keys**: a missing invalidation that left the old default
+  wearing its badge, per-second polling on top of a live WebSocket, a settings
+  toggle that the global realtime handler ignored, and a bare `['gallery']`
+  prefix invalidation that walked every loaded page.
+
+**Open after the pass** — the audit's §2. Its top item is
+`remote_agent/provider_core/downloads.py:899`, which puts the CivitAI token in
+the URL query string where the rest of the flow uses `Authorization: Bearer`;
+§3 records the six candidates that did not survive verification, including two
+that pointed at files the 10-08 consolidation had already deleted.
 
 ### The second 2026-10-04 pass
 

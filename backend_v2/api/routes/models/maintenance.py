@@ -515,9 +515,13 @@ async def backfill_provider_statuses(
         "errors": []
     }
     
-    MODEL_DIRECTORIES = [
-        f"models/{d}" for d in _DIRECTORY_TO_MODEL_TYPE
-    ]
+    # Imported, not re-derived. `_DIRECTORY_TO_MODEL_TYPE` is a
+    # directory -> model TYPE map, so a directory that is not a model type is
+    # silently invisible here: deriving the sweep list from it dropped
+    # `models/clip_vision` and both `models/ultralytics/*` trees, which is a
+    # whole directory's files never marked found — and the same keying rule
+    # the reconciler matches on, so they stay pending on every tick.
+    from services.engines.base import MODEL_DIRECTORIES
     
     import asyncio
     

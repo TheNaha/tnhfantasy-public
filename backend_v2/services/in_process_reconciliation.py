@@ -86,6 +86,28 @@ def is_reconciliation_running(provider_id: str) -> bool:
     return provider_id in _RUNNING
 
 
+def _storage_path_for_entry(entry: dict[str, Any], directory: str) -> str | None:
+    """The storage path a listing entry refers to, or None if it has none.
+
+    Prefer the path the lister reported: the remote agent walks recursively
+    and reports `path` as a full relative path (`models/checkpoints/sub/
+    yolo.pt`), and `models/{model.directory}/{filename}` — the shape
+    `get_all_storage_paths` builds — can carry an intermediate directory too.
+    Keying on `directory + basename` instead silently drops that segment, so
+    the expected path never matches: the file is re-marked pending on every
+    tick *and* reported as an orphan, which with delete-orphans enabled
+    turns into a delete against a path that does not exist.
+
+    Same preference order as the maintenance scan in
+    `api/routes/models/maintenance.py`, which has always read `path` first.
+    """
+    path = entry.get("path") or entry.get("storage_path")
+    if path:
+        return str(path)
+    name = entry.get("name")
+    return f"{directory}/{name}" if name else None
+
+
 async def trigger_in_process_reconciliation(
     provider_id: str,
     *,
@@ -385,12 +407,9 @@ async def _run_reconciliation(
                 for entry in files if isinstance(files, list) else []:
                     if not isinstance(entry, dict):
                         continue
-                    name = entry.get("name") or os.path.basename(
-                        entry.get("path") or entry.get("storage_path") or ""
-                    )
-                    if not name:
-                        continue
-                    existing_files_dict[f"{directory}/{name}"] = entry
+                    path = _storage_path_for_entry(entry, directory)
+                    if path:
+                        existing_files_dict[path] = entry
             existing_files = set(existing_files_dict.keys())
             stats["total_models"] = len(existing_files)
 

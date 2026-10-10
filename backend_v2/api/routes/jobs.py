@@ -240,8 +240,10 @@ async def search_jobs(
     """Full-text search over job prompts (tsvector on Postgres, LIKE on SQLite)."""
     if not q.strip():
         return {"jobs": []}
-    if limit > 100:
-        limit = 100
+    # Negative reaches the repo as-is: Postgres rejects `LIMIT -1` with a
+    # 500 and SQLite reads it as "no limit", an unauthenticated whole-table
+    # dump. Clamp at both ends like `list_failed_jobs` does.
+    limit = max(1, min(limit, 100))
     results = await deduplicated(
         make_key("search_jobs", q, limit),
         lambda: service.search_jobs(q.strip(), limit=limit),
@@ -573,6 +575,9 @@ async def get_jobs_breakdown(
 
     if not re.fullmatch(r"[A-Za-z0-9_]+", key):
         raise ValidationError("key must be alphanumeric/underscore only", field="key")
+    # Same both-ends clamp as `list_failed_jobs`: a negative limit reaches
+    # SQL as `LIMIT -1`.
+    limit = max(1, min(limit, 100))
     statuses = [JobStatus.COMPLETED, JobStatus.FAILED]
     items = await service.get_metadata_key_counts(key, statuses=statuses, limit=limit)
     return {"key": key, "breakdown": items}

@@ -34,6 +34,9 @@ const getOutputText = (job) => {
  * rejects on failure or when maxPolls is exhausted. Shares the
  * ['jobs', jobId] React Query cache with useJobStatus consumers.
  */
+/** With a live event stream, re-poll every Nth iteration as a safety net. */
+const WS_FALLBACK_EVERY = 15;
+
 export function awaitJobText({ jobId, queryClient = null, pollInterval = 1000, maxPolls = 300, isCancelled = () => false }) {
     return new Promise((resolve, reject) => {
         let settled = false;
@@ -95,8 +98,23 @@ export function awaitJobText({ jobId, queryClient = null, pollInterval = 1000, m
                     onCancelled();
                     return;
                 }
-                if (i === 0 && wsConnected) {
-                    continue;
+                if (wsConnected) {
+                    // The event subscription above resolves this job, so
+                    // polling on every iteration only doubles the load while
+                    // it runs — the previous form skipped iteration 0 and then
+                    // polled per interval until maxPolls ran out.
+                    //
+                    // Not polling at all would trade that for a hang: an event
+                    // emitted before this subscription (a job that finished
+                    // while the page was hidden, say) is missed, and only the
+                    // fallback would notice. So the fallback becomes a slow
+                    // heartbeat instead of a per-second poll, and the final
+                    // iteration always fetches so "maxPolls exhausted" means
+                    // something was actually checked.
+                    const idle = pollInterval;
+                    if (idle > 0) await new Promise((r) => setTimeout(r, idle));
+                    const isLastIteration = i === maxPolls - 1;
+                    if (!isLastIteration && i % WS_FALLBACK_EVERY !== 0) continue;
                 }
                 const delay = pollInterval;
                 if (delay > 0) await new Promise((r) => setTimeout(r, delay));

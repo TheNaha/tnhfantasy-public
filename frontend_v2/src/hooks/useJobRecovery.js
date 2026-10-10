@@ -10,6 +10,7 @@
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { jobsApi } from '../api';
+import { refetchNewestGalleryPage } from './useGallery';
 
 export const FAILED_JOBS_QUERY_KEY = ['jobs', 'failed'];
 
@@ -19,7 +20,17 @@ const DEFAULT_LIMIT = 10;
 function invalidateJobViews(queryClient) {
     return () => {
         queryClient.invalidateQueries({ queryKey: ['jobs'] });
-        queryClient.invalidateQueries({ queryKey: ['gallery'] });
+        // Newest page only, not the bare ['gallery'] prefix: that walks every
+        // page already loaded, sequentially, for one job state change. The
+        // gallery is an infinite query, so a prefix invalidation is a request
+        // per page — with fifteen pages loaded, on mobile, that is fifteen
+        // round trips and a sentinel that moves as each one lands, which is
+        // exactly the infinite-scroll jitter `useGallery` documents. `mounted`
+        // matters here: recovery runs from the diagnostics view, where a
+        // dashboard may or may not be live, and it just toggles the current
+        // tab away and back.
+        // A recovered image can also be new, so the gallery moves.
+        void refetchNewestGalleryPage(queryClient, { mountedOnly: true });
     };
 }
 

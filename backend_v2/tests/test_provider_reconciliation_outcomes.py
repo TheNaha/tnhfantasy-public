@@ -240,3 +240,55 @@ class TestOnlyImageProvidersReportImageModelCounts:
 
         assert result["is_image_provider"] is True
         assert result["catalog_models"] is not None
+
+
+class TestReconcilerStoragePathKeying:
+    """What path a listed file is filed under.
+
+    The listing is matched against `get_all_storage_paths()`, which builds
+    `models/{model.directory}/{filename}` — a directory that may itself hold
+    an intermediate segment (`ultralytics/bbox`). Keying a listed file on
+    `directory + basename` drops any segment beyond the requested directory,
+    so a nested file matches nothing: it is re-marked pending forever and
+    reported as an orphan on every tick.
+    """
+
+    def test_a_reported_path_is_used_verbatim(self):
+        from services.in_process_reconciliation import _storage_path_for_entry
+
+        entry = {"name": "yolo.pt", "path": "models/checkpoints/sub/yolo.pt", "size": 1}
+
+        assert _storage_path_for_entry(entry, "models/checkpoints") == (
+            "models/checkpoints/sub/yolo.pt"
+        )
+
+    def test_a_nested_directory_directory_is_preserved(self):
+        """`directory` from MODEL_DIRECTORIES can be two segments deep."""
+        from services.in_process_reconciliation import _storage_path_for_entry
+
+        entry = {"name": "yolo.pt", "path": "models/ultralytics/seg/yolo.pt"}
+
+        assert _storage_path_for_entry(entry, "models/ultralytics/seg") == (
+            "models/ultralytics/seg/yolo.pt"
+        )
+
+    def test_storage_path_is_accepted_as_the_path(self):
+        from services.in_process_reconciliation import _storage_path_for_entry
+
+        entry = {"name": "x.pt", "storage_path": "models/loras/deep/x.pt"}
+
+        assert _storage_path_for_entry(entry, "models/loras") == "models/loras/deep/x.pt"
+
+    def test_a_name_only_entry_falls_back_to_directory(self):
+        """Payloads that never send a path keep the old, correct behaviour."""
+        from services.in_process_reconciliation import _storage_path_for_entry
+
+        assert _storage_path_for_entry({"name": "sd.ckpt"}, "models/checkpoints") == (
+            "models/checkpoints/sd.ckpt"
+        )
+
+    def test_an_entry_with_neither_is_dropped(self):
+        from services.in_process_reconciliation import _storage_path_for_entry
+
+        assert _storage_path_for_entry({"size": 12}, "models/checkpoints") is None
+        assert _storage_path_for_entry({}, "models/checkpoints") is None

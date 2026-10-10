@@ -129,6 +129,10 @@ export function useSetLLMDefault() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: LLM_DEFAULT_KEY });
             queryClient.invalidateQueries({ queryKey: LLM_MODELS_KEY });
+            // The providers list carries `is_default` per row, so the old
+            // winner keeps its badge while the new winner gets none: the UI
+            // reports the new default and marks the old one at the same time.
+            queryClient.invalidateQueries({ queryKey: LLM_PROVIDERS_KEY });
         },
     });
 }

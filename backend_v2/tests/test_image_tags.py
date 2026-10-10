@@ -443,9 +443,15 @@ def test_vocabulary_caps_and_flags_truncation(session):
     for i in range(5):
         tag_service.add_user_tag(session, make_asset(session, f"c{i}").id, f"tag{i}")
     session.commit()
-    # limit + 1, so the caller can see there is more rather than guessing.
-    assert len(tag_service.list_tag_vocabulary(session, limit=2)) == 3
-    assert len(tag_service.list_tag_vocabulary(session, limit=50)) == 5
+    # Exactly `limit`, never limit + 1: the extra row the service fetches is
+    # a truncation probe the caller reads through `truncated`, and returning
+    # it made `?limit=50` answer with 51 tags.
+    page = tag_service.list_tag_vocabulary(session, limit=2)
+    assert len(page) == 2
+    assert page.truncated is True
+    page = tag_service.list_tag_vocabulary(session, limit=50)
+    assert len(page) == 5
+    assert page.truncated is False
 
 
 def test_vocabulary_rejects_a_prefix_longer_than_a_tag_can_be(session):

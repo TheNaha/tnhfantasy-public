@@ -694,3 +694,16 @@ def invalidate_engine(provider_id: str) -> None:
         _provider_health_cache.pop(f"in_process:{provider_id}", None)
     except Exception:
         pass
+    # The cached ComfyUI node graph goes with it. This is the one place every
+    # runtime change funnels through (provider PATCH, token refresh), and the
+    # graph cache had no caller for it at all — its own docstring named this
+    # path — so a provider that came back from a restart with a different
+    # install served the pre-restart `/object_info` for the full TTL, and the
+    # user composed against a node that was no longer there.
+    try:
+        from api.routes.nodes import invalidate_object_info_cache
+
+        invalidate_object_info_cache(provider_id)
+    except Exception:
+        # Never let a cache-clearing path fail a config update.
+        pass

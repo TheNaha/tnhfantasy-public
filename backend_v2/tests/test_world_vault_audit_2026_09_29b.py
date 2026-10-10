@@ -884,13 +884,26 @@ class TestStartupRecoveryOrder:
 
     def test_the_reset_sweep_really_includes_post_processing(self):
         """Guards the assumption above: if the sweep ever drops POST_PROCESSING,
-        the ordering constraint is documented as load-bearing and would be wrong."""
+        the ordering constraint is documented as load-bearing and would be wrong.
+
+        The sweep's status list used to be six hand-copied SQL string literals
+        inside the statement. It is now interpolated from
+        `core.entities.ACTIVE_JOB_STATUSES` — the same tuple the Python paths
+        read — so the guard checks that the tuple still holds the state the
+        ordering depends on, rather than that the method spells it out. The
+        literal spelling and the enum had no link, so a new status added to the
+        tuple would have left the reset stranded forever in that state.
+        """
         import inspect
+
+        from core.entities import ACTIVE_JOB_STATUSES, JobStatus
 
         from services.job_queue import QueueManager
 
+        assert JobStatus.POST_PROCESSING in ACTIVE_JOB_STATUSES
+
         src = inspect.getsource(QueueManager._reset_claims_and_requeue_sync)
-        assert "POST_PROCESSING" in src
+        assert "ACTIVE_JOB_STATUSES" in src
 
 
 # ── D11: the timeline materialised whole Asset rows ───────────────────────

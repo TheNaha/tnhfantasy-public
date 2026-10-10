@@ -93,7 +93,6 @@ NODE_TO_DIRECTORY = {
     "CLIPLoader": "clip",
     "CLIPVisionLoader": "clip_vision",
     "HypernetworkLoader": "hypernetworks",
-    "DiffusersLoader": "diffusers",
     "unCLIPCheckpointLoader": "checkpoints",
 }
 
@@ -624,18 +623,47 @@ class DirectComfyEngine(InProcessEngine):
         status. The agent branch streams under a 600s timeout (the old
         remote_comfy client allowed 600s; the shared agent client defaults
         to 60s, which a multi-GB checkpoint read can exceed).
+
+        Both branches are bounded by `get_file_size_cap()`: the caps exist
+        so a wrong `path` cannot stream a whole weights file into the
+        caller, and they have to agree because the caller cannot tell which
+        branch served it.
         """
+        from services.engines.base import get_file_size_cap
+
+        max_bytes = get_file_size_cap()
+
         if self._has_agent:
             agent = self.get_agent_client()
             url = f"/get-file/{urllib.parse.quote(path, safe='/')}"
             async with agent.stream("GET", url, timeout=AGENT_GET_FILE_TIMEOUT_SECONDS) as resp:
                 if resp.status_code == 404:
                     raise FileNotFoundError(f"File not found on remote agent: {path}")
+                if resp.status_code == 413:
+                    # Over the agent's own cap — surface it as the cap error
+                    # it is, not a generic status the caller cannot act on.
+                    raise FileTooLargeError(path, cap=get_file_size_cap())
                 if resp.status_code != 200:
                     raise RuntimeError(
                         f"Remote agent /get-file returned {resp.status_code} for {path}"
                     )
-                async for chunk in resp.aiter_bytes(_STREAM_CHUNK_BYTES):
+                # Same ceiling the /view branch enforces: the agent 413s on
+                # its own cap, but a mis-typed path into a weights file must
+                # not stream unbounded into the caller when the agent's cap
+                # is disabled (PROVIDER_GET_FILE_MAX_BYTES=0).
+                declared = resp.headers.get("content-length")
+                if max_bytes and declared and declared.isdigit() and int(declared) > max_bytes:
+                    raise FileTooLargeError(path, size=int(declared), cap=max_bytes)
+
+                async def _capped_agent() -> AsyncIterator[bytes]:
+                    total = 0
+                    async for chunk in resp.aiter_bytes(_STREAM_CHUNK_BYTES):
+                        total += len(chunk)
+                        if max_bytes and total > max_bytes:
+                            raise FileTooLargeError(path, size=total, cap=max_bytes)
+                        yield chunk
+
+                async for chunk in _capped_agent():
                     yield chunk
             return
 
@@ -651,9 +679,6 @@ class DirectComfyEngine(InProcessEngine):
             await resp.aclose()
             raise RuntimeError(f"ComfyUI /view returned {resp.status_code} for {path}")
 
-        from services.engines.base import get_file_size_cap
-
-        max_bytes = get_file_size_cap()
         declared = resp.headers.get("content-length")
         if max_bytes and declared and declared.isdigit() and int(declared) > max_bytes:
             await resp.aread()
@@ -758,18 +783,19 @@ class DirectComfyEngine(InProcessEngine):
         """Upload a file via the agent sidecar; unsupported without one."""
         if not self._has_agent:
             return False
-        try:
-            from services.engines.base import get_upload_max_bytes_encoded
+        from services.engines.base import encoded_upload_over_cap
 
-            # Encoded-length pre-check first (parity with BeamEngine): never
-            # base64-decode a body the wire cap already rejects.
-            if len(content_base64) > get_upload_max_bytes_encoded():
-                logger.warning(
-                    "direct_comfy_upload_over_cap",
-                    provider_id=self.provider_id,
-                    path=filename,
-                )
-                return False
+        # Encoded-length pre-check first (parity with BeamEngine): never
+        # base64-decode a body the wire cap already rejects. Outside the try
+        # so a fault in the guard is not swallowed into `return False`.
+        if encoded_upload_over_cap(len(content_base64)):
+            logger.warning(
+                "direct_comfy_upload_over_cap",
+                provider_id=self.provider_id,
+                path=filename,
+            )
+            return False
+        try:
             cap = get_upload_size_cap()
             if cap:
                 try:

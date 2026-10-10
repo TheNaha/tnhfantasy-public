@@ -29,6 +29,7 @@ from infrastructure.logging import api_logger
 from services.provider_runtime import resolve_provider_runtime_async
 from services.engines.registry import ui_schemas, validate_provider_payload
 from services.provider_status_service import invalidate_provider_status_caches
+from services.load_balancer import LoadBalancer
 
 logger = api_logger()
 
@@ -603,6 +604,12 @@ async def update_provider(
     from services.engines.engine_factory import invalidate_engine
     invalidate_engine(provider_id)
     invalidate_provider_status_caches(provider_id)
+    # `enabled` decides which providers the balancer will route to at all, so
+    # a toggle changes the answer `resolve_checkpoint` and
+    # `get_available_checkpoint` cache for up to 30 s. Both caches are
+    # cleared through the one invalidation entry point.
+    if "enabled" in updates or "capabilities" in updates:
+        LoadBalancer.invalidate_model_availability_cache(provider_id=provider_id)
     status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider.id, provider=provider)
 

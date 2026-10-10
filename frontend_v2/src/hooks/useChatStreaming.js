@@ -166,6 +166,21 @@ export function useChatStreaming({
                 if (job.task_type === 'image') {
                     queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId, 'images'], exact: true });
                 }
+                // A chat completion is also where memory extraction runs: the
+                // backend scans the new exchange and writes character memories
+                // after the reply is stored. The memories list was not
+                // invalidated here, so a memory panel stayed stale until
+                // navigation — the panel did not show what the turn had just
+                // learned.
+                //
+                // Keyed on the CHARACTER, not the chat: the memories query is
+                // `['world_vault','memories',characterId]`
+                // (useMemories.js), so a chat id would prefix-match nothing
+                // and "fix" it with a no-op.
+                const memoryCharacterId = meta.character_id || existingJob?.characterId;
+                if (memoryCharacterId) {
+                    queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MEMORIES, memoryCharacterId), exact: true });
+                }
             }
 
             if (eventChatId === activeChatId) {

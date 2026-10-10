@@ -187,4 +187,32 @@ describe('useLLMJobResult', () => {
             });
         }).rejects.toThrow('boom');
     });
+
+    it('does not poll per iteration while WS is connected', async () => {
+        api.post.mockResolvedValue({ id: 'job-2' });
+        api.get.mockResolvedValue({ status: 'running' });
+        ws.getConnectionStatus.mockImplementation(() => true);
+
+        const { result } = renderHook(() => useLLMJobResult({ pollInterval: 1, maxPolls: 20 }));
+
+        let outcome;
+        await act(async () => {
+            outcome = result.current({ workflow: {} });
+            // Let several iterations run. Nothing settles, so the loop is
+            // purely idling — which is the point: the event stream resolves
+            // it, and the old form issued a fetch per iteration.
+            await new Promise((r) => setTimeout(r, 60));
+        });
+
+        const callsWhileIdling = api.get.mock.calls.length;
+        // Proves the fallback is a heartbeat, not a poll: one call per
+        // WS_FALLBACK_EVERY iterations, not one per iteration.
+        expect(callsWhileIdling).toBeLessThan(5);
+
+        act(() => {
+            handlers[ws.EventTypes.JOB_COMPLETED]({ job: { id: 'job-2', outputs: [{ content: 'ok' }] } });
+        });
+        await outcome;
+    });
+
 });

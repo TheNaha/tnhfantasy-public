@@ -156,9 +156,20 @@ class LoadBalancer:
         provider_id: str | None = None,
         runtime_state: LoadBalancerRuntimeState | None = None,
     ) -> None:
-        """Clear cached model-availability lookups after model status changes."""
+        """Clear cached model-availability lookups after model status changes.
+
+        Clears *both* availability caches through this one entry point. The
+        `ModelAvailabilityService` cache had no production caller at all —
+        its own docstring named the model-install and provider-toggle paths
+        that would call it and none did — so a just-deleted model stayed
+        servable, and a just-installed one invisible, for the 30 s TTL. Every
+        writer now comes through here.
+        """
+        from services.model_availability_service import clear_available_models_cache
+
         cleared_entries = len(_model_availability_cache)
         _model_availability_cache.clear()
+        clear_available_models_cache()
 
         if cleared_entries:
             logger.debug(
@@ -550,7 +561,18 @@ class LoadBalancer:
                     return None
                 candidates = [provider]
             else:
-                return None
+                # The pinned provider is disabled, unknown, or already
+                # exhausted by an earlier attempt on this job. Returning
+                # None here makes `job_runner.select_next_provider` read
+                # "all providers failed" and fail the job outright — which
+                # is exactly the failover the exhausted-set exists to
+                # provide, and which the non-health-aware branch below and
+                # the LLM branch above both perform. Fall through to the
+                # strategy over what is left instead; `providers` has
+                # already dropped disabled and capability-ineligible rows.
+                candidates = [p for p in providers if p.id != preferred_provider_id]
+                if not candidates:
+                    return None
 
         # Check health and separate candidates into warm and cold
         warm_candidates = []

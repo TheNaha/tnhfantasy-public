@@ -1,8 +1,9 @@
 """Tests for services/job_queue.py"""
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import patch
 
-from services.job_queue import JobQueue
+from services.job_queue import JobQueue, QueueManager
 
 
 class TestJobQueueInit:
@@ -225,3 +226,84 @@ class TestMaxConcurrentThrottle:
             assert image._max_concurrent() == 1
             assert llm._max_concurrent() == 1
         assert image._task_type != llm._task_type
+
+
+class TestRawSqlStatusVocabulary:
+    """The two raw-SQL statements must agree with `ACTIVE_JOB_STATUSES`.
+
+    Both used to carry the six statuses as SQL string literals, hand-copied
+    from the Python enum. A seventh status added to
+    `core.entities.ACTIVE_JOB_STATUSES` would then make the queue's own
+    headroom arithmetic disagree with the runners that populate it — the
+    claim would see fewer in-flight jobs than exist, and the restart reset
+    would leave rows stuck in the new state forever, because nothing else
+    resets them.
+    """
+
+    def test_both_statements_interpolate_the_enum_not_literals(self):
+        from core.entities import ACTIVE_JOB_STATUSES
+
+        # `inspect.getsource`, not `co_consts`: the reset statement is built
+        # from adjacent string literals, so the joined SQL never appears as a
+        # single constant. Comments are stripped first — the explanatory
+        # comment on the `.name` fix quotes the literal it warns about.
+        import inspect
+
+        def _code_only(fn) -> str:
+            return "\n".join(
+                line.split("#", 1)[0]
+                for line in inspect.getsource(fn).splitlines()
+            )
+
+        blob = _code_only(JobQueue._claim_next_job_sync) + _code_only(
+            QueueManager._reset_claims_and_requeue_sync
+        )
+
+        for status in ACTIVE_JOB_STATUSES:
+            assert f"'{status.value}'" not in blob, (
+                f"{status.value} is still a hard-coded SQL literal; the enum is "
+                "the one definition of the active vocabulary"
+            )
+        assert "active_status_placeholders" in blob
+
+    def test_reset_requeues_in_flight_and_claimed_pending_jobs(self, session):
+        """The reset's observable contract, on the dialect tests actually run.
+
+        This statement is not dialect-guarded — unlike the claim query, it used
+        to be a literal string nobody executed under SQLite, so a typo in it
+        shipped silently.
+        """
+        from core.entities import Job, JobStatus
+
+        in_flight = Job(
+            id="claims-generating",
+            task_type="image",
+            status=JobStatus.GENERATING,
+            workflow={},
+        )
+        claimed_pending = Job(
+            id="claims-pending",
+            task_type="image",
+            status=JobStatus.PENDING,
+            workflow={},
+            claimed_at=datetime.now(timezone.utc),
+        )
+        terminal = Job(
+            id="claims-done",
+            task_type="image",
+            status=JobStatus.COMPLETED,
+            workflow={},
+        )
+        session.add_all([in_flight, claimed_pending, terminal])
+        session.commit()
+
+        QueueManager._reset_claims_and_requeue_sync()
+
+        session.refresh(in_flight)
+        session.refresh(claimed_pending)
+        session.refresh(terminal)
+        assert in_flight.status == JobStatus.PENDING
+        assert in_flight.started_at is None
+        assert claimed_pending.claimed_at is None
+        # Terminal jobs are left untouched — a finished job is not in flight.
+        assert terminal.status == JobStatus.COMPLETED

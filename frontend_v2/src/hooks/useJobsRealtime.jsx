@@ -4,6 +4,7 @@ import * as ws from '../api/websocket';
 import { refetchNewestGalleryPage } from './useGallery';
 import { jobMetadata } from '../utils/jobStatus';
 import toast from 'react-hot-toast';
+import useSettingsStore from '../store/settingsStore';
 
 export function useJobsRealtime() {
     const queryClient = useQueryClient();
@@ -176,6 +177,21 @@ export function useJobsRealtime() {
                 // and the grid does not change. It is a missing invalidation,
                 // not polling.
                 //
+                // `gallery.autoRefreshOnJobComplete` is the user's switch for
+                // exactly this refresh, and the Dashboard's own handler honours
+                // it (Dashboard.jsx:116). This handler did not, so with the
+                // setting off a finished job still reloaded the newest page —
+                // one request to show something the user had just turned off.
+                // `refetchNewestGalleryPage` coalesces the two callers itself,
+                // so gating here costs nothing when it is on.
+                const autoRefreshEnabled = useSettingsStore.getState().settings.gallery.autoRefreshOnJobComplete;
+                if (!autoRefreshEnabled) {
+                    // Collection and world counts still change with a new asset.
+                    invalidateIfMounted(['collections']);
+                    invalidateIfMounted(['statistics']);
+                    return;
+                }
+
                 /* Refetch ONLY the newest page.
 
                    `useGallery` is a `useInfiniteQuery`, so a bare

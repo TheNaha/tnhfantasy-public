@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 
+from config import env_positive_float
 from infrastructure.logging import get_logger
 from services.engines.base import (
     EngineAuthError,
@@ -48,10 +49,15 @@ def _health_probe_timeout(env_name: str, default: float = 1.5) -> float:
 
     Mirrors the old container clients (each read its own
     ``*_HEALTH_PROBE_TIMEOUT`` env var, default 1.5s). Read at call time so
-    tests can monkeypatch the environment.
+    tests can monkeypatch the environment. A bad value falls back to the
+    default through the shared reader rather than raising here — the
+    `float(os.getenv(...))` form crashes the process at import.
     """
+    raw = os.getenv(env_name)
+    if raw is None or raw.strip() == "":
+        return default
     try:
-        return float(os.getenv(env_name, str(default)))
+        return float(raw)
     except (TypeError, ValueError):
         return default
 
@@ -504,7 +510,9 @@ class ModalVLLMEngine(InProcessEngine):
     #: out over MODEL_DIRECTORIES, so non-models dirs answer [] below.
     _MODEL_DIRS = ("models",)
 
-    _GET_FILE_TIMEOUT_SECONDS = float(os.getenv("MODAL_GET_FILE_TIMEOUT_SECONDS", "3600"))
+    _GET_FILE_TIMEOUT_SECONDS = env_positive_float(
+    os.getenv("MODAL_GET_FILE_TIMEOUT_SECONDS"), 3600.0
+)
     _RANGE_CHUNK_BYTES = 4 * 1024 * 1024
 
     def __init__(
@@ -766,13 +774,14 @@ class ModalVLLMEngine(InProcessEngine):
     async def upload_file(self, filename: str, content_base64: str, directory: str = "") -> bool:
         if not HAS_MODAL or modal is None:
             return False
-        from services.engines.base import get_upload_max_bytes_encoded
+        from services.engines.base import encoded_upload_over_cap
 
         # Encoded-length pre-check first (parity with ModalEngine/BeamEngine
         # and the container router's 413): never base64-decode a body the
         # wire cap already rejects — decoding a multi-hundred-MB blob just
-        # to reject it OOMs the backend first.
-        if len(content_base64) > get_upload_max_bytes_encoded():
+        # to reject it OOMs the backend first. A cap of 0 means *disabled*,
+        # so the comparison must be gated on the cap being set.
+        if encoded_upload_over_cap(len(content_base64)):
             logger.warning("modal_vllm_upload_over_cap", provider_id=self.provider_id, path=filename)
             return False
         try:
@@ -1254,12 +1263,20 @@ class AnthropicLLMEngine(InProcessEngine):
             yield {"event": "failed", "job_id": job_id,
                    "message": f"LLM generation timed out after {int(timeout)}s", "retryable": True}
         except asyncio.CancelledError:
-            # Parity with the container Anthropic client: an externally
-            # cancelled stream yields a cancelled event (empty content —
-            # the half-written message is not recorded as a success).
-            yield {"event": "cancelled", "job_id": job_id,
-                    "message": "Job cancelled by user",
-                    "outputs": [{"role": "assistant", "content": "", "cancelled": True}]}
+            # A task cancellation here is the *timeout* carrier, not a user
+            # cancel: `provider_client` wraps this stream in
+            # `asyncio.timeout`, which delivers the deadline by cancelling
+            # the task, and it only converts that into a TimeoutError if the
+            # CancelledError actually reaches its `__aexit__`. Swallowing it
+            # here disarms the deadline — the job finalises as
+            # "cancelled by user" instead of timing out, and the retry the
+            # timeout is allowed never happens.
+            #
+            # A genuine user cancel never reaches this handler: the SSE loop
+            # below checks `self._cancelled_jobs` on every frame and yields
+            # the cancelled event with the partial content, exactly as the
+            # openai_compat and vLLM engines do.
+            raise
         except Exception as exc:
             logger.exception("llm_inference_error", provider_id=self.provider_id, job_id=job_id, error=str(exc))
             yield {"event": "failed", "job_id": job_id, "message": f"LLM generation error: {exc}",
@@ -1486,12 +1503,10 @@ class GoogleLLMEngine(InProcessEngine):
             yield {"event": "failed", "job_id": job_id,
                    "message": f"LLM generation timed out after {int(timeout)}s", "retryable": True}
         except asyncio.CancelledError:
-            # Parity with the container Google client: an externally
-            # cancelled stream yields a cancelled event, never a success
-            # carrying a half-written message.
-            yield {"event": "cancelled", "job_id": job_id,
-                    "message": "Job cancelled by user",
-                    "outputs": [{"role": "assistant", "content": "", "cancelled": True}]}
+            # See the twin comment on AnthropicLLMEngine: this is the timeout
+            # carrier, not a user cancel. The loop above already yields the
+            # cancelled event (with partial content) for a real cancel.
+            raise
         except Exception as exc:
             message = redact_api_key(str(exc), self.api_key)
             logger.exception("llm_inference_error", provider_id=self.provider_id, job_id=job_id, error=message)

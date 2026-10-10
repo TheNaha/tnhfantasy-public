@@ -639,7 +639,11 @@ async def get_file(path: str, type: str = Query(default="output"), subfolder: st
         size = os.path.getsize(full_path)
     except OSError:
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    if max_bytes >= 0 and size > max_bytes:
+    # `0` (or negative) is the documented *disable* value, not a zero-byte
+    # limit: `max_bytes >= 0` made an operator who disabled the cap get a
+    # 413 for every file. The backend's twin normalises to 0 and lets
+    # callers treat it as falsy; the same rule here.
+    if max_bytes > 0 and size > max_bytes:
         raise HTTPException(
             status_code=413,
             detail=f"{path} is {size} bytes, over the {max_bytes} byte get-file limit",

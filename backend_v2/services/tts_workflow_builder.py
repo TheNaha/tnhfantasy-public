@@ -76,9 +76,8 @@ def _require_tts_capable(session) -> None:
     ) or "none"
     raise TtsCapabilityError(
         "No enabled provider declares the 'tts' capability, so a speech job "
-        f"cannot be routed. Current providers: {declared}. Deploy the TTS worker "
-        "with POST /api/v2/providers/{id}/deploy, then set the provider's "
-        "`capabilities` to include 'tts'."
+        f"cannot be routed. Current providers: {declared}. Set the provider's "
+        "`capabilities` to include 'tts', and confirm it is enabled."
     )
 
 

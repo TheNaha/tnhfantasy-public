@@ -7,6 +7,7 @@ multiple concurrent Modal accounts via discrete modal.Client.from_credentials(..
 
 import asyncio
 import base64
+import inspect
 import os
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -18,6 +19,7 @@ except ImportError:
     modal = None  # type: ignore
     HAS_MODAL = False
 
+from config import env_positive_float
 from infrastructure.logging import get_logger
 from services.engines.base import (
     TERMINAL_EVENTS,
@@ -38,7 +40,9 @@ _RANGE_CHUNK_BYTES = 8 * 1024 * 1024  # 8 MiB per slice for large volume reads
 # Deadline for the whole get-file stream, mirroring
 # MODAL_GET_FILE_TIMEOUT_SECONDS in the modal container client (default
 # 3600s): a stalled volume read must fail instead of hanging the fetch.
-_GET_FILE_TIMEOUT_SECONDS = float(os.getenv("MODAL_GET_FILE_TIMEOUT_SECONDS", "3600"))
+_GET_FILE_TIMEOUT_SECONDS = env_positive_float(
+    os.getenv("MODAL_GET_FILE_TIMEOUT_SECONDS"), 3600.0
+)
 
 # Cancel-poll window inside the inference loop. The old container client
 # checked job_tracker.is_cancelled on a 2s timeout even mid-stall
@@ -315,8 +319,24 @@ class ModalEngine(InProcessEngine):
             }
 
     async def close(self) -> None:
-        """Release the cached Modal client (parity with container close())."""
-        self._client = None
+        """Release the cached Modal client (parity with container close()).
+
+        The client is closed when it exposes `aclose` before the reference is
+        dropped: only setting `_client = None` leaks the client's connection
+        pool across every credential rotation, which is exactly when this is
+        called. A client without `aclose` is still cleared.
+        """
+        client, self._client = self._client, None
+        aclose = getattr(client, "aclose", None)
+        if aclose is None:
+            return
+        try:
+            result = aclose()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            # Teardown must never fail a job finalisation path.
+            logger.warning("modal_client_close_failed", provider_id=self.provider_id, error=str(exc))
 
     async def list_models(self, directory: str, timeout: float = 60.0) -> List[Dict[str, Any]]:
         """Query models in a directory directly from Modal Volume.
@@ -378,9 +398,23 @@ class ModalEngine(InProcessEngine):
             while offset < total_size:
                 chunk = await storage.read_file_range.remote.aio(path, offset, _RANGE_CHUNK_BYTES)
                 if not chunk:
-                    break
+                    # The provider declared `total_size` bytes; a short read
+                    # is a truncated stream, not a clean end of file. Raising
+                    # here is what stops the caller hashing and storing a
+                    # half-written checkpoint that would later fail its own
+                    # sha256 check — silently, because every byte it did
+                    # receive is valid on its own.
+                    raise RuntimeError(
+                        f"Modal read_file_range returned a short read for {path}: "
+                        f"{offset} of {total_size} bytes"
+                    )
                 offset += len(chunk)
                 yield chunk
+
+            if offset < total_size:
+                raise RuntimeError(
+                    f"Modal streamed only {offset} of {total_size} bytes for {path}"
+                )
 
     def download_token_for_url(self, url: str) -> Optional[str]:
         """Which registry token authenticates this download URL.
@@ -487,13 +521,18 @@ class ModalEngine(InProcessEngine):
         bool contract reports False). files.py checks first, so this is the
         backstop for direct engine callers.
         """
-        from services.engines.base import get_upload_max_bytes_encoded
+        from services.engines.base import encoded_upload_over_cap
 
         # Encoded-length pre-check first (parity with BeamEngine and the
         # container router's 413): decoding a multi-hundred-MB base64 blob
         # just to reject it OOMs the backend first — and a refused upload
         # must not construct a Modal client either.
-        if len(content_base64) > get_upload_max_bytes_encoded():
+        #
+        # A cap of 0 (or negative) means *disabled*, so the guard must test
+        # the cap itself before the comparison: `len(s) > 0` is true for
+        # every non-empty body, which would refuse all uploads for an
+        # operator who disabled the cap.
+        if encoded_upload_over_cap(len(content_base64)):
             logger.warning("modal_upload_over_cap", provider_id=self.provider_id, path=filename)
             return False
         try:

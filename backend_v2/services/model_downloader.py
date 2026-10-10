@@ -61,14 +61,21 @@ class ModelDownloader:
             for version in target_versions:
                 file = self.repo.get_primary_file_for_version(version.id)
                 if file:
-                    status = "not_installed" if getattr(provider, "type", None) in {"direct_url", "remote_comfy"} else "pending"
+                    # The documented vocabulary is pending / downloading /
+                    # ready / failed (see `ProviderVersionStatus.status`).
+                    # `not_installed` used to be written here for
+                    # external-host providers; nothing decodes it, so those
+                    # rows counted toward `total_models` while every bucket
+                    # read zero — visually identical to "nothing assigned".
+                    # `pending` is also the accurate answer: the file is
+                    # expected, and discovery marks it ready when found.
                     self.repo.update_provider_status(
                         file_id=file.id,
                         provider_id=provider.id,
-                        status=status,
+                        status="pending",
                         force_create=True
                     )
-        
+
         results = {"triggered": 0, "providers": []}
         
         for provider in providers:
@@ -83,63 +90,45 @@ class ModelDownloader:
                 })
                 continue
 
-            if getattr(provider, "worker_type", "image") == "llm" and getattr(runtime, "mode", "") != "in_process" and getattr(provider, "type", "") != "modal_vllm" and "vllm" not in getattr(provider, "id", ""):
+            # Everything below is the in-process case: the guard above already
+            # `continue`d for every other mode, so `runtime.mode == "in_process"`
+            # here is a tautology. The block it used to wrap was written as one
+            # of three arms — and the third (`type in {direct_url, remote_comfy}`
+            # answering "external") is unreachable for the same reason: an
+            # external host is not an in-process runtime.
+            from services.engines.engine_factory import get_engine
+            from services.in_process_reconciliation import trigger_in_process_reconciliation
+
+            engine = get_engine(provider.id, provider)
+            # Skip engines with no model tree (hosted LLM/TTS), same as
+            # the container path skipping llm worker_types — but keyed
+            # off the engine flag, not a "vllm" substring in the id, so
+            # a renamed ModalVLLM still reconciles. ModalVLLM keeps
+            # manages_model_files=True.
+            if engine is None or (
+                not getattr(engine, "manages_model_files", False)
+                and not getattr(engine, "supports_discovery_reconcile", False)
+            ):
                 results["providers"].append({
                     "provider_id": provider.id,
                     "status": "skipped",
                     "error": "LLM workers do not reconcile model files",
                 })
                 continue
-
-            if getattr(runtime, "mode", "") == "in_process":
-                from services.engines.engine_factory import get_engine
-                from services.in_process_reconciliation import trigger_in_process_reconciliation
-
-                engine = get_engine(provider.id, provider)
-                # Skip engines with no model tree (hosted LLM/TTS), same as
-                # the container path skipping llm worker_types — but keyed
-                # off the engine flag, not a "vllm" substring in the id, so
-                # a renamed ModalVLLM still reconciles. ModalVLLM keeps
-                # manages_model_files=True.
-                if engine is None or (
-                    not getattr(engine, "manages_model_files", False)
-                    and not getattr(engine, "supports_discovery_reconcile", False)
-                ):
-                    results["providers"].append({
-                        "provider_id": provider.id,
-                        "status": "skipped",
-                        "error": "LLM workers do not reconcile model files",
-                    })
-                    continue
-                # Same trigger the container path POSTs to /reconcile with no
-                # body: a full reconciliation, not a quick sync.
-                result = await trigger_in_process_reconciliation(
-                    provider.id,
-                    provider=provider,
-                    engine=engine,
-                    quick_sync=False,
-                )
-                if result.get("status") in ("started", "already_running"):
-                    results["triggered"] += 1
-                results["providers"].append({
-                    "provider_id": provider.id,
-                    "status": result.get("status", "reconciling"),
-                    "message": result.get("message"),
-                })
-                continue
-
-            if getattr(provider, "type", None) in {"direct_url", "remote_comfy"}:
-                results["providers"].append({
-                    "provider_id": provider.id,
-                    "status": "external",
-                    "message": "Model files are managed by the external ComfyUI host",
-                })
-                continue
-
+            # Same trigger the container path POSTs to /reconcile with no
+            # body: a full reconciliation, not a quick sync.
+            result = await trigger_in_process_reconciliation(
+                provider.id,
+                provider=provider,
+                engine=engine,
+                quick_sync=False,
+            )
+            if result.get("status") in ("started", "already_running"):
+                results["triggered"] += 1
             results["providers"].append({
                 "provider_id": provider.id,
-                "status": "skipped",
-                "error": f"Runtime unavailable ({runtime.mode})",
+                "status": result.get("status", "reconciling"),
+                "message": result.get("message"),
             })
 
         return results

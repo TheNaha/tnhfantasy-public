@@ -102,6 +102,49 @@ class TestLoadBalancer:
         assert provider is not None
         assert provider.id == "provider-2"
 
+    async def test_pinned_provider_exhaustion_falls_over(
+        self, session: Session, providers, monkeypatch
+    ):
+        """A pinned provider that just failed must not fail the whole job.
+
+        job_runner adds the failed provider to `exhausted_providers` and calls
+        back with the same `preferred_provider_id`. The health-aware branch
+        used to answer None for that combination, which
+        `select_next_provider` reads as "all providers failed" and turns into
+        a FAILED job while a healthy provider still sits in the pool. The
+        LLM branch and the non-health-aware branch both fail over; this pins
+        the health-aware branch to the same behaviour.
+        """
+        # conftest disables health checks suite-wide; this path only exists
+        # when they are on, which is the production default.
+        monkeypatch.setenv("COMFY_LB_HEALTH_CHECKS_ENABLED", "1")
+        lb = LoadBalancer(session, strategy="round-robin")
+        assert lb.health_check_enabled is True
+
+        provider = await lb.get_next_provider(
+            preferred_provider_id="provider-1",
+            exclude_provider_ids={"provider-1"},
+        )
+
+        assert provider is not None, (
+            "pinned-and-exhausted must fail over, not report the pool as exhausted"
+        )
+        assert provider.id == "provider-2"
+
+    async def test_pinned_provider_exhaustion_with_nothing_left_returns_none(
+        self, session: Session, providers, monkeypatch
+    ):
+        """Failover only exists while something remains to fail over to."""
+        monkeypatch.setenv("COMFY_LB_HEALTH_CHECKS_ENABLED", "1")
+        lb = LoadBalancer(session, strategy="round-robin")
+
+        provider = await lb.get_next_provider(
+            preferred_provider_id="provider-1",
+            exclude_provider_ids={"provider-1", "provider-2"},
+        )
+
+        assert provider is None
+
     async def test_no_enabled_providers(self, session: Session):
         """Test returns None when no providers are enabled."""
         lb = LoadBalancer(session, strategy="round-robin")
@@ -317,3 +360,27 @@ class TestLoadBalancer:
         lb = LoadBalancer(session, strategy="priority")
         selected = await lb.get_next_provider(task_type="llm", exclude_provider_ids={"llm-x"})
         assert selected is not None and selected.id == "llm-y"
+
+    async def test_invalidation_clears_both_availability_caches(self, monkeypatch):
+        """The ModelAvailabilityService cache must share the one invalidation path.
+
+        `clear_available_models_cache` had no production caller — its docstring
+        named the model-install and provider-toggle paths and none existed — so
+        a deleted model stayed servable, and an installed one invisible, for
+        the 30 s TTL. Writers clear both through
+        `LoadBalancer.invalidate_model_availability_cache`.
+        """
+        from services import model_availability_service as svc
+
+        import time
+
+        svc._available_models_cache["checkpoints"] = (
+            time.monotonic(),
+            ["ghost.safetensors"],
+        )
+        assert svc._cached_available_models("checkpoints") == ["ghost.safetensors"]
+
+        LoadBalancer.invalidate_model_availability_cache()
+
+        assert svc._available_models_cache == {}
+        assert svc._cached_available_models("checkpoints") is None

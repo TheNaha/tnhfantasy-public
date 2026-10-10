@@ -80,6 +80,10 @@ def update_scenario(scenario_id: str, update_data: ScenarioUpdate, session: Sess
         scenario.description = update_dict["description"]
     if "prompt_template" in update_dict:
         scenario.prompt_template = update_dict["prompt_template"]
+    if "default_checkpoint" in update_dict:
+        scenario.default_checkpoint = update_dict["default_checkpoint"]
+    if "default_voice_profile" in update_dict:
+        scenario.default_voice_profile = update_dict["default_voice_profile"]
         
     scenario.updated_at = datetime.now(timezone.utc)
     session.add(scenario)

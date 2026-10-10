@@ -242,13 +242,26 @@ def list_asset_tags(session: Session, asset_id: str) -> list[dict]:
 # ── the vocabulary ───────────────────────────────────────────────────────────
 
 
+class TagVocabulary(list):
+    """A vocabulary page plus whether more exist beyond `limit`.
+
+    A `list` subclass rather than a `(rows, truncated)` tuple so every existing
+    reader — `len(...)`, iteration, `row["tag"]` — is untouched, and the route
+    can report `truncated` without fetching a second page.
+    """
+
+    def __init__(self, rows: list[dict], truncated: bool):
+        super().__init__(rows)
+        self.truncated = truncated
+
+
 def list_tag_vocabulary(
     session: Session,
     *,
     prefix: str | None = None,
     query: str | None = None,
     limit: int = 50,
-) -> list[dict]:
+) -> TagVocabulary:
     """Distinct tags with how many live images carry each, most-used first.
 
     Ordering by use-count is what makes a picker usable: an alphabetical list of
@@ -298,15 +311,19 @@ def list_tag_vocabulary(
         .limit(limit + 1)
     )
 
-    rows = session.exec(statement).all()
-    return [
+    fetched = session.exec(statement).all()
+    # The probe row is not a result: returning it made `?limit=50` answer with
+    # 51 tags. It is reported separately, as a flag, so the caller can still
+    # tell there is more.
+    rows = [
         {
             "tag": tag,
             "count": int(count),
             "user_count": int(user_count or 0),
         }
-        for tag, count, user_count in rows
+        for tag, count, user_count in fetched[:limit]
     ]
+    return TagVocabulary(rows, truncated=len(fetched) > limit)
 
 
 # ── the auto-tagger ──────────────────────────────────────────────────────────

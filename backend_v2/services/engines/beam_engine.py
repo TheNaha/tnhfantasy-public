@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
 import websockets
 
+from config import env_positive_int
 from infrastructure.logging import get_logger
 from services.engines.base import (
     TERMINAL_EVENTS,
@@ -33,8 +34,10 @@ from services.engines.base import (
 
 logger = get_logger("beam_engine")
 
-_WS_MAX_SIZE_MB = int(os.getenv("WS_MAX_SIZE_MB", "20"))
-_WS_OPEN_TIMEOUT = int(os.getenv("WS_OPEN_TIMEOUT", "120"))
+# Through the shared tolerant reader: `int(os.getenv(...))` turns a typo in a
+# deployment env file into a boot crash for the whole backend.
+_WS_MAX_SIZE_MB = env_positive_int(os.getenv("WS_MAX_SIZE_MB"), 20)
+_WS_OPEN_TIMEOUT = env_positive_int(os.getenv("WS_OPEN_TIMEOUT"), 120)
 _STREAM_CHUNK_BYTES = 1024 * 1024  # 1 MiB
 
 
@@ -45,7 +48,7 @@ def _max_background_tasks() -> int:
     failed(retryable=True) past saturation; the engine answers a busy dict
     with the same retryable marker."""
     try:
-        return max(1, int(os.getenv("PROVIDER_MAX_BACKGROUND_TASKS", "16")))
+        return env_positive_int(os.getenv("PROVIDER_MAX_BACKGROUND_TASKS"), 16)
     except (TypeError, ValueError):
         return 16
 
@@ -472,16 +475,17 @@ class BeamEngine(InProcessEngine):
         return await self._delete_via("delete-model", path)
 
     async def upload_file(self, filename: str, content_base64: str, directory: str = "") -> bool:
+        from services.engines.base import encoded_upload_over_cap
+
+        # Encoded-length pre-check first (parity with the container's
+        # content-length 413 pre-check): never base64-decode a body the wire
+        # cap already rejects. It sits outside the try so a fault in the
+        # guard itself is not swallowed into a generic `return False`.
+        if encoded_upload_over_cap(len(content_base64)):
+            logger.warning("beam_upload_over_cap", provider_id=self.provider_id, path=filename)
+            return False
         client = self.get_http_client()
         try:
-            from services.engines.base import get_upload_max_bytes_encoded
-
-            # Check the encoded length first (parity with the container's
-            # content-length 413 pre-check): decoding a multi-hundred-MB
-            # base64 blob just to reject it OOMs the backend first.
-            if len(content_base64) > get_upload_max_bytes_encoded():
-                logger.warning("beam_upload_over_cap", provider_id=self.provider_id, path=filename)
-                return False
             cap = get_upload_size_cap()
             if cap and len(base64.b64decode(content_base64, validate=False)) > cap:
                 logger.warning("beam_upload_over_cap", provider_id=self.provider_id, path=filename, cap=cap)

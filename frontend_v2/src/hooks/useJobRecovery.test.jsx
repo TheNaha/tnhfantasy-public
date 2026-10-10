@@ -22,6 +22,13 @@ vi.mock('react-hot-toast', () => ({
     },
 }));
 
+// Whole-module mock: the hook binds `refetchNewestGalleryPage` at import, which
+// is what replaced the bare `['gallery']` prefix invalidation. A namespace spy
+// would not be the call the hook makes. `vi.hoisted` because `vi.mock` is
+// hoisted above the const it needs.
+const { refetchNewestGalleryPage } = vi.hoisted(() => ({ refetchNewestGalleryPage: vi.fn() }));
+vi.mock('./useGallery', () => ({ refetchNewestGalleryPage }));
+
 function makeWrapper() {
     const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -175,7 +182,10 @@ describe('useJobRecovery', () => {
         expect(jobsApi.retry).toHaveBeenCalledWith('job-1');
         const invalidatedKeys = invalidate.mock.calls.map((call) => call[0].queryKey);
         expect(invalidatedKeys).toContainEqual(['jobs']);
-        expect(invalidatedKeys).toContainEqual(['gallery']);
+        // Scoped to the newest page, not the whole gallery tree — see the
+        // note on `invalidateJobViews`.
+        expect(refetchNewestGalleryPage).toHaveBeenCalled();
+        expect(invalidatedKeys).not.toContainEqual(['gallery']);
     });
 
     it('surfaces retry errors to the caller', async () => {
@@ -252,7 +262,11 @@ describe('useJobRecovery', () => {
             expect(jobsApi.acknowledge).toHaveBeenCalledWith('job-1', true);
             const invalidatedKeys = invalidate.mock.calls.map((call) => call[0].queryKey);
             expect(invalidatedKeys).toContainEqual(['jobs']);
-            expect(invalidatedKeys).toContainEqual(['gallery']);
+            // The gallery refreshes through the scoped newest-page helper, not
+            // the ['gallery'] prefix: a prefix invalidation walks every loaded
+            // page of an infinite query, sequentially, for one job state change.
+            expect(refetchNewestGalleryPage).toHaveBeenCalled();
+            expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['gallery'] });
         });
 
         it('restores a job without retrying it', async () => {
@@ -280,7 +294,11 @@ describe('useJobRecovery', () => {
             expect(bulk.updated).toBe(1);
             const invalidatedKeys = invalidate.mock.calls.map((call) => call[0].queryKey);
             expect(invalidatedKeys).toContainEqual(['jobs']);
-            expect(invalidatedKeys).toContainEqual(['gallery']);
+            // The gallery refreshes through the scoped newest-page helper, not
+            // the ['gallery'] prefix: a prefix invalidation walks every loaded
+            // page of an infinite query, sequentially, for one job state change.
+            expect(refetchNewestGalleryPage).toHaveBeenCalled();
+            expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['gallery'] });
         });
 
         it('restores every failed job in one call', async () => {

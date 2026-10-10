@@ -10,6 +10,7 @@ from sqlalchemy import Text, cast
 from sqlmodel import Session, select
 
 from core.entities import World, Character, Chat, Message, Story, VoiceModel
+from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 
 
 def _without(ids, entity_id):
@@ -22,11 +23,16 @@ def _scrub_json_array(session, model, field, entity_id):
     """Remove entity_id from JSON arrays using SQL-level filtering.
 
     Uses LIKE to find only rows that may contain the id, avoiding
-    full-table scans on every delete.
+    full-table scans on every delete. The pattern goes through the shared
+    escaping helper: a raw `%`/`_` in the id would otherwise match unrelated
+    JSON and strip the *wrong* id out of a Story's `character_ids`. Same
+    helper `asset_metadata_index` and `tag_service` already use.
     """
-    pattern = f'%"{entity_id}"%'
+    pattern = like_contains(f'"{entity_id}"')
     rows = session.exec(
-        select(model).where(cast(getattr(model, field), Text).like(pattern))
+        select(model).where(
+            cast(getattr(model, field), Text).like(pattern, escape=LIKE_ESCAPE_CHAR)
+        )
     ).all()
     for row in rows:
         setattr(row, field, _without(getattr(row, field), entity_id))

@@ -282,26 +282,79 @@ def test_tag_vocabulary_escaping_does_not_destroy_normal_prefix_search(session, 
 # interpolating something other than a literal must be gone.
 
 
-_LIKE_CALLS = {".like(", ".ilike(", ".not_like(", ".not_ilike("}
+# Attribute names, not call spellings: `".like(".lstrip(".")` is `"like("`, which
+# no `ast.Attribute.attr` ever equals, so the sweep below used to collect zero
+# calls and its test passed vacuously against every unescaped pattern in the
+# tree.
+_LIKE_ATTRS = {"like", "ilike", "not_like", "not_ilike"}
 
 
-def _like_pattern_arguments(path: Path) -> list[str]:
-    """Every first argument to a `.like()`/`.ilike()` call in `path`."""
+def _like_pattern_arguments(path: Path) -> list[tuple[int, str, bool]]:
+    """`(lineno, pattern_source, is_plain_literal)` for every LIKE call in `path`.
+
+    Resolves one level of indirection. The guard used to read only the literal
+    argument text, so `pattern = f"%{entity_id}%"` assigned two lines above the
+    call was invisible to it — which is exactly how `reference_cleanup` shipped
+    an unescaped pattern next to this file. A `Name` argument is therefore
+    looked up in the enclosing function's simple assignments.
+
+    `is_plain_literal` separates the two things the rule must not conflate: a
+    literal `"%Auto-discovered%"` interpolates nothing and is fine, while an
+    f-string, a concatenation or a `.format()` call splices data into the
+    pattern and is not.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    found: list[str] = []
+    found: list[tuple[int, str, bool]] = []
 
-    class Visitor(ast.NodeVisitor):
-        def visit_Call(self, node: ast.Call):
-            func = node.func
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr in {c.lstrip(".") for c in _LIKE_CALLS}
-                and node.args
+    def _is_interpolated(node: ast.expr) -> bool:
+        if isinstance(node, ast.Constant):
+            return False
+        if isinstance(node, ast.JoinedStr):
+            return True
+        if isinstance(node, ast.BinOp):
+            return True
+        if isinstance(node, ast.Call):
+            return True
+        return True
+
+    class Scope:
+        """One scope's simple `name = expression` assignments."""
+
+        def __init__(self, body: list[ast.stmt]):
+            self.sources: dict[str, ast.expr] = {}
+            for stmt in body:
+                if isinstance(stmt, ast.Assign):
+                    for target in stmt.targets:
+                        if isinstance(target, ast.Name):
+                            self.sources[target.id] = stmt.value
+
+        def resolve(self, node: ast.expr) -> ast.expr:
+            if isinstance(node, ast.Name) and node.id in self.sources:
+                return self.sources[node.id]
+            return node
+
+    def _collect(scope: Scope, node: ast.AST, found: list):
+        for inner in ast.walk(node):
+            if not (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr in _LIKE_ATTRS
+                and inner.args
             ):
-                found.append(ast.unparse(node.args[0]))
-            self.generic_visit(node)
+                continue
+            pattern = scope.resolve(inner.args[0])
+            found.append(
+                (inner.lineno, ast.unparse(pattern), not _is_interpolated(pattern))
+            )
 
-    Visitor().visit(tree)
+    module_scope = Scope(tree.body)
+    _collect(module_scope, tree, found)
+    # Function bodies: a nested scope's assignments shadow the module's, so the
+    # nested scope also gets its own pass over its own body.
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _collect(Scope(node.body), node, found)
+
     return found
 
 
@@ -310,18 +363,20 @@ def test_no_application_like_call_builds_its_pattern_by_interpolation():
 
     A literal `"%Auto-discovered%"` is fine — nothing is interpolated, so there
     is no user input to be confused by. What cannot be fine is any pattern that
-    splices a name into the string.
+    splices a value into the string: a `%` or `_` in that value then acts as a
+    wildcard, silently widening the match set.
     """
     offenders: list[str] = []
     for path in sorted(REPO_ROOT.rglob("*.py")):
         rel = path.relative_to(REPO_ROOT)
         if rel.parts[0] in {"tests", ".venv"} or "__pycache__" in rel.parts:
             continue
-        for argument in _like_pattern_arguments(path):
-            if "%" in argument and ("f\"" in argument or "f'" in argument or ".format(" in argument):
-                offenders.append(f"{rel}: {argument}")
-            if argument.lstrip().startswith('"') is False and "%" in argument:
-                offenders.append(f"{rel}: {argument}")
+        for lineno, pattern, is_plain_literal in _like_pattern_arguments(path):
+            if "%" not in pattern:
+                continue
+            if is_plain_literal:
+                continue
+            offenders.append(f"{rel}:{lineno} {pattern}")
 
     assert not offenders, (
         "LIKE pattern built by string interpolation, so '%'/'_' in the search "
