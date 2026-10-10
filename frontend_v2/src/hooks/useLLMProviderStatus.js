@@ -69,7 +69,7 @@ export function useLLMProviderStatus() {
     const providers = providersQuery.data ?? [];
     const enabledProviders = providers.filter(p => p.enabled);
     const availableModels = modelsQuery.data ?? [];
-    const isHealthy = enabledProviders.length > 0 && !modelsQuery.isError;
+    const isHealthy = enabledProviders.length > 0 && availableModels.length > 0 && !modelsQuery.isError;
 
     return {
         providers,
@@ -77,7 +77,7 @@ export function useLLMProviderStatus() {
         defaultProvider: defaultQuery.data ?? null,
         availableModels,
         isHealthy,
-        isLoading: providersQuery.isLoading || defaultQuery.isLoading,
+        isLoading: providersQuery.isLoading || modelsQuery.isLoading || defaultQuery.isLoading,
         isModelsLoading: modelsQuery.isLoading || modelsQuery.isFetching,
         error: providersQuery.error ?? modelsQuery.error ?? null,
     };

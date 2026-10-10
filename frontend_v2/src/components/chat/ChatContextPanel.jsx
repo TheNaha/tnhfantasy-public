@@ -18,6 +18,7 @@ import MemoriesPanel from './MemoriesPanel';
 import EntityContextInspector from '../workspace/EntityContextInspector';
 import WorldLinkRow from '../workspace/WorldLinkRow';
 import { useChatWorkspace } from '../../contexts/ChatWorkspaceContext';
+import { useActiveChatStreams } from '../../hooks/useStreamingJobs';
 
 const LOREBOOK_CONTEXT_TAIL = 12;
 
@@ -66,7 +67,6 @@ function ChatContextPanel() {
         linkedCharacter,
         chatJobs,
         chatCollection,
-        activeStreamEntries,
         sceneJobId,
         characters,
         lorebooks,
@@ -87,6 +87,7 @@ function ChatContextPanel() {
         onEditLorebook,
         onEditLocation,
     } = useChatWorkspace();
+    const activeStreamEntries = useActiveChatStreams(activeChat?.id);
     const { data: locations = [] } = useLocations();
 
     const navigate = useNavigate();

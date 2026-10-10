@@ -92,7 +92,7 @@ export function useStoryStreaming({
             }
             
             if (meta.story_id === activeStoryId && meta.chapter_id === activeChapterId) {
-                if (job.task_type === 'image' || meta.workspace === 'image') {
+                if (job.task_type === 'image') {
                     setIsIllustrating(false);
                     queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(activeStoryId) });
                     queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'images') });

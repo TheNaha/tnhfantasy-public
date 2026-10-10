@@ -16,7 +16,7 @@ import { useWebSocket, EventTypes } from '../api/websocket';
 import { useDebounce } from '../hooks/useDebounce';
 import { useChatStreaming } from '../hooks/useChatStreaming';
 import { CHAT_LIST_KEY } from '../hooks/useChats';
-import { setStreamingJob } from '../hooks/useStreamingJobs';
+import { setStreamingJob, useActiveChatStreams } from '../hooks/useStreamingJobs';
 import { COMMANDS } from '../components/chat/chatCommands';
 import { warnIfWorldIgnored, WORLD_IGNORED_MESSAGE } from '../utils/worldLinkWarning';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
@@ -257,9 +257,16 @@ export function ChatWorkspaceProvider({ children }) {
         chats, isChatsLoading, isChatsError, chatsError, refetchChats, queryErrors,
         searchResults, messagesData, activeChat, lorebooks, characters, worlds,
         personas, availableModels, defaultLlmConfig, systemPromptData, chatCollection, chatImages,
-        collectionsMap, voices, chatJobs, activeStreamEntries, activeStreams,
+        collectionsMap, voices, chatJobs,
     } = cwData;
     const cwMutations = useChatWorkspaceMutations();
+    const activeStreamEntries = useActiveChatStreams(activeChatId);
+    const activeStreams = useMemo(
+        () => activeStreamEntries
+            .filter(item => item.jobData?.status === 'running')
+            .map(item => ({ _key: `stream-${item.jobId}`, jobId: item.jobId, jobData: item.jobData })),
+        [activeStreamEntries]
+    );
     const {
         sendMessageMutation: rawSendMessageMutation, createChatMutation: rawCreateChatMutation,
         exportJsonlMutation: rawExportJsonlMutation, importChatMutation: rawImportChatMutation,
@@ -1067,8 +1074,6 @@ export function ChatWorkspaceProvider({ children }) {
         activeChatList,
         activeChatTtsVoiceId: activeChat?.tts_voice_id,
         activeCommand,
-        activeStreamEntries,
-        activeStreams,
         agenticMode,
         availableModels,
         avatarModalSrc,
@@ -1242,7 +1247,7 @@ export function ChatWorkspaceProvider({ children }) {
     }), [
         CHAT_PAGE_SIZE, MAX_MESSAGE_PAGES, MESSAGE_PAGE_SIZE,
         activeBranch, activeChat, activeChatId, activeChatList,
-        activeCommand, activeStreamEntries, activeStreams,
+        activeCommand,
         agenticMode, availableModels, avatarModalSrc,
         canSend, characters, chatCollection, personas,
         chatImages, chatJobs, chatOffset, chatSearchQuery,

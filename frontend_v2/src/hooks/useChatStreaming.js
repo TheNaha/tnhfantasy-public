@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { getStreamingJob, setStreamingJob, clearStreamingJob } from './useStreamingJobs';
 import { jobMetadata } from '../utils/jobStatus';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 
 export function useChatStreaming({
     activeChatId,
@@ -169,7 +170,7 @@ export function useChatStreaming({
 
             if (eventChatId === activeChatId) {
                 const jobType = meta.workspace || job.task_type;
-                if (meta.type === 'chat_tts') {
+                if (job.type === 'chat_tts') {
                     toast.success('Speech generated!', { icon: '🎤' });
                 } else if (jobType === 'image' || meta.image_context) {
                     toast.success('Image generated!', { icon: '🖼️' });
@@ -194,6 +195,9 @@ export function useChatStreaming({
             if (eventId === suggestJobIdRef.current) setSuggestJobId(null);
             if (eventId) clearStreamingJob(queryClient, eventId, eventChatId);
 
+            if (eventChatId) {
+                queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, eventChatId) });
+            }
             if (eventChatId === activeChatId) {
                 toast.error('AI response failed. Please try again.');
             }

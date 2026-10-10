@@ -6,7 +6,6 @@ import {
 } from '../hooks/useWorldVault';
 import { useVoices } from '../hooks/useVoices';
 import { useCollections } from '../hooks/useCollections';
-import { useActiveChatStreams } from '../hooks/useStreamingJobs';
 
 const CHAT_PAGE_SIZE = 50;
 
@@ -90,18 +89,6 @@ export function useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQue
     // exclusion by deleting a dependency the context panel genuinely reads.
     const { data: worlds = [], isError: isWorldsError, error: worldsError, refetch: refetchWorlds } = useWorlds();
 
-    const activeStreamEntries = useActiveChatStreams(activeChatId);
-    // Memoised: this array is a dependency of BOTH the listItems memo and the
-    // ~210-dependency contextValue memo in ChatWorkspaceContext. Rebuilt on
-    // every render it invalidated both, so all ~20 useChatWorkspace()
-    // consumers re-rendered on every streamed token.
-    const activeStreams = useMemo(
-        () => activeStreamEntries
-            .filter(item => item.jobData?.status === 'running')
-            .map(item => ({ _key: `stream-${item.jobId}`, jobId: item.jobId, jobData: item.jobData })),
-        [activeStreamEntries]
-    );
-
     /**
      * `{ chats: { error, refetch, noun }, … }` — one entry per FAILED query.
      *
@@ -183,14 +170,12 @@ export function useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQue
         collectionsMap,
         voices,
         chatJobs,
-        activeStreamEntries,
-        activeStreams,
         worlds,
     }), [
         chats, isChatsLoading, isChatsError, chatsError, refetchChats, queryErrors,
         searchResults, messagesData, activeChat,
         lorebooks, characters, personas, availableModels, defaultLlmConfig,
         systemPromptData, chatCollection, chatImages, collectionsMap,
-        voices, chatJobs, activeStreamEntries, activeStreams, worlds,
+        voices, chatJobs, worlds,
     ]);
 }

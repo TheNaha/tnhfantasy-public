@@ -391,6 +391,7 @@ describe('ChatContextPanel — a failed job fetch is not a chat with no jobs', (
         useChatWorkspace: () => workspace.value,
         ChatWorkspaceProvider: ({ children }) => children,
     }));
+    vi.mock('../hooks/useStreamingJobs', () => ({ useActiveChatStreams: () => [] }));
 
     function renderPanel(overrides) {
         workspace.value = {
@@ -398,7 +399,6 @@ describe('ChatContextPanel — a failed job fetch is not a chat with no jobs', (
             linkedCharacter: null,
             chatJobs: [],
             chatCollection: null,
-            activeStreamEntries: [],
             sceneJobId: null,
             characters: [],
             lorebooks: [],

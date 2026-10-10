@@ -11,6 +11,7 @@ vi.mock('../../contexts/ChatWorkspaceContext', () => ({
 const mockUseLocations = vi.hoisted(() => vi.fn(() => ({ data: [] })));
 vi.mock('../../hooks/useLocations', () => ({ useLocations: () => mockUseLocations() }));
 vi.mock('../../hooks/useWorldVault', () => ({ getAvatarUrl: (id) => `/avatars/${id}.png` }));
+vi.mock('../../hooks/useStreamingJobs', () => ({ useActiveChatStreams: () => [] }));
 
 // The panel's neighbours each own their own fetching; stub them so this test
 // exercises the panel's own structure and nothing else. The inspector stub
@@ -48,7 +49,6 @@ function makeContext(overrides = {}) {
         linkedCharacter: { id: 'char-1', name: 'Aria', avatar_path: null },
         chatJobs: [],
         chatCollection: { image_count: 0 },
-        activeStreamEntries: [],
         sceneJobId: null,
         characters: [{ id: 'char-1', name: 'Aria' }],
         lorebooks: [],
