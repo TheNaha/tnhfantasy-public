@@ -8,6 +8,13 @@ from services.engines.beam_engine import BeamEngine
 from services.engines.direct_comfy_engine import DirectComfyEngine
 from services.engines.llm_engine import OpenAICompatLLMEngine, ModalVLLMEngine, AnthropicLLMEngine, GoogleLLMEngine
 from services.engines.modal_tts_engine import ModalTTSEngine
+from services.engines.direct_comfy_engine import DirectTTSEngine
+from services.engines.worker_transport_engines import (
+    BeamLLMEngine,
+    BeamTTSEngine,
+    RemoteLLMEngine,
+    RemoteTTSEngine,
+)
 from services.engines.engine_factory import (
     get_engine,
     can_create_engine,
@@ -35,6 +42,11 @@ __all__ = [
     "GoogleLLMEngine",
     "ModalVLLMEngine",
     "ModalTTSEngine",
+    "DirectTTSEngine",
+    "BeamLLMEngine",
+    "BeamTTSEngine",
+    "RemoteLLMEngine",
+    "RemoteTTSEngine",
     "get_engine",
     "can_create_engine",
     "engine_supports_setup",

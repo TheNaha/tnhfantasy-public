@@ -465,7 +465,23 @@ async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task
     await _shutdown_engine_cache()
 
     logger.info("shutdown", phase="http_client")
-    await close_http_client()
+    # Guarded, and for a reason that is not hypothetical: the shared httpx pool's
+    # `aclose()` reaches `anyio`'s transport teardown, which raises
+    # `RuntimeError: Event loop is closed` if the loop has already gone. That
+    # happens whenever shutdown is entered from a context whose loop was closed
+    # first — which is exactly what a test suite, or an embedding that drives the
+    # ASGI app by hand, produces. An unguarded `await` here turns a successful
+    # shutdown into a crash on its very last line, after every other phase has
+    # already run, and it is the tail of the lifespan so the failure surfaces in
+    # the *caller's* context with nothing pointing at shutdown.
+    try:
+        await close_http_client()
+    except RuntimeError as exc:
+        if "Event loop is closed" not in str(exc):
+            raise
+        logger.debug("shutdown_http_client_on_closed_loop")
+    except Exception as exc:
+        logger.warning("shutdown_http_client_failed", error=str(exc))
 
     logger.info("shutdown_complete")
 

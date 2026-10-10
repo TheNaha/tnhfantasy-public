@@ -22,6 +22,12 @@ services:
       - .env.agent
     environment:
       - PORT=8001
+      # `model` unless overridden: /download-model, /list-models,
+      # /validate-models, /get-file. Set WORKER_MODE=llm to serve
+      # /v1/chat/completions (a proxy to LLM_UPSTREAM_BASE) or WORKER_MODE=tts
+      # to serve /synthesize. Same image, any GPU box with Docker — the provider
+      # matrix's "remote" transport. See .env.agent.example.
+      - WORKER_MODE=${WORKER_MODE:-model}
     volumes:
       # Set DATA_DIR to the absolute path of the ComfyUI models directory on the
       # GPU rig. It is a REQUIRED variable (`:?`) on purpose: the file previously

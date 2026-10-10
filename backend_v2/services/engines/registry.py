@@ -15,9 +15,69 @@ powers 422-on-save validation in the provider routes.
 
 from typing import Any, Dict, List, Optional
 
+# --------------------------------------------------------------------------
+# The two axes a provider is described by.
+#
+# CATEGORY (what work it does) is stored in the `worker_type` column, kept under
+# that name so no provider row or API payload has to move. Read it through
+# `Provider.category`.
+#
+# TRANSPORT (how the backend reaches it) was never explicit — it was implied by
+# the provider *type* string. That is why the provider page read as ambiguous and
+# why four empty cells in the matrix below were invisible: a "Beam LLM" was not
+# a thing anyone could see was missing.
+#
+# The matrix is the contract the provider UI and the factory both read, so a
+# missing cell is a hole in the product rather than a surprise at dispatch.
+# --------------------------------------------------------------------------
+TRANSPORT_MODAL = "modal"    # Modal serverless (Modal SDK -> app function)
+TRANSPORT_BEAM = "beam"      # Beam serverless
+TRANSPORT_REMOTE = "remote"  # our own container, deployed anywhere with Docker
+TRANSPORT_DIRECT = "direct"  # straight to a hosted API protocol
+
+TRANSPORTS = (TRANSPORT_MODAL, TRANSPORT_BEAM, TRANSPORT_REMOTE, TRANSPORT_DIRECT)
+
+CATEGORY_IMAGE = "image"
+CATEGORY_LLM = "llm"
+CATEGORY_TTS = "tts"
+
+#: transport -> (category -> provider type id), or None where the cell is empty.
+#: A cell may name a *family* — a tuple of types that share the cell and differ
+#: only in which API protocol they speak (the direct-LLM cell). `ENGINE_SPECS`
+#: below stays the flat source of truth for each *type*; this is the question
+#: "what can serve X over Y", answered in one place.
+PROVIDER_MATRIX: Dict[str, Dict[str, Optional[str]]] = {
+    TRANSPORT_MODAL: {
+        CATEGORY_IMAGE: "modal",
+        CATEGORY_LLM: "modal_vllm",
+        CATEGORY_TTS: "modal_tts",
+    },
+    TRANSPORT_BEAM: {
+        CATEGORY_IMAGE: "beam",
+        CATEGORY_LLM: "beam_llm",
+        CATEGORY_TTS: "beam_tts",
+    },
+    TRANSPORT_REMOTE: {
+        CATEGORY_IMAGE: "remote_comfy",
+        CATEGORY_LLM: "remote_llm",
+        CATEGORY_TTS: "remote_tts",
+    },
+    TRANSPORT_DIRECT: {
+        CATEGORY_IMAGE: "direct_url",
+        # A *family*, not one type: the direct-LLM cell is filled by several
+        # provider types that differ only in which hosted API protocol they
+        # speak. Listing them here rather than None keeps the cell filled — a
+        # hostable OpenAI-compatible endpoint (a local vLLM, Ollama,
+        # OpenRouter) is a real option, not a gap.
+        CATEGORY_LLM: ("openai_compat", "ollama", "anthropic", "google"),
+        CATEGORY_TTS: "direct_tts",
+    },
+}
+
 ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
     "modal": {
         "id": "modal",
+        "transport": "modal",
         "name": "Modal (ComfyUI)",
         "category": "image",
         "worker_type": "image",
@@ -42,6 +102,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "beam": {
         "id": "beam",
+        "transport": "beam",
         "name": "Beam.cloud (ComfyUI)",
         "category": "image",
         "worker_type": "image",
@@ -68,6 +129,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "direct_url": {
         "id": "direct_url",
+        "transport": "direct",
         "name": "Direct ComfyUI Server",
         "category": "image",
         "worker_type": "image",
@@ -96,6 +158,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "remote_comfy": {
         "id": "remote_comfy",
+        "transport": "remote",
         "name": "Remote ComfyUI (with Agent Sidecar)",
         "category": "image",
         "worker_type": "image",
@@ -126,6 +189,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "openai_compat": {
         "id": "openai_compat",
+        "transport": "direct",
         "name": "OpenAI / Local LLM (Ollama, vLLM, OpenRouter)",
         "category": "llm",
         "worker_type": "llm",
@@ -155,6 +219,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "ollama": {
         "id": "ollama",
+        "transport": "direct",
         "name": "Ollama (Local LLM)",
         "category": "llm",
         "worker_type": "llm",
@@ -183,6 +248,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "anthropic": {
         "id": "anthropic",
+        "transport": "direct",
         "name": "Anthropic Claude",
         "category": "llm",
         "worker_type": "llm",
@@ -207,6 +273,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "google": {
         "id": "google",
+        "transport": "direct",
         "name": "Google Gemini",
         "category": "llm",
         "worker_type": "llm",
@@ -231,6 +298,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "modal_vllm": {
         "id": "modal_vllm",
+        "transport": "modal",
         "name": "Modal vLLM",
         "category": "llm",
         "worker_type": "llm",
@@ -253,32 +321,9 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
             },
         },
     },
-    "modal_llm": {
-        "id": "modal_llm",
-        "name": "Modal LLM",
-        "category": "llm",
-        "worker_type": "llm",
-        "capabilities": ["llm"],
-        "description": "Serverless LLM worker on Modal cloud GPUs (alias of Modal vLLM engine).",
-        "engine": "ModalVLLMEngine",
-        "manages_model_files": True,
-        "credentials": [
-            {"key": "token_id", "label": "Modal Token ID", "type": "password", "required": True, "placeholder": "ak-..."},
-            {"key": "token_secret", "label": "Modal Token Secret", "type": "password", "required": True, "placeholder": "as-..."},
-        ],
-        "config": [
-            {"key": "app_name", "label": "Modal App Name", "type": "text", "default": "comfy-modal-vllm", "placeholder": "comfy-modal-vllm"},
-            {"key": "model", "label": "Model ID", "type": "text", "placeholder": "Model ID"},
-        ],
-        "aliases": {
-            "credentials": {},
-            "config": {
-                "model": ["default_model"],
-            },
-        },
-    },
     "modal_tts": {
         "id": "modal_tts",
+        "transport": "modal",
         "name": "Modal Kokoro / TTS",
         "category": "tts",
         "worker_type": "tts",
@@ -298,6 +343,119 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
             "config": {},
         },
     },
+    # ------------------------------------------------------------------
+    # The Beam / Remote cells for the LLM and TTS categories.
+    #
+    # These four were empty before this pass. The Beam integration only ever
+    # spoke the ComfyUI WebSocket protocol, and the container path for LLM/TTS
+    # was deleted in 9a91e6f2 and folded in-process. `remote_agent/` still owns
+    # the HTTP/auth/storage shape, so the REMOTE engines reuse that and add only
+    # the inference protocol each category needs.
+    # ------------------------------------------------------------------
+    "beam_llm": {
+        "id": "beam_llm",
+        "transport": "beam",
+        "name": "Beam.cloud (LLM)",
+        "category": "llm",
+        "worker_type": "llm",
+        "capabilities": ["llm"],
+        "description": "Serverless LLM on Beam.cloud: a llama.cpp or vLLM endpoint behind Beam's realtime handler.",
+        "engine": "BeamLLMEngine",
+        "manages_model_files": False,
+        "credentials": [
+            {"key": "api_key", "label": "Beam API Key", "type": "password", "required": True},
+            {"key": "workspace_id", "label": "Workspace ID", "type": "text", "required": False},
+        ],
+        "config": [
+            {"key": "gpu_url", "label": "Beam LLM Realtime URL", "type": "text", "required": True, "placeholder": "https://...beam.run"},
+            {"key": "default_model", "label": "Default Model", "type": "text", "required": False, "placeholder": "rp"},
+        ],
+        "aliases": {"credentials": {}, "config": {}},
+    },
+    "beam_tts": {
+        "id": "beam_tts",
+        "transport": "beam",
+        "name": "Beam.cloud (TTS)",
+        "category": "tts",
+        "worker_type": "tts",
+        "capabilities": ["tts"],
+        "description": "Serverless speech synthesis on Beam.cloud, streaming audio back over its realtime handler.",
+        "engine": "BeamTTSEngine",
+        "manages_model_files": False,
+        "credentials": [
+            {"key": "api_key", "label": "Beam API Key", "type": "password", "required": True},
+        ],
+        "config": [
+            {"key": "gpu_url", "label": "Beam TTS Realtime URL", "type": "text", "required": True, "placeholder": "https://...beam.run"},
+            {"key": "default_voice", "label": "Default Voice", "type": "text", "required": False},
+        ],
+        "aliases": {"credentials": {}, "config": {}},
+    },
+    "remote_llm": {
+        "id": "remote_llm",
+        "transport": "remote",
+        "name": "Self-hosted LLM Container",
+        "category": "llm",
+        "worker_type": "llm",
+        "capabilities": ["llm"],
+        "description": "The TNHComfy LLM container, deployed on any Docker host with a GPU. OpenAI-compatible, speaks the remote_agent service token.",
+        "engine": "RemoteLLMEngine",
+        "manages_model_files": False,
+        "credentials": [
+            {"key": "agent_token", "label": "Service Token", "type": "password", "required": True},
+            {"key": "hf_token", "label": "HuggingFace Token", "type": "password", "required": False},
+        ],
+        "config": [
+            {"key": "agent_url", "label": "Container URL", "type": "text", "required": True, "placeholder": "http://gpu-box:8001"},
+            {"key": "default_model", "label": "Default Model", "type": "text", "required": False, "placeholder": "util"},
+        ],
+        "aliases": {
+            "credentials": {"agent_token": ["remote_agent_token", "token"]},
+            "config": {"agent_url": ["remote_agent_url", "url"]},
+        },
+    },
+    "remote_tts": {
+        "id": "remote_tts",
+        "transport": "remote",
+        "name": "Self-hosted TTS Container",
+        "category": "tts",
+        "worker_type": "tts",
+        "capabilities": ["tts"],
+        "description": "The TNHComfy TTS container, deployed on any Docker host with a GPU. Speaks the remote_agent service token.",
+        "engine": "RemoteTTSEngine",
+        "manages_model_files": False,
+        "credentials": [
+            {"key": "agent_token", "label": "Service Token", "type": "password", "required": True},
+        ],
+        "config": [
+            {"key": "agent_url", "label": "Container URL", "type": "text", "required": True, "placeholder": "http://gpu-box:8002"},
+            {"key": "default_voice", "label": "Default Voice", "type": "text", "required": False},
+        ],
+        "aliases": {
+            "credentials": {"agent_token": ["remote_agent_token", "token"]},
+            "config": {"agent_url": ["remote_agent_url", "url"]},
+        },
+    },
+    "direct_tts": {
+        "id": "direct_tts",
+        "transport": "direct",
+        "name": "Direct ComfyUI (TTS)",
+        "category": "tts",
+        "worker_type": "tts",
+        "capabilities": ["tts"],
+        "description": "A ComfyUI rig that already serves speech. The workflow graph is the difference, not the machine; no model files of its own to reconcile.",
+        "engine": "DirectTTSEngine",
+        "manages_model_files": False,
+        "credentials": [
+            {"key": "comfyui_api_key", "label": "ComfyUI API Key", "type": "password", "required": False},
+        ],
+        "config": [
+            {"key": "comfy_url", "label": "ComfyUI Server URL", "type": "text", "required": True, "default": "http://localhost:8188"},
+            {"key": "default_voice", "label": "Default Voice", "type": "text", "required": False},
+        ],
+        "aliases": {"credentials": {}, "config": {}},
+    },
+
 }
 
 
@@ -318,7 +476,79 @@ def get_engine_spec(provider_type: str) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 #: Legacy / shorthand type names that never got their own spec.
+def resolve_transport(provider_type: Optional[str]) -> Optional[str]:
+    """The transport a provider type uses, or None when the type is unknown.
+
+    Reads the spec first, then the matrix. An unknown type resolves to None
+    rather than to a guess: callers must treat None as "ask the registry", never
+    as "direct", because guessing direct silently points a provider at the wrong
+    protocol.
+    """
+    if not provider_type:
+        return None
+    # Resolve aliases first: `modal_llm` is not a spec any more, but a row still
+    # carrying it is a modal_vllm row and must answer "modal", not None.
+    resolved = _TYPE_ALIASES.get(provider_type, provider_type)
+    spec = get_engine_spec(resolved) or {}
+    transport = spec.get("transport")
+    if transport:
+        return transport
+    for transport_name, cells in PROVIDER_MATRIX.items():
+        for value in cells.values():
+            if provider_type in _cell_provider_types(value):
+                return transport_name
+    return None
+
+
+def _cell_provider_types(value: Any) -> List[str]:
+    """The provider types occupying a matrix cell, empty list when unfilled."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
+def matrix_cells() -> List[Dict[str, Any]]:
+    """Every (category, transport) cell, unfilled ones included.
+
+    The provider UI renders from this so a cell with no provider type shows as
+    unavailable with a reason, instead of not existing at all — which is how four
+    cells went missing from the product without anyone noticing.
+
+    `provider_types` is a list because one cell can hold a family (direct-LLM
+    speaks several different hosted APIs); `provider_type` is the first member,
+    kept for callers that want the simple case.
+    """
+    cells: List[Dict[str, Any]] = []
+    for transport, columns in PROVIDER_MATRIX.items():
+        for category, value in columns.items():
+            types = _cell_provider_types(value)
+            missing = [t for t in types if t not in ENGINE_SPECS]
+            cells.append({
+                "category": category,
+                "transport": transport,
+                "provider_types": types,
+                "provider_type": types[0] if types else None,
+                "filled": bool(types) and not missing,
+            })
+    return cells
+
+
+#: Generic hosted-LLM types whose "vllm"-bearing id was historically a
+#: mis-typed Modal vLLM pod. Narrow on purpose: an override that could reach a
+#: transport type would re-label a `beam_llm`/`remote_llm` row as `modal_vllm`,
+#: which is precisely the ambiguity this pass exists to remove. `modal_llm` is
+#: absent because it is an alias now, and an alias never reaches this check.
+_LEGACY_VLLM_MISTYPED = frozenset({"openai_compat", "ollama"})
+
 _TYPE_ALIASES: Dict[str, str] = {
+    # `modal_llm` was a whole second spec carrying the same ModalVLLMEngine as
+    # `modal_vllm`, differing only in its display name. Two rows for one engine
+    # is exactly the duplication that made the provider page ambiguous, and the
+    # old factory resolved the two differently — it branched on whether "vllm"
+    # appeared in the id. One engine, one type, existing rows unaffected.
+    "modal_llm": "modal_vllm",
     "tts": "modal_tts",
     "openai": "openai_compat",
     "gemini": "google",
@@ -329,7 +559,26 @@ _TYPE_ALIASES: Dict[str, str] = {
 #: provider_id prefixes that imply a type when `type` is empty/unknown.
 #: Order matters: TTS before LLM before image, mirroring the old factory
 #: branch order (a tts+llm hybrid without image capability is TTS).
+# Order matters and is most-specific-first. The Beam/Remote LLM and TTS families
+# have to precede the bare `beam-` / `modal-` prefixes they used to be swallowed
+# by, and all of them have to precede the substring heuristics further down —
+# otherwise `remote-llm-vllm-1` (a container that really does run vLLM) resolves
+# to `modal_vllm` on the strength of the word "vllm" in its id.
 _ID_PREFIXES = (
+    ("beam-llm-", "beam_llm"),
+    ("beam_llm_", "beam_llm"),
+    ("beam-tts-", "beam_tts"),
+    ("beam_tts_", "beam_tts"),
+    ("remote-llm-", "remote_llm"),
+    ("remote_llm_", "remote_llm"),
+    ("remote-tts-", "remote_tts"),
+    ("remote_tts_", "remote_tts"),
+    ("direct-tts-", "direct_tts"),
+    ("direct_tts_", "direct_tts"),
+    ("remote-comfy-", "remote_comfy"),
+    ("remote-comfy", "remote_comfy"),
+    ("direct-comfy-", "direct_url"),
+    ("direct-comfy", "direct_url"),
     ("tts-", "modal_tts"),
     ("tts_", "modal_tts"),
     ("llm-", "openai_compat"),
@@ -360,24 +609,30 @@ def resolve_provider_type(
 ) -> Optional[str]:
     """Resolve any provider identity to a canonical ENGINE_SPECS key.
 
-    Precedence: exact spec hit → legacy alias → modal_vllm-by-id
-    (a `vllm` provider_id always means the Modal vLLM engine, whatever
-    `type` claims) → id prefix → worker_type/capability fallback.
+    Precedence: exact spec hit → legacy alias → id prefix (most specific
+    first) → substring heuristics → worker_type/capability fallback.
     Returns None when nothing matches.
+
+    The substring rules are deliberately LAST. They are legacy rescues for rows
+    written before `type` was reliable, and putting them last is what stops them
+    from re-labelling a provider that now knows what it is.
     """
+    # An explicit type that is a spec wins outright.
+    #
+    # One legacy rescue survives: a row whose *generic hosted* type was a
+    # mis-typed Modal vLLM pod, recoverable because the id says "vllm" and the
+    # pod owns the `models/` volume tree. It is scoped to
+    # `_LEGACY_VLLM_MISTYPED` and nothing else, because the new transports
+    # legitimately contain "vllm" — a `beam_llm` or `remote_llm` row must never
+    # be re-labelled `modal_vllm`, which is the mistake an unscoped override
+    # would make.
     if provider_type in ENGINE_SPECS:
-        # A vllm-named provider with a generic llm type still owns the
-        # models/ volume tree — route it to the vLLM engine, not hosted.
-        if "vllm" in (provider_id or "") and provider_type in (
-            "openai_compat", "openai", "ollama", "modal_llm",
-        ):
+        if "vllm" in (provider_id or "") and provider_type in _LEGACY_VLLM_MISTYPED:
             return "modal_vllm"
         return provider_type
     if provider_type in _TYPE_ALIASES:
         return _TYPE_ALIASES[provider_type]
     pid = provider_id or ""
-    if "vllm" in pid:
-        return "modal_vllm"
     for prefix, target in _ID_PREFIXES:
         if pid.startswith(prefix):
             return target
@@ -386,6 +641,8 @@ def resolve_provider_type(
         return "remote_comfy"
     if "direct" in lowered:
         return "direct_url"
+    if "vllm" in pid:
+        return "modal_vllm"
     return _capability_fallback(capabilities, worker_type)
 
 
@@ -396,7 +653,12 @@ def resolve_provider_type(
 #: same models/ volume (the old factory returned False for a modal_llm
 #: id without "vllm" in it — that was a routing miss, not intent).
 _SUPPORTS_SETUP = frozenset({
-    "modal", "beam", "direct_url", "remote_comfy", "modal_vllm", "modal_llm",
+    "modal", "beam", "direct_url", "remote_comfy", "modal_vllm",
+    # Direct TTS shares DirectComfyEngine's no-op setup; a rig with no model
+    # tree still answers True so the provider page's setup action does nothing
+    # harmful rather than failing. The rest of the new cells host a container
+    # that owns its own weights, so they inherit the base's False.
+    "direct_tts",
 })
 
 
@@ -415,6 +677,10 @@ def ui_schemas() -> Dict[str, Dict[str, Any]]:
 
     Strips engine-internal keys (`engine`, `manages_model_files`, `aliases`)
     so the wire shape stays exactly what the frontend expects.
+
+    `transport` is ADDED, not stripped: the provider modal groups by
+    category x transport so the four empty cells that used to be invisible
+    show up as choices that do not exist rather than as choices nobody made.
     """
     out: Dict[str, Dict[str, Any]] = {}
     for key, spec in ENGINE_SPECS.items():
@@ -422,6 +688,7 @@ def ui_schemas() -> Dict[str, Dict[str, Any]]:
             "id": spec["id"],
             "name": spec["name"],
             "category": spec["category"],
+            "transport": spec.get("transport"),
             "worker_type": spec["worker_type"],
             "capabilities": spec["capabilities"],
             "description": spec["description"],

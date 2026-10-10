@@ -27,17 +27,33 @@ from services.job_processing import (
 
 
 class TestQueueClaimScope:
-    def test_the_container_pool_claims_every_container_task_type(self):
-        """`tts` routes to the image pool, so the image pool must claim it.
+    def test_every_pool_claims_exactly_its_own_task_type(self):
+        """One category, one pool, one claim set.
 
-        The routing was right and the claim predicate was not: it bound the
-        pool's single `task_type`, so a `tts` row could never be a candidate and
-        every TTS job sat PENDING forever with `enqueued_at` set and no error.
+        `tts` used to route to the image pool because both ran a ComfyUI graph,
+        and the image pool then had to claim it. The claim predicate initially
+        bound the pool's single `task_type` instead, so a `tts` row could never
+        be a candidate and every TTS job sat PENDING forever with `enqueued_at`
+        set and no error.
+
+        That sharing was the ambiguity itself: a "TTS worker" sized as image
+        capacity and was served by a pool named image. The claim-scope fix was
+        correct and it has been superseded — a pool no longer has to claim a
+        category that is not its own. What must still hold is the invariant the
+        old test was really guarding: **no pool claims a task type it does not
+        serve**, and every task type has exactly one home.
         """
+        from core.entities import CATEGORY_CLAIM_TASK_TYPES, VALID_CATEGORIES
+
         manager = QueueManager()
-        assert manager.get_queue("tts") is manager.image
-        assert manager.image._claim_task_types == frozenset(CONTAINER_TASK_TYPES)
-        assert "tts" in manager.image._claim_task_types
+        for category in sorted(VALID_CATEGORIES):
+            queue = manager.get_queue(category)
+            assert queue._claim_task_types == CATEGORY_CLAIM_TASK_TYPES[category]
+            assert queue._claim_task_types == frozenset({category})
+
+        # No task type has two homes, and no pool claims another's work.
+        all_claimed = [t for c in CATEGORY_CLAIM_TASK_TYPES.values() for t in c]
+        assert sorted(all_claimed) == sorted(VALID_CATEGORIES)
 
     def test_the_llm_pool_does_not_claim_container_work(self):
         manager = QueueManager()

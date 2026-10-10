@@ -230,26 +230,38 @@ class TestTheTtsProviderIsItsOwnThing:
 
 
 class TestQueueSelection:
-    def test_tts_shares_the_container_queue_with_image(self):
-        """They are the same Modal class under one `max_containers` budget, so
-        they contend — which is the honest behaviour when the class is capped at
-        one, and batching is what mitigates it."""
+    def test_tts_has_its_own_pool(self):
+        """TTS stops sharing the image pool.
+
+        It used to, because both ran a ComfyUI graph and the old rule made
+        `worker_type != "llm"` count as image capacity. The consequence was that
+        a TTS worker you enabled grew *image* concurrency while the TTS pool
+        itself stayed pinned at one — the provider page could not explain why a
+        TTS setting changed image throughput. It is a category now, with its own
+        pool and its own sizing rule.
+        """
         from services.job_queue import QueueManager
 
         mgr = QueueManager()
-        assert mgr.get_queue("tts") is mgr.image
         assert mgr.get_queue("image") is mgr.image
         assert mgr.get_queue("llm") is mgr.llm
+        assert mgr.get_queue("tts") is mgr.tts
+        assert mgr.tts is not mgr.image
+        assert mgr.tts._claim_task_types == frozenset({"tts"})
 
-    def test_a_future_container_task_type_does_not_default_to_llm(self):
+    def test_an_unknown_task_type_has_no_pool(self):
         """`get_queue` used to be `if task_type == "llm": llm else image`, so a
-        new container-backed type landed on the image queue by omission rather
-        than by decision."""
-        from core.entities import CONTAINER_TASK_TYPES
+        new category landed on the image pool by omission rather than by
+        decision — and then silently shared image capacity. It now fails loudly:
+        adding a category means adding a pool, which is the point."""
         from services.job_queue import QueueManager
 
         mgr = QueueManager()
-        for t in CONTAINER_TASK_TYPES:
-            assert mgr.get_queue(t) is mgr.image
-        for t in VALID_TASK_TYPES - CONTAINER_TASK_TYPES:
-            assert mgr.get_queue(t) is mgr.llm
+        for known in ("image", "llm", "tts"):
+            assert mgr.get_queue(known) is mgr.pools[known]
+        for unknown in ("video", "audio", ""):
+            try:
+                mgr.get_queue(unknown)
+            except KeyError:
+                continue
+            raise AssertionError(f"{unknown!r} resolved to a pool by omission")

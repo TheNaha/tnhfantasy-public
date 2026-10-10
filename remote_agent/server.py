@@ -266,7 +266,41 @@ def _is_sidecar(name: str) -> bool:
     return name.lower().endswith(_SIDECAR_EXTENSIONS)
 
 
+# ---------------------------------------------------------------------------
+# Worker-mode endpoints.
+#
+# The same image is deployed as a MODEL agent (default), an LLM worker, or a TTS
+# worker, selected by `WORKER_MODE`. That is deliberate: the provider matrix's
+# `remote` transport is "our own container, anywhere with Docker", and one image
+# that can be three things is one image to build, ship and run on a GPU box —
+# not three. Everything unrelated is already here (bearer auth, /get-file,
+# /delete-file), so the mode only decides which pair of inference routes answers.
+# ---------------------------------------------------------------------------
+
+WORKER_MODE = os.getenv("WORKER_MODE", "model").strip().lower()
+WORKER_MODES = ("model", "llm", "tts")
+
+if WORKER_MODE not in WORKER_MODES:
+    raise RuntimeError(
+        f"WORKER_MODE must be one of {WORKER_MODES}, got {WORKER_MODE!r}"
+    )
+
+#: Where a synthesised clip is written under DATA_DIR, and read back through
+#: the existing `/get-file` route.
+AUDIO_DIR = os.getenv("TTS_AUDIO_DIR", "audio").strip("/")
+
+
+class SynthesizeRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+    voice: Optional[str] = None
+    speed: Optional[float] = None
+    format: Optional[str] = None
+    language: Optional[str] = None
+    sample_rate: Optional[int] = None
+
+
 @app.get("/health")
+
 async def health():
     return {"status": "healthy"}
 
@@ -739,6 +773,184 @@ async def validate_all_models(req: Optional[ValidateAllModelsRequest] = None):
     # stays optional so `POST` with no payload still works.
     delete_invalid = req.delete_invalid if req is not None else False
     return await validate_models(ValidateModelsRequest(directory=list(MODEL_DIRECTORIES), delete_invalid=delete_invalid))
+
+
+# ---------------------------------------------------------------------------
+# LLM worker mode: an OpenAI-compatible chat surface.
+#
+# This is what `RemoteLLMEngine` talks to, and it is deliberately the *same*
+# protocol the Modal LLM app (`modal_llm.py`) exposes — so a llama.cpp or vLLM
+# container can sit behind it unchanged, and switching between Modal and a
+# self-hosted box is a provider row, not a code change.
+#
+# The engine's `inference` consumes canonical `{"event": ...}` TaskEvent frames
+# because it subclasses OpenAICompatLLMEngine; this route speaks SSE because
+# that is what an OpenAI-compatible server emits, and the engine's SSE reader is
+# already correct and tested. Implementing a TaskEvent dialect here would mean a
+# second frame format for no gain.
+# ---------------------------------------------------------------------------
+if WORKER_MODE == "llm":
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    #: Where the actual model server lives: llama.cpp / vLLM on the same host,
+    #: or another container on the compose network. The worker is a proxy plus a
+    #: token check, which is what lets the backend speak the service-token auth
+    #: it already has while the app underneath stays plain OpenAI.
+    UPSTREAM_BASE = os.getenv("LLM_UPSTREAM_BASE", "http://127.0.0.1:8080/v1").rstrip("/")
+    UPSTREAM_TIMEOUT = float(os.getenv("LLM_UPSTREAM_TIMEOUT", "600"))
+
+    @app.post("/v1/chat/completions", dependencies=[Depends(verify_token)])
+    async def chat_completions(request: Request):
+        """Proxy the chat completion stream to the upstream model server.
+
+        Proxied rather than reimplemented: the model server already speaks SSE,
+        already handles `stream: true`, and already knows its own tool-calling
+        template. A reimplementation here would be a second partial copy of
+        llama.cpp's protocol.
+        """
+        body = await request.body()
+
+        def _forward() -> tuple[int, bytes, str]:
+            req = urllib.request.Request(
+                f"{UPSTREAM_BASE}/chat/completions",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    # The upstream is on the host or the compose network; it is
+                    # not exposed, so no key is sent.
+                    "Accept": "text/event-stream",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as resp:
+                    return resp.status, resp.read(), resp.headers.get("Content-Type", "")
+            except urllib.error.HTTPError as exc:
+                return exc.code, exc.read(), exc.headers.get("Content-Type", "")
+
+        status, payload, content_type = await _bounded_to_thread(_forward)
+
+        from fastapi.responses import StreamingResponse
+
+        async def _relay():
+            # A non-200 is a single JSON error body, not a stream.
+            if status != 200:
+                yield payload
+                return
+            yield payload
+
+        return StreamingResponse(
+            _relay(),
+            status_code=status,
+            media_type=content_type or "text/event-stream",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TTS worker mode: synthesise to a file, return its address.
+#
+# The clip is written under DATA_DIR and read back through the existing
+# `/get-file` route, so the same service token, the same path containment check
+# and the same size cap that guard model files also guard audio. A container
+# that already runs the model agent needs no second file-serving path.
+# ---------------------------------------------------------------------------
+if WORKER_MODE == "tts":
+    from fastapi.responses import StreamingResponse
+
+    @app.post("/synthesize", dependencies=[Depends(verify_token)])
+    async def synthesize(req: SynthesizeRequest):
+        """Synthesise speech and return the stored clip's address.
+
+        Returns a descriptor, not the audio: `RemoteTTSEngine.get_file_stream`
+        fetches the bytes under the shared read cap, and a job that finalised
+        with an oversized inline body would bypass it.
+        """
+        import subprocess
+
+        # `TTS_COMMAND` is the operator's hook: the container ships no model by
+        # default, and pointing it at any `text -> wav` shell command (Kokoro,
+        # Coqui, an in-process server) is all that is needed. Missing means no
+        # synthesis is configured, which is a 503 rather than a crash.
+        command = os.getenv("TTS_COMMAND", "").strip()
+        if not command:
+            return failed(
+                "TTS worker has no TTS_COMMAND configured; set it to a "
+                "`text -> wav` command and restart the container",
+                code=503,
+            )
+
+        target_dir = os.path.join(_ensure_data_dir(), AUDIO_DIR)
+        os.makedirs(target_dir, exist_ok=True)
+        suffix = (req.format or "wav").lstrip(".")
+        filename = f"tts-{os.urandom(8).hex()}.{suffix}"
+        output_path = os.path.join(target_dir, filename)
+
+        env = dict(os.environ)
+        env.update({
+            "TTS_TEXT": req.text,
+            "TTS_OUTPUT": output_path,
+            "TTS_FORMAT": suffix,
+        })
+        if req.voice:
+            env["TTS_VOICE"] = req.voice
+        if req.speed is not None:
+            env["TTS_SPEED"] = str(req.speed)
+        if req.sample_rate is not None:
+            env["TTS_SAMPLE_RATE"] = str(req.sample_rate)
+
+        timeout_seconds = float(os.getenv("TTS_COMMAND_TIMEOUT", "600"))
+
+        def _run() -> tuple[int, bytes, bytes]:
+            proc = subprocess.run(
+                command, shell=True, env=env,
+                capture_output=True, timeout=timeout_seconds,
+            )
+            return proc.returncode, proc.stdout, proc.stderr
+
+        try:
+            returncode, stdout, stderr = await _bounded_to_thread(
+                _run, timeout_seconds=timeout_seconds + 30
+            )
+        except Exception as exc:
+            return failed(f"TTS synthesis failed: {exc}", code=502)
+
+        if returncode != 0:
+            detail = stderr.decode("utf-8", "ignore")[:300] or "no stderr"
+            return failed(f"TTS command exited {returncode}: {detail}", code=502)
+
+        if not os.path.exists(output_path):
+            return failed(
+                "TTS command exited 0 but wrote no file at the expected path",
+                code=502,
+            )
+
+        # Audio clips are addressed by their path under DATA_DIR (relative), so
+        # the engine's `/get-file/{path}` and `/delete-file` treat them exactly
+        # like any other artefact.
+        rel_path = f"{AUDIO_DIR}/{filename}"
+
+        def _duration() -> Optional[float]:
+            import struct
+
+            try:
+                with open(output_path, "rb") as fh:
+                    header = fh.read(44)
+                if len(header) < 44 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+                    return None
+                byte_rate = struct.unpack("<I", header[28:32])[0]
+                data_size = struct.unpack("<I", header[40:44])[0]
+                return round(data_size / byte_rate, 3) if byte_rate else None
+            except Exception:
+                return None
+
+        return ok("Synthesised", result={
+            "path": rel_path,
+            "filename": filename,
+            "duration": await _bounded_to_thread(_duration),
+            "voice": req.voice,
+        })
 
 
 if __name__ == "__main__":

@@ -8,8 +8,23 @@ logger = get_logger("startup_helpers")
 
 
 def configure_worker_pool() -> None:
-    """Set worker counts based on enabled providers split by worker_type."""
+    """Set worker counts per category from the enabled providers.
+
+    One worker per enabled provider in that category, floored at one so a
+    category with no provider still has a pool to log and to recover into.
+
+    The old rule was `worker_type != "llm" counts as image`, which is why a
+    `tts` provider silently grew image capacity and its own category stayed
+    permanently sized at the floor of one — no matter how many TTS workers you
+    enabled.
+    """
     try:
+        from core.entities import (
+            CATEGORY_IMAGE,
+            CATEGORY_LLM,
+            CATEGORY_TTS,
+            VALID_CATEGORIES,
+        )
         from infrastructure.repositories import ProviderRepository
         from services.job_queue import queue_manager
 
@@ -18,26 +33,22 @@ def configure_worker_pool() -> None:
             provider_repo = ProviderRepository(session)
             enabled_providers = provider_repo.get_enabled()
 
-            image_providers = []
-            llm_providers = []
-            for p in enabled_providers:
-                w_type = getattr(p, "worker_type", "image")
-                if w_type == "llm":
-                    llm_providers.append(p)
-                else:
-                    image_providers.append(p)
+            counts = {category: 0 for category in sorted(VALID_CATEGORIES)}
+            for provider in enabled_providers:
+                # `category` is the `worker_type` column read through its proper
+                # name. An unrecognised value is counted under image, which is
+                # the column's default and the historical behaviour.
+                category = getattr(provider, "worker_type", "") or CATEGORY_IMAGE
+                if category not in counts:
+                    category = CATEGORY_IMAGE
+                counts[category] += 1
 
-            image_workers = max(1, len(image_providers))
-            llm_workers = max(1, len(llm_providers))
-
-            queue_manager.resize(image_workers=image_workers, llm_workers=llm_workers)
-            logger.info(
-                "worker_pool_configured",
-                image_providers=len(image_providers),
-                llm_providers=len(llm_providers),
-                image_workers=image_workers,
-                llm_workers=llm_workers,
-            )
+            sizing = {category: max(1, count) for category, count in counts.items()}
+            counts.setdefault(CATEGORY_IMAGE, sizing.get(CATEGORY_IMAGE, 1))
+            counts.setdefault(CATEGORY_LLM, sizing.get(CATEGORY_LLM, 1))
+            counts.setdefault(CATEGORY_TTS, sizing.get(CATEGORY_TTS, 1))
+            queue_manager.resize(**sizing)
+            logger.info("worker_pool_configured", providers_per_category=counts, **sizing)
         finally:
             session.close()
     except Exception as exc:

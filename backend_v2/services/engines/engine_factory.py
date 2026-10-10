@@ -16,10 +16,16 @@ from cachetools import TTLCache
 from infrastructure.logging import get_logger
 from services.engines.base import InProcessEngine
 from services.engines.beam_engine import BeamEngine
-from services.engines.direct_comfy_engine import DirectComfyEngine
+from services.engines.direct_comfy_engine import DirectComfyEngine, DirectTTSEngine
 from services.engines.llm_engine import ModalVLLMEngine, OpenAICompatLLMEngine, AnthropicLLMEngine, GoogleLLMEngine
 from services.engines.modal_engine import HAS_MODAL, ModalEngine, resolve_enable_memory_snapshot
 from services.engines.modal_tts_engine import ModalTTSEngine
+from services.engines.worker_transport_engines import (
+    BeamLLMEngine,
+    BeamTTSEngine,
+    RemoteLLMEngine,
+    RemoteTTSEngine,
+)
 from services.engines.registry import (
     resolve_provider_type,
     supports_setup as _registry_supports_setup,
@@ -143,6 +149,54 @@ def can_create_engine(provider: Any) -> bool:
     # TTS: Modal credentials only.
     if rtype == "modal_tts":
         return bool(HAS_MODAL and token_id and token_secret)
+
+    # Beam LLM/TTS: an API key and the endpoint, exactly like Beam image minus
+    # the storage URL — these dialects stream their result rather than storing
+    # it on a shared volume, so there is nothing to point a storage app at.
+    if rtype in ("beam_llm", "beam_tts"):
+        beam_key = (
+            creds.get("api_key")
+            or creds.get("BEAM_API_KEY")
+            or env_vars.get("BEAM_API_KEY")
+            or os.getenv("BEAM_API_KEY")
+        )
+        gpu_url = (
+            config.get("gpu_url")
+            or creds.get("gpu_url")
+            or env_vars.get("BEAM_GPU_URL")
+            or os.getenv("BEAM_GPU_URL")
+        )
+        return bool(beam_key and gpu_url)
+
+    # Self-hosted containers: a service token and a URL. The same keys the image
+    # agent sidecar uses, so a provider row written for one works for the other.
+    if rtype in ("remote_llm", "remote_tts"):
+        service_token = (
+            creds.get("agent_token")
+            or creds.get("token")
+            or creds.get("remote_agent_token")
+            or env_vars.get("AGENT_TOKEN")
+            or env_vars.get("REMOTE_AGENT_TOKEN")
+            or os.getenv("AGENT_TOKEN")
+            or os.getenv("REMOTE_AGENT_TOKEN")
+        )
+        container_url = (
+            config.get("agent_url")
+            or config.get("remote_agent_url")
+            or config.get("url")
+            or creds.get("agent_url")
+            or creds.get("remote_agent_url")
+            or env_vars.get("AGENT_URL")
+            or env_vars.get("REMOTE_AGENT_URL")
+            or os.getenv("AGENT_URL")
+            or os.getenv("REMOTE_AGENT_URL")
+        )
+        return bool(service_token and container_url)
+
+    # Direct ComfyUI (TTS dialect), same rule as direct_url: always
+    # constructible, the URL defaults to localhost.
+    if rtype == "direct_tts":
+        return True
 
     # Hosted LLM: each wire protocol authenticates with its own key.
     # (Checked before the OpenAICompat base_url fallback so a stray
@@ -437,6 +491,133 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
             )
             _ENGINE_CACHE[provider_id] = engine
             return engine
+
+    # 2b. Self-hosted containers for the LLM and TTS categories.
+    if rtype in ("remote_llm", "remote_tts"):
+        service_token = (
+            creds.get("agent_token")
+            or creds.get("token")
+            or creds.get("remote_agent_token")
+            or env_vars.get("AGENT_TOKEN")
+            or env_vars.get("REMOTE_AGENT_TOKEN")
+            or os.getenv("AGENT_TOKEN")
+            or os.getenv("REMOTE_AGENT_TOKEN")
+        )
+        container_url = (
+            config.get("agent_url")
+            or config.get("remote_agent_url")
+            or config.get("url")
+            or creds.get("agent_url")
+            or creds.get("remote_agent_url")
+            or env_vars.get("AGENT_URL")
+            or env_vars.get("REMOTE_AGENT_URL")
+            or os.getenv("AGENT_URL")
+            or os.getenv("REMOTE_AGENT_URL")
+        )
+        if not (service_token and container_url):
+            return None
+        if rtype == "remote_llm":
+            engine = RemoteLLMEngine(
+                provider_id=provider_id,
+                agent_url=container_url,
+                agent_token=service_token,
+                default_model=(
+                    config.get("default_model")
+                    or config.get("model")
+                    or env_vars.get("LLM_MODEL")
+                    or os.getenv("LLM_MODEL")
+                    or "default"
+                ),
+            )
+        else:
+            engine = RemoteTTSEngine(
+                provider_id=provider_id,
+                agent_url=container_url,
+                agent_token=service_token,
+                default_voice=(
+                    config.get("default_voice")
+                    or config.get("voice")
+                    or env_vars.get("TTS_DEFAULT_VOICE")
+                    or os.getenv("TTS_DEFAULT_VOICE")
+                    or ""
+                ),
+            )
+        _ENGINE_CACHE[provider_id] = engine
+        return engine
+
+    # 2c. Beam LLM/TTS. Shares everything with Beam image except the frame
+    # dialect, which lives on the subclass.
+    if rtype in ("beam_llm", "beam_tts"):
+        beam_key = (
+            creds.get("api_key")
+            or creds.get("BEAM_API_KEY")
+            or env_vars.get("BEAM_API_KEY")
+            or os.getenv("BEAM_API_KEY")
+        )
+        gpu_url = (
+            config.get("gpu_url")
+            or creds.get("gpu_url")
+            or env_vars.get("BEAM_GPU_URL")
+            or os.getenv("BEAM_GPU_URL")
+        )
+        if not (beam_key and gpu_url):
+            return None
+        engine_cls = BeamLLMEngine if rtype == "beam_llm" else BeamTTSEngine
+        engine = engine_cls(
+            provider_id=provider_id,
+            api_key=beam_key,
+            gpu_url=gpu_url,
+            workspace_id=(
+                creds.get("workspace_id")
+                or config.get("workspace_id")
+                or env_vars.get("BEAM_WORKSPACE_ID")
+                or os.getenv("BEAM_WORKSPACE_ID")
+                or ""
+            ),
+        )
+        _ENGINE_CACHE[provider_id] = engine
+        return engine
+
+    # 2d. Direct ComfyUI speaking the TTS dialect.
+    if rtype == "direct_tts":
+        comfy_url = (
+            config.get("comfy_url")
+            or config.get("comfyui_url")
+            or creds.get("comfy_url")
+            or env_vars.get("COMFYUI_URL")
+            or os.getenv("COMFYUI_URL")
+            or "http://localhost:8188"
+        )
+        agent_url = (
+            config.get("agent_url")
+            or config.get("remote_agent_url")
+            or env_vars.get("AGENT_URL")
+            or os.getenv("AGENT_URL")
+            or ""
+        )
+        agent_token = (
+            creds.get("agent_token")
+            or creds.get("remote_agent_token")
+            or env_vars.get("AGENT_TOKEN")
+            or os.getenv("AGENT_TOKEN")
+            or ""
+        )
+        engine = DirectTTSEngine(
+            provider_id=provider_id,
+            comfy_url=comfy_url,
+            api_key=(
+                creds.get("comfyui_api_key")
+                or creds.get("api_key")
+                or config.get("comfyui_api_key")
+                or env_vars.get("COMFYUI_API_KEY")
+                or os.getenv("COMFYUI_API_KEY")
+                or ""
+            ),
+            agent_url=agent_url,
+            agent_token=agent_token,
+        )
+        _ENGINE_CACHE[provider_id] = engine
+        return engine
 
     # 3. Modal Image Provider
     if rtype == "modal":

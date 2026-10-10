@@ -389,11 +389,16 @@ class TestQueueBackgroundTasksAreTracked:
         manager = QueueManager()
         await manager.image.start()
 
-        manager.resize(3, 1)
+        # Keyword form: resizing one pool must not disturb the others, which is
+        # why `resize` no longer takes a positional image/llm pair.
+        manager.resize(image=3)
         await asyncio.sleep(0.05)
 
         assert len(manager.image._workers) == 3
         assert manager._resize_tasks == set()
+        # Untouched pools keep their size.
+        assert manager.llm.max_workers == 1
+        assert manager.tts.max_workers == 1
 
         await manager.stop()
 
@@ -412,7 +417,7 @@ class TestQueueBackgroundTasksAreTracked:
             await release.wait()
 
         manager.image.resize = slow_resize
-        manager.resize(5, 1)
+        manager.resize(image=5)
 
         await asyncio.wait_for(started.wait(), timeout=2.0)
         pending = [t for t in manager._resize_tasks if not t.done()]

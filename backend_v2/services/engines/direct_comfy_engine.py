@@ -1179,3 +1179,64 @@ class DirectComfyEngine(InProcessEngine):
                 prompt_id = self._job_prompt_ids.pop(job_id, None)
                 if prompt_id:
                     self._interrupted_prompts.pop(prompt_id, None)
+
+
+class DirectTTSEngine(DirectComfyEngine):
+    """A ComfyUI rig that serves speech.
+
+    Before this, TTS-on-a-ComfyUI-rig was not a distinct thing: a `tts`-worker
+    provider had to be registered as `direct_url` and was then counted as image
+    capacity by the old `worker_type != "llm"` pool rule. It is a separate
+    provider type now — the same ComfyUI protocol, a different category, and no
+    model tree of its own.
+
+    The protocol is genuinely identical (WebSocket prompt, progress frames,
+    `completed` with output paths), so this subclasses `DirectComfyEngine` rather
+    than copying it. What differs:
+      * `manages_model_files` is False — a speech rig's voices come from its node
+        graph, so there are no checkpoints to reconcile and `list_models`
+        answers the voice catalogue instead.
+      * `list_models()` (no argument) returns voices, the same static catalogue
+        the provider route serves, so the voice picker works for a rig whose
+        voice list cannot be discovered over the API.
+    """
+
+    manages_model_files: bool = False
+    supports_discovery_reconcile: bool = False
+
+    #: Kokoro's built-in voices. A ComfyUI speech rig exposes them through its
+    #: own nodes, so this is the catalogue for `list_models` rather than a
+    #: discovery result. Same list `api/routes/providers/crud.py` serves for
+    #: `modal_tts`, so the voice picker is identical across TTS providers.
+    DEFAULT_VOICES: tuple[dict[str, str], ...] = (
+        {"name": "af_bella", "id": "af_bella", "type": "voice", "gender": "female", "accent": "American"},
+        {"name": "af_sarah", "id": "af_sarah", "type": "voice", "gender": "female", "accent": "American"},
+        {"name": "am_adam", "id": "am_adam", "type": "voice", "gender": "male", "accent": "American"},
+        {"name": "am_michael", "id": "am_michael", "type": "voice", "gender": "male", "accent": "American"},
+        {"name": "bf_emma", "id": "bf_emma", "type": "voice", "gender": "female", "accent": "British"},
+        {"name": "bf_isabella", "id": "bf_isabella", "type": "voice", "gender": "female", "accent": "British"},
+        {"name": "bm_george", "id": "bm_george", "type": "voice", "gender": "male", "accent": "British"},
+        {"name": "bm_lewis", "id": "bm_lewis", "type": "voice", "gender": "male", "accent": "British"},
+    )
+
+    async def list_models(self, directory: str = "voices") -> list[dict[str, Any]]:
+        """Voices, not checkpoints.
+
+        The base signature takes a directory; a TTS rig has no model tree, so any
+        directory argument is answered with the voice catalogue rather than with
+        an empty list a caller cannot distinguish from a broken rig.
+        """
+        return [dict(voice) for voice in self.DEFAULT_VOICES]
+
+    async def check_health(self) -> dict[str, Any]:
+        """Health of the rig itself — the base already probes ComfyUI directly."""
+        try:
+            return await super().check_health()
+        except Exception as exc:  # pragma: no cover - defensive
+            return {
+                "status": "rejected",
+                "provider_id": self.provider_id,
+                "healthy": False,
+                "reason": "comfyui_unreachable",
+                "message": str(exc),
+            }

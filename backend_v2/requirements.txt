@@ -59,7 +59,19 @@ structlog>=23.2.0
 
 # LLM and Embeddings
 sentence-transformers>=2.2.2
-torch>=2.0.0 --extra-index-url https://download.pytorch.org/whl/cpu
+# `--extra-index-url` on its own line, NOT trailing the requirement.
+#
+# pip accepts `torch>=2.0.0 --extra-index-url https://...` on one line and reads
+# the option as applying to that requirement; `uv`'s requirements parser does
+# not — after a requirement it expects `--hash`, and a build switched from pip to
+# uv dies at install time with `Expected --hash, found "--extra-index-url"`.
+# Options on their own lines are the portable form both understand.
+#
+# From this point on it applies to the rest of the file. That is harmless here:
+# the only packages after it are tiktoken, the test deps and h2, all plain PyPI
+# packages that resolve identically with the extra index visible.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
 tiktoken>=0.7.0
 
 # Prometheus Metrics

@@ -6,7 +6,13 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from config import get_config
-from core.entities import ACTIVE_JOB_STATUSES, ENGINE_TASK_TYPES
+from core.entities import (
+    ACTIVE_JOB_STATUSES,
+    CATEGORY_CLAIM_TASK_TYPES,
+    CATEGORY_IMAGE,
+    CATEGORY_LLM,
+    CATEGORY_TTS,
+)
 from infrastructure.background_tasks import start_background_task
 from infrastructure.database import database_url
 from infrastructure.logging import get_logger
@@ -717,13 +723,33 @@ class QueueManager:
     based on the number of enabled providers of that type.
     """
 
+    #: One pool per provider CATEGORY, and each pool claims only its own task
+    #: type. Before this, there were two pools and `tts` was squeezed into the
+    #: image one: pool sizing counted every non-`llm` provider as an image worker,
+    #: while `ENGINE_TASK_TYPES = {image, tts}` let tts jobs claim from it. The
+    #: result was the ambiguity the provider page could never explain — a "TTS
+    #: worker" that sized as image capacity and were served by a pool named
+    #: "image". One category, one pool, one claim set.
+    POOLS = (
+        (CATEGORY_IMAGE, CATEGORY_IMAGE),
+        (CATEGORY_LLM, CATEGORY_LLM),
+        (CATEGORY_TTS, CATEGORY_TTS),
+    )
+
     def __init__(self) -> None:
-        self.image: JobQueue = JobQueue(
-            max_workers=1,
-            task_type="image",
-            claim_task_types=ENGINE_TASK_TYPES,
-        )
-        self.llm: JobQueue = JobQueue(max_workers=1, task_type="llm")
+        self.pools: dict[str, JobQueue] = {
+            name: JobQueue(
+                max_workers=1,
+                task_type=name,
+                claim_task_types=CATEGORY_CLAIM_TASK_TYPES[name],
+            )
+            for name in (CATEGORY_IMAGE, CATEGORY_LLM, CATEGORY_TTS)
+        }
+        # Attribute access kept for every existing caller, including tests that
+        # reach for `queue_manager.image`. The tts pool is the new one.
+        self.image = self.pools[CATEGORY_IMAGE]
+        self.llm = self.pools[CATEGORY_LLM]
+        self.tts = self.pools[CATEGORY_TTS]
         self._processor: Callable[[str, str | None], Awaitable[None]] | None = None
         self._notify_listener: _PgNotifyListener | None = None
         # In-flight pool resizes. Held so `stop()` can drain them: a resize that
@@ -733,53 +759,50 @@ class QueueManager:
         self._resize_tasks: set[asyncio.Task[Any]] = set()
 
     def set_processor(self, processor: Callable[[str, str | None], Awaitable[None]]) -> None:
-        """Register the same processor on both queues."""
+        """Register the same processor on every queue."""
         self._processor = processor
-        self.image.set_processor(processor)
-        self.llm.set_processor(processor)
+        for queue in self.pools.values():
+            queue.set_processor(processor)
 
     def get_queue(self, task_type: str) -> "JobQueue":
         """Return the queue that serves a task type.
 
-        There are two physical queues, not one per task type, because there are
-        two kinds of execution: an always-on HTTP endpoint (LLM) and a ComfyUI
-        engine job (image, tts). `tts` belongs with `image` because it is the
-        same engine pool and the same concurrency budget — it differs only in
-        the workflow graph, so a TTS job and an image job contend for the same
-        workers exactly as they should when the class is capped at one.
-
-        Stated with `ENGINE_TASK_TYPES` rather than left as "anything that
-        isn't llm", so adding a fourth engine-backed task type later does not
-        silently default onto the image queue by omission.
+        One queue per category, so a task type maps to exactly one pool and an
+        unknown type has nowhere to land rather than defaulting onto the image
+        pool by omission — which is what "anything that isn't llm" used to mean,
+        and how a fourth category would have quietly shared image capacity.
         """
-        if task_type in ENGINE_TASK_TYPES:
-            return self.image
-        return self.llm
+        if task_type in self.pools:
+            return self.pools[task_type]
+        raise KeyError(f"no job pool for task type {task_type!r}")
 
     async def enqueue(self, job_id: str, provider_id: str | None = None, task_type: str = "image") -> None:
         """Enqueue a job into the correct typed queue."""
         await self.get_queue(task_type).enqueue(job_id, provider_id)
 
     async def start(self) -> None:
-        """Start both queues."""
-        await self.image.start()
-        await self.llm.start()
+        """Start every queue."""
+        for queue in self.pools.values():
+            await queue.start()
         if _DB_CLAIMS_ENABLED:
             self._notify_listener = _PgNotifyListener(
-                (self.image._queue, self.llm._queue),
+                tuple(queue._queue for queue in self.pools.values()),
                 asyncio.get_running_loop(),
             )
             self._notify_listener.start()
-        logger.info("queue_manager_started", image_workers=self.image.max_workers, llm_workers=self.llm.max_workers)
+        logger.info(
+            "queue_manager_started",
+            workers={name: queue.max_workers for name, queue in self.pools.items()},
+        )
 
     async def stop(self, timeout_seconds: float = 30.0) -> None:
-        """Stop both queues."""
+        """Stop every queue."""
         if self._notify_listener:
             self._notify_listener.stop()
             self._notify_listener = None
         await self._drain_resize_tasks()
-        await self.image.stop(timeout_seconds=timeout_seconds)
-        await self.llm.stop(timeout_seconds=timeout_seconds)
+        for queue in self.pools.values():
+            await queue.stop(timeout_seconds=timeout_seconds)
         logger.info("queue_manager_stopped")
 
     async def _drain_resize_tasks(self) -> None:
@@ -792,8 +815,8 @@ class QueueManager:
         await asyncio.gather(*pending, return_exceptions=True)
         self._resize_tasks.clear()
 
-    def resize(self, image_workers: int, llm_workers: int) -> None:
-        """Resize both queues.
+    def resize(self, **workers_by_category: int) -> None:
+        """Resize any subset of the category pools.
 
         Pre-start (during startup_helpers.configure_worker_pool): updates
         max_workers so ``start()`` spawns the right number of workers.
@@ -804,20 +827,27 @@ class QueueManager:
         ``asyncio.create_task`` — an untracked task mutates ``queue._workers``
         and asyncio only holds a weak reference to it, so it could be collected
         mid-flight and silently leave the pool at the old size.
-        """
-        self.image.max_workers = max(1, image_workers)
-        self.llm.max_workers = max(1, llm_workers)
 
-        for queue, count in ((self.image, image_workers), (self.llm, llm_workers)):
-            if not queue._running:
+        Keyword form so a caller resizes the pool it changed and the others keep
+        their size: the old positional pair forced every caller — including the
+        provider monitor — to decide all three counts at once, which is how the
+        tts pool came to be invisible to the sizing logic entirely.
+        """
+        for name, count in workers_by_category.items():
+            if name not in self.pools:
+                raise KeyError(f"unknown job pool {name!r}")
+            self.pools[name].max_workers = max(1, int(count))
+
+        for name, queue in self.pools.items():
+            if name not in workers_by_category or not queue._running:
                 continue
             try:
                 asyncio.get_running_loop()
             except RuntimeError:
                 continue
             task = start_background_task(
-                queue.resize(count),
-                task_name=f"queue_resize:{queue._task_type}",
+                queue.resize(self.pools[name].max_workers),
+                task_name=f"queue_resize:{name}",
                 timeout=60.0,
             )
             self._resize_tasks.add(task)
@@ -880,8 +910,8 @@ class QueueManager:
             # claims so workers can re-claim them from the DB.
             await asyncio.to_thread(self._reset_claims_and_requeue_sync)
             summary["recovered"] = len(pending) + len(recoverable_running)
-            self.image._schedule_notify()
-            self.llm._schedule_notify()
+            for queue in self.pools.values():
+                queue._schedule_notify()
             logger.info("queue_manager_recovery_db_reset", pending=len(pending), running=len(recoverable_running))
             return summary
 
@@ -933,11 +963,11 @@ class QueueManager:
 
     @property
     def pending_count(self) -> int:
-        return self.image.pending_count + self.llm.pending_count
+        return sum(queue.pending_count for queue in self.pools.values())
 
     @property
     def active_count(self) -> int:
-        return self.image.active_count + self.llm.active_count
+        return sum(queue.active_count for queue in self.pools.values())
 
 
 # ---------------------------------------------------------------------------

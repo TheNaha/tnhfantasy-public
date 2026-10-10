@@ -23,11 +23,15 @@ from api.deps import (
     get_provider_status_service,
     get_session,
 )
-from core.entities import Provider
+from core.entities import CATEGORY_LLM, CATEGORY_TTS, Provider
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import api_logger
 from services.provider_runtime import resolve_provider_runtime_async
-from services.engines.registry import ui_schemas, validate_provider_payload
+from services.engines.registry import (
+    matrix_cells,
+    ui_schemas,
+    validate_provider_payload,
+)
 from services.provider_status_service import invalidate_provider_status_caches
 from services.load_balancer import LoadBalancer
 
@@ -284,9 +288,13 @@ def get_provider_schemas():
 
     Built per request from the registry (not the import-time ENGINE_SCHEMAS
     alias, which exists only for the `crud.ENGINE_SCHEMAS` import path used
-    by routes and tests): the dict is small (11 specs) and a stale import
-    would serve a previous registry after an edit.
+    by routes and tests): the dict is small and a stale import would serve a
+    previous registry after an edit.
     """
+    # Both axes plus the matrix, so the provider modal renders the same
+    # category x transport grid the registry declares — including the cells
+    # with no engine, which the frontend shows as unavailable rather than as
+    # choices nobody thought to make.
     return {
         "engines": ui_schemas(),
         "categories": [
@@ -294,6 +302,13 @@ def get_provider_schemas():
             {"id": "llm", "label": "Language Models (LLM)", "icon": "message-square"},
             {"id": "tts", "label": "Voice & Audio (TTS)", "icon": "mic"},
         ],
+        "transports": [
+            {"id": "modal", "label": "Modal (serverless)", "icon": "cloud"},
+            {"id": "beam", "label": "Beam.cloud (serverless)", "icon": "cloud-lightning"},
+            {"id": "remote", "label": "Self-hosted container", "icon": "server"},
+            {"id": "direct", "label": "Direct API endpoint", "icon": "plug"},
+        ],
+        "matrix": matrix_cells(),
     }
 
 
@@ -441,8 +456,13 @@ async def get_provider_discovered_models(
 
     try:
         models = []
-        worker_type = getattr(provider, "worker_type", "") or provider.type
-        if worker_type == "tts" or provider.type in ("modal_tts", "tts"):
+        # Route on the provider's CATEGORY, not on a list of type names. A list
+        # of type names is how `remote_tts` / `beam_tts` / `direct_tts` would fall
+        # through to the image branch and return a checkpoint listing as a voice
+        # catalogue. `modal_llm` was in the LLM list below until it stopped being
+        # a type at all; category has no such duplicate.
+        category = provider.category
+        if category == CATEGORY_TTS:
             # Kokoro / TTS voice catalogue (static: the TTS engine exposes no
             # live voice-listing endpoint, so in-process returns [].).
             default_voices = [
@@ -456,7 +476,7 @@ async def get_provider_discovered_models(
                 {"name": "bm_lewis", "id": "bm_lewis", "type": "voice", "gender": "male", "accent": "British"},
             ]
             models = default_voices
-        elif worker_type == "llm" or provider.type in ("openai_compat", "ollama", "anthropic", "google", "modal_vllm", "modal_llm"):
+        elif category == CATEGORY_LLM:
             models = await asyncio.wait_for(engine.list_models(), timeout=12.0)
         else:
             checkpoints = await asyncio.wait_for(engine.list_models("checkpoints"), timeout=15.0)
@@ -467,7 +487,7 @@ async def get_provider_discovered_models(
             "type": provider.type,
             "models": models,
             "count": len(models),
-            "source": "catalogue" if (getattr(provider, "worker_type", "") or provider.type) in ("tts",) or provider.type in ("modal_tts", "tts") else "live",
+            "source": "catalogue" if category == CATEGORY_TTS else "live",
         }
     except Exception as exc:
         logger.warning("provider_discovered_models_failed", provider_id=provider_id, error=str(exc))

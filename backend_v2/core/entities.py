@@ -76,12 +76,46 @@ TERMINAL_JOB_STATUSES = (
 # provider uses (a ComfyUI container vs an always-on API endpoint), and the
 # load balancer branches on it. `capabilities` decides which *jobs* it may be
 # handed. Splitting those two questions is the point.
-VALID_TASK_TYPES = {"image", "llm", "tts"}
+# ---------------------------------------------------------------------------
+# Provider categories
+#
+# A provider's CATEGORY is the kind of work it does, and it is stored in the
+# `worker_type` column — kept under its original name so no provider row and no
+# API payload has to move. Read it through `Provider.category`, which is the
+# property that says what it is.
+#
+# The word "worker" was doing two jobs at once: it named the category *and*
+# implied an execution shape. That is what made the provider page read as
+# ambiguous — a `tts` worker counts as an image worker for pool sizing while its
+# jobs claim from the pool called "image", because the old rules were
+# `worker_type != "llm"` and `task_type in {"image", "tts"}`. The category is now
+# three named things, each with exactly one job pool, and the execution shape is
+# a separate, explicit axis (`Provider.transport`, from the engine registry).
+# ---------------------------------------------------------------------------
+CATEGORY_IMAGE = "image"
+CATEGORY_LLM = "llm"
+CATEGORY_TTS = "tts"
 
-# Task types served by ComfyUI engines (image/TTS workloads with model files)
-# rather than a plain HTTP endpoint to an always-running LLM service.
-ENGINE_TASK_TYPES = {"image", "tts"}
+VALID_TASK_TYPES = {CATEGORY_IMAGE, CATEGORY_LLM, CATEGORY_TTS}
+VALID_CATEGORIES = VALID_TASK_TYPES  # same three values, said properly
+
+#: Categories whose workloads run as a ComfyUI graph — model files, a workflow
+#: dict, node-level progress. The remaining category (`llm`) is a plain HTTP
+#: protocol endpoint. Kept under its old name because providers/crud.py and
+#: tests reference it; it is a *category* set, not an engine-type set, and TTS
+#: belongs to it for the reason above.
+ENGINE_TASK_TYPES = {CATEGORY_IMAGE, CATEGORY_TTS}
+COMFY_CATEGORIES = ENGINE_TASK_TYPES
 CONTAINER_TASK_TYPES = ENGINE_TASK_TYPES  # backward-compat alias
+
+#: Which task types each category's job pool may claim. One category, one pool,
+#: one claim set — a job can only be served by the category that owns it, so
+#: there is nothing to add on top.
+CATEGORY_CLAIM_TASK_TYPES = {
+    CATEGORY_IMAGE: frozenset({CATEGORY_IMAGE}),
+    CATEGORY_LLM: frozenset({CATEGORY_LLM}),
+    CATEGORY_TTS: frozenset({CATEGORY_TTS}),
+}
 
 
 class Job(SQLModel, table=True):
@@ -210,6 +244,31 @@ class Provider(SQLModel, table=True):
         # Returning worker_type here rather than keeping the list empty means
         # callers never have to remember the fallback rule.
         return list(value or [])
+
+    @property
+    def category(self) -> str:
+        """The kind of work this provider does: image, llm, or tts.
+
+        The stored column is `worker_type`, and it stays that way — every
+        provider row, every API payload and every SQLite file would otherwise
+        have to move for a rename. This property exists so new code says
+        "category", which is the actual question, and so the pool-sizing and
+        capability rules have one word to hang off.
+        """
+        return self.worker_type or CATEGORY_IMAGE
+
+    @property
+    def transport(self) -> str | None:
+        """How the backend reaches this provider: modal/beam/remote/direct.
+
+        Resolved from `type` through the engine registry rather than stored, so
+        the registry stays the single place that knows a `beam_llm` provider
+        talks to Beam. Unknown types resolve to None, which the pool sizing and
+        the provider UI treat as "ask the registry".
+        """
+        from services.engines.registry import resolve_transport
+
+        return resolve_transport(self.type)
 
     def serves(self, task_type: str) -> bool:
         """Whether this provider may be handed a job of `task_type`.

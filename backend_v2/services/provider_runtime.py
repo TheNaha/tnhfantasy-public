@@ -136,16 +136,30 @@ async def monitor_provider_changes():
                         try:
                             repo = ProviderRepository(session)
                             providers = repo.get_enabled()
-                            image_workers = sum(1 for p in providers if p.worker_type != "llm")
-                            llm_workers = sum(1 for p in providers if p.worker_type == "llm")
-                            return image_workers, llm_workers
+                            counts: dict[str, int] = {}
+                            for provider in providers:
+                                category = getattr(provider, "worker_type", "") or "image"
+                                if category not in counts:
+                                    counts[category] = 0
+                                counts[category] += 1
+                            return counts
                         finally:
                             session.close()
 
-                    image_workers, llm_workers = await asyncio.to_thread(count_enabled_providers)
+                    counts = await asyncio.to_thread(count_enabled_providers)
 
-                    if image_workers != queue_manager.image.max_workers or llm_workers != queue_manager.llm.max_workers:
-                        queue_manager.resize(image_workers, llm_workers)
+                    # Only the pools whose size actually changed, so a TTS
+                    # provider toggling does not spawn resize tasks for the
+                    # image and llm pools. The old code resized both positions on
+                    # every event, and the tts pool was not one of them at all.
+                    changed = {
+                        category: max(1, count)
+                        for category, count in counts.items()
+                        if category in queue_manager.pools
+                        and queue_manager.pools[category].max_workers != max(1, count)
+                    }
+                    if changed:
+                        queue_manager.resize(**changed)
                 except Exception as exc:
                     logger.error("provider_monitor_error", error=str(exc))
     except asyncio.CancelledError:

@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 
 from core.entities import (
     ACTIVE_JOB_STATUSES,
-    ENGINE_TASK_TYPES,
+    COMFY_CATEGORIES,
     Job,
     LoadBalancerState,
     Provider,
@@ -460,7 +460,7 @@ class LoadBalancer:
         # inferred — this is the failure the whole column exists to prevent,
         # since before it a `tts` job was simply handed to an image worker that
         # has no TTS nodes and failed inside the graph.
-        if task_type in ENGINE_TASK_TYPES:
+        if task_type in COMFY_CATEGORIES:
             capable = [
                 p.id
                 for p in self.repo.get_enabled()

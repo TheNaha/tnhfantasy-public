@@ -12,31 +12,41 @@ const INPUT_CLASS = 'w-full rounded-lg border border-gray-700 bg-gray-800/80 px-
 // (or if it fails). The canonical source is the backend registry served by
 // that endpoint — adding a provider type must never require editing this
 // file again.
+// Three categories x four transports, matching the backend registry's
+// PROVIDER_MATRIX. `modal_llm` is gone from here as well as the backend: it was
+// a second display name over the same ModalVLLMEngine, and the duplicate is
+// what made the provider page ambiguous. The Beam/Remote LLM and TTS entries
+// were empty cells until now — unwritten, so they were invisible.
 const FALLBACK_TYPE_OPTIONS = [
-    { group: 'Image Workers', options: [
+    { group: 'Image Generation', options: [
         { value: 'modal', label: 'Modal (ComfyUI)' },
         { value: 'beam', label: 'Beam.cloud (ComfyUI)' },
-        { value: 'direct_url', label: 'Direct URL (ComfyUI)' },
-        { value: 'remote_comfy', label: 'Remote ComfyUI Agent' },
+        { value: 'remote_comfy', label: 'Self-hosted container (ComfyUI + agent)' },
+        { value: 'direct_url', label: 'Direct ComfyUI server' },
     ] },
-    { group: 'LLM Workers', options: [
-        { value: 'openai_compat', label: 'OpenAI / OpenAI-Compatible API' },
-        { value: 'ollama', label: 'Local LLM Worker (Ollama / LM Studio)' },
-        { value: 'anthropic', label: 'Anthropic (Claude)' },
-        { value: 'google', label: 'Google AI (Gemini)' },
-        { value: 'modal_vllm', label: 'Modal vLLM (High-Throughput)' },
-        { value: 'modal_llm', label: 'Modal LLM' },
+    { group: 'Language Models', options: [
+        { value: 'modal_vllm', label: 'Modal (serverless LLM)' },
+        { value: 'beam_llm', label: 'Beam.cloud (serverless LLM)' },
+        { value: 'remote_llm', label: 'Self-hosted LLM container' },
+        { value: 'openai_compat', label: 'Direct: OpenAI-compatible API' },
+        { value: 'ollama', label: 'Direct: Ollama / LM Studio' },
+        { value: 'anthropic', label: 'Direct: Anthropic Claude' },
+        { value: 'google', label: 'Direct: Google Gemini' },
     ] },
-    { group: 'Voice & Audio (TTS)', options: [
-        { value: 'modal_tts', label: 'Modal Kokoro / TTS' },
+    { group: 'Voice & Audio', options: [
+        { value: 'modal_tts', label: 'Modal (serverless TTS)' },
+        { value: 'beam_tts', label: 'Beam.cloud (serverless TTS)' },
+        { value: 'remote_tts', label: 'Self-hosted TTS container' },
+        { value: 'direct_tts', label: 'Direct: ComfyUI rig with speech' },
     ] },
 ];
 
 // Worker-type fallback for the save payload before schemas load.
 const FALLBACK_WORKER_TYPE = {
-    modal_tts: 'tts',
-    ollama: 'llm', openai_compat: 'llm', anthropic: 'llm',
-    google: 'llm', modal_llm: 'llm', modal_vllm: 'llm',
+    modal: 'image', beam: 'image', remote_comfy: 'image', direct_url: 'image',
+    modal_vllm: 'llm', beam_llm: 'llm', remote_llm: 'llm',
+    openai_compat: 'llm', ollama: 'llm', anthropic: 'llm', google: 'llm',
+    modal_tts: 'tts', beam_tts: 'tts', remote_tts: 'tts', direct_tts: 'tts',
 };
 
 // Defaults contributed by a schema's config fields (checkboxes, selects,
