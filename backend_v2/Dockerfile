@@ -2,6 +2,10 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
+# Install uv — 10-100x faster than pip for dependency resolution and
+# installation, with built-in parallelism.
+RUN pip install --no-cache-dir uv
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
@@ -10,9 +14,12 @@ RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install Python dependencies.
+# Cache mount persists the uv package cache across builds so a requirements.txt
+# change (or a source-only change) does not re-download or re-resolve the world.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system -r requirements.txt
 
 # Copy application
 COPY . .
