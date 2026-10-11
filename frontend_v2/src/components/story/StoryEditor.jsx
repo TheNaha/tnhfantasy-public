@@ -193,7 +193,10 @@ export default React.memo(function StoryEditor({ isPreviewMode, editorContent, o
                                     }}
                                     value={editorContent}
                                     onChange={(e) => onEditorChange(e.target.value)}
-                                    disabled={isStreaming}
+                                    // Editable while the chapter streams. The
+                                    // stream yields to a human edit (see
+                                    // `useStoryStreaming`), so freezing the box
+                                    // was a restriction, not a safeguard.
                                     aria-label="Chapter content" placeholder="Begin your story here (Markdown supported)..."
                                     className="w-full flex-1 bg-transparent px-6 py-4 text-gray-100 font-serif text-lg leading-relaxed resize-none outline-none story-editor-textarea"
                                 />

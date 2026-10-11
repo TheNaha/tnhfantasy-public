@@ -688,7 +688,12 @@ async def _tool_generate_image(
     chapter_id: str | None = None,
     source_job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Generate an image via the job pipeline and wait for completion."""
+    """Generate an image via the job pipeline, without waiting for it.
+
+    Returns immediately with `status: "queued"`; the image lands on its own
+    JOB_COMPLETED. See the comment at the return for why blocking here was
+    worse than it looks.
+    """
     from infrastructure.deps import get_session_context
 
     prompt = args.get("prompt", "a beautiful fantasy landscape")
@@ -771,28 +776,31 @@ async def _tool_generate_image(
             logger.error("tool_generate_image_failed", error=str(e))
             return {"status": "error", "error": str(e)}
 
-    try:
-        from core.events import wait_for_job_completion
-        final_status, output = await wait_for_job_completion(job.id, timeout=330.0)
-    except Exception as e:
-        logger.error("wait_for_job_completion_failed", error=str(e))
-        return {"status": "error", "error": f"Failed waiting for image job: {e}"}
-
-    if final_status == "completed":
-        image_path = None
-        if output:
-            image_path = output.get("relative_path") or output.get("filename")
-        return {
-            "status": "success",
-            "image_path": image_path or f"Generated_{job.id[:8]}.png",
-            "prompt_used": prompt,
-            "job_id": job.id,
-        }
-
-    if final_status in ("failed", "cancelled"):
-        return {"status": "error", "error": f"Image generation {final_status}"}
-
-    return {"status": "error", "error": f"Image generation ended with status: {final_status}"}
+    # Submit, do not wait.
+    #
+    # This tool used to `await wait_for_job_completion(job.id, timeout=330.0)` —
+    # blocking the single LLM worker for up to five and a half minutes inside
+    # one tool call. Because the reply `Message` is only written once the parent
+    # job's JOB_COMPLETED arrives, and the parent cannot finalise until every
+    # chained hop is enqueued, a user who typed one line was waiting on an image
+    # they never asked for. The reply was not in the database yet either, so a
+    # reload in that window lost a paid generation.
+    #
+    # The image does not need waiting for. It lands on its own JOB_COMPLETED,
+    # where `world_integration_service._handle_chat_image` appends an IMAGE
+    # message to this same chat — that path already exists and already
+    # special-cases `source == "agentic_tool"`. So the tool returns immediately,
+    # the follow-up LLM hop runs at once, the reply is persisted, and the image
+    # appears beside it whenever it finishes.
+    return {
+        "status": "queued",
+        "job_id": job.id,
+        "prompt_used": prompt,
+        "note": (
+            "Image generation started in the background and will appear in the "
+            "conversation when it finishes. Do not claim it exists yet."
+        ),
+    }
 
 
 async def _tool_recall_memory(

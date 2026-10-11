@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { useWebSocket, EventTypes } from '../api/websocket';
@@ -18,6 +18,55 @@ export function useChatStreaming({
     const queryClient = useQueryClient();
     const { subscribe } = useWebSocket();
 
+    // Stall watchdog.
+    //
+    // The story stream has had one since its first pass; chat never did, so a
+    // provider that stopped mid-reply left "X is thinking..." on screen
+    // indefinitely with no error and no escape — the user reloads, and the reply
+    // that was paid for is gone with the cache. Story's wording ("Your story is
+    // saved") deliberately does not carry over: a chat reply is NOT saved until
+    // its world-integration consumer writes the Message row, so claiming it is
+    // would be a lie at exactly the moment the user relies on it.
+    const CHAT_STALL_MS = 300000;
+    const stallTimerRef = useRef(null);
+
+    const armStallTimer = useCallback(() => {
+        if (stallTimerRef.current) window.clearTimeout(stallTimerRef.current);
+        stallTimerRef.current = window.setTimeout(() => {
+            const root = queryClient.getQueryCache().findAll({ queryKey: ['streaming', 'jobs'] });
+            const ids = root.flatMap((q) => Object.keys(q.state?.data || {}));
+            ids.forEach((eventId) => clearStreamingJob(queryClient, eventId));
+            toast.error(
+                'Generation stalled. No reply was saved — sending again will restart it.'
+            );
+        }, CHAT_STALL_MS);
+    }, [queryClient]);
+
+    const clearStallTimer = useCallback(() => {
+        if (stallTimerRef.current) {
+            window.clearTimeout(stallTimerRef.current);
+            stallTimerRef.current = null;
+        }
+    }, []);
+
+    useEffect(() => () => clearStallTimer(), [clearStallTimer]);
+
+    // Arm when a job is created, so a stream that never produces a first token
+    // is covered too — the first-token arm alone would only catch a stream that
+    // stalls part-way.
+    const lastArmedJobRef = useRef(null);
+    useEffect(() => {
+        const jobs = queryClient.getQueryCache().findAll({ queryKey: ['streaming', 'jobs'] });
+        const streamed = jobs.flatMap((q) => Object.values(q.state?.data || {}));
+        const running = streamed.filter((j) => j && j.status !== 'completed' && j.status !== 'failed');
+        if (!running.length) return;
+        const armedKey = running.map((j) => j.text || '').join('').length;
+        if (lastArmedJobRef.current !== armedKey) {
+            lastArmedJobRef.current = armedKey;
+            armStallTimer();
+        }
+    }, [queryClient, armStallTimer]);
+
     useEffect(() => {
         const getJob = (event) => event?.data?.job || {};
 
@@ -35,6 +84,16 @@ export function useChatStreaming({
                 return;
             }
 
+            // A background job must not render as a reply.
+            //
+            // Memory extraction runs after every reply, carries the same
+            // `chat_id` (it is derived from that conversation), and streams
+            // tokens — so this reducer produced a second "X is thinking…" bubble
+            // under the reply it was extracted from. The backend marks such jobs
+            // `background: true` in the workflow, which `job_metadata` copies
+            // onto the event payload, and the terminal path drops them too.
+            if (meta.background) return;
+
             const existingJob = getStreamingJob(queryClient, eventId);
             const eventChatId = meta.chat_id || existingJob?.chatId;
             if (streamText && eventChatId) {
@@ -46,6 +105,11 @@ export function useChatStreaming({
                     taskType: job.task_type ?? null,
                     progress: job.overall_progress ?? job.progress ?? null
                 });
+                // Every token is proof of life. `armStallTimer` clears any
+                // previous timer before setting a new one, so this is a reset
+                // rather than a start — the watchdog is for a stream that STOPS
+                // mid-reply, not for a slow provider.
+                armStallTimer();
             }
         };
 
@@ -149,6 +213,14 @@ export function useChatStreaming({
 
             if (eventId) clearStreamingJob(queryClient, eventId, eventChatId);
 
+            // A background job completing must not refetch the transcript.
+            //
+            // Memory extraction carries the chat's own `chat_id`, so without
+            // this its completion invalidated the whole message list a second
+            // time per turn — a full refetch of the conversation after every
+            // reply, for a job that added no message at all.
+            if (meta.background) return;
+
             if (eventChatId) {
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', eventChatId] });
                 // `exact: true` is load-bearing. The 3-element chat key is a
@@ -246,5 +318,5 @@ export function useChatStreaming({
             unsubProgress(); unsubCompleted(); unsubError(); unsubCancelled();
             unsubCreated(); unsubUpdated(); unsubPostProcessing();
         };
-    }, [subscribe, activeChatId, queryClient, setMessage, setSuggestJobId, setSceneJobId, setIsGeneratingScene, suggestJobIdRef, sceneJobIdRef]);
+    }, [subscribe, activeChatId, queryClient, setMessage, setSuggestJobId, setSceneJobId, setIsGeneratingScene, suggestJobIdRef, sceneJobIdRef, armStallTimer, clearStallTimer]);
 }

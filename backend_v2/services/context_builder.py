@@ -735,12 +735,33 @@ def build_system_prompt_sections(
             if story_location:
                 _query_text += f"{story_location} "
 
+        # One embedding for the whole turn.
+        #
+        # Lorebook retrieval and memory retrieval query the SAME string, and
+        # each used to run its own `_try_embedding` — two MiniLM forward passes,
+        # serially, on the critical path of every chat turn. MiniLM is small but
+        # it is a GPU/CPU forward on ~3 KB of text, and it was paid twice for
+        # identical input.
+        #
+        # Computed once here and handed to both. `search_lorebook_entries` now
+        # takes the same precomputed-vector parameter `search_memories` already
+        # had, so the two retrieval paths are symmetric.
+        from services.rag_pipeline import _is_postgres, _try_embedding, rag_enabled
+
+        _q_vec = (
+            _try_embedding(_query_text)
+            if (rag_enabled() and _query_text and _is_postgres(session))
+            else None
+        )
+
         try:
             from services.rag_pipeline import search_lorebook_entries
 
             entries = search_lorebook_entries(
                 session, lorebook_ids, _query_text,
-                limit=LOREBOOK_ENTRY_BUDGET
+                limit=LOREBOOK_ENTRY_BUDGET,
+                q_vec=_q_vec,
+                q_vec_computed=True,
             )
         except Exception as _lb_err:
             logger.warning("lorebook_injection_failed: %s", str(_lb_err))
@@ -918,7 +939,9 @@ def build_system_prompt_sections(
             _mem_top_k = 10
 
             _memories = search_memories(
-                session, character_id, _mem_query, limit=_mem_top_k
+                session, character_id, _mem_query, limit=_mem_top_k,
+                q_vec=_q_vec if _mem_query == _query_text else None,
+                q_vec_computed=_mem_query == _query_text,
             )
             if _memories:
                 mem_block = "\n".join(f"- {m.content}" for m in _memories)

@@ -1080,24 +1080,39 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
         {"role": "user", "content": chapter.content.strip()},
     ]
 
-    story_scenario_template = None
-    if story and story.scenario_id:
-        # The scenario lookup is synchronous session work in an async helper.
-        story_scenario_template = await asyncio.to_thread(
-            _scenario_prompt_template, session, story.scenario_id
-        )
-
+    # Both remaining reads go out together.
+    #
+    # They were three serial `to_thread` round trips — prior chapters, scenario,
+    # world — and the last two touch independent rows on a session that nothing
+    # else is using, so there is no reason to pay three round trips for them.
+    # Batch context tokens in as well: it is a pure config read with no session
+    # at all, so it is the cheapest of the four and free to overlap.
+    story_scenario_template: str | None = None
     world_name = world_description = None
     world_lorebook_ids: list[str] = []
     world_location_ids: list[str] = []
     world_scenario: str | None = None
+
+    scenario_task = world_task = tokens_task = None
+    if story and story.scenario_id:
+        # The scenario lookup is synchronous session work in an async helper.
+        scenario_task = asyncio.to_thread(
+            _scenario_prompt_template, session, story.scenario_id
+        )
     if story is not None and story.world_id:
-        world = await asyncio.to_thread(_world_prompt_parts, session, story)
-        if world is not None:
-            world_name, world_description = world["name"], world["description"]
-            world_lorebook_ids = world["lorebook_ids"]
-            world_location_ids = world["location_ids"]
-            world_scenario = world["scenario"]
+        world_task = asyncio.to_thread(_world_prompt_parts, session, story)
+    tokens_task = asyncio.to_thread(_resolve_context_tokens)
+
+    context_tokens, world, story_scenario_template = await asyncio.gather(
+        tokens_task,
+        world_task or asyncio.sleep(0, None),
+        scenario_task or asyncio.sleep(0, None),
+    )
+    if world is not None:
+        world_name, world_description = world["name"], world["description"]
+        world_lorebook_ids = world["lorebook_ids"]
+        world_location_ids = world["location_ids"]
+        world_scenario = world["scenario"]
 
     if story_premise:
         base_prompt = f"{base_prompt}\n\n[Story premise]\n{story_premise}"
@@ -1114,7 +1129,7 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
         # `DEFAULT_MAX_TOKENS` (4096) regardless of `ai.maxContextTokens`, and
         # `prune_context` then truncated the user's own prose — not the chat
         # formatting block that had eaten the budget.
-        max_context_tokens=await asyncio.to_thread(_resolve_context_tokens),
+        max_context_tokens=context_tokens,
         lorebook_ids=list(dict.fromkeys(
             [*(story.lorebook_ids if story else [] or []), *world_lorebook_ids]
         )) or None,

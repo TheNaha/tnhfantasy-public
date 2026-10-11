@@ -904,6 +904,11 @@ export default function StorySandbox() {
 
     const handleNarrateChapter = useCallback((chapterId) => {
         if (!activeStoryId) return;
+        // Guard on the button, not just the server. Narration is a paid TTS job
+        // with no visible indicator, so a double-click queued two identical
+        // syntheses and both billed — and the second finished silently on top of
+        // the first.
+        if (narrateChapter.isPending) return;
         narrateChapter.mutate({ storyId: activeStoryId, chapterId }, {
             onSuccess: () => toast.success('Narration job queued'),
             onError: (e) => toast.error(`Narration failed: ${e.message}`),

@@ -151,6 +151,12 @@ async def enqueue_memory_extraction(
         character_id=character_id,
         workspace="chat",
         source="auto_memory",
+        # Routed by `applyStreamUpdate` to the streaming store, which renders any
+        # job with a `chat_id` as a character reply bubble — so an extraction
+        # appeared as a second "X is thinking…" under the reply it was derived
+        # from. Same mechanism that already suppresses a swipe, extended to
+        # background work generally.
+        background=True,
     )
 
     try:

@@ -207,6 +207,8 @@ def search_lorebook_entries(
     lorebook_ids: list[str],
     query: str = "",
     limit: int = 5,
+    q_vec: list[float] | None = None,
+    q_vec_computed: bool = False,
 ) -> list[LorebookEntry]:
     """Retrieve the top-``limit`` most relevant entries across lorebooks.
 
@@ -234,7 +236,8 @@ def search_lorebook_entries(
     if not lorebook_ids:
         return []
 
-    q_vec = _try_embedding(query) if (rag_on and query and _is_postgres(session)) else None
+    if not q_vec_computed:
+        q_vec = _try_embedding(query) if (rag_on and query and _is_postgres(session)) else None
 
     results: list[LorebookEntry] = []
     seen: set[str] = set()

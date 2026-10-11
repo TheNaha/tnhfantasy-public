@@ -34,6 +34,7 @@ def build_llm_workflow(
     parent_job_id: str | None = None,
     samplers: dict[str, Any] | None = None,
     extra_metadata: dict[str, Any] | None = None,
+    background: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build a standardized LLM job workflow + metadata pair.
 
@@ -45,6 +46,14 @@ def build_llm_workflow(
         "type": type_,
         "model": model,
     }
+
+    # A background job is rendered differently, or not at all. The frontend's
+    # streaming reducer keys on `chat_id` and shows a reply bubble for anything
+    # that carries one, so a background job that reuses the chat id — memory
+    # extraction does — has to be marked, or it appears as a second phantom
+    # "X is thinking…" under the reply it was derived from.
+    if background:
+        workflow["background"] = True
 
     # The ROLE's sampler is the base; a caller's samplers win on top.
     #
@@ -97,6 +106,8 @@ def build_llm_workflow(
         metadata["parent_job_id"] = parent_job_id
     if extra_metadata:
         metadata.update(extra_metadata)
+    if background:
+        metadata["background"] = True
 
     return workflow, metadata
 

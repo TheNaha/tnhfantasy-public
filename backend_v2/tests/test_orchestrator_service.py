@@ -327,3 +327,114 @@ def test_tool_generate_image_story_mode_routes_to_story_workspace():
     src = inspect.getsource(_tool_generate_image)
     assert 'workspace="story"' in src
     assert "StoryAgenticGen" in src
+
+
+class TestImageToolDoesNotBlock:
+    """`_tool_generate_image` must submit, not wait.
+
+    It used to `await wait_for_job_completion(job.id, timeout=330.0)` — blocking
+    the single LLM worker for up to five and a half minutes inside one tool call.
+    Because the reply `Message` is written only once the parent job's
+    JOB_COMPLETED arrives and the parent cannot finalise until every chained hop
+    is enqueued, a user who typed one line waited on an image they never asked
+    for, and the reply was not in the database yet either — so a reload in that
+    window lost a paid generation.
+
+    The image does not need waiting for: it lands on its own JOB_COMPLETED, where
+    `world_integration_service._handle_chat_image` appends an IMAGE message to
+    the same chat (that path already special-cases `source == "agentic_tool"`).
+    """
+
+    def _submit(self, monkeypatch, **kw):
+        """Drive `_tool_generate_image` past availability with a fake submit."""
+        from services import orchestrator_service as orch
+
+        captured = {}
+
+        async def fake_submit(session, *, prompt, **kwargs):
+            from types import SimpleNamespace
+
+            captured.update(kwargs)
+            return SimpleNamespace(id="job-image-1")
+
+        monkeypatch.setattr("services.image_submission.submit_image_job", fake_submit)
+        monkeypatch.setattr(
+            "services.model_availability_service.ModelAvailabilityService"
+            ".get_available_checkpoint",
+            lambda self, name=None: "sd-comfy.safetensors",
+        )
+        monkeypatch.setattr(
+            "services.model_availability_service.ModelAvailabilityService"
+            ".get_available_lora",
+            lambda self, name=None: None,
+        )
+        return orch, captured
+
+    async def _run(self, monkeypatch, **kw):
+
+        from services import orchestrator_service as orch
+
+        # A session so `get_session_context()` works without the app lifespan.
+        from sqlmodel import Session, SQLModel, create_engine
+
+        engine = create_engine("sqlite:///:memory:")
+        SQLModel.metadata.create_all(engine)
+
+        class _Ctx:
+            async def __aenter__(self):
+                return Session(engine)
+
+            async def __aexit__(self, *exc):
+                return False
+
+        # `get_session_context` is imported INSIDE the function body, so the
+        # patch has to target `infrastructure.deps`, not this module.
+        monkeypatch.setattr("infrastructure.deps.get_session_context", lambda: _Ctx())
+        self._submit(monkeypatch, **kw)
+        return await orch._tool_generate_image(
+            {"prompt": "a castle at dusk"}, chat_id="chat-1", character_id=None,
+            source_job_id=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_queued_without_waiting(self, monkeypatch):
+
+        waited = []
+
+        def _boom(*a, **kw):
+            waited.append(True)
+            raise AssertionError("the tool must not wait for the image job")
+
+        monkeypatch.setattr("core.events.wait_for_job_completion", _boom)
+
+        result = await self._run(monkeypatch)
+
+        assert result["status"] == "queued", result
+        assert result["job_id"] == "job-image-1"
+        assert "background" in result["note"], (
+            "the model must be told not to claim the image exists yet"
+        )
+        assert not waited, "the tool waited for the image job"
+
+    @pytest.mark.asyncio
+    async def test_does_not_reference_the_blocking_waiter_at_all(self, monkeypatch):
+        """Structural: the waiter is gone, not merely unused.
+
+        A dead import would keep the failure one git-revert away.
+        """
+        import ast
+        import inspect
+
+        import services.orchestrator_service as orch
+
+        fn = orch._tool_generate_image
+        # Check the executed statements, not the text: the explanatory comment
+        # quotes the old call, and a text match would flag its own prose.
+        tree = ast.parse(inspect.getsource(fn))
+        awaits = {
+            ast.unparse(n)
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Await) and isinstance(n.value, ast.Call)
+        }
+        blocking = [a for a in awaits if "wait_for_job_completion" in a]
+        assert not blocking, f"the image tool still awaits: {blocking}"

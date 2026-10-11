@@ -44,6 +44,31 @@ def configure_worker_pool() -> None:
                 counts[category] += 1
 
             sizing = {category: max(1, count) for category, count in counts.items()}
+
+            # LLM is sized by the WORK, not by the provider count.
+            #
+            # It used to be one worker per enabled LLM provider, which was right
+            # when one provider meant one model meant one request at a time. It
+            # is not right now: `rp` and `util` can share one set of weights, so
+            # a deployment with one provider still has two kinds of work
+            # contending for one coroutine — chat replies, agentic follow-ups,
+            # narrator jobs, suggest jobs, memory extractions and story
+            # continuations all in a single lane. A memory extraction blocked
+            # the next reply.
+            #
+            # Per-provider sizing became a proxy for concurrency, and the
+            # provider count stopped being a proxy for the number of things a
+            # provider is asked to do at once. `llm.max_workers` is the real
+            # answer; it defaults to 2 (reply + one background job), which is
+            # what a single user generates.
+            from config import get_config
+
+            configured_llm = (get_config() or {}).get("llm", {}).get("max_workers", 2)
+            try:
+                sizing[CATEGORY_LLM] = max(1, int(configured_llm))
+            except (TypeError, ValueError):
+                sizing[CATEGORY_LLM] = 2
+
             counts.setdefault(CATEGORY_IMAGE, sizing.get(CATEGORY_IMAGE, 1))
             counts.setdefault(CATEGORY_LLM, sizing.get(CATEGORY_LLM, 1))
             counts.setdefault(CATEGORY_TTS, sizing.get(CATEGORY_TTS, 1))

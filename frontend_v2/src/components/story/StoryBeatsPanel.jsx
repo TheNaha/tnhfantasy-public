@@ -19,7 +19,10 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { QueryErrorState } from '../common/QueryState';
 
-const BEAT_ROLE_OPTIONS = ['user', 'narrator', 'system'];
+// `tts` is written by the backend's narration path (`TTS_BEAT_ROLE` in
+// world_integration_service.py), so a beat authored by narration must be
+// selectable here or the editor silently re-labels it.
+const BEAT_ROLE_OPTIONS = ['user', 'narrator', 'system', 'tts'];
 
 const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, branchPending, branchingBeatId, onBranch, onUpdateBeat, onDeleteBeat }) {
     const beatId = beat?.id || null;
@@ -80,11 +83,11 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
                 "mt-0.5 shrink-0 text-2xs font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded inline-flex items-center gap-1",
                 isUser
                     ? "bg-blue-500/15 text-blue-300"
-                    : beat?.role === 'system_tts'
+                    : beat?.role === 'tts'
                         ? "bg-sky-500/15 text-sky-300"
                         : "bg-purple-500/15 text-purple-300"
             )}>
-                {beat?.role === 'system_tts' && <Volume2 size={9} />}
+                {beat?.role === 'tts' && <Volume2 size={9} />}
                 {isUser ? 'user' : (beat?.role || 'narrator')}
             </span>
             {editing ? (

@@ -25,6 +25,13 @@ export function useStoryStreaming({
     const isStreamingRef = useRef(false);
     const streamSafetyTimerRef = useRef(null);
 
+    // Stream-write throttle. Chat has had one since its first pass; story never
+    // did, so a chapter continuation re-rendered the editor once per token.
+    const STREAM_WRITE_MS = 100;
+    const streamWriteAtRef = useRef(0);
+    const streamPendingRef = useRef(false);
+
+
     useEffect(() => {
         let active = true;
         queueMicrotask(() => {
@@ -57,6 +64,20 @@ export function useStoryStreaming({
     useEffect(() => {
         const getJob = (event) => event?.data?.job || {};
 
+        // Write the latest streamed text, yielding to a human. Defined here
+        // rather than at the top because it closes over `setEditorContent`,
+        // which is a prop, and a stable identity for it buys nothing.
+        const writeStreamContent = (streamText) => {
+            let userTookOver = false;
+            setEditorContent((prev) => {
+                const baseContent = streamingBaseRef.current || '';
+                const expected = baseContent ? baseContent + '\n\n' + streamText : streamText;
+                userTookOver = prev !== expected;
+                if (userTookOver) return prev;
+                return expected;
+            });
+        };
+
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
             const job = getJob(event);
             const meta = jobMetadata(job);
@@ -65,10 +86,33 @@ export function useStoryStreaming({
                 if (streamText) {
                     setIsStreaming(true);
                     streamingRef.current = streamText;
-                    setEditorContent(() => {
-                        const baseContent = streamingBaseRef.current || '';
-                        return baseContent ? baseContent + '\n\n' + streamText : streamText;
-                    });
+
+                    // Yield to the user. The editor used to be `disabled` for the
+                    // whole stream, so the one moment you most want to change a
+                    // sentence is the one moment the box is frozen. It is editable
+                    // now, which means the stream has to stop overwriting a
+                    // human: once the editor no longer holds exactly what the
+                    // stream last wrote, the user has typed, and the remaining
+                    // tokens stop landing in the text.
+                    //
+                    // Detected by shape rather than a new flag threaded through
+                    // the editor — the editor is the source of truth and this is
+                    // the only writer, so a mismatch is by definition a user edit.
+                    // Throttled, because the editor re-rendered on EVERY token.
+                    // `setEditorContent` rewrites the whole chapter textarea and
+                    // the author-note effect reads it, so one call per token at
+                    // 40 tok/s meant 40 full editor renders per second — and the
+                    // 2000 ms autosave debounce was contended against each of
+                    // them. Chat has throttled at 100 ms since its first pass;
+                    // story never did.
+                    const throttledAt = streamWriteAtRef.current;
+                    const now = Date.now();
+                    if (throttledAt && now - throttledAt < STREAM_WRITE_MS) {
+                        streamPendingRef.current = true;
+                    } else {
+                        streamWriteAtRef.current = now;
+                        writeStreamContent(streamText);
+                    }
                 }
             }
         });
@@ -92,14 +136,44 @@ export function useStoryStreaming({
             }
             
             if (meta.story_id === activeStoryId && meta.chapter_id === activeChapterId) {
+                // Chapter illustration is TWO chained paid jobs: an LLM writes
+                // the art direction, then that output drives an image job. The
+                // user sees one spinner for both, with nothing to say which of
+                // the two is running or that the second one has begun. Naming the
+                // handover is what makes the dead middle of that wait legible.
+                if (meta.type === 'story_illustrate_prompt') {
+                    toast('Art direction ready — generating the image...', { icon: '🎨' });
+                }
                 if (job.task_type === 'image') {
                     setIsIllustrating(false);
                     queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(activeStoryId) });
                     queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'images') });
                     toast.success('Illustration complete');
+                } else if (job.task_type === 'tts') {
+                    // Narration completes invisibly without this.
+                    //
+                    // The TTS job writes `chapter.beats` with an `audio_path`
+                    // (world_integration_service._handle_story_tts), but this
+                    // handler only matched `image` and `story_continue`. So the
+                    // beat never re-rendered until some OTHER query happened to
+                    // refetch the chapter — navigation, a chapter switch, a later
+                    // invalidation — which made narration look like it had done
+                    // nothing at all.
+                    queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(activeStoryId) });
+                    queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES, activeStoryId, 'beats') });
+                    toast.success('Narration ready');
                 } else if (meta.type === 'story_continue') {
                     const finalStreamedText = streamingRef.current;
                     streamingRef.current = '';
+                    // Flush a write the throttle held back. Without this the
+                    // last partial second of tokens was dropped: the throttled
+                    // handler updates `streamingRef` but only writes the editor on
+                    // the next pass, and completion is the last pass.
+                    if (streamPendingRef.current && finalStreamedText) {
+                        streamPendingRef.current = false;
+                        streamWriteAtRef.current = 0;
+                        writeStreamContent(finalStreamedText);
+                    }
                     setIsStreaming(false);
 
                     setEditorContent(prev => {
