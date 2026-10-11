@@ -12,6 +12,8 @@ not have two models deployed.
 
 import pytest
 
+LOCAL_TMP = __import__("pathlib").Path("/tmp/kilo")
+
 from services.llm_router import (
     DEFAULT_ROLE,
     ROLE_BY_KIND,
@@ -164,6 +166,59 @@ class TestTheRegistryParses:
         assert args[0:2] == ["-m", f"/models/{model.volume_dir}/{model.gguf}"]
         assert args.count("--cache-type-k") == 1
         assert "--jinja" in args
+
+
+class TestTheRegistryIsFindableFromBothSides:
+    """`models.json` must resolve wherever this code actually runs.
+
+    The file used to sit at the repo root, resolved with `parents[2]`. In the
+    backend container the build context is `backend_v2/`, so there is no repo
+    root above it and that resolved to `/modal_llm/models.json` — a path present
+    in no deployment. `GET /llm/routing` 500ed there while every local test
+    passed, because locally `parents[2]` really is the repo root.
+
+    The file now lives inside the deployable unit and resolution is a search.
+    This pins that the file the backend loads and the file the Modal app loads
+    are the same one.
+    """
+
+    def test_the_backend_resolves_an_existing_file(self):
+        import services.llm_router as router_mod
+
+        assert router_mod.load().models, "router loaded an empty registry"
+
+    def test_the_registry_module_resolves_by_search_not_by_fixed_depth(self):
+        from registry import REGISTRY_PATH, _resolve_registry_path
+
+        assert REGISTRY_PATH.is_file(), f"{REGISTRY_PATH} does not exist"
+        assert _resolve_registry_path().is_file()
+        # Beside the module wins, so the file never depends on CWD.
+        assert _resolve_registry_path().parent == REGISTRY_PATH.parent
+
+    def test_both_sides_load_the_same_model_set(self):
+        """The Modal app and the backend must agree on what exists.
+
+        They import the same `registry.py`, so this holds structurally — but it
+        is the assertion that stops someone pointing one side at a second copy
+        of the file, which is the failure the search-based resolution exists to
+        prevent.
+        """
+        from registry import load as modal_load
+        import services.llm_router as router_mod
+
+        assert set(modal_load().models) == set(router_mod.load().models)
+
+    def test_the_env_override_wins(self, monkeypatch):
+        import json
+
+        from registry import _resolve_registry_path
+
+        override = {"roles": {"rp": {"fallback": ["x"]}, "util": {"fallback": ["x"]}},
+                    "models": {"x": {"role": "rp", "repo": "r", "gguf": "g.gguf"}}}
+        tmp = LOCAL_TMP / "override.json"
+        tmp.write_text(json.dumps(override))
+        monkeypatch.setenv("LLM_REGISTRY_PATH", str(tmp))
+        assert _resolve_registry_path() == tmp
 
 
 class TestKindResolutionKeepsOneModelWorking:

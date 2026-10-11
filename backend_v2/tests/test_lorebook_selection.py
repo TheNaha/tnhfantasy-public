@@ -130,7 +130,6 @@ class TestTheLorebookBudget:
     """
 
     def test_the_budget_is_one_constant_used_at_both_call_sites(self):
-        import re
 
         from services import context_builder
 

@@ -21,9 +21,13 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-# `registry.py` lives in the sibling `modal_llm/` directory, so it is importable
-# as a plain module rather than needing a package install.
-_REGISTRY_DIR = Path(__file__).resolve().parents[2] / "modal_llm"
+# `registry.py` lives in `backend_v2/modal_llm/`, which is INSIDE the deployable
+# unit on purpose. It used to sit at the repo root, and the backend resolved it
+# with `parents[2]` — the repo root in development, `/` inside the container,
+# where the Docker build context is `backend_v2/` and there is no repo root
+# above it. That produced `/modal_llm/models.json`, a path present in no
+# deployment, and `GET /llm/routing` 500ed while every test passed.
+_REGISTRY_DIR = Path(__file__).resolve().parents[1] / "modal_llm"
 if str(_REGISTRY_DIR) not in sys.path:
     sys.path.insert(0, str(_REGISTRY_DIR))
 

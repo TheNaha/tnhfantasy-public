@@ -26,13 +26,40 @@ Design notes:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-#: The registry file. Resolved relative to the repository root, so importing this
-#: module from either side works without the caller knowing where it lives.
-REGISTRY_PATH = Path(__file__).resolve().parent.parent / "modal_llm" / "models.json"
+#: The registry file, resolved by search rather than by fixed depth.
+#
+# Fixed-depth was wrong in both directions. This module is imported from two
+# places that live at different depths: the Modal app (a sibling directory) and
+# the backend service. `Path(__file__).parent.parent` is the repo root in one
+# and `/` in the other — and inside the backend container, where the build
+# context is `backend_v2/` and the repo root does not exist, that produced
+# `/modal_llm/models.json`, a path that is present in no deployment. So the file
+# lives INSIDE the deployable unit and each side looks beside itself first.
+_REGISTRY_CANDIDATES = (
+    Path(__file__).resolve().parent / "models.json",
+    Path(__file__).resolve().parent.parent / "modal_llm" / "models.json",
+    Path(__file__).resolve().parents[1] / "modal_llm" / "models.json"
+    if len(Path(__file__).resolve().parents) > 1 else None,
+)
+
+
+def _resolve_registry_path() -> Path:
+    """The models.json that exists, preferring the one beside this module."""
+    env_override = os.environ.get("LLM_REGISTRY_PATH")
+    if env_override:
+        return Path(env_override)
+    for candidate in _REGISTRY_CANDIDATES:
+        if candidate and candidate.is_file():
+            return candidate
+    return Path(__file__).resolve().parent / "models.json"
+
+
+REGISTRY_PATH = _resolve_registry_path()
 
 #: Defaults a model entry may omit. Mirrored in the JSON's own DEFAULTS comment
 #: so a reader of the file alone can see what an omitted key means.

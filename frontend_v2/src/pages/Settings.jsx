@@ -8,7 +8,7 @@ import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings, GALLERY_VIEW_MODES } from '../store/settingsStore';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
-import { useLLMProviderStatus, useSetLLMDefault } from '../hooks/useLLMProviderStatus';
+import { useLLMProviderStatus, useLLMRouting, useSetLLMDefault } from '../hooks/useLLMProviderStatus';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import React, { useCallback, useEffect, useRef } from 'react';
 
@@ -1199,6 +1199,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
     const { providers = [] } = useProvidersPageData();
     const llmStatus = useLLMProviderStatus();
     const setDefaultMutation = useSetLLMDefault();
+    const routing = useLLMRouting();
     
     const llmProviders = providers.filter(p => p.worker_type === 'llm' || p.id.startsWith('llm'));
 
@@ -1391,6 +1392,80 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                             </select>
                         </div>
                     </div>
+                </div>
+
+                <div className="p-6 border border-white/5 rounded-2xl bg-white/5 shadow-inner">
+                    <div className="mb-4">
+                        <h3 className="font-bold text-white tracking-wide">Model Routing</h3>
+                        <p className="text-sm font-medium text-gray-400 mt-1">
+                            Which model handles which kind of work. Roleplay prose and
+                            structured tasks are deliberately separate models — an
+                            rp finetune is worse at tool calls and extraction, and most
+                            have no vision at all.
+                        </p>
+                    </div>
+
+                    {routing.isLoading ? (
+                        <p className="text-sm text-gray-400">Loading routing…</p>
+                    ) : routing.isError ? (
+                        <p className="text-sm text-gray-400">
+                            Routing is unavailable — chat still works, using the default model above.
+                        </p>
+                    ) : (
+                        <div className="grid gap-4 md:grid-cols-2">
+                            {Object.entries(routing.data?.roles || {}).map(([role, info]) => (
+                                <div key={role} className="rounded-xl border border-white/10 bg-gray-900/50 p-4">
+                                    <div className="flex items-center justify-between mb-1">
+                                        <span className="text-xs font-bold uppercase tracking-widest text-blue-300">
+                                            {role === 'rp' ? 'Roleplay (rp)' : role === 'util' ? 'Structured (util)' : role}
+                                        </span>
+                                        <span className="text-2xs text-gray-500">
+                                            {info.chain?.length || 0} in chain
+                                        </span>
+                                    </div>
+                                    <div className="text-sm font-semibold text-white">
+                                        {info.primary || '—'}
+                                    </div>
+                                    <div className="text-xs text-gray-400 mt-1">
+                                        {info.primary ? 'primary' : 'no enabled model'}
+                                    </div>
+                                    {(info.chain?.length || 0) > 1 && (
+                                        <div className="mt-3 pt-3 border-t border-white/5">
+                                            <div className="text-2xs uppercase tracking-widest text-gray-500 mb-1.5">Fallback</div>
+                                            <div className="flex flex-wrap gap-1">
+                                                {info.chain.slice(1).map((id) => (
+                                                    <span key={id} className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-gray-300 text-2xs">
+                                                        {id}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    <details className="mt-4 group">
+                        <summary className="cursor-pointer text-xs font-bold uppercase tracking-widest text-gray-500 hover:text-gray-300">
+                            Which job kinds use which role
+                        </summary>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            {Object.entries(routing.data?.kinds || {}).map(([kind, role]) => (
+                                <div key={kind} className="flex items-center justify-between text-xs">
+                                    <span className="font-mono text-gray-300">{kind}</span>
+                                    <span className={role === 'rp' ? 'text-blue-300' : 'text-purple-300'}>
+                                        {role}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </details>
+
+                    <p className="mt-4 text-xs text-gray-500">
+                        A per-chat or per-story model pin overrides all of this.
+                        Change the routing itself by editing <code className="text-gray-400">modal_llm/models.json</code>.
+                    </p>
                 </div>
 
                 <SettingGroup title="Max Context Tokens" description="Maximum tokens to keep in chat history">

@@ -12,34 +12,46 @@ const INPUT_CLASS = 'w-full rounded-lg border border-gray-700 bg-gray-800/80 px-
 // (or if it fails). The canonical source is the backend registry served by
 // that endpoint — adding a provider type must never require editing this
 // file again.
-// Three categories x four transports, matching the backend registry's
-// PROVIDER_MATRIX. `modal_llm` is gone from here as well as the backend: it was
-// a second display name over the same ModalVLLMEngine, and the duplicate is
-// what made the provider page ambiguous. The Beam/Remote LLM and TTS entries
-// were empty cells until now — unwritten, so they were invisible.
-const FALLBACK_TYPE_OPTIONS = [
-    { group: 'Image Generation', options: [
-        { value: 'modal', label: 'Modal (ComfyUI)' },
-        { value: 'beam', label: 'Beam.cloud (ComfyUI)' },
-        { value: 'remote_comfy', label: 'Self-hosted container (ComfyUI + agent)' },
-        { value: 'direct_url', label: 'Direct ComfyUI server' },
-    ] },
-    { group: 'Language Models', options: [
-        { value: 'modal_vllm', label: 'Modal (serverless LLM)' },
-        { value: 'beam_llm', label: 'Beam.cloud (serverless LLM)' },
-        { value: 'remote_llm', label: 'Self-hosted LLM container' },
-        { value: 'openai_compat', label: 'Direct: OpenAI-compatible API' },
-        { value: 'ollama', label: 'Direct: Ollama / LM Studio' },
-        { value: 'anthropic', label: 'Direct: Anthropic Claude' },
-        { value: 'google', label: 'Direct: Google Gemini' },
-    ] },
-    { group: 'Voice & Audio', options: [
-        { value: 'modal_tts', label: 'Modal (serverless TTS)' },
-        { value: 'beam_tts', label: 'Beam.cloud (serverless TTS)' },
-        { value: 'remote_tts', label: 'Self-hosted TTS container' },
-        { value: 'direct_tts', label: 'Direct: ComfyUI rig with speech' },
-    ] },
+//
+// Grouped by TRANSPORT (how the backend reaches the compute), not by category.
+// Three categories x four transports is the matrix the registry declares, and
+// grouping by transport is what makes it legible: pick "Beam.cloud (serverless)"
+// and you see Image + LLM + TTS under it, which is exactly what the backend's
+// PROVIDER_MATRIX says that transport offers. Grouping by category instead —
+// which is what this file used to do — produced one flat "Language Models" list
+// of seven options where three said "Direct" only in the label.
+const FALLBACK_TRANSPORTS = [
+    { id: 'modal', label: 'Modal (serverless)' },
+    { id: 'beam', label: 'Beam.cloud (serverless)' },
+    { id: 'remote', label: 'Self-hosted container' },
+    { id: 'direct', label: 'Direct API endpoint' },
 ];
+
+const CATEGORY_LABEL = {
+    image: 'Image Generation',
+    llm: 'Language Models',
+    tts: 'Voice & Audio',
+};
+
+// Display names for the fallback path, keyed by provider type id.
+const FALLBACK_TYPE_NAMES = {
+    modal: 'Modal (ComfyUI)', modal_tts: 'Modal (TTS)', modal_vllm: 'Modal (LLM)',
+    beam: 'Beam (ComfyUI)', beam_llm: 'Beam (LLM)', beam_tts: 'Beam (TTS)',
+    remote_comfy: 'Container (ComfyUI + agent)', remote_llm: 'Self-hosted LLM container',
+    remote_tts: 'Self-hosted TTS container',
+    direct_url: 'Direct ComfyUI server', direct_tts: 'Direct ComfyUI (TTS)',
+    openai_compat: 'Direct: OpenAI-compatible API', ollama: 'Direct: Ollama / LM Studio',
+    anthropic: 'Direct: Anthropic Claude', google: 'Direct: Google Gemini',
+};
+
+// (transport, category) -> provider type id. Mirrors the backend's
+// PROVIDER_MATRIX; the API's own `matrix` replaces this once loaded.
+const FALLBACK_MATRIX = {
+    modal:   { image: 'modal',          llm: null,                    tts: 'modal_tts' },
+    beam:    { image: 'beam',           llm: 'beam_llm',              tts: 'beam_tts' },
+    remote:  { image: 'remote_comfy',   llm: 'remote_llm',            tts: 'remote_tts' },
+    direct:  { image: 'direct_url',     llm: null,                    tts: 'direct_tts' },
+};
 
 // Worker-type fallback for the save payload before schemas load.
 const FALLBACK_WORKER_TYPE = {
@@ -73,7 +85,8 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
     // "Esc → Close modals" line in KeyboardShortcutsModal.
     useEscapeKey(onClose);
     const initialType = provider?.type || 'modal';
-    const [engineSchemas, setEngineSchemas] = useState(null);
+    const [schemasPayload, setSchemasPayload] = useState(null);
+    const engineSchemas = schemasPayload?.engines || null;
     const [formData, setFormData] = useState({
         id: provider?.id || '',
         type: initialType,
@@ -94,9 +107,11 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         let mounted = true;
         providersApi.getSchemas()
             .then((data) => {
-                if (mounted && data?.engines) {
-                    setEngineSchemas(data.engines);
-                }
+                // The WHOLE payload, not just `engines`: `transports` and
+                // `matrix` are what let this modal render the category x
+                // transport grid, and dropping them reduced the UI to the
+                // flat per-category list the matrix was added to replace.
+                if (mounted && data?.engines) setSchemasPayload(data);
             })
             .catch(() => {});
         return () => { mounted = false; };
@@ -149,18 +164,73 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
     const credentialFields = useMemo(() => currentSchema?.credentials || [], [currentSchema]);
     const schemasLoaded = engineSchemas != null;
 
-    // Type options grouped by schema category (image/llm/tts). Static
-    // fallback only while schemas load.
+    // Type options grouped by TRANSPORT, with the category as each option's own
+    // label. One `optgroup` per transport is what makes the 3x4 matrix legible:
+    // a user choosing "Beam.cloud (serverless)" sees Image + LLM + TTS together,
+    // which is what that transport is declared to offer.
+    //
+    // Every transport is listed even when a category cell is empty (Direct LLM
+    // is a *family* of hosted APIs rather than one type), because an omitted
+    // cell reads as "this transport cannot do LLMs" — which is false here and
+    // was the original reason four cells went missing from the product.
     const typeOptions = useMemo(() => {
-        if (!engineSchemas) return FALLBACK_TYPE_OPTIONS;
-        const groups = new Map();
-        for (const [key, schema] of Object.entries(engineSchemas)) {
-            const group = `${(schema.category || schema.worker_type || 'other')[0].toUpperCase()}${(schema.category || schema.worker_type || 'other').slice(1)} Workers`;
-            if (!groups.has(group)) groups.set(group, []);
-            groups.get(group).push({ value: key, label: schema.name || key });
+        const engines = engineSchemas || {};
+        const transportList = schemasPayload?.transports || FALLBACK_TRANSPORTS;
+        const matrix = schemasPayload?.matrix || null;
+
+        // Before the payload arrives there is no `engines` map to iterate, so the
+        // fallback grid has to be built from the static matrix. Returning an
+        // empty list here would leave the select blank for the whole load —
+        // which is exactly what a bare `return []` fallback used to do before
+        // the type options were grouped at all.
+        if (!schemasPayload?.engines) {
+            return transportList.map((transport) => {
+                const cells = matrix || FALLBACK_MATRIX[transport.id] || {};
+                const options = Object.entries(cells)
+                    .filter(([, id]) => id)
+                    .map(([category, id]) => ({
+                        value: id,
+                        label: `${CATEGORY_LABEL[category] || category} — ${FALLBACK_TYPE_NAMES[id] || id}`,
+                    }));
+                // The static matrix is declared in category order already.
+                return { group: transport.label, transport: transport.id, options };
+            }).filter((g) => g.options.length > 0);
         }
-        return [...groups.entries()].map(([group, options]) => ({ group, options }));
-    }, [engineSchemas]);
+
+        const transports = transportList;
+
+        const groups = transports.map((transport) => {
+            const transportId = transport.id || transport.value;
+            const options = [];
+            for (const [key, schema] of Object.entries(engines)) {
+                // `id` is what the API sends; `value` is accepted too so a
+                // hand-written payload works. Comparing against the wrong key
+                // does not error — `schema.transport !== undefined` is simply
+                // always true, so every option is filtered out and the select
+                // renders empty, which reads as "no provider types exist".
+                if (schema.transport !== transportId) continue;
+                const category = schema.category || schema.worker_type || 'image';
+                options.push({
+                    value: key,
+                    category,
+                    label: `${CATEGORY_LABEL[category] || category} — ${schema.name || key}`,
+                });
+            }
+            // The registry's own order is insertion order, not UI order. Sort
+            // within a transport so the three categories always read Image, LLM,
+            // TTS — keyed on the CATEGORY, not the option value: `order` is
+            // keyed by category, so indexing it by a provider type id gave 0 for
+            // every row and the sort was a silent no-op.
+            const order = { image: 0, llm: 1, tts: 2 };
+            // `??`, NOT `||`: `order['image']` is 0, and `0 || 9` is 9 — the
+            // legitimate value for Image is falsy, so `||` ranks it LAST. No
+            // error, just the three categories quietly reading LLM, TTS, Image.
+            options.sort((a, b) => (order[a.category] ?? 99) - (order[b.category] ?? 99));
+            return { group: transport.label, transport: transport.id, options, matrix };
+        });
+
+        return groups.filter((g) => g.options.length > 0 || g.matrix);
+    }, [engineSchemas, schemasPayload]);
 
     const handleTypeChange = (type) => {
         setFormData((current) => ({

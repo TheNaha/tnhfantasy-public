@@ -41,6 +41,24 @@ def get_default_provider(session: Session = Depends(get_session)):
         return None
     return DefaultProviderResponse(provider_id=resolved[0], model_id=resolved[1])
 
+@router.get("/routing")
+def get_llm_routing():
+    """Describe the rp/util model router.
+
+    The two-role split exists because an rp model is chosen for prose and a util
+    model for structure, and neither does the other's job. This is what makes
+    that legible: which model each role resolves to, the fallback chain behind
+    it, and which job kinds belong to which role.
+
+    Without it the split is invisible — a user cannot tell why a chat reply comes
+    from one model and a memory extraction from another, nor that editing
+    `modal_llm/models.json` is how it changes.
+    """
+    from services.llm_router import get_router
+
+    return get_router().describe()
+
+
 class UpdateProviderRequest(BaseModel):
     provider_id: str
     model_id: str

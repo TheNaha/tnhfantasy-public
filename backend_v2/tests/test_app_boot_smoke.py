@@ -461,10 +461,10 @@ async def test_app_serves_requests_after_boot(client, boot):
     # `api/routes/models/provider_sync.py` and `GET /all-storage-paths` in
     # `models/crud.py`. Dropping rather than rising is the expected direction now
     # that the container workers they served are gone.
-    assert len(spec["paths"]) == 236, (
+    assert len(spec["paths"]) == 237, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 316
+    assert sum(len(ops) for ops in spec["paths"].values()) == 317
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 

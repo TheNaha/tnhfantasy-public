@@ -11,10 +11,16 @@ import { api, API_V2_BASE } from '../api';
 export const LLM_PROVIDERS_KEY = ['llm', 'providers'];
 export const LLM_MODELS_KEY = ['llm', 'available-models'];
 export const LLM_DEFAULT_KEY = ['llm', 'default-provider'];
+export const LLM_ROUTING_KEY = ['llm', 'routing'];
 
 /** Fetch all registered LLM providers with is_default flag. */
 async function fetchLLMProviders({ signal } = {}) {
     return api.get(`${API_V2_BASE}/llm/providers`, { signal });
+}
+
+/** Fetch the rp/util routing table: role -> primary + fallback chain, kind -> role. */
+async function fetchLLMRouting({ signal } = {}) {
+    return api.get(`${API_V2_BASE}/llm/routing`, { signal });
 }
 
 /** Fetch available models from the default LLM provider's worker. */
@@ -133,7 +139,31 @@ export function useSetLLMDefault() {
             // winner keeps its badge while the new winner gets none: the UI
             // reports the new default and marks the old one at the same time.
             queryClient.invalidateQueries({ queryKey: LLM_PROVIDERS_KEY });
+            // The routing table is a *description* of how kinds resolve, and a
+            // provider change can change which model a role actually reaches:
+            // `resolve_model_for_kind` only routes to the registry's primary
+            // when a real provider serves it. Without this the panel keeps
+            // showing the role's primary as reachable after it stopped being.
+            queryClient.invalidateQueries({ queryKey: LLM_ROUTING_KEY });
         },
+    });
+}
+
+
+/**
+ * useLLMRouting — the rp/util table.
+ *
+ * Which model serves which *kind* of work, and why. Without it the two-role
+ * split is invisible: a user cannot tell why a chat reply comes from one model
+ * and a memory extraction from another, nor that editing
+ * `modal_llm/models.json` is how it changes.
+ */
+export function useLLMRouting(options = {}) {
+    return useQuery({
+        queryKey: LLM_ROUTING_KEY,
+        queryFn: fetchLLMRouting,
+        staleTime: 60_000,
+        ...options,
     });
 }
 

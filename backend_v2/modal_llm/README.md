@@ -12,6 +12,14 @@ modal_llm/
 backend_v2/services/llm_router.py  <- job kind -> role. Reads the same registry.
 ```
 
+This directory lives **inside `backend_v2/`**, not at the repo root, and that is
+load-bearing. It used to sit at the repo root and the backend resolved it with
+`Path(__file__).parents[2]` — the repo root in development, `/` inside the
+backend container, whose Docker build context is `backend_v2/` and therefore has
+no repo root above it. `GET /llm/routing` then 500ed in the container while
+every test passed locally. `registry.py` now resolves by *search*, preferring
+the file beside it, with `LLM_REGISTRY_PATH` as an override.
+
 ## The two roles
 
 | role | what it serves | why it exists |
