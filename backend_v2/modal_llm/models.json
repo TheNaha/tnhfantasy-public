@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "TNH LLM model registry — the ONE file to edit to change which models serve",
+    "TNH LLM model registry \u2014 the ONE file to edit to change which models serve",
     "which role. Nothing in the Modal app or the backend hardcodes a model id;",
     "both read this.",
     "",
@@ -20,7 +20,11 @@
     "router only ever uses the first *reachable* entry, so reordering this list",
     "is how you swap the primary without touching anything else."
   ],
-
+  "scaledown_policy": {
+    "_comment": "Thinking is NOT disabled: `--reasoning-budget 0` stops llama.cpp separating reasoning from content, which puts the chain of thought into `content` and shows it as prose. The default keeps it in `reasoning_content`, which the OpenAI-compatible reader drops. What DOES matter is the token floor \u2014 reasoning consumes max_output_tokens first, so a small budget returns an empty reply with no error anywhere.",
+    "idle": 60,
+    "idle_note": "60s at ~18s of model load. The image worker tolerates scaledown_window=5, so this is twelve times more generous already. Raise it only after measuring: every idle second of an L40S is billed."
+  },
   "roles": {
     "rp": {
       "_comment": "Roleplay prose: in-character long-form writing, scene narration, continuations. Chosen for willingness and prose quality.",
@@ -42,7 +46,6 @@
       ]
     }
   },
-
   "models": {
     "artemis_31b": {
       "role": "rp",
@@ -54,13 +57,17 @@
       "parallel": 1,
       "kv": "q8_0",
       "gpu": "L40S",
-      "idle": 300,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 1.0, "top_p": 0.95, "top_k": 64 },
+      "sampler": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
       "enabled": true,
       "_note": "Reddit's most-praised RP finetune; 1/30 refusals in one tester's bench. The only rp model with its own vision file, so it can read images directly."
     },
-
     "writers_31b_v2": {
       "role": "rp",
       "repo": "mradermacher/Gemma-4-Writers-31B-V2-i1-GGUF",
@@ -71,13 +78,17 @@
       "parallel": 1,
       "kv": "q8_0",
       "gpu": "L40S",
-      "idle": 300,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 1.0, "top_p": 0.95, "top_k": 64 },
+      "sampler": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
       "enabled": true,
-      "_note": "'Goated' for long RP, slopless style, handles stat tables. Text-only — no mmproj in the repo, so this one cannot read images."
+      "_note": "'Goated' for long RP, slopless style, handles stat tables. Text-only \u2014 no mmproj in the repo, so this one cannot read images."
     },
-
     "gemma4_31b_heretic": {
       "role": "rp",
       "repo": "mradermacher/gemma-4-31B-it-heretic-i1-GGUF",
@@ -88,13 +99,17 @@
       "parallel": 1,
       "kv": "q8_0",
       "gpu": "L40S",
-      "idle": 300,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 1.0, "top_p": 0.95, "top_k": 64 },
+      "sampler": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
       "enabled": true,
-      "_note": "UGI 56.4, W/10 10, NatInt 35.6 — an abliteration rather than an RP finetune, so prose can read assistant-like. Shares weights with gemma4_31b_heretic_util (see dir), so this costs one download not two."
+      "_note": "UGI 56.4, W/10 10, NatInt 35.6 \u2014 an abliteration rather than an RP finetune, so prose can read assistant-like. Shares weights with gemma4_31b_heretic_util (see dir), so this costs one download not two."
     },
-
     "sompoa_26b_a4b": {
       "role": "rp",
       "repo": "mradermacher/gemma-4-26B-A4B-it-SOMPOA-heresy-i1-GGUF",
@@ -105,13 +120,17 @@
       "parallel": 1,
       "kv": "q8_0",
       "gpu": "L40S",
-      "idle": 240,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 1.0, "top_p": 0.95, "top_k": 64 },
+      "sampler": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
       "enabled": true,
       "_note": "Fast tier: MoE with ~4B active. UGI Writing 43.5, NatInt 34.7."
     },
-
     "weirdcompound_24b": {
       "role": "rp",
       "repo": "mradermacher/WeirdCompound-v1.7-24b-i1-GGUF",
@@ -122,13 +141,16 @@
       "parallel": 1,
       "kv": null,
       "gpu": "L40S",
-      "idle": 300,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 1.0, "min_p": 0.1 },
+      "sampler": {
+        "temperature": 1.0,
+        "min_p": 0.1,
+        "max_tokens": 2048
+      },
       "enabled": true,
       "_note": "Best all-round Mistral-family row: Writing 47.0, UGI 48.0, NSFW 7.8, Dark 7.5. Mistral Tekken template, not Gemma."
     },
-
     "magnum_diamond_24b": {
       "role": "rp",
       "repo": "Doctor-Shotgun/MS3.2-24B-Magnum-Diamond-GGUF",
@@ -139,13 +161,16 @@
       "parallel": 1,
       "kv": null,
       "gpu": "L40S",
-      "idle": 300,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 1.0, "min_p": 0.1 },
+      "sampler": {
+        "temperature": 1.0,
+        "min_p": 0.1,
+        "max_tokens": 2048
+      },
       "enabled": true,
-      "_note": "Deep backup, the original pick. Low willingness (W/10 2.2) but high NSFW/Dark writing scores. gguf is a GLOB — its filename is unverified, so the first deploy will fail loudly if it does not match exactly one file."
+      "_note": "Deep backup, the original pick. Low willingness (W/10 2.2) but high NSFW/Dark writing scores. gguf is a GLOB \u2014 its filename is unverified, so the first deploy will fail loudly if it does not match exactly one file."
     },
-
     "dark_thoughts_v2_31b": {
       "role": "rp",
       "repo": "mradermacher/Gemma-4-Dark-Thoughts-V2-31B-i1-GGUF",
@@ -156,13 +181,17 @@
       "parallel": 1,
       "kv": "q8_0",
       "gpu": "L40S",
-      "idle": 300,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 1.0, "top_p": 0.95, "top_k": 64 },
+      "sampler": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
       "enabled": false,
-      "_note": "BENCH. Best multilingual behaviour among the 31B finetunes — enable this if you roleplay outside English."
+      "_note": "BENCH. Best multilingual behaviour among the 31B finetunes \u2014 enable this if you roleplay outside English."
     },
-
     "split_untied_31b": {
       "role": "rp",
       "repo": "mradermacher/Split-Untied-31B-i1-GGUF",
@@ -173,13 +202,17 @@
       "parallel": 1,
       "kv": "q8_0",
       "gpu": "L40S",
-      "idle": 300,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 1.0, "top_p": 0.95, "top_k": 64 },
+      "sampler": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
       "enabled": false,
       "_note": "BENCH. Needs its own preset or it leaks English."
     },
-
     "goetia_26b_a4b": {
       "role": "rp",
       "repo": "mradermacher/Goetia-26B-A4B-v1.3-Absolute-Heretic-ARA-i1-GGUF",
@@ -190,13 +223,17 @@
       "parallel": 1,
       "kv": "q8_0",
       "gpu": "L40S",
-      "idle": 240,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 1.0, "top_p": 0.95, "top_k": 64 },
+      "sampler": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
       "enabled": false,
       "_note": "BENCH. Highest UGI writing score of the bench (40.9, 47.9 with thinking)."
     },
-
     "styletune_v2_26b_a4b": {
       "role": "rp",
       "repo": "mradermacher/Gemma-4-26B-A4B-StyleTune-V2-i1-GGUF",
@@ -207,13 +244,17 @@
       "parallel": 1,
       "kv": "q8_0",
       "gpu": "L40S",
-      "idle": 240,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 1.0, "top_p": 0.95, "top_k": 64 },
+      "sampler": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
       "enabled": false,
       "_note": "BENCH. ~63 tok/s on a 16GB card per Reddit; speculation hurts RP on this MoE."
     },
-
     "gemma4_31b_heretic_util": {
       "role": "util",
       "dir": "gemma4_31b_heretic",
@@ -225,13 +266,16 @@
       "parallel": 2,
       "kv": "q8_0",
       "gpu": "L40S",
-      "idle": 180,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 0.3, "top_p": 0.95, "top_k": 64 },
+      "sampler": {
+        "temperature": 0.3,
+        "top_p": 0.95,
+        "top_k": 64
+      },
       "enabled": true,
-      "_note": "util primary. Same GGUF as the gemma4_31b_heretic rp entry (shared download), so NSFW extraction and captioning do not refuse. Vision uses the STOCK Gemma 4 projector on an abliterated model — works in practice but test with a real image."
+      "_note": "util primary. Same GGUF as the gemma4_31b_heretic rp entry (shared download), so NSFW extraction and captioning do not refuse. Vision uses the STOCK Gemma 4 projector on an abliterated model \u2014 works in practice but test with a real image."
     },
-
     "gemma4_26b_a4b_heretic_util": {
       "role": "util",
       "repo": "llmfan46/gemma-4-26B-A4B-it-ultra-uncensored-heretic-GGUF",
@@ -242,13 +286,16 @@
       "parallel": 2,
       "kv": "q8_0",
       "gpu": "L40S",
-      "idle": 180,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 0.3, "top_p": 0.95, "top_k": 64 },
+      "sampler": {
+        "temperature": 0.3,
+        "top_p": 0.95,
+        "top_k": 64
+      },
       "enabled": true,
       "_note": "Fast util. UGI 45.0, W/10 8.8. Its own repo ships the vision file, so no cross-repo projector."
     },
-
     "mistral_small_32_it": {
       "role": "util",
       "repo": "unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF",
@@ -259,9 +306,11 @@
       "parallel": 2,
       "kv": null,
       "gpu": "L40S",
-      "idle": 180,
+      "idle": 60,
       "startup": 600,
-      "sampler": { "temperature": 0.15 },
+      "sampler": {
+        "temperature": 0.15
+      },
       "enabled": true,
       "_note": "Deep backup, the original util pick. More cautious than the Gemma 4 abliterations (W/10 6.5) but verified filenames."
     }

@@ -41,10 +41,11 @@ from typing import Any, Dict, List, Optional
 # `/modal_llm/models.json`, a path that is present in no deployment. So the file
 # lives INSIDE the deployable unit and each side looks beside itself first.
 _REGISTRY_CANDIDATES = (
+    # In the Modal image the whole `modal_llm/` directory is added at
+    # /app/modal_llm, so this module's own directory already holds the file.
     Path(__file__).resolve().parent / "models.json",
+    # Local development, where this file is at <repo>/backend_v2/modal_llm.
     Path(__file__).resolve().parent.parent / "modal_llm" / "models.json",
-    Path(__file__).resolve().parents[1] / "modal_llm" / "models.json"
-    if len(Path(__file__).resolve().parents) > 1 else None,
 )
 
 

@@ -92,6 +92,36 @@ it. Until then everything resolves exactly as it did before.
 | `sampler` | suggested sampler values. Sent by the backend, overridable per chat |
 | `extra_args` | extra `llama-server` flags, appended last |
 
+## Measured (2026-10-11, first real deploy)
+
+| | seconds | what it is |
+|---|---|---|
+| llama-server model load | **~18** | 23.5 GB GGUF off a Modal Volume, mmap'd — from `load_model: loading model` to `listening on 0.0.0.0:8080` |
+| Cold container → first SDK call answered | **~26** | 18 s of load plus Modal's container scheduling and GPU allocation |
+| Warm call | **~4–10** | the model is resident and the port is open |
+| Primaries download | ~48 GB | `artemis_31b` 23.5 GB + 1.2 GB projector, `gemma4_31b_heretic_util` 21.8 GB + 1.2 GB projector |
+
+So the ~18 s the log shows *is* the cold boot — it is llama-server loading, and
+it happens inside `@modal.enter()`, before the first call rather than inside it.
+Anything slower than that in Modal's own "cold booting" banner is container
+scheduling. If Modal reports cold-booting for minutes while the log already says
+`listening`, the container is crash-looping after start, not booting slowly —
+which is exactly what a missing dependency in the image looks like.
+
+### Thinking mode: do not try to disable it
+
+These models emit `reasoning_content` before prose. `--reasoning-budget 0` looks
+like the fix and is the opposite: it stops llama.cpp *separating* the two, so the
+chain of thought lands in `content` and is shown to the reader as prose. The
+default keeps it in `reasoning_content`, which the OpenAI-compatible reader
+already drops.
+
+What actually matters is the token floor. Reasoning consumes `max_output_tokens`
+before any prose is written, so a small budget produces an **empty reply with no
+error anywhere** — `completion_tokens` is spent, `content` is `""`,
+`finish_reason` is `stop`. Every `rp` sampler therefore carries
+`max_tokens: 2048`, which a per-chat sampler still overrides.
+
 ## Known-unverified
 
 This directory has never been deployed. Before relying on it:

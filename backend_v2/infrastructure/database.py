@@ -44,6 +44,19 @@ def _positive_int_env(name: str, default: int) -> int:
 # COMFY_DB_POOL_SIZE / COMFY_DB_MAX_OVERFLOW / COMFY_DB_POOL_TIMEOUT.
 DB_POOL_SIZE = _positive_int_env("COMFY_DB_POOL_SIZE", 30)
 DB_MAX_OVERFLOW = _positive_int_env("COMFY_DB_MAX_OVERFLOW", 30)
+
+
+def get_db_pool_size() -> int:
+    """How many concurrent connections the engine will hand out.
+
+    `infrastructure/db_executor.py` sizes its offload pool from this, so that
+    offloading the job path does not queue on `pool_timeout` inside SQLAlchemy.
+    SQLite is NullPool / one connection, so it reports 1 — and the offload pool
+    then has no reason to over-subscribe.
+    """
+    if os.environ.get("COMFY_DB_URL", "").startswith("sqlite"):
+        return 1
+    return DB_POOL_SIZE + DB_MAX_OVERFLOW
 DB_POOL_TIMEOUT = _positive_int_env("COMFY_DB_POOL_TIMEOUT", 30)
 # Recycle below the usual 1h/infra limit so a long-lived pool never hands out a
 # connection the far side has already dropped.
