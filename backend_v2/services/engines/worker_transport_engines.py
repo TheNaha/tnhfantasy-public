@@ -113,6 +113,8 @@ class _BeamLLMEngineBase(BeamEngine):
     def _payload(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
         """Build the request payload, carrying only the dialect's fields."""
         payload: Dict[str, Any] = {"token": self.api_key}
+        if getattr(self, "wants_tts_request", False):
+            payload.update(_tts_request_from_workflow(workflow))
         for field in self.request_fields:
             if field in workflow:
                 payload[field] = workflow[field]
@@ -323,7 +325,11 @@ class BeamTTSEngine(_BeamLLMEngineBase):
     """Beam serverless speech synthesis."""
 
     ws_path = "/tts"
-    request_fields = ("text",)
+    # Speech is a flat request rather than a ComfyUI graph, so this engine reads
+    # the graph the app builds and sends the extracted text — see
+    # `_tts_request_from_workflow`.
+    request_fields = ()
+    wants_tts_request = True
 
 
 class RemoteLLMEngine(OpenAICompatLLMEngine):
@@ -375,6 +381,43 @@ class RemoteLLMEngine(OpenAICompatLLMEngine):
             "Content-Type": "application/json",
             SERVICE_TOKEN_HEADER: f"Bearer {self.api_key}",
         }
+
+
+def _tts_request_from_workflow(workflow: dict) -> dict:
+    """Extract a TTS request from either workflow shape.
+
+    The app builds ONE shape — a ComfyUI graph with the text buried at
+    `prompt["<node>"]["inputs"]` — because `build_voice_speak_workflow` is shared
+    with the ComfyUI-based TTS engines. The engines that speak a plain HTTP
+    protocol (`remote_tts`, `beam_tts`) must read the same document, not a
+    hypothetical flat one.
+
+    Reading `workflow["text"]` instead made those two transports refuse every
+    real narration with "TTS request carried no text", after the job had already
+    been routed and paid for. Both shapes are accepted here so a caller that
+    does have a flat workflow still works.
+    """
+    text = (workflow or {}).get("text")
+    voice = (workflow or {}).get("voice")
+    language = (workflow or {}).get("language")
+
+    prompt = (workflow or {}).get("prompt")
+    if isinstance(prompt, dict):
+        for node in prompt.values():
+            if not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs") or {}
+            if not isinstance(inputs, dict):
+                continue
+            text = text or inputs.get("text")
+            voice = voice or inputs.get("voice") or inputs.get("speaker")
+            language = language or inputs.get("language")
+
+    return {
+        "text": (text or "").strip(),
+        "voice": (voice or "").strip() or None,
+        "language": (language or "").strip() or None,
+    }
 
 
 class RemoteTTSEngine(InProcessEngine):
@@ -473,13 +516,18 @@ class RemoteTTSEngine(InProcessEngine):
             yield {"event": "cancelled", "job_id": job_id, "message": "Job cancelled"}
             return
 
-        text = workflow.get("text") or workflow.get("input") or ""
-        voice = workflow.get("voice") or self.default_voice
-        if not text.strip():
+        request = _tts_request_from_workflow(workflow)
+        text = request["text"]
+        voice = request["voice"] or self.default_voice
+        language = request["language"]
+        if not text:
             yield {
                 "event": "failed",
                 "job_id": job_id,
-                "message": "TTS request carried no text",
+                "message": (
+                    "TTS request carried no text; the workflow must put it in "
+                    "`prompt[<node>][inputs][text]` or at the top level"
+                ),
                 "retryable": False,
             }
             return
@@ -487,7 +535,9 @@ class RemoteTTSEngine(InProcessEngine):
         payload: Dict[str, Any] = {"text": text}
         if voice:
             payload["voice"] = voice
-        for field in ("speed", "format", "language", "sample_rate"):
+        if language:
+            payload["language"] = language
+        for field in ("speed", "format", "sample_rate"):
             if workflow.get(field) is not None:
                 payload[field] = workflow[field]
 

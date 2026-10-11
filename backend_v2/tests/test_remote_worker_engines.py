@@ -287,3 +287,95 @@ class TestRemoteLLMEngine:
         )
         assert engine.default_rp_model == "rp"
         assert engine.default_util_model == "util"
+
+
+class TestTTSEnginesReadTheRealWorkflow:
+    """The engines must read the workflow the app actually builds.
+
+    `build_voice_speak_workflow` produces ONE shape — a ComfyUI graph with the
+    text buried at `prompt[<node>][inputs][text]` — because it is shared with the
+    ComfyUI-based TTS engines. The plain-HTTP engines (`remote_tts`, `beam_tts`)
+    read that document, not a hypothetical flat one.
+
+    Reading `workflow["text"]` instead made those two transports refuse every
+    real narration with "TTS request carried no text", *after* the job had been
+    routed and paid for — and the two engines that do read the graph
+    (`modal_tts`, `direct_tts`) worked, so it presented as "TTS works on Modal
+    but not on my box".
+    """
+
+    @staticmethod
+    def _workflow():
+        from services.tts_workflow_builder import build_voice_speak_workflow
+
+        workflow, _ = build_voice_speak_workflow(
+            "The gate creaks open.", voice_profile="af_bella", language="en",
+        )
+        return workflow
+
+    def test_the_extractor_reads_the_graph(self):
+        from services.engines.worker_transport_engines import (
+            _tts_request_from_workflow,
+        )
+
+        request = _tts_request_from_workflow(self._workflow())
+        assert request["text"] == "The gate creaks open."
+        assert request["voice"] == "af_bella"
+        assert request["language"] == "en"
+
+    def test_a_flat_workflow_still_works(self):
+        """Both shapes accepted, so a direct caller is not broken."""
+        from services.engines.worker_transport_engines import (
+            _tts_request_from_workflow,
+        )
+
+        request = _tts_request_from_workflow(
+            {"text": "hello", "voice": "bm_george", "language": "en"}
+        )
+        assert request["text"] == "hello"
+        assert request["voice"] == "bm_george"
+
+    @pytest.mark.asyncio
+    async def test_remote_tts_sends_the_extracted_text(self):
+        """The request that reaches the container, not the intent."""
+        transport = _MockTransport([
+            (200, {"status": "success", "result": {
+                "path": "audio/clip.wav", "filename": "clip.wav", "duration": 1.0,
+            }}, {}),
+        ])
+        engine = RemoteTTSEngine("remote-tts", "http://gpu-box:8002", "tok")
+        engine._http = httpx.AsyncClient(
+            base_url="http://gpu-box:8002", transport=transport
+        )
+
+        events = [e async for e in engine.inference(self._workflow(), job_id="tts-1")]
+        await engine.close()
+
+        assert events[-1]["event"] == "completed", events
+        sent = json.loads(transport.requests[0].content)
+        assert sent["text"] == "The gate creaks open."
+        assert sent["voice"] == "af_bella"
+        assert sent["language"] == "en"
+
+    def test_beam_tts_includes_the_text_in_its_payload(self):
+        """The websocket payload is what the deployed handler answers."""
+        from services.engines.worker_transport_engines import BeamTTSEngine
+
+        engine = BeamTTSEngine("beam-tts", api_key="k", gpu_url="http://beam.run")
+        payload = engine._payload(self._workflow())
+        assert payload["text"] == "The gate creaks open."
+        assert payload["voice"] == "af_bella"
+        assert payload["language"] == "en"
+        assert "token" in payload
+
+    @pytest.mark.asyncio
+    async def test_a_graph_with_no_text_fails_with_a_useful_message(self):
+        transport = _MockTransport([])
+        engine = RemoteTTSEngine("remote-tts", "http://gpu-box:8002", "tok")
+        engine._http = httpx.AsyncClient(
+            base_url="http://gpu-box:8002", transport=transport
+        )
+        events = [e async for e in engine.inference({"prompt": {}}, job_id="tts-2")]
+        await engine.close()
+        assert events[-1]["event"] == "failed"
+        assert "prompt" in events[-1]["message"]

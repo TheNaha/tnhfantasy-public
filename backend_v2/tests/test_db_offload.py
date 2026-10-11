@@ -40,72 +40,71 @@ class TestOffloadPool:
 
     @pytest.mark.asyncio
     async def test_update_job_runs_on_a_db_offload_thread(self, session, monkeypatch):
-        """Proved by the thread the work actually executed on.
+        """`update_job` ROUTES its database work through `run_db`.
 
-        Not by diffing the pool's thread set: the pool creates threads lazily,
-        so a test that runs after another has already spawned one sees an empty
-        diff and passes for the wrong reason.
+        Asserts the seam, not the thread it lands on. Where it lands is decided by
+        `run_db` — on a worker when the pool gives each checkout its own
+        connection, on the loop when the pool shares one — so asserting a thread
+        here couples this test to whichever engine the suite happens to build.
+        `test_the_queue_pool_shape_does_run_on_a_worker` and
+        `test_a_shared_connection_runs_inline` cover that decision together.
         """
-        import threading
-
         import services.job_service as job_service_mod
         from services.job_service import JobService
 
-        observed = []
+        calls = []
         real_run_db = job_service_mod.run_db
 
         async def _spy(fn, *args):
-            # Trace INSIDE the sync body. Recording the coroutine's own thread
-            # always answers MainThread, which is the bug these tests exist to
-            # catch — and it makes the test pass for the wrong reason.
-            def _traced(*a, **kw):
-                observed.append(threading.current_thread().name)
-                return fn(*a, **kw)
-
-            return await real_run_db(_traced, *args)
+            calls.append(fn)
+            return await real_run_db(fn, *args)
 
         monkeypatch.setattr(job_service_mod, "run_db", _spy)
 
         service = JobService(session)
         job = await service.create_job(task_type="image", workflow={"1": {}}, metadata={})
-        observed.clear()
+        calls.clear()
 
-        await service.update_job(job.id, status=JobStatus.PRE_GENERATION)
+        if "update_job" == "update_job":
+            await service.update_job(job.id, status=JobStatus.PRE_GENERATION)
+        else:
+            await service.get_job(job.id)
 
-        assert observed, "update_job did not route its DB work through run_db"
-        assert all("db-offload" in name for name in observed), (
-            f"DB work ran on {observed}"
-        )
+        assert calls, f"{'update_job'} did not route its database work through run_db"
 
     @pytest.mark.asyncio
     async def test_get_job_runs_on_a_db_offload_thread(self, session, monkeypatch):
-        import threading
+        """`get_job` ROUTES its database work through `run_db`.
 
+        Asserts the seam, not the thread it lands on. Where it lands is decided by
+        `run_db` — on a worker when the pool gives each checkout its own
+        connection, on the loop when the pool shares one — so asserting a thread
+        here couples this test to whichever engine the suite happens to build.
+        `test_the_queue_pool_shape_does_run_on_a_worker` and
+        `test_a_shared_connection_runs_inline` cover that decision together.
+        """
         import services.job_service as job_service_mod
         from services.job_service import JobService
 
-        observed = []
+        calls = []
         real_run_db = job_service_mod.run_db
 
         async def _spy(fn, *args):
-            # Trace INSIDE the sync body. Recording the coroutine's own thread
-            # always answers MainThread, which is the bug these tests exist to
-            # catch — and it makes the test pass for the wrong reason.
-            def _traced(*a, **kw):
-                observed.append(threading.current_thread().name)
-                return fn(*a, **kw)
-
-            return await real_run_db(_traced, *args)
+            calls.append(fn)
+            return await real_run_db(fn, *args)
 
         monkeypatch.setattr(job_service_mod, "run_db", _spy)
 
         service = JobService(session)
         job = await service.create_job(task_type="image", workflow={"1": {}}, metadata={})
-        observed.clear()
+        calls.clear()
 
-        await service.get_job(job.id)
+        if "get_job" == "update_job":
+            await service.update_job(job.id, status=JobStatus.PRE_GENERATION)
+        else:
+            await service.get_job(job.id)
 
-        assert observed and all("db-offload" in name for name in observed)
+        assert calls, f"{'get_job'} did not route its database work through run_db"
 
     @pytest.mark.asyncio
     async def test_a_transition_still_emits_its_event(self, session):
@@ -197,3 +196,82 @@ class TestOffloadPool:
             "an illegal transition emitted a completion event"
         )
         assert job.status == JobStatus.PENDING
+
+
+class TestTheOffloadDeclinesWhenItWouldRace:
+    """Offloading a shared connection is a race, not an optimisation.
+
+    The `session` fixture's engine is `StaticPool` — one SQLite connection behind
+    every session, which is what lets a whole suite share an in-memory database.
+    Moving a session's work to a worker thread while the loop can still reach
+    that same connection is two threads on one connection, and SQLite connections
+    are not safe for concurrent use.
+
+    This cost an intermittent failure where a job finalised at
+    `post-processing` instead of `completed` — the two writers interleaving.
+    Production Postgres uses QueuePool, a connection per checkout, so it never
+    hit it there. The guard makes the distinction explicit rather than leaving
+    it to luck.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_shared_connection_runs_inline(self):
+        import threading
+
+        import infrastructure.db_executor as db_executor
+
+        # The conftest engine is StaticPool, so this is the real production
+        # shape for the test suite rather than a simulation.
+        from sqlmodel.pool import StaticPool
+
+        from infrastructure.database import engine
+
+        assert isinstance(engine.pool, StaticPool), (
+            "this test is only meaningful against a single-connection pool"
+        )
+
+        observed = []
+
+        def _work():
+            observed.append(threading.current_thread().name)
+
+        await db_executor.run_db(_work)
+
+        assert observed == ["MainThread"], (
+            "a shared connection must run on the loop, not a worker thread"
+        )
+
+    def test_the_guard_detects_a_shared_pool(self):
+        import infrastructure.db_executor as db_executor
+
+        assert db_executor._pool_is_single_connection() is True
+
+    @pytest.mark.asyncio
+    async def test_the_queue_pool_shape_does_run_on_a_worker(self):
+        """The other half: this must not silently disable offloading everywhere.
+
+        Simulating QueuePool rather than relying on the deployed engine, because
+        the test suite's engine is StaticPool by design and the production one is
+        not — so testing only the guard would leave the offload untested.
+        """
+        import threading
+
+        import infrastructure.db_executor as db_executor
+        from infrastructure.database import engine
+
+        original = db_executor._pool_is_single_connection
+        try:
+            db_executor._pool_is_single_connection = lambda: False
+            observed = []
+
+            def _work():
+                observed.append(threading.current_thread().name)
+
+            await db_executor.run_db(_work)
+        finally:
+            db_executor._pool_is_single_connection = original
+
+        assert observed and "db-offload" in observed[0], (
+            "with a per-checkout pool the work must reach the offload pool"
+        )
+        assert engine is not None

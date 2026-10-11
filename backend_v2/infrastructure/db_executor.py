@@ -84,6 +84,32 @@ executor = concurrent.futures.ThreadPoolExecutor(
 _executor_closed = False
 
 
+def _pool_is_single_connection() -> bool:
+    """Does this process's engine hand every session the SAME connection?
+
+    `StaticPool` does — it exists so every checkout reuses one connection, which
+    is what a test suite wants for a shared in-memory database. NullPool and
+    QueuePool do not; they give each checkout its own.
+
+    Offloading onto a worker thread is only sound while the session's connection
+    is exclusively held by that one caller. With a StaticPool it is not: a
+    `Session` used from the loop and the pool is two threads on one SQLite
+    connection, and SQLite connections are not safe for concurrent use. That
+    showed up as an intermittent test failure where a job finalised at
+    `post-processing` instead of `completed` — a real race, from this offload,
+    that production Postgres happened not to hit.
+
+    It is also pointless there: with one shared connection, moving the work to a
+    thread does not stop it blocking, it only adds a race. So: don't.
+    """
+    try:
+        from infrastructure.database import engine as _engine
+
+        return type(_engine.pool).__name__ == "StaticPool"
+    except Exception:
+        return False
+
+
 async def run_db(fn: Callable[..., T], *args: Any) -> T:
     """Run sync database work on the offload pool.
 
@@ -94,10 +120,11 @@ async def run_db(fn: Callable[..., T], *args: Any) -> T:
     `functools.partial` or a lambda both work; keyword arguments need binding
     first, since `run_in_executor` takes positional args only.
     """
-    if _executor_closed:
-        # Degrade to the default executor rather than raising: an offload pool
-        # that is gone should not take a job with it.
-        return await asyncio.to_thread(fn, *args)
+    if _executor_closed or _pool_is_single_connection():
+        # A closed pool, or a shared connection: run it here. A closed pool
+        # degrading to the default executor keeps a job alive; a single shared
+        # connection means a thread would race the loop rather than help it.
+        return fn(*args)
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(executor, fn, *args)
 
