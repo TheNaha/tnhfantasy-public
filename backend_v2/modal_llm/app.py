@@ -1,41 +1,52 @@
 """
-TNH LLM on Modal — llama.cpp servers behind an OpenAI-compatible API.
+TNH LLM on Modal — llama.cpp servers reachable only through the Modal SDK.
 
-One Modal function per *enabled* registry entry, each with its own URL and its
-own scale-to-zero timer. Nothing here decides which model serves which role:
-that is `models.json`, read by this file and by the backend so the two cannot
-drift. See `modal_llm/README.md`.
+ONE class, `ChatLLM`, parametrized by model id. Modal gives each distinct
+`model_id` its own container pool with its own lifecycle and scale-to-zero
+timer, so every model in the registry is individually addressable without a
+separate function or a public URL per model. The backend reads the same
+`models.json` this image is built with, so the role's primary and its fallback
+chain are agreed on both sides.
+
+There is no HTTP surface at all. The earlier version used `modal.web_server`,
+which left unauthenticated public URLs where llama-server's own API key was the
+only thing between the internet and the model. Plain `@modal.method()` is
+reachable only through the Modal SDK with the caller's token.
 
 Setup (once):
     modal secret create tnh-llm-key LLAMA_API_KEY=<long-random-string>
-    modal run modal_llm/app.py              # download weights for enabled models
-    modal run modal_llm/app.py --key rp     # ...or just one role
-    modal deploy modal_llm/app.py           # prints the URLs
-    modal run modal_llm/app.py::urls        # JSON manifest for the backend
-    modal run modal_llm/app.py::bench --key artemis_31b
+    modal run modal_llm/app.py              # download the two role primaries
+    modal deploy modal_llm/app.py
+    modal run modal_llm/app.py::urls        # manifest for the backend
+    modal run modal_llm/app.py::bench --key artemis_31b   # cold-start timer
 
 Call a model:
-    POST <url>/v1/chat/completions
-    Authorization: Bearer <LLAMA_API_KEY>
-    {"model": "<id>", "messages": [...]}
+    cls = modal.Cls.from_name("tnh-llm", "ChatLLM")
+    cls(model_id="artemis_31b").complete.remote([{...}])
+    # or, streamed:
+    for chunk in cls(model_id="artemis_31b").stream.remote_gen([{...}]):
+        ...
 
-To change which model serves a role, edit `models.json` and redeploy. To try a
-model that is on the bench, flip `enabled: true`, run the download, redeploy.
+To add a model to rotation: add it to models.json, then
+    modal run modal_llm/app.py::ensure --model-id <id>`   # fetch weights
+    modal deploy modal_llm/app.py                          # make it routable
+`ensure_model` downloads on demand and `volume_state` reports what is genuinely
+on the Volume, so a model can be fetched before it is needed.
 
-VERIFY ON FIRST RUN — this file has not been deployed against a live account:
-  * Gemma 4 chat template: GGUFs built before ~May 2026 may run past their turn
-    and print raw turn tokens. If 3 turns look wrong, add
-    extra_args=["--chat-template-file", "/models/chat-template.jinja"] to that
-    model in models.json.
-  * Cross-repo vision: the abliterated `util` models take the STOCK Gemma 4
-    projector. That usually works, but it has not been tested with a real image.
-  * VRAM: 31B at 32k with q8_0 KV may not fit one L40S. On OOM, lower `ctx` or
-    set `kv` to "q4_0".
-  * Cold-start times: run `bench` once the deployment is idle, and send the
-    numbers back so the `roles` order can be tuned.
+MEASURED (2026-10-11, first real deploy): ~18 s of llama-server model load for
+a 23.5 GB GGUF off the Volume, ~26 s cold container to an answered SDK call,
+4-10 s warm. See README.md.
 """
 
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` here, deliberately.
+#
+# Modal 1.5.5 validates a `modal.parameter()` attribute by reading the
+# annotation's `.`__name__`. With PEP 563 in effect every annotation is a
+# *string*, so `model_id: str = modal.parameter()` hands Modal `"str"` instead
+# of `str`, and registration dies with
+# `AttributeError: 'str' object has no attribute '__name__'`. The `X | Y`
+# spelling below is native from 3.10 and the image runs 3.12, so the future
+# import is not needed.
 
 import json
 import os
@@ -248,35 +259,253 @@ def _proxy_stream(path: str, payload: dict):
 _REQUEST_TIMEOUT_SECONDS = 900
 
 
-class _RoleChatBase:
-    """Shared body for the two role classes.
+class _LaunchedServer:
+    """A running llama-server plus the handle needed to notice it died.
 
-    A base rather than a factory: Modal registers functions by the name it finds
-    in the source AST, so generating two classes inside a loop both literally
-    named `_RoleChat` makes the second override the first (Modal warns
-    "function name collision"). Two explicit subclasses is the same amount of
-    code and no warning — and the role vocabulary is a fixed pair, so there is
-    nothing dynamic to write for.
+    Keeping the `Popen` matters: without it a container whose model process
+    exits after becoming healthy answers every subsequent call with a connection
+    error until it happens to scale down, which reads as "the model is broken"
+    rather than "the process is gone".
     """
 
-    #: Which registry entry this role serves. Overridden per subclass, which is
-    #: the only thing that differs between them.
-    ROLE = "rp"
+    def __init__(self, process):
+        self.process = process
 
-    def _model(self):
-        return ROLE_PRIMARY[self.ROLE]
+    @property
+    def alive(self) -> bool:
+        return self.process.poll() is None
 
-    #: Llama-server starts on container enter, so the model load happens before
-    #: the first call rather than inside it. This is also where the ~16 s load
-    #: is paid — on the container's own clock, not inside the caller's request.
+
+#: One per container. `@modal.enter()` sets it; the methods check it.
+_SERVER: _LaunchedServer | None = None
+
+
+def _launch(model) -> None:
+    """Start llama-server for one model and wait until it answers.
+
+    Blocking is required: Modal keeps the container alive while `@modal.enter()`
+    runs, so a `Popen` that returned would let the function exit and the server
+    die with it. The wait is where the ~18 s model load is paid — on the
+    container's own clock, before the first call rather than inside it.
+    """
+    global _SERVER
+
+    import subprocess
+
+    # Loopback only: nothing outside the container can reach this port, and
+    # there is no web endpoint to secure.
+    cmd = ["/app/llama-server"] + model.llama_args() + [
+        "--host", "127.0.0.1",
+        "--port", str(PORT),
+    ]
+    print(f"[{model.id}] launching: {' '.join(cmd)}", flush=True)
+    process = subprocess.Popen(cmd)
+    started = time.time()
+    deadline = started + _MODEL_LOAD_TIMEOUT_SECONDS
+    while time.time() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"llama-server exited {process.returncode} for {model.id} "
+                f"after {time.time() - started:.1f}s"
+            )
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{PORT}/health", timeout=2
+            ) as response:
+                if response.status == 200:
+                    _SERVER = _LaunchedServer(process)
+                    print(
+                        f"[{model.id}] healthy after {time.time() - started:.1f}s",
+                        flush=True,
+                    )
+                    return
+        except Exception:
+            pass
+        time.sleep(1)
+    process.terminate()
+    raise RuntimeError(
+        f"llama-server for {model.id} did not become healthy within "
+        f"{_MODEL_LOAD_TIMEOUT_SECONDS}s"
+    )
+
+
+#: How long a container waits for its model to load. The measured figure is
+#: ~18 s for a 23.5 GB GGUF off a Modal Volume; this leaves room for a slower
+#: cold volume and the first pull.
+_MODEL_LOAD_TIMEOUT_SECONDS = 600
+
+#: Modal's own startup budget for the container, which must exceed the model
+#: load time or the container is killed before it ever serves.
+_STARTUP_TIMEOUT_SECONDS = 900
+
+#: Per-request ceiling inside the container. The caller's timeout is the other
+#: half; too small here turns a long reply into a 500.
+_REQUEST_TIMEOUT_SECONDS = 900
+
+#: Concurrent inputs per container. `parallel` in models.json is how many slots
+#: llama-server opens, and WITHOUT this Modal sends one input at a time — so a
+#: util container declared with `parallel: 2` would serve one request while its
+#: second slot sat empty, and a long memory-extraction call would block
+#: captioning and tool calls behind it. Class-level because `@modal.concurrent`
+#: is not per-parameter, so it takes the widest model in the registry.
+_MAX_INPUTS = max(
+    (m.parallel for m in registry.models.values() if m.enabled), default=1
+) * 2
+
+#: Scale-to-zero is class-level for a parameterized class, so it cannot be
+#: per-model. Every registry entry declares the same value; reading it back is
+#: what keeps models.json the one place to change it.
+_IDLE_SECONDS = next(
+    iter({m.idle for m in registry.models.values() if m.enabled}), 60
+)
+
+#: GPU is class-level for a parameterized class, so it cannot be per-model.
+#: Every model in the registry targets the same card; assert that rather than
+#: silently picking one, because a 48 GB model on a smaller card fails at load.
+_GPU = next(iter({m.gpu for m in registry.models.values() if m.enabled}), "L40S")
+
+
+def _require_healthy_server() -> None:
+    """Fail fast if the in-container model process is gone.
+
+    A Modal method on a dead llama-server raises a connection error that names
+    the HTTP layer, not the model. Naming the process here is what makes the
+    container exit instead of serving errors forever.
+    """
+    if _SERVER is None or not _SERVER.alive:
+        raise RuntimeError(
+            "llama-server is not running in this container; the container "
+            "should be recycled"
+        )
+
+
+def _proxy(path: str, payload: dict | None = None):
+    """One call to the in-container llama-server.
+
+    Stdlib only — `urllib.request`. A pip dependency in this image is one that
+    can be missing at exactly the moment a cold container starts serving, which
+    is how this function's first version failed: the image installed `httpx`,
+    the code imported `requests`, and every call died with ModuleNotFoundError
+    while Modal logged the container as cold-booting forever.
+    """
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{PORT}{path}",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.environ['LLAMA_API_KEY']}",
+        },
+        method="POST" if body else "GET",
+    )
+    _require_healthy_server()
+    with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _proxy_stream(path: str, payload: dict):
+    """SSE from the in-container llama-server, yielding each parsed chunk.
+
+    `urlopen` gives a file-like object, so `readline()` is the natural SSE
+    reader — no client library and no buffering layer that has to be configured
+    to stop holding lines back.
+    """
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{PORT}{path}",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "Authorization": f"Bearer {os.environ['LLAMA_API_KEY']}",
+        },
+        method="POST",
+    )
+    _require_healthy_server()
+    with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
+        for raw in response:
+            line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                return
+            try:
+                yield json.loads(data)
+            except json.JSONDecodeError:
+                continue
+
+
+#: One class, parametrized by model id.
+#:
+#: This is what makes the registry's fallback order and the "switch models
+#: without redeploying" promise real. A class bound to `ROLE_PRIMARY` at deploy
+#: time can only ever serve that one model — the others would download via
+#: `ensure_model` and then have nothing behind them until a redeploy. Modal
+#: gives each distinct `model_id` its own container pool with its own lifecycle,
+#: so every model still scales to zero on its own, with no URLs involved.
+@app.cls(
+    image=image,
+    gpu=_GPU,
+    volumes={MODELS_DIR: vol},
+    secrets=[modal.Secret.from_name("tnh-llm-key")],
+    scaledown_window=_IDLE_SECONDS,
+    max_containers=1,
+    timeout=60 * 60,
+    startup_timeout=_STARTUP_TIMEOUT_SECONDS,
+)
+@modal.concurrent(max_inputs=_MAX_INPUTS)
+class ChatLLM:
+    """Serve any registry model behind an OpenAI-compatible surface.
+
+    One Modal class, one container pool per `model_id`. The backend reads the
+    same `models.json` this container was built with, so the role's primary and
+    its fallback chain are agreed on both sides without a second manifest.
+    """
+
+    #: Which registry entry to load. A parameter, so each value gets its own
+    #: pool and its own scale-to-zero timer.
+    model_id: str = modal.parameter()
+
+    #: Set on container enter when the model cannot be served. The container
+    #: still starts and answers — it just says so, rather than failing.
+    unavailable_reason: str | None = None
+
+    #: Loaded on container enter, so the model load happens BEFORE the first
+    #: call rather than inside it.
+    #:
+    #: A model with no weights, or not in the registry, is a PERMANENT
+    #: configuration state. Raising here is the obvious move and the wrong one:
+    #: Modal retries `@modal.enter()` and then re-creates the container on every
+    #: call, so a missing download becomes an infinite container crash-loop
+    #: burning GPU on a thing that can never succeed. The container starts
+    #: cheaply instead, records why it cannot serve, and every method reports
+    #: that — which is what makes "not downloaded yet" a state the caller can
+    #: act on rather than an outage it has to diagnose.
     @modal.enter()
     def start(self):
-        _launch(self._model())
+        try:
+            model = registry.get(self.model_id)
+        except KeyError:
+            self.unavailable_reason = (
+                f"{self.model_id!r} is not in the baked-in registry; add it to "
+                "models.json and redeploy"
+            )
+            return
+        if not _present(model):
+            self.unavailable_reason = (
+                f"{self.model_id!r} has no weights on the Volume; run "
+                "`modal run modal_llm/app.py::ensure --model-id <id>` first"
+            )
+            return
+        _launch(model)
 
     @modal.method()
     def complete(self, messages: list, sampler: dict | None = None) -> dict:
         """One-shot completion. Returns the full parsed response."""
-        payload = {"model": self._model().id, "messages": messages, "stream": False}
+        self._require_available()
+        payload = {"model": self.model_id, "messages": messages, "stream": False}
         if sampler:
             payload.update(sampler)
         return _proxy("/v1/chat/completions", payload)
@@ -285,63 +514,40 @@ class _RoleChatBase:
     def stream(self, messages: list, sampler: dict | None = None):
         """Streamed completion, yielding each SSE chunk as a dict.
 
-        A generator method, consumed with `.gen()` over the Modal SDK — so there
-        is no HTTP endpoint to secure in the first place, which is the whole
-        reason `modal.web_server` is not used here.
+        A generator method, consumed with `.remote_gen()` over the Modal SDK —
+        which is why there is no HTTP endpoint to secure at all.
         """
-        payload = {"model": self._model().id, "messages": messages, "stream": True}
+        self._require_available()
+        payload = {"model": self.model_id, "messages": messages, "stream": True}
         if sampler:
             payload.update(sampler)
         yield from _proxy_stream("/v1/chat/completions", payload)
 
+    def _require_available(self) -> None:
+        """Raise a clear, non-retryable error when this model cannot be served.
+
+        Non-retryable is the point: this is a configuration state, not a
+        transient failure, so a caller should not back off and retry it.
+        """
+        if self.unavailable_reason:
+            raise RuntimeError(self.unavailable_reason)
+
     @modal.method()
     def health(self) -> dict:
-        return _proxy("/health")
+        """Container and model reachability, including "not downloaded".
 
-
-#: One Modal class per ROLE, not per model.
-#:
-#: This is the fix for "why a million endpoints". Nine web functions — one per
-#: enabled model — is nine public URLs, nine scale-to-zero timers and nine
-#: attack surfaces on a single-user app. A role is what the backend actually
-#: addresses, and `ROLE_PRIMARY` decides which weights sit behind it, so
-#: swapping the primary model is an edit to models.json and a redeploy rather
-#: than a new function.
-#:
-#: No `modal.web_server`: those endpoints were unauthenticated, and llama-server's
-#: own API key was the only thing between a public URL and the model. A plain
-#: `@modal.method()` is reached only through the Modal SDK with the caller's
-#: token — the same auth the rest of this app's Modal path uses.
-#:
-#: `max_containers=1` and one input at a time: two L40S containers is twice the
-#: bill for a workload where the second request never happens.
-def _register_role(name: str, role: str):
-    model = ROLE_PRIMARY[role]
-
-    cls = type(
-        name,
-        (_RoleChatBase,),
-        {
-            "ROLE": role,
-            "__doc__": f"{role} prose chat — currently {model.id}.",
-        },
-    )
-    decorated = app.cls(
-        image=image,
-        gpu=model.gpu,
-        volumes={MODELS_DIR: vol},
-        secrets=[modal.Secret.from_name("tnh-llm-key")],
-        scaledown_window=model.idle,
-        max_containers=_MAX_CONTAINERS_PER_ROLE,
-        timeout=60 * 60,
-        startup_timeout=_STARTUP_TIMEOUT_SECONDS,
-    )(cls)
-    globals()[name] = decorated
-    return decorated
-
-
-ChatRP = _register_role("ChatRP", "rp")
-ChatUTIL = _register_role("ChatUTIL", "util")
+        A missing model answers `{"status": "not_downloaded", ...}` rather than
+        raising, so a caller polling health sees an actionable state instead of
+        a crash-loop it has to infer from retries.
+        """
+        if self.unavailable_reason:
+            return {
+                "status": "not_downloaded",
+                "model_id": self.model_id,
+                "reason": self.unavailable_reason,
+            }
+        _require_healthy_server()
+        return {**_proxy("/health"), "model_id": self.model_id}
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +684,15 @@ def volume_state() -> dict:
 
 
 def _present(model) -> bool:
-    """Is the model's GGUF (and projector, if it has one) on the Volume?"""
+    """Is the model's GGUF (and projector, if it has one) on the Volume?
+
+    Reloads first, without exception. A Modal Volume is a cache in front of
+    object storage: a file committed by *another* container — which is what
+    `ensure_model` does, from its own short-lived instance — is invisible here
+    until this process refreshes. Without the reload the answer is "not
+    downloaded" for a model that is, and `ensure_model` stops being idempotent.
+    """
+    vol.reload()
     for pattern in filter(None, [model.gguf, model.mmproj]):
         try:
             _resolve(model.volume_dir, pattern)
@@ -496,14 +710,6 @@ def _size(model) -> dict:
         except RuntimeError:
             continue
     return {"bytes": total, "gb": round(total / 1e9, 2)}
-
-
-def _web_url(model) -> str:
-    fn = modal.Function.from_name(APP_NAME, f"serve_{model.id}")
-    try:
-        return fn.get_web_url()
-    except AttributeError:  # older modal clients
-        return fn.web_url
 
 
 @app.local_entrypoint()
@@ -534,21 +740,21 @@ def presence():
 def urls():
     """Print the JSON manifest the backend needs.
 
-    Per role, in fallback order, with the sampler the model card suggests. The
-    backend reads the same `models.json` for the *order*; this manifest is what
-    tells it which URL each model ended up on, which only Modal knows.
+    Per role, in fallback order, with the sampler the model card suggests. There
+    are no URLs in it any more — the app exposes no HTTP surface at all — so the
+    backend constructs a Modal class instead:
+        ChatLLM(model_id=manifest["roles"][role][0])
+    which is also why `max_inputs`, `gpu` and `idle` are class-level facts the
+    backend does not need to know.
     """
-    manifest: dict = {"roles": {}, "models": {}}
-    for role in registry.fallback:
+    manifest: dict = {"app": APP_NAME, "cls": "ChatLLM", "roles": {}, "models": {}}
+    for role in sorted(registry.fallback):
         manifest["roles"][role] = []
         for model in registry.enabled_for(role):
-            url = _web_url(model)
             manifest["roles"][role].append(model.id)
             manifest["models"][model.id] = {
                 "id": model.id,
                 "role": model.role,
-                "url": url,
-                "chat_url": f"{url}/v1/chat/completions",
                 "vision": model.has_vision,
                 "ctx_per_slot": model.ctx,
                 "parallel": model.parallel,
@@ -562,19 +768,11 @@ def urls():
 def bench(key: str):
     """Time a cold start. Run when the model has been idle long enough to
     scale to zero, or it measures nothing."""
-    model = registry.get(key)
-    url = _web_url(model) + "/health"
+    model_id = key or PRIMARY_IDS[0]
     t0 = time.time()
-    while time.time() - t0 < 900:
-        try:
-            with urllib.request.urlopen(url, timeout=30) as response:
-                if response.status == 200:
-                    print(f"{key}: healthy after {time.time() - t0:.1f}s")
-                    return
-        except Exception:
-            pass  # still booting / still loading
-        time.sleep(2)
-    raise SystemExit(f"{key}: not healthy after 900s")
+    instance = ChatLLM(model_id=model_id)
+    instance.health.remote()
+    print(f"{model_id}: healthy after {time.time() - t0:.1f}s")
 
 
 if __name__ == "__main__":
@@ -583,7 +781,7 @@ if __name__ == "__main__":
     print(json.dumps(
         {
             "enabled": ENABLED,
-            "roles": {r: registry.enabled_for(r).__len__() for r in registry.fallback},
+            "primaries": {role: ROLE_PRIMARY[role].id for role in ROLES},
         },
         indent=2,
     ))

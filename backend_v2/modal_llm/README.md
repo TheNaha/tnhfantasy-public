@@ -122,6 +122,26 @@ error anywhere** — `completion_tokens` is spent, `content` is `""`,
 `finish_reason` is `stop`. Every `rp` sampler therefore carries
 `max_tokens: 2048`, which a per-chat sampler still overrides.
 
+## What breaks and how to read it
+
+### A model with no weights must REPORT, not crash-loop
+
+`@modal.enter()` raising for a missing download is the obvious move and the
+wrong one. Modal retries enter and then re-creates the container on every call,
+so a missing weight becomes an infinite container crash-loop that burns GPU on a
+thing that can never succeed.
+
+`@modal.enter()` therefore succeeds for any permanent condition and records
+`unavailable_reason`. The methods report it:
+
+- `health()` answers `{"status": "not_downloaded", "reason": ...}` — an
+  actionable state, ~7 s, no model load
+- `complete()` / `stream()` raise the same reason as a plain non-retryable error
+
+A caller polling health sees "not downloaded yet", which is the state the
+frontend needs, rather than a crash-loop it has to infer from retries.
+
+
 ## Known-unverified
 
 This directory has never been deployed. Before relying on it:
