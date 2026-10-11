@@ -163,6 +163,19 @@ CHARS_PER_TOKEN = 3.5
 LOREBOOK_SCAN_CAP = 200
 LOREBOOK_FALLBACK_ENTRIES = 50
 
+# How many lorebook entries reach the system prompt, per turn.
+#
+# Not a "nice" number — a budget. Every one of them is injected verbatim into a
+# paid system prompt on every single turn, so this is the one knob that decides
+# how much of a month's inference bill the World Vault spends. It was a bare `5`
+# written at each call site, twice, in the same function, so the two paths could
+# not be re-budgeted together and neither could be measured.
+#
+# The semantic path now appends always-on entries *within* this budget
+# (`search_lorebook_entries` calls `_append_keyless`), so the ceiling holds
+# across both sources rather than being a per-source allowance.
+LOREBOOK_ENTRY_BUDGET = 5
+
 
 _TOKEN_CACHE = TTLCache(maxsize=2048, ttl=300)
 
@@ -293,19 +306,6 @@ def parse_mes_example(mes_example: str, char_name: str = "Character", user_name:
             # Lines that don't match any speaker pattern are skipped (e.g. stage directions)
 
     return messages
-
-
-def inject_lorebooks_into_system_prompt(
-    system_prompt: str,
-    lorebook_entries: list[dict],
-) -> str:
-    """Inject relevant lorebook entries into system prompt."""
-    if not lorebook_entries:
-        return system_prompt
-    lore_block = "\n\n[World Information]\n"
-    for entry in lorebook_entries:
-        lore_block += f"- {entry['content']}\n"
-    return system_prompt + lore_block
 
 
 def prune_context(
@@ -739,7 +739,8 @@ def build_system_prompt_sections(
             from services.rag_pipeline import search_lorebook_entries
 
             entries = search_lorebook_entries(
-                session, lorebook_ids, _query_text, limit=5
+                session, lorebook_ids, _query_text,
+                limit=LOREBOOK_ENTRY_BUDGET
             )
         except Exception as _lb_err:
             logger.warning("lorebook_injection_failed: %s", str(_lb_err))
@@ -770,7 +771,9 @@ def build_system_prompt_sections(
         if not entries:
             # Semantic search returns nothing when RAG is off or nothing
             # matched; constant (keyless) entries are still always-on lore.
-            entries = _load_constant_lorebook_entries(session, lorebook_ids, limit=5)
+            entries = _load_constant_lorebook_entries(
+                session, lorebook_ids, limit=LOREBOOK_ENTRY_BUDGET
+            )
 
         if entries:
             lore_block = "\n".join(f"- {e.content}" for e in entries)

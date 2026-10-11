@@ -15,7 +15,6 @@ from services.context_builder import (
     build_system_prompt_sections,
     chat_context_kwargs,
     estimate_tokens,
-    inject_lorebooks_into_system_prompt,
     parse_mes_example,
     prune_context,
 )
@@ -59,23 +58,6 @@ def test_parse_mes_example_blocks():
 def test_parse_mes_example_empty():
     assert parse_mes_example("") == []
     assert parse_mes_example(None) == []
-
-
-# ── inject_lorebooks_into_system_prompt ─────────────────────────────────────
-
-def test_inject_lorebooks_appends_block():
-    out = inject_lorebooks_into_system_prompt(
-        "Base prompt",
-        [{"content": "The capital is Aetheria"}, {"content": "Dragons fear iron"}],
-    )
-    assert out.startswith("Base prompt")
-    assert "[World Information]" in out
-    assert "Aetheria" in out
-    assert "iron" in out
-
-
-def test_inject_lorebooks_empty_unchanged():
-    assert inject_lorebooks_into_system_prompt("Base", []) == "Base"
 
 
 # ── build_character_system_prompt ───────────────────────────────────────────

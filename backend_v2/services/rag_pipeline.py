@@ -264,6 +264,23 @@ def search_lorebook_entries(
                         if e.id not in seen and len(results) < limit:
                             seen.add(e.id)
                             results.append(e)
+                    # Always-on lore is not a *result* of relevance, so it must
+                    # not be filtered by the query that produced these rows.
+                    #
+                    # This branch returned only rows carrying an embedding, and
+                    # a keyless ("constant") entry is invisible to it whenever
+                    # the backfill has not reached it yet — a fresh SillyTavern
+                    # import, the first turns after creating a lorebook, or any
+                    # deployment where the embedding model never loaded. Those
+                    # entries then simply did not appear, while the keyword path
+                    # below and `context_builder._load_constant_lorebook_entries`
+                    # both treat them as always-on. The result was a chat that
+                    # lost the cast's always-on facts precisely when the rest of
+                    # the context was most relevant.
+                    #
+                    # Same bounded helper the keyword path uses, so the budget
+                    # is still `limit` across the whole call.
+                    _append_keyless(session, lb_id, seen, results, limit, len(results))
                     continue
                 # `top` is empty but we had a query vector, so embeddings EXIST
                 # for this lorebook and none of them is within
