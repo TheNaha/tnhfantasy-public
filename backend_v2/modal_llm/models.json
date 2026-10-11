@@ -23,7 +23,8 @@
   "scaledown_policy": {
     "_comment": "Thinking is NOT disabled: `--reasoning-budget 0` stops llama.cpp separating reasoning from content, which puts the chain of thought into `content` and shows it as prose. The default keeps it in `reasoning_content`, which the OpenAI-compatible reader drops. What DOES matter is the token floor \u2014 reasoning consumes max_output_tokens first, so a small budget returns an empty reply with no error anywhere.",
     "idle": 60,
-    "idle_note": "60s at ~18s of model load. The image worker tolerates scaledown_window=5, so this is twelve times more generous already. Raise it only after measuring: every idle second of an L40S is billed."
+    "idle_note": "60s at ~18s of model load. The image worker tolerates scaledown_window=5, so this is twelve times more generous already. Raise it only after measuring: every idle second of an L40S is billed.",
+    "container_shape": "ONE container (max_containers=1), one llama-server per role on ports 8081+rp / 8082+util. util is a 12B specifically so both fit one L40S: two 31B models are 47.7 GB of weights and cannot share a card. `--swa-full` must stay off (~15.7 GB KV for Artemis)."
   },
   "roles": {
     "rp": {
@@ -38,10 +39,9 @@
       ]
     },
     "util": {
-      "_comment": "Everything structured: image captioning, tool calls, memory extraction, summaries, image-prompt generation. Chosen for instruction following and willingness to describe adult content without refusing.",
+      "_comment": "Everything structured: image captioning, tool calls, memory extraction, summaries, image prompts. Sized to CO-EXIST with the rp model in one container: a 12B leaves ~6 GB of the L40S for Artemis's KV cache, where another 31B (47.7 GB of weights) cannot fit at all.",
       "fallback": [
-        "gemma4_31b_heretic_util",
-        "gemma4_26b_a4b_heretic_util",
+        "gemma3_12b_heretic_util",
         "mistral_small_32_it"
       ]
     }
@@ -273,8 +273,8 @@
         "top_p": 0.95,
         "top_k": 64
       },
-      "enabled": true,
-      "_note": "util primary. Same GGUF as the gemma4_31b_heretic rp entry (shared download), so NSFW extraction and captioning do not refuse. Vision uses the STOCK Gemma 4 projector on an abliterated model \u2014 works in practice but test with a real image."
+      "enabled": false,
+      "_note": "BENCH (needs its own container). Too large to co-exist with a 31B rp model: util primary. Same GGUF as the gemma4_31b_heretic rp entry (shared download), so NSFW extraction and captioning do not refuse. Vision uses the STOCK Gemma 4 projector on an abliterated model \u2014 works in practice but test with a real image."
     },
     "gemma4_26b_a4b_heretic_util": {
       "role": "util",
@@ -293,8 +293,8 @@
         "top_p": 0.95,
         "top_k": 64
       },
-      "enabled": true,
-      "_note": "Fast util. UGI 45.0, W/10 8.8. Its own repo ships the vision file, so no cross-repo projector."
+      "enabled": false,
+      "_note": "BENCH (needs its own container). Too large to co-exist with a 31B rp model: Fast util. UGI 45.0, W/10 8.8. Its own repo ships the vision file, so no cross-repo projector."
     },
     "mistral_small_32_it": {
       "role": "util",
@@ -313,6 +313,27 @@
       },
       "enabled": true,
       "_note": "Deep backup, the original util pick. More cautious than the Gemma 4 abliterations (W/10 6.5) but verified filenames."
+    },
+    "gemma3_12b_heretic_util": {
+      "role": "util",
+      "repo": "llmfan46/gemma-3-12b-it-ultra-uncensored-heretic-GGUF",
+      "gguf": "gemma-3-12b-it-heretic-Q5_K_M.gguf",
+      "mmproj": "gemma-3-12b-it-mmproj-BF16.gguf",
+      "mmproj_repo": null,
+      "ctx": 16384,
+      "parallel": 2,
+      "kv": "q8_0",
+      "gpu": "L40S",
+      "idle": 60,
+      "startup": 600,
+      "sampler": {
+        "temperature": 0.3,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
+      "enabled": true,
+      "_note": "util primary. Chosen for SIZE as much as score: 9.3 GB with vision (filenames and byte sizes verified against the HuggingFace API), which fits beside Artemis's 24.7 GB on one L40S. UGI 38.0 / W10 9.5 / NatInt 20.7 per the leaderboard rows. Most willing of the 12B class, and its vision projector ships in the SAME repo."
     }
   }
 }

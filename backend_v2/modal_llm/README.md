@@ -92,7 +92,46 @@ it. Until then everything resolves exactly as it did before.
 | `sampler` | suggested sampler values. Sent by the backend, overridable per chat |
 | `extra_args` | extra `llama-server` flags, appended last |
 
-## Measured (2026-10-11, first real deploy)
+## Architecture: ONE container, one llama-server per role
+
+`ChatLLM` is a single Modal class with `max_containers=1`. On container enter it
+loads one llama-server **per role**, each on its own port (`8081 + role index`),
+so both roles are served by one L40S rather than two cards.
+
+Why: two 31B models are 47.7 GB of weights and cannot share one card at all. The
+`util` primary is therefore a **12B** (`gemma3_12b_heretic_util`, 9.3 GB with
+vision, filenames and byte sizes verified against the HuggingFace API), which
+leaves room:
+
+| | GB |
+|---|---|
+| Artemis 31B Q5_K_M + projector | 24.7 |
+| Artemis KV @ 32k, q8_0 | ~2.1 |
+| Gemma 3 12B Q5_K_M + projector | **9.3** |
+| Gemma KV @ 16k, q8_0 | ~1.0 |
+| CUDA contexts, two servers | ~3.5 |
+| **total** | **~40.6 of ~46.7 usable** |
+
+`--swa-full` must stay **OFF**: it makes Artemis's KV cache ~15.7 GB and nothing
+fits. The trade is throughput — two llama-servers on one GPU means a reply's
+token rate dips while an extraction runs. For one user who waits on one reply at
+a time, that is cheaper than a second card.
+
+Changing a role's model is an edit to `models.json` and a redeploy; fetching its
+weights is `modal run modal_llm/app.py::ensure --model-id <id>`.
+
+## Measured (2026-10-11, one-container shape)
+
+| | seconds | note |
+|---|---|---|
+| llama-server model load | **~17-18** | 23.5 GB GGUF off the Volume, mmap'd |
+| Cold container, BOTH roles healthy | **~28** | Artemis's load dominates; the 12B adds ~2 s |
+| Warm `rp` call | ~8-10 | |
+| Warm `util` call | **~0.5** | the 12B is quick and short-reasoning |
+| Concurrent `rp` + `util` in ONE container | **~10.6** | proved they overlap, not queue |
+| Streamed `rp` | 194 chunks in ~8 s | via `.remote_gen()` |
+
+
 
 | | seconds | what it is |
 |---|---|---|
