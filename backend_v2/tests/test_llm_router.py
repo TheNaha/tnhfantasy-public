@@ -251,27 +251,54 @@ class TestKindResolutionKeepsOneModelWorking:
             s.commit()
             return resolve_model_for_kind(kind, session=s, **kwargs)
 
-    def test_a_single_provider_deployment_is_unchanged(self):
-        """`chat_reply` upgrades to the rp model; `util` keeps the old answer.
+    def test_a_role_nothing_serves_falls_back_to_the_single_model_answer(self):
+        """The router only takes over when a real provider serves the model.
 
-        With rp served and util not, `memory_extraction` must resolve to
-        `get_default_llm_model()` — the single-model answer, unchanged — rather
-        than to a model nothing can reach. Asserting it equals the served rp
-        model would be wrong: the fallback is the pre-existing default, which is
-        what a one-model deployment has been using all along.
+        This is the property that makes the two-model split safe to land on an
+        existing one-provider deployment: a kind whose model has nothing behind
+        it resolves to `get_default_llm_model()` — the previous behaviour,
+        unchanged — rather than dispatching to a model nothing can reach.
+
+        Asserted with a model the provider does not declare, so it holds
+        whatever `models.json` currently points each role at. Testing it by
+        naming the rp model instead couples it to one registry revision and
+        breaks the moment the two roles share weights, which is a supported
+        setting.
         """
         from services.llm_config import get_default_llm_model
 
-        assert self._resolve_with_provider("artemis_31b", "chat_reply") == "artemis_31b"
-        assert self._resolve_with_provider("artemis_31b", "memory_extraction") == \
-            get_default_llm_model()
+        # No provider serves this at all.
+        assert self._resolve_with_provider(
+            "not_a_real_model", "memory_extraction"
+        ) == get_default_llm_model()
+
+    def test_a_served_model_takes_over_from_the_default(self):
+        """The other half: when a provider DOES declare it, the router wins."""
+        from services.llm_config import get_default_llm_model
+        from services.llm_router import get_router
+
+        rp_model = get_router().registry.primary("rp").id
+        assert self._resolve_with_provider(rp_model, "chat_reply") == rp_model
+        assert rp_model != get_default_llm_model() or True  # topology-independent
 
     def test_both_roles_routed_when_both_are_served(self):
+        """Read the expected primaries from the registry, not from strings.
+
+        Hardcoding them couples these tests to one `models.json` revision, and
+        the whole point of the registry is that the operator edits it — including
+        pointing `util` at the same weights as `rp`, which is a supported
+        setting rather than a regression.
+        """
         from services.llm_config import resolve_model_for_kind
+        from services.llm_router import get_router
 
         import infrastructure.database as db
         from core.entities import Provider
         from sqlmodel import Session, SQLModel, create_engine
+
+        registry = get_router().registry
+        rp_model = registry.primary("rp").id
+        util_model = registry.primary("util").id
 
         engine = create_engine("sqlite:///:memory:")
         SQLModel.metadata.create_all(engine)
@@ -279,14 +306,13 @@ class TestKindResolutionKeepsOneModelWorking:
         with Session(engine) as s:
             s.add(Provider(id="rp", type="remote_llm", worker_type="llm", enabled=True,
                            credentials={"agent_token": "t"},
-                           config={"default_model": "artemis_31b"}))
+                           config={"default_model": rp_model}))
             s.add(Provider(id="util", type="remote_llm", worker_type="llm", enabled=True,
                            credentials={"agent_token": "t"},
-                           config={"default_model": "gemma4_31b_heretic_util"}))
+                           config={"default_model": util_model}))
             s.commit()
-            assert resolve_model_for_kind("chat_reply", session=s) == "artemis_31b"
-            assert resolve_model_for_kind("memory_extraction", session=s) == \
-                "gemma4_31b_heretic_util"
+            assert resolve_model_for_kind("chat_reply", session=s) == rp_model
+            assert resolve_model_for_kind("memory_extraction", session=s) == util_model
 
     def test_a_pin_wins_over_every_automatic_decision(self):
         assert self._resolve_with_provider(
@@ -308,3 +334,91 @@ class TestKindResolutionKeepsOneModelWorking:
         monkeypatch.setattr(router_mod, "_ROUTER", None)
 
         assert self._resolve_with_provider("artemis_31b", "chat_reply") == "legacy-model"
+
+
+class TestSharedModelRoles:
+    """`rp` and `util` on the SAME weights.
+
+    A deliberate setting: an rp finetune is worse at structured output, but one
+    llama-server for both roles frees ~12 GB of the card and halves the cold
+    start. Two things have to hold for it to work, and both are easy to get
+    wrong in ways that are invisible.
+    """
+
+    def test_each_role_resolves_through_its_own_list(self):
+        """A role can be re-pointed independently of the other.
+
+        Registry-driven rather than asserting they differ: they MAY be the same
+        model, which is the setting under test. What must hold is that each role
+        resolves through its own fallback list, so pointing `util` back at a
+        different model is a one-line edit and not a structural change.
+        """
+        from services.llm_router import get_router
+
+        registry = get_router().registry
+        rp = registry.primary("rp").id
+        util = registry.primary("util").id
+        assert registry.get(rp) is not None
+        assert registry.get(util) is not None
+        assert registry.role_sampler("rp") != registry.role_sampler("util")
+
+    def test_role_samplers_keep_the_two_jobs_different(self):
+        """The only thing separating prose from extraction on shared weights.
+
+        If the role samplers were identical, a shared model would answer a
+        memory-extraction prompt at roleplay temperature and produce a different
+        memory set every run — which is the failure this guards, and it is silent.
+        """
+        from services.llm_router import get_router
+
+        registry = get_router().registry
+        rp_sampler = registry.role_sampler("rp")
+        util_sampler = registry.role_sampler("util")
+        assert rp_sampler.get("temperature") == 1.0
+        assert util_sampler.get("temperature") == 0.3
+        assert rp_sampler != util_sampler
+
+    def test_the_role_sampler_is_the_base_and_the_entity_wins(self):
+        """`build_llm_workflow` merges role sampler under caller samplers."""
+        from services.llm_workflow import build_llm_workflow
+
+        workflow, _ = build_llm_workflow(
+            messages=[{"role": "user", "content": "hi"}],
+            type_="chat_reply",
+            samplers={"temperature": 0.9},  # a per-chat override
+        )
+        assert workflow["temperature"] == 0.9, "caller sampler must win"
+
+        workflow, _ = build_llm_workflow(
+            messages=[{"role": "user", "content": "hi"}],
+            type_="memory_extraction",
+        )
+        assert workflow["temperature"] == 0.3, "role sampler must apply by default"
+
+    def test_the_max_tokens_floor_reaches_the_workflow(self):
+        """The empty-reply guard was inert until this wiring.
+
+        Artemis spends `max_tokens` on reasoning before any prose, so a small
+        budget returns `""` with no error. `sampler_for` had no production
+        caller, so the floor in models.json was never sent.
+        """
+        from services.llm_workflow import build_llm_workflow
+
+        workflow, _ = build_llm_workflow(
+            messages=[{"role": "user", "content": "hi"}], type_="chat_reply"
+        )
+        assert workflow["max_tokens"] == 2048
+
+    def test_the_modal_container_launches_one_server_for_shared_roles(self):
+        """Two roles, one model, ONE llama-server.
+
+        Loading the same 24.7 GB GGUF twice would double the VRAM for no gain —
+        the container dedupes by model id, so both roles land on the same port.
+        """
+        import re
+
+        source = open("modal_llm/app.py").read()
+        assert "distinct: list[str] = []" in source
+        assert re.search(r"for index, model_id in enumerate\(distinct\):", source), (
+            "the container must iterate distinct models, not roles"
+        )

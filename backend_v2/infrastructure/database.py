@@ -51,11 +51,29 @@ def get_db_pool_size() -> int:
 
     `infrastructure/db_executor.py` sizes its offload pool from this, so that
     offloading the job path does not queue on `pool_timeout` inside SQLAlchemy.
-    SQLite is NullPool / one connection, so it reports 1 — and the offload pool
-    then has no reason to over-subscribe.
+
+    Reads the ENGINE's dialect, not `COMFY_DB_URL`. The env var is the wrong
+    source in two ways: the project logs a warning against setting it (the DSN is
+    assembled from POSTGRES_*), and the env-contract guard treats every read as
+    a variable an operator must be able to discover. The engine is also simply
+    the truth — it is the object the pool belongs to.
+
+    SQLite is NullPool / one connection, so it reports 1 and the offload pool has
+    no reason to over-subscribe.
     """
-    if os.environ.get("COMFY_DB_URL", "").startswith("sqlite"):
-        return 1
+    try:
+        from infrastructure.database import engine as _engine
+
+        if _engine.url.get_backend_name() == "sqlite":
+            # NullPool — a fresh connection per checkout, no ceiling to match.
+            # Reporting 1 here would size the offload pool to a single thread and
+            # make it a queue rather than a pool, which is the bug this exists to
+            # avoid. There is simply no pool number to match, so the default.
+            from infrastructure.db_executor import default_pool_size
+
+            return default_pool_size()
+    except Exception:
+        pass
     return DB_POOL_SIZE + DB_MAX_OVERFLOW
 DB_POOL_TIMEOUT = _positive_int_env("COMFY_DB_POOL_TIMEOUT", 30)
 # Recycle below the usual 1h/infra limit so a long-lived pool never hands out a

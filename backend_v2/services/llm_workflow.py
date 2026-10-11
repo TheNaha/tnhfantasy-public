@@ -45,6 +45,31 @@ def build_llm_workflow(
         "type": type_,
         "model": model,
     }
+
+    # The ROLE's sampler is the base; a caller's samplers win on top.
+    #
+    # This is what makes two roles on one shared model behave differently. An
+    # rp finetune asked for extraction at temperature 1.0 produces a different
+    # memory set every run, so `util` is deliberately cold while `rp` is not —
+    # and when both roles resolve to the SAME weights, this is the only thing
+    # separating a prose reply from an extraction.
+    #
+    # The registry's per-model samplers were never applied at all before this —
+    # `sampler_for` had no production caller — so the guard against Artemis's
+    # reasoning eating `max_tokens` before any prose was inert, and the empty
+    # reply it was written to prevent was avoided only by the accident of no
+    # limit being sent at all.
+    try:
+        from services.llm_router import get_router
+
+        role_sampler = get_router().registry.role_sampler(
+            get_router().role_for_kind(type_)
+        )
+    except Exception:
+        role_sampler = {}
+    if role_sampler:
+        workflow.update(role_sampler)
+
     if samplers:
         workflow.update(samplers)
     if chat_id is not None:

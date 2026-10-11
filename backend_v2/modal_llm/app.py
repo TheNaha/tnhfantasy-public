@@ -398,52 +398,72 @@ class ChatLLM:
 
     @modal.enter()
     def start(self):
-        """Load one llama-server per role, each on its own port.
+        """Load one llama-server per DISTINCT model, and map every role to it.
 
-        A role whose weights are missing, or which is not in the registry, is
-        recorded in `unavailable` rather than raised. Raising makes Modal retry
-        enter and re-create the container on every call, so a missing download
-        becomes an infinite crash-loop burning GPU on something that can never
-        succeed.
+        A role per model, not a role per server. When `rp` and `util` resolve to
+        the same weights — which is the whole point of the shared-model setting —
+        one server serves both and the second is never started: launching the
+        same 24.7 GB GGUF twice would double the VRAM for no gain. Distinct
+        models still get their own server on their own port, so the container
+        holds whichever combination the registry asks for.
+
+        A model with no weights, or one not in the registry, is recorded in
+        `unavailable` rather than raised. Raising makes Modal retry enter and
+        re-create the container on every call, so a missing download becomes an
+        infinite crash-loop burning GPU on something that can never succeed.
         """
         self.serving = {}
         self.unavailable = {}
         # Before any model loads — see `_refresh_volume`.
         _refresh_volume()
-        for index, role in enumerate(ROLES):
-            model = ROLE_PRIMARY[role]
+
+        # Distinct models across every role, in registry order for a stable
+        # port assignment.
+        distinct: list[str] = []
+        for role in ROLES:
+            model_id = ROLE_PRIMARY[role].id
+            if model_id not in distinct:
+                distinct.append(model_id)
+
+        for index, model_id in enumerate(distinct):
+            port = _SERVER_PORT_BASE + index
             try:
-                model = registry.get(ROLE_PRIMARY[role].id)
+                model = registry.get(model_id)
             except KeyError:
-                self.unavailable[role] = (
-                    f"role {role!r} points at {ROLE_PRIMARY[role].id!r}, which is "
-                    "not in the baked-in registry"
+                self.unavailable[model_id] = (
+                    f"{model_id!r} is not in the baked-in registry; add it to "
+                    "models.json and redeploy"
                 )
                 continue
             if not _present(model):
-                self.unavailable[role] = (
-                    f"{model.id!r} has no weights on the Volume; run "
+                self.unavailable[model_id] = (
+                    f"{model_id!r} has no weights on the Volume; run "
                     "`modal run modal_llm/app.py::ensure --model-id <id>` first"
                 )
                 continue
-            port = _SERVER_PORT_BASE + index
             _launch(model, port)
-            self.serving[role] = model.id
-        print(f"serving: {self.serving}; unavailable: {self.unavailable}", flush=True)
+
+        for role in ROLES:
+            model_id = ROLE_PRIMARY[role].id
+            if model_id in _SERVERS:
+                self.serving[role] = model_id
+        print(
+            f"serving: {self.serving}; servers on "
+            f"{ {mid: sv.port for mid, sv in _SERVERS.items()} }",
+            flush=True,
+        )
 
     # ------------------------------------------------------------------
-    def _resolve(self, model_id: str) -> tuple[str, int]:
-        """(role, port) for a model id, or raise a clear non-retryable error.
+    def _resolve(self, model_id: str) -> int:
+        """The port serving `model_id`, or a clear non-retryable error.
 
         Not retryable on purpose: an unknown or unserved model is a
         configuration state, so a caller should fail rather than back off.
         """
-        for role, served in self.serving.items():
-            if served == model_id:
-                return role, _SERVER_PORT_BASE + ROLES.index(role)
-        reason = self.unavailable.get(model_id) or self.unavailable.get(
-            self._role_for(model_id)
-        )
+        server = _SERVERS.get(model_id)
+        if server is not None and model_id in self.serving.values():
+            return server.port
+        reason = self.unavailable.get(model_id)
         if reason:
             raise RuntimeError(reason)
         raise RuntimeError(
@@ -462,9 +482,9 @@ class ChatLLM:
     def complete(self, messages: list, sampler: dict | None = None,
                  model_id: str = "") -> dict:
         """One-shot completion. Returns the full parsed response."""
-        _, port = self._resolve(model_id or self._default_model())
-        payload = {"model": model_id or self._default_model(),
-                   "messages": messages, "stream": False}
+        resolved = model_id or self._default_model()
+        port = self._resolve(resolved)
+        payload = {"model": resolved, "messages": messages, "stream": False}
         if sampler:
             payload.update(sampler)
         return _proxy(port, "/v1/chat/completions", payload)
@@ -478,7 +498,7 @@ class ChatLLM:
         which is why there is no HTTP endpoint to secure at all.
         """
         resolved = model_id or self._default_model()
-        _, port = self._resolve(resolved)
+        port = self._resolve(resolved)
         payload = {"model": resolved, "messages": messages, "stream": True}
         if sampler:
             payload.update(sampler)
@@ -491,31 +511,41 @@ class ChatLLM:
         A role with no weights answers `not_downloaded` with its reason rather
         than raising, so a caller polling health sees an actionable state
         instead of a crash-loop it has to infer from retries.
+
+        Roles that share a server report the same port, which is the point — and
+        what makes the shared-model setting visible rather than something you
+        have to infer from two llama-servers being absent.
         """
-        out: dict = {"app": APP_NAME, "roles": {}}
+        out: dict = {"app": APP_NAME, "roles": {}, "servers": {}}
+        for model_id, server in _SERVERS.items():
+            out["servers"][model_id] = {"port": server.port, "alive": server.alive}
         for role in ROLES:
             model_id = ROLE_PRIMARY[role].id
-            if role in self.unavailable:
+            if model_id in self.unavailable:
                 out["roles"][role] = {
                     "status": "not_downloaded",
                     "model_id": model_id,
-                    "reason": self.unavailable[role],
+                    "reason": self.unavailable[model_id],
                 }
                 continue
-            if role not in self.serving:
+            server = _SERVERS.get(model_id)
+            if server is None:
+                out["roles"][role] = {"status": "unknown", "model_id": model_id}
+                continue
+            port = server.port
+            try:
                 out["roles"][role] = {
-                    "status": "unknown",
+                    "status": "ok",
                     "model_id": model_id,
+                    "port": port,
+                    **_proxy(port, "/health"),
                 }
-                continue
-            port = _SERVER_PORT_BASE + ROLES.index(role)
-            server = _require_healthy_server(self.serving[role])
-            out["roles"][role] = {
-                "status": "ok",
-                "model_id": self.serving[role],
-                "port": server.port,
-                **_proxy(port, "/health"),
-            }
+            except Exception as exc:
+                out["roles"][role] = {
+                    "status": "unhealthy",
+                    "model_id": model_id,
+                    "reason": str(exc),
+                }
         return out
 
     @staticmethod

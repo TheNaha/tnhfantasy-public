@@ -78,6 +78,13 @@ def test_sampler_overrides_handles_none_entity():
 
 
 def test_build_llm_workflow_includes_samplers():
+    """Caller samplers win; the role sampler is only a base beneath them.
+
+    The `top_p`/`frequency_penalty` assertions this test used to make assumed
+    nothing but the caller's samplers reached the workflow. Since the role
+    sampler became the base layer, `top_p` is present from the registry — and
+    what still matters is that an explicit per-chat value overrides it.
+    """
     workflow, _ = build_llm_workflow(
         messages=[],
         type_="chat_reply",
@@ -87,5 +94,38 @@ def test_build_llm_workflow_includes_samplers():
     assert workflow["temperature"] == 0.35
     assert workflow["max_output_tokens"] == 512
     assert workflow["presence_penalty"] == 0.2
-    assert "top_p" not in workflow
     assert "frequency_penalty" not in workflow
+    # And the caller's value beats the role sampler's, rather than being merged
+    # under it.
+    role_base = _role_sampler_base("chat_reply")
+    if "temperature" in role_base:
+        assert workflow["temperature"] == 0.35
+
+
+def _role_sampler_base(type_: str) -> dict:
+    """What the registry contributes as the base layer, for comparison."""
+    from services.llm_router import get_router
+
+    try:
+        return get_router().registry.role_sampler(
+            get_router().role_for_kind(type_)
+        )
+    except Exception:
+        return {}
+
+
+def test_role_sampler_is_the_base_layer():
+    workflow, _ = build_llm_workflow(
+        messages=[], type_="memory_extraction",
+    )
+    base = _role_sampler_base("memory_extraction")
+    if "temperature" in base:
+        assert workflow["temperature"] == base["temperature"]
+
+
+def test_caller_sampler_overrides_the_role_layer():
+    workflow, _ = build_llm_workflow(
+        messages=[], type_="memory_extraction",
+        samplers={"temperature": 0.77},
+    )
+    assert workflow["temperature"] == 0.77

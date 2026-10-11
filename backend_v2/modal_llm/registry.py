@@ -149,6 +149,10 @@ class Registry:
 
     models: Dict[str, Model]
     fallback: Dict[str, List[str]]
+    #: Per-role sampler defaults. Separate from per-model samplers because a
+    #: role and a model are different axes: when `rp` and `util` share weights the
+    #: model sampler cannot express both jobs' temperatures.
+    role_samplers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def role_order(self, role: str) -> List[str]:
         """Model ids for a role, in fallback order, disabled ones dropped."""
@@ -169,6 +173,12 @@ class Registry:
                 f"model {model_id!r} is not in the registry; "
                 f"known ids: {sorted(self.models)}"
             ) from None
+
+    def role_sampler(self, role: str) -> Dict[str, Any]:
+        """Sampler defaults for a role, empty when the registry declares none."""
+        if not role:
+            return {}
+        return dict(self.role_samplers.get(role) or {})
 
     def primary(self, role: str) -> Model:
         """The first enabled model for a role.
@@ -244,4 +254,13 @@ def load(path: Optional[Path] = None) -> Registry:
                 f"no fallback order for it, so it can never be reached"
             )
 
-    return Registry(models=models, fallback=fallback)
+    role_samplers = {
+        role: {
+            k: v for k, v in (spec or {}).items() if not k.startswith("_")
+        }
+        for role, spec in (raw.get("role_samplers") or {}).items()
+    }
+
+    return Registry(
+        models=models, fallback=fallback, role_samplers=role_samplers
+    )

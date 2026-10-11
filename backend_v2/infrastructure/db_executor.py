@@ -47,10 +47,17 @@ logger = get_logger("db_executor")
 
 T = TypeVar("T")
 
-#: The default, used when the DB pool is unknown (tests, a missing config
-#: module). Deliberately small: this pool exists to *bound* offloaded work, and
-#: a default that cannot over-subscribe is the safe failure.
+#: The default, used when the DB pool is unknown or does not apply (tests, the
+#: NullPool case, a missing config module). Deliberately small: this pool exists
+#: to *bound* offloaded work, and a default that cannot over-subscribe is the
+#: safe failure — while still being more than one thread, so it is a pool and not
+#: a queue.
 _DEFAULT_SIZE = 8
+
+
+def default_pool_size() -> int:
+    """The fallback size, exported so the DB module can report one number."""
+    return _DEFAULT_SIZE
 
 
 def _pool_size() -> int:
