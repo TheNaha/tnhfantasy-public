@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -249,12 +250,164 @@ async def _handle_narrator(job_data: dict[str, Any]):
             logger.warning("narrator_insert_failed", job_id=job_data.get("id"), error=str(e))
 
 
-async def _handle_chat_reply(job_data: dict[str, Any]):
+async def _handle_chat_reply(job_data: dict[str, Any], session: Any = None):
+    """Persist a paid LLM reply as the assistant Message.
+
+    `session` is the caller's when the write is made by `complete_when_ready` —
+    the durable path, run BEFORE the job goes COMPLETED — and None for the
+    event bus consumer, which opens its own. The same code runs either way, and
+    the source-job-id guard below makes the double delivery a no-op rather than
+    a duplicate reply.
+    """
     chat_id = job_data.get("metadata", {}).get("chat_id")
     content = _first_text(job_data)
 
     if not chat_id or not content:
         return
+
+    # Idempotent, and load-bearing rather than defensive.
+    #
+    # This handler used to run ONLY off the event bus, so its write sat
+    # downstream of a lossy 10 000-deep buffer and a fire-and-forget task. The
+    # reply is now written in `complete_when_ready` before the job goes
+    # COMPLETED; this same handler still runs when JOB_COMPLETED arrives.
+    # Matched on the flat `source_job_id` scalar, which is exactly what
+    # `find_unpersisted_chat_replies` uses to decide a reply was never written —
+    # so the two paths agree by construction on what "already written" means.
+    job_id = job_data.get("id")
+    async with _session_for(job_data, session) as active_session:
+        if job_id and _reply_already_stamped(active_session, job_id):
+            logger.debug("chat_reply_already_persisted", job_id=job_id, chat_id=chat_id)
+            return
+        await _write_chat_reply(job_data, active_session, content)
+
+
+@asynccontextmanager
+async def _session_for(_job_data: dict[str, Any], session: Any):
+    """The caller's session if one was passed, otherwise a fresh one."""
+    if session is not None:
+        yield session
+        return
+    async with get_session_context() as opened:
+        yield opened
+
+
+def _reply_already_stamped(session, job_id: str) -> bool:
+    """Is there already a message carrying this job as its source?
+
+    One flat JSON lookup rather than a scan: `source_job_id` is a scalar in
+    `message_metadata`, so it can be selected and compared in SQL.
+
+    Synchronous on purpose. It was `async` while being called without `await`,
+    which made every call return a truthy coroutine object — and the guard then
+    short-circuited every reply for a while.
+    """
+    from sqlmodel import select
+
+    flat = Message.message_metadata[SOURCE_JOB_ID_METADATA_KEY].as_string()
+    return session.exec(select(flat).where(flat == job_id)).first() is not None
+
+
+async def _write_chat_reply(job_data: dict[str, Any], session, content: str) -> None:
+    """The write itself. Split out so the guard and the write are distinct."""
+    chat_id = job_data.get("metadata", {}).get("chat_id")
+    metadata = job_data.get("metadata", {})
+    job_id = job_data.get("id")
+    tool_calls = None
+    outputs = job_data.get("outputs") or []
+    if outputs and isinstance(outputs[0], dict):
+        tool_calls = outputs[0].get("tool_calls")
+    try:
+        msg_metadata = {"agentic": bool(tool_calls)}
+        if "orchestrator_depth" in metadata:
+            msg_metadata["orchestrator_depth"] = metadata["orchestrator_depth"]
+        if job_id:
+            # The link that makes a dropped JOB_COMPLETED recoverable:
+            # find_unpersisted_chat_replies() looks for COMPLETED chat_reply
+            # jobs with no message carrying this stamp.
+            msg_metadata[SOURCE_JOB_ID_METADATA_KEY] = job_id
+
+        if metadata.get("is_swipe") and metadata.get("target_message_id"):
+            await _append_swipe_alternative(job_data, session, content, msg_metadata, metadata)
+            return
+
+        # Normal path: insert NEW CHAR message
+        msg = Message(
+            role=MessageRole.CHAR,
+            kind=MessageKind.CHAR,
+            content=content,
+            chat_id=chat_id,
+            # The thread the question was asked on, carried on the job
+            # metadata by the send/regenerate routes. A branch's copies share
+            # their originals' `chat_id` and `created_at`, so an answer written
+            # without it interleaves into the original thread and the fork the
+            # user is reading never advances.
+            branch_id=metadata.get("branch_id"),
+            character_id=metadata.get("character_id"),
+            tool_calls=tool_calls,
+            message_metadata=msg_metadata,
+        )
+        session.add(msg)
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.warning("chat_reply_insert_failed", job_id=job_data.get("id"), error=str(e))
+
+
+async def _append_swipe_alternative(job_data, session, content, msg_metadata, metadata) -> None:
+    """Append a swipe's alternate onto its anchor message, or refuse clearly."""
+    chat_id = job_data.get("metadata", {}).get("chat_id")
+    target_msg = session.get(Message, metadata["target_message_id"])
+    if target_msg and target_msg.chat_id != chat_id:
+        # The id exists but belongs to a different chat. Swiping a message in
+        # one conversation from another is never intended, and writing to it
+        # would move text across chats.
+        logger.warning(
+            "chat_swipe_target_wrong_chat",
+            job_id=job_data.get("id"),
+            chat_id=chat_id,
+            target_chat_id=target_msg.chat_id,
+        )
+        return
+    if not target_msg:
+        # The target is gone (deleted, or rolled back) while this job was in
+        # flight. Appending a fresh CHAR message at the tail would be wrong in
+        # two reachable ways: the user regenerates or deletes the message they
+        # asked to swipe, the in-flight job lands afterwards and re-inserts the
+        # text they discarded; and
+        # `POST /api/jobs/reconcile-chat-replies` replays every COMPLETED
+        # chat_reply with no source stamp, so every reply that was ever
+        # regenerated or rolled back — the ones whose stamped message was
+        # deleted — would be reported as a lost reply and resurrected at the
+        # end of the chat.
+        #
+        # A swipe has no meaning without its anchor, so this is a no-op rather
+        # than a fallback. The job still completes normally, so the cost is
+        # already sunk either way; what matters is that it does not mutate the
+        # conversation.
+        logger.warning(
+            "chat_swipe_target_missing",
+            job_id=job_data.get("id"),
+            chat_id=chat_id,
+            target_message_id=metadata.get("target_message_id"),
+        )
+        return
+
+    target_meta = dict(target_msg.message_metadata or {})
+    alternates = target_meta.get("alternates", [target_msg.content])
+    if target_msg.content not in alternates:
+        alternates.insert(0, target_msg.content)
+
+    alternates.append(content)
+    active_index = len(alternates) - 1
+
+    target_msg.content = content
+    target_msg.tool_calls = job_data.get("outputs")[0].get("tool_calls")
+    target_meta.update(msg_metadata)
+    target_meta.update({"alternates": alternates, "active_index": active_index})
+    target_msg.message_metadata = target_meta
+    session.add(target_msg)
+    session.commit()
 
     # Capture tool calls (agentic loop) as a transcript on the message so the
     # UI can show what the character did (generated an image, narrated, etc.)

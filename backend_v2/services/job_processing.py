@@ -318,6 +318,34 @@ async def finalize_persisted_job_outputs(
                         await process_image_background_fn(path, job_id)
 
                 await wait_for_gallery_outputs(outputs)
+
+                # Persist the reply BEFORE the job goes COMPLETED.
+                #
+                # This used to happen in the event bus consumer, which is
+                # downstream of a fire-and-forget task and a 10 000-deep
+                # in-memory buffer that evicts. A dropped JOB_COMPLETED meant a
+                # paid reply existed nowhere: the text was shown to the user and
+                # then vanished on reload, recoverable only by an operator-only
+                # endpoint nobody calls. Writing here makes the invariant "job
+                # COMPLETED => its chat reply is a row" hold at the point of
+                # completion.
+                #
+                # The consumer still runs when the event arrives, and skips on
+                # the source-job-id stamp both paths share, so this is not a
+                # second write.
+                if event_extra and event_extra.get("type") == "chat_reply":
+                    from services.world_integration_service import _handle_chat_reply
+
+                    await _handle_chat_reply(
+                        {
+                            "id": job_id,
+                            "metadata": job.metadata_ or {},
+                            "outputs": outputs,
+                            "workflow": job.workflow or {},
+                        },
+                        reconcile_session,
+                    )
+
                 await complete_job(
                     job_service=active_job_service,
                     job_id=job_id,

@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -975,8 +975,53 @@ def _add_message_prep_sync(
 
 
 @router.post("/{chat_id}/messages")
-async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), message_repo: MessageRepository = Depends(get_message_repo)) -> dict:
+async def add_message(
+    chat_id: str,
+    request: SendMessageRequest,
+    session: Session = Depends(get_session),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
+    message_repo: MessageRepository = Depends(get_message_repo),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    """Send a message and (unless `no_reply`) dispatch the reply job.
+
+    `Idempotency-Key` is opt-in, matching `POST /api/jobs`. Without it a
+    double submit is two user rows and two paid LLM jobs: the client guard
+    only covers one tab, since network retries and a second tab both bypass it.
+    """
+    from infrastructure.request_dedup import deduplicated, make_key
     from services.job_queue import queue_manager
+
+    if idempotency_key and idempotency_key.strip():
+        # Concurrent identical sends collapse onto one execution. Key includes
+        # the chat and the client-supplied key; the request body is not hashed,
+        # because a client that resends the same key means the same thought —
+        # and a body-keyed guard would make a legitimately repeated message
+        # (a "hello" twice) collapse instead of deduplicating a retry.
+        dedup_key = make_key("send_message", chat_id, idempotency_key.strip())
+        return await deduplicated(
+            dedup_key,
+            lambda: _send_message(
+                session, chat_repo, message_repo, chat_id, request, queue_manager
+            ),
+        )
+
+    return await _send_message(
+        session, chat_repo, message_repo, chat_id, request, queue_manager
+    )
+
+
+async def _send_message(
+    session: Session,
+    chat_repo: ChatRepository,
+    message_repo: MessageRepository,
+    chat_id: str,
+    request: SendMessageRequest,
+    queue_manager,
+) -> dict:
+    from services.job_queue import queue_manager as _qm
+
+    queue_manager = queue_manager or _qm
 
     # Persisting the message and assembling its context are synchronous session
     # work; the reply job below is awaited, so the route stays `async def` and
@@ -992,7 +1037,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             past_messages,
             **ctx_kwargs,
         )
-            
+
         try:
             job_service = get_job_service(session)
 

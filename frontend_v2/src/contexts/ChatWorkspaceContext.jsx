@@ -534,9 +534,19 @@ export function ChatWorkspaceProvider({ children }) {
             }
         }
 
+        // One key per send attempt. Generated here rather than in the hook so a
+        // retry of the SAME attempt reuses it while a second, distinct send gets
+        // its own — the same rule the server applies. `handleSendMessage` returns
+        // early on `isPending`, so this only fires for a retry that page-level
+        // state has already forgotten about (a tab restored by the browser, an
+        // offline queue flush), but those are exactly the cases that produce two
+        // paid jobs for one sent message.
+        const idempotencyKey = crypto.randomUUID();
+
         try {
             const res = await sendMessageMutation.mutateAsync({
                 chatId: chatIdToUse,
+                idempotencyKey,
                 message: { 
                     role: role, 
                     content: msgContent, 

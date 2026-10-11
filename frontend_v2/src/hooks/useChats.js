@@ -198,7 +198,14 @@ export const useDeleteChat = () => useDeleteResource({
 export const useSendMessage = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ chatId, message }) => api.post(`/api/v2/chats/${chatId}/messages`, message),
+        // A stable key per send, so a retry (or two tabs) collapses onto ONE
+        // server-side execution rather than becoming two user messages and two
+        // paid LLM jobs. The server honours it via the request-dedup map, the
+        // same opt-in mechanism `POST /api/jobs` uses; without it the client
+        // `isPending` guard is the only protection there is, and it covers one
+        // tab.
+        mutationFn: ({ chatId, message, idempotencyKey }) =>
+            api.post(`/api/v2/chats/${chatId}/messages`, message, { idempotencyKey }),
         onMutate: async ({ chatId, message }) => {
             const keyPrefix = [...MESSAGES_ROOT_KEY, chatId];
             await queryClient.cancelQueries({ queryKey: keyPrefix });
