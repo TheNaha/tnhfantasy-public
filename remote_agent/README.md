@@ -72,6 +72,171 @@ it in `.env.agent` has no effect: `env_file:` populates the container
 environment, and by then the mount has already been resolved. The compose file
 fails fast with a message saying so rather than mounting a placeholder path.
 
+## Storage roots — a different tree per worker
+
+An image worker exposes a ComfyUI **repo root** (`models/`, `output/`, `input/`
+live under it). An LLM worker usually wants a plain weights directory with no
+ComfyUI structure in it at all, and a TTS worker is typically back on a ComfyUI
+rig because it shares one. So the root is selected by `WORKER_MODE`, one variable
+per mode, each falling back to `DATA_DIR`:
+
+| `WORKER_MODE` | variable read | falls back to |
+|---|---|---|
+| `model` (default) | `DATA_DIR` | `./data` |
+| `llm` | `LLM_DATA_DIR` | `DATA_DIR` |
+| `tts` | `TTS_DATA_DIR` | `DATA_DIR` |
+
+```bash
+# image worker on its ComfyUI rig — unchanged
+DATA_DIR=/opt/ComfyUI docker compose up -d
+
+# LLM worker on a different box, pointing at a plain weights tree
+WORKER_MODE=llm LLM_DATA_DIR=/opt/llm-weights docker compose up -d
+
+# TTS worker, deliberately back on a ComfyUI rig
+WORKER_MODE=tts TTS_DATA_DIR=/opt/ComfyUI docker compose up -d
+```
+
+The root is the container's storage **root**, not a `models/` subdirectory, so
+setting `LLM_DATA_DIR=/opt/llm-weights` puts the LLM worker's models tree at
+`/opt/llm-weights/models` and leaves the ComfyUI tree alone.
+
+`/setup`, `/list-models`, `/download-model`, `/validate-models`, `/delete-model`,
+`/get-file`, `/upload-file` and `/delete-file` all resolve against the root for
+the mode — in **every** mode, not just `model`. That is what makes a `remote_llm`
+or `remote_tts` provider able to manage files the same way a `remote_comfy` one
+can, and what makes the remote transport 1-to-1 with `modal` per category.
+
+## `WORKER_MODE=llm` serves its own weights
+
+An LLM worker is not a proxy by default. It reads the model registry
+(`backend_v2/modal_llm/models.json`), launches **one llama-server per distinct
+model** on loopback ports, and routes by the model id in the payload — the same
+thing Modal's app (`deployables/modal/llm/app.py`) does, from the same file. That
+is what makes a `remote_llm` provider the same thing as `modal_llm` rather than a
+lookalike: the tree the worker manages is the tree that answers, and there is
+nothing to reconcile.
+
+```bash
+CUDA_RUNTIME=runtime-llama WORKER_MODE=llm \
+    LLM_DATA_DIR=/mnt/llm-weights docker compose up -d --build
+```
+
+The registry is one file read by all three sides — the Modal app, this worker, and
+the backend's `services/llm_router.py` — so a role's model cannot disagree between
+transports. Both roles resolving to the same weights is the shared-model setting,
+and `distinct_primaries()` collapses it to one launch: the same 24.7 GB GGUF is
+not started twice to double the VRAM for nothing.
+
+With no weights present the worker starts healthy and `/info` reports each role
+`not_downloaded` with its reason — the shape Modal's `health` answers, so polling
+either side shows an actionable state instead of a crash-loop to infer from
+retries.
+
+Fetch a model's weights, by registry id (repo and destination both come from
+`models.json`, so a typo cannot land a file where llama-server will not find it):
+
+```bash
+curl -X POST -H "Authorization: Bearer $REMOTE_AGENT_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"model_id": "artemis_31b"}' \
+     http://localhost:8001/download-model
+```
+
+then recreate the container so the new model loads.
+
+**Two builds, one Dockerfile.** `llm` needs a GPU and a llama-server binary, and
+it uses the *same* llama.cpp image the Modal app does, so the two transports run
+the same llama-server from the same GGUFs. `model` and `tts` do not, and carrying
+a CUDA runtime they never use would allocate a card on a rig that may have none.
+
+```bash
+docker build -f remote_agent/Dockerfile -t tnhcomfy-agent ..            # model / tts
+docker build -f remote_agent/Dockerfile \
+    --build-arg CUDA_RUNTIME=runtime-llama -t tnhcomfy-agent-llm ..     # llm
+```
+
+Two notes on the CUDA base, both found by building rather than by reading: it
+ships no `pip` and no `ensurepip` module (Debian splits it out), so `apt-get
+install python3-pip` is the one spelling that works; and it ships no `passwd`
+package, so `useradd` exits 4 and the llama image runs as root. Both are guarded
+in the Dockerfile with comments.
+
+`LLM_UPSTREAM_BASE` still works and is now the **opt-out**: set it to front a
+llama.cpp or vLLM you already run, and the worker becomes an authenticated proxy
+instead of a model server.
+
+### Two things the sidecar deliberately does not copy from `backend_v2`
+
+`backend_v2` uses `logger.info("msg", key=value)` everywhere. This sidecar
+imports nothing from `backend_v2` and gets a plain stdlib `Logger`, whose
+`info(**kwargs)` forwards to `_log(level, msg, args, exc_info, extra, ...)` — so
+`key=value` raises `TypeError` at the **first** log line on a worker at INFO,
+which is every deployment. Use `extra={...}` here.
+
+`backend_v2/modal_llm/registry.py` is not imported either; `llama_server.py`
+carries the ~40 lines of parsing that shape needs. The *file* is shared (one
+`models.json`, mounted or copied in) — a second copy of the registry is what
+would drift, a second copy of the parser is not.
+
+## Google Colab
+
+`colab_start.sh` runs the agent directly in a notebook runtime — no Docker, no
+Python, no GPU-adjacent host required — and exposes it through a Cloudflare quick
+tunnel so the backend can reach it:
+
+```python
+!bash remote_agent/colab_start.sh llm
+```
+
+It prints the address, the service token and the storage root, plus the exact
+`type` / `agent_url` / `agent_token` to put on a provider row. Keep the cell
+running: it is the process supervisor, and ending it stops the agent and the
+tunnel. A runtime recycle loses the storage root and the address; the token file
+(`/content/.agent-token`) survives, so re-running against a fresh runtime only
+needs `agent_url` updated.
+
+Reachability is **NetBird by default**: the worker joins your WireGuard mesh and
+gets a `100.x.x.x` address, which is what you put in `agent_url`. Private, stable,
+and nothing is published.
+
+```python
+from google.colab import userdata   # add NETBIRD_SETUP_KEY as a Colab SECRET
+!bash remote_agent/colab_start.sh llm
+```
+
+`PUBLIC_MODE=cloudflared` is the fallback for when you have no key: a public
+`*.trycloudflare.com` URL with a new random hostname on every run. Prefer NetBird
+— the quick tunnel puts an authenticated model server on the open internet with
+no TLS, and its address changes on every recycle.
+
+### Three NetBird-specific things worth knowing
+
+**The key is a network-level credential**, which is why the script reads
+`NETBIRD_SETUP_KEY` from the environment and not from an argument you type into a
+cell — a cell lands in a notebook, the notebook is often shared, and a setup key
+in a shared notebook is a credential keyed to your whole network. Add it as a
+Colab secret, which injects it into the runtime's environment.
+
+**Every runtime is a new peer.** Colab's filesystem resets, so NetBird's state
+under `/var/lib/netbird` goes with it and each run re-registers. NetBird Cloud's
+free tier caps peers (5 as of writing), so a runtime you recycle ten times burns
+ten. A self-hosted management server removes the cap; otherwise clean up dead
+peers in the dashboard. The peer is named
+`comfy-agent-<mode>-<8 hex of your service token>` so its identity is stable and
+recognizable even as it re-registers.
+
+**A peer that joins may need approving.** NetBird and any policy gating peer
+groups hold new peers until a human approves them, so a key that works can still
+join invisibly. If `netbird status` never reaches "connected", look there before
+the firewall.
+
+Three Colab-specific behaviours are deliberate and commented in the script: the
+token is **generated** rather than typed (a cell is often shared, and a shared
+secret is the failure mode), the startup wait is a `/health` loop rather than a
+fixed sleep (a cold runtime takes variable time to import uvicorn), and the LLM
+worker takes port **8003** so a runtime can host more than one mode side by side.
+
 ## Environment variables (`.env`)
 
 | Key | Default | Meaning |

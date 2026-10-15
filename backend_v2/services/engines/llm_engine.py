@@ -5,7 +5,7 @@ Provides direct compute execution for LLM generation:
 - OpenAICompatLLMEngine: Direct streaming client for OpenAI-compatible APIs (Ollama, OpenRouter, vLLM, LM Studio)
 - AnthropicLLMEngine: Direct streaming client for Anthropic Messages API (Claude)
 - GoogleLLMEngine: Direct streaming client for Google Gemini API
-- ModalVLLMEngine: Serverless vLLM execution directly on Modal cloud
+- ModalLlamaCPPEngine: Serverless vLLM execution directly on Modal cloud
 """
 
 import asyncio
@@ -399,7 +399,7 @@ class OpenAICompatLLMEngine(InProcessEngine):
     async def list_models(self, directory: str = "") -> List[Dict[str, Any]]:
         """List models available on the upstream endpoint.
 
-        A 401/403 raises EngineAuthError (like ModalVLLMEngine) so a revoked
+        A 401/403 raises EngineAuthError (like ModalLlamaCPPEngine) so a revoked
         key reads as unhealthy instead of an empty catalogue; any other
         failure still answers [] — an LLM endpoint with no /models route is
         common (e.g. bare Ollama) and must not fail discovery.
@@ -563,8 +563,14 @@ class OpenAICompatLLMEngine(InProcessEngine):
             yield {"event": "failed", "job_id": job_id, "message": f"LLM generation error: {exc}", "retryable": retryable_for_exception(exc)}
 
 
-class ModalVLLMEngine(InProcessEngine):
-    """In-process execution engine for serverless vLLM on Modal cloud."""
+class ModalLlamaCPPEngine(InProcessEngine):
+    """In-process execution engine for the llama.cpp app on Modal cloud.
+
+    Named for what it actually runs. The engine was called `ModalLlamaCPPEngine`
+    from the vLLM era and kept the name after the app moved to llama.cpp, so
+    the class, the `modal_llm` provider type and the `VLLMEngine` remote class
+    all described a runtime this project no longer serves.
+    """
 
     #: Owns the ``models/`` tree on the Modal volume, so the in-process
     #: reconciliation runner drives downloads/validation through it — same
@@ -586,28 +592,31 @@ class ModalVLLMEngine(InProcessEngine):
         provider_id: str,
         token_id: str,
         token_secret: str,
-        app_name: str = "vllm-modal-stack",
-        cls_name: str = "VLLMEngine",
+        app_name: str = "tnh-llm",
+        cls_name: str = "ChatLLM",
     ):
         super().__init__(provider_id)
         self.token_id = token_id.strip()
         self.token_secret = token_secret.strip()
-        # MODAL_LLM_APP_NAME wins; MODAL_APP_NAME (the container-era variable)
-        # is honoured as a fallback so existing hosts keep working.
+        # The defaults are the names `deployables/modal/llm/app.py` declares
+        # (`APP_NAME = "tnh-llm"`, class `ChatLLM`). They used to be
+        # `vllm-modal-stack` / `VLLMEngine`, which is what the deleted
+        # vLLM-era worker app published — so every default resolved an app and
+        # a class that do not exist, and the failure surfaced only at first
+        # dispatch, as a Modal lookup error naming a stranger's class.
         self.app_name = (
             app_name
             or os.getenv("MODAL_LLM_APP_NAME")
-            or os.getenv("MODAL_APP_NAME")
-            or "vllm-modal-stack"
+            or "tnh-llm"
         )
-        self.cls_name = cls_name or os.getenv("MODAL_LLM_CLASS", "VLLMEngine")
+        self.cls_name = cls_name or os.getenv("MODAL_LLM_CLASS", "ChatLLM")
         self._client: Optional[Any] = None
         self._lock = asyncio.Lock()
 
 
     async def get_client_async(self) -> Any:
         if not HAS_MODAL or modal is None:
-            raise RuntimeError("modal package is required for ModalVLLMEngine")
+            raise RuntimeError("modal package is required for ModalLlamaCPPEngine")
         if self._client is None:
             async with self._lock:
                 if self._client is None:
@@ -644,7 +653,7 @@ class ModalVLLMEngine(InProcessEngine):
                 "provider_id": self.provider_id,
                 "ready": False,
                 "latency_ms": latency_ms,
-                "engine": "modal_vllm",
+                "engine": "modal_llm",
                 "error": f"provider is not configured (missing: {', '.join(missing)})",
                 "retryable": False,
             }
@@ -653,15 +662,15 @@ class ModalVLLMEngine(InProcessEngine):
             "provider_id": self.provider_id,
             "ready": True,
             "latency_ms": latency_ms,
-            "engine": "modal_vllm",
+            "engine": "modal_llm",
             "app_name": self.app_name,
         }
 
     async def get_info(self) -> dict[str, Any]:
         return {
             "provider_id": self.provider_id,
-            "type": "modal_vllm",
-            "engine": "modal_vllm",
+            "type": "modal_llm",
+            "engine": "modal_llm",
             "app_name": self.app_name,
             "cls_name": self.cls_name,
         }
@@ -679,7 +688,7 @@ class ModalVLLMEngine(InProcessEngine):
         if directory and directory not in self._MODEL_DIRS and not directory.startswith("models/"):
             return []
         if not HAS_MODAL or modal is None:
-            raise RuntimeError("modal package is required for ModalVLLMEngine")
+            raise RuntimeError("modal package is required for ModalLlamaCPPEngine")
         try:
             client = await self.get_client_async()
             func = modal.Function.from_name(
@@ -691,7 +700,7 @@ class ModalVLLMEngine(InProcessEngine):
             raise
         except Exception as exc:
             logger.error(
-                "modal_vllm_list_models_failed",
+                "modal_llm_list_models_failed",
                 provider_id=self.provider_id,
                 error=str(exc),
             )
@@ -709,7 +718,7 @@ class ModalVLLMEngine(InProcessEngine):
         FileNotFoundError), over-cap fails fast, whole stream deadline-bound.
         """
         if not HAS_MODAL or modal is None:
-            raise RuntimeError("modal package is required for ModalVLLMEngine")
+            raise RuntimeError("modal package is required for ModalLlamaCPPEngine")
         client = await self.get_client_async()
         FileStorage = modal.Cls.from_name(self.app_name, "FileStorage", client=client)
         storage = FileStorage()
@@ -740,7 +749,7 @@ class ModalVLLMEngine(InProcessEngine):
             storage = FileStorage()
             return bool(await storage.delete_file.remote.aio(path))
         except Exception as exc:
-            logger.warning("modal_vllm_delete_failed", provider_id=self.provider_id, path=path, error=str(exc))
+            logger.warning("modal_llm_delete_failed", provider_id=self.provider_id, path=path, error=str(exc))
             return False
 
     def download_token_for_url(self, url: str) -> Optional[str]:
@@ -768,7 +777,7 @@ class ModalVLLMEngine(InProcessEngine):
         awaiting keeps success/failure attribution exact.
         """
         if not HAS_MODAL or modal is None:
-            raise RuntimeError("modal package is required for ModalVLLMEngine")
+            raise RuntimeError("modal package is required for ModalLlamaCPPEngine")
         client = await self.get_client_async()
         func = modal.Function.from_name(self.app_name, "download_model", client=client)
         result = await asyncio.wait_for(
@@ -796,7 +805,7 @@ class ModalVLLMEngine(InProcessEngine):
     ) -> Dict[str, Any]:
         """Validate model integrity on the Modal volume (mirrors the worker)."""
         if not HAS_MODAL or modal is None:
-            raise RuntimeError("modal package is required for ModalVLLMEngine")
+            raise RuntimeError("modal package is required for ModalLlamaCPPEngine")
         target = self._vllm_dirs(directories)
         client = await self.get_client_async()
         try:
@@ -809,7 +818,7 @@ class ModalVLLMEngine(InProcessEngine):
         except EngineAuthError:
             raise
         except Exception as exc:
-            logger.error("modal_vllm_validate_failed", provider_id=self.provider_id, error=str(exc))
+            logger.error("modal_llm_validate_failed", provider_id=self.provider_id, error=str(exc))
             if is_auth_error(exc):
                 raise EngineAuthError(
                     f"Modal vLLM rejected credentials for /validate-models: {exc}",
@@ -834,7 +843,7 @@ class ModalVLLMEngine(InProcessEngine):
             await func.spawn.aio()
             return True
         except Exception as exc:
-            logger.error("modal_vllm_setup_failed", provider_id=self.provider_id, error=str(exc))
+            logger.error("modal_llm_setup_failed", provider_id=self.provider_id, error=str(exc))
             return False
 
     async def upload_file(self, filename: str, content_base64: str, directory: str = "") -> bool:
@@ -848,14 +857,14 @@ class ModalVLLMEngine(InProcessEngine):
         # to reject it OOMs the backend first. A cap of 0 means *disabled*,
         # so the comparison must be gated on the cap being set.
         if encoded_upload_over_cap(len(content_base64)):
-            logger.warning("modal_vllm_upload_over_cap", provider_id=self.provider_id, path=filename)
+            logger.warning("modal_llm_upload_over_cap", provider_id=self.provider_id, path=filename)
             return False
         try:
             content = base64.b64decode(content_base64)
             cap = get_upload_size_cap()
             if cap and len(content) > cap:
                 logger.warning(
-                    "modal_vllm_upload_over_cap",
+                    "modal_llm_upload_over_cap",
                     provider_id=self.provider_id, path=filename, size=len(content), cap=cap,
                 )
                 return False
@@ -866,7 +875,7 @@ class ModalVLLMEngine(InProcessEngine):
             await storage.put_file.remote.aio(path=path, content=content)
             return True
         except Exception as exc:
-            logger.error("modal_vllm_upload_failed", provider_id=self.provider_id, path=filename, error=str(exc))
+            logger.error("modal_llm_upload_failed", provider_id=self.provider_id, path=filename, error=str(exc))
             return False
 
     async def get_object_info(self) -> Dict[str, Any]:
@@ -879,7 +888,7 @@ class ModalVLLMEngine(InProcessEngine):
             entries = await self.list_models("models")
             return {"provider_id": self.provider_id, "total": len(entries), "by_directory": {"models": len(entries)}}
         except Exception as exc:
-            logger.warning("modal_vllm_storage_stats_failed", provider_id=self.provider_id, error=str(exc))
+            logger.warning("modal_llm_storage_stats_failed", provider_id=self.provider_id, error=str(exc))
             return {"provider_id": self.provider_id, "total": 0, "by_directory": {}, "error": str(exc)}
 
     def _retryable_for_remote_error(self, data: Dict[str, Any]) -> bool:
@@ -1083,7 +1092,7 @@ class ModalVLLMEngine(InProcessEngine):
             # llm modal client emitted nothing here, so the backend reducer
             # raised a retryable ProviderCallError; yielding completed would
             # commit a truncated answer to the chat as if it were whole.
-            logger.error("modal_vllm_stream_truncated", provider_id=self.provider_id, job_id=job_id)
+            logger.error("modal_llm_stream_truncated", provider_id=self.provider_id, job_id=job_id)
             yield {
                 "event": "failed",
                 "job_id": job_id,
@@ -1092,7 +1101,7 @@ class ModalVLLMEngine(InProcessEngine):
             }
 
         except (asyncio.TimeoutError, TimeoutError):
-            logger.warning("modal_vllm_inference_timeout", provider_id=self.provider_id, job_id=job_id)
+            logger.warning("modal_llm_inference_timeout", provider_id=self.provider_id, job_id=job_id)
             yield {
                 "event": "failed",
                 "job_id": job_id,
@@ -1101,7 +1110,7 @@ class ModalVLLMEngine(InProcessEngine):
             }
         except Exception as exc:
             if _is_modal_connection_error(exc):
-                logger.warning("modal_vllm_connection_error", provider_id=self.provider_id, job_id=job_id, error=str(exc))
+                logger.warning("modal_llm_connection_error", provider_id=self.provider_id, job_id=job_id, error=str(exc))
                 yield {
                     "event": "failed",
                     "job_id": job_id,

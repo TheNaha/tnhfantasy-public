@@ -249,8 +249,15 @@ export const useSendMessage = () => {
 export const useIllustrateChat = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ chatId, imagePrompt }) =>
-            api.post(`/api/v2/chats/${chatId}/illustrate`, { image_prompt: imagePrompt || '' }),
+        mutationFn: ({ chatId, imagePrompt, branchId }) =>
+            api.post(`/api/v2/chats/${chatId}/illustrate`, {
+                image_prompt: imagePrompt || '',
+                // The thread the illustration belongs to. A branch's copies share
+                // their originals' `chat_id` and `created_at`, so an image message
+                // written without it lands in the original thread and the fork
+                // the user is reading never shows it.
+                branch_id: branchId || null,
+            }),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
         }

@@ -22,6 +22,16 @@ The design keeps each engine as small as its protocol allows:
   synthesis request actually is — a POST with no streaming progress worth
   relaying frame by frame.
 
+Both remote engines mix in :class:`RemoteAgentFileMixin`. That is what makes the
+`remote` transport 1-to-1 with `modal` per category: the sidecar registers
+``/list-models``, ``/download-model``, ``/delete-model``, ``/validate-models``,
+``/get-file``, ``/upload-file``, ``/delete-file`` and ``/setup`` in *every*
+``WORKER_MODE``, so the capability was always there and neither engine called it.
+``RemoteLLMEngine`` overrode only ``__init__`` and reported
+``manages_model_files: False`` — it inherited OpenAI-compatible inference and
+nothing else, while ``modal_llm`` overrides thirteen methods and owns a models
+volume. The mixin closes that gap for all three remote engines at once.
+
 Protocol notes for the deployed containers (see ``remote_workers/``):
 * Beam realtime handlers answer ``{"token", <payload>}`` with the same
   ``{"event": ...}`` TaskEvent frames the ComfyUI and LLM engines already
@@ -52,6 +62,10 @@ from services.engines.base import (
 )
 from services.engines.beam_engine import BeamEngine
 from services.engines.llm_engine import OpenAICompatLLMEngine
+from services.engines.remote_agent_files import (
+    SERVICE_TOKEN_HEADER,
+    RemoteAgentFileMixin,
+)
 
 logger = get_logger("worker_transport_engines")
 
@@ -60,11 +74,9 @@ logger = get_logger("worker_transport_engines")
 #: different ports rather than sharing one compose service.
 LLM_DEFAULT_PORT = 8001
 TTS_DEFAULT_PORT = 8002
-
-#: Header the remote_agent service-token auth middleware validates. Shared with
-#: DirectComfyEngine's agent path so a container that already serves image
-#: agents needs no second credential scheme.
-SERVICE_TOKEN_HEADER = "Authorization"
+# `SERVICE_TOKEN_HEADER` now comes from `remote_agent_files`, the
+# single home for the sidecar's auth header. This module used to define its
+# own copy with the same value, which is how two stop agreeing.
 
 #: Poll interval while a remote LLM request is in flight. The container streams
 #: SSE, so this only bounds how long we wait for the *first* byte.
@@ -332,7 +344,7 @@ class BeamTTSEngine(_BeamLLMEngineBase):
     wants_tts_request = True
 
 
-class RemoteLLMEngine(OpenAICompatLLMEngine):
+class RemoteLLMEngine(RemoteAgentFileMixin, OpenAICompatLLMEngine):
     """The self-hosted TNHComfy LLM container.
 
     Speaks the OpenAI protocol — that is why the container is deployable
@@ -341,7 +353,31 @@ class RemoteLLMEngine(OpenAICompatLLMEngine):
     second HTTP client. The URL and token are read from the remote_agent config
     keys so a provider row written for the image agent sidecar points at the
     same container with no renaming.
+
+    The mixin is the parity half. The sidecar serves the model-file routes in
+    ``llm`` mode exactly as it does in ``model`` mode, so before this class
+    mixed it in a ``remote_llm`` provider could generate and nothing else — no
+    listing, no download, no validation, no setup, ``manages_model_files`` False —
+    while ``modal_llm`` owned a models volume and overrode thirteen methods.
+    That was never a sidecar gap, only an engine one.
     """
+
+    #: The one models tree a vLLM/llama.cpp worker has, mirroring
+    #: ``ModalLlamaCPPEngine._MODEL_DIRS`` exactly.
+    #:
+    #: This is the last piece of behavioural parity. Without it, a `remote_llm`
+    #: provider answered the generic reconciler's six image directories against
+    #: a plain weights root — so `get_storage_stats` reported five empty
+    #: directories and `validate_models` hashed a tree that does not exist.
+    #: `modal_llm` has narrowed to `("models",)` all along, which is what this
+    #: matches.
+    _MODEL_DIRS = ("models",)
+
+    #: The mixin reports which storage root a provider resolved. The engine does
+    #: not own a models tree the way `modal_llm` does — the weights belong to
+    #: whatever `LLM_UPSTREAM_BASE` points at — but it CAN list, download into,
+    #: validate and delete from the agent's root, which is what parity means.
+    worker_mode = "llm"
 
     def __init__(
         self,
@@ -353,13 +389,15 @@ class RemoteLLMEngine(OpenAICompatLLMEngine):
         default_util_model: str = "util",
         **kwargs: Any,
     ) -> None:
-        base_url = (agent_url or "").strip().rstrip("/")
+        self.agent_url = (agent_url or "").strip().rstrip("/")
+        self.agent_token = (agent_token or "").strip()
+        base_url = self.agent_url
         if base_url and not base_url.endswith("/v1"):
             base_url = f"{base_url}/v1"
         super().__init__(
             provider_id=provider_id,
             base_url=base_url,
-            api_key=(agent_token or "").strip(),
+            api_key=self.agent_token,
             default_model=default_model,
             **kwargs,
         )
@@ -420,7 +458,7 @@ def _tts_request_from_workflow(workflow: dict) -> dict:
     }
 
 
-class RemoteTTSEngine(InProcessEngine):
+class RemoteTTSEngine(RemoteAgentFileMixin, InProcessEngine):
     """The self-hosted TNHComfy TTS container.
 
     A synthesis request is not a progress stream: it is a POST whose useful
@@ -432,9 +470,60 @@ class RemoteTTSEngine(InProcessEngine):
     The clip is fetched through ``get_file_stream`` on the same
     ``remote_agent`` HTTP shape the image agent path uses, so file addressing and
     the service-token auth are identical across both.
+
+    The mixin is why this class is now much smaller than it was: it owned a
+    private HTTP client and its own copies of ``list_models``, ``upload_file``,
+    ``delete_file``, ``get_file_stream``, ``setup_models``, ``check_health``,
+    ``get_object_info`` and ``get_storage_stats`` — the same eight methods the
+    agent protocol defines, differing from ``DirectComfyEngine``'s copies only by
+    which URL they were built on. One implementation now serves all three remote
+    engines, and ``remote_tts`` gained `validate_models` and `download_file` it
+    never had.
     """
 
+    #: No models tree at all, which is what ``ModalTTSEngine.list_models``
+    #: encodes by returning ``[]`` unconditionally. An empty tuple makes the
+    #: mixin's `_directory_allowed` false for every directory and its
+    #: `list_models` answer ``[]``, so the two engines agree without a second
+    #: override. TTS voices are selected inside the TTS app, not from storage.
+    _MODEL_DIRS = ()
+
+    async def setup_models(self) -> bool:
+        """False, and on purpose — this is what makes it 1-to-1 with `modal_tts`.
+
+        `_SUPPORTS_SETUP` means "owns storage needing initialisation", and neither
+        TTS engine does: a TTS worker's root holds audio clips, written on demand
+        by `/synthesize`, and `MODEL_DIRECTORIES` is a ComfyUI concept
+        (checkpoints, loras, vae, controlnet, unet, clip). `ModalTTSEngine`
+        inherits the base's `False`; this engine overrides the mixin's `/setup`
+        call to match, rather than claiming a setup it has nothing to do.
+
+        `remote_llm` keeps the mixin's real setup, because an LLM worker's root
+        really does hold weights that need a directory to exist first — which is
+        what `modal_llm` does and why that pair matches.
+        """
+        return False
+
+    #: The mixin supplies `manages_model_files: True`; this engine sets it back
+    #: to False, deliberately, to stay 1-to-1 with `modal_tts`.
+    #:
+    #: "Model files" is a ComfyUI concept — `MODEL_DIRECTORIES` is
+    #: checkpoints/loras/vae/controlnet/unet/clip — and a TTS worker's storage
+    #: root holds audio clips, not any of those. Leaving it True would make
+    #: `get_storage_stats` walk six ComfyUI directories against a root that has
+    #: none of them and report five zeros, which is the base class's own
+    #: "engines that do not manage model files" empty-payload path suppressed by
+    #: one wrong flag.
+    #:
+    #: The file *surface* — list, upload, stream, delete, setup — is still the
+    #: mixin's, and that is the parity that matters.
     manages_model_files: bool = False
+    worker_mode = "tts"
+    #: Discovery reconcile is a model-reconciliation concept, not a storage one.
+    #: A TTS worker has no model tree to reconcile a ComfyUI rig against, so it
+    #: stays off — `manages_model_files` is about *storage*, this is about
+    #: *reconciliation*, and conflating them was what made the distinction easy
+    #: to miss.
     supports_discovery_reconcile: bool = False
 
     def __init__(
@@ -456,19 +545,21 @@ class RemoteTTSEngine(InProcessEngine):
     # HTTP client, the same shape DirectComfyEngine uses for its agent.
     # ------------------------------------------------------------------
     def get_http_client(self) -> httpx.AsyncClient:
-        if self._http is None or self._http.is_closed:
-            self._http = httpx.AsyncClient(
-                base_url=self.agent_url,
-                timeout=clamp_timeout(self.timeout, default=1800.0),
-                headers={
-                    "Content-Type": "application/json",
-                    SERVICE_TOKEN_HEADER: f"Bearer {self.agent_token}",
-                },
-            )
-        return self._http
+        """The agent client, shared with the mixin's file routes.
+
+        One client, not two. This engine used to build its own with the same
+        base URL and the same bearer header the mixin uses, which meant an
+        inference call and a `get_file_stream` call could hold separate
+        connections to the same container — and that the timeout for one was
+        `self.timeout` while the other was the mixin's fixed 600s.
+        """
+        return self.get_agent_client()
 
     async def close(self) -> None:
-        client, self._http = self._http, None
+        # The mixin's client is the one in use, so that is the one to close. The
+        # old `close` only ever closed `self._http`, which the mixin never set.
+        client = getattr(self, "_http", None)
+        self._http = None
         if client is not None and not client.is_closed:
             try:
                 await client.aclose()
@@ -708,43 +799,27 @@ class RemoteTTSEngine(InProcessEngine):
         return []
 
     async def check_health(self) -> dict[str, Any]:
-        """Config validity, per the same trade the Beam engines make.
+        """Config validity first, then a real round trip.
 
-        No round trip: a cold container would otherwise read unhealthy and the
-        dispatch-time failure streak would take it out of rotation before it had
-        a chance to scale up.
+        No round trip before the config check, because a misconfigured container
+        would read unhealthy-and-unreachable, and the dispatch-time failure streak
+        would take it out of rotation over a missing URL rather than a cold one.
+
+        This is the mixin's `check_health` (a real `/health` probe) wrapped, not
+        a replacement for it — the standalone "config validity" dict this engine
+        used to return satisfied neither the load balancer nor the provider page.
         """
-        return {
-            "status": "healthy" if (self.agent_url and self.agent_token) else "rejected",
-            "healthy": bool(self.agent_url and self.agent_token),
-            "provider_id": self.provider_id,
-            "engine": "RemoteTTSEngine",
-            "url_configured": bool(self.agent_url),
-            "token_configured": bool(self.agent_token),
-        }
-
-    async def setup_models(self) -> bool:
-        return True
-
-    async def get_object_info(self) -> Dict[str, Any]:
-        return {"object_info": {}}
-
-    async def get_storage_stats(self) -> Dict[str, Any]:
-        return {"provider_id": self.provider_id, "total": 0, "by_directory": {}}
-
-    async def upload_file(self, filename: str, content_base64: str, directory: str = "") -> bool:
-        """No shared volume: the container owns its own model files."""
-        return False
-
-    async def get_info(self) -> dict[str, Any]:
-        return {
-            "provider_id": self.provider_id,
-            "type": "remote",
-            "category": "tts",
-            "engine": "RemoteTTSEngine",
-            "url_configured": bool(self.agent_url),
-            "token_configured": bool(self.agent_token),
-        }
+        if not (self.agent_url and self.agent_token):
+            return {
+                "status": "unhealthy",
+                "ready": False,
+                "provider_id": self.provider_id,
+                "engine": "RemoteTTSEngine",
+                "url_configured": bool(self.agent_url),
+                "token_configured": bool(self.agent_token),
+                "error": "Remote agent URL or token not configured",
+            }
+        return await super().check_health()
 
 
 __all__ = [

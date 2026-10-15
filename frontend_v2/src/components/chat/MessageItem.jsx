@@ -7,6 +7,7 @@ import {
 import { thumbUrl, assetUrl } from '../../utils/assetUrl';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 import TavernMessage from './TavernMessage';
+import ContextTracePanel from './ContextTracePanel';
 import { useConfirmation } from '../../store/confirmationStore';
 
 const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onDelete, onRegenerate, onRollback, onPin, onSwipe, onGenerateSwipe, onAvatarClick, onGenerateTTS, onIllustrate, ttsEnabled = false, voices = [], chatTtsVoiceId, characterVoiceId }) {
@@ -169,6 +170,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                         })}
                                     </div>
                                 )}
+                                <ContextTracePanel trace={meta.context_trace} />
                                 {msg.image_path && (
                                     <div className="mt-1">
                                         <img src={thumbUrl(msg.image_path)} alt="Attachment" loading="lazy" decoding="async" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />

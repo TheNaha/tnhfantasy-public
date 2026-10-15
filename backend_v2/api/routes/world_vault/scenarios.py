@@ -8,6 +8,7 @@ from typing import Literal
 from api.deps import get_session, get_scenario_repo
 from infrastructure.repositories.scenario_repo import ScenarioRepository
 from services.reference_cleanup import scrub_entity_references
+from services.world_ownership import apply_world_id, require_world
 from core.entities import Scenario, Chat, Story
 from core.exceptions import NotFoundError
 
@@ -24,6 +25,10 @@ class ScenarioCreate(BaseModel):
     prompt_template: str
     default_checkpoint: str | None = None
     default_voice_profile: str | None = None
+    # Which World this entity belongs to. Ownership of record lives on the
+    # member, not in an array on the `worlds` row — see `services/
+    # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.
+    world_id: str | None = None
 
 
 class ScenarioUpdate(BaseModel):
@@ -45,6 +50,10 @@ class ScenarioUpdate(BaseModel):
     prompt_template: str | None = None
     default_checkpoint: str | None = None
     default_voice_profile: str | None = None
+    # Which World this entity belongs to. Ownership of record lives on the
+    # member, not in an array on the `worlds` row — see `services/
+    # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.
+    world_id: str | None = None
 
 @router.get("", response_model=list[Scenario])
 def list_scenarios(session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
@@ -52,6 +61,7 @@ def list_scenarios(session: Session = Depends(get_session), scenario_repo: Scena
 
 @router.post("", response_model=Scenario)
 def create_scenario(payload: ScenarioCreate, session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
+    require_world(session, payload.world_id)
     scenario = Scenario(**payload.model_dump())
     scenario.created_at = datetime.now(timezone.utc)
     scenario.updated_at = scenario.created_at
@@ -74,6 +84,8 @@ def update_scenario(scenario_id: str, update_data: ScenarioUpdate, session: Sess
         raise NotFoundError("Scenario", scenario_id)
     
     update_dict = update_data.model_dump(exclude_unset=True)
+    apply_world_id(session, scenario, update_dict)
+    update_dict.pop("world_id", None)
     if "name" in update_dict:
         scenario.name = update_dict["name"]
     if "description" in update_dict:

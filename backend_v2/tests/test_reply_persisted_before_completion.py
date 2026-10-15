@@ -137,29 +137,40 @@ class TestFinalizationWritesTheReply:
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 called = ast.unparse(node.func)
-                if called.endswith("_handle_chat_reply"):
+                # The dispatch table entry, not the handler name: the durable
+                # write is now `_EVENT_DISPATCH[type](payload, session)`, which
+                # covers replies, narrations and chat images.
+                if "_EVENT_DISPATCH" in called:
                     writes.append(node.lineno)
                 if called == "complete_job":
                     completes.append(node.lineno)
 
-        assert writes, "finalize_persisted_job_outputs never writes the chat reply"
+        assert writes, "finalize_persisted_job_outputs never writes the chat artefact"
         assert completes, "no complete_job call found"
         assert min(writes) < min(completes), (
-            "the chat reply must be written before the job goes COMPLETED, so "
-            "COMPLETED implies the reply is durable"
+            "the chat artefact must be written before the job goes COMPLETED, so "
+            "COMPLETED implies it is durable"
         )
 
-    def test_the_write_is_gated_on_the_chat_reply_job_type(self):
-        """Not every job carries a chat reply; the write must be selective.
+    def test_the_write_is_gated_on_the_artefact_job_type(self):
+        """Not every job produces a chat artefact; the write must be selective.
 
-        Image and TTS jobs go through the same finalization, and writing a chat
-        reply for one would either no-op or insert a wrong row.
+        Image and TTS jobs go through the same finalization, and writing a
+        narrator paragraph for one would either no-op or insert a wrong row.
+
+        The gate is the `_PRECOMPLETION_PERSISTED_TYPES` set, not a literal
+        string compare. That is the whole point of the change: a second copy of
+        "which kinds get a durable write" is the shape that left narrator and
+        chat_image out for as long as they were.
         """
         import inspect
 
         from services import job_processing
 
         source = inspect.getsource(job_processing.finalize_persisted_job_outputs)
-        assert 'event_extra.get("type") == "chat_reply"' in source, (
-            "the durable write is not gated on the job being a chat reply"
+        assert "_PRECOMPLETION_PERSISTED_TYPES" in source, (
+            "the durable write is not gated on the set of artefact job types"
+        )
+        assert 'event_extra.get("type")' in source, (
+            "the gate must read the resolved event type off event_extra"
         )

@@ -64,19 +64,13 @@ const DEFAULT_WORLDS = [
         id: 'world-1',
         name: 'Age of Embers',
         description: 'A dragon war epic',
-        character_ids: ['char-1', 'char-2'],
-        story_ids: ['s-1', 's-2', 's-3'],
-        chat_ids: ['chat-1', 'chat-2', 'chat-3', 'chat-4'],
-        location_ids: ['loc-1', 'loc-2', 'loc-3', 'loc-4', 'loc-5'],
+        counts: { Character: 2, Story: 3, Chat: 4, Location: 5, Lorebook: 0, Scenario: 0, VoiceModel: 0 },
     },
     {
         id: 'world-2',
         name: 'Silent Waters',
         description: 'An underwater chronicle',
-        character_ids: [],
-        story_ids: [],
-        chat_ids: [],
-        location_ids: [],
+        counts: { Character: 0, Story: 0, Chat: 0, Location: 0, Lorebook: 0, Scenario: 0, VoiceModel: 0 },
     },
 ];
 
@@ -271,24 +265,22 @@ describe('Worlds page', () => {
         expect(screen.queryByText('Age of Embers')).not.toBeInTheDocument();
     });
 
-    it('creates a world with linked entities from the pickers', async () => {
+    it('creates a world with name and description only', async () => {
         renderWorlds();
         await screen.findByText('Age of Embers');
         fireEvent.click(screen.getByRole('button', { name: /new world/i }));
         expect(screen.getAllByText('New World').length).toBeGreaterThan(0);
         fireEvent.change(screen.getByPlaceholderText('World name'), { target: { value: 'New Age' } });
         fireEvent.change(screen.getByPlaceholderText(/overview of this world/i), { target: { value: 'A test realm' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Aria' }));
         fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
 
+        // No membership fields. A world used to be created with four id lists
+        // and then drifted from them, because the members' own `world_id`
+        // columns were the ownership of record and this was a second copy.
         await waitFor(() => {
             expect(mockApi.post).toHaveBeenCalledWith('/api/v2/worlds', {
                 name: 'New Age',
                 description: 'A test realm',
-                character_ids: ['char-1'],
-                story_ids: [],
-                chat_ids: [],
-                location_ids: [],
             });
         });
         expect(mockToast.success).toHaveBeenCalledWith('World created');
@@ -303,7 +295,10 @@ describe('Worlds page', () => {
         expect(mockApi.post).not.toHaveBeenCalled();
     });
 
-    it('shows picker empty hints when no entities are available', async () => {
+    it('has no member pickers — membership is set on the member', async () => {
+        // The four EntityPickers used to live here and POST the ids onto the
+        // world. Assigning a member is now `<member>.world_id`, written from the
+        // member's own page, so the world form is name and description.
         mockCharacters.mockReturnValue({ data: [] });
         mockStories.mockReturnValue({ data: [] });
         mockChats.mockReturnValue({ data: [] });
@@ -311,10 +306,9 @@ describe('Worlds page', () => {
         renderWorlds();
         await screen.findByText('Age of Embers');
         fireEvent.click(screen.getByRole('button', { name: /new world/i }));
-        expect(screen.getByText('None available — create characters first')).toBeInTheDocument();
-        expect(screen.getByText('None available — create stories first')).toBeInTheDocument();
-        expect(screen.getByText('None available — create chats first')).toBeInTheDocument();
-        expect(screen.getByText('None available — create locations first')).toBeInTheDocument();
+        expect(screen.queryByText('None available — create characters first')).not.toBeInTheDocument();
+        expect(screen.queryByText('None available — create locations first')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Aria' })).not.toBeInTheDocument();
     });
 
     it('edits an existing world with prefilled values', async () => {
@@ -323,6 +317,7 @@ describe('Worlds page', () => {
         fireEvent.click(screen.getAllByTitle('Edit')[0]);
         expect(screen.getByText('Edit World')).toBeInTheDocument();
         expect(screen.getByDisplayValue('Age of Embers')).toBeInTheDocument();
+        expect(screen.getByDisplayValue('A dragon war epic')).toBeInTheDocument();
         fireEvent.change(screen.getByPlaceholderText('World name'), { target: { value: 'Age of Embers II' } });
         fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
 

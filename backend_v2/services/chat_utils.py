@@ -383,6 +383,25 @@ def insert_world_state_marker(session: Session, chat_id: str, changed: dict) -> 
 # ---------------------------------------------------------------------------
 
 
+def extract_persistable_text(job_data: dict) -> str | None:
+    """`extract_first_text`, but None when there is nothing worth persisting.
+
+    A whitespace-only turn is not prose. The plain extractor returns it as-is
+    because `"   \n "` is truthy, and every downstream guard is `if not content`
+    — so a model that emits nothing but blank lines alongside a tool call gets a
+    message written for it, and on the story side a beat whose `content` is
+    whitespace renders as a bare separator in the chapter text.
+
+    `.strip()` on the value AND the empty case are separate: `""` and `"\n"` both
+    mean "no turn", and a returned `None` is what the existing guards already
+    test for.
+    """
+    text = extract_first_text(job_data)
+    if text is None:
+        return None
+    return text if text.strip() else None
+
+
 def extract_first_text(job_data: dict) -> str | None:
     """Extract reply text from a completion payload.
 

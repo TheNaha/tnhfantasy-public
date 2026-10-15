@@ -47,7 +47,7 @@ Pick open-weight LLMs and a Modal deployment for the roleplay pillar that satisf
 
 ## 4. Deliverables so far
 
-- `modal_llm.py` (already sent to the user): the Modal app. Contains a `MODELS` registry, a `download` function (`modal run modal_llm.py::download`), `serve_rp` and `serve_util` web servers, and a `_launch()` helper that builds the `llama-server` command line. Setup order: create the secret, run `download`, run `modal deploy modal_llm.py`.
+- ~~`modal_llm.py`~~ **superseded.** The draft referenced here is archived at `docs/archive/modal_llm_app_draft.py`. The shipped app is `deployables/modal/llm/app.py`: same `llama-server`, but the `MODELS` literal became `models.json` (shared with the backend's `llm_router` and with `remote_agent/llama_server.py`), and the per-model `serve_rp`/`serve_util` **web servers** became one SDK-only `ChatLLM` class parametrized by model id — no public URLs, because `modal.web_server` publishes them. Deploy it with `bash scripts/deploy.sh llm`.
 - Documentation advice given: split the summary file into `README.md` (what/quick start), `ARCHITECTURE.md` (chat-turn data flow: context builder → pgvector retrieval → LLM call → tool calls → job queue → Modal), and `CONFIG.md` (env vars). Fold backend/frontend conventions into an agent instruction file. The doc should state where the LLM runs, which protocol the backend uses, what `llm_config` points at, and the embedding model and dimension (changing it forces re-embedding all memories). Drop the commit hash and date from the roadmap line.
 
 ## 5. Unverified items (check before relying on them)

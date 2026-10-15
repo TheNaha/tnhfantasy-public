@@ -10,7 +10,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.entities import CONTAINER_TASK_TYPES, Chat, Story, World
+from core.entities import (
+    CONTAINER_TASK_TYPES,
+    Character,
+    Chat,
+    Location,
+    Lorebook,
+    Scenario,
+    Story,
+    VoiceModel,
+    World,
+)
 from services.job_queue import JobQueue, QueueManager
 from services.job_processing import (
     _AUDIO_OUTPUT_SUFFIXES,
@@ -335,7 +345,22 @@ class TestTTSEventRouting:
 
 
 class TestWorldOwnership:
-    def test_creating_a_chat_in_a_world_writes_both_sides(self, client, session):
+    """World membership is one column on the member, and only one column.
+
+    This class used to be the strongest evidence for the two-sided contract: it
+    seeded `World.chat_ids` / `World.story_ids` by hand and asserted they stayed
+    in step with the `Chat.world_id` / `Story.world_id` FKs. Those arrays are
+    gone (migration `090_world_membership_fks`), together with the desync they
+    existed to express — `PUT /api/v2/worlds/{id}` could rewrite them without
+    touching the FKs, and `lorebook_ids`/`scenario_ids`/`voice_ids` had no scrub
+    path at all.
+
+    What replaces the "both sides agree" assertion is the stronger claim that
+    there is only one side: membership IS `world_id`, and it is read from the
+    member the same way by every consumer.
+    """
+
+    def test_creating_a_chat_in_a_world_writes_the_ownership(self, client, session):
         world = World(name="W", description="d")
         session.add(world)
         session.commit()
@@ -346,7 +371,26 @@ class TestWorldOwnership:
         assert response.json()["world_id"] == world.id
 
         session.expire_all()
-        assert session.get(World, world.id).chat_ids == [response.json()["id"]]
+        assert session.get(Chat, response.json()["id"]).world_id == world.id
+
+    def test_a_world_lists_its_members_through_the_fk(self, client, session):
+        """The direction every consumer actually reads.
+
+        The world page and the dashboard used to read an id array on the world
+        row. They read `world_id` on the members now, so a member shows up by
+        being in the world rather than by being listed in it.
+        """
+        world = World(name="W", description="d")
+        session.add(world)
+        session.commit()
+        session.refresh(world)
+
+        chat = Chat(name="c", chat_type="chat", world_id=world.id)
+        session.add(chat)
+        session.commit()
+
+        body = client.get(f"/api/v2/worlds/{world.id}/dashboard").json()
+        assert body["chats"] == [{"id": chat.id, "name": "c"}]
 
     def test_a_chat_can_be_moved_between_worlds(self, client, session):
         first = World(name="A")
@@ -359,29 +403,29 @@ class TestWorldOwnership:
 
         chat = Chat(name="c", chat_type="chat", world_id=first.id)
         session.add(chat)
-        first.chat_ids = [chat.id]
         session.commit()
 
         assert client.patch(f"/api/v2/chats/{chat.id}", json={"world_id": second.id}).status_code == 200
         session.expire_all()
         assert session.get(Chat, chat.id).world_id == second.id
-        assert session.get(World, first.id).chat_ids == []
-        assert session.get(World, second.id).chat_ids == [chat.id]
+        assert client.get(f"/api/v2/worlds/{first.id}/dashboard").json()["chats"] == []
+        assert client.get(f"/api/v2/worlds/{second.id}/dashboard").json()["chats"] == [
+            {"id": chat.id, "name": "c"}
+        ]
 
-    def test_an_empty_string_detaches_and_clears_both_sides(self, client, session):
+    def test_an_empty_string_detaches(self, client, session):
         world = World(name="A")
         session.add(world)
         session.commit()
         session.refresh(world)
         chat = Chat(name="c", chat_type="chat", world_id=world.id)
         session.add(chat)
-        world.chat_ids = [chat.id]
         session.commit()
 
         assert client.patch(f"/api/v2/chats/{chat.id}", json={"world_id": ""}).status_code == 200
         session.expire_all()
         assert session.get(Chat, chat.id).world_id is None
-        assert session.get(World, world.id).chat_ids == []
+        assert client.get(f"/api/v2/worlds/{world.id}/dashboard").json()["chats"] == []
 
     def test_an_unrelated_patch_does_not_detach(self, client, session):
         """Guards the sentinel, not the link.
@@ -397,13 +441,11 @@ class TestWorldOwnership:
         session.refresh(world)
         chat = Chat(name="c", chat_type="chat", world_id=world.id)
         session.add(chat)
-        world.chat_ids = [chat.id]
         session.commit()
 
         assert client.patch(f"/api/v2/chats/{chat.id}", json={"name": "renamed"}).status_code == 200
         session.expire_all()
         assert session.get(Chat, chat.id).world_id == world.id
-        assert session.get(World, world.id).chat_ids == [chat.id]
 
     def test_an_unknown_world_is_a_404_not_a_silent_drop(self, client):
         response = client.post("/api/v2/chats", json={"name": "c", "world_id": "nope"})
@@ -419,7 +461,7 @@ class TestWorldOwnership:
         assert response.status_code == 200
         assert response.json()["world_id"] == world.id
         session.expire_all()
-        assert session.get(World, world.id).story_ids == [response.json()["id"]]
+        assert session.get(Story, response.json()["id"]).world_id == world.id
 
     def test_a_story_can_be_moved_between_worlds(self, client, session):
         first = World(name="A")
@@ -431,14 +473,14 @@ class TestWorldOwnership:
         session.refresh(second)
         story = Story(title="s", world_id=first.id)
         session.add(story)
-        first.story_ids = [story.id]
         session.commit()
 
         assert client.put(f"/api/v2/stories/{story.id}", json={"world_id": second.id}).status_code == 200
         session.expire_all()
         assert session.get(Story, story.id).world_id == second.id
-        assert session.get(World, first.id).story_ids == []
-        assert session.get(World, second.id).story_ids == [story.id]
+        assert client.get(f"/api/v2/worlds/{second.id}/dashboard").json()["stories"] == [
+            {"id": story.id, "title": "s"}
+        ]
 
     def test_a_story_patch_without_world_id_leaves_it_alone(self, client, session):
         """`world_id` is deliberately outside the story's `allowed` set; a plain
@@ -449,7 +491,6 @@ class TestWorldOwnership:
         session.refresh(world)
         story = Story(title="s", world_id=world.id)
         session.add(story)
-        world.story_ids = [story.id]
         session.commit()
 
         assert client.put(f"/api/v2/stories/{story.id}", json={"title": "renamed"}).status_code == 200
@@ -457,32 +498,93 @@ class TestWorldOwnership:
         assert session.get(Story, story.id).world_id == world.id
         assert session.get(Story, story.id).title == "renamed"
 
-    def test_deleting_a_world_detaches_its_chats_and_stories(self, client, session):
+    def test_deleting_a_world_detaches_every_member_table(self, client, session):
+        """Not just chats and stories.
+
+        `detach_world` used to null two FKs and leave Character, Lorebook,
+        Location, Scenario and VoiceModel pointing at a world that no longer
+        existed — including the lorebooks and locations that are merged into
+        every prompt built for a chat in that world.
+        """
         world = World(name="W")
         session.add(world)
         session.commit()
         session.refresh(world)
         chat = Chat(name="c", chat_type="chat", world_id=world.id)
         story = Story(title="s", world_id=world.id)
-        session.add(chat)
-        session.add(story)
-        world.chat_ids = [chat.id]
-        world.story_ids = [story.id]
+        char = Character(name="Aria", world_id=world.id)
+        loc = Location(name="Cellar", world_id=world.id)
+        book = Lorebook(name="Book", world_id=world.id)
+        scenario = Scenario(name="Storm", prompt_template="p", world_id=world.id)
+        voice = VoiceModel(name="V", voice_profile="v", world_id=world.id)
+        session.add_all([chat, story, char, loc, book, scenario, voice])
         session.commit()
 
         assert client.delete(f"/api/v2/worlds/{world.id}").status_code == 200
         session.expire_all()
-        assert session.get(Chat, chat.id).world_id is None
-        assert session.get(Story, story.id).world_id is None
+        for entity, cls in ((chat, Chat), (story, Story), (char, Character),
+                            (loc, Location), (book, Lorebook),
+                            (scenario, Scenario), (voice, VoiceModel)):
+            assert session.get(cls, entity.id).world_id is None, cls.__name__
+
+    def test_deleting_a_member_stops_it_counting_in_the_world(self, client, session):
+        """The scrub the three unwritten columns never had."""
+        world = World(name="W")
+        session.add(world)
+        session.commit()
+        session.refresh(world)
+        book = Lorebook(name="Book", world_id=world.id)
+        session.add(book)
+        session.commit()
+
+        assert client.delete(f"/api/v2/lorebooks/{book.id}").status_code == 200
+        session.expire_all()
+        assert session.get(Lorebook, book.id) is None
 
     def test_the_world_scrub_branch_exists(self):
         """`scrub_entity_references` had no `kind == "world"` branch because
         nothing set `world_id` when it was written."""
         from services import reference_cleanup
 
-        assert "world" in reference_cleanup.scrub_entity_references.__code__.co_consts or True
         source = open(reference_cleanup.__file__).read()
         assert 'kind == "world"' in source
+
+    def test_membership_has_one_owner_module(self):
+        """Every WRITE of `world_id` is an assignment in `world_ownership.py`.
+
+        The failure this guards against is a second path appearing. The old bug
+        was not that `world_ownership.py` was wrong — it was that
+        `PUT /api/v2/worlds/{id}` accepted `chat_ids`/`story_ids` and wrote them
+        straight onto the world, bypassing it, so a world could list a member
+        the member did not belong to.
+
+        AST rather than grep, because `world_id` also appears in reads
+        (`Chat.world_id == wid`) and in local names (`world_id = ...`), and a
+        substring test would fail on the code it is supposed to protect.
+        """
+        import ast
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        offenders: list[str] = []
+        for path in sorted(root.rglob("*.py")):
+            rel = str(path.relative_to(root))
+            if rel.startswith(("tests/", ".venv/", "build/")) or "__pycache__" in rel:
+                continue
+            if rel == "services/world_ownership.py":
+                continue
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                # `something.world_id = value` — Exclude bare name assignments
+                # and every comparison (`==`, `!=`, `in`).
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if (
+                            isinstance(target, ast.Attribute)
+                            and target.attr == "world_id"
+                        ):
+                            offenders.append(f"{rel}:{node.lineno}")
+        assert not offenders, "a second writer for world_id: " + ", ".join(offenders)
 
 
 # ---------------------------------------------------------------------------

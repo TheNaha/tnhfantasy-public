@@ -1,0 +1,23 @@
+target-version = "py313"
+line-length = 120
+# Mirrors backend_v2/ruff.toml. `F` only — pyflakes — because that is the set
+# that catches real bugs here (F821 undefined name, F401 unused import, F811
+# redefined-while-unused) without turning a tree of deployed cloud artifacts into
+# a style debate nobody has agreed on.
+#
+# F401 is ON, and it is the reason the dead imports in the Modal apps went
+# unnoticed for as long as they did: `capture_stall_diagnostics` accepted two
+# parameters it never used, and `list_models_with_metadata_internal` accepted a
+# `compute_hashes` flag it discarded, both of which are invisible to a linter but
+# are the exact shape of drift item 21's runtime_config bug had.
+#
+# There is no per-file F401 exemption anywhere below, which is the point: the
+# Modal apps import provider_core names for use inside container-side functions
+# (the image is a different filesystem at deploy time, so "only used in a
+# function that runs remotely" still counts as a use to pyflakes), and a
+# side-effect-only import is better written as one.
+lint.select = ["F"]
+lint.per-file-ignores = {
+  # The package's own re-export surface.
+  "__init__.py" = ["F401"],
+}

@@ -586,6 +586,7 @@ def build_image_job_workflow(
     story_id: Optional[str] = None,
     chapter_id: Optional[str] = None,
     parent_job_id: Optional[str] = None,
+    branch_id: Optional[str] = None,
     extra_metadata: Optional[dict[str, Any]] = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     workflow = build_image_workflow(
@@ -630,6 +631,8 @@ def build_image_job_workflow(
         metadata["chapter_id"] = chapter_id
     if parent_job_id is not None:
         metadata["parent_job_id"] = parent_job_id
+    if branch_id is not None:
+        metadata["branch_id"] = branch_id
     if extra_metadata:
         metadata.update(extra_metadata)
 
@@ -701,83 +704,6 @@ def build_video_job_workflow(
         "type": "video"
     }
     
-    if chat_id is not None:
-        metadata["chat_id"] = chat_id
-    if character_id is not None:
-        metadata["character_id"] = character_id
-    if story_id is not None:
-        metadata["story_id"] = story_id
-    if chapter_id is not None:
-        metadata["chapter_id"] = chapter_id
-    if parent_job_id is not None:
-        metadata["parent_job_id"] = parent_job_id
-    if extra_metadata:
-        metadata.update(extra_metadata)
-
-    return workflow, metadata
-
-def build_tts_workflow(
-    text: str,
-    voice_profile: str | None = None,
-    voice_model_id: str | None = None,
-    speed: float = 1.0,
-    language: str | None = None,
-    client_id: str | None = None,
-    chat_id: str | None = None,
-    character_id: str | None = None,
-    story_id: str | None = None,
-    chapter_id: str | None = None,
-    parent_job_id: str | None = None,
-    extra_metadata: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """
-    Assemble a ComfyUI workflow payload for Text-to-Speech.
-    Supports XTTS v2 and Bark custom node setups on the worker.
-
-    If ``voice_model_id`` is provided, the caller should have already resolved
-    it to ``voice_profile`` / ``language`` / ``speed`` via the VoiceModel entity.
-    For backward compatibility, ``voice_profile`` is still accepted directly.
-    """
-    tts_node = {
-        "inputs": {
-            "text": text,
-            "voice": voice_profile or "default",
-            "speed": speed,
-        },
-        "class_type": "XTTS_v2",
-        "_meta": {"title": "XTTS Text-to-Speech"},
-    }
-    if language:
-        tts_node["inputs"]["language"] = language
-
-    save_node = {
-        "inputs": {
-            "filename_prefix": "tts_output",
-            "audio": ["3", 0],
-        },
-        "class_type": "SaveAudio",
-        "_meta": {"title": "Save Audio"},
-    }
-
-    workflow = {
-        "prompt": {
-            "3": tts_node,
-            "4": save_node,
-        },
-        "client_id": client_id,
-        "type": "tts",
-    }
-
-    metadata = {
-        "type": "tts",
-        "text": text,
-        "voice_profile": voice_profile,
-        "speed": speed,
-    }
-    if voice_model_id is not None:
-        metadata["voice_model_id"] = voice_model_id
-    if language is not None:
-        metadata["language"] = language
     if chat_id is not None:
         metadata["chat_id"] = chat_id
     if character_id is not None:

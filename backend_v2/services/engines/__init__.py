@@ -6,7 +6,12 @@ from services.engines.base import InProcessEngine
 from services.engines.modal_engine import ModalEngine
 from services.engines.beam_engine import BeamEngine
 from services.engines.direct_comfy_engine import DirectComfyEngine
-from services.engines.llm_engine import OpenAICompatLLMEngine, ModalVLLMEngine, AnthropicLLMEngine, GoogleLLMEngine
+from services.engines.llm_engine import (
+    AnthropicLLMEngine,
+    GoogleLLMEngine,
+    ModalLlamaCPPEngine,
+    OpenAICompatLLMEngine,
+)
 from services.engines.modal_tts_engine import ModalTTSEngine
 from services.engines.direct_comfy_engine import DirectTTSEngine
 from services.engines.worker_transport_engines import (
@@ -40,7 +45,7 @@ __all__ = [
     "OpenAICompatLLMEngine",
     "AnthropicLLMEngine",
     "GoogleLLMEngine",
-    "ModalVLLMEngine",
+    "ModalLlamaCPPEngine",
     "ModalTTSEngine",
     "DirectTTSEngine",
     "BeamLLMEngine",

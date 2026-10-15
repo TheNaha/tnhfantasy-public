@@ -138,7 +138,13 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
   `services/engines/base.py` (`InProcessEngine`, `translate_legacy_image_update`,
    `normalize_validation_result`, `EngineAuthError`, `MODEL_DIRECTORIES`). The `COMFY_USE_IN_PROCESS_ENGINES`
    gate and the containerized `provider_containers/` workers (plus the `--profile providers`
-   compose profile) were removed on 2026-10-08. Providers that live in a separate runtime
+   compose profile) were removed on 2026-10-08. The cloud-worker deploy sources those engines
+   name were deleted with them and restored on 2026-10-15 to `deployables/` (Modal image, Modal
+   TTS, Beam); see `docs/provider-architecture.md` for which tree runs where.
+- The Modal LLM provider is `modal_llm` (was `modal_vllm`, still accepted as an alias) and runs
+   llama.cpp, not vLLM: `deployables/modal/llm/app.py`, app `tnh-llm`, class `ChatLLM`.
+- Deploying a cloud worker is a host-side CLI operation: `bash scripts/deploy.sh <image|tts|llm|beam>`.
+   There is deliberately no deploy route. Providers that live in a separate runtime
    (remote ComfyUI, a hosted agent) connect via `external_worker` / `remote_agent/`.
 - `POST /inference` streams NDJSON progress lines, finishes with a success or error JSON payload.
 - Model directories: `models/checkpoints`, `models/loras`, `models/vae`, `models/controlnet`, `models/unet`, `models/clip`.

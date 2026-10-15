@@ -91,7 +91,7 @@ class TestTheMatrix:
 class TestTransportResolution:
     @pytest.mark.parametrize("provider_type,expected", [
         ("modal", "modal"),
-        ("modal_vllm", "modal"),
+        ("modal_llm", "modal"),
         ("modal_tts", "modal"),
         ("beam", "beam"),
         ("beam_llm", "beam"),
@@ -105,7 +105,7 @@ class TestTransportResolution:
         ("anthropic", "direct"),
         ("google", "direct"),
         # `modal_llm` is an alias now, and an alias must still answer "modal"
-        # rather than None — a row still carrying it is a modal_vllm row.
+        # rather than None — a row still carrying it is a modal_llm row.
         ("modal_llm", "modal"),
     ])
     def test_every_type_resolves(self, provider_type, expected):
@@ -121,7 +121,7 @@ class TestTransportResolution:
 class TestTypeResolutionCannotBeHijacked:
     """A provider that knows what it is keeps its identity.
 
-    The legacy substring rule ("vllm in the id means modal_vllm") rescued rows
+    The legacy substring rule ("vllm in the id means modal_llm") rescued rows
     written before `type` was reliable. With the new transports, a `beam_llm` or
     `remote_llm` row legitimately contains "vllm", so that rule can no longer be
     allowed to win.
@@ -139,12 +139,23 @@ class TestTypeResolutionCannotBeHijacked:
 
     def test_the_legacy_rescue_still_works_for_a_mistyped_row(self):
         """A row whose generic hosted type was a mis-typed Modal vLLM pod."""
-        assert resolve_provider_type("openai_compat", "vllm-pod") == "modal_vllm"
-        assert resolve_provider_type("", "vllm-pod") == "modal_vllm"
+        assert resolve_provider_type("openai_compat", "vllm-pod") == "modal_llm"
+        assert resolve_provider_type("", "vllm-pod") == "modal_llm"
 
     def test_modal_llm_is_one_type_not_two(self):
-        assert resolve_provider_type("modal_llm", "") == "modal_vllm"
-        assert "modal_llm" not in ENGINE_SPECS
+        """`modal_llm` is canonical and `modal_vllm` is the legacy spelling.
+
+        The direction was flipped on 2026-10-15. `modal_vllm` was canonical
+        while the engine still ran vLLM; it has been llama.cpp since
+        `deployables/modal/llm/app.py` was rewritten, so the type that names the runtime
+        honestly is the one in `ENGINE_SPECS`.
+        """
+        assert resolve_provider_type("modal_llm", "") == "modal_llm"
+        assert "modal_llm" in ENGINE_SPECS
+        assert "modal_vllm" not in ENGINE_SPECS
+        # Both spellings still resolve to the one canonical type, so a row
+        # written before the rename keeps working without a migration.
+        assert resolve_provider_type("modal_vllm", "") == "modal_llm"
 
 
 class TestProviderCategoryProperty:

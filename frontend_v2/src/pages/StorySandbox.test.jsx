@@ -58,6 +58,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useStoryAiAction: (...a) => mockStoryAiAction(...a),
     useRetryLastContinuation: () => ({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'job-1' }), isPending: false }),
     useUpdateStoryBeat: (...a) => mockUpdateStoryBeat(...a),
+    useSelectStoryBeatAlternate: () => ({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false }),
     useDeleteStoryBeat: (...a) => mockDeleteStoryBeat(...a),
     useChapterRevisions: () => ({ data: [], isLoading: false }),
     useCreateChapterRevision: () => ({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false }),

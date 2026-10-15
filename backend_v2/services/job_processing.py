@@ -12,7 +12,7 @@ from infrastructure.logging import get_logger
 from services.chat_utils import extract_first_text
 from services.image_processing import build_job_outputs, normalize_persisted_output
 from services.job_service import FAILURE_FINALIZATION
-from services.orchestrator_service import MAX_AGENTIC_DEPTH, get_max_agentic_depth
+from services.orchestrator_service import get_max_agentic_depth
 
 logger = get_logger("job_processing")
 
@@ -333,13 +333,42 @@ async def finalize_persisted_job_outputs(
                 # The consumer still runs when the event arrives, and skips on
                 # the source-job-id stamp both paths share, so this is not a
                 # second write.
-                if event_extra and event_extra.get("type") == "chat_reply":
-                    from services.world_integration_service import _handle_chat_reply
+                #
+                # chat_reply, narrator and chat_image all take the pre-completion
+                # path. The first two are LLM work whose output is text; the
+                # third is what makes an image recoverable at all — without it,
+                # an evicted JOB_COMPLETED for an illustration left a paid job
+                # marked COMPLETED, images in `assets` and the gallery, and
+                # nothing in the conversation.
+                if event_extra and event_extra.get("type") in _PRECOMPLETION_PERSISTED_TYPES:
+                    from services.world_integration_service import _EVENT_DISPATCH
 
-                    await _handle_chat_reply(
+                    job_metadata = job.metadata_ or {}
+                    # Which provider and model actually produced this, stamped
+                    # onto the exchange record before the handler copies it onto
+                    # the message row.
+                    #
+                    # The trace is built at send time and the provider is not
+                    # known then — `create_load_balancer` picks it. So "why did
+                    # this reply differ from that one" was unanswerable from the
+                    # message alone: the prompts were comparable and the
+                    # assignment was not recorded anywhere. This is the only
+                    # point both answers are in scope.
+                    trace = job_metadata.get("context_trace")
+                    if isinstance(trace, dict):
+                        workflow = job.workflow or {}
+                        trace["execution"] = {
+                            "provider_id": provider_id,
+                            "model": workflow.get("model"),
+                            # The job's own task type, which for a costed tool is
+                            # not the same as the exchange kind.
+                            "task_type": job.task_type,
+                        }
+
+                    await _EVENT_DISPATCH[event_extra["type"]](
                         {
                             "id": job_id,
-                            "metadata": job.metadata_ or {},
+                            "metadata": job_metadata,
                             "outputs": outputs,
                             "workflow": job.workflow or {},
                         },
@@ -577,11 +606,17 @@ async def _finalize_llm_job(
         is_story_job = job_type == "story_continue" and bool(story_id)
         if (job_type == "chat_reply" or is_story_job) and assistant_output.get("tool_calls"):
             metadata = job.metadata_ or {}
-            max_depth = (
-                get_max_agentic_depth(metadata=metadata)
-                if is_story_job
-                else MAX_AGENTIC_DEPTH
-            )
+            # One resolver for both branches.
+            #
+            # This was `get_max_agentic_depth(metadata=...)` for a story job and
+            # the bare `MAX_AGENTIC_DEPTH` literal for a chat — which is the same
+            # constant the resolver falls back to. So a chat whose
+            # `max_agentic_depth` said 8 was capped at 5, and the only thing that
+            # decided which cap applied was which branch of this ternary the job
+            # happened to take. The chat routes stamp the cap onto the job's
+            # metadata (`budget_metadata_for`, and the depth beside it), so the
+            # metadata path is the one that carries the user's setting.
+            max_depth = get_max_agentic_depth(metadata=metadata)
             if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < max_depth:
                 allowed_tools = {
                     t.get("function", {}).get("name")
@@ -731,6 +766,71 @@ _TTS_FETCH_TIMEOUT_SECONDS = 120.0
 
 def _is_audio_path(value: str) -> bool:
     return str(value).lower().endswith(_AUDIO_OUTPUT_SUFFIXES)
+
+
+# Event kinds whose artefact is written BEFORE the job goes COMPLETED, rather
+# than by the event bus consumer that JOB_COMPLETED wakes.
+#
+# The consumer is downstream of a fire-and-forget task and a 10 000-deep buffer
+# that evicts, so "COMPLETED in the DB" and "written to the chat" are separate
+# facts. Writing here makes the invariant hold at the point of completion: a job
+# that says COMPLETED has its artefact.
+#
+# Three, not one. It used to be only `chat_reply`, which is why a paid
+# narration or illustration could disappear the same way — same queue, same
+# eviction, same nothing-recorded-the-gap outcome.
+#
+# Every handler here is called twice on the happy path: once by
+# `complete_when_ready` below, and again by the event bus consumer when
+# `complete_job` emits JOB_COMPLETED. That is not accidental and it is not
+# avoided — the pre-completion call is what makes "COMPLETED" mean the artefact
+# exists, and the event-bus call is the backstop for anything the pre-completion
+# path missed. `_write_once` in `world_integration_service` guards all three on
+# the shared `source_job_id` stamp, so the second call is a no-op.
+#
+# Which all three of them must do, not just check the stamp is written. This
+# comment used to claim "every handler here stamps source_job_id and therefore
+# no-ops" while two of the three stamped a value nothing read — narrator and
+# chat_image were given the pre-completion path without the guard, so every
+# illustration wrote two sets of IMAGE messages and every narration two NARRATOR
+# messages. The reason that class survives a code review is that the guard is
+# invisible: the output looks right until you count.
+#
+# `chat_tts` is deliberately absent: it mutates an existing message rather than
+# inserting one, and the message is already durable, so the loss is a missing
+# `audio_path` rather than a missing row.
+#
+# `story_image` and `story_tts` used to be here on the grounds that they were
+# idempotent WITHOUT a stamp: `_handle_story_image` skips paths already in
+# `chapter.image_paths` and `_handle_story_tts` overwrites the trailing tts beat.
+# True, but it is only half the story — the reconciler could not SEE them either,
+# so both were reported as lost artefacts on every sweep, forever, and re-driven
+# each time. Both now stamp, which is what makes idempotence detectable rather
+# than merely harmless.
+#
+# `story_continue` DOES need the stamp — it appends — and has it, on the beat.
+# `chat_tts` mutates a message rather than inserting one, and stamps with its own
+# key so it does not clobber the reply stamp already on that row.
+#
+# `impersonation` is deliberately NOT here. It chains a `chat_reply` job, and the
+# chained job is the expensive half; writing the impersonation before the job goes
+# COMPLETED would spend that reply on every delivery, because the guard that
+# prevents it lives inside the handler and cannot short-circuit an enqueue that
+# has already happened. Its recoverability comes from the reconciler instead.
+_PRECOMPLETION_PERSISTED_TYPES = frozenset(
+    {
+        "chat_reply",
+        "narrator",
+        "chat_image",
+        "story_continue",
+        "story_image",
+        "story_tts",
+        # A TTS artefact is a mutation of a durable message rather than an
+        # insert, but it is now stamped, so it is as safe to write early as the
+        # rest: the event bus redelivery finds the stamp and no-ops.
+        "chat_tts",
+    }
+)
 
 
 def _safe_output_subdir(subfolder: str) -> str:
@@ -887,6 +987,45 @@ def _write_tts_output(path: str, data: bytes) -> None:
         raise
 
 
+def artifact_event_type(
+    metadata: dict[str, Any] | None, image_path: str | None
+) -> str | None:
+    """The event kind a completed image/TTS job dispatches to, or None.
+
+    One implementation, read by `_finalize_image_job` (which builds the event)
+    and by `world_integration_service` (which has to predict the same event when
+    it replays a lost one). A second copy of this table is exactly how a replayed
+    job ends up in the wrong handler — which is the failure the reconciler exists
+    to repair, so it must not be able to cause it.
+
+    The decision order is load-bearing:
+      * voice_preview wins outright: it is the only kind that carries a voice_id,
+        and it was being overridden by the story branch below.
+      * a chat-scoped job is TTS when it produced audio, else an image.
+      * the story branch comes LAST and overwrites, because a chapter narration
+        is a TTS job and a chapter illustration is an image job, and the chapter
+        is the narrower scope. Hardcoding "story_image" here is what sent every
+        story narration to the image handler.
+    """
+    metadata = metadata or {}
+    if not image_path:
+        return None
+
+    if metadata.get("type") == "voice_preview" and metadata.get("voice_id"):
+        return "voice_preview"
+
+    chat_id = metadata.get("chat_id")
+    story_id = metadata.get("story_id")
+    chapter_id = metadata.get("chapter_id")
+    is_audio = _is_audio_path(image_path)
+
+    if story_id and chapter_id:
+        return "story_tts" if (metadata.get("source") == "story_tts" or is_audio) else "story_image"
+    if chat_id:
+        return "chat_tts" if (metadata.get("type") == "chat_tts" or is_audio) else "chat_image"
+    return None
+
+
 async def _finalize_image_job(
     *,
     job,
@@ -906,10 +1045,10 @@ async def _finalize_image_job(
             if image_path:
                 break
 
+    event_type = artifact_event_type(metadata, image_path)
     if image_path:
         chat_id = metadata.get("chat_id")
-        is_audio = _is_audio_path(image_path)
-        if metadata.get("type") == "voice_preview" and metadata.get("voice_id"):
+        if event_type == "voice_preview":
             event_extra = {
                 "type": "voice_preview",
                 "voice_id": metadata.get("voice_id"),
@@ -917,7 +1056,7 @@ async def _finalize_image_job(
             }
         elif chat_id:
             event_extra = {
-                "type": "chat_tts" if (metadata.get("type") == "chat_tts" or is_audio) else "chat_image",
+                "type": event_type,
                 "chat_id": chat_id,
                 "image_path": image_path,
                 "metadata": metadata,
@@ -931,10 +1070,9 @@ async def _finalize_image_job(
             # "story_image", which overwrote the "chat_tts" decided just above
             # and sent every story narration to the image handler, so the audio
             # was never attached to the chapter's beat list.
-            is_story_tts = metadata.get("source") == "story_tts" or is_audio
             event_extra = {
                 **(event_extra or {}),
-                "type": "story_tts" if is_story_tts else "story_image",
+                "type": event_type,
                 "story_id": story_id,
                 "chapter_id": chapter_id,
                 "image_path": image_path,

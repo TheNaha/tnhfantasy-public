@@ -83,7 +83,7 @@ def _upstream():
 
         return SimpleNamespace(get=get)
 
-    provider = SimpleNamespace(id="p1", type="remote_comfy", container_config={})
+    provider = SimpleNamespace(id="p1", type="remote_comfy")
     service = SimpleNamespace(get_provider=AsyncMock(return_value=provider))
     runtime = SimpleNamespace(worker_url="http://worker.invalid")
     with (
@@ -124,7 +124,7 @@ class TestObjectInfoCache:
         assert len(upstream) == 2, len(upstream)
 
     def test_a_failure_is_not_cached(self, client):
-        provider = SimpleNamespace(id="p1", type="remote_comfy", container_config={})
+        provider = SimpleNamespace(id="p1", type="remote_comfy")
 
         async def get(url, timeout=None):
             raise TimeoutError("upstream hung")
@@ -155,7 +155,7 @@ class TestObjectInfoCache:
     async def test_a_provider_timeout_is_still_a_timeout_error(self, client):
         import httpx
 
-        provider = SimpleNamespace(id="p1", type="remote_comfy", container_config={})
+        provider = SimpleNamespace(id="p1", type="remote_comfy")
 
         async def get(url, timeout=None):
             raise httpx.TimeoutException("too slow")
@@ -204,7 +204,7 @@ class TestObjectInfoCache:
 
             return SimpleNamespace(get=get)
 
-        provider = SimpleNamespace(id="p1", type="remote_comfy", container_config={})
+        provider = SimpleNamespace(id="p1", type="remote_comfy")
         with (
             patch.object(
                 nodes_routes,

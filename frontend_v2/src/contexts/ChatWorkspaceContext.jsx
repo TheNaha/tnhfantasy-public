@@ -79,6 +79,10 @@ export function ChatWorkspaceProvider({ children }) {
     const [isGeneratingScene, setIsGeneratingScene] = useState(false);
     const [sceneJobId, setSceneJobId] = useState(null);
     const sceneJobIdRef = useRef(null);
+    // The watchdog for `handleGenerateScene`. Declared beside `sceneJobId` and
+    // cleared in the same effect that clears `suggestSafetyTimerRef`, so a
+    // pending timer cannot fire after unmount.
+    const sceneSafetyTimerRef = useRef(null);
     const [pendingAttachment, setPendingAttachment] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
     const [agenticMode, setAgenticMode] = useState(true);
@@ -195,7 +199,9 @@ export function ChatWorkspaceProvider({ children }) {
         return () => {
             if (suggestSafetyTimerRef.current) {
                 clearTimeout(suggestSafetyTimerRef.current);
-                suggestSafetyTimerRef.current = null;
+            }
+            if (sceneSafetyTimerRef.current) {
+                clearTimeout(sceneSafetyTimerRef.current);
             }
         };
     }, []);
@@ -645,7 +651,30 @@ export function ChatWorkspaceProvider({ children }) {
             if (data?.job_id) {
                 sceneJobIdRef.current = data.job_id;
                 setSceneJobId(data.job_id);
-                setStreamingJob(queryClient, data.job_id, { text: 'Generating scene image...', status: 'running', chatId: activeChatId, type: 'roleplay', taskType: 'llm' });
+                // Safety net, matching the one `/suggest` has had since it was
+                // written. Every way this wait can end without a terminal event
+                // for the tracked id leaves `isGeneratingScene` true and the
+                // button disabled until a full reload: the events are polled, so
+                // a job whose id has already been consumed by a previous poll
+                // cycle never matches, and the event bus drops rather than
+                // queues. Two minutes is generous for a prompt-writing job, and
+                // a disabled button is not worth an unbounded hang.
+                //
+                // The previous timer is cleared first, so generating a scene
+                // twice inside the window does not leave the first one orphaned
+                // to fire after the user has moved on.
+                if (sceneSafetyTimerRef.current) {
+                    clearTimeout(sceneSafetyTimerRef.current);
+                }
+                sceneSafetyTimerRef.current = window.setTimeout(() => {
+                    if (sceneJobIdRef.current !== data.job_id) return;
+                    sceneJobIdRef.current = null;
+                    setSceneJobId(null);
+                    setIsGeneratingScene(false);
+                    toast('Scene generation did not report back. Check Jobs before retrying.', { icon: '⚠️', duration: 6000 });
+                }, 120000);
+            } else {
+                setIsGeneratingScene(false);
             }
         } catch {
             toast.error('Failed to generate scene');
@@ -657,13 +686,17 @@ export function ChatWorkspaceProvider({ children }) {
         if (!activeChatId || illustrateMutation.isPending) return;
         const prompt = message.trim();
         try {
-            await illustrateMutation.mutateAsync({ chatId: activeChatId, imagePrompt: prompt });
+            await illustrateMutation.mutateAsync({
+                chatId: activeChatId,
+                imagePrompt: prompt,
+                branchId: activeBranch,
+            });
             if (prompt) setMessage('');
             toast.success('Illustration queued...', { icon: '🖼️' });
         } catch {
             toast.error('Failed to start illustration');
         }
-    }, [activeChatId, message, illustrateMutation]);
+    }, [activeChatId, activeBranch, message, illustrateMutation]);
 
     const handleSaveImageToCollection = useCallback(async (collectionId, path) => {
         if (!collectionId || !path) return;
@@ -936,14 +969,18 @@ export function ChatWorkspaceProvider({ children }) {
             const msg = messages.find(m => m.id === msgId);
             const res = await illustrateMutation.mutateAsync({
                 chatId: activeChatId,
-                imagePrompt: msg?.content || ''
+                imagePrompt: msg?.content || '',
+                // The thread the message lives on, NOT the thread currently being
+                // read. Illustrating a message from another fork files the image on
+                // that message's thread, where the user is looking.
+                branchId: msg?.branch_id || activeBranch,
             });
             if (res?.job_id) {
                 setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'image' });
                 toast.success('Illustration started', { icon: '✨' });
             }
         } catch { toast.error('Failed to start illustration'); }
-    }, [activeChatId, messages, illustrateMutation, queryClient]);
+    }, [activeChatId, activeBranch, messages, illustrateMutation, queryClient]);
 
     const handleDeleteMessage = useCallback(async (msgId) => {
         try {

@@ -14,8 +14,21 @@ from sqlmodel import select
 from core.entities import ACTIVE_JOB_STATUSES, Character, Chat, Job, JobStatus, Message
 from infrastructure.logging import get_logger
 from services.chat_utils import resolve_context_tokens as _resolve_context_tokens
-
 logger = get_logger("idle_simulation")
+
+
+def _idle_sim_model(chat, session) -> str:
+    """The model an idle reply for this chat should run on.
+
+    Same authority as every `chats.py` reply path: the per-chat pin first, then
+    the rp/util router, then the default. It used to be
+    `chat.llm_model or get_default_llm_model()`, which skipped the role router
+    entirely — so an idle reply and a normal reply could resolve to two
+    different models in the same chat.
+    """
+    from services.llm_config import model_for_kind
+
+    return model_for_kind("chat_reply", chat.llm_model, session)
 
 IDLE_SIM_ACTIVITY_AGE_MINUTES = 30
 IDLE_SIM_IN_FLIGHT_LOOKBACK_MINUTES = 120
@@ -69,7 +82,6 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
     from services.context_builder import build_chat_context_async
     from services.job_queue import queue_manager
     from services.job_service import JobService
-    from services.llm_config import get_default_llm_model
     from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
 
     spawned = 0
@@ -187,7 +199,7 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
                 chat_id=chat.id,
                 character_id=chat.character_id,
                 system_prompt=system_prompt or None,
-                model=chat.llm_model or get_default_llm_model(),
+                model=_idle_sim_model(chat, session),
                 type_="chat_reply",
                 source="idle_simulation",
                 # Honour the chat's own sampler settings. Every other

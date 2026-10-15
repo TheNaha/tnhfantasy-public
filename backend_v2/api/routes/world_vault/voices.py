@@ -5,17 +5,15 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import (
-    get_job_service,
-    get_queue_manager,
     get_session,
     get_voice_model_repo,
 )
 from infrastructure.repositories.voice_model_repo import VoiceModelRepository
 from core.entities import VoiceModel
 from core.exceptions import NotFoundError, ValidationError
-from services.job_service import JobService
-from services.job_queue import QueueManager
+from services.job_submission_service import submit_tts_job
 from services.reference_cleanup import scrub_entity_references
+from services.world_ownership import apply_world_id, require_world
 
 router = APIRouter()
 
@@ -36,6 +34,10 @@ class VoiceModelUpdate(BaseModel):
     language: str | None = None
     preview_text: str | None = None
     character_id: str | None = None
+    # Which World this entity belongs to. Ownership of record lives on the
+    # member, not in an array on the `worlds` row — see `services/
+    # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.
+    world_id: str | None = None
 
 
 @router.get("")
@@ -66,10 +68,15 @@ class VoiceModelCreate(BaseModel):
     language: str | None = None
     preview_text: str | None = None
     character_id: str | None = None
+    # Which World this entity belongs to. Ownership of record lives on the
+    # member, not in an array on the `worlds` row — see `services/
+    # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.
+    world_id: str | None = None
 
 
 @router.post("")
 def create_voice(payload: VoiceModelCreate, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
+    require_world(session, payload.world_id)
     voice = VoiceModel(**payload.model_dump())
     voice.created_at = datetime.now(timezone.utc)
     voice.updated_at = voice.created_at
@@ -94,6 +101,8 @@ def update_voice(voice_id: str, update_data: VoiceModelUpdate, session: Session 
         raise NotFoundError("VoiceModel", voice_id)
 
     update_dict = update_data.model_dump(exclude_unset=True)
+    apply_world_id(session, voice, update_dict)
+    update_dict.pop("world_id", None)
     for key, value in update_dict.items():
         setattr(voice, key, value)
 
@@ -111,6 +120,8 @@ def patch_voice(voice_id: str, update_data: VoiceModelUpdate, session: Session =
         raise NotFoundError("VoiceModel", voice_id)
 
     update_dict = update_data.model_dump(exclude_unset=True)
+    apply_world_id(session, voice, update_dict)
+    update_dict.pop("world_id", None)
     update_dict = {k: v for k, v in update_dict.items() if v is not None}
     for key, value in update_dict.items():
         setattr(voice, key, value)
@@ -138,8 +149,6 @@ async def get_voice_preview(
     voice_id: str,
     session: Session = Depends(get_session),
     voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo),
-    job_service: JobService = Depends(get_job_service),
-    queue_manager: QueueManager = Depends(get_queue_manager),
 ):
     """Queue a real TTS job that synthesizes the voice model's preview text.
 
@@ -173,12 +182,11 @@ async def get_voice_preview(
     if voice.character_id:
         metadata["character_id"] = voice.character_id
 
-    job = await job_service.create_job(
-        task_type="tts",
-        workflow=workflow,
-        metadata=metadata,
+    job = await submit_tts_job(
+        session,
+        workflow,
+        metadata,
     )
-    await queue_manager.enqueue(job.id, task_type="tts")
 
     return {"voice_id": voice.id, "job_id": job.id}
 
@@ -229,8 +237,6 @@ class VoiceDesignResponse(BaseModel):
 async def design_voices(
     req: VoiceDesignRequest,
     session: Session = Depends(get_session),
-    job_service: JobService = Depends(get_job_service),
-    queue_manager: QueueManager = Depends(get_queue_manager),
 ):
     """Design a batch of voices from natural-language descriptions, in ONE job.
 
@@ -270,17 +276,11 @@ async def design_voices(
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
 
-    job = await job_service.create_job(
-        task_type="tts",
-        workflow=workflow,
-        metadata=metadata,
-    )
-    # NOT create_and_enqueue: the TTS app is its own Modal deployment, addressed
-    # by its own app name, so the generic enqueue path (which stamps
-    # `enqueued_at` and lets the shared container queue pick it up) is right, but
-    # the task type must be `tts` so the load balancer only considers providers
-    # whose capabilities include it.
-    await queue_manager.enqueue(job.id, task_type="tts")
+    # The TTS app is its own Modal deployment, addressed by its own app name, so
+    # the shared submission path is right — it stamps `enqueued_at` and lets the
+    # shared queue claim it — but the task type stays `tts` so the load balancer
+    # only considers providers whose capabilities include it.
+    job = await submit_tts_job(session, workflow, metadata)
 
     return VoiceDesignResponse(
         job_id=job.id,
@@ -301,10 +301,15 @@ async def speak(
     req: VoiceSpeakRequest,
     session: Session = Depends(get_session),
     voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo),
-    job_service: JobService = Depends(get_job_service),
-    queue_manager: QueueManager = Depends(get_queue_manager),
 ):
-    """Speak text in an existing voice. This is what narration uses."""
+    """Speak text in an existing voice.
+
+    NOT what narration uses, whatever this docstring used to say. Chat and
+    chapter narration build their own `build_voice_speak_workflow` graph inline
+    so the output path carries the chat/chapter ids (`chats.py`,
+    `stories.py`); this endpoint is a standalone voice audition. There is no
+    frontend caller, and it exists for API users and tests.
+    """
     from services.tts_workflow_builder import _require_tts_capable, build_voice_speak_workflow
 
     _require_tts_capable(session)
@@ -336,6 +341,5 @@ async def speak(
         if voice.character_id:
             metadata["character_id"] = voice.character_id
 
-    job = await job_service.create_job(task_type="tts", workflow=workflow, metadata=metadata)
-    await queue_manager.enqueue(job.id, task_type="tts")
+    job = await submit_tts_job(session, workflow, metadata)
     return {"job_id": job.id, "voice_id": voice.id if voice else None}

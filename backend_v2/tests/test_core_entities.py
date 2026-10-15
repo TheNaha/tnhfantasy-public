@@ -78,7 +78,6 @@ def test_provider_defaults():
     assert provider.priority == 1
     assert provider.credentials == {}
     assert provider.config == {}
-    assert provider.container_config is None
 
 
 

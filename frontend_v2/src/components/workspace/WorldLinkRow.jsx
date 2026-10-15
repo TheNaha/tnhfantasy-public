@@ -5,6 +5,16 @@ import { QueryErrorState } from '../common/QueryState';
 
 const countLabel = (n, singular, plural = `${singular}s`) => `${n} ${n === 1 ? singular : plural}`;
 
+// The three things a world contributes beyond its description, and the label the
+// `/api/v2/worlds` list puts in `counts` for each. `counts` is one grouped scan
+// per member table rather than a column on the world row, because membership is
+// `member.world_id`.
+const CONTRIBUTIONS = [
+    ['Lorebook', 'lorebook'],
+    ['Location', 'location'],
+    ['Scenario', 'scenario'],
+];
+
 /**
  * The World a chat or a story belongs to, and what that world contributes.
  *
@@ -16,20 +26,19 @@ const countLabel = (n, singular, plural = `${singular}s`) => `${n} ${n === 1 ? s
  * also answers the question grouping exists to answer — what does picking this
  * actually add to the prompt.
  *
- * The counts come off the world row itself (`lorebook_ids`, `location_ids`,
- * `scenario_ids`), which is what the prompt assembly reads. They are the
- * world's *index*, not ownership of record, so a count of 0 is honest: the
- * world contributes its description and nothing else.
+ * The counts come from the world's `counts` on the list response, which derives
+ * them from `member.world_id`. They are the ownership of record, so a count of
+ * 0 is honest: the world contributes its description and nothing else.
  */
 export default function WorldLinkRow({ worldId, worlds = [], onChange, testId = 'world-link-row', queryErrors = {} }) {
     const world = worlds.find(w => w?.id === worldId) || null;
     const worldsError = queryErrors.worlds;
 
-    const contributions = world ? [
-        (world.lorebook_ids || []).length && countLabel(world.lorebook_ids.length, 'lorebook'),
-        (world.location_ids || []).length && countLabel(world.location_ids.length, 'location'),
-        (world.scenario_ids || []).length && countLabel(world.scenario_ids.length, 'scenario'),
-    ].filter(Boolean) : [];
+    const contributions = world ? CONTRIBUTIONS
+        .map(([key, label]) => [world.counts?.[key] || 0, label])
+        .filter(([n]) => n > 0)
+        .map(([n, label]) => countLabel(n, label))
+    : [];
 
     return (
         <div className="glass-panel p-4 rounded-xl border border-white/5" data-testid={testId}>

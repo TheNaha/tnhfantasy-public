@@ -55,8 +55,9 @@ from pathlib import Path
 import pytest
 
 from api.main import app
+from repo_paths import require_repo_root
 
-E2E_DIR = Path(__file__).resolve().parents[2] / "frontend_v2" / "e2e"
+E2E_DIR = require_repo_root("frontend_v2/e2e") / "frontend_v2" / "e2e"
 
 # The harness helpers that take a path, and the HTTP method they issue. The
 # method is not asserted — only that *some* operation exists at the path — but

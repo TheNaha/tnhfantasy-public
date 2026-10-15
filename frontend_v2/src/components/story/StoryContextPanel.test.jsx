@@ -17,8 +17,9 @@ vi.mock('./StoryOutlinePanel', () => ({ default: () => <div data-testid="outline
 import StoryContextPanel from './StoryContextPanel';
 
 const WORLDS = [
-    { id: 'w-1', name: 'Emberfall', description: 'A city inside a volcano.', lorebook_ids: ['lb-1'], location_ids: ['loc-1'], scenario_ids: ['sc-9'] },
-    { id: 'w-2', name: 'Hollow Marsh', description: '', lorebook_ids: [], location_ids: [], scenario_ids: [] },
+    // `counts` from the /api/v2/worlds list, derived from `member.world_id`.
+    { id: 'w-1', name: 'Emberfall', description: 'A city inside a volcano.', counts: { Lorebook: 1, Location: 1, Scenario: 1, Character: 0, Chat: 0, Story: 0, VoiceModel: 0 } },
+    { id: 'w-2', name: 'Hollow Marsh', description: '', counts: { Lorebook: 0, Location: 0, Scenario: 0, Character: 0, Chat: 0, Story: 0, VoiceModel: 0 } },
 ];
 
 const SCENARIOS = [

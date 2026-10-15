@@ -105,6 +105,28 @@ DEFAULT_CONFIG = {
         "reconciliation_interval": 120
     },
 
+    # How a stored chat message becomes an LLM turn. See
+    # `services.context_builder.llm_turn_for` for why these exist as settings
+    # rather than as code: the mapping is what decides whether the model can
+    # tell a character reply from a narration from an image, and every chat's
+    # prompt is built from it.
+    "roleplay": {
+        # Name each speaking turn. In a single-character chat the character's
+        # name is already the whole subject of the system prompt, so the prefix
+        # is noise; with more than one participant it is the only thing
+        # distinguishing one `assistant` turn from the next.
+        "label_speakers": True,
+        # A narrator turn is NOT a character turn and NOT a system instruction.
+        # It used to be sent as `role: "system"`, which on a provider that
+        # concatenates every system message into the system prompt rips the
+        # narration out of its place in the dialogue and appends it to the end
+        # of the instructions, unmarked.
+        "narrator_prefix": "[Narration]",
+        # An image turn carries no text the model asked for. Labelled and kept
+        # in position, so the model knows an illustration happened where it
+        # happened rather than not at all.
+        "image_prefix": "[Scene]",
+    },
     "downloads": {
         "chunk_size": 8192,
         "auto_remove_delay": 5
@@ -845,6 +867,18 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError("image_processing.blurhash_resize_max must be > 0")
         _check_bool("image_processing", "output_date_hierarchy", img.get("output_date_hierarchy"))
         _check_bool("image_processing", "embed_metadata_in_png", img.get("embed_metadata_in_png"))
+        # See `get_roleplay_context_config`. Validated here so a typo in
+        # config.json is a warning at load rather than a prompt that quietly
+        # keeps the behaviour the user was trying to turn off.
+        #
+        # Guarded on presence, because `_section_body` is `config[section]` and
+        # this runs for EVERY settings write — so an update that touches only
+        # `image_processing` raised KeyError: 'roleplay' and 500'd the request.
+        if "roleplay" in config:
+            rp = _section_body(config, "roleplay")
+            _check_bool("roleplay", "label_speakers", rp.get("label_speakers"))
+            _check_str("roleplay", "narrator_prefix", rp.get("narrator_prefix"), allow_blank=True)
+            _check_str("roleplay", "image_prefix", rp.get("image_prefix"), allow_blank=True)
         _check_str("image_processing", "thumbnail_format", img.get("thumbnail_format"))
         _check_str("image_processing", "thumbnail_directory", img.get("thumbnail_directory"))
         if "thumbnail_sizes" in img and not isinstance(img["thumbnail_sizes"], dict):
@@ -1171,3 +1205,32 @@ def get_output_date_hierarchy() -> bool:
 def get_embed_metadata_in_png() -> bool:
     """Get whether to embed metadata directly in PNG files."""
     return get_config()["image_processing"].get("embed_metadata_in_png", True)
+
+
+def get_roleplay_context_config() -> dict:
+    """How a stored chat message is mapped onto an LLM turn.
+
+    `label_speakers`, `narrator_prefix` and `image_prefix` — see the `roleplay`
+    block in DEFAULT_CONFIG.
+
+    Defensive about types rather than trusting `_validate` alone: a file config
+    that fails validation is discarded whole, but a partially-merged one is not,
+    and a non-string prefix would be interpolated straight into a prompt. A
+    boolean that is not a bool falls back to True, because a string like
+    "false" would otherwise be truthy and the setting could never be turned off.
+    """
+    body = get_config().get("roleplay")
+    body = body if isinstance(body, dict) else {}
+    label = body.get("label_speakers")
+    if not isinstance(label, bool):
+        label = True
+
+    def _prefix(key: str, default: str) -> str:
+        value = body.get(key)
+        return value if isinstance(value, str) else default
+
+    return {
+        "label_speakers": label,
+        "narrator_prefix": _prefix("narrator_prefix", "[Narration]"),
+        "image_prefix": _prefix("image_prefix", "[Scene]"),
+    }

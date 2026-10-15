@@ -14,7 +14,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from core.entities import JobStatus, Message, MessageRole
+from core.entities import JobStatus, Message
 from infrastructure.logging import get_logger
 from services.chat_utils import insert_world_state_marker
 from services.job_service import JobService
@@ -23,6 +23,55 @@ from services.model_availability_service import ModelAvailabilityService
 logger = get_logger("orchestrator")
 
 MAX_AGENTIC_DEPTH = 5
+
+# How many images one exchange may spend, when the chat/story sets no limit.
+#
+# The depth cap above counts LLM hops; a hop is cheap. An image is not, and
+# `generate_image` was callable once per hop with nothing else in the way, so a
+# single reply could chain five paid image jobs while the user asked for one.
+# The cap that matters for cost is this one, not the hop count — and a user who
+# turns agentic images ON is asking for "illustrate this", not "illustrate every
+# beat".
+# The cost caps.
+#
+# `MAX_AGENTIC_DEPTH` above bounds how many times the model may THINK. These
+# bound what it may SPEND, which is a different question and was the one nobody
+# asked: `generate_image` was callable once per hop with nothing in the way, so a
+# single reply could chain `max_depth` paid image jobs while the user asked for
+# one.
+#
+# `narrate_scene` is here for the same reason and it was the worse of the two.
+# An image is a side effect the user may have wanted; a narration is always a
+# whole extra LLM completion, it is the one tool the model is most likely to
+# reach for, and it had no cap at all — so the single most expensive
+# discretionary decision in the loop was also the only unbounded one.
+MAX_AGENTIC_IMAGES_PER_EXCHANGE = 2
+MAX_AGENTIC_NARRATIONS_PER_EXCHANGE = 1
+
+IMAGE_TOOL_NAME = "generate_image"
+NARRATE_TOOL_NAME = "narrate_scene"
+
+# tool name -> (counter key in job metadata, per-entity column, global default).
+#
+# A table rather than two bespoke functions, because the next tool with a cost
+# should be a row here and not another copy of the gate. `update_story_rewrites`
+# and the chat/story routes read the column names from it.
+TOOL_BUDGETS: dict[str, tuple[str, str, int]] = {
+    IMAGE_TOOL_NAME: (
+        "agentic_image_jobs",
+        "max_agentic_images",
+        MAX_AGENTIC_IMAGES_PER_EXCHANGE,
+    ),
+    NARRATE_TOOL_NAME: (
+        "agentic_narration_jobs",
+        "max_agentic_narrations",
+        MAX_AGENTIC_NARRATIONS_PER_EXCHANGE,
+    ),
+}
+
+# Every tool that costs money when called. Used by the callers that stamp a
+# chat's or story's settings onto the job, so a new row there is picked up.
+COSTLY_TOOL_NAMES = frozenset(TOOL_BUDGETS)
 
 # Top-level guard so a single misbehaving tool whose internal call does not
 # enforce its own timeout cannot hang the agentic loop indefinitely. Inner
@@ -267,9 +316,146 @@ def get_max_agentic_depth(chat_or_story=None, metadata: dict[str, Any] | None = 
     return MAX_AGENTIC_DEPTH
 
 
+def budget_metadata_for(chat_or_story) -> dict[str, int]:
+    """A member's costed-tool caps, as `{column: value}`, ready to stamp onto a job.
+
+    One place, read from `TOOL_BUDGETS`, because these were being written out by
+    hand at four sites — three chat routes and one story route — and a new
+    costed tool would have needed all four to know. It did not: the image budget
+    was added to the chat routes and the story route kept only the depth cap, so
+    a story's autonomous illustration ran at the global default no matter what
+    the panel said.
+
+    Only columns that are actually SET are included. An absent column reads as
+    the global default downstream, whereas an explicit `None` would be recorded
+    as "deliberately unset" and shadow the default.
+    """
+    if chat_or_story is None:
+        return {}
+    stamped: dict[str, int] = {}
+    for _name, (_counter, column, _default) in TOOL_BUDGETS.items():
+        value = getattr(chat_or_story, column, None)
+        if value is not None:
+            stamped[column] = int(value)
+    return stamped
+
+
 def can_continue_agentic(metadata: dict[str, Any] | None, chat_or_story=None) -> bool:
     """Whether the orchestrator should process another iteration."""
     return get_agentic_depth(metadata) < get_max_agentic_depth(chat_or_story, metadata)
+
+
+def _budget_for(tool_name: str) -> tuple[str, str, int]:
+    """The `(counter key, column, default)` for a costed tool.
+
+    An unknown tool name is a bug in the caller, and returning
+    `("","",0)` rather than raising is deliberate: the gate that reads this runs
+    on every hop of every agentic reply, and a KeyError there would take down a
+    reply that had already been paid for.
+    """
+    return TOOL_BUDGETS.get(tool_name, ("", "", 0))
+
+
+def get_tool_count(metadata: dict[str, Any] | None, tool_name: str) -> int:
+    """How many times this exchange has already spent `tool_name`."""
+    counter_key = _budget_for(tool_name)[0]
+    if not counter_key or not metadata:
+        return 0
+    try:
+        return int(metadata.get(counter_key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def get_tool_max(tool_name: str, chat_or_story=None, metadata: dict[str, Any] | None = None) -> int:
+    """Resolve one tool's budget: per-entity override > metadata > global default.
+
+    Same precedence as the depth cap, and deliberately the same shape, because
+    the two answer different questions and should be tuned separately: depth is
+    "how many more times should the model think", this is "how much am I willing
+    to spend on one exchange".
+
+    A stored 0 means "not at all" rather than "unset" — an explicit zero is how a
+    user turns a tool off without also turning off the rest of the agentic loop,
+    so `is None` is the unset test and not falsiness.
+    """
+    _counter, column, default = _budget_for(tool_name)
+    for source in (chat_or_story, metadata or {}):
+        value = (
+            source.get(column) if isinstance(source, dict)
+            else getattr(source, column, None)
+        )
+        if value is not None:
+            return int(value)
+    return default
+
+
+def tool_budget_remaining(
+    tool_name: str, metadata: dict[str, Any] | None, chat_or_story=None
+) -> int:
+    """How many more of `tool_name` this exchange may spend."""
+    return max(
+        0,
+        get_tool_max(tool_name, chat_or_story, metadata)
+        - get_tool_count(metadata, tool_name),
+    )
+
+
+# ── the image-specific names, kept as thin wrappers ─────────────────────────
+#
+# Their callers and tests are unchanged; adding a second costed tool should not
+# have meant renaming half of them.
+
+def get_agentic_image_count(metadata: dict[str, Any] | None) -> int:
+    """How many images this exchange has already spent."""
+    return get_tool_count(metadata, IMAGE_TOOL_NAME)
+
+
+def get_max_agentic_images(chat_or_story=None, metadata: dict[str, Any] | None = None) -> int:
+    """Resolve the image budget."""
+    return get_tool_max(IMAGE_TOOL_NAME, chat_or_story, metadata)
+
+
+def image_budget_remaining(metadata: dict[str, Any] | None, chat_or_story=None) -> int:
+    """How many more images this exchange may spend."""
+    return tool_budget_remaining(IMAGE_TOOL_NAME, metadata, chat_or_story)
+
+
+def budget_exhausted_tool_result(tool_call_id: str, tool_name: str = IMAGE_TOOL_NAME) -> dict[str, Any]:
+    """A tool result the model can read when a costed tool was refused.
+
+    A dropped tool call with no result is an error to the model — it produces a
+    malformed follow-up or loops asking again. This keeps the conversation
+    well-formed and tells it why, so its final turn is a text reply instead of
+    another request for the same thing.
+
+    `tool_name` is on the result so the model can see WHICH budget it hit. With
+    two costed tools, "you are out of budget" is ambiguous — it might otherwise
+    conclude narration is unavailable and stop offering scene descriptions
+    entirely, which is a worse outcome than the refusal.
+    """
+    if tool_name == NARRATE_TOOL_NAME:
+        detail = (
+            "This exchange has already used its narration budget, so no new "
+            "narration was generated. Write the reply in text and do not call "
+            "narrate_scene again."
+        )
+    elif tool_name == IMAGE_TOOL_NAME:
+        detail = (
+            "This exchange has already used its image budget, so the image was "
+            "not generated. Reply in text without calling generate_image again."
+        )
+    else:  # pragma: no cover - defensive; an unknown tool has no budget row
+        detail = (
+            f"This exchange has already used its budget for {tool_name}, so it "
+            "was not run. Reply in text without calling it again."
+        )
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "name": tool_name,
+        "content": detail,
+    }
 
 
 async def execute_tool(
@@ -280,6 +466,7 @@ async def execute_tool(
     story_id: str | None = None,
     chapter_id: str | None = None,
     source_job_id: str | None = None,
+    branch_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Execute a single tool call and return the result dict.
@@ -306,6 +493,7 @@ async def execute_tool(
                 story_id=story_id,
                 chapter_id=chapter_id,
                 source_job_id=source_job_id,
+                branch_id=branch_id,
             )
 
         if name == "narrate_scene":
@@ -419,6 +607,7 @@ async def _tool_narrate_scene(
     """Run a Narrator LLM job that writes a third-person scene description."""
     from services.job_submission_service import JobSubmissionService
     from infrastructure.deps import get_session_context
+    from services.context_builder import llm_turn_for, speaker_context
 
     scene_direction = args.get("scene_direction", "")
 
@@ -458,10 +647,21 @@ async def _tool_narrate_scene(
                 .order_by(Message.created_at)
                 .limit(200)
             ).all()
+            # The same turn mapping as the reply path, through the same helper.
+            # This was a third copy of the if/elif and the one that had drifted
+            # worst: it mapped every non-user message to `assistant` wholesale, so
+            # the narrator's prose reached the follow-up job indistinguishably
+            # from the character's reply — the model had no way to tell whose
+            # voice it was continuing.
+            speaker_names, speaker_total = speaker_context(recent[-20:], session)
             for m in recent[-20:]:
-                if m.role == MessageRole.SYSTEM and (m.message_metadata or {}).get("source") == "narrator":
-                    continue
-                messages.append({"role": "user" if m.role == MessageRole.USER else "assistant", "content": m.content})
+                turn = llm_turn_for(
+                    m,
+                    speaker_names=speaker_names,
+                    participants=max(speaker_total, 1),
+                )
+                if turn is not None:
+                    messages.append(turn)
 
         if scene_direction:
             messages.append({"role": "user", "content": f"[Narrate: {scene_direction}]"})
@@ -687,6 +887,7 @@ async def _tool_generate_image(
     story_id: str | None = None,
     chapter_id: str | None = None,
     source_job_id: str | None = None,
+    branch_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate an image via the job pipeline, without waiting for it.
 
@@ -770,7 +971,18 @@ async def _tool_generate_image(
                 story_id=story_id if is_story_tool else None,
                 chapter_id=chapter_id if is_story_tool else None,
                 parent_job_id=source_job_id,
-                extra_metadata={"tool_name": "generate_image"},
+                # The thread the reply that called the tool lives on. Without it
+                # an agentic image from a forked branch is filed into the
+                # original thread, where the user reading the fork never sees it.
+                branch_id=None if is_story_tool else branch_id,
+                # The prompt travels with the job, because that is what the
+                # IMAGE message is built from: without it `_handle_chat_image`
+                # has nothing to say about what the image depicts and stores the
+                # literal string "[Image generated by generate_image]" instead.
+                extra_metadata={
+                    "tool_name": "generate_image",
+                    "image_context": args.get("prompt", ""),
+                },
             )
         except Exception as e:
             logger.error("tool_generate_image_failed", error=str(e))
@@ -1028,12 +1240,58 @@ async def process_tool_calls_and_chain(
         )
         return False
 
-    # Note: intermediate narration text is NOT persisted as a SYSTEM message here;
-    # it is forwarded to the follow-up job via context so the final reply is the
-    # only visible character message for this exchange.
+    # Image budget, applied before any of them are spent. The depth cap bounds
+    # hops, not cost, so without this a single reply could chain up to
+    # `max_depth` paid image jobs. Counted across the whole exchange, carried in
+    # the chained job's metadata, so five separate replies asking for one image
+    # each are unaffected while one reply asking for five images is not.
+    # Remaining budget per costed tool, resolved once before anything is spent.
+    #
+    # Each tool has its OWN budget, so a chat that asks for four images and one
+    # narration gets four images and one narration — they are different columns
+    # answering different questions, and one shared pool would mean raising the
+    # image cap silently lowered the narration cap.
+    remaining = {
+        name: tool_budget_remaining(name, metadata)
+        for name in TOOL_BUDGETS
+    }
 
-    tool_results = []
+    granted: list[dict[str, Any]] = []
+    refused: list[dict[str, Any]] = []
     for tc in tool_calls:
+        name = tc.get("function", {}).get("name")
+        if name in remaining:
+            already_spent = sum(
+                1 for g in granted if g.get("function", {}).get("name") == name
+            )
+            if already_spent >= remaining[name]:
+                refused.append(tc)
+                continue
+        granted.append(tc)
+
+    refused_by_tool: dict[str, int] = {}
+    for tc in refused:
+        name = tc.get("function", {}).get("name", "?")
+        refused_by_tool[name] = refused_by_tool.get(name, 0) + 1
+
+    for name, count in refused_by_tool.items():
+        logger.warning(
+            "agentic_tool_budget_exhausted",
+            job_id=job.id,
+            depth=depth,
+            tool=name,
+            remaining=remaining.get(name, 0),
+            refused=count,
+            budget=get_tool_max(name, metadata=metadata),
+        )
+
+    # One result per refused call, naming the tool, so the model can tell which
+    # budget it hit rather than concluding narration is unavailable entirely.
+    tool_results = [
+        budget_exhausted_tool_result(tc.get("id", ""), tc.get("function", {}).get("name"))
+        for tc in refused
+    ]
+    for tc in granted:
         result = await execute_tool(
             tc,
             chat_id=chat_id,
@@ -1041,6 +1299,9 @@ async def process_tool_calls_and_chain(
             story_id=story_id,
             chapter_id=chapter_id,
             source_job_id=job.id,
+            # Carried from the parent job so a tool-spawned image is filed on the
+            # same thread as the reply that asked for it.
+            branch_id=metadata.get("branch_id"),
         )
         tool_results.append({
             "role": "tool",
@@ -1048,6 +1309,13 @@ async def process_tool_calls_and_chain(
             "name": tc.get("function", {}).get("name", ""),
             "content": json.dumps(result),
         })
+
+    spent_by_tool = {
+        name: sum(
+            1 for tc in granted if tc.get("function", {}).get("name") == name
+        )
+        for name in TOOL_BUDGETS
+    }
 
     original_messages = metadata.get("original_messages", [])
     context = list(original_messages) if original_messages else []
@@ -1083,6 +1351,23 @@ async def process_tool_calls_and_chain(
             "orchestrator_depth": depth + 1,
             "original_messages": context,
             "max_agentic_depth": metadata.get("max_agentic_depth"),
+            # The running total per costed tool, not the count this hop spent, so
+            # each budget is per exchange rather than per hop. Dropping the carry
+            # would make the cap "one image per hop" — four more images than the
+            # user asked for — and the same is true of narration, which is why
+            # this is built from the table rather than written out per tool.
+            **{
+                counter: get_tool_count(metadata, name)
+                + spent_by_tool.get(name, 0)
+                for name, (counter, _column, _default) in TOOL_BUDGETS.items()
+            },
+            # The caps travel with the totals. Without them the second hop falls
+            # back to the global default, so a chat that set its own budget is
+            # capped by the default from hop two onward.
+            **{
+                column: metadata.get(column)
+                for name, (_counter, column, _default) in TOOL_BUDGETS.items()
+            },
             # Every hop of the chain writes its reply onto the thread the
             # question was asked on. `metadata` is the PARENT job's, so the
             # branch is inherited rather than re-derived — a chained reply that

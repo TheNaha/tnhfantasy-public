@@ -138,3 +138,52 @@ class JobSubmissionService:
 
         logger.info("job_enqueued", job_id=job.id)
         return job
+
+
+async def submit_job(
+    session: Session,
+    workflow: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+    *,
+    task_type: str,
+    preferred_provider_id: str | None = None,
+):
+    """The one place any job enters the pipeline.
+
+    `JobSubmissionService` was, by its own docstring, the canonical submission
+    path "shared by all active job-creation routes" — but only the image routes
+    used it. Every LLM and TTS route hand-rolled
+    `JobService.create_job(task_type=...)` followed by
+    `queue_manager.enqueue(job.id, task_type=...)`, each with its own idea of
+    the metadata rebinding, the LLM default-provider resolution, and the
+    enqueue-failure rollback. 21 call sites, one contract.
+
+    This is that contract. An LLM or TTS workflow carries no ComfyUI model
+    loaders, so `validate_workflow` extracts nothing and behaves as a no-op —
+    which is why the same function is safe for all three task types.
+    """
+    submission = JobSubmissionService(session)
+    return await submission.create_and_enqueue_job(
+        workflow,
+        metadata=metadata,
+        task_type=task_type,
+        preferred_provider_id=preferred_provider_id,
+    )
+
+
+async def submit_llm_job(
+    session: Session,
+    workflow: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+):
+    """Submit an LLM job. See `submit_job` for why this is not hand-rolled."""
+    return await submit_job(session, workflow, metadata, task_type="llm")
+
+
+async def submit_tts_job(
+    session: Session,
+    workflow: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+):
+    """Submit a TTS job. See `submit_job` for why this is not hand-rolled."""
+    return await submit_job(session, workflow, metadata, task_type="tts")

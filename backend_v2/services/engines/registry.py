@@ -49,7 +49,7 @@ CATEGORY_TTS = "tts"
 PROVIDER_MATRIX: Dict[str, Dict[str, Optional[str]]] = {
     TRANSPORT_MODAL: {
         CATEGORY_IMAGE: "modal",
-        CATEGORY_LLM: "modal_vllm",
+        CATEGORY_LLM: "modal_llm",
         CATEGORY_TTS: "modal_tts",
     },
     TRANSPORT_BEAM: {
@@ -296,15 +296,15 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
             },
         },
     },
-    "modal_vllm": {
-        "id": "modal_vllm",
+    "modal_llm": {
+        "id": "modal_llm",
         "transport": "modal",
-        "name": "Modal vLLM",
+        "name": "Modal llama.cpp",
         "category": "llm",
         "worker_type": "llm",
         "capabilities": ["llm"],
-        "description": "Serverless vLLM high-throughput engine on Modal cloud GPU volumes.",
-        "engine": "ModalVLLMEngine",
+        "description": "llama.cpp GGUF servers on Modal: one per role, scale-to-zero on its own idle timer.",
+        "engine": "ModalLlamaCPPEngine",
         "manages_model_files": True,
         "credentials": [
             {"key": "token_id", "label": "Modal Token ID", "type": "password", "required": True, "placeholder": "ak-..."},
@@ -398,9 +398,15 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         "category": "llm",
         "worker_type": "llm",
         "capabilities": ["llm"],
-        "description": "The TNHComfy LLM container, deployed on any Docker host with a GPU. OpenAI-compatible, speaks the remote_agent service token.",
+        "description": "The TNHComfy LLM container, deployed on any Docker host with a GPU. OpenAI-compatible, speaks the remote_agent service token, and owns a models tree it can list, download into, validate and delete from — 1-to-1 with modal_llm.",
         "engine": "RemoteLLMEngine",
-        "manages_model_files": False,
+        # True, and it is the parity claim. The sidecar serves /list-models,
+        # /download-model, /validate-models, /delete-model, /upload-file and
+        # /setup in `llm` mode exactly as in `model` mode, and
+        # `RemoteAgentFileMixin` is what calls them. This used to read False,
+        # which made a `remote_llm` provider generate and nothing else while
+        # `modal_llm` owned a models volume and overrode thirteen methods.
+        "manages_model_files": True,
         "credentials": [
             {"key": "agent_token", "label": "Service Token", "type": "password", "required": True},
             {"key": "hf_token", "label": "HuggingFace Token", "type": "password", "required": False},
@@ -421,8 +427,12 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         "category": "tts",
         "worker_type": "tts",
         "capabilities": ["tts"],
-        "description": "The TNHComfy TTS container, deployed on any Docker host with a GPU. Speaks the remote_agent service token.",
+        "description": "The TNHComfy TTS container, deployed on any Docker host with a GPU. Speaks the remote_agent service token and owns a storage root it can list, upload to and delete from — 1-to-1 with modal_tts.",
         "engine": "RemoteTTSEngine",
+        # False, matching `modal_tts`: a TTS worker's storage root holds audio
+        # clips, not a ComfyUI models tree. The engine still has the mixin's full
+        # file surface (list/upload/stream/delete/setup) — `manages_model_files`
+        # is about whether to walk CHECKPOINT_DIRECTORIES, not about capability.
         "manages_model_files": False,
         "credentials": [
             {"key": "agent_token", "label": "Service Token", "type": "password", "required": True},
@@ -486,8 +496,8 @@ def resolve_transport(provider_type: Optional[str]) -> Optional[str]:
     """
     if not provider_type:
         return None
-    # Resolve aliases first: `modal_llm` is not a spec any more, but a row still
-    # carrying it is a modal_vllm row and must answer "modal", not None.
+    # Resolve aliases first: `modal_vllm` is not a spec any more, but a row still
+    # carrying it is a modal_llm row and must answer "modal", not None.
     resolved = _TYPE_ALIASES.get(provider_type, provider_type)
     spec = get_engine_spec(resolved) or {}
     transport = spec.get("transport")
@@ -537,18 +547,20 @@ def matrix_cells() -> List[Dict[str, Any]]:
 
 #: Generic hosted-LLM types whose "vllm"-bearing id was historically a
 #: mis-typed Modal vLLM pod. Narrow on purpose: an override that could reach a
-#: transport type would re-label a `beam_llm`/`remote_llm` row as `modal_vllm`,
-#: which is precisely the ambiguity this pass exists to remove. `modal_llm` is
+#: transport type would re-label a `beam_llm`/`remote_llm` row as `modal_llm`,
+#: which is precisely the ambiguity this pass exists to remove. `modal_vllm` is
 #: absent because it is an alias now, and an alias never reaches this check.
 _LEGACY_VLLM_MISTYPED = frozenset({"openai_compat", "ollama"})
 
 _TYPE_ALIASES: Dict[str, str] = {
-    # `modal_llm` was a whole second spec carrying the same ModalVLLMEngine as
-    # `modal_vllm`, differing only in its display name. Two rows for one engine
-    # is exactly the duplication that made the provider page ambiguous, and the
-    # old factory resolved the two differently — it branched on whether "vllm"
-    # appeared in the id. One engine, one type, existing rows unaffected.
-    "modal_llm": "modal_vllm",
+    # The direction of this alias was flipped on 2026-10-15. `modal_vllm` used
+    # to be canonical with `modal_llm` folded into it, because the engine was a
+    # vLLM pod. It has been llama.cpp since `deployables/modal/llm/app.py` was rewritten —
+    # `ghcr.io/ggml-org/llama.cpp:server-cuda`, `llama-server` per role — so the
+    # type that names the runtime honestly is the canonical one. Existing rows
+    # carrying `modal_vllm` keep resolving, which is why this is an alias and
+    # not a rename with a migration.
+    "modal_vllm": "modal_llm",
     "tts": "modal_tts",
     "openai": "openai_compat",
     "gemini": "google",
@@ -563,7 +575,7 @@ _TYPE_ALIASES: Dict[str, str] = {
 # have to precede the bare `beam-` / `modal-` prefixes they used to be swallowed
 # by, and all of them have to precede the substring heuristics further down —
 # otherwise `remote-llm-vllm-1` (a container that really does run vLLM) resolves
-# to `modal_vllm` on the strength of the word "vllm" in its id.
+# to `modal_llm` on the strength of the word "vllm" in its id.
 _ID_PREFIXES = (
     ("beam-llm-", "beam_llm"),
     ("beam_llm_", "beam_llm"),
@@ -624,11 +636,11 @@ def resolve_provider_type(
     # pod owns the `models/` volume tree. It is scoped to
     # `_LEGACY_VLLM_MISTYPED` and nothing else, because the new transports
     # legitimately contain "vllm" — a `beam_llm` or `remote_llm` row must never
-    # be re-labelled `modal_vllm`, which is the mistake an unscoped override
+    # be re-labelled `modal_llm`, which is the mistake an unscoped override
     # would make.
     if provider_type in ENGINE_SPECS:
         if "vllm" in (provider_id or "") and provider_type in _LEGACY_VLLM_MISTYPED:
-            return "modal_vllm"
+            return "modal_llm"
         return provider_type
     if provider_type in _TYPE_ALIASES:
         return _TYPE_ALIASES[provider_type]
@@ -642,23 +654,33 @@ def resolve_provider_type(
     if "direct" in lowered:
         return "direct_url"
     if "vllm" in pid:
-        return "modal_vllm"
+        return "modal_llm"
     return _capability_fallback(capabilities, worker_type)
 
 
 #: Resolved types whose engine implements setup (owns storage needing
 #: init, or no-op success). Hosted LLM and TTS engines inherit the base
-#: setup_models which reports False — they have no model tree.
-#: Note modal_llm is included: same ModalVLLMEngine class as modal_vllm,
-#: same models/ volume (the old factory returned False for a modal_llm
-#: id without "vllm" in it — that was a routing miss, not intent).
+#: setup_models which reports False — they have no model tree. The remote
+#: cells are here because `RemoteAgentFileMixin` implements setup for all
+#: three, which is what closes the modal/remote parity gap.
 _SUPPORTS_SETUP = frozenset({
-    "modal", "beam", "direct_url", "remote_comfy", "modal_vllm",
+    "modal", "beam", "direct_url", "remote_comfy", "modal_llm",
     # Direct TTS shares DirectComfyEngine's no-op setup; a rig with no model
     # tree still answers True so the provider page's setup action does nothing
     # harmful rather than failing. The rest of the new cells host a container
     # that owns its own weights, so they inherit the base's False.
     "direct_tts",
+    # `remote_llm` and `remote_comfy` were absent because their engines never
+    # called the sidecar's `/setup` — the route answers in every `WORKER_MODE`.
+    # `RemoteAgentFileMixin` calls it, so setup works for both.
+    #
+    # `remote_tts` is NOT here, and is not supposed to be: `RemoteTTSEngine`
+    # overrides `setup_models` to return False, matching `ModalTTSEngine`, which
+    # inherits the base's False. A TTS root holds audio, not a ComfyUI models
+    # tree, so there is nothing to initialise. Adding it would have been the
+    # wrong direction to "fix" the one remaining parity mismatch — the honest
+    # direction is TTS not doing setup on either transport.
+    "remote_llm",
 })
 
 

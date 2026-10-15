@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit3, Trash2, Search, Globe2, X, MessageSquare, BookOpen, MapPin, Users, ChevronRight, Check, AlertTriangle } from 'lucide-react';
+import { Plus, Edit3, Trash2, Search, Globe2, X, MessageSquare, BookOpen, MapPin, Users, ChevronRight, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -10,10 +10,6 @@ import {
     useDeleteWorld,
     useWorldDashboard,
 } from '../hooks/useWorlds';
-import { useCharacters } from '../hooks/useCharacters';
-import { useStories } from '../hooks/useStories';
-import { useChats } from '../hooks/useChats';
-import { useLocations } from '../hooks/useLocations';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
@@ -27,10 +23,6 @@ const FORM_FIELDS = [
 const DEFAULT_FORM = {
     name: '',
     description: '',
-    character_ids: [],
-    story_ids: [],
-    chat_ids: [],
-    location_ids: [],
 };
 
 export default function Worlds() {
@@ -73,7 +65,11 @@ export default function Worlds() {
             return;
         }
         try {
-            const payload = { ...form, name: form.name.trim() };
+            // Name and description only. Membership is `member.world_id`, owned
+            // by the member and written from its own page — this route used to
+            // accept four id lists, which is what let a world and its members
+            // disagree about who was in it.
+            const payload = { name: form.name.trim(), description: form.description };
             if (editingWorld) {
                 await updateMutation.mutateAsync({ id: editingWorld.id, ...payload });
                 toast.success('World updated');
@@ -92,10 +88,6 @@ export default function Worlds() {
         setForm({
             name: world.name || '',
             description: world.description || '',
-            character_ids: world.character_ids || [],
-            story_ids: world.story_ids || [],
-            chat_ids: world.chat_ids || [],
-            location_ids: world.location_ids || [],
         });
         setShowForm(true);
     };
@@ -273,76 +265,25 @@ function WorldCard({ world, onEdit, onDelete, onOpen }) {
                 </div>
             </div>
             <div className="flex items-center gap-4 text-xs text-gray-500">
-                {(world.character_ids?.length || 0) > 0 && (
-                    <span className="flex items-center gap-1"><Users size={12} /> {world.character_ids.length}</span>
+                {world.counts?.Character > 0 && (
+                    <span className="flex items-center gap-1"><Users size={12} /> {world.counts.Character}</span>
                 )}
-                {(world.story_ids?.length || 0) > 0 && (
-                    <span className="flex items-center gap-1"><BookOpen size={12} /> {world.story_ids.length}</span>
+                {world.counts?.Story > 0 && (
+                    <span className="flex items-center gap-1"><BookOpen size={12} /> {world.counts.Story}</span>
                 )}
-                {(world.chat_ids?.length || 0) > 0 && (
-                    <span className="flex items-center gap-1"><MessageSquare size={12} /> {world.chat_ids.length}</span>
+                {world.counts?.Chat > 0 && (
+                    <span className="flex items-center gap-1"><MessageSquare size={12} /> {world.counts.Chat}</span>
                 )}
-                {(world.location_ids?.length || 0) > 0 && (
-                    <span className="flex items-center gap-1"><MapPin size={12} /> {world.location_ids.length}</span>
+                {world.counts?.Location > 0 && (
+                    <span className="flex items-center gap-1"><MapPin size={12} /> {world.counts.Location}</span>
                 )}
             </div>
         </motion.div>
     );
 }
 
-function EntityPicker({ title, icon: Icon, items, selected, onChange, getLabel }) {
-    return (
-        <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-1.5">
-                <Icon size={13} /> {title}
-            </label>
-            {items.length === 0 ? (
-                <p className="text-xs text-gray-600 border border-gray-700/50 rounded-lg px-3 py-2">
-                    None available — create {title.toLowerCase()} first
-                </p>
-            ) : (
-                <div className="max-h-40 overflow-y-auto border border-gray-600 rounded-lg bg-gray-800/60 divide-y divide-white/5">
-                    {items.map(item => {
-                        const active = selected.includes(item.id);
-                        return (
-                            <button
-                                key={item.id}
-                                type="button"
-                                onClick={() => onChange(item.id)}
-                                className={
-                                    'w-full flex items-center gap-2 px-3 py-2 text-left text-xs transition-colors ' +
-                                    (active ? 'bg-indigo-500/20 text-indigo-300' : 'text-gray-400 hover:bg-white/5')
-                                }
-                            >
-                                {active ? (
-                                    <Check size={12} className="text-indigo-400 shrink-0" />
-                                ) : (
-                                    <div className="w-3 h-3 rounded border border-gray-600 shrink-0" />
-                                )}
-                                <span className="truncate">{getLabel(item)}</span>
-                            </button>
-                        );
-                    })}
-                </div>
-            )}
-        </div>
-    );
-}
-
 function WorldFormModal({ world, form, setForm, onSave, onClose, isSubmitting }) {
-    const { data: characters = [] } = useCharacters();
-    const { data: stories = [] } = useStories();
-    const { data: chats = [] } = useChats();
-    const { data: locations = [] } = useLocations();
-
     useEscapeKey(onClose, true);
-
-    const toggle = (field, id) => {
-        setForm(f => ({
-            ...f,
-            [field]: f[field].includes(id) ? f[field].filter(x => x !== id) : [...f[field], id],
-        }));
-    };
 
     return (
         <motion.div
@@ -394,40 +335,6 @@ function WorldFormModal({ world, form, setForm, onSave, onClose, isSubmitting })
                         )}
                     </div>
                 ))}
-                <div className="space-y-3 mt-4">
-                    <EntityPicker
-                        title="Characters"
-                        icon={Users}
-                        items={characters}
-                        selected={form.character_ids}
-                        onChange={(id) => toggle('character_ids', id)}
-                        getLabel={(c) => c.name}
-                    />
-                    <EntityPicker
-                        title="Stories"
-                        icon={BookOpen}
-                        items={stories}
-                        selected={form.story_ids}
-                        onChange={(id) => toggle('story_ids', id)}
-                        getLabel={(s) => s.title}
-                    />
-                    <EntityPicker
-                        title="Chats"
-                        icon={MessageSquare}
-                        items={chats}
-                        selected={form.chat_ids}
-                        onChange={(id) => toggle('chat_ids', id)}
-                        getLabel={(c) => c.name}
-                    />
-                    <EntityPicker
-                        title="Locations"
-                        icon={MapPin}
-                        items={locations}
-                        selected={form.location_ids}
-                        onChange={(id) => toggle('location_ids', id)}
-                        getLabel={(l) => l.name}
-                    />
-                </div>
                 <div className="flex gap-2 justify-end mt-4">
                     <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white transition-colors">
                         Cancel

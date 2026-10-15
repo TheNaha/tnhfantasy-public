@@ -427,6 +427,85 @@ function ChatContextPanel() {
                 </div>
                 <SamplingControls values={activeChat || {}} onChange={onChatUpdate} />
                 <div>
+                    {/* The cost cap. Separate from depth, which bounds how many
+                        times the model may think rather than how much it may
+                        spend: generate_image was callable once per hop, so the
+                        depth cap alone let one reply chain five paid image jobs.
+                        min is 0, not 1 — zero is how you keep the agentic loop
+                        but turn its images off. */}
+                    <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-xs text-gray-300 font-medium whitespace-nowrap shrink-0">Agentic Image Budget</p>
+                        <span className="text-xs text-gray-500 font-mono min-w-0 truncate text-right">
+                            {activeChat?.max_agentic_images != null
+                                ? (activeChat.max_agentic_images > 0
+                                    ? `${activeChat.max_agentic_images} per reply`
+                                    : 'Off')
+                                : 'Global default (2)'}
+                        </span>
+                    </div>
+                    <input
+                        type="range"
+                        min="0"
+                        max="8"
+                        step="1"
+                        value={activeChat?.max_agentic_images ?? 2}
+                        onChange={(e) => onChatUpdate({ max_agentic_images: parseInt(e.target.value) })}
+                        className="w-full accent-purple-500 min-h-[24px]"
+                        title="How many images the AI may spend on one reply. 0 disables autonomous illustration."
+                    />
+                    <div className="flex justify-between text-xs text-gray-600 mt-0.5">
+                        <span>Off</span><span>2</span><span>8</span>
+                    </div>
+                    {activeChat?.max_agentic_images != null && (
+                        <button
+                            onClick={() => onChatUpdate({ max_agentic_images: null })}
+                            className="mt-1 inline-flex items-center min-h-[24px] text-xs text-gray-500 hover:text-red-400 transition-colors"
+                        >
+                            Reset to global default
+                        </button>
+                    )}
+                </div>
+                <div>
+                    {/* Narration, its own budget. It was the worst offender of the
+                        uncapped kind: a narration is always a whole extra LLM
+                        completion, it is the tool the model is most likely to
+                        reach for, and it had no cap at all — so the single most
+                        expensive discretionary decision in the agentic loop was
+                        also the only unbounded one. A separate column, because
+                        raising the image cap must not lower this one. */}
+                    <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-xs text-gray-300 font-medium whitespace-nowrap shrink-0">Agentic Narrations</p>
+                        <span className="text-xs text-gray-500 font-mono min-w-0 truncate text-right">
+                            {activeChat?.max_agentic_narrations != null
+                                ? (activeChat.max_agentic_narrations > 0
+                                    ? `${activeChat.max_agentic_narrations} per reply`
+                                    : 'Off')
+                                : 'Global default (1)'}
+                        </span>
+                    </div>
+                    <input
+                        type="range"
+                        min="0"
+                        max="4"
+                        step="1"
+                        value={activeChat?.max_agentic_narrations ?? 1}
+                        onChange={(e) => onChatUpdate({ max_agentic_narrations: parseInt(e.target.value) })}
+                        className="w-full accent-purple-500 min-h-[24px]"
+                        title="How many narrator paragraphs the AI may write on its own per reply. 0 means it may write scene prose inside the reply but will not run separate narration jobs."
+                    />
+                    <div className="flex justify-between text-xs text-gray-600 mt-0.5">
+                        <span>Off</span><span>1</span><span>4</span>
+                    </div>
+                    {activeChat?.max_agentic_narrations != null && (
+                        <button
+                            onClick={() => onChatUpdate({ max_agentic_narrations: null })}
+                            className="mt-1 inline-flex items-center min-h-[24px] text-xs text-gray-500 hover:text-red-400 transition-colors"
+                        >
+                            Reset to global default
+                        </button>
+                    )}
+                </div>
+                <div>
                     <div className="flex items-center justify-between mb-1.5">
                         <p className="text-xs text-gray-300 font-medium whitespace-nowrap shrink-0">Agentic Loop Depth</p>
                         <span className="text-xs text-gray-500 font-mono min-w-0 truncate text-right">

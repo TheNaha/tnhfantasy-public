@@ -296,9 +296,11 @@ class Provider(SQLModel, table=True):
     
     # Provider-specific config
     config: dict[str, Any] = Field(default={}, sa_column=Column(JSONColumn))
-    
-    # Container config for multi-profile mode
-    container_config: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONColumn))
+    # The `container_config` column is gone from the model: migration 089
+    # folded its keys into `config` (config wins) and the container-worker
+    # architecture it served was removed in acc86aa3. The physical column is
+    # still in Postgres (see `_migration_089_fold_container_config_into_config`);
+    # nothing reads or writes it.
 
 
 
@@ -1169,6 +1171,9 @@ class VoiceModel(SQLModel, table=True):
     preview_text: str | None = Field(default=None, sa_column=Column(Text))
     preview_path: str | None = Field(default=None)  # Audio file produced by a preview TTS job
     character_id: str | None = Field(foreign_key="characters.id", default=None, index=True)
+    # The World this voice belongs to. Nullable and owned from the voice side —
+    # see `World` for why the arrays it replaces are gone.
+    world_id: str | None = Field(foreign_key="worlds.id", default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -1209,6 +1214,9 @@ class Character(SQLModel, table=True):
     # World Context
     default_time: str | None = Field(default=None)
     default_location: str | None = Field(default=None)
+    # The World this character belongs to. See `World` for why membership is a
+    # column here and not an id array on the world.
+    world_id: str | None = Field(foreign_key="worlds.id", default=None, index=True)
 
     # --- SillyTavern character card provenance ---------------------------
     # Kept separate from the editable prompt fields so an imported card can be
@@ -1363,6 +1371,16 @@ class Chat(SQLModel, table=True):
     max_context_tokens: int | None = Field(default=None)
     # Per-chat agentic loop depth limit (None → use global MAX_AGENTIC_DEPTH)
     max_agentic_depth: int | None = Field(default=None)
+    # Per-chat agentic image budget: how many images one exchange may spawn.
+    # Separate from the depth cap, because depth counts LLM hops and a hop is
+    # cheap while an image is not. The depth cap used to be the only limit, so a
+    # single reply could chain five paid image jobs.
+    max_agentic_images: int | None = Field(default=None)
+    # Per-chat narration budget. Its OWN column rather than a share of the image
+    # one, because a narration is always a whole extra LLM completion and an
+    # image is a side effect the user may not have wanted at all — so raising
+    # the image cap must not silently lower the narration cap.
+    max_agentic_narrations: int | None = Field(default=None)
     # Per-chat LLM sampling overrides (None → global defaults from settings)
     temperature: float | None = Field(default=None)
     top_p: float | None = Field(default=None)
@@ -1486,7 +1504,8 @@ class Lorebook(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
     description: str | None = Field(default=None, sa_column=Column(Text))
-    
+    # The World whose chats draw on this book automatically. See `World`.
+    world_id: str | None = Field(foreign_key="worlds.id", default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
@@ -1530,6 +1549,8 @@ class Scenario(SQLModel, table=True):
     prompt_template: str = Field(sa_column=Column(Text))
     default_checkpoint: str | None = Field(default=None)
     default_voice_profile: str | None = Field(default=None, sa_column=Column(Text))
+    # The World this scenario is the fallback for. See `World`.
+    world_id: str | None = Field(foreign_key="worlds.id", default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -1557,10 +1578,22 @@ class Story(SQLModel, table=True):
     world_id: str | None = Field(foreign_key="worlds.id", default=None, index=True)
     llm_model: str | None = Field(default=None)  # Per-story LLM model override
     memory: str | None = Field(default=None, sa_column=Column(Text))  # Global author's note / story memory
+    # Who the reader character IS. A chat resolves persona from the library via
+    # `chat_context_kwargs`, a story had nothing — so `Story.character_ids` gave
+    # the model every other person in the scene and none of them was the one
+    # typing `> I draw my blade`. The world, the cast and the narrator all knew
+    # who they were; the protagonist was anonymous.
+    persona_id: str | None = Field(default=None, foreign_key="personas.id", index=True)
+    persona_name: str | None = Field(default=None)
+    persona_description: str | None = Field(default=None, sa_column=Column(Text))
     # Story state
     is_archived: bool = Field(default=False)
     # Per-story agentic loop depth limit (None → use global MAX_AGENTIC_DEPTH)
     max_agentic_depth: int | None = Field(default=None)
+    # Per-story agentic image budget. See `Chat.max_agentic_images`.
+    max_agentic_images: int | None = Field(default=None)
+    # Per-story narration budget. See `Chat.max_agentic_narrations`.
+    max_agentic_narrations: int | None = Field(default=None)
     # Per-story LLM sampling overrides (None → global defaults from settings)
     temperature: float | None = Field(default=None)
     top_p: float | None = Field(default=None)
@@ -1606,14 +1639,96 @@ class StoryChapter(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     story: Optional["Story"] = Relationship(back_populates="chapters")
 
+class StoryBeat(SQLModel, table=True):
+    """One beat of a chapter, as a row.
+
+    Beats were a JSON array of dicts on `story_chapters.beats`. That was the
+    start of the two-representations problem this module spent a long time
+    undoing: `chapter.content` was a prose string, `chapter.beats` was a
+    sequence, and `sync_chapter_prose` / `absorb_prose_edit` existed to keep the
+    two from disagreeing about the same text. They did disagree, and every fix
+    was another guard against the next way to disagree.
+
+    The sequence is now rows. What that buys is not correctness on its own — the
+    JSON column is still maintained, by one writer, as the render the API and the
+    editor already speak — but two things the JSON could never do:
+
+      * a beat is independently ADDRESSABLE, so a chapter no longer has to be
+        selected whole. `build_chat_context_async` receives a chapter as one
+        `{"role": "user", "content": ...}` message, so `prune_context` has
+        nothing to trim INSIDE it and a 6,000-word chapter eats the budget
+        regardless of `maxContextTokens`. Beats are rows, so a window can be
+        selected by position.
+      * a beat is a row, so the beat-level routes and the job handlers write one
+        thing rather than splicing a list of dicts.
+
+    `position` is the ordering, renumbered on reorder — the beats panel supports
+    drag-to-move, so an ordering that cannot be renumbered would have to be
+    encoded in a linked list and `parent_beat_id` already is one.
+    """
+    __tablename__ = "story_beats"
+    __table_args__ = (Index('idx_beat_chapter_position', 'chapter_id', 'position'),)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    chapter_id: str = Field(foreign_key="story_chapters.id", index=True)
+    # Ordering within the chapter. Dense and renumbered on move, so the beats
+    # panel's drag-to-reorder is one UPDATE per affected row rather than a
+    # fractional-order scheme with its own compaction pass.
+    position: int = Field(default=0)
+    parent_beat_id: str | None = None
+    # narration | user | system | tts | scene — the same values the beat
+    # request models validate against.
+    role: str = Field(default="narrator")
+    content: str = Field(default="", sa_column=Column(Text))
+    # The audio attachment for a TTS beat. A separate column rather than part of
+    # `extra` because it is what `render_beats` must NOT render and what the
+    # beats panel renders an <audio> for.
+    audio_path: str | None = None
+    # The provenance stamps. Two keys, not one, for the reason
+    # `_handle_chat_tts` uses its own: a TTS job's stamp must not overwrite the
+    # reply job's on the same row, or the beat would look unwritten for the
+    # continuation it came from.
+    source_job_id: str | None = None
+    tts_source_job_id: str | None = None
+    # The retry takes, as [{"text": ..., "source_job_id": ...}]. A JSON column
+    # rather than rows because alternates are a property of ONE beat, are read
+    # and written together with it, and are never queried across beats.
+    # A FRESH JSON type, not the shared `JSONColumn`. `as_mutable()` associates
+    # the listener with the TYPE instance, so reusing the shared one attaches
+    # MutableList's coerce to every other column built from it — `extra` here
+    # becomes a list column and rejects a dict with
+    # `Attribute 'extra' does not accept objects of type <class 'dict'>`.
+    # `StoryChapter.beats` carries the same comment for the same reason.
+    alternates: list[dict[str, Any]] = Field(
+        default=[], sa_column=Column(MutableList.as_mutable(JSON().with_variant(JSONB(), "postgresql")))
+    )
+    active_index: int = Field(default=0)
+    # Everything else a beat carries: orchestrator_depth, `intermediate`.
+    extra: dict[str, Any] = Field(default={}, sa_column=Column(JSONColumn))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class StoryChapterRevision(SQLModel, table=True):
-    """Immutable point-in-time snapshot of a chapter's prose."""
+    """Immutable point-in-time snapshot of a chapter's prose AND its beat list.
+
+    `beats` was added because a snapshot of only `content` could not be restored
+    faithfully: `restore_chapter_revision` used to set `content` and leave
+    `beats` untouched, so the chapter came back as prose the beat list did not
+    describe. That is the same drift this column exists to prevent, reintroduced
+    by the one route that could rewind state.
+
+    Existing rows have no `beats` and render from `render_beats`, which returns
+    `""` for an empty list — so `restore` on a legacy snapshot restores the prose
+    and leaves the beats as they are, which is the behaviour it already had.
+    """
     __tablename__ = "story_chapter_revisions"
     __table_args__ = (Index('idx_revision_chapter_id', 'chapter_id'),)
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     chapter_id: str = Field(foreign_key="story_chapters.id", index=True)
     story_id: str = Field(foreign_key="stories.id", index=True)
     content: str = Field(default="", sa_column=Column(Text))
+    beats: list[dict[str, Any]] = Field(
+        default=[], sa_column=Column(MutableList.as_mutable(JSON()))
+    )
     # manual | pre_retry | pre_beat_edit | pre_beat_delete | pre_restore
     source: str = Field(default="manual")
     word_count: int = Field(default=0)
@@ -1628,6 +1743,8 @@ class Location(SQLModel, table=True):
     atmosphere: str | None = Field(default=None, sa_column=Column(Text))
     tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     image_path: str | None = Field(default=None)
+    # The World this place is in. See `World`.
+    world_id: str | None = Field(foreign_key="worlds.id", default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -1643,27 +1760,24 @@ class World(SQLModel, table=True):
     The two names had to be reconciled, and "World" is the one the rest of the UI
     already assumed existed.
 
-    The membership columns are a *denormalised index* for the graph and the world
-    page, not the ownership of record. A world may list a character it does not
-    own — that is what makes it an index. Ownership of a chat or a story is
-    `Chat.world_id` / `Story.world_id`, which is why those were added: a world
-    that owns nothing cannot scope anything, and the timeline and the graph both
-    need a scope to filter on.
+    Ownership is one column on each member, pointing here:
+
+        Chat.world_id, Story.world_id, Character.world_id, Lorebook.world_id,
+        Location.world_id, Scenario.world_id, VoiceModel.world_id
+
+    It USED to be six JSON id arrays on this row, read by the world page and the
+    prompt builder and kept in sync with `Chat.world_id`/`Story.world_id` by a
+    hand-written module — two columns describing one relationship, which is the
+    shape this codebase's worst bug class comes from. The arrays are gone
+    (migration `090_world_membership_fks`): `world_id` is indexed, so
+    `select(Chat).where(Chat.world_id == wid)` is the same indexed lookup the
+    array bought, and nothing can desync because there is only one thing to
+    write. Every direction goes through `services/world_ownership.py`.
     """
     __tablename__ = "worlds"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
     description: str | None = Field(default=None, sa_column=Column(Text))
-    character_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
-    location_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
-    lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
-    scenario_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
-    voice_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
-    # Kept from Campaign: the dashboard reads these directly, and a world that
-    # indexes its chats and stories is what makes "what is in this world" one
-    # query rather than a join across three ownership columns.
-    story_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
-    chat_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

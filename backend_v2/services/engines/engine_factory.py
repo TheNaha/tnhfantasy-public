@@ -2,7 +2,7 @@
 In-Process Engine Factory and Registry.
 
 Manages the lifecycle, caching, and credential resolution for InProcessEngine instances
-(ModalEngine, DirectComfyEngine, OpenAICompatLLMEngine, ModalVLLMEngine, ModalTTSEngine).
+(ModalEngine, DirectComfyEngine, OpenAICompatLLMEngine, ModalLlamaCPPEngine, ModalTTSEngine).
 Resolves credentials from provider DB models, .env.<provider_id> files, and system environment variables.
 """
 
@@ -17,7 +17,12 @@ from infrastructure.logging import get_logger
 from services.engines.base import InProcessEngine
 from services.engines.beam_engine import BeamEngine
 from services.engines.direct_comfy_engine import DirectComfyEngine, DirectTTSEngine
-from services.engines.llm_engine import ModalVLLMEngine, OpenAICompatLLMEngine, AnthropicLLMEngine, GoogleLLMEngine
+from services.engines.llm_engine import (
+    AnthropicLLMEngine,
+    GoogleLLMEngine,
+    ModalLlamaCPPEngine,
+    OpenAICompatLLMEngine,
+)
 from services.engines.modal_engine import HAS_MODAL, ModalEngine, resolve_enable_memory_snapshot
 from services.engines.modal_tts_engine import ModalTTSEngine
 from services.engines.worker_transport_engines import (
@@ -32,6 +37,14 @@ from services.engines.registry import (
 )
 
 logger = get_logger("engine_factory")
+
+#: The Modal app and remote class that `deployables/modal/llm/app.py` declares
+#: (`APP_NAME = "tnh-llm"`, `class ChatLLM`). Defined here as well so the
+#: factory's fallback and the engine's own default cannot drift, which is the
+#: same reason the registry owns provider-type routing rather than repeating it
+#: in three call sites.
+DEFAULT_MODAL_LLM_APP_NAME = "tnh-llm"
+DEFAULT_MODAL_LLM_CLS_NAME = "ChatLLM"
 
 
 def _parse_positive_float(raw: str | None, default: float) -> float:
@@ -232,8 +245,8 @@ def can_create_engine(provider: Any) -> bool:
         )
         return bool(base_url)
 
-    # Serverless LLM (vLLM on Modal): Modal credentials. Both the
-    # modal_vllm and modal_llm specs share the ModalVLLMEngine class.
+    # Serverless LLM (llama.cpp on Modal): Modal credentials. `modal_vllm` is
+    # the legacy spelling of `modal_llm`; both reach this branch.
     if rtype in ("modal_vllm", "modal_llm"):
         return bool(HAS_MODAL and token_id and token_secret)
 
@@ -376,24 +389,24 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
             _ENGINE_CACHE[provider_id] = engine
             return engine
 
-    # 2. LLM Provider (serverless vLLM, hosted APIs, OpenAI-compat local)
-    if rtype in ("openai_compat", "ollama", "anthropic", "google", "modal_vllm", "modal_llm"):
-        if rtype in ("modal_vllm", "modal_llm"):
+    # 2. LLM Provider (serverless llama.cpp, hosted APIs, OpenAI-compat local)
+    if rtype in ("openai_compat", "ollama", "anthropic", "google", "modal_llm", "modal_vllm"):
+        if rtype in ("modal_llm", "modal_vllm"):
+            # `modal_vllm` is the legacy spelling of `modal_llm`; both reach
+            # here so a row written before the rename keeps working.
             app_name = (
                 config.get("app_name")
                 or env_vars.get("MODAL_LLM_APP_NAME")
                 or os.getenv("MODAL_LLM_APP_NAME")
-                or env_vars.get("MODAL_APP_NAME")
-                or os.getenv("MODAL_APP_NAME")
-                or "vllm-modal-stack"
+                or DEFAULT_MODAL_LLM_APP_NAME
             )
             cls_name = (
                 config.get("cls_name")
                 or env_vars.get("MODAL_LLM_CLASS")
                 or os.getenv("MODAL_LLM_CLASS")
-                or "VLLMEngine"
+                or DEFAULT_MODAL_LLM_CLS_NAME
             )
-            engine = ModalVLLMEngine(
+            engine = ModalLlamaCPPEngine(
                 provider_id=provider_id,
                 token_id=token_id,
                 token_secret=token_secret,

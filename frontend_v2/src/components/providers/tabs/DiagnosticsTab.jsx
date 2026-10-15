@@ -23,6 +23,12 @@ export default function DiagnosticsTab({ providerId, diagnostics, runtime, crede
     });
 
     const metrics = diagData;
+    // Where a remote worker reads and serves, from the LIVE probe — not from the
+    // `diagnostics` prop, which is the caller's snapshot and would report a root
+    // from a previous deployment. One bound local so the JSX reads
+    // `topology.storage_root` rather than a five-deep chain, and so "is there any
+    // topology at all" is one test rather than four.
+    const topology = metrics?.telemetry?.topology;
     // The live query is the authority on telemetry, not the caller's snapshot.
     // Every value in the telemetry panel below is prefixed with this for that
     // reason: when the probe is not answering there is nothing to report, and
@@ -91,6 +97,50 @@ export default function DiagnosticsTab({ providerId, diagnostics, runtime, crede
                                     <div>
                                         <div className="text-xs text-gray-500">API Base</div>
                                         <div className="text-gray-200 truncate">{metrics.telemetry.api_base}</div>
+                                    </div>
+                                )}
+                                {/* Where a remote worker actually reads and
+                                    serves. A `remote_llm` provider manages a
+                                    storage root AND proxies inference to
+                                    `LLM_UPSTREAM_BASE`; those are two settings
+                                    that can name two different trees on two
+                                    different machines, which `modal_llm` has no
+                                    equivalent of. Showing both is what lets an
+                                    operator tell whether the models tree they
+                                    see is the one being served. */}
+                                {topology && (
+                                    <div className="col-span-2 border-t border-white/10 pt-2 mt-1">
+                                        <div className="text-xs text-gray-500 mb-1">Worker topology</div>
+                                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                                            {topology.storage_root && (
+                                                <div>
+                                                    <div className="text-gray-500">Storage root</div>
+                                                    <div className="text-gray-200 font-mono truncate" title={topology.storage_root}>
+                                                        {topology.storage_root}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {topology.llm_upstream_base && (
+                                                <div>
+                                                    <div className="text-gray-500">LLM upstream</div>
+                                                    <div className="text-gray-200 font-mono truncate" title={topology.llm_upstream_base}>
+                                                        {topology.llm_upstream_base}
+                                                        {topology.upstream_is_local ? ' (this box)' : ' (remote)'}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {topology.storage_root && topology.llm_upstream_base && topology.upstream_is_local && (
+                                            <p className="text-xs text-amber-300/80 mt-1">
+                                                Root managed above; generation served by a separate server on {topology.llm_upstream_base}.
+                                                Confirm that server reads this root, or the managed models are not what you run.
+                                            </p>
+                                        )}
+                                        {topology.info_error && (
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                Root resolved from {topology.storage_root_env || 'the agent'}; live /info unavailable ({topology.info_error}).
+                                            </p>
+                                        )}
                                     </div>
                                 )}
                             </>

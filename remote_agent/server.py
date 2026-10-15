@@ -30,7 +30,7 @@ logger = get_logger("server")
 
 app = FastAPI(title="TNHComfy Remote Agent")
 
-DATA_DIR = os.getenv("DATA_DIR", "./data")  # STORAGE ROOT (not `models/`)
+
 TOKEN = os.getenv("REMOTE_AGENT_TOKEN", "").strip()
 ALLOW_INSECURE = os.getenv("REMOTE_AGENT_ALLOW_INSECURE", "").lower() in {"1", "true", "yes"}
 if not TOKEN and not ALLOW_INSECURE:
@@ -87,7 +87,7 @@ def _warn_insecure_bind() -> None:
     logger.warning(
         "REMOTE_AGENT_ALLOW_INSECURE is set. The agent has NO authentication: "
         "/delete-model, /delete-file, /upload-file and /download-model will accept "
-        "any caller that can reach it, and DATA_DIR is read-write. "
+        "any caller that can reach it, and the storage root is read-write. "
         f"HOST={requested!r} -> binding {_resolve_bind_host()!r}. "
         "Set REMOTE_AGENT_TOKEN to open it up; this flag is for local dev only."
     )
@@ -197,8 +197,8 @@ _SIDECAR_EXTENSIONS = (".json", ".preview.png", ".sha256", ".downloading", ".loc
 
 
 def _ensure_data_dir() -> str:
-    os.makedirs(DATA_DIR, exist_ok=True)
-    return DATA_DIR
+    os.makedirs(DATA_ROOT, exist_ok=True)
+    return DATA_ROOT
 
 
 async def verify_token(request: Request):
@@ -219,12 +219,22 @@ async def verify_token(request: Request):
 
 
 class DownloadRequest(BaseModel):
-    url: str
-    path: str
+    # Optional, not required: `model_id` is a whole second entrypoint into this
+    # route, and a required `url`/`path` beside it makes the registry path
+    # unusable — FastAPI rejects the body before the handler runs, so the caller
+    # sees a validation error naming fields it deliberately did not send. The
+    # handler below is what decides which of the two is meaningful.
+    url: str = ""
+    path: str = ""
     token: Optional[str] = None
     preview_url: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     info: Optional[Dict[str, Any]] = None
+    #: A registry model id, for an LLM worker fetching its own weights.
+    #: Mutually exclusive with `url`; when given, the repo and filename come from
+    #: `models.json` rather than from the caller, so a typo cannot put a file where
+    #: the launcher will not find it.
+    model_id: Optional[str] = None
 
 
 class ListModelsRequest(BaseModel):
@@ -257,7 +267,7 @@ class ValidateAllModelsRequest(BaseModel):
 
 def _data_path(requested_path: str) -> str:
     try:
-        return get_safe_path(DATA_DIR, requested_path)
+        return get_safe_path(DATA_ROOT, requested_path)
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied: path outside allowed directory")
 
@@ -285,7 +295,71 @@ if WORKER_MODE not in WORKER_MODES:
         f"WORKER_MODE must be one of {WORKER_MODES}, got {WORKER_MODE!r}"
     )
 
-#: Where a synthesised clip is written under DATA_DIR, and read back through
+# The storage root for the mode this container runs in.
+#
+# The three modes want different trees, and the difference is not hypothetical:
+# an image worker exposes its ComfyUI repo root — which holds `models/`,
+# `output/`, `input/` and nothing else of interest — an LLM worker wants a plain
+# weights directory with no ComfyUI structure in it at all, and a TTS worker is
+# usually back on a ComfyUI rig because it shares one.
+#
+# One variable per mode, falling back to `DATA_DIR`, so the mapping is explicit
+# at the point of deployment rather than being a shared root someone has to
+# reason about. The keys mirror `WORKER_MODES` exactly, so an unknown mode has
+# already raised before any path is resolved.
+MODE_DATA_ENV = {
+    "model": "DATA_DIR",
+    "llm": "LLM_DATA_DIR",
+    "tts": "TTS_DATA_DIR",
+}
+
+#: The storage root for THIS worker mode. `MODEL_DIRECTORIES` and every provider
+#: path — `models/checkpoints/x.safetensors`, `output/...`, `input/...` — are
+#: resolved against it, so setting `LLM_DATA_DIR=/models` on an LLM worker means
+#: `models/` is `/models/models` and the ComfyUI root can stay what it is.
+DATA_ROOT_ENV = MODE_DATA_ENV[WORKER_MODE]
+
+
+def _resolve_data_root() -> str:
+    """The root for the mode this container runs in, falling back to `DATA_DIR`.
+
+    One `os.getenv` per mode, spelled out, rather than
+    `os.getenv(MODE_DATA_ENV[WORKER_MODE])`. The computed key resolves the same
+    value, but a dynamic key is invisible to the environment-variable guard that
+    walks this tree (`test_env_contracts.py`), so any variable introduced later
+    would be unreadable to it as well. Three literals cost three lines and keep
+    every variable in this file findable.
+    """
+    if WORKER_MODE == "llm":
+        own = os.getenv("LLM_DATA_DIR")
+    elif WORKER_MODE == "tts":
+        own = os.getenv("TTS_DATA_DIR")
+    else:
+        own = os.getenv("DATA_DIR")
+    return own or os.getenv("DATA_DIR") or "./data"
+
+
+DATA_ROOT = _resolve_data_root()
+
+#: Where the actual model server lives, for `WORKER_MODE=llm` only.
+#:
+#: Declared at module level rather than inside the mode block because `/info`
+#: needs it to describe the topology, and a value that describes the system
+#: should not be scoped to the branch that happens to consume it.
+#:
+#: This is the second half of the parity question for a `remote_llm` provider. A
+#: `modal_llm` provider serves from the SAME `models/` tree it manages; a
+#: `remote_llm` one manages a root AND proxies to wherever this points, which
+#: can be a different tree entirely. That is not a bug — fronting an existing
+#: llama.cpp is the whole point — but it is invisible, and an operator looking
+#: at a populated models tree would reasonably assume it is the one being served.
+#: `/info` now reports both, so the assumption is checkable rather than
+#: inherited.
+UPSTREAM_BASE = (
+    os.getenv("LLM_UPSTREAM_BASE", "http://127.0.0.1:8080/v1").rstrip("/")
+)
+
+#: Where a synthesised clip is written under DATA_ROOT, and read back through
 #: the existing `/get-file` route.
 AUDIO_DIR = os.getenv("TTS_AUDIO_DIR", "audio").strip("/")
 
@@ -301,8 +375,76 @@ class SynthesizeRequest(BaseModel):
 
 @app.get("/health")
 
+
 async def health():
     return {"status": "healthy"}
+
+
+def _topology() -> dict:
+    """Where this container reads, writes and serves—the whole picture.
+
+    An LLM worker manages a storage root AND proxies inference to
+    `LLM_UPSTREAM_BASE`, and those are two independent settings that can point at
+    two different trees. `modal_llm` has no such split—its app serves
+    from the volume it manages—so a `remote_llm` provider is where an
+    operator can reasonably believe the models tree they see is the one being
+    served, and be wrong.
+
+    `upstream_is_local` is the operator-visible half of the signal: a loopback
+    upstream is almost certainly a server on this box reading a nearby path,
+    while a remote one is certainly a different machine with its own storage.
+    Reporting it makes the topology checkable instead of inferred.
+
+    `storage_root` is the real resolved path, which the backend cannot see—it
+    only ever had the variable name.
+    """
+    from urllib.parse import urlparse
+
+    info: dict = {
+        "worker_mode": WORKER_MODE,
+        "storage_root": os.path.abspath(DATA_ROOT),
+        "storage_root_env": DATA_ROOT_ENV,
+    }
+    if WORKER_MODE == "llm":
+        info["llm_serving"] = "upstream" if UPSTREAM_OVERRIDE else "local"
+        if UPSTREAM_OVERRIDE:
+            host = (urlparse(UPSTREAM_OVERRIDE).hostname or "").lower()
+            info["llm_upstream_base"] = UPSTREAM_OVERRIDE
+            info["upstream_is_local"] = host in ("127.0.0.1", "localhost", "::1", "")
+        else:
+            # The managed root IS the served root, which is the parity claim. An
+            # operator no longer has to assume it.
+            info["llm_upstream_base"] = "this worker (llama-server, loopback)"
+            info["upstream_is_local"] = True
+    return info
+
+
+@app.get("/info", dependencies=[Depends(verify_token)])
+async def info():
+    """Deployment topology: storage root, mode, and what llm mode serves.
+
+    Authenticated, unlike `/health`, because it discloses paths. `/health` is the
+    one route that answers before the token check precisely so a misconfigured
+    token does not look like a dead container; `/info` has the opposite
+    requirement.
+    """
+    payload = _topology()
+    if WORKER_MODE == "llm":
+        # Which models this container actually holds, per role, with the reason a
+        # missing one is missing. `modal_llm` answers the same shape, so a caller
+        # polling health sees an actionable state on either transport — and a role
+        # whose weights were not downloaded reads `not_downloaded` rather than as
+        # a crash-loop to infer from retries.
+        llm_health = {}
+        if REGISTRY is not None:
+            llm_health = STACK.health(REGISTRY)
+            llm_health["registry"] = str(REGISTRY_PATH) if REGISTRY_PATH else None
+        payload["llm"] = {
+            **llm_health,
+            "serving": "local" if not UPSTREAM_OVERRIDE else "upstream",
+            "upstream": UPSTREAM_OVERRIDE or None,
+        }
+    return payload
 
 
 @app.post("/setup", dependencies=[Depends(verify_token)])
@@ -334,7 +476,7 @@ async def setup():
         "models/ultralytics/seg/person_yolov8n-seg.pt",
     ]
     for d in directories:
-        os.makedirs(os.path.join(DATA_DIR, d), exist_ok=True)
+        os.makedirs(os.path.join(DATA_ROOT, d), exist_ok=True)
 
     # Bounded, and with a real HTTP timeout.
     #
@@ -377,8 +519,92 @@ async def setup():
     return ok("Setup complete", directories=directories)
 
 
+def _registry_download_path(model) -> str:
+    """The provider path a registry model's GGUFs land on.
+
+    `<root>/<volume_dir>/<gguf>`, which is exactly what `Model.llama_args` points
+    `-m` at — so a download that succeeds is a model that launches, with no second
+    mapping to keep in step.
+    """
+    return f"{model.volume_dir}/{model.gguf}"
+
+
+async def _download_registry_model(model_id: str):
+    """Fetch one registry model's weights, on demand.
+
+    The sidecar's `ensure_model`, and what makes "switch model in the UI" work
+    without a rebuild: the caller names an id, the weights are pulled, and the
+    container is recreated for the new model to load. Returns the same answer
+    shape whether it fetched or not, so a second call is free and safe to drive
+    from a button.
+    """
+    if WORKER_MODE != "llm" or REGISTRY is None:
+        return {"ok": False, "model_id": model_id, "reason": "no_registry"}
+
+    try:
+        model = REGISTRY.get(model_id)
+    except KeyError:
+        return {
+            "ok": False,
+            "model_id": model_id,
+            "reason": "not_in_registry",
+            "known": sorted(REGISTRY.models),
+        }
+
+    # The projectors too: a vision model whose mmproj is missing launches and
+    # then cannot read an image, which is worse than not launching.
+    jobs = [(model.gguf, model.repo)]
+    if model.mmproj:
+        jobs.append((model.mmproj, model.mmproj_repo or model.repo))
+
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:
+        # Lazy on purpose — the model and tts modes have no use for the HF
+        # client — but a lazy import means a missing dependency surfaces as a
+        # bare 500 "Internal Server Error", which names neither the package nor
+        # the reason. Name it, and say what image it should be in.
+        return {
+            "ok": False,
+            "model_id": model_id,
+            "reason": "huggingface_hub_not_installed",
+            "detail": f"{exc}; it is in remote_agent/requirements.txt, so this "
+                      "image predates registry downloads — rebuild it",
+        }
+
+    fetched = []
+    for filename, repo in jobs:
+        target = os.path.join(DATA_ROOT, model.volume_dir)
+        os.makedirs(target, exist_ok=True)
+        print(f"[{model.id}] {repo} :: {filename}", flush=True)
+        snapshot_download(
+            repo,
+            allow_patterns=[filename],
+            local_dir=target,
+            token=HF_TOKEN or None,
+        )
+        resolved = os.path.join(target, filename)
+        if not os.path.isfile(resolved):
+            # The download "succeeded" but the file is not there. That is the
+            # glob-matched-nothing case, and reporting success here is how a model
+            # becomes permanently un-startable with no error anywhere.
+            return {
+                "ok": False,
+                "model_id": model_id,
+                "reason": "download_left_nothing",
+                "expected": filename,
+            }
+        fetched.append(resolved)
+    return {"ok": True, "model_id": model_id, "fetched": fetched}
+
+
 @app.post("/download-model", dependencies=[Depends(verify_token)])
 async def download_model(req: DownloadRequest):
+    if req.model_id:
+        # The registry path: name a model from models.json, and the repo and the
+        # destination are both derived rather than supplied.
+        return await _download_registry_model(req.model_id)
+
     full_path = _data_path(req.path)
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
@@ -388,7 +614,7 @@ async def download_model(req: DownloadRequest):
     # matching the Modal/Beam storage function semantics.
     token = req.token or determine_download_token(req.url, HF_TOKEN, CIVITAI_TOKEN)
 
-    progress_dir = os.path.join(DATA_DIR, "downloads")
+    progress_dir = os.path.join(DATA_ROOT, "downloads")
     os.makedirs(progress_dir, exist_ok=True)
     safe_name = os.path.basename(full_path)
     progress_file = os.path.join(progress_dir, f"{safe_name}.json")
@@ -456,7 +682,7 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
                 # are swept by /delete-model and /delete-file via
                 # pending_download_paths, which is the only place that can tell an
                 # in-flight attempt from a dead one.
-                rel_path = os.path.relpath(os.path.join(root, name), DATA_DIR).replace("\\", "/")
+                rel_path = os.path.relpath(os.path.join(root, name), DATA_ROOT).replace("\\", "/")
                 try:
                     size = os.path.getsize(os.path.join(root, name))
                 except OSError:
@@ -487,7 +713,7 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
             if not is_model_candidate(name):
                 continue
             full_path = os.path.join(root, name)
-            rel_path = os.path.relpath(full_path, DATA_DIR).replace("\\", "/")
+            rel_path = os.path.relpath(full_path, DATA_ROOT).replace("\\", "/")
             try:
                 size = os.path.getsize(full_path)
             except OSError as exc:
@@ -541,7 +767,7 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
 
 @app.post("/list-models", dependencies=[Depends(verify_token)])
 async def list_models(req: ListModelsRequest):
-    target_dir = _data_path(req.directory) if req.directory else DATA_DIR
+    target_dir = _data_path(req.directory) if req.directory else DATA_ROOT
 
     def _walk():
         files = []
@@ -551,7 +777,7 @@ async def list_models(req: ListModelsRequest):
                     if filename.startswith(".") or _is_sidecar(filename):
                         continue
                     full_path = os.path.join(root, filename)
-                    rel_path = os.path.relpath(full_path, DATA_DIR).replace("\\", "/")
+                    rel_path = os.path.relpath(full_path, DATA_ROOT).replace("\\", "/")
                     files.append({"name": filename, "path": rel_path, "type": "file", "size": os.path.getsize(full_path)})
         return files
 
@@ -646,7 +872,7 @@ async def delete_file(req: DeleteModelRequest):
 
 @app.get("/get-file/{path:path}", dependencies=[Depends(verify_token)])
 async def get_file(path: str, type: str = Query(default="output"), subfolder: str = Query(default="")):
-    """Stream a file from DATA_DIR.
+    """Stream a file from DATA_ROOT.
 
     This read the whole file with `f.read()` inside an `async def` and returned it
     in a single Response. On a single-process `uvicorn.run` that blocks every other
@@ -656,7 +882,7 @@ async def get_file(path: str, type: str = Query(default="output"), subfolder: st
     `FileResponse` reads in chunks on Starlette's own threadpool, so the event loop
     stays free and peak memory is one chunk. The `type` parameter is accepted and
     ignored: it was never used here, and `_data_path` already confines the result
-    to DATA_DIR.
+    to DATA_ROOT.
 
     The size cap is the same backstop beam_app's /get-file uses
     (`provider_core.http_client.get_file_size_cap`, overridable with
@@ -724,7 +950,7 @@ async def upload_file(req: UploadFileRequest, http_request: Request):
         return len(content)
 
     size = await _bounded_to_thread(_decode_and_write)
-    rel_path = os.path.relpath(path, DATA_DIR).replace("\\", "/")
+    rel_path = os.path.relpath(path, DATA_ROOT).replace("\\", "/")
     return ok("File uploaded", path=rel_path, size=size)
 
 
@@ -779,17 +1005,103 @@ async def validate_all_models(req: Optional[ValidateAllModelsRequest] = None):
 # LLM worker mode: an OpenAI-compatible chat surface.
 #
 # This is what `RemoteLLMEngine` talks to, and it is deliberately the *same*
-# protocol the Modal LLM app (`modal_llm.py`) exposes — so a llama.cpp or vLLM
-# container can sit behind it unchanged, and switching between Modal and a
-# self-hosted box is a provider row, not a code change.
+# protocol the Modal LLM app (`deployables/modal/llm/app.py`) exposes — so a
+# llama.cpp or vLLM container can sit behind it unchanged, and switching between
+# Modal and a self-hosted box is a provider row, not a code change.
 #
 # The engine's `inference` consumes canonical `{"event": ...}` TaskEvent frames
 # because it subclasses OpenAICompatLLMEngine; this route speaks SSE because
 # that is what an OpenAI-compatible server emits, and the engine's SSE reader is
 # already correct and tested. Implementing a TaskEvent dialect here would mean a
 # second frame format for no gain.
+#
+# BY DEFAULT this worker serves its own weights, which is what makes a
+# `remote_llm` provider the same thing as `modal_llm` rather than a lookalike.
+# Modal runs llama.cpp from `backend_v2/modal_llm/models.json`; so does this, in
+# the same shape — one llama-server per distinct primary on adjacent loopback
+# ports, routed by the model id in the payload. Set `LLM_UPSTREAM_BASE` to opt
+# OUT and front a llama.cpp or vLLM you already run.
 # ---------------------------------------------------------------------------
 if WORKER_MODE == "llm":
+    from llama_server import LlamaStack, load as load_registry, resolve_registry_path
+
+    REGISTRY = load_registry()
+    REGISTRY_PATH = resolve_registry_path()
+
+    #: The model server this worker fronts. Empty means "serve the weights
+    #: myself", which is the whole parity claim: the tree this worker manages is
+    #: then the tree that answers, and there is nothing to reconcile.
+    UPSTREAM_OVERRIDE = os.getenv("LLM_UPSTREAM_BASE", "").strip().rstrip("/")
+
+    #: The local stack, launched from the registry when there is no override.
+    STACK = LlamaStack(models_dir=DATA_ROOT)
+
+    if UPSTREAM_OVERRIDE:
+        # An explicit upstream wins and no local model is loaded: the operator
+        # runs their own server, and this worker is the authenticated proxy.
+        UPSTREAM_BASE = UPSTREAM_OVERRIDE
+        # `extra=`, not a bare keyword: `Logger.info(**kwargs)` forwards them to
+        # `_log`, whose signature is (level, msg, args, exc_info, extra,
+        # stack_info, stacklevel) — so `base=...` raises TypeError at the FIRST
+        # log line on a worker at INFO, which is every deployment. backend_v2
+        # uses the `key=value` style everywhere because `infrastructure/logging.py`
+        # wraps it; this sidecar deliberately imports nothing from backend_v2 and
+        # gets a plain stdlib Logger, so the style does not transfer.
+        logger.info("llm_upstream_configured", extra={"base": UPSTREAM_BASE})
+    elif REGISTRY is None:
+        # No registry and no override. There is nothing to serve and nothing to
+        # proxy, which is a configuration error rather than an empty answer.
+        UPSTREAM_BASE = ""
+        raise RuntimeError(
+            "WORKER_MODE=llm needs either a models registry at "
+            f"{BUNDLED_REGISTRY} or LLM_UPSTREAM_BASE set"
+        )
+    else:
+        _started = STACK.launch(REGISTRY)
+        logger.info(
+            "llm_serving_local_models",
+            extra={
+                "registry_path": str(REGISTRY_PATH),
+                "roles": {r: REGISTRY.primary(r).id for r in REGISTRY.roles},
+                "servers": _started,
+            },
+        )
+        # Nothing to proxy to: requests are routed to whichever loopback port
+        # serves the named model. See `_upstream_for`.
+        UPSTREAM_BASE = ""
+
+    UPSTREAM_TIMEOUT = float(os.getenv("LLM_UPSTREAM_TIMEOUT", "600"))
+
+    def _upstream_for(payload: dict) -> str:
+        """The base URL that serves the model this payload names.
+
+        With no local stack this is the configured upstream, unchanged. With one,
+        it is the port that model is on, which is why the model id is what the
+        registry's `--alias` makes llama-server answer for.
+        """
+        if UPSTREAM_BASE:
+            return UPSTREAM_BASE
+        model_id = (payload or {}).get("model") or ""
+        return f"http://127.0.0.1:{STACK.resolve(model_id)}"
+
+    def _unavailable_payload(exc: Exception) -> dict:
+        """A 503-shaped error body for a model this worker does not serve.
+
+        `_resolve` raises non-retryable for a configuration state, which the
+        engine reads as retryable=False — the signal that says try another
+        provider rather than back off and retry this one.
+        """
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "message": str(exc),
+                "retryable": False,
+                "served_models": sorted(STACK.servers),
+            },
+        )
     import urllib.error
     import urllib.parse
     import urllib.request
@@ -798,7 +1110,6 @@ if WORKER_MODE == "llm":
     #: or another container on the compose network. The worker is a proxy plus a
     #: token check, which is what lets the backend speak the service-token auth
     #: it already has while the app underneath stays plain OpenAI.
-    UPSTREAM_BASE = os.getenv("LLM_UPSTREAM_BASE", "http://127.0.0.1:8080/v1").rstrip("/")
     UPSTREAM_TIMEOUT = float(os.getenv("LLM_UPSTREAM_TIMEOUT", "600"))
 
     @app.post("/v1/chat/completions", dependencies=[Depends(verify_token)])
@@ -811,15 +1122,26 @@ if WORKER_MODE == "llm":
         llama.cpp's protocol.
         """
         body = await request.body()
+        try:
+            payload = json.loads(body) if body else {}
+        except ValueError:
+            payload = {}
+        try:
+            base = _upstream_for(payload)
+        except Exception as exc:
+            # A model this worker does not hold. Named rather than proxied, so the
+            # backend sees retryable=False and fails over to another provider
+            # instead of backing off against this one.
+            return _unavailable_payload(exc)
 
         def _forward() -> tuple[int, bytes, str]:
             req = urllib.request.Request(
-                f"{UPSTREAM_BASE}/chat/completions",
+                f"{base}/chat/completions",
                 data=body,
                 headers={
                     "Content-Type": "application/json",
-                    # The upstream is on the host or the compose network; it is
-                    # not exposed, so no key is sent.
+                    # The upstream is loopback in this container; it is not
+                    # exposed, so no key is sent.
                     "Accept": "text/event-stream",
                 },
                 method="POST",
@@ -851,7 +1173,7 @@ if WORKER_MODE == "llm":
 # ---------------------------------------------------------------------------
 # TTS worker mode: synthesise to a file, return its address.
 #
-# The clip is written under DATA_DIR and read back through the existing
+# The clip is written under DATA_ROOT and read back through the existing
 # `/get-file` route, so the same service token, the same path containment check
 # and the same size cap that guard model files also guard audio. A container
 # that already runs the model agent needs no second file-serving path.
@@ -926,7 +1248,7 @@ if WORKER_MODE == "tts":
                 code=502,
             )
 
-        # Audio clips are addressed by their path under DATA_DIR (relative), so
+        # Audio clips are addressed by their path under DATA_ROOT (relative), so
         # the engine's `/get-file/{path}` and `/delete-file` treat them exactly
         # like any other artefact.
         rel_path = f"{AUDIO_DIR}/{filename}"

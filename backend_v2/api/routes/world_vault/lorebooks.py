@@ -12,6 +12,7 @@ from infrastructure.logging import get_logger
 from infrastructure.repositories.lorebook_repo import LorebookRepository
 from infrastructure.repositories.lorebook_entry_repo import LorebookEntryRepository
 from services.reference_cleanup import scrub_entity_references
+from services.world_ownership import apply_world_id, require_world
 from core.entities import Lorebook, LorebookEntry
 from core.exceptions import NotFoundError, ValidationError
 from services.embedding_service import EmbeddingService
@@ -37,6 +38,10 @@ MAX_SEARCH_LENGTH = 200
 class LorebookUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    # Which World this entity belongs to. Ownership of record lives on the
+    # member, not in an array on the `worlds` row — see `services/
+    # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.
+    world_id: str | None = None
 
 
 class EntryUpdate(BaseModel):
@@ -55,6 +60,8 @@ class LorebookCreateRequest(BaseModel):
 
     name: str
     description: str | None = None
+    # Which World this book belongs to. See `LorebookUpdate.world_id`.
+    world_id: str | None = None
 
 
 class LorebookEntryCreateRequest(BaseModel):
@@ -85,6 +92,7 @@ def list_lorebooks(session: Session = Depends(get_session), lorebook_repo: Loreb
 
 @router.post("", response_model=Lorebook)
 def create_lorebook(payload: LorebookCreateRequest, session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo)):
+    require_world(session, payload.world_id)
     lorebook = Lorebook(**payload.model_dump())
     lorebook.created_at = datetime.now(timezone.utc)
     lorebook.updated_at = lorebook.created_at
@@ -107,6 +115,8 @@ def update_lorebook(lorebook_id: str, update_data: LorebookUpdate, session: Sess
         raise NotFoundError("Lorebook", lorebook_id)
     
     update_dict = update_data.model_dump(exclude_unset=True)
+    apply_world_id(session, lorebook, update_dict)
+    update_dict.pop("world_id", None)
     if "name" in update_dict:
         lorebook.name = update_dict["name"]
     if "description" in update_dict:

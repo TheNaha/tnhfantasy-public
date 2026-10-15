@@ -343,8 +343,20 @@ def test_build_chat_context_skips_world_state_source_for_dicts(session):
 
 
 def test_build_chat_context_pins_narrator_as_prunable(session):
+    """A narrator turn is a conversation turn, not a system instruction.
+
+    It used to go out as `role: "system"`, which made it exempt from pruning AND
+    — on the Google provider, whose `translate_messages_google` concatenates every
+    system message into the system prompt and drops it from the conversation —
+    tore the narration out of its place in the dialogue and appended it to the
+    end of the instructions, unmarked.
+
+    `kind=NARRATOR` is what makes it prunable, so this asserts all three: it is
+    present, it is labelled, and it is on the dialogue channel rather than the
+    instruction one.
+    """
     messages = [
-        Message(chat_id="chat-x", role=MessageRole.SYSTEM, content="Narrator: rain falls",
+        Message(chat_id="chat-x", role=MessageRole.SYSTEM, content="rain falls",
                 kind=MessageKind.NARRATOR),
         Message(chat_id="chat-x", role=MessageRole.USER, content="I go inside"),
     ]
@@ -352,9 +364,60 @@ def test_build_chat_context_pins_narrator_as_prunable(session):
     session.commit()
 
     _, all_msgs = build_chat_context(session, messages, max_context_tokens=100000)
-    assert any(m["content"] == "Narrator: rain falls" for m in all_msgs)
-    narrator = next(m for m in all_msgs if m["content"] == "Narrator: rain falls")
-    assert narrator["role"] == "system"
+    narrator = next(m for m in all_msgs if m["content"].endswith("rain falls"))
+
+    # Labelled, so the model can tell narration from a character reply.
+    assert narrator["content"] == "[Narration] rain falls"
+    # On the dialogue channel, so its POSITION survives.
+    assert narrator["role"] == "assistant"
+    # And the last turn is still the user's, which is what the model answers.
+    assert all_msgs[-1] == {"role": "user", "content": "I go inside"}
+
+
+def test_a_narrator_turn_is_prunable_rather_than_exempt(session):
+    """`_kind` is what makes it droppable; without it the old bug returns.
+
+    A narrator turn is stored as `role=SYSTEM`, and `role == "system"` is on the
+    never-prune list. The serialised `_kind` is the only thing that moves it off
+    that list, so this goes straight to `prune_context` rather than through
+    `build_chat_context` — the default system prompt there is large enough to
+    swamp any budget a two-message fixture can set, whose floors then keep
+    everything.
+
+    A budget is chosen that comfortably clears those floors and still needs the
+    narration dropped, which is the whole claim.
+    """
+    msgs = [
+        {"role": "assistant", "content": "[Narration] " + ("rain falls " * 200),
+         "_kind": "narrator", "_pinned": False},
+    ] + [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"turn {i}", "_pinned": False}
+        for i in range(1, 5)
+    ]
+
+    pruned = prune_context(msgs, "SYS", [], max_tokens=200)
+
+    contents = [m["content"] for m in pruned]
+    assert not any("rain falls" in c for c in contents)
+    assert contents == ["turn 1", "turn 2", "turn 3", "turn 4"]
+
+
+def test_a_pinned_narrator_turn_is_never_pruned():
+    """`_pinned` still wins over `_kind`, in both directions.
+
+    The pin check is ordered before the kind check, so a pin survives — and a
+    narrator that is pinned must not be droppable just because of its kind.
+    """
+    msgs = [
+        {"role": "assistant", "content": "[Narration] rain falls",
+         "_kind": "narrator", "_pinned": True},
+        {"role": "user", "content": "I go inside", "_pinned": False},
+    ]
+    budget = estimate_tokens("SYS") + estimate_tokens("I go inside")
+    pruned = prune_context(msgs, "SYS", [], max_tokens=budget)
+
+    contents = [m["content"] for m in pruned]
+    assert any("rain falls" in c for c in contents)
 
 
 def test_build_chat_context_strips_internal_keys(session):

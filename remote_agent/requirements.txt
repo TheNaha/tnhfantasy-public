@@ -3,3 +3,9 @@ uvicorn[standard]==0.34.0
 httpx==0.28.1
 pydantic==2.10.6
 requests==2.32.3
+
+# Registry-driven LLM weight downloads. Lazy-imported inside the route so the
+# model/tts modes carry it but never pay for it; declared here because without
+# this line the import raises ModuleNotFoundError and the route answers a bare
+# 500 "Internal Server Error" rather than anything actionable.
+huggingface_hub>=0.24

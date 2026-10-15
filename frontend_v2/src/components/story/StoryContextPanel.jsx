@@ -382,11 +382,17 @@ export default React.memo(function StoryContextPanel({
                           <div className="flex items-center justify-between mb-1.5">
                               <p className="text-xs text-gray-300 font-medium">Autonomous Illustration</p>
                               <span className="text-xs text-gray-500 font-mono">
-                                  {activeStory?.max_agentic_depth != null
-                                      ? (activeStory.max_agentic_depth > 0
-                                          ? `${activeStory.max_agentic_depth} image${activeStory.max_agentic_depth === 1 ? '' : 's'} max`
+                                  {/* max_agentic_IMAGES, not max_agentic_DEPTH.
+                                      This slider was bound to the depth cap,
+                                      which counts LLM hops — so it read "images
+                                      max" while actually limiting how many
+                                      times the model may think. The two are
+                                      now separate columns. */}
+                                  {activeStory?.max_agentic_images != null
+                                      ? (activeStory.max_agentic_images > 0
+                                          ? `${activeStory.max_agentic_images} image${activeStory.max_agentic_images === 1 ? '' : 's'} max`
                                           : 'Off')
-                                      : 'Global default (5)'}
+                                      : 'Global default (2)'}
                               </span>
                           </div>
                           <input
@@ -394,21 +400,54 @@ export default React.memo(function StoryContextPanel({
                               min="0"
                               max="10"
                               step="1"
-                              value={activeStory?.max_agentic_depth ?? 5}
-                              onChange={(e) => onUpdateStory({ max_agentic_depth: parseInt(e.target.value) })}
+                              value={activeStory?.max_agentic_images ?? 2}
+                              onChange={(e) => onUpdateStory({ max_agentic_images: parseInt(e.target.value) })}
                               className="w-full accent-purple-500"
-                              title="How many images the AI may generate on its own while continuing the story. 0 disables autonomous illustration."
+                              title="How many images the AI may spend on one story continuation. 0 disables autonomous illustration." 
                           />
                           <div className="flex justify-between text-2xs text-gray-600 mt-0.5">
                               <span>Off</span><span>5</span><span>10</span>
                           </div>
                           <p className="text-xs text-gray-500 mt-1">While continuing the story, the AI can illustrate scenes itself; generated art attaches to this chapter.</p>
-                          {activeStory?.max_agentic_depth != null && (
+                          {activeStory?.max_agentic_images != null && (
                               <button
-                                  onClick={() => onUpdateStory({ max_agentic_depth: null })}
+                                  onClick={() => onUpdateStory({ max_agentic_images: null })}
                                   className="mt-1 text-2xs text-gray-500 hover:text-red-400 transition-colors"
                               >
                                   Reset to global default
+                              </button>
+                          )}
+                      </div>
+
+                      {/* Who the reader character is.
+                          The world, the cast and the narrator all knew who they
+                          were and the protagonist was anonymous — `character_ids`
+                          named everyone else in the scene. A chat resolves this
+                          from the Persona library; a story passes it straight to
+                          the context builder. */}
+                      <div>
+                          <p className="text-xs text-gray-300 font-medium mb-1.5">Reader character</p>
+                          <input
+                              value={activeStory?.persona_name ?? ''}
+                              onChange={(e) => onUpdateStory({ persona_name: e.target.value })}
+                              placeholder="Who “you” are in this story"
+                              className="w-full bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-purple-500/60"
+                              title="The character you play. The model writes the world's reaction to this person."
+                          />
+                          <textarea
+                              value={activeStory?.persona_description ?? ''}
+                              onChange={(e) => onUpdateStory({ persona_description: e.target.value })}
+                              rows={2}
+                              placeholder="A tired courier with a bad knee…"
+                              className="mt-1.5 w-full bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 placeholder:text-gray-600 resize-none focus:outline-none focus:border-purple-500/60"
+                              title="How you present: appearance, manner, what others notice first."
+                          />
+                          {(activeStory?.persona_name || activeStory?.persona_description) && (
+                              <button
+                                  onClick={() => onUpdateStory({ persona_name: null, persona_description: null })}
+                                  className="mt-1 text-2xs text-gray-500 hover:text-red-400 transition-colors"
+                              >
+                                  Clear
                               </button>
                           )}
                       </div>

@@ -22,21 +22,6 @@ import MentionPicker from './MentionPicker';
  * MDEditor happens to render a real `<textarea>` underneath.
  */
 
-/** Wraps the textarea selection, or inserts `text` when nothing is selected. */
-function useSelectionWrap() {
-    const textareaRef = useRef(null);
-    const wrap = useCallback((before, after = before, fallback = '') => {
-        const el = textareaRef.current;
-        if (!el) return null;
-        const { selectionStart: start, selectionEnd: end } = el;
-        const value = el.value;
-        const selected = value.slice(start, end) || fallback;
-        const next = value.slice(0, start) + before + selected + after + value.slice(end);
-        return { next, start, end, selected };
-    }, []);
-    return { textareaRef, wrap };
-}
-
 const TOOLBAR_ACTIONS = [
     { key: 'bold', icon: Bold, title: 'Bold', before: '**', after: '**', fallback: 'bold text' },
     { key: 'italic', icon: Italic, title: 'Italic', before: '_', after: '_', fallback: 'italic text' },
@@ -57,7 +42,6 @@ export default React.memo(function StoryEditor({ isPreviewMode, editorContent, o
     // was already gone. The pending restore is tracked so it can be cancelled,
     // and the ref is re-checked inside the callback.
     const restoreTimerRef = useRef(null);
-    const { wrap } = useSelectionWrap();
     // The textarea grows with its content instead of scrolling internally, which
     // is what MDEditor did for us. Capped at 70vh so a very long chapter still
     // scrolls the page rather than pushing the word counter off screen — the
@@ -101,43 +85,68 @@ export default React.memo(function StoryEditor({ isPreviewMode, editorContent, o
         }, 0);
     }, [editorContent, onEditorChange, textareaRef]);
 
+    /**
+     * Apply a toolbar action to the editor's selection.
+     *
+     * Reads the live `<textarea>` rather than going through a wrapper, because
+     * the wrapper this used to call (`useSelectionWrap`) owned a ref that was
+     * never attached to anything — the call site destructured only `wrap` and
+     * threw the ref away, so `wrap` always returned null and all seven buttons
+     * were inert. No test covered them; this is the fix, and the tests below are
+     * the point.
+     *
+     * The line-start case is its own path, not a variant of the inline one: it
+     * used to run the inline wrap FIRST and then look for the line start in the
+     * already-wrapped string, using the pre-wrap offsets, which both
+     * double-prefixed the text and mis-located the caret.
+     */
     const applyFormat = useCallback((action) => {
-        const result = wrap(action.before, action.after, action.fallback);
-        if (!result) return;
-        const { next, start, end, selected } = result;
+        const el = editorRef.current;
+        if (!el) return;
+        const { selectionStart: start, selectionEnd: end } = el;
+        const value = el.value;
 
-        // Line-prefix actions apply to whole lines, so the selection is widened
-        // to the start of the first line and the prefix is inserted there. A
-        // mid-line selection would otherwise get `## ` inserted inside a word.
-        if (action.lineStart) {
-            const lineStart = next.lastIndexOf('\n', start - 1) + 1;
-            const lines = next.slice(lineStart, end).split('\n');
-            const prefixed = lines.map((line) => `${action.before}${line}`).join('\n');
-            onEditorChange(next.slice(0, lineStart) + prefixed + next.slice(end));
-            const caret = lineStart + prefixed.length;
+        const restore = (caretStart, caretEnd) => {
             if (restoreTimerRef.current !== null) clearTimeout(restoreTimerRef.current);
             restoreTimerRef.current = setTimeout(() => {
                 restoreTimerRef.current = null;
-                const el = textareaRef.current;
-                if (!el) return;
-                el.focus();
-                el.selectionStart = el.selectionEnd = caret;
+                const node = editorRef.current;
+                if (!node) return;
+                node.focus();
+                node.selectionStart = caretStart;
+                node.selectionEnd = caretEnd;
             }, 0);
+        };
+
+        if (action.lineStart) {
+            // The whole line the selection touches, not just the selected
+            // characters. A `## ` inserted in front of the word the caret happens
+            // to sit on is not a heading, it is corruption — and with no
+            // selection at all there is nothing to wrap, so the line is the
+            // target.
+            //
+            // `Math.max(0, ...)` on the lineStart because `lastIndexOf` with a
+            // negative fromIndex scans the whole string and finds an EARLIER
+            // newline on a multi-line document.
+            const lineStart = value.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+            const newlineAfter = value.indexOf('\n', end);
+            const lineEnd = newlineAfter === -1 ? value.length : newlineAfter;
+            const target = value.slice(lineStart, lineEnd);
+            const next = value.slice(0, lineStart) + action.before + target + action.after + value.slice(lineEnd);
+            onEditorChange(next);
+            restore(
+                lineStart + action.before.length,
+                lineStart + action.before.length + target.length,
+            );
             return;
         }
 
+        const selected = value.slice(start, end) || action.fallback;
+        const next = value.slice(0, start) + action.before + selected + action.after + value.slice(end);
         onEditorChange(next);
         const caret = start + action.before.length;
-        if (restoreTimerRef.current !== null) clearTimeout(restoreTimerRef.current);
-        restoreTimerRef.current = setTimeout(() => {
-            restoreTimerRef.current = null;
-            const el = textareaRef.current;
-            if (!el) return;
-            el.focus();
-            el.selectionStart = caret;
-            el.selectionEnd = caret + selected.length;
-        }, 0);
-    }, [wrap, onEditorChange, textareaRef]);
+        restore(caret, caret + selected.length);
+    }, [onEditorChange]);
 
     const previewComponents = useMemo(() => ({
         a: ({ node, ...props }) => <a {...props} className="text-cyan-400 underline" target="_blank" rel="noreferrer" />,

@@ -1,4 +1,5 @@
 import json
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1750,7 +1751,477 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Copy providers.container_config keys into config wherever absent (config wins), so container_name/port survive under the single registry key; the legacy column stays for read-compat",
             apply_fn=_migration_089_fold_container_config_into_config,
         ),
+        MigrationStep(
+            version="090_world_membership_fks",
+            description="Move World membership from six JSON id arrays on the worlds row to one indexed world_id FK per member table (characters, locations, lorebooks, scenarios, voice_models, stories, chats), backfilled and the arrays dropped, so a world has one description instead of two",
+            apply_fn=_migration_090_world_membership_fks,
+        ),
+        MigrationStep(
+            version="091_agentic_image_budget",
+            description="Add chats.max_agentic_images and stories.max_agentic_images (nullable, global default when null) so an agentic exchange has an image budget separate from the depth cap that counts LLM hops, not cost",
+            apply_fn=_migration_091_agentic_image_budget,
+        ),
+        MigrationStep(
+            version="092_revisions_carry_beats",
+            description="Add story_chapter_revisions.beats so a chapter restore rewinds the beat list with the prose, instead of leaving beats describing text that was just reverted",
+            apply_fn=_migration_092_revisions_carry_beats,
+        ),
+        MigrationStep(
+            version="093_agentic_narration_budget",
+            description="Add chats.max_agentic_narrations and stories.max_agentic_narrations (nullable, global default when null) so narrate_scene has the per-exchange cost cap generate_image got in 091 — a narration is a whole extra LLM completion the model chooses to spend",
+            apply_fn=_migration_093_agentic_narration_budget,
+        ),
+        MigrationStep(
+            version="094_story_persona",
+            description="Add stories.persona_id / persona_name / persona_description (nullable) so a story resolves who the reader character is the way a chat does — the world, the cast and the narrator all knew, and the protagonist was anonymous",
+            apply_fn=_migration_094_story_persona,
+        ),
+        MigrationStep(
+            version="095_beats_as_rows",
+            description="Move story beats from the story_chapters.beats JSON array to a story_beats table, backfilled in position order, so a beat is independently addressable and a chapter can be pruned by beat window instead of selected whole",
+            apply_fn=_migration_095_beats_as_rows,
+        ),
     ]
+
+
+def _migration_090_world_membership_fks(conn) -> bool:
+    """Make World membership one column per member instead of six JSON arrays.
+
+    For most of its life a World held its roster in six JSON id arrays —
+    `character_ids`, `location_ids`, `lorebook_ids`, `scenario_ids`,
+    `voice_ids`, and the `chat_ids`/`story_ids` pair that `services/
+    world_ownership.py` kept in sync with the `Chat.world_id` / `Story.world_id`
+    FKs added in `077_campaigns_to_worlds`. So the vault had two descriptions
+    of one relationship for chats and stories, and one denormalised guess for
+    everything else. That is the shape this codebase's worst bug class comes
+    from, and it shipped the desync `world_ownership.py` exists to prevent:
+    `PUT /api/v2/worlds/{id}` accepted `chat_ids`/`story_ids` directly, so a
+    world could list a chat the chat did not belong to, and
+    `lorebook_ids`/`scenario_ids`/`voice_ids` had no scrub path at all, so
+    deleting an entity left its id in the array forever.
+
+    Ownership becomes one nullable indexed `world_id` on each member table.
+    `world_id` is indexed, so `select(Chat).where(Chat.world_id == wid)` is the
+    same indexed lookup the array bought, and there is one thing to write
+    instead of two.
+
+    Three legs, each safe to re-run:
+      1. ADD the five columns + indexes (a no-op on a fresh install, which
+         already has them from `create_all`).
+      2. BACKFILL them from the arrays, `SET world_id = :w WHERE id = :id AND
+         world_id IS NULL`. The guard makes an entity that already points at a
+         world keep its FK, so a re-run cannot steal members, and worlds are
+         visited oldest-first so an id listed by two worlds resolves
+         deterministically rather than by rowid.
+      3. DROP the six arrays from `worlds`. Nothing reads them after this.
+
+    Per-statement savepoints, because leg 3 must not be able to leave a
+    half-backed deployment: if a drop fails the step still returns True (the
+    columns are dead code and dropping them is hygiene, not correctness) but it
+    logs, so the next step does not silently assume they are gone.
+    """
+    inspector = inspect(conn)
+    tables = set(inspector.get_table_names())
+
+    # (table, array column on worlds, entity label)
+    members = (
+        ("characters", "character_ids", "character"),
+        ("locations", "location_ids", "location"),
+        ("lorebooks", "lorebook_ids", "lorebook"),
+        ("scenarios", "scenario_ids", "scenario"),
+        ("voice_models", "voice_ids", "voice"),
+        ("stories", "story_ids", "story"),
+        ("chats", "chat_ids", "chat"),
+    )
+
+    # ── Leg 1: the columns ────────────────────────────────────────────────────
+    # `Chat.world_id` / `Story.world_id` already exist (077); every member table
+    # needs one anyway, and ADD COLUMN is a no-op when it is present.
+    for table, _column, _label in members:
+        if table not in tables:
+            return False
+        cols = {c["name"] for c in inspect(conn).get_columns(table)}
+        if "world_id" in cols:
+            continue
+        col_type = "VARCHAR" if conn.dialect.name == "postgresql" else "TEXT"
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN world_id {col_type}"))
+        logger.info("migration_column_added", table=table, column="world_id")
+
+    # Indexes after columns, for the reason spelled out in
+    # `_migration_077_campaigns_to_worlds`: an index built before its column
+    # exists takes the app down at startup, every boot, with an error that
+    # names the index rather than the ordering that caused it.
+    for table, _column, _label in members:
+        conn.execute(text(
+            f"CREATE INDEX IF NOT EXISTS ix_{table}_world_id ON {table} (world_id)"
+        ))
+
+    if "worlds" not in tables:
+        return False
+
+    world_cols = {c["name"] for c in inspect(conn).get_columns("worlds")}
+    arrays = [column for _table, column, _label in members if column in world_cols]
+    if not arrays:
+        # Fresh install: `create_all` already produced the new World shape.
+        for table, _column, _label in members:
+            _verify_required_columns(conn, table, {"world_id"})
+        return True
+
+    # ── Leg 2: backfill ───────────────────────────────────────────────────────
+    # Oldest world first, so an entity appearing in two arrays lands in the one
+    # that was created first rather than whichever row the planner happened to
+    # visit last.
+    world_rows = conn.execute(text(
+        "SELECT id, " + ", ".join(arrays) + " FROM worlds "
+        "ORDER BY created_at NULLS LAST, id"
+        if conn.dialect.name == "postgresql"
+        else "SELECT id, " + ", ".join(arrays) + " FROM worlds ORDER BY id"
+    )).all()
+
+    def _as_list(raw):
+        """Normalise a JSON column to a list of ids.
+
+        Postgres hands back a parsed list for JSONB; SQLite hands back the text
+        and needs `json.loads`. Anything unparseable is skipped rather than
+        crashing the migration — the column is about to be dropped, and a
+        malformed array is logged, not silently converted into a member.
+        """
+        if not raw:
+            return []
+        if isinstance(raw, (list, tuple)):
+            return [str(v) for v in raw if v]
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        if isinstance(parsed, list):
+            return [str(v) for v in parsed if v]
+        return []
+
+    moved = 0
+    for row in world_rows:
+        world_id = row[0]
+        values = row[1:]
+        for (table, _column, label), raw in zip(members, values):
+            ids = _as_list(raw)
+            if ids is None:
+                logger.warning("migration_090_unparseable_array",
+                               table="worlds", world_id=world_id, column=_column)
+                continue
+            for entity_id in ids:
+                updated = conn.execute(
+                    text(f"UPDATE {table} SET world_id = :wid WHERE id = :id AND world_id IS NULL"),
+                    {"wid": world_id, "id": entity_id},
+                ).rowcount or 0
+                if updated:
+                    moved += 1
+        logger.info("migration_090_world_migrated", world_id=world_id)
+
+    if moved:
+        logger.info("migration_090_members_relinked", count=moved)
+
+    # ── Leg 3: drop the arrays ────────────────────────────────────────────────
+    # One statement per savepoint: a failed drop is logged and does not abort
+    # the step, because the columns are dead code afterwards and losing the
+    # whole migration over hygiene would leave the backfill unrecorded too.
+    for column in arrays:
+        try:
+            with conn.begin_nested():
+                if conn.dialect.name == "postgresql":
+                    conn.execute(text(f"ALTER TABLE worlds DROP COLUMN IF EXISTS {column}"))
+                else:
+                    # SQLite has no DROP COLUMN IF EXISTS, and the column is
+                    # already known to exist at this point.
+                    conn.execute(text(f"ALTER TABLE worlds DROP COLUMN {column}"))
+            logger.info("migration_column_dropped", table="worlds", column=column)
+        except Exception as exc:
+            logger.warning("migration_090_column_drop_failed", column=column, error=str(exc))
+
+    # The postcondition that matters is that every member carries `world_id`,
+    # which is the ownership of record. `worlds.description` is not asserted:
+    # this migration does not touch it, and a verify listing a column it never
+    # reads turns an unrelated schema problem into a startup crash here.
+    for table, _column, _label in members:
+        _verify_required_columns(conn, table, {"world_id"})
+    return True
+
+
+def _migration_091_agentic_image_budget(conn) -> bool:
+    """Give the agentic loop an image budget, separate from its depth cap.
+
+    The depth cap counts LLM hops. A hop is cheap; an image is not, and
+    `generate_image` was callable once per hop, so one reply could chain
+    `MAX_AGENTIC_DEPTH` paid image jobs while the user asked for nothing. The
+    depth cap and the image budget answer different questions — "how many more
+    times should the model think" versus "how much am I willing to spend on one
+    exchange" — so they are separate columns and separate limits.
+
+    `max_agentic_images` on `chats` and `stories`, null meaning the global
+    default. No backfill: a null column reads as the global default, which is the
+    behaviour these chats already had.
+    """
+    from sqlalchemy import inspect, text
+
+    added = False
+    for table in ("chats", "stories"):
+        tables = inspect(conn).get_table_names()
+        if table not in tables:
+            continue
+        cols = {c["name"] for c in inspect(conn).get_columns(table)}
+        if "max_agentic_images" in cols:
+            continue
+        conn.execute(
+            text(f"ALTER TABLE {table} ADD COLUMN max_agentic_images INTEGER")
+        )
+        logger.info("migration_column_added", table=table, column="max_agentic_images")
+        added = True
+    if not added:
+        logger.info("migration_noop", note="agentic image budget already present")
+    return True
+
+
+def _migration_092_revisions_carry_beats(conn) -> bool:
+    """Give `story_chapter_revisions` a `beats` column so a restore is total.
+
+    A revision was a snapshot of `content` only, and `restore_chapter_revision`
+    set `content` while leaving `beats` untouched — so the one route that rewinds
+    state put the chapter back into the drift state the beat list is supposed to
+    prevent. With beats in the snapshot, a restore rewinds both and the prose is
+    re-rendered from them.
+
+    No backfill. A legacy snapshot has no beats, so restoring it restores the
+    prose exactly as before and leaves the beats alone — the behaviour it
+    already had. Rendering an empty beat list would produce `""`, which is why
+    the restore path checks for an empty list rather than treating it as
+    "the chapter had no beats".
+    """
+    from sqlalchemy import inspect, text
+
+    tables = inspect(conn).get_table_names()
+    if "story_chapter_revisions" not in tables:
+        return False
+    cols = {c["name"] for c in inspect(conn).get_columns("story_chapter_revisions")}
+    if "beats" in cols:
+        logger.info("migration_noop", note="story_chapter_revisions.beats already present")
+        return True
+        conn.execute(
+            text("ALTER TABLE story_chapter_revisions ADD COLUMN beats JSON DEFAULT '[]'")
+        )
+    logger.info("migration_column_added", table="story_chapter_revisions", column="beats")
+    return True
+
+
+def _migration_093_agentic_narration_budget(conn) -> bool:
+    """Give `narrate_scene` a per-exchange budget alongside the image one.
+
+    `MAX_AGENTIC_DEPTH` bounds how many times the model may think; it does not
+    bound what it spends. `generate_image` was callable once per hop with
+    nothing in the way, so a single reply could chain five paid image jobs while
+    the user asked for one — that was `091`. `narrate_scene` had the same hole
+    and it was the worse of the two: a narration is always a whole extra LLM
+    completion, it is the tool the model is most likely to reach for, and it had
+    no cap at all. So the most expensive discretionary decision in the loop was
+    also the only unbounded one.
+
+    A separate column, not a share of `max_agentic_images`: raising the image cap
+    must not silently lower the narration cap, because the two are answering
+    different questions. No backfill — null reads as the global default, which is
+    what these chats had before.
+    """
+    from sqlalchemy import inspect, text
+
+    added = False
+    for table in ("chats", "stories"):
+        tables = inspect(conn).get_table_names()
+        if table not in tables:
+            continue
+        cols = {c["name"] for c in inspect(conn).get_columns(table)}
+        if "max_agentic_narrations" in cols:
+            continue
+        conn.execute(
+            text(f"ALTER TABLE {table} ADD COLUMN max_agentic_narrations INTEGER")
+        )
+        logger.info("migration_column_added", table=table, column="max_agentic_narrations")
+        added = True
+    if not added:
+        logger.info("migration_noop", note="agentic narration budget already present")
+    return True
+
+
+def _migration_094_story_persona(conn) -> bool:
+    """Give a Story the persona fields a Chat resolves.
+
+    A chat builds its context through `chat_context_kwargs`, which resolves
+    `chat.persona_id` from the Persona library and falls back to the story's own
+    strings. A story called the same context builder with neither — so every
+    other field the user can set on a story reached the model and the one
+    describing the reader did not.
+
+    Three nullable columns, added idempotently, all reading as "unset" when null.
+    No backfill: a story with no persona was being written with no persona, and
+    that is what it keeps.
+    """
+    from sqlalchemy import inspect, text
+
+    tables = inspect(conn).get_table_names()
+    if "stories" not in tables:
+        return False
+    cols = {c["name"] for c in inspect(conn).get_columns("stories")}
+    for column, coltype in (
+        ("persona_id", "VARCHAR"),
+        ("persona_name", "VARCHAR"),
+        ("persona_description", "TEXT"),
+    ):
+        if column in cols:
+            continue
+        conn.execute(text(f"ALTER TABLE stories ADD COLUMN {column} {coltype}"))
+        logger.info("migration_column_added", table="stories", column=column)
+    return True
+
+
+def _migration_095_beats_as_rows(conn) -> bool:
+    """Move story beats from a JSON array on the chapter to their own table.
+
+    Beats were `story_chapters.beats`, a list of dicts, and keeping them in
+    step with `story_chapters.content` — the prose they render to — was a
+    hand-written set of splices. That is the two-representations problem, and it
+    cost: `sync_chapter_prose`, `absorb_prose_edit`, `_beat_snippet`,
+    `_replace_beat_text` (deleted) and `_remove_beat_text` (deleted) all existed
+    because two fields described one text.
+
+    Now a beat is a row. The JSON column is NOT dropped by this migration — the
+    API, the editor and ~95 readers still speak `beats: [...]`, and a schema
+    change that breaks every reader in one commit is not a migration, it is an
+    outage. It is maintained by one writer (`sync_chapter_prose`) from the rows,
+    which is what makes the two unable to disagree: there is one code path that
+    produces the JSON and it is the same one that writes the rows.
+
+    Backfilled in `position` order from the existing array, so a chapter's beat
+    order survives. Re-running is a no-op once the rows exist, so the migration
+    is safe to re-run on a partially-migrated database.
+    """
+    import json as _json
+
+    from sqlalchemy import inspect, text
+
+    tables = inspect(conn).get_table_names()
+    if "story_beats" not in tables:
+        if conn.dialect.name == "postgresql":
+            conn.execute(text("""
+                CREATE TABLE story_beats (
+                    id VARCHAR PRIMARY KEY,
+                    chapter_id VARCHAR NOT NULL,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    parent_beat_id VARCHAR,
+                    role VARCHAR NOT NULL DEFAULT 'narrator',
+                    content TEXT NOT NULL DEFAULT '',
+                    audio_path VARCHAR,
+                    source_job_id VARCHAR,
+                    tts_source_job_id VARCHAR,
+                    alternates JSONB NOT NULL DEFAULT '[]',
+                    active_index INTEGER NOT NULL DEFAULT 0,
+                    extra JSONB NOT NULL DEFAULT '{}',
+                    created_at TIMESTAMP
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE story_beats (
+                    id VARCHAR PRIMARY KEY,
+                    chapter_id VARCHAR NOT NULL,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    parent_beat_id VARCHAR,
+                    role VARCHAR NOT NULL DEFAULT 'narrator',
+                    content TEXT NOT NULL DEFAULT '',
+                    audio_path VARCHAR,
+                    source_job_id VARCHAR,
+                    tts_source_job_id VARCHAR,
+                    alternates JSON NOT NULL DEFAULT '[]',
+                    active_index INTEGER NOT NULL DEFAULT 0,
+                    extra JSON NOT NULL DEFAULT '{}',
+                    created_at TIMESTAMP
+                )
+            """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_story_beats_chapter_id ON story_beats (chapter_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_beat_chapter_position ON story_beats (chapter_id, position)"
+        ))
+        logger.info("migration_table_created", table="story_beats")
+
+    if "story_chapters" not in tables:
+        return False
+    cols = {c["name"] for c in inspect(conn).get_columns("story_chapters")}
+    if "beats" not in cols:
+        # Nothing to backfill from: a chapter with no JSON column has no beats to
+        # carry over, and the rows are the only source from here on.
+        return True
+
+    existing = conn.execute(text("SELECT COUNT(*) FROM story_beats")).scalar()
+    if existing:
+        # Already backfilled. Idempotent by the row count, not by a marker, so a
+        # partially-migrated database is not re-seeded on the next boot.
+        return True
+
+    rows = conn.execute(
+        text("SELECT id, beats FROM story_chapters WHERE beats IS NOT NULL")
+    ).all()
+
+    inserted = 0
+    for chapter_id, raw in rows:
+        if isinstance(raw, (str, bytes)):
+            try:
+                beats = _json.loads(raw)
+            except (ValueError, TypeError):
+                logger.warning("migration_095_unparseable_beats", chapter_id=chapter_id)
+                continue
+        else:
+            beats = raw
+        if not isinstance(beats, list):
+            continue
+        for position, beat in enumerate(beats):
+            if not isinstance(beat, dict):
+                continue
+            # Everything the JSON carried that is not a column of its own goes to
+            # `extra`, so nothing is lost by the move.
+            extra = {
+                k: v for k, v in beat.items()
+                if k not in {
+                    "id", "parent_beat_id", "role", "content", "audio_path",
+                    "source_job_id", "alternates", "active_index",
+                }
+            }
+            conn.execute(
+                text("""
+                    INSERT INTO story_beats
+                        (id, chapter_id, position, parent_beat_id, role, content,
+                         audio_path, source_job_id, tts_source_job_id,
+                         alternates, active_index, extra, created_at)
+                    VALUES
+                        (:id, :chapter_id, :position, :parent_beat_id, :role, :content,
+                         :audio_path, :source_job_id, :tts_source_job_id,
+                         :alternates, :active_index, :extra, :created_at)
+                """),
+                {
+                    "id": beat.get("id") or str(uuid.uuid4()),
+                    "chapter_id": chapter_id,
+                    "position": position,
+                    "parent_beat_id": beat.get("parent_beat_id"),
+                    "role": beat.get("role") or "narrator",
+                    "content": beat.get("content") or "",
+                    "audio_path": beat.get("audio_path"),
+                    "source_job_id": beat.get("source_job_id"),
+                    "tts_source_job_id": beat.get("tts_source_job_id"),
+                    "alternates": _json.dumps(beat.get("alternates") or []),
+                    "active_index": beat.get("active_index") or 0,
+                    "extra": _json.dumps(extra),
+                    "created_at": beat.get("created_at"),
+                },
+            )
+            inserted += 1
+    logger.info("migration_095_beats_migrated", count=inserted)
+    return True
 
 
 def _migration_073_create_asset_tags(conn) -> bool:
@@ -2106,10 +2577,10 @@ def _migration_049_seed_starter_pack(conn) -> bool:
                 text("""
                     INSERT INTO providers (
                         id, type, worker_type, enabled, priority,
-                        credentials, config, container_config
+                        credentials, config
                     ) VALUES (
                         :id, :type, :worker_type, :enabled, :priority,
-                        :credentials, :config, :container_config
+                        :credentials, :config
                     )
                 """),
                 {
@@ -2119,8 +2590,19 @@ def _migration_049_seed_starter_pack(conn) -> bool:
                     "enabled": False,
                     "priority": 1,
                     "credentials": json.dumps({}),
-                    "config": json.dumps({"seeded": True, "discovered": True, "api_base": "http://localhost:11434/v1"}),
-                    "container_config": json.dumps({"container_name": "tnhcomfy-llm-local"}),
+                    # `container_name` used to be seeded under the
+                    # `container_config` column. That column is no longer in
+                    # the ORM model, so a fresh database has no such column to
+                    # insert into; it carries the value under `config`, which
+                    # is where migration 089 put it for every pre-existing row
+                    # anyway, so a fresh seed and a migrated one converge on
+                    # the same record.
+                    "config": json.dumps({
+                        "seeded": True,
+                        "discovered": True,
+                        "api_base": "http://localhost:11434/v1",
+                        "container_name": "tnhcomfy-llm-local",
+                    }),
                 },
             )
             seeded = True

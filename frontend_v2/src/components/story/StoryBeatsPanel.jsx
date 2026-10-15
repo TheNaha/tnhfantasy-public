@@ -24,7 +24,45 @@ import { QueryErrorState } from '../common/QueryState';
 // selectable here or the editor silently re-labels it.
 const BEAT_ROLE_OPTIONS = ['user', 'narrator', 'system', 'tts'];
 
-const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, branchPending, branchingBeatId, onBranch, onUpdateBeat, onDeleteBeat }) {
+/**
+ * `<` / `>` beside a beat that has more than one take.
+ *
+ * A chat has had this since swipes existed; a story did not, because retry used
+ * to DROP the take it replaced. Now the takes accumulate on the beat and this
+ * picks which one the chapter renders.
+ */
+const AlternateSwitcher = ({ beat, disabled, onSelect }) => {
+    const alternates = Array.isArray(beat?.alternates) ? beat.alternates : [];
+    if (alternates.length < 2) return null;
+    const active = beat?.active_index ?? 0;
+    return (
+        <div className="flex items-center text-xs text-gray-500 font-mono" title="Alternate takes of this beat">
+            <button
+                type="button"
+                onClick={() => onSelect(active - 1)}
+                disabled={disabled || active <= 0}
+                aria-label="Previous take"
+                className="p-1 min-w-6 min-h-6 hover:text-white disabled:opacity-30 transition-colors"
+            >
+                {'<'}
+            </button>
+            <span className="w-6 text-center select-none">
+                {active + 1}/{alternates.length}
+            </span>
+            <button
+                type="button"
+                onClick={() => onSelect(active + 1)}
+                disabled={disabled || active >= alternates.length - 1}
+                aria-label="Next take"
+                className="p-1 min-w-6 min-h-6 hover:text-white disabled:opacity-30 transition-colors"
+            >
+                {'>'}
+            </button>
+        </div>
+    );
+};
+
+const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, branchPending, branchingBeatId, onBranch, onUpdateBeat, onDeleteBeat, onSelectAlternate }) {
     const beatId = beat?.id || null;
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState('');
@@ -138,7 +176,14 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
                     {beat?.audio_path && (
                         <audio src={assetUrl(beat.audio_path)} controls className="shrink-0 h-7 w-44" title="Chapter narration" />
                     )}
-                    <div className="shrink-0 flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                    <div className="ml-auto shrink-0 flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                        {/* More than one take, and the switcher between them —
+                            the story counterpart of the chat swipe arrows. */}
+                        <AlternateSwitcher
+                            beat={beat}
+                            disabled={isStreaming}
+                            onSelect={(index) => onSelectAlternate?.(beatId, index)}
+                        />
                         <button
                             onClick={startEdit}
                             disabled={!beatId || isStreaming}
@@ -180,6 +225,7 @@ export default React.memo(function StoryBeatsPanel({
     onReorder,
     onUpdateBeat,
     onDeleteBeat,
+    onSelectAlternate,
     onClose,
     // `beats` is `activeChapter?.beats` from the page, and a failed chapters
     // fetch leaves `activeChapter` undefined — so this panel said "No beats
@@ -255,6 +301,7 @@ export default React.memo(function StoryBeatsPanel({
                                         onBranch={onBranch}
                                         onUpdateBeat={onUpdateBeat}
                                         onDeleteBeat={onDeleteBeat}
+                                        onSelectAlternate={onSelectAlternate}
                                     />
                                 );
                             })}

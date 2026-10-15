@@ -237,7 +237,26 @@ describe('useChats mutations', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useIllustrateChat(), { wrapper });
         await act(async () => result.current.mutateAsync({ chatId: 'c1', imagePrompt: undefined }));
-        expect(apiMock.post).toHaveBeenCalledWith('/api/v2/chats/c1/illustrate', { image_prompt: '' });
+        expect(apiMock.post).toHaveBeenCalledWith(
+            '/api/v2/chats/c1/illustrate',
+            { image_prompt: '', branch_id: null },
+        );
+    });
+
+    it('useIllustrateChat carries the branch so the image lands on that thread', async () => {
+        apiMock.post.mockResolvedValue({ ok: true });
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useIllustrateChat(), { wrapper });
+        await act(async () =>
+            result.current.mutateAsync({ chatId: 'c1', imagePrompt: 'a castle', branchId: 'br1' })
+        );
+        // A branch's copies share their originals' `chat_id` and `created_at`, so
+        // an IMAGE message written without `branch_id` is filed into the original
+        // thread and the fork the user is reading never shows it.
+        expect(apiMock.post).toHaveBeenCalledWith(
+            '/api/v2/chats/c1/illustrate',
+            { image_prompt: 'a castle', branch_id: 'br1' },
+        );
     });
 
     it('useChatImages gates on chatId', async () => {

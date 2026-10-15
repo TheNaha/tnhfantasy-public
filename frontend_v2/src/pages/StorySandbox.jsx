@@ -4,7 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation, useUpdateStoryBeat, useDeleteStoryBeat, useChapterRevisions, useCreateChapterRevision, useRestoreChapterRevision, useScenarios } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation, useSelectStoryBeatAlternate,
+    useUpdateStoryBeat, useDeleteStoryBeat, useChapterRevisions, useCreateChapterRevision, useRestoreChapterRevision, useScenarios } from '../hooks/useWorldVault';
 import { useLLMJobResult, awaitJobText } from '../hooks/useLLMJobResult';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -144,6 +145,7 @@ export default function StorySandbox() {
         revisionsOpen ? activeChapterId : null
     );
     const updateStoryBeat = useUpdateStoryBeat();
+    const selectAlternate = useSelectStoryBeatAlternate();
     const deleteStoryBeat = useDeleteStoryBeat();
     const parseStory = useParseStory();
     const publishStory = usePublishStory();
@@ -337,17 +339,28 @@ export default function StorySandbox() {
             const title = titleMatch ? titleMatch : 'Imported Story';
             
             const newStory = await createStory.mutateAsync({ title });
-            // create_story doesn't create an initial chapter — create one
-            // with the full parsed text as content, then let the AI parser
-            // extract characters/lorebooks/locations in the background.
-            await createChapter.mutateAsync({
+            // `create_story` already creates an empty Chapter 1 (that is the
+            // placeholder the editor lands on), so the imported text goes into
+            // Chapter 2 — and `navigate(\`/story/${newStory.id}\`)` then hits the
+            // auto-select effect, which picks `chapters[0]`: the EMPTY one. The
+            // user imported a story and was dropped into a blank chapter with a
+            // same-named sibling holding their text.
+            //
+            // The chapter is created, and navigated to, by id.
+            const created = await createChapter.mutateAsync({
                 storyId: newStory.id,
                 data: { title: 'Chapter 1', content: text },
             });
-            
+
             await parseStory.mutateAsync({ storyId: newStory.id, text });
-            
-            navigate(`/story/${newStory.id}`, { replace: true });
+
+            // Guarded rather than assuming: if the create response ever stops
+            // carrying the body, navigating to `/chapter/undefined` is worse than
+            // landing on the placeholder chapter.
+            const target = created?.id
+                ? `/story/${newStory.id}/chapter/${created.id}`
+                : `/story/${newStory.id}`;
+            navigate(target, { replace: true });
             
             toast.success("Story imported. AI is parsing Characters & Lore in the background!");
         } catch {
@@ -754,6 +767,22 @@ export default function StorySandbox() {
             return prev;
         });
     }, [streamingBaseRef]);
+
+    const handleSelectAlternate = useCallback(async (beatId, index) => {
+        if (!activeStoryId || !activeChapterId || isStreaming) return;
+        try {
+            // Switching is optimistic in the hook: the response replaces the
+            // chapter wholesale, so the prose on screen has to move with it.
+            await selectAlternate.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                beatId,
+                index,
+            });
+        } catch {
+            toast.error('Could not switch to that take');
+        }
+    }, [activeStoryId, activeChapterId, isStreaming, selectAlternate]);
 
     const handleEditBeat = useCallback(async (beatId, patch) => {
         if (!activeStoryId || !activeChapterId || isStreaming) return;
@@ -1197,6 +1226,7 @@ export default function StorySandbox() {
                                                 onReorder={handleReorderBeats}
                                                 onUpdateBeat={handleEditBeat}
                                                 onDeleteBeat={handleDeleteBeat}
+                                                onSelectAlternate={handleSelectAlternate}
                                                 onClose={() => setShowBeatsPanel(false)}
                                                 beatsError={queryErrors.chapters?.error}
                                                 onRetryBeats={queryErrors.chapters?.refetch}

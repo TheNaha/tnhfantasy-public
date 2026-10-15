@@ -184,6 +184,55 @@ export const useUpdateStoryBeat = () => {
     });
 };
 
+export const useSelectStoryBeatAlternate = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId, beatId, index }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/beats/${beatId}/select-alternate`, { index }),
+        onMutate: async ({ storyId, chapterId, beatId, index }) => {
+            // Optimistic, for the same reason the beat edit is: the server
+            // response replaces the chapter wholesale, so waiting for the round
+            // trip leaves the prose on screen behind the beat the user just
+            // switched away from.
+            const key = STORY_CHAPTERS_KEY(storyId);
+            await queryClient.cancelQueries({ queryKey: key });
+            const previous = queryClient.getQueryData(key);
+            queryClient.setQueryData(key, (old) => {
+                if (!old) return old;
+                return old.map((ch) => {
+                    if (ch.id !== chapterId) return ch;
+                    return {
+                        ...ch,
+                        beats: (ch.beats || []).map((b) => {
+                            if (b?.id !== beatId) return b;
+                            const alternates = b?.alternates || [];
+                            const take = alternates[index];
+                            if (!take) return b;
+                            return {
+                                ...b,
+                                active_index: index,
+                                content: take.text || '',
+                                // The stamp follows the take, so the reconciler
+                                // looks for the job that produced the text on screen.
+                                ...(take.source_job_id ? { source_job_id: take.source_job_id } : {}),
+                            };
+                        }),
+                    };
+                });
+            });
+            return { previous };
+        },
+        onError: (_err, _variables, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(STORY_CHAPTERS_KEY(_variables.storyId), context.previous);
+            }
+        },
+        onSettled: (_data, _err, variables) => {
+            queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+        },
+    });
+};
+
 export const useDeleteStoryBeat = () => {
     const queryClient = useQueryClient();
     return useMutation({

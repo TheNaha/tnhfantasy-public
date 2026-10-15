@@ -35,7 +35,7 @@ const CATEGORY_LABEL = {
 
 // Display names for the fallback path, keyed by provider type id.
 const FALLBACK_TYPE_NAMES = {
-    modal: 'Modal (ComfyUI)', modal_tts: 'Modal (TTS)', modal_vllm: 'Modal (LLM)',
+    modal: 'Modal (ComfyUI)', modal_tts: 'Modal (TTS)', modal_llm: 'Modal (LLM)',
     beam: 'Beam (ComfyUI)', beam_llm: 'Beam (LLM)', beam_tts: 'Beam (TTS)',
     remote_comfy: 'Container (ComfyUI + agent)', remote_llm: 'Self-hosted LLM container',
     remote_tts: 'Self-hosted TTS container',
@@ -56,7 +56,7 @@ const FALLBACK_MATRIX = {
 // Worker-type fallback for the save payload before schemas load.
 const FALLBACK_WORKER_TYPE = {
     modal: 'image', beam: 'image', remote_comfy: 'image', direct_url: 'image',
-    modal_vllm: 'llm', beam_llm: 'llm', remote_llm: 'llm',
+    modal_llm: 'llm', beam_llm: 'llm', remote_llm: 'llm',
     openai_compat: 'llm', ollama: 'llm', anthropic: 'llm', google: 'llm',
     modal_tts: 'tts', beam_tts: 'tts', remote_tts: 'tts', direct_tts: 'tts',
 };

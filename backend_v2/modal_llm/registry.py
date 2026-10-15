@@ -3,7 +3,7 @@ TNH LLM registry — the ONE definition of which model serves which role.
 
 Read by both sides so they cannot drift:
 
-  * ``modal_llm/app.py`` imports this to register one Modal function per enabled
+  * ``deployables/modal/llm/app.py`` imports this to register one Modal function per enabled
     model, and embeds ``models.json`` into the image so the deployed function can
     read its own role and sampler.
   * ``backend_v2/services/llm_router.py`` imports it to resolve

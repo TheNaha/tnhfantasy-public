@@ -1,0 +1,88 @@
+# Where the provider code lives
+
+Four trees run code that talks to a GPU. They used to be one, got split apart,
+and were not fully re-described when they were — so the fastest way to find
+something is to know which tree you are in.
+
+| Tree | Runs where | Imported by the backend? | Deployed how |
+| --- | --- | --- | --- |
+| `backend_v2/services/engines/` | **in-process**, in the backend container | yes — this *is* the backend's provider layer | nothing to deploy |
+| `deployables/` | on **Modal** and **Beam** | never | `bash scripts/deploy.sh <target>` |
+| `deployables/modal/llm/` | on **Modal** (llama.cpp) | never | `bash scripts/deploy.sh llm` |
+| `backend_v2/modal_llm/` | nowhere — it is the **shared registry** | yes (`llm_router`) and `remote_agent/` | not a deployable |
+| `remote_agent/` | on **your own** Docker host | never | `docker compose` in that directory |
+
+## The rule that explains the layout
+
+**The backend never imports a deployable, and a deployable never imports the
+backend.** Everything crossing that line crosses it over the network.
+
+That is why `deployables/` and `remote_agent/` are not packages, why nothing in
+`backend_v2/` imports them, and why the backend's test suite does not run them.
+It is also why each deployable resolves its own imports from the repo root at
+import time instead of assuming a sibling package — see the bootstrap at
+`deployables/modal/image/modal_app.py:27`,
+`deployables/modal/tts/modal_app.py:65` and `deployables/beam/beam_app.py:53`.
+When `provider_core` moved out from next to the app files (commit `acc86aa3`),
+every one of those assumptions broke at once and the whole tree became
+un-deployable.
+
+## The split that is not clean
+
+The LLM registry is shared by three consumers — the backend's `llm_router`, the
+Modal app, and `remote_agent/llama_server.py` — so it cannot live in
+`deployables/` with the other things the backend never imports. What moved:
+
+| File | Where it is now | Why |
+| --- | --- | --- |
+| `app.py` (the Modal deployment) | `deployables/modal/llm/` | it is a deployable like any other |
+| `registry.py`, `models.json` | `backend_v2/modal_llm/` | three consumers import them; no reason to make two of them search |
+
+So the Modal app now resolves its registry by walking up to the repo root rather
+than by neighbour — the same bootstrap `deployables/modal/image/` and
+`deployables/beam/` use, and for the same reason: a sibling assumption is
+exactly what made those trees un-deployable when `provider_core` moved.
+
+`backend_v2/modal_llm/` must stay *inside* `backend_v2/`: the backend container's
+build context has no repo root above it, and moving the registry out 500ed
+`GET /llm/routing` in Docker while every test passed on the host.
+
+## Which engine owns which provider
+
+`backend_v2/services/engines/engine_factory.py` is the only routing table, and
+`backend_v2/services/engines/registry.py` owns provider *type* resolution.
+15 provider types are backed by 13 engine classes — several types share a class,
+which is deliberate:
+
+- `direct_url` + `remote_comfy` → `DirectComfyEngine`
+- `openai_compat` + `ollama` → `OpenAICompatLLMEngine`
+- `modal_llm` (and legacy `modal_vllm`) → `ModalLlamaCPPEngine`
+
+Provider *selection* is not in the factory: it is the load balancer's job, and it
+filters by **capability**, not by worker type
+(`backend_v2/services/load_balancer.py:447`, `provider.serves(task_type)`).
+
+## Names are a contract
+
+The engines look classes and functions up by name in someone else's cloud. The
+table in `deployables/README.md` is the verified two-way map, and it is worth
+reading before changing either side — an engine naming a method that no longer
+exists fails at first dispatch, in the cloud, not in CI.
+
+The health check cannot always see that class of break. `modal_engine.py:158`
+probes only `list_models_with_metadata`, whose signature has been stable since
+August — so a provider whose deployed build has drifted from the source in this
+repo reports **healthy** while `get_file` fails. That is not hypothetical: the
+live `modal-zetsuke` provider is in exactly that state, documented in
+`deployables/README.md` under "This is a CLOUD artifact".
+
+## Deploying
+
+```bash
+bash scripts/deploy.sh list      # targets and what each one builds
+bash scripts/deploy.sh check     # preconditions only
+bash scripts/deploy.sh image --dry-run
+```
+
+There is no `POST /providers/{id}/deploy`, on purpose. See the header of
+`scripts/deploy.sh`.

@@ -1,15 +1,38 @@
 """Scrub cross-entity references when a World Vault entity is deleted.
 
-Entities keep JSON-array associations (Story.character_ids, World.story_ids,
-etc.) and a few bare id columns instead of FK-backed join tables. When an
-entity is deleted, every referencing row must have the dangling id removed,
-otherwise the vault leaks stale references (ghost characters in stories,
-broken dashboard links, etc.).
-"""
-from sqlalchemy import Text, cast
-from sqlmodel import Session, select
+Most associations are id arrays on the referencing row (`Story.character_ids`,
+`Chat.active_lorebook_ids`) or bare id columns, not join tables. When an entity
+is deleted, every referencing row must drop the dangling id or the vault leaks
+stale references — ghost characters in stories, broken dashboard links.
 
-from core.entities import World, Character, Chat, Message, Story, VoiceModel
+World membership is the exception, and it is the one that used to leak: it was
+six JSON id arrays on the `worlds` row, and only two of them (`chat_ids`,
+`story_ids`) had a scrub branch here. Deleting a Character, Lorebook, Location,
+Scenario or VoiceModel left its id in the array forever, and deleting a world
+left every member pointing at a row that no longer existed. Membership is now
+`<member>.world_id` on the member side, so both directions are one column:
+`detach_entity` on member delete, `detach_world` on world delete, both in
+`services.world_ownership.py`. Nothing here reaches into `worlds` at all.
+"""
+
+from sqlalchemy import Text, cast
+from sqlmodel import Session, delete, select
+
+from core.entities import (
+    Asset,
+    Character,
+    Chat,
+    GraphLayout,
+    Lorebook,
+    Location,
+    Message,
+    Scenario,
+    Story,
+    StoryBeat,
+    StoryChapter,
+    StoryChapterRevision,
+    VoiceModel,
+)
 from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 
 
@@ -46,16 +69,49 @@ def _scrub_chats(session, field, entity_id):
     _scrub_json_array(session, Chat, field, entity_id)
 
 
-def _scrub_worlds(session, field, entity_id):
-    _scrub_json_array(session, World, field, entity_id)
+def _detach_from_world(session, model, entity_id):
+    """Clear the member's own `world_id` before it is deleted.
+
+    The member is the row carrying the reference, so this is the entire scrub —
+    there is no world-side array to clean up any more, which is the point. The
+    write goes through `world_ownership.link_to_world` rather than a bare
+    assignment, so there is exactly one place in the tree that writes
+    `world_id`; `test_audit_2026_09_29b_p0` walks the AST to hold that.
+    """
+    from services.world_ownership import link_to_world
+
+    row = session.get(model, entity_id)
+    if row is None:
+        return
+    link_to_world(session, row, None)
+
+
+def _drop_graph_node(session: Session, entity_id: str) -> None:
+    """Remove a world-graph node for a deleted entity.
+
+    Matched on `entity_id` alone, not `entity_id` + `entity_type`. The column
+    exists and the API accepts it, but the only consumer keys on the id
+    (`RelationshipGraph` builds its map with `map.set(n.entity_id, ...)`), so
+    the type half of the row's unique constraint is write-only: two rows can
+    share one entity under different types and the read picks arbitrarily.
+    Matching on both would leave whichever spelling disagreed behind.
+    """
+    for layout in session.exec(select(GraphLayout).where(GraphLayout.entity_id == entity_id)).all():
+        session.delete(layout)
 
 
 def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None:
-    """Remove `entity_id` from every reference to a deleted entity of `kind`."""
+    """Remove `entity_id` from every reference to a deleted entity of `kind`.
+
+    An unknown `kind` is a silent no-op, which is itself a trap: both delete
+    routes below pass `"chat"` and `"story"`, and before those branches existed
+    the whole `if/elif` chain fell through for them. Nothing raised, nothing
+    logged, and the vault quietly accumulated dangling rows — so this asserts
+    on the unknown case instead of ignoring it.
+    """
     if kind == "character":
         _scrub_stories(session, "character_ids", entity_id)
         _scrub_chats(session, "additional_character_ids", entity_id)
-        _scrub_worlds(session, "character_ids", entity_id)
         for chat in session.exec(select(Chat).where(Chat.character_id == entity_id)).all():
             chat.character_id = None
         for msg in session.exec(select(Message).where(Message.character_id == entity_id)).all():
@@ -65,6 +121,7 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         # IntegrityError.  Detach the voice models instead of deleting them.
         for voice in session.exec(select(VoiceModel).where(VoiceModel.character_id == entity_id)).all():
             voice.character_id = None
+        _detach_from_world(session, Character, entity_id)
     elif kind == "lorebook":
         _scrub_stories(session, "lorebook_ids", entity_id)
         _scrub_chats(session, "active_lorebook_ids", entity_id)
@@ -81,33 +138,64 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         # every character row in the vault to test one JSON array, on the delete
         # path, three lines below the helper that already does this correctly.
         _scrub_json_array(session, Character, "lorebook_ids", entity_id)
+        _detach_from_world(session, Lorebook, entity_id)
     elif kind == "voice":
         for character in session.exec(select(Character).where(Character.voice_model_id == entity_id)).all():
             character.voice_model_id = None
         for chat in session.exec(select(Chat).where(Chat.tts_voice_id == entity_id)).all():
             chat.tts_voice_id = None
+        _detach_from_world(session, VoiceModel, entity_id)
     elif kind == "scenario":
         for story in session.exec(select(Story).where(Story.scenario_id == entity_id)).all():
             story.scenario_id = None
+        _detach_from_world(session, Scenario, entity_id)
     elif kind == "persona":
         for chat in session.exec(select(Chat).where(Chat.persona_id == entity_id)).all():
             chat.persona_id = None
     elif kind == "world":
-        # Delegates rather than repeating: `delete_world` calls
-        # `world_ownership.detach_world` for the same two columns, and two
-        # hand-rolled copies of one detach is exactly the pair that drifts.
-        # `Chat.world_id` / `Story.world_id` are the ownership of record and
-        # `World.chat_ids` / `World.story_ids` are its denormalised index, so
-        # the index needs no scrub — it lives on the row being deleted.
+        # Delegates rather than repeating. Covers all seven member tables —
+        # deleting a world used to leave Character, Lorebook, Location,
+        # Scenario and VoiceModel rows pointing at a world that no longer
+        # existed, because the arrays on the `worlds` row died with it and
+        # nothing on the member side moved.
         from services.world_ownership import detach_world
 
         detach_world(session, entity_id)
-    elif kind == "story":
-        _scrub_worlds(session, "story_ids", entity_id)
-    elif kind == "chat":
-        _scrub_worlds(session, "chat_ids", entity_id)
     elif kind == "location":
         _scrub_stories(session, "location_ids", entity_id)
-        _scrub_worlds(session, "location_ids", entity_id)
         for chat in session.exec(select(Chat).where(Chat.location_id == entity_id)).all():
             chat.location_id = None
+        _detach_from_world(session, Location, entity_id)
+    elif kind == "chat":
+        # Direct SQL DELETE and a flush, ahead of the route's `session.delete(chat)`.
+        # The ORM unit of work is free to issue the chat DELETE before the
+        # message DELETEs, and then `messages_chat_id_fkey` rejects the whole
+        # transaction. It has to happen here rather than in the route because
+        # this is the only place that knows the whole reference set, and the
+        # route's hand-rolled copy of it had already drifted — it could not see
+        # the graph layout node below.
+        session.exec(delete(Message).where(Message.chat_id == entity_id))
+        session.flush()
+        _drop_graph_node(session, entity_id)
+    elif kind == "story":
+        # Everything here cascades by hand because the schema does not:
+        # `story_beats.chapter_id` and `story_chapter_revisions.story_id` are
+        # bare VARCHAR columns with no foreign key and no ON DELETE, so
+        # deleting chapters leaves their rows behind with nothing to complain.
+        # Beats were the worse of the two — invisible, unbounded, and a chapter
+        # id that could later be regenerated onto unrelated content.
+        chapter_ids = list(
+            session.exec(select(StoryChapter.id).where(StoryChapter.story_id == entity_id)).all()
+        )
+        if chapter_ids:
+            session.exec(delete(StoryBeat).where(StoryBeat.chapter_id.in_(chapter_ids)))
+            session.exec(delete(StoryChapterRevision).where(StoryChapterRevision.chapter_id.in_(chapter_ids)))
+        session.flush()
+        # The images themselves stay. `Asset.story_id` is a bare column with no
+        # FK, and an orphaned gallery entry is worse than an untagged one, so
+        # the tag is dropped and the picture survives.
+        for asset in session.exec(select(Asset).where(Asset.story_id == entity_id)).all():
+            asset.story_id = None
+        _drop_graph_node(session, entity_id)
+    else:
+        raise ValueError(f"scrub_entity_references: unknown entity kind {kind!r}")

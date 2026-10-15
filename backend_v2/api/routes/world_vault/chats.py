@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from fastapi.responses import Response
@@ -9,7 +10,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 from sqlalchemy import func, delete
 
-from api.deps import get_job_service, get_session, get_queue_manager, get_chat_repo, get_message_repo, get_character_repo, get_location_repo
+from api.deps import get_session, get_chat_repo, get_message_repo, get_character_repo, get_location_repo
 from infrastructure.repositories.chat_repo import ChatRepository
 from infrastructure.repositories.message_repo import MessageRepository
 from infrastructure.repositories.character_repo import CharacterRepository
@@ -40,11 +41,26 @@ from services.chat_utils import (
     resolve_voice_for_character,
     substitute_tavern_vars,
 )
-from services.context_builder import build_chat_context_async, build_chat_context_with_sections_async, build_system_prompt_sections_async, chat_context_kwargs, prune_context
-from services.job_service import JobService
-from services.job_queue import QueueManager
+from services.context_builder import (
+    speaker_context,
+    build_chat_context_with_sections_async,
+    build_system_prompt_sections_async,
+    chat_context_kwargs,
+    llm_turn_for,
+    prune_context,
+)
+from services.job_submission_service import submit_llm_job, submit_tts_job
+from services.orchestrator_service import (
+    TOOL_BUDGETS,
+    budget_metadata_for,
+    get_tool_max,
+)
+
+# Every costed tool name, for the trace's budget block. Read from the table so a
+# new costed tool appears in the inspector without a second list to update.
+TOOL_NAMES = frozenset(TOOL_BUDGETS)
 from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
-from services.world_ownership import link_chat_to_world, require_world
+from services.world_ownership import link_to_world, require_world
 from config import settings
 from infrastructure.logging import get_logger
 
@@ -132,14 +148,13 @@ def _chat_context_prep_sync(
 def _model_for_kind(kind: str, override: str | None, session):
     """Resolve the model for a job kind, honouring a per-chat/Story pin.
 
-    Thin wrapper over `services.llm_config.resolve_model_for_kind` so the route
-    files do not each re-import it, and so the name at the call site says what
-    is being decided (a *kind* of work) rather than which default was reached
-    for.
+    Declared here so the ~15 call sites in this module stay short, but the
+    decision itself is `services.llm_config.model_for_kind` — the single
+    authority shared with the story routes.
     """
-    from services.llm_config import resolve_model_for_kind
+    from services.llm_config import model_for_kind
 
-    return resolve_model_for_kind(kind, session=session, override=override)
+    return model_for_kind(kind, override, session)
 
 
 class UpdateChatRequest(BaseModel):
@@ -171,6 +186,16 @@ class UpdateChatRequest(BaseModel):
     append_system_prompt: str | None = None
     max_context_tokens: int | None = None
     max_agentic_depth: int | None = None
+    # The per-exchange budget columns. Same failure as `additional_character_ids`
+    # above, one entity over: the columns and migrations were in place
+    # (`entities.py:1376,1381`), `budget_metadata_for` read them, and the
+    # stories route whitelisted them, but `UpdateChatRequest` never declared
+    # them — so `extra='ignore'` dropped them at the edge. `ChatContextPanel`
+    # PATCHed exactly these two keys with an optimistic cache update, which
+    # means the two budget sliders looked live and reverted on every refetch,
+    # while the chat silently ran on the global `MAX_AGENTIC_*` defaults.
+    max_agentic_images: int | None = None
+    max_agentic_narrations: int | None = None
     temperature: float | None = None
     top_p: float | None = None
     max_output_tokens: int | None = None
@@ -205,6 +230,11 @@ class CreateChatRequest(BaseModel):
     location_id: str | None = None
     active_lorebook_ids: list[str] = []
     max_agentic_depth: int | None = None
+    # See `UpdateChatRequest.max_agentic_images` — a chat that never set its
+    # budget could not be given one later without a PUT, which is a worse way
+    # to start than editing it.
+    max_agentic_images: int | None = None
+    max_agentic_narrations: int | None = None
     idle_sim_enabled: bool = False
     persona_id: str | None = None
 
@@ -643,7 +673,7 @@ def create_chat(req: CreateChatRequest, session: Session = Depends(get_session),
     )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
-    link_chat_to_world(session, chat, req.world_id)
+    link_to_world(session, chat, req.world_id)
     session.add(chat)
     session.commit()
     session.refresh(chat)
@@ -684,19 +714,16 @@ def get_chat(chat_id: str, session: Session = Depends(get_session), chat_repo: C
 
 @router.delete("/{chat_id}")
 def delete_chat(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo)):
-    from sqlalchemy import delete as sql_delete
-
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
+    # Deletes the messages first, as a direct SQL DELETE plus a flush, so the
+    # FK constraint is satisfied before the chat row goes: the ORM unit of work
+    # can reorder `session.delete()` calls and issue the chat DELETE ahead of the
+    # message DELETEs, which `messages_chat_id_fkey` then rejects. It also drops
+    # the world-graph node, which the route's own copy of this never could.
     scrub_entity_references(session, "chat", chat_id)
-    # Issue a direct SQL DELETE for messages first so the FK constraint is
-    # satisfied before the chat row is removed.  The ORM unit-of-work can
-    # reorder session.delete() calls and execute the chat DELETE before the
-    # message DELETEs, causing an IntegrityError (messages_chat_id_fkey).
-    session.exec(sql_delete(Message).where(Message.chat_id == chat_id))
-    session.flush()   # commit the message deletes to the DB within the same txn
     session.delete(chat)
     session.commit()
     return {"message": "Chat deleted"}
@@ -853,7 +880,7 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
     for key, value in update_fields.items():
         setattr(chat, key, value)
     if requested_world_id is not _WORLD_ID_UNSET:
-        link_chat_to_world(session, chat, requested_world_id)
+        link_to_world(session, chat, requested_world_id)
     chat.updated_at = datetime.now(timezone.utc)
     session.add(chat)
     session.commit()
@@ -990,7 +1017,6 @@ async def add_message(
     only covers one tab, since network retries and a second tab both bypass it.
     """
     from infrastructure.request_dedup import deduplicated, make_key
-    from services.job_queue import queue_manager
 
     if idempotency_key and idempotency_key.strip():
         # Concurrent identical sends collapse onto one execution. Key includes
@@ -1002,12 +1028,12 @@ async def add_message(
         return await deduplicated(
             dedup_key,
             lambda: _send_message(
-                session, chat_repo, message_repo, chat_id, request, queue_manager
+                session, chat_repo, message_repo, chat_id, request
             ),
         )
 
     return await _send_message(
-        session, chat_repo, message_repo, chat_id, request, queue_manager
+        session, chat_repo, message_repo, chat_id, request
     )
 
 
@@ -1017,12 +1043,7 @@ async def _send_message(
     message_repo: MessageRepository,
     chat_id: str,
     request: SendMessageRequest,
-    queue_manager,
 ) -> dict:
-    from services.job_queue import queue_manager as _qm
-
-    queue_manager = queue_manager or _qm
-
     # Persisting the message and assembling its context are synchronous session
     # work; the reply job below is awaited, so the route stays `async def` and
     # the reads run in a worker thread.
@@ -1033,14 +1054,20 @@ async def _send_message(
     job_id = None
 
     if message.role == MessageRole.USER and not request.no_reply:
-        system_prompt, context = await build_chat_context_async(
+        # `_with_sections` plus a trace out-param, rather than the two-tuple
+        # `build_chat_context_async`: the trace is the only record of what THIS
+        # reply was actually told, and it can only be taken before the internal
+        # `_pinned` / `_kind` keys are stripped — which is to say here.
+        # Reconstructing it later would build today's context, not the one that
+        # produced this reply.
+        context_trace: dict[str, Any] = {}
+        system_prompt, context, _sections = await build_chat_context_with_sections_async(
             past_messages,
+            trace_out=context_trace,
             **ctx_kwargs,
         )
 
         try:
-            job_service = get_job_service(session)
-
             if request.narrate:
                 from config import get_system_prompt_blocks
                 from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
@@ -1062,12 +1089,17 @@ async def _send_message(
                     source="narrator",
                 )
             else:
+                # `chat_reply`, not `suggest_reply`. Both kinds currently map to
+                # the same "rp" role in `ROLE_BY_KIND`, so the mismatch was
+                # invisible — but the primary reply path is a *reply*, and it
+                # must not silently follow the suggest/impersonate model if the
+                # role table is ever reordered.
                 workflow, metadata = build_chat_llm_workflow(
                     messages=context,
                     chat_id=chat_id,
                     character_id=request.target_character_id or chat.character_id,
                     system_prompt=system_prompt or None,
-                    model=_model_for_kind("suggest_reply", chat.llm_model, session),
+                    model=_model_for_kind("chat_reply", chat.llm_model, session),
                     samplers=sampler_overrides(chat),
                 )
 
@@ -1084,9 +1116,31 @@ async def _send_message(
                 effective_max = request.max_agentic_depth or chat.max_agentic_depth
                 if effective_max is not None:
                     metadata["max_agentic_depth"] = effective_max
+                # The costed-tool caps travel with the depth cap. Both are per
+                # exchange, so both have to be decided once, at the start, or the
+                # first hop is the only one that knew the limit.
+                metadata.update(budget_metadata_for(chat))
+                # The resolved caps, on the exchange record, so the inspector can
+                # show "3 images allowed" next to the turns that asked for them.
+                # Read back off the metadata rather than re-resolved, so what is
+                # displayed is what the gate used.
+                context_trace["budgets"] = {
+                    name: {
+                        "spent": 0,
+                        "max": get_tool_max(name, metadata=metadata),
+                    }
+                    for name in TOOL_NAMES
+                }
 
             if request.generator_checkpoint:
                 metadata["generator_checkpoint"] = request.generator_checkpoint
+
+            # The exchange record travels on the job, so the handler that writes
+            # the reply can put it on the message row. Kept as one blob rather
+            # than spread over the metadata, so it has a single name to look for
+            # and cannot be confused with a routing field.
+            if context_trace:
+                metadata["context_trace"] = context_trace
 
             if message.branch_id:
                 # Carried so the reply lands on the thread the question was asked
@@ -1096,13 +1150,11 @@ async def _send_message(
                 # in the original thread, so the fork is still not continuable.
                 metadata["branch_id"] = message.branch_id
 
-            job = await job_service.create_job(
-                task_type="llm",
-                workflow=workflow,
-                metadata=metadata,
+            job = await submit_llm_job(
+                session,
+                workflow,
+                metadata,
             )
-
-            await queue_manager.enqueue(job.id, task_type="llm")
             job_id = job.id
 
         except ComfyError:
@@ -1191,10 +1243,42 @@ async def narrate_message(
     session: Session = Depends(get_session),
     chat_repo: ChatRepository = Depends(get_chat_repo),
     character_repo: CharacterRepository = Depends(get_character_repo),
-    job_service: JobService = Depends(get_job_service),
-    queue_manager: QueueManager = Depends(get_queue_manager),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    """Trigger a TTS job to narrate a specific message."""
+    """Trigger a TTS job to narrate a specific message.
+
+    `Idempotency-Key` is opt-in, matching `POST /{chat_id}/messages`. Without it
+    a double click is two TTS jobs: there is no client-side guard on the
+    narrator button, and `_handle_chat_tts` writes the same `audio_path` twice,
+    so the second job's cost is invisible in the UI.
+    """
+    from infrastructure.request_dedup import deduplicated, make_key
+
+    if idempotency_key and idempotency_key.strip():
+        # Key includes the message, so narrating a different message is never
+        # collapsed into the first, and a replayed request for the same message
+        # returns the first job.
+        dedup_key = make_key(
+            "narrate_message", chat_id, message_id, idempotency_key.strip()
+        )
+        return await deduplicated(
+            dedup_key,
+            lambda: _narrate_message(session, chat_repo, character_repo, chat_id, message_id, data),
+        )
+
+    return await _narrate_message(
+        session, chat_repo, character_repo, chat_id, message_id, data
+    )
+
+
+async def _narrate_message(
+    session: Session,
+    chat_repo: ChatRepository,
+    character_repo: CharacterRepository,
+    chat_id: str,
+    message_id: str,
+    data: NarrateRequest | None,
+):
     # Voice resolution, the capability guard and the graph build are synchronous
     # session work; the job enqueue below is awaited, so they move to a worker
     # thread.
@@ -1208,12 +1292,11 @@ async def narrate_message(
         data,
     )
 
-    job = await job_service.create_job(
-        task_type="tts",
-        workflow=workflow,
-        metadata=metadata,
+    job = await submit_tts_job(
+        session,
+        workflow,
+        metadata,
     )
-    await queue_manager.enqueue(job.id, task_type="tts")
 
     return {"message_id": message_id, "job_id": job.id}
 
@@ -1351,16 +1434,16 @@ async def generate_swipe(
     session: Session = Depends(get_session),
     chat_repo: ChatRepository = Depends(get_chat_repo)
 ) -> dict:
-    from services.job_queue import queue_manager
-
     # Reading up to CHAT_HISTORY_HARD_CAP messages is synchronous session work
     # and the context build below is awaited, so the reads run in a thread.
     chat, remaining, prev_agentic, ctx_kwargs = await asyncio.to_thread(
         _swipe_prep_sync, session, chat_repo, chat_id, message_id
     )
 
-    system_prompt, context = await build_chat_context_async(
+    context_trace: dict[str, Any] = {}
+    system_prompt, context, _sections = await build_chat_context_with_sections_async(
         remaining,
+        trace_out=context_trace,
         **ctx_kwargs,
     )
 
@@ -1404,14 +1487,20 @@ async def generate_swipe(
         # `memory_extraction` is the backstop for every other re-run path.
         metadata["suppress_memory_extraction"] = True
         metadata["max_agentic_depth"] = chat.max_agentic_depth or 3
+        metadata.update(budget_metadata_for(chat))
+        context_trace["budgets"] = {
+            name: {"spent": 0, "max": get_tool_max(name, metadata=metadata)}
+            for name in TOOL_NAMES
+        }
 
-    job_service = get_job_service(session)
-    job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
+    if context_trace:
+        metadata["context_trace"] = context_trace
+
+    job = await submit_llm_job(session, workflow, metadata)
     await asyncio.to_thread(session.commit)
 
     # Agentic chaining happens when the job completes with tool calls
     # (see job_processing.py) — this route only enqueues the job.
-    await queue_manager.enqueue(job.id, task_type="llm")
 
     return {"job_id": job.id}
 
@@ -1683,8 +1772,6 @@ async def regenerate_reply(
     Re-run the last user message: delete every message after it, then dispatch
     a fresh reply job mirroring the previous job's agentic settings.
     """
-    from services.job_queue import queue_manager
-
     # The delete + history load is synchronous session work and the context
     # build below is awaited, so the whole prologue runs in a worker thread.
     chat, anchor_character_id, anchor_branch_id, deleted, prev_agentic, prev_checkpoint, remaining, ctx_kwargs = await asyncio.to_thread(
@@ -1697,8 +1784,10 @@ async def regenerate_reply(
     # exists and appends a duplicate of the reply we are about to regenerate.
     await _cancel_inflight_chat_jobs(session, chat_id, reason="chat regenerate")
 
-    system_prompt, context = await build_chat_context_async(
+    context_trace: dict[str, Any] = {}
+    system_prompt, context, _sections = await build_chat_context_with_sections_async(
         remaining,
+        trace_out=context_trace,
         **ctx_kwargs,
     )
 
@@ -1745,14 +1834,20 @@ async def regenerate_reply(
         effective_max = chat.max_agentic_depth
         if effective_max is not None:
             metadata["max_agentic_depth"] = effective_max
+        metadata.update(budget_metadata_for(chat))
+        context_trace["budgets"] = {
+            name: {"spent": 0, "max": get_tool_max(name, metadata=metadata)}
+            for name in TOOL_NAMES
+        }
     if prev_checkpoint:
         metadata["generator_checkpoint"] = prev_checkpoint
 
-    job_service = get_job_service(session)
+    if context_trace:
+        metadata["context_trace"] = context_trace
+
     try:
-        job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
         await asyncio.to_thread(session.commit)
-        await queue_manager.enqueue(job.id, task_type="llm")
+        job = await submit_llm_job(session, workflow, metadata)
     except ComfyError:
         await asyncio.to_thread(session.rollback)
         raise
@@ -1874,8 +1969,6 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     a completed user message directly and immediately fires the character's response.
     The LLM writes *as the user*, not as the character.
     """
-    from services.job_queue import queue_manager
-
     # The prologue (history, character, world-state kwargs) is synchronous
     # session work and the world-state sections below are awaited, so it runs in
     # a worker thread.
@@ -1899,23 +1992,28 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
 
     # Swap roles for the impersonation LLM call: char→user, user→assistant
     msg_list = []
+    # Mirrored, for the same reason as `suggest_reply`: the model writes as
+    # the USER, so a prior user message is `assistant` from its seat and a
+    # character message is the `user` it answers.
+    speaker_names, speaker_total = speaker_context(past_messages, session)
     for msg in past_messages:
-        meta = getattr(msg, "message_metadata", None) or {}
-        if meta.get("source") == "world_state":
+        turn = llm_turn_for(
+            msg,
+            speaker_names=speaker_names,
+            participants=max(speaker_total, 1),
+            as_user=True,
+        )
+        if turn is None:
             continue
-        if msg.role == MessageRole.USER:
-            msg_list.append({"role": "assistant", "content": msg.content})
-        elif msg.role == MessageRole.CHAR:
-            msg_list.append({"role": "user", "content": msg.content})
-        elif msg.role == MessageRole.SYSTEM and meta.get("source") not in ("narrator", "world_state"):
-            msg_list.append({"role": "user", "content": f"[{msg.content}]"})
+        if turn["role"] == "system":
+            msg_list.append({"role": "user", "content": f"[{turn['content']}]"})
+        else:
+            msg_list.append(turn)
 
     all_msgs = [{"role": "system", "content": imp_system}] + msg_list
     all_msgs = prune_context(all_msgs, imp_system, [], _resolve_context_tokens(chat))
 
     try:
-        job_service = get_job_service(session)
-
         workflow, metadata = build_chat_llm_workflow(
             messages=all_msgs,
             chat_id=chat_id,
@@ -1934,12 +2032,11 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
             },
         )
 
-        imp_job = await job_service.create_job(
-            task_type="llm",
-            workflow=workflow,
-            metadata=metadata,
+        imp_job = await submit_llm_job(
+            session,
+            workflow,
+            metadata,
         )
-        await queue_manager.enqueue(imp_job.id, task_type="llm")
         return {"job_id": imp_job.id}
     except ComfyError:
         raise
@@ -1989,8 +2086,6 @@ class SuggestReplyRequest(BaseModel):
 
 @router.post("/{chat_id}/suggest")
 async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo)) -> dict:
-
-    from services.job_queue import queue_manager
 
     # The prologue (history, character, world-state kwargs) is synchronous
     # session work and the world-state sections below are awaited, so it runs in
@@ -2049,19 +2144,29 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
             + suggest_instruction
         )
 
+    # The same turn mapping as the reply path (`llm_turn_for`), mirrored: this
+    # job writes as the USER, so a prior user message is `assistant` from the
+    # model's seat and a character message is the `user` it answers. This was a
+    # fourth copy of the if/elif, and it was the one that had already drifted —
+    # it dropped narrator turns entirely while the reply path sent them as
+    # `system`.
     msg_list = []
+    speaker_names, speaker_total = speaker_context(past_messages, session)
     for msg in past_messages:
-        meta = getattr(msg, "message_metadata", None) or {}
-        if meta.get("source") == "world_state":
+        turn = llm_turn_for(
+            msg,
+            speaker_names=speaker_names,
+            participants=max(speaker_total, 1),
+            as_user=True,
+        )
+        if turn is None:
             continue
-        if msg.role == MessageRole.USER:
-            # From the LLM's perspective (acting as user), prior user messages are "assistant"
-            msg_list.append({"role": "assistant", "content": msg.content})
-        elif msg.role == MessageRole.CHAR:
-            # Character messages are the "user" turn (the party the LLM is responding to)
-            msg_list.append({"role": "user", "content": msg.content})
-        elif msg.role == MessageRole.SYSTEM and meta.get("source") not in ("narrator", "world_state"):
-            msg_list.append({"role": "user", "content": f"[{msg.content}]"})
+        # A plain system turn is an instruction, and from the user's seat it
+        # belongs on the `user` channel, bracketed, as before.
+        if turn["role"] == "system":
+            msg_list.append({"role": "user", "content": f"[{turn['content']}]"})
+        else:
+            msg_list.append(turn)
 
     # Prune to stay within context budget
     all_msgs = [{"role": "system", "content": suggest_system}] + msg_list
@@ -2072,8 +2177,6 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     all_msgs = prune_context(all_msgs, suggest_system, [], _resolve_context_tokens(chat))
 
     try:
-        job_service = get_job_service(session)
-
         workflow, metadata = build_chat_llm_workflow(
             messages=all_msgs,
             chat_id=chat_id,
@@ -2084,14 +2187,13 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
             extra_metadata={"is_suggestion": True, "max_agentic_depth": chat.max_agentic_depth},
         )
 
-        job = await job_service.create_job(
-            task_type="llm",
-            workflow=workflow,
-            metadata=metadata,
+        job = await submit_llm_job(
+            session,
+            workflow,
+            metadata,
         )
-        await queue_manager.enqueue(job.id, task_type="llm")
         return {"job_id": job.id}
-        
+
     except ComfyError:
         raise
     except Exception as e:
@@ -2144,22 +2246,13 @@ async def generate_scene(
     character_repo: CharacterRepository = Depends(get_character_repo),
     message_repo: MessageRepository = Depends(get_message_repo),
 ):
-    from services.job_queue import queue_manager
-
     # History, character and checkpoint resolution are synchronous session
     # work; only the job enqueue below is awaited, so they run in a thread.
     chat, workflow, metadata = await asyncio.to_thread(
         _scene_job_prep_sync, session, chat_repo, character_repo, message_repo, chat_id
     )
 
-    job_service = JobService(session)
-
-    prompt_job = await job_service.create_job(
-        task_type="llm",
-        workflow=workflow,
-        metadata=metadata,
-    )
-    await queue_manager.enqueue(prompt_job.id, task_type="llm")
+    prompt_job = await submit_llm_job(session, workflow, metadata)
 
     # The scene LLM job is agentic: it calls the generate_image tool (or, when
     # the model cannot call tools, its plain-text output is chained into an
@@ -2236,6 +2329,9 @@ def _scene_job_prep_sync(
             "generator_checkpoint": checkpoint,
             "agentic": True,
             "orchestrator_depth": 0,
+            # Carried through the agentic chain so the image it spawns is filed
+            # on the same thread the scene was asked for, not the original one.
+            "branch_id": past_messages[0].branch_id if past_messages else None,
         },
     )
     workflow["tools"] = filter_agentic_tools(
@@ -2248,6 +2344,11 @@ def _scene_job_prep_sync(
 
 class ChatIllustrateRequest(BaseModel):
     image_prompt: str = ""
+    # The thread the illustration belongs to. A branch's copies share their
+    # originals' `chat_id` and `created_at`, so an image message written without
+    # it lands in the original thread and the fork the user is reading never
+    # shows it. Mirrors `ChatMessageRequest.branch_id`.
+    branch_id: str | None = None
 
 
 @router.post("/{chat_id}/illustrate")
@@ -2269,8 +2370,8 @@ async def illustrate_chat(
 
     # Fallback prompt, character and checkpoint are resolved by a worker thread
     # (the route awaits the image submission below).
-    character_id, image_prompt, checkpoint, lora_name = await asyncio.to_thread(
-        _illustrate_prep_sync, session, chat_repo, character_repo, chat_id, request.image_prompt
+    character_id, image_prompt, checkpoint, lora_name, branch_id = await asyncio.to_thread(
+        _illustrate_prep_sync, session, chat_repo, character_repo, chat_id, request
     )
 
     job = await submit_image_job(
@@ -2283,6 +2384,7 @@ async def illustrate_chat(
         workspace="chat",
         chat_id=chat_id,
         character_id=character_id,
+        branch_id=branch_id,
         extra_metadata={"image_context": image_prompt},
     )
     return {"job_id": job.id, "status": "queued", "message": "Illustration started"}
@@ -2293,9 +2395,9 @@ def _illustrate_prep_sync(
     chat_repo: ChatRepository,
     character_repo: CharacterRepository,
     chat_id: str,
-    image_prompt: str | None,
-) -> tuple[str | None, str, str, str | None]:
-    """Resolve the image prompt, checkpoint and LoRA for a chat illustration.
+    request: ChatIllustrateRequest,
+) -> tuple[str | None, str, str, str | None, str | None]:
+    """Resolve the image prompt, checkpoint, LoRA and thread for an illustration.
 
     Synchronous on purpose: the image submission is awaited, so the route stays
     `async def` and these queries would otherwise run on the event loop.
@@ -2308,7 +2410,8 @@ def _illustrate_prep_sync(
     if not chat.allow_image_generation:
         raise ValidationError("Image generation is disabled for this chat")
 
-    prompt = (image_prompt or "").strip()
+    prompt = (request.image_prompt or "").strip()
+    last_char = None
     if not prompt:
         last_char = session.exec(
             select(Message)
@@ -2340,11 +2443,17 @@ def _illustrate_prep_sync(
     if not checkpoint:
         checkpoint = ModelAvailabilityService(session).resolve_checkpoint()
 
+    # Explicit branch wins; otherwise the thread the fallback prompt came from.
+    # Without this an illustration of a branched message is filed into the
+    # original thread.
+    branch_id = request.branch_id or (last_char.branch_id if last_char else None)
+
     return (
         chat.character_id,
         prompt,
         checkpoint,
         character.lora if character and character.lora else None,
+        branch_id,
     )
 
 

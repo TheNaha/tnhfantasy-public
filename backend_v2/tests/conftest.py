@@ -16,6 +16,7 @@ import infrastructure.database as _infra_db
 # Disable provider health checks in tests (LoadBalancer defaults to enabled in prod)
 os.environ.setdefault("COMFY_LB_HEALTH_CHECKS_ENABLED", "0")
 
+
 # Need to import all models so SQLModel metadata is complete
 
 

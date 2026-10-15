@@ -333,6 +333,26 @@ def get_settings_schema() -> dict[str, Any]:
                 }
             }
         },
+        "roleplay": {
+            "description": "How a stored chat message becomes an LLM turn — see services.context_builder.llm_turn_for",
+            "fields": {
+                "label_speakers": {
+                    "type": "boolean",
+                    "description": "Prefix each speaking turn with the character's name. Noise in a single-character chat, the only thing distinguishing two assistant turns in a group one",
+                    "default": _default("roleplay.label_speakers")
+                },
+                "narrator_prefix": {
+                    "type": "string",
+                    "description": "Label on a narrator turn. It must not be sent as role:system — on a provider that folds every system message into the system prompt, that moves the narration out of its place in the dialogue",
+                    "default": _default("roleplay.narrator_prefix")
+                },
+                "image_prefix": {
+                    "type": "string",
+                    "description": "Label on an image turn, so the model knows an illustration happened where it happened. Empty means send it unlabelled",
+                    "default": _default("roleplay.image_prefix")
+                }
+            }
+        },
         "modal": {
             "description": "Modal.com infrastructure configuration (read-only)",
             "readonly": True,
@@ -524,6 +544,10 @@ class SettingsUpdate(BaseModel):
     generator: dict[str, Any] | None = None
     ai: dict[str, Any] | None = None
     image_processing: dict[str, Any] | None = None
+    # What a stored chat message becomes as an LLM turn. Must be declared here
+    # or the settings route silently drops it: `model_dump(exclude_none=True)`
+    # can only forward fields the model knows about.
+    roleplay: dict[str, Any] | None = None
 
 
 @router.put("")

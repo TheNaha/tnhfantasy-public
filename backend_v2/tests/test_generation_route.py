@@ -152,7 +152,6 @@ def test_generate_and_jobs_share_missing_model_validation(client, session):
             priority=1,
             credentials={},
             config={"app_name": "test"},
-            container_config={"port": 8000},
         )
     )
     session.commit()

@@ -30,6 +30,7 @@ async def submit_image_job(
     story_id: str | None = None,
     chapter_id: str | None = None,
     parent_job_id: str | None = None,
+    branch_id: str | None = None,
     task_type: str = "image",
     extra_metadata: dict[str, Any] | None = None,
     preferred_provider_id: str | None = None,
@@ -63,6 +64,7 @@ async def submit_image_job(
         story_id=story_id,
         chapter_id=chapter_id,
         parent_job_id=parent_job_id,
+        branch_id=branch_id,
         extra_metadata=extra_metadata,
     )
 

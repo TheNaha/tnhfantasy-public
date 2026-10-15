@@ -4,13 +4,21 @@ This directory is the **one place** model choices live. Nothing in the Modal app
 or the backend hardcodes a model id; both read `models.json`.
 
 ```
-modal_llm/
+backend_v2/modal_llm/                    SHARED — three consumers import it
   models.json    <- THE file you edit. Roles, fallback order, per-model config.
-  registry.py    <- parses it, applies defaults, validates. Shared by both sides.
-  app.py         <- the Modal deployment. Registers one function per enabled model.
+  registry.py    <- parses it, applies defaults, validates.
   README.md      <- this file.
-backend_v2/services/llm_router.py  <- job kind -> role. Reads the same registry.
+
+deployables/modal/llm/app.py             DEPLOYABLE — imports the registry above
+backend_v2/services/llm_router.py        RUNTIME  — job kind -> role
+remote_agent/llama_server.py             RUNTIME  — same roles on your own box
 ```
+
+`app.py` used to live here too, beside the files it imports. It moved to
+`deployables/` on 2026-10-15 so that every cloud worker the engines name has its
+source in one place, and it now finds this directory by walking up to the repo
+root — the same bootstrap `deployables/modal/image/` uses. Deploy it with
+`bash scripts/deploy.sh llm`.
 
 This directory lives **inside `backend_v2/`**, not at the repo root, and that is
 load-bearing. It used to sit at the repo root and the backend resolved it with
@@ -46,9 +54,9 @@ Edit `models.json`:
 Then:
 
 ```bash
-modal deploy modal_llm/app.py                       # pick up the new registry
-modal run modal_llm/app.py                          # download any new weights
-modal run modal_llm/app.py::urls                    # refresh the URL manifest
+modal deploy deployables/modal/llm/app.py                       # pick up the new registry
+modal run deployables/modal/llm/app.py                          # download any new weights
+modal run deployables/modal/llm/app.py::urls                    # refresh the URL manifest
 ```
 
 The backend does not need a restart: `llm_router` re-reads on process start, and
@@ -118,7 +126,7 @@ token rate dips while an extraction runs. For one user who waits on one reply at
 a time, that is cheaper than a second card.
 
 Changing a role's model is an edit to `models.json` and a redeploy; fetching its
-weights is `modal run modal_llm/app.py::ensure --model-id <id>`.
+weights is `modal run deployables/modal/llm/app.py::ensure --model-id <id>`.
 
 ## Measured (2026-10-11, one-container shape)
 
@@ -196,7 +204,7 @@ This directory has never been deployed. Before relying on it:
   the first deploy will fail loudly if it does not match exactly one file.
 - **VRAM.** 31B at 32k with `q8_0` KV may not fit one L40S. On OOM: lower `ctx`
   or set `kv` to `q4_0`.
-- **Cold start.** Run `modal run modal_llm/app.py::bench --key <id>` when the
+- **Cold start.** Run `modal run deployables/modal/llm/app.py::bench --key <id>` when the
   model has been idle, and send the number back so the `fallback` order can be
   reordered by measured latency rather than by community report.
 - **Four models are benched** (`dark_thoughts_v2_31b`,

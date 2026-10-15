@@ -15,10 +15,10 @@ reachable only through the Modal SDK with the caller's token.
 
 Setup (once):
     modal secret create tnh-llm-key LLAMA_API_KEY=<long-random-string>
-    modal run modal_llm/app.py              # download the two role primaries
-    modal deploy modal_llm/app.py
-    modal run modal_llm/app.py::urls        # manifest for the backend
-    modal run modal_llm/app.py::bench --key artemis_31b   # cold-start timer
+    modal run deployables/modal/llm/app.py              # download the two role primaries
+    modal deploy deployables/modal/llm/app.py
+    modal run deployables/modal/llm/app.py::urls        # manifest for the backend
+    modal run deployables/modal/llm/app.py::bench --key artemis_31b   # cold-start timer
 
 Call a model:
     cls = modal.Cls.from_name("tnh-llm", "ChatLLM")
@@ -28,8 +28,8 @@ Call a model:
         ...
 
 To add a model to rotation: add it to models.json, then
-    modal run modal_llm/app.py::ensure --model-id <id>`   # fetch weights
-    modal deploy modal_llm/app.py                          # make it routable
+    modal run deployables/modal/llm/app.py::ensure --model-id <id>`   # fetch weights
+    modal deploy deployables/modal/llm/app.py                          # make it routable
 `ensure_model` downloads on demand and `volume_state` reports what is genuinely
 on the Volume, so a model can be fetched before it is needed.
 
@@ -57,23 +57,58 @@ from pathlib import Path
 
 import modal
 
-# `registry.py` and `models.json` sit beside this file. Modal uploads ONLY the
-# module it runs — `app.py` becomes `/root/app.py` and its siblings do not come
-# with it — so locally this import works and remotely it dies with
-# `ModuleNotFoundError: No module named 'registry'`, on every function, at
-# hydrate time. Both images therefore ADD this directory, and the import looks
-# there first. Discovering it at runtime rather than hard-coding `/app/...`
-# keeps the file runnable locally too.
+# `registry.py` and `models.json` do NOT sit beside this file any more — they
+# stayed in `backend_v2/modal_llm/`, because the backend's `llm_router` and
+# `remote_agent/llama_server.py` both import the registry and there is no reason
+# for three consumers to resolve one file by search. This file is the odd one
+# out, and used to solve that by sitting with them.
+#
+# Modal uploads ONLY the module it runs — `app.py` becomes `/root/app.py` and
+# its siblings do not come with it — so locally this import works and remotely
+# it dies with `ModuleNotFoundError: No module named 'registry'`, on every
+# function, at hydrate time. Both images therefore ADD the registry directory,
+# and the import looks there first.
+#
+# The repo root is resolved by marker rather than by counting parents: counting
+# is exactly what made the image and beam apps un-deployable, and this file just
+# moved two levels deeper. Falls through to None inside the container, where the
+# app is uploaded to `/root` with no repo above it and `sys.path[0]` is already
+# the directory the image added.
 _HERE = Path(__file__).resolve().parent
 _REMOTE_LLM_DIR = Path("/app/modal_llm")
+# This file is 3 levels below the repo root: modal/llm -> modal -> deployables.
+_REPO_ROOT = next(
+    (p for p in _HERE.parents if (p / "backend_v2" / "modal_llm" / "registry.py").is_file()),
+    None,
+)
+_LOCAL_REGISTRY_DIR = _REPO_ROOT / "backend_v2" / "modal_llm" if _REPO_ROOT else None
 
-for _candidate in (_REMOTE_LLM_DIR if _REMOTE_LLM_DIR.is_dir() else None, _HERE):
+# Order matters and is NOT "remote first". `/app/modal_llm` is where the Modal
+# image puts the registry, but `backend_v2/` is mounted at `/app` inside the
+# backend container, so `/app/modal_llm` also exists there — for a completely
+# unrelated reason, and it happens to hold the right file. A local repo must win
+# so the checkout is what gets packaged; `/app/modal_llm` is the fallback for the
+# Modal container, which has no repo at all.
+for _candidate in (
+    _LOCAL_REGISTRY_DIR,
+    _REMOTE_LLM_DIR if _REMOTE_LLM_DIR.is_dir() else None,
+):
     if _candidate and (_candidate / "registry.py").is_file():
         if str(_candidate) not in sys.path:
             sys.path.insert(0, str(_candidate))
         break
+else:  # pragma: no cover - a broken checkout, reported by the import below
+    raise RuntimeError(
+        f"cannot locate registry.py: looked in {_LOCAL_REGISTRY_DIR} and "
+        f"{_REMOTE_LLM_DIR}"
+    )
 
 from registry import REGISTRY_PATH, load  # noqa: E402
+
+#: What both images `add_local_dir`. Resolved now, not at image-build time, so a
+#: local checkout packages the checkout's registry and the Modal container
+#: packages the copy it already has at `/app/modal_llm`.
+_REGISTRY_SRC = _LOCAL_REGISTRY_DIR or _REMOTE_LLM_DIR
 
 APP_NAME = "tnh-llm"
 app = modal.App(APP_NAME)
@@ -98,7 +133,8 @@ image = (
     # Nothing the runtime needs: the proxy uses urllib from the stdlib.
     # The registry AND models.json, baked in. Modal ships only the module it
     # runs, so without this the container has `app.py` and nothing else.
-    .add_local_dir(_HERE, "/app/modal_llm")
+    # `_REGISTRY_SRC` rather than `_HERE`: this file no longer sits beside them.
+    .add_local_dir(_REGISTRY_SRC, "/app/modal_llm")
 )
 
 #: The DOWNLOAD image, deliberately not the server image. Downloading is network
@@ -109,7 +145,7 @@ download_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("huggingface_hub[hf_transfer]")
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
-    .add_local_dir(_HERE, "/app/modal_llm")
+    .add_local_dir(_REGISTRY_SRC, "/app/modal_llm")
 )
 
 registry = load(REGISTRY_PATH)
@@ -438,7 +474,7 @@ class ChatLLM:
             if not _present(model):
                 self.unavailable[model_id] = (
                     f"{model_id!r} has no weights on the Volume; run "
-                    "`modal run modal_llm/app.py::ensure --model-id <id>` first"
+                    "`modal run deployables/modal/llm/app.py::ensure --model-id <id>` first"
                 )
                 continue
             _launch(model, port)
@@ -746,10 +782,10 @@ def _size(model) -> dict:
 
 @app.local_entrypoint()
 def main(key: str = ""):
-    """`modal run modal_llm/app.py [--key <id|role>]` — download weights.
+    """`modal run deployables/modal/llm/app.py [--key <id|role>]` — download weights.
 
     With no key this fetches the two primaries only, and says so, so a bare
-    `modal run modal_llm/app.py` cannot be mistaken for "everything is ready".
+    `modal run deployables/modal/llm/app.py` cannot be mistaken for "everything is ready".
     """
     fetched = download.remote(key)
     print(f"fetched: {fetched}")
@@ -757,14 +793,14 @@ def main(key: str = ""):
 
 @app.local_entrypoint()
 def ensure(model_id: str):
-    """`modal run modal_llm/app.py::ensure --model-id <id>` — fetch one model."""
+    """`modal run deployables/modal/llm/app.py::ensure --model-id <id>` — fetch one model."""
     result = ensure_model.remote(model_id)
     print(f"{model_id}: {result}")
 
 
 @app.local_entrypoint()
 def presence():
-    """`modal run modal_llm/app.py::presence` — what is on the Volume."""
+    """`modal run deployables/modal/llm/app.py::presence` — what is on the Volume."""
     print(json.dumps(volume_state.remote(), indent=2))
 
 

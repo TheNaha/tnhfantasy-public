@@ -30,15 +30,14 @@ def _async_session_override(session: Session):
     return fake_get_session_context
 
 
-def _add_provider(session: Session, provider_id: str, priority: int, container_config):
+def _add_provider(session: Session, provider_id: str, priority: int, has_credentials: bool = True):
     provider = Provider(
         id=provider_id,
         type="modal",
         enabled=True,
         priority=priority,
-        credentials={},
+        credentials={"token_id": "ak-1", "token_secret": "as-1"} if has_credentials else {},
         config={},
-        container_config=container_config,
     )
     session.add(provider)
     session.commit()
@@ -95,8 +94,10 @@ def _unavailable_runtime(provider_id):
 @pytest.fixture(autouse=True)
 def _stub_engine_runtime(monkeypatch):
     async def fake_resolve_provider_runtime(provider):
-        container_config = getattr(provider, "container_config", None) or {}
-        if not container_config:
+        # The container path is gone; the only thing that decides whether a
+        # provider resolves in-process now is whether it carries credentials
+        # for one.
+        if not (provider.credentials or {}).get("token_id"):
             return _unavailable_runtime(provider.id)
         return _in_process_runtime(provider.id)
 
@@ -107,10 +108,10 @@ def _stub_engine_runtime(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_process_job_falls_back_when_provider_missing_container_config(session: Session, sample_workflow, monkeypatch):
+async def test_process_job_falls_back_when_first_provider_has_no_credentials(session: Session, sample_workflow, monkeypatch):
     LoadBalancer.reset_state()
-    _add_provider(session, "provider-1", 1, None)
-    _add_provider(session, "provider-2", 2, {"port": 8000})
+    _add_provider(session, "provider-1", 1, has_credentials=False)
+    _add_provider(session, "provider-2", 2)
 
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
@@ -146,8 +147,8 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
 @pytest.mark.asyncio
 async def test_process_job_falls_back_after_non_retryable_provider_error(session: Session, sample_workflow, monkeypatch):
     LoadBalancer.reset_state()
-    _add_provider(session, "provider-1", 1, {"port": 8000})
-    _add_provider(session, "provider-2", 2, {"port": 8000})
+    _add_provider(session, "provider-1", 1)
+    _add_provider(session, "provider-2", 2)
 
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
@@ -179,7 +180,7 @@ async def test_process_job_falls_back_after_non_retryable_provider_error(session
 @pytest.mark.asyncio
 async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(session: Session, sample_workflow, monkeypatch, tmp_path):
     LoadBalancer.reset_state()
-    _add_provider(session, "provider-1", 1, {"port": 8000})
+    _add_provider(session, "provider-1", 1)
 
     metadata = {"prompt": "hello", "seed": 42}
     job_service = JobService(session)
@@ -239,7 +240,7 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
 @pytest.mark.asyncio
 async def test_process_job_respects_cancelled_status_before_finalize(session: Session, sample_workflow, monkeypatch):
     LoadBalancer.reset_state()
-    _add_provider(session, "provider-1", 1, {"port": 8000})
+    _add_provider(session, "provider-1", 1)
 
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
@@ -269,7 +270,7 @@ async def test_process_job_respects_cancelled_status_before_finalize(session: Se
 @pytest.mark.asyncio
 async def test_process_job_timeout_signals_provider_cancel(session: Session, sample_workflow, monkeypatch):
     LoadBalancer.reset_state()
-    _add_provider(session, "provider-1", 1, {"port": 8000})
+    _add_provider(session, "provider-1", 1)
 
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
@@ -302,7 +303,7 @@ async def test_process_job_persists_base64_image_to_workspace_partition(session:
     directory (job.metadata_.workspace), not flat 'main' — chat/story images
     would otherwise land in default_user/main."""
     LoadBalancer.reset_state()
-    _add_provider(session, "provider-1", 1, {"port": 8000})
+    _add_provider(session, "provider-1", 1)
 
     metadata = {"prompt": "hello", "seed": 42, "workspace": "chat"}
     job_service = JobService(session)
@@ -353,7 +354,7 @@ async def test_process_job_persists_base64_image_to_workspace_partition(session:
 @pytest.mark.asyncio
 async def test_process_job_timeout_signals_external_worker_cancel(session: Session, sample_workflow, monkeypatch):
     LoadBalancer.reset_state()
-    _add_provider(session, "provider-1", 1, {"port": 8000})
+    _add_provider(session, "provider-1", 1)
 
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
@@ -390,8 +391,8 @@ async def test_process_job_timeout_signals_external_worker_cancel(session: Sessi
 @pytest.mark.asyncio
 async def test_process_job_fails_after_all_providers_exhausted(session: Session, sample_workflow, monkeypatch):
     LoadBalancer.reset_state()
-    _add_provider(session, "provider-1", 1, {"port": 8000})
-    _add_provider(session, "provider-2", 2, {"port": 8000})
+    _add_provider(session, "provider-1", 1)
+    _add_provider(session, "provider-2", 2)
 
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata={})

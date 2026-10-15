@@ -66,9 +66,9 @@ class ProviderRequest(BaseModel):
     credentials: dict[str, Any] = {}
     runtime_config: dict[str, Any] | None = None
     deploy_config: dict[str, Any] | None = None
-    # Legacy compatibility fields accepted on write only.
+    # Legacy compatibility field accepted on write only. `container_config`
+    # is gone: migration 089 folded it into `config`.
     config: dict[str, Any] = {}
-    container_config: dict[str, Any] | None = None
 
 
 class ProviderUpdateRequest(BaseModel):
@@ -80,9 +80,9 @@ class ProviderUpdateRequest(BaseModel):
     credentials: dict[str, Any] | None = None
     runtime_config: dict[str, Any] | None = None
     deploy_config: dict[str, Any] | None = None
-    # Legacy compatibility fields accepted on write only.
+    # Legacy compatibility field accepted on write only. `container_config`
+    # is gone: migration 089 folded it into `config`.
     config: dict[str, Any] | None = None
-    container_config: dict[str, Any] | None = None
 
 
 class LoadBalancingConfigRequest(BaseModel):
@@ -315,9 +315,10 @@ def get_provider_schemas():
 def _merged_save_config(*dicts: dict[str, Any] | None) -> dict[str, Any]:
     """Merge legacy + current config keys into one dict for validation.
 
-    Providers have been written with `config`, `runtime_config`, and
-    `container_config` over time; validation must see the union so a URL
-    stored under any legacy key still satisfies its schema field.
+    Providers have been written with `config` and `runtime_config` over time;
+    validation must see the union so a URL stored under any legacy key still
+    satisfies its schema field. (`container_config` was a third such key; it
+    stopped being read when migration 089 folded it into `config`.)
     """
     merged: dict[str, Any] = {}
     for part in dicts:
@@ -568,7 +569,7 @@ async def create_provider(
     _raise_for_save_errors(
         request.type,
         request.credentials,
-        _merged_save_config(request.config, request.runtime_config, request.container_config),
+        _merged_save_config(request.config, request.runtime_config),
     )
     service = get_provider_service(session)
     payload = request.model_dump()
@@ -601,7 +602,7 @@ async def update_provider(
     """Update a provider."""
     service = get_provider_service(session)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
-    if any(k in updates for k in ("type", "credentials", "config", "runtime_config", "container_config")):
+    if any(k in updates for k in ("type", "credentials", "config", "runtime_config")):
         existing = session.get(Provider, provider_id)
         if existing is not None:
             _raise_for_save_errors(
@@ -611,7 +612,6 @@ async def update_provider(
                     (existing.config or {}),
                     updates.get("config"),
                     updates.get("runtime_config"),
-                    updates.get("container_config"),
                 ),
             )
     service = get_provider_service(session)

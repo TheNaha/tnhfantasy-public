@@ -24,7 +24,6 @@ def providers(session: Session):
             priority=data["priority"],
             credentials={},
             config={},
-            container_config={"port": 8001}
         )
         session.add(provider)
         created.append(provider)
@@ -311,7 +310,7 @@ class TestLoadBalancer:
         for pid, priority in (("llm-1", 1), ("llm-2", 2), ("llm-3", 3)):
             session.add(Provider(
                 id=pid, type="modal", enabled=True, priority=priority,
-                worker_type="llm", credentials={}, config={}, container_config={"port": 8000},
+                worker_type="llm", credentials={}, config={},
             ))
         session.commit()
 
@@ -337,7 +336,7 @@ class TestLoadBalancer:
         for pid in ("llm-a", "llm-b"):
             session.add(Provider(
                 id=pid, type="modal", enabled=True, priority=1,
-                worker_type="llm", credentials={}, config={}, container_config={"port": 8000},
+                worker_type="llm", credentials={}, config={},
             ))
         session.commit()
 
@@ -353,7 +352,7 @@ class TestLoadBalancer:
         for pid, priority in (("llm-x", 1), ("llm-y", 2)):
             session.add(Provider(
                 id=pid, type="modal", enabled=True, priority=priority,
-                worker_type="llm", credentials={}, config={}, container_config={"port": 8000},
+                worker_type="llm", credentials={}, config={},
             ))
         session.commit()
 

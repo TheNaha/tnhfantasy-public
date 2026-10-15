@@ -129,9 +129,8 @@ class ProviderService:
         # `runtime_config` is legacy placement: an explicit payload value
         # (including null, which is what the current UI sends) wins, otherwise
         # the stored value round-trips untouched.
-        if "runtime_config" in payload or "container_config" in payload:
-            raw_runtime_config = payload.get("runtime_config", payload.get("container_config"))
-            runtime_config = clean_dict(raw_runtime_config) or None
+        if "runtime_config" in payload:
+            runtime_config = clean_dict(payload.get("runtime_config")) or None
         else:
             runtime_config = extract_runtime_config(merged_config)
 
@@ -157,9 +156,6 @@ class ProviderService:
             "enabled": payload.get("enabled", getattr(existing, "enabled", True)),
             "priority": payload.get("priority", getattr(existing, "priority", 1)),
             "credentials": clean_dict(payload.get("credentials", getattr(existing, "credentials", {}))),
-            # Legacy column, always cleared on write; placement now lives
-            # under `config` (migration 089 healed old rows there).
-            "container_config": None,
             "config": config,
             # Column name, so `repo.create`/`repo.update` (which splat this
             # dict into the model) persist it rather than dropping a kwarg it
@@ -299,7 +295,6 @@ class ProviderService:
                 "enabled": normalized["enabled"],
                 "priority": normalized["priority"],
                 "credentials": normalized["credentials"],
-                "container_config": normalized["container_config"],
                 "config": normalized["config"],
                 "capabilities": normalized["capabilities"],
             },

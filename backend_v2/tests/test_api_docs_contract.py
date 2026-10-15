@@ -31,13 +31,12 @@ hand).
 """
 
 import re
-from pathlib import Path
-
 import pytest
 
 from api.main import app
+from repo_paths import require_repo_root
 
-DOC = Path(__file__).resolve().parents[2] / "docs" / "api.md"
+DOC = require_repo_root("docs/api.md") / "docs" / "api.md"
 
 # `METHOD /api/...` in prose, or a bare `/api/...` path token in backticks.
 #

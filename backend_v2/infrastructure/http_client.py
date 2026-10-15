@@ -125,13 +125,13 @@ def load_known_provider_hosts(*, force: bool = False) -> frozenset[str] | None:
         try:
             for provider in ProviderRepository(session).get_all():
                 config = provider.config or {}
-                container_config = provider.container_config or {}
                 # A discovered provider keeps its container name under
-                # `runtime_config`; `container_config` is the legacy key. Read
+                # `runtime_config`, and migration 089 folded the old
+                # `container_config` column into `config` (config wins). Read
                 # both so a provider is recognised whichever shape it stored.
                 runtime_config = config.get("runtime_config") or {}
                 for candidate in (
-                    container_config.get("container_name"),
+                    config.get("container_name"),
                     runtime_config.get("container_name") if isinstance(runtime_config, dict) else None,
                     f"{_PROVIDER_CONTAINER_PREFIX}{provider.id}",
                     config.get("discovery_url"),

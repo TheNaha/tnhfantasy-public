@@ -25,6 +25,11 @@ from core.entities import (
     ModelV2,
     ModelVersion,
     Message,
+    MessageKind,
+    MessageRole,
+    Story,
+    StoryChapter,
+    World,
 )
 import services.rag_pipeline as rag_pipeline
 import services.world_integration_service as wis
@@ -487,7 +492,11 @@ def test_unpersisted_chat_reply_is_detected(session, wired_engine):
 
     found = wis.find_unpersisted_chat_replies(session)
 
-    assert [job["id"] for job in found] == ["job-lost"]
+    # A (kind, payload) pair, not a bare payload: the caller has to know which
+    # handler to replay each through, and a chat_reply and a chat_image are
+    # different handlers.
+    assert [kind for kind, _ in found] == ["chat_reply"]
+    assert [job["id"] for _kind, job in found] == ["job-lost"]
 
 
 def test_persisted_chat_reply_is_not_reported(session, wired_engine):
@@ -576,6 +585,218 @@ def test_non_chat_reply_jobs_are_ignored(session, wired_engine):
     session.commit()
 
     assert wis.find_unpersisted_chat_replies(session) == []
+
+
+def test_a_lost_narrator_is_recoverable(session, wired_engine):
+    """A narration used to have the same failure as a reply, with no recovery.
+
+    It comes through the same lossy queue and inserts a Message the same way, but
+    `_RECONCILABLE_WORKFLOW_TYPES` was `("chat_reply",)` — so an evicted
+    JOB_COMPLETED for a narration left a paid generation marked COMPLETED,
+    the paragraph nowhere, and nothing recording the gap.
+    """
+    import asyncio
+
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="C", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    session.add(Job(
+        task_type="llm",
+        status=JobStatus.COMPLETED,
+        workflow={"type": "narrator", "chat_id": chat.id},
+        metadata_={"type": "narrator", "chat_id": chat.id, "source": "narrator"},
+        outputs=[{"role": "assistant", "content": "The harbour goes quiet."}],
+    ))
+
+    session.commit()
+
+    assert [kind for kind, _ in wis.find_unpersisted_chat_replies(session)] == ["narrator"]
+
+    result = asyncio.run(wis.reconcile_unpersisted_chat_replies())
+    assert result["found"] == 1
+    assert result["repaired"] and result["failed"] == []
+
+    with Session(wired_engine) as check:
+        rows = check.exec(select(Message).where(Message.chat_id == chat.id)).all()
+        assert [row.content for row in rows] == ["The harbour goes quiet."]
+        assert rows[0].kind.value == "narrator"
+
+
+def test_a_lost_chat_image_is_recoverable(session, wired_engine):
+    """The image route lost the same way, and it is the expensive one.
+
+    The images already landed in `assets` and the gallery, so the loss was
+    invisible everywhere except the conversation — and the old reconciler could
+    not see it because it resolved the kind from `metadata["source"]` rather
+    than from the output path, which is what the consumer dispatches on.
+    """
+    import asyncio
+
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="C", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    session.add(Job(
+        task_type="image",
+        status=JobStatus.COMPLETED,
+        workflow={"type": "chat_image", "chat_id": chat.id},
+        # `source`, not `type`. The runtime event is decided from the output
+        # path by `artifact_event_type`, and this is the shape an illustration
+        # actually carries.
+        metadata_={"chat_id": chat.id, "source": "chat_image"},
+        outputs=[{"relative_path": "2026/08/11/scene_0.png"}],
+    ))
+    session.commit()
+
+    found = wis.find_unpersisted_chat_replies(session)
+    assert [kind for kind, _ in found] == ["chat_image"]
+
+    result = asyncio.run(wis.reconcile_unpersisted_chat_replies())
+    assert result["found"] == 1
+    assert result["failed"] == []
+
+    with Session(wired_engine) as check:
+        rows = check.exec(select(Message).where(Message.chat_id == chat.id)).all()
+        assert [row.image_path for row in rows] == ["2026/08/11/scene_0.png"]
+        assert rows[0].kind.value == "image"
+
+
+def test_an_audio_output_is_not_mistaken_for_an_image(session, wired_engine):
+    """The one-way door in the shared decision.
+
+    `artifact_event_type` routes on the OUTPUT, so a TTS job that produced audio
+    resolves as `chat_tts`. A second implementation of that rule in the
+    reconciler is what this test guards against: it would put audio into the
+    gallery as an image.
+
+    It asserts the KIND, not that nothing was found — `chat_tts` became
+    recoverable deliberately, and this is the test that keeps that recovery
+    pointed at the audio path rather than at a message insert.
+    """
+    import asyncio
+
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="C", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+    msg = Message(role=MessageRole.CHAR, content="Hello.", chat_id=chat.id)
+    session.add(msg)
+    session.commit()
+    session.refresh(msg)
+
+    session.add(Job(
+        task_type="tts",
+        status=JobStatus.COMPLETED,
+        workflow={"type": "chat_tts", "chat_id": chat.id},
+        metadata_={"chat_id": chat.id, "message_id": msg.id, "source": "chat_tts"},
+        outputs=[{"relative_path": "2026/08/11/narration.mp3"}],
+    ))
+    session.commit()
+
+    assert [kind for kind, _ in wis.find_unpersisted_chat_replies(session)] == ["chat_tts"]
+
+    asyncio.run(wis.reconcile_unpersisted_chat_replies())
+    with Session(wired_engine) as check:
+        reread = check.get(Message, msg.id)
+        rows = check.exec(select(Message).where(Message.chat_id == chat.id)).all()
+    # Audio attached to the message that asked for it, and NO image message.
+    assert reread.message_metadata["audio_path"] == "2026/08/11/narration.mp3"
+    assert not any(m.kind == MessageKind.IMAGE for m in rows)
+
+
+def test_reconcile_endpoint_reports_the_kinds_it_found(client, session, wired_engine):
+    """`dry_run` has to say which handler each job will be replayed through.
+
+    A reply, a narration and an image go to three different handlers, and the
+    only way an operator can tell whether the endpoint covers what they lost is
+    for the report to name the kinds.
+    """
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="C", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    _completed_chat_reply_job(session, chat.id, "a reply", "job-dry")
+    session.add(Job(
+        task_type="llm",
+        status=JobStatus.COMPLETED,
+        workflow={"type": "narrator", "chat_id": chat.id},
+        metadata_={"type": "narrator", "chat_id": chat.id, "source": "narrator"},
+        outputs=[{"role": "assistant", "content": "a narration"}],
+    ))
+    session.add(Job(
+        task_type="image",
+        status=JobStatus.COMPLETED,
+        workflow={"type": "chat_image", "chat_id": chat.id},
+        metadata_={"chat_id": chat.id, "source": "chat_image"},
+        outputs=[{"relative_path": "2026/08/11/a_0.png"}],
+    ))
+    session.commit()
+
+    resp = client.post("/api/jobs/reconcile-chat-replies?dry_run=true")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    # All three kinds, not just the one the endpoint is named after.
+    assert set(body["kinds"]) == {"chat_reply", "narrator", "chat_image"}
+    assert body["found"] == 3
+
+
+def test_reconcile_endpoint_repairs_every_kind(client, session, wired_engine):
+
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="C", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    _completed_chat_reply_job(session, chat.id, "the reply", "job-r")
+    session.add(Job(
+        task_type="image",
+        status=JobStatus.COMPLETED,
+        workflow={"type": "chat_image", "chat_id": chat.id},
+        metadata_={"chat_id": chat.id, "source": "chat_image"},
+        outputs=[{"relative_path": "2026/08/11/b_0.png"}],
+    ))
+    session.commit()
+
+    img_job_id = session.exec(select(Job).where(Job.task_type == "image")).all()[0].id
+    resp = client.post("/api/jobs/reconcile-chat-replies")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["found"] == 2
+    assert set(body["repaired"]) == {"job-r", img_job_id}
+    assert body["failed"] == []
+
+    with Session(wired_engine) as check:
+        rows = check.exec(select(Message).where(Message.chat_id == chat.id)).all()
+        # The content is what the image DEPICTED, not a placeholder saying an
+        # illustration exists. This job carries no `image_context`, so it falls
+        # back to the generic string; a real `generate_image` call carries the
+        # prompt, which is what the transcript says instead.
+        assert sorted(row.content for row in rows) == ["Generated Image:", "the reply"]
 
 
 def test_reconcile_endpoint_dry_run_reports_without_writing(client, session, wired_engine):
@@ -671,3 +892,443 @@ class TestDefaultProviderEndpoint:
 
         assert resp.status_code == 200, resp.text
         assert [p["provider_id"] for p in resp.json()] == ["llm-one"]
+
+
+class TestStoryArtifactRecovery:
+    """Story artefacts now travel the same road chat artefacts do.
+
+    Every story kind used to be written only by the event bus consumer, behind
+    the same lossy queue, with no pre-completion write and no reconciler — so a
+    dropped `story_continue` was a paid continuation whose prose existed nowhere
+    and which nothing could repair. `chat_reply`/`narrator`/`chat_image` had all
+    of that since the reconciliation work; stories had none of it.
+    """
+
+    @pytest.fixture
+    def _story(self, session, wired_engine):
+        world = World(name="W")
+        session.add(world)
+        session.commit()
+        session.refresh(world)
+        story = Story(title="s", world_id=world.id)
+        session.add(story)
+        session.commit()
+        session.refresh(story)
+        chapter = StoryChapter(story_id=story.id, chapter_number=1, title="c1", content="")
+        session.add(chapter)
+        session.commit()
+        session.refresh(chapter)
+        return story, chapter
+
+    def test_a_lost_story_continue_is_found_and_repaired(self, session, wired_engine, _story):
+        import asyncio
+
+        from services.world_integration_service import (
+            find_unpersisted_chat_replies,
+        )
+
+        _story_id, chapter = _story
+        session.add(Job(
+            task_type="llm",
+            status=JobStatus.COMPLETED,
+            workflow={"type": "story_continue", "story_id": chapter.story_id},
+            metadata_={
+                "type": "story_continue",
+                "story_id": chapter.story_id,
+                "chapter_id": chapter.id,
+            },
+            outputs=[{"role": "assistant", "content": "The harbour went dark."}],
+        ))
+        session.commit()
+
+        found = find_unpersisted_chat_replies(session)
+        # The detector used to require `chat_id`, which a story job never carries
+        # — so nothing on the story side was ever a candidate, whatever kinds were
+        # listed.
+        assert [kind for kind, _ in found] == ["story_continue"]
+
+        result = asyncio.run(wis.reconcile_unpersisted_chat_replies())
+        assert result["found"] == 1
+        assert result["failed"] == []
+
+        with Session(wired_engine) as check:
+            reread = check.get(StoryChapter, chapter.id)
+            assert "The harbour went dark." in reread.content
+            assert any(b.get("content") == "The harbour went dark." for b in reread.beats)
+
+    @pytest.mark.asyncio
+    async def test_a_redelivered_story_continue_does_not_duplicate(
+        self, session, wired_engine, _story
+    ):
+        """`_handle_story_continue` appends, so the guard is what makes it safe.
+
+        `story_image` and `story_tts` are idempotent by construction (path dedupe
+        and overwrite), which is why they needed no stamp. This one appends a beat
+        and had none, so a pre-completion write followed by the event bus write
+        would land the same paragraph twice.
+        """
+
+        from services.world_integration_service import _handle_story_continue
+
+        _story_id, chapter = _story
+        payload = {
+            "id": "story-job-once",
+            "metadata": {"story_id": chapter.story_id, "chapter_id": chapter.id},
+            "outputs": [{"role": "assistant", "content": "The harbour went dark."}],
+        }
+
+        await _handle_story_continue(payload, session)
+        await _handle_story_continue(payload)
+
+        with Session(wired_engine) as check:
+            reread = check.get(StoryChapter, chapter.id)
+            assert reread.content.count("The harbour went dark.") == 1
+            assert len([b for b in reread.beats if b.get("content") == "The harbour went dark."]) == 1
+
+    def test_a_repaired_story_is_stamped_so_it_is_not_found_again(
+        self, session, wired_engine, _story
+    ):
+        import asyncio
+
+        from services.world_integration_service import (
+            find_unpersisted_chat_replies,
+        )
+
+        _story_id, chapter = _story
+        session.add(Job(
+            task_type="llm",
+            status=JobStatus.COMPLETED,
+            workflow={"type": "story_continue", "story_id": chapter.story_id},
+            metadata_={
+                "type": "story_continue",
+                "story_id": chapter.story_id,
+                "chapter_id": chapter.id,
+            },
+            outputs=[{"role": "assistant", "content": "Once."}],
+        ))
+        session.commit()
+
+        asyncio.run(wis.reconcile_unpersisted_chat_replies())
+        # Idempotent: a second sweep finds nothing, because the beat now carries
+        # the job id.
+        assert find_unpersisted_chat_replies(session) == []
+
+
+# ── The last two loss paths ──────────────────────────────────────────────────
+#
+# `chat_tts` and `impersonation` were both outside recovery, each with a reason
+# that turned out to be about what had been built rather than what was possible.
+# TTS "mutates rather than inserts, so there is no row to find" — true only
+# because nothing was stamped. Impersonation "a replay would duplicate and
+# re-spend" — true, and it is what a guard is for.
+
+
+@pytest.fixture
+def _tts_chat(session, wired_engine):
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="C", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+    msg = Message(role=MessageRole.CHAR, content="Hello.", chat_id=chat.id)
+    session.add(msg)
+    session.commit()
+    session.refresh(msg)
+    return chat, msg
+
+
+class TestChatTtsIsRecoverable:
+    def test_a_completed_tts_job_is_found_when_its_audio_is_missing(
+        self, session, wired_engine, _tts_chat
+    ):
+        import asyncio
+
+        from services.world_integration_service import (
+            find_unpersisted_chat_replies,
+        )
+
+        chat, msg = _tts_chat
+        session.add(Job(
+            task_type="tts",
+            status=JobStatus.COMPLETED,
+            workflow={"type": "chat_tts", "chat_id": chat.id},
+            metadata_={
+                "type": "chat_tts",
+                "chat_id": chat.id,
+                "message_id": msg.id,
+                "source": "chat_tts",
+            },
+            outputs=[{"relative_path": "2026/08/12/narration.mp3"}],
+        ))
+        session.commit()
+
+        assert [kind for kind, _ in find_unpersisted_chat_replies(session)] == ["chat_tts"]
+
+        result = asyncio.run(wis.reconcile_unpersisted_chat_replies())
+        assert result["found"] == 1 and result["failed"] == []
+
+        with Session(wired_engine) as check:
+            reread = check.get(Message, msg.id)
+        assert reread.message_metadata["audio_path"] == "2026/08/12/narration.mp3"
+
+    def test_a_tts_stamp_uses_its_own_key_and_does_not_erase_the_reply_stamp(
+        self, session, wired_engine, _tts_chat
+    ):
+        """The reason this kind needs a second key at all.
+
+        The message already carries the REPLY job's `source_job_id`. Overwriting
+        it would make that message look unwritten for its own reply, so the
+        reconciler would resurrect the reply at the tail of the chat on every
+        sweep, forever.
+        """
+        import asyncio
+
+        import services.world_integration_service as wis
+
+        chat, msg = _tts_chat
+        meta = {"source_job_id": "the-reply-job"}
+        msg.message_metadata = meta
+        session.add(msg)
+        session.commit()
+
+        asyncio.run(wis._handle_chat_tts({
+            "id": "tts-job-1",
+            "metadata": {"chat_id": chat.id, "message_id": msg.id},
+            "outputs": [{"relative_path": "2026/08/12/a.mp3"}],
+        }))
+
+        with Session(wired_engine) as check:
+            reread = check.get(Message, msg.id)
+        assert reread.message_metadata["source_job_id"] == "the-reply-job"
+        assert reread.message_metadata["tts_source_job_id"] == "tts-job-1"
+
+    def test_a_written_tts_is_not_found_again(
+        self, session, wired_engine, _tts_chat
+    ):
+        import asyncio
+
+        from services.world_integration_service import (
+            find_unpersisted_chat_replies,
+        )
+
+        chat, msg = _tts_chat
+        session.add(Job(
+            task_type="tts",
+            status=JobStatus.COMPLETED,
+            workflow={"type": "chat_tts", "chat_id": chat.id},
+            metadata_={
+                "type": "chat_tts",
+                "chat_id": chat.id,
+                "message_id": msg.id,
+                "source": "chat_tts",
+            },
+            outputs=[{"relative_path": "2026/08/12/b.mp3"}],
+        ))
+        session.commit()
+
+        asyncio.run(wis.reconcile_unpersisted_chat_replies())
+        assert find_unpersisted_chat_replies(session) == []
+
+    def test_a_tts_job_is_written_before_it_goes_completed(self, session, wired_engine):
+        """Durability, the same as every other stamped kind.
+
+        The TTS handlers were the last written only by the event bus, behind the
+        same lossy queue: a dropped JOB_COMPLETED was a paid synthesis whose audio
+        never reached the message that asked for it.
+        """
+        from services import job_processing
+
+        assert "chat_tts" in job_processing._PRECOMPLETION_PERSISTED_TYPES
+
+
+class TestImpersonationIsRecoverable:
+    def _seed(self, session):
+        char = Character(name="Aria")
+        session.add(char)
+        session.commit()
+        session.refresh(char)
+        chat = Chat(name="C", character_id=char.id)
+        session.add(chat)
+        session.commit()
+        session.refresh(chat)
+        return chat
+
+    def _payload(self, chat_id):
+        return {
+            "id": "imp-job-1",
+            "metadata": {"chat_id": chat_id},
+            "outputs": [{"role": "assistant", "content": "Aria steps forward."}],
+            "type": "impersonation",
+        }
+
+    def test_a_second_delivery_writes_nothing_and_chains_nothing(
+        self, session, wired_engine, monkeypatch
+    ):
+        """The whole reason this kind was left unrecoverable, inverted.
+
+        It inserts a USER message and then enqueues a `chat_reply` from it, so a
+        replay meant a duplicate line plus a second spent reply. The stamp is
+        already written; reading it makes the replay free.
+        """
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        import services.world_integration_service as wis
+
+        chat = self._seed(session)
+        enqueue = AsyncMock(return_value=True)
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+
+        asyncio.run(wis._handle_impersonation(self._payload(chat.id)))
+        enqueue.reset_mock()
+        asyncio.run(wis._handle_impersonation(self._payload(chat.id)))
+
+        with Session(wired_engine) as check:
+            rows = check.exec(
+                select(Message).where(Message.chat_id == chat.id)
+            ).all()
+        assert len(rows) == 1, "the impersonation was written twice"
+        # The expensive half: no second reply was enqueued either.
+        assert enqueue.await_count == 0
+
+    def test_a_lost_impersonation_is_found_and_restored(
+        self, session, wired_engine, monkeypatch
+    ):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        import services.world_integration_service as wis
+
+        chat = self._seed(session)
+        session.add(Job(
+            task_type="llm",
+            status=JobStatus.COMPLETED,
+            workflow={"type": "impersonation", "chat_id": chat.id},
+            metadata_={
+                "type": "impersonation",
+                "chat_id": chat.id,
+                "source": "impersonation",
+            },
+            outputs=[{"role": "assistant", "content": "I draw my blade."}],
+        ))
+        session.commit()
+
+        enqueue = AsyncMock(return_value=True)
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+        asyncio.run(wis.reconcile_unpersisted_chat_replies())
+
+        with Session(wired_engine) as check:
+            rows = check.exec(
+                select(Message).where(Message.chat_id == chat.id)
+            ).all()
+        assert [r.content for r in rows] == ["I draw my blade."]
+        # And the chained reply was spent, which is the point of recovering it.
+        assert enqueue.await_count == 1
+
+
+class TestStoryArtefactsAreDetectable:
+    """The other half of the idempotence story.
+
+    These were idempotent by construction and therefore excluded from detection,
+    which made them harmless AND invisible: found as lost on every sweep, forever,
+    re-driven each time, so the reconciler never reported a clean state.
+    """
+
+    @pytest.fixture
+    def _chapter(self, session, wired_engine):
+        world = World(name="W")
+        session.add(world)
+        session.commit()
+        session.refresh(world)
+        story = Story(title="s", world_id=world.id)
+        session.add(story)
+        session.commit()
+        session.refresh(story)
+        chapter = StoryChapter(story_id=story.id, chapter_number=1, title="c1", content="")
+        session.add(chapter)
+        session.commit()
+        session.refresh(chapter)
+        return story, chapter
+
+    def _image_job(self, story, chapter, job_id, paths):
+        return Job(
+            id=job_id,
+            task_type="image",
+            status=JobStatus.COMPLETED,
+            workflow={"type": "story_image", "story_id": story.id},
+            metadata_={
+                "type": "story_image",
+                "story_id": story.id,
+                "chapter_id": chapter.id,
+                "source": "story_image",
+            },
+            outputs=[{"relative_path": p} for p in paths],
+        )
+
+    def test_a_story_image_is_not_found_again_after_it_is_written(
+        self, session, wired_engine, _chapter
+    ):
+        import asyncio
+
+        from services.world_integration_service import (
+            find_unpersisted_chat_replies,
+        )
+
+        story, chapter = _chapter
+        session.add(self._image_job(story, chapter, "img-1", ["2026/08/12/a.png"]))
+        session.commit()
+
+        asyncio.run(wis.reconcile_unpersisted_chat_replies())
+        # It was found and repaired...
+        with Session(wired_engine) as check:
+            assert check.get(StoryChapter, chapter.id).image_paths == ["2026/08/12/a.png"]
+        # ...and the next sweep is clean, which is the part that never held.
+        assert find_unpersisted_chat_replies(session) == []
+
+    def test_a_partially_written_story_image_is_still_found(
+        self, session, wired_engine, _chapter
+    ):
+        """Two images, one written: the artefact is not complete."""
+        from services.world_integration_service import find_unpersisted_chat_replies
+
+        story, chapter = _chapter
+        chapter.image_paths = ["2026/08/12/a.png"]
+        session.add(chapter)
+        session.commit()
+        session.add(self._image_job(story, chapter, "img-2", ["2026/08/12/a.png", "2026/08/12/b.png"]))
+        session.commit()
+
+        assert [kind for kind, _ in find_unpersisted_chat_replies(session)] == ["story_image"]
+
+    def test_a_story_tts_is_not_found_again_after_it_is_written(
+        self, session, wired_engine, _chapter
+    ):
+        import asyncio
+
+        from services.world_integration_service import (
+            find_unpersisted_chat_replies,
+        )
+
+        story, chapter = _chapter
+        session.add(Job(
+            task_type="tts",
+            status=JobStatus.COMPLETED,
+            workflow={"type": "story_tts", "story_id": story.id},
+            metadata_={
+                "type": "story_tts",
+                "story_id": story.id,
+                "chapter_id": chapter.id,
+                "source": "story_tts",
+            },
+            outputs=[{"relative_path": "2026/08/12/chapter.mp3"}],
+        ))
+        session.commit()
+
+        asyncio.run(wis.reconcile_unpersisted_chat_replies())
+        with Session(wired_engine) as check:
+            reread = check.get(StoryChapter, chapter.id)
+        assert any(b.get("audio_path") == "2026/08/12/chapter.mp3" for b in reread.beats)
+        assert find_unpersisted_chat_replies(session) == []

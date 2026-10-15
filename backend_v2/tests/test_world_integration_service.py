@@ -88,7 +88,11 @@ async def test_handle_chat_image_creates_message_and_collection(session, wired_e
         assert len(msgs) == 1
         assert msgs[0].kind == MessageKind.IMAGE
         assert msgs[0].image_path == "2026/08/11/scene.png"
-        assert msgs[0].content == "[Scene illustration]"
+        # What the image DEPICTED, not a placeholder. The scene-prompt chain
+        # always carried its prompt as `image_context`; the agentic
+        # `generate_image` tool only started doing so recently, so a job without
+        # one still falls back to the generic string.
+        assert msgs[0].content == "Generated Image:"
 
         images = check.exec(select(CollectionImage)).all()
         assert len(images) == 1
@@ -650,6 +654,88 @@ async def test_handle_chat_reply_swipe_appends_alternate(session, wired_engine):
     assert updated.tool_calls is None
 
 
+@pytest.mark.asyncio
+async def test_handle_chat_reply_swipe_appends_alternate_exactly_once(
+    session, wired_engine
+):
+    """One swipe job appends ONE alternate, not two.
+
+    `_write_chat_reply` used to be the small dispatcher in front of
+    `_append_swipe_alternative`, which then fell through into a verbatim copy of
+    the OLD `_write_chat_reply` body and appended the same alternate a second
+    time on its own session. The pre-existing test above could not catch it
+    because it asserts `"Alternate reply" in alternates` — which is true of a
+    list containing it twice.
+    """
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="Swipe Test", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+    msg = Message(
+        role=MessageRole.CHAR,
+        content="Original reply",
+        chat_id=chat.id,
+        message_metadata={"alternates": ["Original reply"], "active_index": 0},
+    )
+    session.add(msg)
+    session.commit()
+    session.refresh(msg)
+
+    await wis._handle_chat_reply({
+        "id": "swipe-job-1",
+        "metadata": {
+            "chat_id": chat.id,
+            "is_swipe": True,
+            "target_message_id": msg.id,
+        },
+        "outputs": [{"content": "Alternate reply"}],
+    })
+
+    with Session(wired_engine) as check:
+        updated = check.get(Message, msg.id)
+        alternates = updated.message_metadata["alternates"]
+        # The anchor plus the one new alternate. `content` is the active one, so
+        # a duplicate shows up as the same text twice in the list.
+        assert alternates == ["Original reply", "Alternate reply"], (
+            f"swipe alternates were appended more than once: {alternates}"
+        )
+        assert updated.message_metadata["active_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_image_carries_branch_and_character(session, wired_engine):
+    """An image asked for on a forked thread is filed on that thread.
+
+    A branch's copies share their originals' `chat_id` and `created_at`, so an
+    IMAGE message written without `branch_id` lands in the original thread and
+    the fork the user is reading never shows it — the exact failure
+    `_handle_chat_reply` and `_handle_narrator` already carry it to avoid.
+    """
+    chat_id, character_id = _seed_chat_with_character(session)
+    outputs = [{"relative_path": "2026/08/11/scene_0.png"}]
+
+    await wis._handle_chat_image({
+        "id": "chat-img-job-1",
+        "metadata": {
+            "chat_id": chat_id,
+            "character_id": character_id,
+            "branch_id": "branch-abc",
+            "source": "chat_image",
+        },
+        "outputs": outputs,
+    })
+
+    with Session(wired_engine) as check:
+        msgs = check.exec(select(Message).where(Message.chat_id == chat_id)).all()
+        assert len(msgs) == 1
+        assert msgs[0].branch_id == "branch-abc"
+        assert msgs[0].character_id == character_id
+
+
 # ── helper ───────────────────────────────────────────────────────────────────
 
 def _add_msg(session: Session, chat: Chat, role: MessageRole, content: str) -> Message:
@@ -777,3 +863,119 @@ async def test_handle_chat_image_leaves_the_session_usable_after_a_failed_insert
         # The follow-up block still ran and committed its own work.
         images = check.exec(select(CollectionImage)).all()
         assert [i.image_filename for i in images] == [path]
+
+
+@pytest.mark.asyncio
+async def test_narrator_is_not_written_twice(session, wired_engine):
+    """The pre-completion write and the event bus write are one write.
+
+    `_handle_narrator` is in `_PRECOMPLETION_PERSISTED_TYPES`, so
+    `complete_when_ready` calls it before the job goes COMPLETED; `complete_job`
+    then emits JOB_COMPLETED and the event bus consumer calls it again. Both
+    calls stamp `source_job_id` — but for a while only `_handle_chat_reply`
+    *read* the stamp, so every narration landed twice.
+    """
+    from services.world_integration_service import _handle_narrator
+
+    chat = Chat(name="c", character_id=None)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    payload = {
+        "id": "job-narrator-once",
+        "metadata": {"chat_id": chat.id, "source": "narrator"},
+        "outputs": [{"role": "assistant", "content": "The harbour goes quiet."}],
+    }
+
+    # First delivery: the durable pre-completion path, with the caller's session.
+    await _handle_narrator(payload, session)
+    # Second delivery: the event bus consumer, opening its own session.
+    await _handle_narrator(payload)
+
+    with Session(wired_engine) as check:
+        rows = check.exec(select(Message).where(Message.chat_id == chat.id)).all()
+    assert len(rows) == 1, f"narrator written twice: {[r.content for r in rows]}"
+    assert rows[0].message_metadata["source_job_id"] == "job-narrator-once"
+
+
+@pytest.mark.asyncio
+async def test_chat_image_is_not_written_twice(session, wired_engine):
+    """Same for an illustration, which is the expensive one to duplicate.
+
+    Two sets of IMAGE messages AND two sets of `CollectionImage` rows — so the
+    character's collection gallery showed the picture twice as well.
+    """
+    from core.entities import Collection, CollectionImage, Character
+
+    from services.world_integration_service import _handle_chat_image
+
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="c", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+    collection = Collection(name="c", character_id=char.id)
+    session.add(collection)
+    session.commit()
+
+    payload = {
+        "id": "job-image-once",
+        "metadata": {"chat_id": chat.id, "source": "chat_image"},
+        "outputs": [{"relative_path": "2026/08/12/a.png"}],
+    }
+
+    await _handle_chat_image(payload, session)
+    await _handle_chat_image(payload)
+
+    with Session(wired_engine) as check:
+        rows = check.exec(select(Message).where(Message.chat_id == chat.id)).all()
+        links = check.exec(select(CollectionImage)).all()
+    assert len(rows) == 1, f"image message written twice: {[r.image_path for r in rows]}"
+    assert len(links) == 1, f"collection link written twice: {[l.image_filename for l in links]}"
+
+
+@pytest.mark.asyncio
+async def test_a_suggest_reply_job_completes_without_a_second_reply(session):
+    """The kind was not dispatchable at all, and that had a cost.
+
+    `_EVENT_DISPATCH` had no `suggest_reply` key, so its `JOB_COMPLETED` fell
+    through every branch of the consumer — and `_finalize_llm_job` calls
+    `apply_agentic_chain` for any `chat_id` job that is not background and not
+    suppressed, which a suggest job is. It depends on that path returning early
+    here, which it cannot do for a kind with no entry: the dependency was on a
+    route the table did not provide.
+
+    It is now an explicit entry that returns, so the intent is a dispatch
+    decision rather than an accidental fall-through.
+    """
+    import services.world_integration_service as wis
+
+    payload = {
+        "id": "suggest-job-1",
+        "metadata": {"chat_id": "c1", "source": "suggest"},
+        "outputs": [{"role": "assistant", "content": "A suggested thing to say."}],
+    }
+
+    # Must be dispatchable.
+    assert wis._EVENT_DISPATCH.get("suggest_reply") is wis._handle_suggest_reply
+
+    # And must not write anything: a suggestion is streamed, never stored.
+    before = len(session.exec(select(Message)).all())
+    await wis._handle_suggest_reply(payload)
+    assert len(session.exec(select(Message)).all()) == before
+
+
+def test_a_suggest_reply_is_not_a_reconcilable_artefact():
+    """Nothing is stamped, so there is nothing to find.
+
+    The contrast with `chat_tts` is the point: that one mutates a durable message
+    and is deliberately not dispatched, while this one has nothing durable at
+    all and is dispatched to say so explicitly.
+    """
+    import services.world_integration_service as wis
+
+    assert "suggest_reply" not in wis._RECONCILABLE_EVENT_TYPES

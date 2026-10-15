@@ -1,4 +1,23 @@
+"""ARCHIVED 2026-10-15 — superseded by backend_v2/modal_llm/app.py.
+
+Kept for reference only. This is the first llama.cpp draft; the shipped app is
+`backend_v2/modal_llm/app.py`, which reads the same `models.json`, registers one
+`ChatLLM` function per enabled model, and — deliberately — exposes NO HTTP
+surface. The `modal.web_server` + bearer-key design below is the thing that
+revision was written to remove: it published a public per-model URL, where the
+current app is SDK-only and authenticated by the caller's Modal credentials.
+
+Differences worth knowing before reading this:
+  * `modal.concurrent`+`web_server` per model  ->  `ChatLLM`, parametrized by
+    `modal.parameter()` model_id, with one llama-server per role.
+  * Its own `MODELS` literal  ->  `models.json`, shared with the backend's
+    llm_router and with `remote_agent/llama_server.py`.
+  * `modal run ...::urls` published the manifest; the backend calls the SDK.
+
+To deploy the real thing:  bash scripts/deploy.sh llm
 """
+
+
 TNH LLM backend on Modal: registry-driven llama.cpp servers (OpenAI-compatible).
 
 Every enabled entry in MODELS becomes its own Modal function with its own URL

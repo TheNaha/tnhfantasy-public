@@ -10,12 +10,26 @@ from typing import Any
 
 import tiktoken
 from cachetools import TTLCache
-from core.entities import Character, Location, LorebookEntry, MessageRole, Persona
+from core.entities import (
+    Character,
+    Location,
+    LorebookEntry,
+    MessageKind,
+    MessageRole,
+    Persona,
+)
 from sqlmodel import Session, select
 
 logger = logging.getLogger("context_builder")
 
 DEFAULT_MAX_TOKENS = 4096
+
+# Bounds on the context trace stamped onto a message. A trace is per-row data,
+# so it cannot be unbounded; these are chosen to cover a real conversation while
+# keeping the stamp to a few KB.
+TRACE_TURN_LIMIT = 60
+TRACE_SECTION_LIMIT = 24
+TRACE_CONTENT_PREVIEW = 48
 
 # Floor for the *system* portion of the budget.
 #
@@ -981,6 +995,263 @@ def build_system_prompt_sections(
     return sections
 
 
+def speaker_context(messages: list, session=None) -> tuple[dict[str, str], int]:
+    """Who is speaking in this transcript, as `(id -> name, distinct speakers)`.
+
+    Both answers come from the messages themselves rather than from the chat's
+    character list, because that is what actually determines whether an
+    `assistant` turn is ambiguous: a group chat stores `character_id` per
+    message, and a CHAR row for a character that is not the chat's primary is
+    indistinguishable from one that is unless the name is sent with it.
+
+    Derived from the data rather than passed in, so every caller gets it for
+    free — the four copies of the turn mapping this replaces each had the
+    messages in hand and none of them used them.
+
+    One extra query, and only when there is more than one distinct speaker,
+    which is the only case the result is needed for.
+    """
+    ids: set[str] = set()
+    for msg in messages or []:
+        if isinstance(msg, dict):
+            value = msg.get("character_id")
+        else:
+            value = getattr(msg, "character_id", None)
+        if value:
+            ids.add(value)
+
+    names: dict[str, str] = {}
+    if len(ids) > 1 and session is not None:
+        from core.entities import Character
+
+        rows = session.exec(select(Character).where(Character.id.in_(list(ids)))).all()
+        for row in rows:
+            if row.name:
+                names[row.id] = row.name
+    return names, len(ids)
+
+
+def context_trace_digest(
+    *,
+    system_prompt: str,
+    sections: list[dict[str, Any]],
+    turns: list[dict[str, Any]],
+    input_messages: list,
+    speaker_names: dict[str, str] | None,
+    speaker_total: int,
+    roleplay_config: dict | None,
+    max_context_tokens: int,
+) -> dict[str, Any]:
+    """A compact record of what a context build actually produced.
+
+    Size counts and labels, never the text itself. A digest rather than a full
+    copy of the payload is deliberate — this is stamped onto a message row, and
+    a chapter of prose per turn would multiply every reply's storage by the
+    length of the conversation. What the inspector needs to answer "why did it
+    reply like that?" is WHICH turns were present, WHICH were dropped, and what
+    each one WAS — and none of that needs the words.
+
+    Caps on the lists keep a pathological chat from writing an unbounded blob
+    onto one row. A truncated trace says so rather than pretending to be
+    complete, which is the whole point of it existing.
+    """
+    from config import get_roleplay_context_config
+
+    if roleplay_config is None:
+        roleplay_config = get_roleplay_context_config()
+
+    # Which stored messages became turns at all, and which were skipped, is a
+    # per-input record rather than something recoverable from the output: a
+    # skipped turn leaves no row to count.
+    dropped: list[str] = []
+    seen_ids = {t.get("_id") for t in turns}
+    for msg in input_messages or []:
+        msg_id = msg.get("id") if isinstance(msg, dict) else getattr(msg, "id", None)
+        if not msg_id or msg_id in seen_ids:
+            continue
+        meta = (
+            msg.get("message_metadata", {})
+            if isinstance(msg, dict)
+            else (getattr(msg, "message_metadata", None) or {})
+        )
+        # `world_state` is derived state, rebuilt from the world on every build,
+        # so its absence from the turns is correct and reporting it would make
+        # every trace claim something was dropped. Anything else disappearing is
+        # worth showing.
+        if meta.get("source") == "world_state":
+            continue
+        dropped.append(meta.get("source") or "unknown")
+
+    capped_turns = turns[-TRACE_TURN_LIMIT:]
+    capped_sections = sections[:TRACE_SECTION_LIMIT]
+
+    trace: dict[str, Any] = {
+        "v": 1,
+        "config": {
+            "label_speakers": bool(roleplay_config.get("label_speakers", True)),
+            "narrator_prefix": roleplay_config.get("narrator_prefix", "[Narration]"),
+            "image_prefix": roleplay_config.get("image_prefix", "[Scene]"),
+        },
+        "speakers": {
+            "count": max(speaker_total, 1),
+            "named": sorted({n for n in (speaker_names or {}).values() if n}),
+        },
+        "sections": [
+            {
+                "label": sec.get("label"),
+                "source": sec.get("source"),
+                "chars": len(sec.get("content") or ""),
+            }
+            for sec in capped_sections
+        ],
+        "turns": [
+            {
+                "role": t.get("role"),
+                # The LABEL the payload carries, which is the field the mapping
+                # decides and the thing a user cannot otherwise verify: whether a
+                # narration was labelled, and whether a speaker was named.
+                "label": (
+                    (t.get("content") or "")[:TRACE_CONTENT_PREVIEW]
+                    if t.get("role") == "assistant"
+                    else None
+                ),
+                "kind": t.get("_kind"),
+                "pinned": bool(t.get("_pinned")),
+                "chars": len(t.get("content") or ""),
+            }
+            for t in capped_turns
+        ],
+        "dropped": dropped,
+        "budget_tokens": max_context_tokens,
+        "system_prompt_chars": len(system_prompt or ""),
+        "truncated": len(turns) > TRACE_TURN_LIMIT or len(sections) > TRACE_SECTION_LIMIT,
+    }
+    return trace
+
+
+def llm_turn_for(
+    msg,
+    *,
+    speaker_names: dict[str, str] | None = None,
+    participants: int = 1,
+    roleplay_config: dict | None = None,
+    as_user: bool = False,
+) -> dict[str, Any] | None:
+    """The LLM-payload turn for one stored message, or None to skip it.
+
+    One implementation, and the reason it is a function is that it used to be
+    four copies of the same if/elif — `build_chat_context_with_sections` at 1144,
+    `chats.py`'s suggest assembly at 2075, its import path at 1929, and
+    `orchestrator_service.py`'s follow-up rebuild at 529. They had already
+    drifted: one mapped narrator to `system`, one dropped it, one wrapped system
+    messages in brackets, and NONE of them carried the speaker. So a group chat
+    reached the model as a wall of anonymous `assistant` turns, and the
+    `MessageKind` refinement — the thing that fixed the pruning exemption — was
+    computed, used for pruning, and then stripped before the payload went out.
+
+    The rules, in order:
+
+    * `kind` decides the channel, not `role`. A narrator turn and an image turn
+      are stored as `role=SYSTEM` for rendering, and sending them as
+      `role: "system"` is the bug: on the Google path, `translate_messages_google`
+      concatenates EVERY system message into the system prompt and drops it from
+      the conversation, so a narration is torn out of its chronological place
+      and appended to the end of the instructions, unmarked. Both are now
+      `assistant` turns with a label, which keeps their position and tells the
+      model what they are.
+    * The speaker's name prefixes their turn whenever a chat has more than one
+      participant. In a single-character chat the character's name is the whole
+      subject of the system prompt, so labelling every turn is noise.
+    * `world_state` markers are dropped — they are derived state, rebuilt from
+      the world on every context build, and re-sending them makes the model
+      treat its own summary as history.
+
+    `as_user` mirrors the two speaking channels instead of mapping them
+    straight. The suggest-reply and impersonate paths ask the model to write as
+    the USER, so from its perspective a prior user message is `assistant` and a
+    character message is the `user` it is replying to. That is the same rule with
+    two labels swapped, so it is a parameter here rather than a fourth copy of
+    the if/elif — which is what it was, and the copies had already drifted on
+    how they treated narrator turns.
+
+    `participants` is a COUNT, not a list, so a caller that only knows how many
+    characters are in play can call this without loading them.
+    """
+    import config as app_config
+
+    if roleplay_config is None:
+        roleplay_config = app_config.get_roleplay_context_config()
+
+    if isinstance(msg, dict):
+        role = msg.get("role")
+        content = msg.get("content", "")
+        meta = msg.get("message_metadata", {}) or {}
+        kind = msg.get("kind")
+        character_id = msg.get("character_id")
+    else:
+        role = getattr(msg, "role", None)
+        content = getattr(msg, "content", "") or ""
+        meta = getattr(msg, "message_metadata", None) or {}
+        kind = getattr(msg, "kind", None)
+        character_id = getattr(msg, "character_id", None)
+
+    role_value = getattr(role, "value", role)
+    kind_value = getattr(kind, "value", kind)
+
+    if meta.get("source") == "world_state":
+        return None
+
+    label_speakers = bool(roleplay_config.get("label_speakers", True))
+
+    if role_value == MessageRole.USER.value:
+        if not content:
+            return None
+        # Mirrored only when the model is the one speaking as the user.
+        return {"role": "assistant" if as_user else "user", "content": content}
+
+    if role_value == MessageRole.CHAR.value:
+        if not content:
+            return None
+        if as_user:
+            return {"role": "user", "content": content}
+        if label_speakers and participants > 1:
+            name = (speaker_names or {}).get(character_id) if character_id else None
+            if name:
+                return {"role": "assistant", "content": f"{name}: {content}"}
+        return {"role": "assistant", "content": content}
+
+    if role_value == MessageRole.SYSTEM.value:
+        if not content:
+            return None
+        if kind_value == MessageKind.NARRATOR.value:
+            prefix = roleplay_config.get("narrator_prefix", "[Narration]")
+            # An empty prefix means "send it bare", which is what a caller who
+            # has taught the model the convention wants.
+            return {
+                "role": "assistant",
+                "content": f"{prefix} {content}" if prefix else content,
+            }
+        if kind_value == MessageKind.IMAGE.value:
+            prefix = roleplay_config.get("image_prefix", "[Scene]")
+            return {
+                "role": "assistant",
+                "content": f"{prefix} {content}" if prefix else content,
+            }
+        if meta.get("source") == "narrator":
+            # A narrator row written before `kind` existed. Same treatment, so
+            # an old transcript does not silently keep the hoisting bug.
+            prefix = roleplay_config.get("narrator_prefix", "[Narration]")
+            return {
+                "role": "assistant",
+                "content": f"{prefix} {content}" if prefix else content,
+            }
+        # A plain system turn (an injected note, an imported marker) is the one
+        # case that really is an instruction.
+        return {"role": "system", "content": content}
+
+    return None
+
+
 def build_chat_context(
     session: Session,
     messages: list,
@@ -1030,9 +1301,19 @@ def build_chat_context_with_sections(
     world_name: str | None = None,
     world_description: str | None = None,
     include_roleplay_default: bool = True,
+    trace_out: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Build the complete chat context AND the sections it was assembled from.
+
+    ``trace_out`` is an out-param, not a return value. Pass a dict and it is
+    filled with a digest of exactly what was assembled — which sections, which
+    turns, what was dropped and why, and which speaker each one is — taken
+    BEFORE the internal ``_pinned`` / ``_kind`` / ``_id`` keys are stripped, so
+    it is the only place that information still exists. An out-param rather
+    than a fourth return element because this function has two async wrappers
+    and a dozen callers, and a reply inspector is not a reason to touch all of
+    them.
 
     Same function as :func:`build_chat_context`, returning a third element: the
     per-section breakdown. It exists because a caller that wanted both used to
@@ -1129,6 +1410,14 @@ def build_chat_context_with_sections(
                 "content": "[End of example dialogue. The actual conversation begins now.]",
             })
 
+    speaker_names, speaker_total = speaker_context(messages, session)
+
+    # Read once per context build rather than per message: it is a config read
+    # behind a `get_config()` merge, and the loop below touches it per turn.
+    import config as app_config
+
+    roleplay_config = app_config.get_roleplay_context_config()
+
     msg_list = []
     for msg in messages:
         if isinstance(msg, dict):
@@ -1141,23 +1430,23 @@ def build_chat_context_with_sections(
             meta = getattr(msg, "message_metadata", None) or {}
             if meta.get("source") == "world_state":
                 continue
-            if msg.role == MessageRole.USER:
-                role = "user"
-            elif msg.role == MessageRole.CHAR:
-                role = "assistant"
-            elif msg.role == MessageRole.SYSTEM:
-                role = "system"
-            else:
+            turn = llm_turn_for(
+                msg,
+                speaker_names=speaker_names,
+                participants=max(speaker_total, 1),
+                roleplay_config=roleplay_config,
+            )
+            if turn is None:
                 continue
-            content = msg.content
             kind = getattr(msg, "kind", None)
             is_pinned = bool(getattr(msg, "pinned", False) or meta.get("pinned"))
             # Serialize `kind` so prune_context can treat narrator/image/tool
             # messages as prunable conversation turns instead of exempt
-            # "system" messages (role stays 'system' for rendering).
+            # "system" messages. The turn's own `role` is what goes to the
+            # provider; this is the pruning hint, and it is no longer derived
+            # from the role — see `llm_turn_for`.
             msg_list.append({
-                "role": role,
-                "content": content,
+                **turn,
                 "_pinned": is_pinned,
                 "_kind": kind.value if kind else None,
                 "_id": getattr(msg, "id", None),
@@ -1188,6 +1477,20 @@ def build_chat_context_with_sections(
             "role": "system",
             "content": f"[Author's Note]\n{authors_note.strip()}",
         })
+
+    if isinstance(trace_out, dict):
+        trace_out.update(
+            context_trace_digest(
+                system_prompt=system_prompt,
+                sections=sections,
+                turns=all_msgs,
+                input_messages=messages,
+                speaker_names=speaker_names,
+                speaker_total=speaker_total,
+                roleplay_config=roleplay_config,
+                max_context_tokens=max_context_tokens,
+            )
+        )
 
     # Strip the internal _pinned/_kind/_id helper keys before returning so
     # unknown fields never leak into provider-bound LLM payloads.
@@ -1312,14 +1615,31 @@ def _resolve_world(chat, session):
     return session.get(World, world_id)
 
 
-def _first_scenario(session, scenario_ids: list[str]):
-    from core.entities import Scenario
+def _world_contribution(session, world) -> tuple[list[str], list[str], str | None]:
+    """What `world` adds to a prompt: its lorebooks, its locations, its scenario.
 
-    for scenario_id in scenario_ids:
-        scenario = session.get(Scenario, scenario_id)
-        if scenario is not None:
-            return scenario
-    return None
+    Read through the FKs. This used to be three id arrays on the `worlds` row,
+    and the reason it is not any more is that those arrays were a second
+    description of a relationship the member tables already owned: they were
+    only ever written by one route, had no scrub path on entity delete, and a
+    world's lorebooks could therefore list a book that no longer existed.
+
+    The queries are indexed lookups on `world_id`, which is what the arrays
+    were a cache of. `world_lorebook_ids` is deliberately ordered by
+    `created_at, id` rather than by whatever the array used to hold — see
+    `world_ownership.world_scenario` for why a set needs an explicit order.
+    """
+    from core.entities import Lorebook, Location
+
+    from services.world_ownership import members_of, world_scenario
+
+    world_lorebook_ids = [b.id for b in members_of(session, world.id, Lorebook)]
+    world_location_ids = [l.id for l in members_of(session, world.id, Location)]
+    scenario = world_scenario(session, world.id)
+    world_scenario_text = (
+        scenario.prompt_template if scenario is not None and scenario.prompt_template else None
+    )
+    return world_lorebook_ids, world_location_ids, world_scenario_text
 
 
 def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> dict[str, Any]:
@@ -1371,15 +1691,7 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
     world_location_ids: list[str] = []
     world_scenario: str | None = None
     if world is not None:
-        world_lorebook_ids = list(world.lorebook_ids or [])
-        world_location_ids = list(world.location_ids or [])
-        if world.scenario_ids:
-            scenario = _first_scenario(session, world.scenario_ids)
-            if scenario is not None and scenario.prompt_template:
-                # A chat's own scenario already wins; the World's is the
-                # fallback, so applying one to the World and then to the chat
-                # behaves the way the precedence reads.
-                world_scenario = scenario.prompt_template
+        world_lorebook_ids, world_location_ids, world_scenario = _world_contribution(session, world)
 
     merged_lorebook_ids = _merge_ordered(lorebook_ids, world_lorebook_ids)
 

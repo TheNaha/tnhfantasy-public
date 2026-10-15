@@ -17,6 +17,7 @@ from core.entities import (
     Scenario,
     Story,
     StoryChapter,
+    VoiceModel,
     World,
 )
 from services.context_builder import (
@@ -63,7 +64,13 @@ class TestWorldReachesThePrompt:
         lorebook = _seed(session, _cls=Lorebook, name="Pier", description="d")
         entry = _seed(session, _cls=LorebookEntry, lorebook_id=lorebook.id, content="The tide is wrong.", keys=["tide"])
         assert entry.id
-        world = _seed(session, _cls=World, name="W", description="d", lorebook_ids=[lorebook.id])
+        world = _seed(session, _cls=World, name="W", description="d")
+        # The world joins the book, not the other way round: ownership is
+        # `lorebook.world_id`. This used to be `World(lorebook_ids=[...])`,
+        # a second description of the same relationship on the world's row.
+        lorebook.world_id = world.id
+        session.add(lorebook)
+        session.commit()
         chat = _seed(session, _cls=Chat, name="c", chat_type="chat", world_id=world.id)
 
         block = next(s for s in _prompt(session, chat) if s["key"] == "lorebook")
@@ -75,7 +82,10 @@ class TestWorldReachesThePrompt:
         theirs = _seed(session, _cls=Lorebook, name="Theirs")
         _seed(session, _cls=LorebookEntry, lorebook_id=theirs.id, content="THEIRS", keys=["t"])
 
-        world = _seed(session, _cls=World, name="W", description="d", lorebook_ids=[theirs.id])
+        world = _seed(session, _cls=World, name="W", description="d")
+        theirs.world_id = world.id
+        session.add(theirs)
+        session.commit()
         chat = _seed(
             session, _cls=Chat, name="c", chat_type="chat",
             world_id=world.id, active_lorebook_ids=[mine.id],
@@ -86,7 +96,10 @@ class TestWorldReachesThePrompt:
 
     def test_the_worlds_locations_are_injected(self, session):
         loc = _seed(session, _cls=Location, name="The Cellar", description="Damp.")
-        world = _seed(session, _cls=World, name="W", description="d", location_ids=[loc.id])
+        world = _seed(session, _cls=World, name="W", description="d")
+        loc.world_id = world.id
+        session.add(loc)
+        session.commit()
         chat = _seed(session, _cls=Chat, name="c", chat_type="chat", world_id=world.id)
 
         prompt = "\n\n".join(s["content"] for s in _prompt(session, chat))
@@ -94,7 +107,10 @@ class TestWorldReachesThePrompt:
 
     def test_the_worlds_scenario_becomes_a_directive(self, session):
         scenario = _seed(session, _cls=Scenario, name="Storm", prompt_template="A storm breaks.")
-        world = _seed(session, _cls=World, name="W", description="d", scenario_ids=[scenario.id])
+        world = _seed(session, _cls=World, name="W", description="d")
+        scenario.world_id = world.id
+        session.add(scenario)
+        session.commit()
         chat = _seed(session, _cls=Chat, name="c", chat_type="chat", world_id=world.id)
 
         block = next(s for s in _prompt(session, chat) if s["key"] == "story_scenario")
@@ -102,7 +118,10 @@ class TestWorldReachesThePrompt:
 
     def test_the_world_scenario_does_not_override_one_the_chat_owns(self, session):
         scenario = _seed(session, _cls=Scenario, name="Storm", prompt_template="WORLD ONE")
-        world = _seed(session, _cls=World, name="W", description="d", scenario_ids=[scenario.id])
+        world = _seed(session, _cls=World, name="W", description="d")
+        scenario.world_id = world.id
+        session.add(scenario)
+        session.commit()
         chat = _seed(session, _cls=Chat, name="c", chat_type="chat", world_id=world.id)
 
         kwargs = chat_context_kwargs(chat, session=session, story_scenario="CHAT ONE")
@@ -117,53 +136,125 @@ class TestWorldReachesThePrompt:
         assert "lorebook" not in keys
 
     def test_a_world_whose_entities_were_deleted_does_not_crash(self, session):
-        world = _seed(
-            session,
-            _cls=World,
-            name="W",
-            description="d",
-            lorebook_ids=["gone-lorebook"],
-            location_ids=["gone-location"],
-            scenario_ids=["gone-scenario"],
-        )
+        world = _seed(session, _cls=World, name="W", description="d")
         chat = _seed(session, _cls=Chat, name="c", chat_type="chat", world_id=world.id)
         _prompt(session, chat)  # must not raise
 
 
 class TestWorldMembershipIsWritable:
-    def test_a_world_accepts_its_membership_on_create(self, client, session):
+    """Membership is written from the member side and read from it.
+
+    This class used to POST and PUT id lists on `/api/v2/worlds` and read them
+    straight back. That route is gone, and the tests with it, because the
+    arrays it accepted were a second description of a relationship the member
+    tables already owned: `PUT` could rewrite `chat_ids`/`story_ids` without
+    touching the `world_id` FKs, and `lorebook_ids`/`scenario_ids`/`voice_ids`
+    had no scrub path at all, so deleting an entity left its id in the array
+    forever. What replaces them is stronger — the world is resolved from the
+    members, and the member's own route 404s on an unknown world.
+    """
+
+    def test_a_membership_is_declared_from_the_member_side(self, client, session):
         lorebook = _seed(session, _cls=Lorebook, name="L", description="d")
         scenario = _seed(session, _cls=Scenario, name="S", prompt_template="p")
         loc = _seed(session, _cls=Location, name="Loc", description="d")
+        world = client.post("/api/v2/worlds", json={"name": "W"}).json()
 
-        response = client.post(
-            "/api/v2/worlds",
-            json={
-                "name": "W",
-                "lorebook_ids": [lorebook.id],
-                "scenario_ids": [scenario.id],
-                "location_ids": [loc.id],
-            },
-        )
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["lorebook_ids"] == [lorebook.id]
-        assert body["scenario_ids"] == [scenario.id]
+        assert client.put(f"/api/v2/lorebooks/{lorebook.id}", json={"world_id": world["id"]}).status_code == 200
+        assert client.put(f"/api/v2/scenarios/{scenario.id}", json={"world_id": world["id"]}).status_code == 200
+        assert client.put(f"/api/v2/locations/{loc.id}", json={"world_id": world["id"]}).status_code == 200
 
-    def test_an_unknown_member_is_a_404_not_a_stored_dangling_id(self, client):
-        response = client.post(
-            "/api/v2/worlds", json={"name": "W", "lorebook_ids": ["does-not-exist"]}
-        )
-        assert response.status_code == 404
+        body = client.get(f"/api/v2/worlds/{world['id']}/dashboard").json()
+        assert body["lorebooks"] == [{"id": lorebook.id, "name": "L"}]
+        assert body["scenarios"] == [{"id": scenario.id, "name": "S"}]
+        assert body["locations"] == [{"id": loc.id, "name": "Loc"}]
 
-    def test_membership_can_be_updated(self, client, session):
-        world = _seed(session, _cls=World, name="W", description="d")
+    def test_a_member_with_no_world_id_field_is_left_alone(self, client, session):
+        """An unrelated partial update must not silently detach.
+
+        `exclude_unset=True` is what makes "field absent" and "field is null"
+        different things: renaming a lorebook cannot drop it out of its world.
+        """
+        lorebook = _seed(session, _cls=Lorebook, name="Before", description="d")
+        world = client.post("/api/v2/worlds", json={"name": "W"}).json()
+        assert client.put(f"/api/v2/lorebooks/{lorebook.id}", json={"world_id": world["id"]}).status_code == 200
+
+        resp = client.put(f"/api/v2/lorebooks/{lorebook.id}", json={"description": "after"})
+        assert resp.status_code == 200, resp.text
+        assert client.get(f"/api/v2/worlds/{world['id']}/dashboard").json()["lorebooks"] == [
+            {"id": lorebook.id, "name": "Before"}
+        ]
+
+    def test_an_unknown_world_is_a_404_not_a_stored_dangling_fk(self, client, session):
+        """A typo'd world id never lands in the column.
+
+        This is the check the old world-side arrays could not make: they took
+        any string, so a world could list a member that did not exist and the
+        prompt builder silently resolved nothing on every turn.
+        """
         lorebook = _seed(session, _cls=Lorebook, name="L", description="d")
-        response = client.put(
-            f"/api/v2/worlds/{world.id}", json={"lorebook_ids": [lorebook.id]}
-        )
-        assert response.status_code == 200
-        assert response.json()["lorebook_ids"] == [lorebook.id]
+        resp = client.put(f"/api/v2/lorebooks/{lorebook.id}", json={"world_id": "does-not-exist"})
+        assert resp.status_code == 404, resp.text
+
+    def test_an_explicit_null_detaches(self, client, session):
+        lorebook = _seed(session, _cls=Lorebook, name="L", description="d")
+        world = client.post("/api/v2/worlds", json={"name": "W"}).json()
+        assert client.put(f"/api/v2/lorebooks/{lorebook.id}", json={"world_id": world["id"]}).status_code == 200
+        assert client.put(f"/api/v2/lorebooks/{lorebook.id}", json={"world_id": None}).status_code == 200
+        assert client.get(f"/api/v2/worlds/{world['id']}/dashboard").json()["lorebooks"] == []
+
+    def test_deleting_a_member_stops_it_counting_in_the_world(self, client, session):
+        """The scrub the old three columns never had.
+
+        `lorebook_ids`, `scenario_ids` and `voice_ids` on the `worlds` row had
+        no branch in `reference_cleanup` at all, so a deleted entity stayed in
+        the array forever and the world kept contributing nothing while looking
+        configured.
+        """
+        lorebook = _seed(session, _cls=Lorebook, name="L", description="d")
+        world = client.post("/api/v2/worlds", json={"name": "W"}).json()
+        assert client.put(f"/api/v2/lorebooks/{lorebook.id}", json={"world_id": world["id"]}).status_code == 200
+
+        assert client.delete(f"/api/v2/lorebooks/{lorebook.id}").status_code == 200
+        assert client.get(f"/api/v2/worlds/{world['id']}/dashboard").json()["lorebooks"] == []
+        listed = client.get("/api/v2/worlds").json()
+        mine = next(w for w in listed if w["id"] == world["id"])
+        assert mine["counts"]["Lorebook"] == 0
+
+    def test_deleting_a_world_detaches_every_kind_of_member(self, client, session):
+        """All seven member tables, not just chats and stories.
+
+        The old `detach_world` nulled `Chat.world_id` and `Story.world_id` and
+        left Character, Lorebook, Location, Scenario and VoiceModel pointing at
+        a world that no longer existed.
+        """
+        world = client.post("/api/v2/worlds", json={"name": "W"}).json()
+        world_id = world["id"]
+        char = _seed(session, _cls=Character, name="Aria")
+        loc = _seed(session, _cls=Location, name="Cellar", description="d")
+        lorebook = _seed(session, _cls=Lorebook, name="Book", description="d")
+        scenario = _seed(session, _cls=Scenario, name="Storm", prompt_template="p")
+        voice = _seed(session, _cls=VoiceModel, name="V", voice_profile="v")
+        for entity in (char, loc, lorebook, scenario, voice):
+            entity.world_id = world_id
+            session.add(entity)
+        session.commit()
+
+        before = client.get(f"/api/v2/worlds/{world['id']}/dashboard").json()
+        assert len(before["characters"]) == 1
+        assert len(before["locations"]) == 1
+        assert len(before["lorebooks"]) == 1
+        assert len(before["scenarios"]) == 1
+        assert len(before["voices"]) == 1
+
+        assert client.delete(f"/api/v2/worlds/{world['id']}").status_code == 200
+        session.refresh(char)
+        session.refresh(loc)
+        session.refresh(lorebook)
+        session.refresh(scenario)
+        session.refresh(voice)
+        for entity in (char, loc, lorebook, scenario, voice):
+            assert entity.world_id is None
 
 
 # ---------------------------------------------------------------------------

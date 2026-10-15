@@ -49,14 +49,37 @@ The keystone. `Chat.world_id` / `Story.world_id` were written, maintained by
 `services/world_ownership.py`, and read by nothing — so filing a cast under a
 World changed nothing about what the model was told.
 
-- `chat_context_kwargs` resolves the owning World and merges its
-  `lorebook_ids`, `location_ids` and first `scenario_ids` entry into the
-  prompt, additively. A chat's own picks always come first.
-- `World.lorebook_ids` / `scenario_ids` / `voice_ids` are now **writable** via
-  `WorldCreate` / `WorldUpdate` and validated — they had **no writer at all**,
-  so a World's membership was unconfigurable even once it was read.
+- `chat_context_kwargs` resolves the owning World and merges its lorebooks,
+  locations and scenario into the prompt, additively. A chat's own picks always
+  come first.
 - A World contributes its `description` as a `[Setting: …]` section, with
   `{{user}}` / `{{char}}` expanded like every other section.
+
+Membership ended up as **one indexed `world_id` on each member table** —
+`characters`, `lorebooks`, `locations`, `scenarios`, `voice_models`, `stories`,
+`chats` — not id arrays on the `worlds` row. That is migration
+`090_world_membership_fks`, and it is worth spelling out why, because the array
+form was the one this document used to describe as the fix:
+
+- A world had **two descriptions** of one relationship. `Chat.world_id` /
+  `Story.world_id` were FKs and `World.chat_ids` / `World.story_ids` were a
+  hand-synced copy. `PUT /api/v2/worlds/{id}` accepted the copy directly, so a
+  world could list a chat the chat did not belong to.
+- The other three had **no writer and no scrub**. `lorebook_ids`,
+  `scenario_ids` and `voice_ids` were made writable through `WorldCreate` /
+  `WorldUpdate` with no corresponding branch in `reference_cleanup`, so deleting
+  an entity left its id in the array forever and a world kept contributing
+  nothing while looking configured.
+- `detach_world` on world delete nulled two FKs and left the other five member
+  tables pointing at a world that no longer existed — including the lorebooks
+  and locations that are merged into every prompt built for a chat in that world.
+
+The arrays bought nothing: `world_id` is indexed, so
+`select(Chat).where(Chat.world_id == wid)` is the same lookup the array was a
+cache of, and there is now one thing to write instead of two. Every read and
+every write goes through `services/world_ownership.py`, and
+`test_audit_2026_09_29b_p0.py::TestWorldOwnership::test_membership_has_one_owner_module`
+walks the AST to keep a second writer from appearing.
 
 ### The chat path caught up to the story path
 

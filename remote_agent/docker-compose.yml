@@ -1,8 +1,20 @@
 services:
   remote-agent:
+    # Which runtime this build produces.
+    #
+    # The default is the slim base (`model` and `tts` modes need only FastAPI and
+    # a filesystem). `CUDA=1` swaps the base for the llama.cpp CUDA image, which
+    # is what `WORKER_MODE=llm` needs because an LLM worker SERVES its own
+    # weights the way the Modal app does — it launches llama-server from
+    # `models.json` on loopback ports and proxies to them.
+    #
+    #   WORKER_MODE=llm CUDA=1 LLM_DATA_DIR=/mnt/llm-weights \
+    #       docker compose up -d --build
     build:
       context: ..
       dockerfile: remote_agent/Dockerfile
+      args:
+        CUDA_RUNTIME: ${CUDA_RUNTIME:-runtime-slim}
     container_name: tnhcomfy-remote-agent
     env_file:
       # Only .env.agent.example is tracked. Copy it first:
@@ -24,10 +36,28 @@ services:
       - PORT=8001
       # `model` unless overridden: /download-model, /list-models,
       # /validate-models, /get-file. Set WORKER_MODE=llm to serve
-      # /v1/chat/completions (a proxy to LLM_UPSTREAM_BASE) or WORKER_MODE=tts
-      # to serve /synthesize. Same image, any GPU box with Docker — the provider
-      # matrix's "remote" transport. See .env.agent.example.
+      # /v1/chat/completions (its own llama-server from models.json, or a proxy
+      # to LLM_UPSTREAM_BASE when that is set) or WORKER_MODE=tts to serve
+      # /synthesize. Same image, any GPU box with Docker — the provider matrix's
+      # "remote" transport. See .env.agent.example.
       - WORKER_MODE=${WORKER_MODE:-model}
+    # GPU, for the llama.cpp runtime only. A `model` agent allocating a card it
+    # never uses is why this is conditional: the default build has no CUDA base
+    # to use one anyway, and an explicit `gpu: all` on a `model` agent would fail
+    # on a rig with no NVIDIA runtime at all.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${GPU_COUNT:-1}
+              capabilities: [gpu]
+    # The llama.cpp runtime runs as root — that image ships no `passwd` package,
+    # so `useradd` does not exist in it and the Dockerfile does not create an
+    # `agent` user. Declared explicitly rather than left to the image's own
+    # default, so the difference is visible in the compose file rather than
+    # discovered from a permissions error.
+    user: ${CONTAINER_USER:-}
     volumes:
       # Set DATA_DIR to the absolute path of the ComfyUI models directory on the
       # GPU rig. It is a REQUIRED variable (`:?`) on purpose: the file previously
@@ -38,18 +68,25 @@ services:
       # Note this is deliberately NOT read from .env.agent — see the env_file
       # comment above for why it cannot be.
       #
-      #   DATA_DIR=/home/user/ComfyUI/models docker compose up -d
+      # For WORKER_MODE=llm, set LLM_DATA_DIR instead and mount THAT: the LLM
+      # worker's root holds GGUFs in `<root>/<model.volume_dir>/`, not a ComfyUI
+      # tree. Both fall back to DATA_DIR, so a single mount serves either.
       - ${DATA_DIR:?set DATA_DIR in COMPOSE's own environment (not .env.agent), e.g. DATA_DIR=/home/user/ComfyUI/models docker compose up -d}:/app/remote_agent/data:rw
+      # The registry, read-only: it is the same models.json the Modal app and the
+      # backend read, and the worker only ever reads it. Mounted rather than
+      # baked in so an operator can edit it on the box and recreate, which is the
+      # workflow `deployables/modal/llm/app.py` documents for the Modal side.
+      - ./models.json:/app/modal_llm/models.json:ro
     ports:
       - "8001:8001"
     restart: unless-stopped
     # /health, which answers {"status": "healthy"} with no token required
-    # (server.py) — the one endpoint that works before anything else is set up,
-    # and the one the PyInstaller job's only verification curl used. Declaring it
-    # here makes `depends_on: condition: service_healthy` available and gives
-    # `docker compose ps` something true to report. 8001, matching PORT above.
+    # (server.py) — the one endpoint that works before anything else is set up.
+    # Declaring it here makes `depends_on: condition: service_healthy` available
+    # and gives `docker compose ps` something true to report. 8001, matching PORT
+    # above.
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://localhost:%s/health' % os.environ.get('PORT', '8001'))\""]
       interval: 30s
       timeout: 5s
       retries: 3

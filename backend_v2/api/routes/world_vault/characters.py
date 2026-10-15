@@ -14,6 +14,7 @@ from api.deps import get_session, get_character_repo
 from infrastructure.logging import get_logger
 from infrastructure.repositories.character_repo import CharacterRepository
 from services.reference_cleanup import scrub_entity_references
+from services.world_ownership import apply_world_id, require_world
 from core.workflow_builder import DEFAULT_CHECKPOINT
 from core.character_cards import (
     CARD_SPEC_V1,
@@ -96,6 +97,10 @@ class CharacterCreateRequest(BaseModel):
     creator: str | None = None
     character_version: str | None = None
     sort_order: int = 0
+    # Which World this entity belongs to. Ownership of record lives on the
+    # member, not in an array on the `worlds` row — see `services/
+    # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.
+    world_id: str | None = None
 
 
 class CharacterUpdateRequest(BaseModel):
@@ -134,6 +139,10 @@ class CharacterUpdateRequest(BaseModel):
     creator: str | None = None
     character_version: str | None = None
     sort_order: int | None = None
+    # Which World this entity belongs to. Ownership of record lives on the
+    # member, not in an array on the `worlds` row — see `services/
+    # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.
+    world_id: str | None = None
 
 
 def _character_to_dict(character: Character) -> dict:
@@ -218,6 +227,7 @@ def list_characters(session: Session = Depends(get_session), character_repo: Cha
 
 @router.post("")
 def create_character(payload: CharacterCreateRequest, session: Session = Depends(get_session)):
+    require_world(session, payload.world_id)
     character = Character(**payload.model_dump())
     character.created_at = datetime.now(timezone.utc)
     character.updated_at = character.created_at
@@ -443,6 +453,8 @@ def update_character(character_id: str, character_update: CharacterUpdateRequest
     update_data = character_update.model_dump(exclude_unset=True)
     if "lorebook_ids" in update_data and update_data["lorebook_ids"] is not None:
         update_data["lorebook_ids"] = _resolve_lorebook_ids(session, update_data["lorebook_ids"])
+    apply_world_id(session, character, update_data)
+    update_data.pop("world_id", None)
     for key, value in update_data.items():
         setattr(character, key, value)
 
@@ -592,8 +604,7 @@ async def generate_animated_avatar(
     character_repo: CharacterRepository = Depends(get_character_repo)
 ):
     """Enqueue a ComfyUI AnimateDiff video generation job for this character's avatar."""
-    from services.job_queue import queue_manager
-    from services.job_service import JobService
+    from services.job_submission_service import submit_job
 
     # The prompt is built from session-loaded character columns, and only the
     # job creation below is awaited.
@@ -601,12 +612,11 @@ async def generate_animated_avatar(
         _animate_avatar_prep_sync, character_repo, character_id, request
     )
 
-    job = await JobService(session).create_job(
-        task_type="image",
-        workflow=workflow,
-        metadata=metadata,
-    )
-    await queue_manager.enqueue(job.id, task_type="image")
+    # Through the shared submission path, not a bare `create_job` +
+    # `enqueue`: it validates the workflow against what is installed first, so a
+    # missing AnimateDiff motion model surfaces as a clean
+    # `MissingModelsError` (400) instead of a job that dies inside the worker.
+    job = await submit_job(session, workflow, metadata, task_type="image")
 
     return {"message": "Animation job enqueued", "job_id": job.id}
 

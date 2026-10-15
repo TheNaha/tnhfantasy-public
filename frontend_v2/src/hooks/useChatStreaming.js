@@ -269,6 +269,17 @@ export function useChatStreaming({
                 setSceneJobId(null);
                 setIsGeneratingScene(false);
             }
+
+            // A suggest-reply completes with nothing persisted, so its only
+            // client-visible end is this event — and until now there was no
+            // branch here. `suggestJobId` was cleared on JOB_FAILED and nothing
+            // else, so a SUCCESSFUL suggestion left the Suggest button disabled
+            // until the 120s safety timer fired, even though the suggestion was
+            // already sitting in the input box.
+            if (eventId === suggestJobIdRef.current) {
+                suggestJobIdRef.current = null;
+                setSuggestJobId(null);
+            }
         });
 
         const unsubError = subscribe(EventTypes.JOB_FAILED, (event) => {

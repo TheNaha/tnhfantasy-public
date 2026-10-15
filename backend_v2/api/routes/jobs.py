@@ -520,15 +520,22 @@ async def reconcile_chat_replies(
     dry_run: bool = False,
     service: JobService = Depends(get_job_service),
 ):
-    """Re-drive chat replies that were generated but never written to `messages`.
+    """Re-drive chat artefacts that were generated but never written to `messages`.
 
-    The world-integration consumer is the only writer of AI chat replies and it
-    reads from a queue. If a JOB_COMPLETED event is evicted under backpressure
-    the text is gone: the job is COMPLETED, the user paid for it, and the chat
-    silently never advances. This finds those jobs — COMPLETED `chat_reply` LLM
-    jobs with no message stamped with their id — and replays them through the
-    normal handler. Idempotent: a reply that was persisted is never found, so
-    repeat calls do nothing.
+    The world-integration consumer is one writer of chat artefacts and it reads
+    from a lossy queue. If a JOB_COMPLETED event is evicted under backpressure
+    the output is gone: the job is COMPLETED, the user paid for it, and the
+    conversation silently never shows it. This finds those jobs — COMPLETED
+    chat_reply, narrator or chat_image jobs with no message stamped with their
+    id — and replays each through the handler that would have written it.
+    Idempotent: anything already persisted is never found, so repeat calls do
+    nothing.
+
+    The URL keeps its old name because an operator may have `_-replies` wired
+    into a cron; what it repairs is the three artefact kinds, which is what
+    `_PRECOMPLETION_PERSISTED_TYPES` in `job_processing` now writes before
+    completion. `chat_tts` is excluded on purpose — it mutates an existing
+    message rather than inserting one, so there is no row to find by absence.
 
     `dry_run=true` reports what would be re-driven without writing.
     """
@@ -543,12 +550,13 @@ async def reconcile_chat_replies(
         found = find_unpersisted_chat_replies(service.session, limit=limit)
         return {
             "found": len(found),
-            "job_ids": [job["id"] for job in found],
+            "kinds": sorted({event_type for event_type, _ in found}),
+            "job_ids": [job["id"] for _event_type, job in found],
             "chat_ids": sorted(
                 {
                     (job["metadata"] or {}).get("chat_id")
                     or (job["workflow"] or {}).get("chat_id")
-                    for job in found
+                    for _event_type, job in found
                 }
                 - {None}
             ),

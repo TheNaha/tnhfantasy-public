@@ -17,6 +17,11 @@ DEPLOY_CONFIG_KEY = "deploy_config"
 # Engine-config keys that pre-overhaul rows may hold top-level on `config`
 # (the old wizard wrote them there). Still honoured on read so old rows
 # resolve identically; new writes go through `deploy_config`.
+#
+# `gateway_host`/`gateway_port`/`api_host`/`api_port`/`beta9_gateway_host`/
+# `beta9_gateway_port` were removed: they named the Beta9 deployment and a
+# generic gateway/api host-port pair, neither of which exists anywhere in the
+# tree any more, and no engine read them.
 LEGACY_DEPLOY_CONFIG_FIELDS = {
     "app_name",
     "enable_memory_snapshot",
@@ -24,17 +29,11 @@ LEGACY_DEPLOY_CONFIG_FIELDS = {
     "storage_url",
     "download_url",
     "gpu_type",
-    "gateway_host",
-    "gateway_port",
-    "api_host",
-    "api_port",
-    "beta9_gateway_host",
-    "beta9_gateway_port",
     # `direct_url` / `remote_comfy` engines resolve their ComfyUI root from the
-    # provider row's `config` (`engine_factory.py:568` reads
-    # `config.get("comfy_url")`). It was missing here, so the Providers page's
-    # Runtime tab read `provider.config?.comfy_url` — a key the status card never
-    # emits — and could not show it under any name.
+    # provider row's `config` (`engine_factory.py` reads `config.get("comfy_url")`).
+    # It was missing here, so the Providers page's Runtime tab read
+    # `provider.config?.comfy_url` — a key the status card never emits — and
+    # could not show it under any name.
     "comfy_url",
 }
 

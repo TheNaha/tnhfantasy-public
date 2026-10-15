@@ -229,13 +229,36 @@ export function useStoryStreaming({
         };
     }, [subscribe, activeStoryId, activeChapterId, queryClient, setEditorContent, isDirtyRef]);
 
+    // One watchdog for both waits, because they are two different states with
+    // the same failure shape and only one of them used to be covered.
+    //
+    // `isStreaming` always had this. `isIllustrating` did not, and it needed it
+    // more: an illustration started with a supplied prompt never streams, so
+    // `isStreaming` stays false and the timer never armed. Every way that wait
+    // can end silently leaves the button spinning until a full page reload —
+    // the art-direction job returning empty text (its handler returns without
+    // producing an image job), the chain failing, or the event bus dropping the
+    // JOB_COMPLETED. So the two states are guarded together, with a message that
+    // names which one stalled.
+    const waitingOn = isStreaming ? 'stream' : isIllustrating ? 'illustration' : null;
+
     useEffect(() => {
-        if (!isStreaming) return;
+        if (!waitingOn) return;
         streamSafetyTimerRef.current = window.setTimeout(() => {
+            const stalled = waitingOn;
             setIsStreaming(false);
             setIsIllustrating(false);
             streamingRef.current = '';
-            toast.error('Connection lost — streaming stopped. Your story is saved.');
+            if (stalled === 'stream') {
+                toast.error('Connection lost — streaming stopped. Your story is saved.');
+            } else {
+                // Not the same message, and deliberately not "your story is
+                // saved": nothing was written, and the spent job is the point.
+                toast.error(
+                    'Illustration never reported back. It may still be running — check the Jobs page before retrying, or you will pay for it twice.',
+                    { duration: 8000 }
+                );
+            }
         }, 300000);
         return () => {
             if (streamSafetyTimerRef.current) {
@@ -243,7 +266,7 @@ export function useStoryStreaming({
                 streamSafetyTimerRef.current = null;
             }
         };
-    }, [isStreaming]);
+    }, [waitingOn]);
 
     return {
         isStreaming,

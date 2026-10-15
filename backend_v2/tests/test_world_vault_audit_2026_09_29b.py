@@ -97,10 +97,11 @@ class TestBranchFilteredContextReads:
 
         async def _spy(messages, **kwargs):
             seen.append([m.content for m in messages])
-            return "sys", [{"role": "user", "content": "x"}]
+            # Three values: the trace-carrying builder's contract.
+            return "sys", [{"role": "user", "content": "x"}], []
 
         monkeypatch.setattr(
-            "api.routes.world_vault.chats.build_chat_context_async", _spy
+            "api.routes.world_vault.chats.build_chat_context_with_sections_async", _spy
         )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
@@ -133,10 +134,11 @@ class TestBranchFilteredContextReads:
 
         async def _spy(messages, **kwargs):
             seen.append([m.content for m in messages])
-            return "sys", [{"role": "user", "content": "x"}]
+            # Three values: the trace-carrying builder's contract.
+            return "sys", [{"role": "user", "content": "x"}], []
 
         monkeypatch.setattr(
-            "api.routes.world_vault.chats.build_chat_context_async", _spy
+            "api.routes.world_vault.chats.build_chat_context_with_sections_async", _spy
         )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
@@ -178,10 +180,11 @@ class TestBranchFilteredContextReads:
 
         async def _spy(messages, **kwargs):
             seen.append([m.content for m in messages])
-            return "sys", [{"role": "user", "content": "x"}]
+            # Three values: the trace-carrying builder's contract.
+            return "sys", [{"role": "user", "content": "x"}], []
 
         monkeypatch.setattr(
-            "api.routes.world_vault.chats.build_chat_context_async", _spy
+            "api.routes.world_vault.chats.build_chat_context_with_sections_async", _spy
         )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
@@ -308,8 +311,8 @@ class TestBranchContinuation:
         branch = _create_branch(client, chat.id, m1.id)
 
         monkeypatch.setattr(
-            "api.routes.world_vault.chats.build_chat_context_async",
-            AsyncMock(return_value=("sys", [])),
+            "api.routes.world_vault.chats.build_chat_context_with_sections_async",
+            AsyncMock(return_value=("sys", [], [])),
         )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
@@ -347,8 +350,8 @@ class TestBranchContinuation:
         branch = _create_branch(client, chat.id, m1.id)
 
         monkeypatch.setattr(
-            "api.routes.world_vault.chats.build_chat_context_async",
-            AsyncMock(return_value=("sys", [])),
+            "api.routes.world_vault.chats.build_chat_context_with_sections_async",
+            AsyncMock(return_value=("sys", [], [])),
         )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
@@ -508,9 +511,14 @@ class TestImpersonationReadsTheNewest:
 
         async def _spy(messages, **kwargs):
             captured.append([m.content for m in messages])
-            return "sys", []
+            return "sys", [], []
 
-        monkeypatch.setattr(wis, "build_chat_context_async", _spy)
+        # `_handle_impersonation` imports the builder from
+        # `services.context_builder` inside the function body, so the patch has
+        # to land on the source module.
+        monkeypatch.setattr(
+            "services.context_builder.build_chat_context_with_sections_async", _spy
+        )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
         )
@@ -1201,13 +1209,22 @@ class TestTtsBeatRole:
         resp = client.post(
             f"/api/v2/stories/{story.id}/chapters/{chapter.id}/retry-last"
         )
+        # The original guard was `beats[-1].role == narrator`, so this refused at
+        # 400 for any chapter that had been narrated — you paid for the narration
+        # and then could not retry the thing it was attached to.
         assert resp.status_code == 200, resp.text
+
+        # It found the narrator beat UNDER the TTS attachment, not the attachment
+        # itself. That is the whole regression.
+        job = session.exec(select(Job)).all()[-1]
+        assert job.metadata_["retry_of"] == "b2"
+
+        # And nothing is removed: the retry is a second take now, not a trim, so
+        # the TTS attachment keeps describing audio of prose that still exists.
         session.expire_all()
         after = session.get(StoryChapter, chapter.id)
-        assert prose not in (after.content or "")
-        # The TTS attachment described the audio of the removed prose, so it goes
-        # with it.
-        assert [b["role"] for b in after.beats] == ["narrator"]
+        assert prose in (after.content or "")
+        assert [b["role"] for b in after.beats] == ["narrator", "narrator", "tts"]
 
 
 def _story_beat_roles():

@@ -25,6 +25,14 @@ def _seed_chat(session: Session, char: Character | None = None) -> Chat:
     return chat
 
 
+def _seed_character_named(session, name, description=""):
+    char = Character(name=name, description=description)
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    return char
+
+
 def _add_message(session, chat, role, content):
     msg = Message(role=role, content=content, chat_id=chat.id)
     session.add(msg)
@@ -373,6 +381,80 @@ class TestNarrateMessage:
         msg = _add_message(session, chat, MessageRole.CHAR, "Hello, adventurer.")
         return chat, msg
 
+    def test_idempotency_key_collapses_a_double_submit(
+        self, client, session, monkeypatch, tts_capable
+    ):
+        """The narrator has no client-side guard, so a double click is two jobs.
+
+        `_handle_chat_tts` writes the same `audio_path` onto the same message, so
+        the second job's cost is invisible in the UI — which is exactly why this
+        needed the opt-in header `POST /{chat_id}/messages` already has.
+        """
+        chat, msg = self._seed(session)
+        enqueue = AsyncMock(return_value=True)
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+
+        headers = {"Idempotency-Key": "narrate-once"}
+        first = client.post(
+            f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate",
+            json={},
+            headers=headers,
+        )
+        assert first.status_code == 200, first.text
+        second = client.post(
+            f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate",
+            json={},
+            headers=headers,
+        )
+        assert second.status_code == 200, second.text
+
+        # One job, one enqueue, one identical response.
+        assert second.json() == first.json()
+        assert enqueue.await_count == 1
+        jobs = session.exec(select(Job).where(Job.task_type == "tts")).all()
+        assert len(jobs) == 1
+
+    def test_a_different_idempotency_key_is_a_second_job(
+        self, client, session, monkeypatch, tts_capable
+    ):
+        """The key must scope to the key, not swallow every narration."""
+        chat, msg = self._seed(session)
+        enqueue = AsyncMock(return_value=True)
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+
+        client.post(
+            f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate",
+            json={},
+            headers={"Idempotency-Key": "first"},
+        )
+        client.post(
+            f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate",
+            json={},
+            headers={"Idempotency-Key": "second"},
+        )
+
+        assert enqueue.await_count == 2
+
+    def test_no_key_means_no_dedup(
+        self, client, session, monkeypatch, tts_capable
+    ):
+        """Opt-in, same as `POST /{chat_id}/messages`.
+
+        A default-on guard would collapse every deliberate re-narration a user
+        asks for after changing the voice, which is a real action.
+        """
+        chat, msg = self._seed(session)
+        enqueue = AsyncMock(return_value=True)
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+
+        for _ in range(2):
+            resp = client.post(
+                f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate", json={}
+            )
+            assert resp.status_code == 200, resp.text
+
+        assert enqueue.await_count == 2
+
     def test_narrate_with_voice_override(self, client, session, monkeypatch, tts_capable):
         from core.entities import VoiceModel
         voice = VoiceModel(name="Midnight", voice_profile="midnight_xtts", language="en")
@@ -588,3 +670,70 @@ class TestNarrationDisabledDoesNotOrphanTheMessage:
 
         assert resp.status_code == 200, resp.text
         assert resp.json()["user_message_id"]
+
+
+class TestContextTraceOnAReply:
+    """The exchange record reaches the message a user can read it from.
+
+    The send path is the one that matters: it is where the trace is captured, so
+    the test has to go through the HTTP route rather than calling the handler,
+    or it would only prove the handler copies what it is handed.
+    """
+
+    def test_a_sent_message_stamps_the_trace_on_its_reply(self, client, session, engine, monkeypatch):
+        import asyncio
+
+        from core.entities import Message
+
+        char = _seed_character_named(session, "Aria", "A guard.")
+        chat = _seed_chat(session, char)
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True))
+
+        resp = client.post(f"/api/v2/chats/{chat.id}/messages", json={"content": "I knock.", "role": "user"})
+        assert resp.status_code == 200, resp.text
+
+        job = session.exec(select(Job).where(Job.task_type == "llm")).all()[0]
+        trace = (job.metadata_ or {}).get("context_trace")
+        assert trace and trace["v"] == 1
+        # The mapping actually applied is recorded, which is the part nobody
+        # could otherwise verify from outside the payload.
+        assert trace["config"]["narrator_prefix"] == "[Narration]"
+
+        import services.world_integration_service as wis
+
+        asyncio.run(wis._handle_chat_reply({
+            "id": job.id,
+            "metadata": job.metadata_ or {},
+            "outputs": [{"role": "assistant", "content": "The door opens."}],
+        }))
+
+        # Same session the routes write through, which is what the client
+        # fixture overrides.
+        reply = session.exec(
+            select(Message)
+            .where(Message.chat_id == chat.id)
+            .order_by(Message.created_at.desc())
+        ).all()[0]
+        stamped = reply.message_metadata.get("context_trace")
+        assert stamped and stamped["v"] == 1
+        assert stamped["turns"][-1]["role"] == "user"
+
+    def test_a_swipe_also_stamps_a_trace(self, client, session, engine, monkeypatch):
+
+        char = _seed_character_named(session, "Aria", "A guard.")
+        chat = _seed_chat(session, char)
+        _add_message(session, chat, MessageRole.USER, "Is it open?")
+        reply = _add_message(session, chat, MessageRole.CHAR, "The door is shut.")
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True))
+
+        resp = client.post(f"/api/v2/chats/{chat.id}/messages/{reply.id}/generate-swipe", json={})
+        assert resp.status_code == 200, resp.text
+
+        # Read through the response rather than the session: the route commits on
+        # its own, and re-querying is more brittle than asserting what came back.
+        assert "job_id" in resp.json()
+        jobs = session.exec(select(Job).where(Job.task_type == "llm")).all()
+        # Only when the turn was agentic does the swipe carry budgets, but the
+        # trace itself is always there — it describes the conversation the
+        # alternate is generated from.
+        assert (jobs[-1].metadata_ or {}).get("context_trace", {}).get("v") == 1

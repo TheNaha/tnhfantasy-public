@@ -219,6 +219,21 @@ def resolve_model_for_kind(
     return get_default_llm_model()
 
 
+def model_for_kind(kind: str | None, override: str | None, session) -> str:
+    """The model id a job of `kind` should run on, honouring a pin.
+
+    The single entry point for the whole roleplay surface. It used to be a
+    wrapper re-declared verbatim in `api/routes/world_vault/chats.py` and
+    `stories.py`, which is the shape that lets the two route files drift on
+    precedence — and one of them already had, using `"suggest_reply"` for the
+    primary reply path while every sibling path used `"chat_reply"`.
+
+    Named so the call site says what is being decided (a *kind* of work) rather
+    than which default was reached for.
+    """
+    return resolve_model_for_kind(kind, session=session, override=override)
+
+
 def set_default_provider(provider_id: str, model_id: str) -> None:
     """Persist the user-selected default LLM provider/model to llm_config.json.
 

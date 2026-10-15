@@ -29,7 +29,7 @@ const PAYLOAD = {
     engines: {
         modal:          { id: 'modal',          name: 'Modal (ComfyUI)',                category: 'image', transport: 'modal',  credentials: [], config: [] },
         modal_tts:      { id: 'modal_tts',      name: 'Modal (TTS)',                    category: 'tts',   transport: 'modal',  credentials: [], config: [] },
-        modal_vllm:     { id: 'modal_vllm',     name: 'Modal (LLM)',                    category: 'llm',   transport: 'modal',  credentials: [], config: [] },
+        modal_llm:     { id: 'modal_llm',     name: 'Modal (LLM)',                    category: 'llm',   transport: 'modal',  credentials: [], config: [] },
         beam:           { id: 'beam',           name: 'Beam (ComfyUI)',                 category: 'image', transport: 'beam',   credentials: [], config: [] },
         beam_llm:       { id: 'beam_llm',       name: 'Beam (LLM)',                     category: 'llm',   transport: 'beam',   credentials: [], config: [] },
         beam_tts:       { id: 'beam_tts',       name: 'Beam (TTS)',                     category: 'tts',   transport: 'beam',   credentials: [], config: [] },
@@ -53,7 +53,7 @@ const PAYLOAD = {
     ],
     matrix: [
         { category: 'image', transport: 'modal', provider_type: 'modal', filled: true },
-        { category: 'llm', transport: 'modal', provider_type: 'modal_vllm', filled: true },
+        { category: 'llm', transport: 'modal', provider_type: 'modal_llm', filled: true },
         { category: 'tts', transport: 'modal', provider_type: 'modal_tts', filled: true },
         { category: 'image', transport: 'beam', provider_type: 'beam', filled: true },
         { category: 'llm', transport: 'beam', provider_type: 'beam_llm', filled: true },

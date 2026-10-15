@@ -12,6 +12,8 @@ not have two models deployed.
 
 import pytest
 
+from repo_paths import repo_root
+
 LOCAL_TMP = __import__("pathlib").Path("/tmp/kilo")
 
 from services.llm_router import (
@@ -417,7 +419,7 @@ class TestSharedModelRoles:
         """
         import re
 
-        source = open("modal_llm/app.py").read()
+        source = (repo_root() / "deployables" / "modal" / "llm" / "app.py").read_text()
         assert "distinct: list[str] = []" in source
         assert re.search(r"for index, model_id in enumerate\(distinct\):", source), (
             "the container must iterate distinct models, not roles"

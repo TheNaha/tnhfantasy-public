@@ -12,16 +12,23 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import WorldLinkRow from './WorldLinkRow';
 
+// `counts` is what the `/api/v2/worlds` list response carries: one grouped
+// scan per member table, derived from `member.world_id`. It replaced the
+// `lorebook_ids` / `location_ids` / `scenario_ids` arrays that used to sit on
+// the world row.
 const WORLDS = [
     {
         id: 'w-1',
         name: 'Emberfall',
         description: 'A city built inside a cooling volcano.',
-        lorebook_ids: ['lb-1', 'lb-2'],
-        location_ids: ['loc-1'],
-        scenario_ids: ['sc-1', 'sc-2', 'sc-3'],
+        counts: { Lorebook: 2, Location: 1, Scenario: 3, Character: 0, Chat: 0, Story: 0, VoiceModel: 0 },
     },
-    { id: 'w-2', name: 'Hollow Marsh', description: '', lorebook_ids: [], location_ids: [], scenario_ids: [] },
+    {
+        id: 'w-2',
+        name: 'Hollow Marsh',
+        description: '',
+        counts: { Lorebook: 0, Location: 0, Scenario: 0, Character: 0, Chat: 0, Story: 0, VoiceModel: 0 },
+    },
 ];
 
 describe('WorldLinkRow', () => {

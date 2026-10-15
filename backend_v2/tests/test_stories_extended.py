@@ -3,13 +3,14 @@ from uuid import uuid4
 
 import pytest
 from PIL import Image as PILImage
+from sqlmodel import select
 
 import config as app_config
 from api.routes.world_vault.stories import (
     _collect_story_illustration_assets,
     _resolve_story_image_path,
 )
-from core.entities import Story, StoryChapter, Character, Asset, AssetKind
+from core.entities import Asset, AssetKind, Character, Job, Story, StoryChapter, World
 
 @pytest.fixture
 def story_with_character(session):
@@ -214,16 +215,23 @@ def test_retry_last_requires_narrator_tail(client, session, story_with_character
     assert response.status_code == 400
 
 
-def test_retry_last_trims_beat_and_content_then_requeues(client, session, story_with_character):
+def test_retry_last_keeps_the_take_it_replaces(client, session, story_with_character):
+    """A retry is a second take, not a replacement.
+
+    It used to TRIM the last narrator beat and re-enqueue, so a continuation you
+    only wanted another opinion on was destroyed the moment you asked for one, and
+    the only way back was a revision snapshot that rewound the whole chapter.
+    """
     story, chapter = story_with_character
     from core.entities import StoryChapter as SC
     ch = session.get(SC, chapter.id)
     ai_text = "A shadow slid across the courtyard wall."
-    ch.beats = [
+    from api.routes.world_vault.stories import write_beats
+
+    write_beats(ch, session, [
         {"id": str(uuid4()), "parent_beat_id": None, "role": "user", "content": "Opening move"},
         {"id": str(uuid4()), "parent_beat_id": None, "role": "narrator", "content": ai_text},
-    ]
-    ch.content = "Once upon a time...\n\n> Opening move\n\n" + f"\n\n{ai_text}\n\n"
+    ])
     session.add(ch)
     session.commit()
     session.refresh(ch)
@@ -232,12 +240,104 @@ def test_retry_last_trims_beat_and_content_then_requeues(client, session, story_
     assert response.status_code == 200
     assert response.json()["job_id"]
 
+    # The beat is still there, still rendering, and the job carries the anchor so
+    # the answer lands as an alternate rather than a new paragraph.
+    job = session.exec(select(Job).where(Job.task_type == "llm")).all()[-1]
+    assert job.metadata_["retry_of"] == ch.beats[1]["id"]
+
     session.expire_all()
     reloaded = session.get(SC, ch.id)
-    assert len(reloaded.beats) == 1
-    assert reloaded.beats[0]["role"] == "user"
-    assert ai_text not in reloaded.content
+    assert len(reloaded.beats) == 2
+    assert reloaded.beats[1]["role"] == "narrator"
+    assert ai_text in reloaded.content
     assert "Opening move" in reloaded.content
+
+
+def test_a_retry_answer_becomes_an_alternate_not_a_new_beat(
+    client, session, story_with_character, monkeypatch
+):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from core.entities import StoryChapter as SC
+    import services.world_integration_service as wis
+
+    story, chapter = story_with_character
+    ch = session.get(SC, chapter.id)
+    first = "A shadow slid across the courtyard wall."
+    # Seeded through the row writer, not by assigning the JSON column: a beat is
+    # a `story_beats` row now, and the JSON is its render.
+    from api.routes.world_vault.stories import write_beats
+
+    write_beats(ch, session, [
+        {"id": "b1", "parent_beat_id": None, "role": "user", "content": "Opening move"},
+        {"id": "b2", "parent_beat_id": None, "role": "narrator", "content": first,
+         "source_job_id": "job-first"},
+    ])
+    session.add(ch)
+    session.commit()
+    session.refresh(ch)
+
+    monkeypatch.setattr("services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True))
+    client.post(f"/api/v2/stories/{story.id}/chapters/{ch.id}/retry-last")
+    job = session.exec(select(Job).where(Job.task_type == "llm")).all()[-1]
+
+    print("JOB META:", job.metadata_)
+    asyncio.run(wis._handle_story_continue({
+        "id": job.id,
+        "metadata": job.metadata_ or {},
+        "outputs": [{"role": "assistant", "content": "A cat watched from the wall."}],
+    }))
+
+    session.expire_all()
+    reloaded = session.get(SC, ch.id)
+    beat = reloaded.beats[1]
+    # One beat, two takes, the second showing.
+    assert beat["content"] == "A cat watched from the wall."
+    assert [a["text"] for a in beat["alternates"]] == [
+        "A shadow slid across the courtyard wall.",
+        "A cat watched from the wall.",
+    ]
+    assert beat["active_index"] == 1
+    # And the first take keeps the job it came from, so switching back to it does
+    # not orphan the stamp the reconciler looks for.
+    assert beat["alternates"][0]["source_job_id"] == "job-first"
+    assert reloaded.content.count("A cat watched") == 1
+
+
+def test_selecting_an_alternate_switches_which_take_renders(
+    client, session, story_with_character
+):
+    """The story counterpart of a chat swipe."""
+    from core.entities import StoryChapter as SC
+
+    story, chapter = story_with_character
+    ch = session.get(SC, chapter.id)
+    from api.routes.world_vault.stories import write_beats
+
+    write_beats(ch, session, [
+        {"id": "b2", "parent_beat_id": None, "role": "narrator", "content": "second take",
+         "alternates": [{"text": "first take", "source_job_id": "j1"},
+                        {"text": "second take", "source_job_id": "j2"}],
+         "active_index": 1},
+    ])
+    session.add(ch)
+    session.commit()
+    session.refresh(ch)
+
+    resp = client.post(
+        f"/api/v2/stories/{story.id}/chapters/{ch.id}/beats/b2/select-alternate",
+        json={"index": 0},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["content"] == "\n\nfirst take\n\n"
+    beat = body["beats"][0]
+    assert beat["active_index"] == 0
+    # The stamp follows the take on screen, so the reconciler looks for the job
+    # that produced the text the user is actually reading.
+    assert beat["source_job_id"] == "j1"
 
 
 def test_story_branch_chapter(client, session, story_with_character):
@@ -548,3 +648,70 @@ def test_revision_endpoints_not_found(client, story_with_character):
     story, chapter = story_with_character
     assert client.get(f"/api/v2/stories/{story.id}/chapters/nope/revisions").status_code == 404
     assert client.post(f"/api/v2/stories/{story.id}/chapters/{chapter.id}/revisions/x/restore").status_code == 404
+
+
+class TestStoryImageBudgetIsPersisted:
+    """The "Autonomous Illustration" slider has to reach the budget.
+
+    `max_agentic_images` was missing from `update_story`'s allow-list, so the
+    PUT returned 200 and discarded it: the context panel's slider was inert and
+    looked broken rather than ignored. Then even if it were stored,
+    `_enqueue_story_continuation` only carried `max_agentic_depth`, so
+    `get_max_agentic_images` fell through to the global default.
+    """
+
+    def test_update_story_persists_the_image_budget(self, client, session):
+        world = World(name="W")
+        session.add(world)
+        session.commit()
+        session.refresh(world)
+        story = Story(title="s", world_id=world.id)
+        session.add(story)
+        session.commit()
+        session.refresh(story)
+
+        resp = client.put(f"/api/v2/stories/{story.id}", json={"max_agentic_images": 0})
+        assert resp.status_code == 200, resp.text
+        session.expire_all()
+        assert session.get(Story, story.id).max_agentic_images == 0
+
+    def test_zero_budget_turns_autonomous_illustration_off(self, client, session, monkeypatch):
+        """0 is "off", not "unset" — the tools must not be attached at all.
+
+        Otherwise the default of 2 still applies and the model keeps
+        illustrating a story the user explicitly turned it off for.
+        """
+        world = World(name="W")
+        session.add(world)
+        session.commit()
+        session.refresh(world)
+        story = Story(title="s", world_id=world.id, max_agentic_depth=5, max_agentic_images=0)
+        session.add(story)
+        session.commit()
+        session.refresh(story)
+        chapter = StoryChapter(story_id=story.id, chapter_number=1, title="c1", content="text")
+        session.add(chapter)
+        session.commit()
+        session.refresh(chapter)
+
+        submitted = {}
+
+        class _Submitted:
+            id = "j1"
+
+        async def _capture(_self, workflow, metadata=None, task_type=None, preferred_provider_id=None):
+            submitted["workflow"] = workflow
+            submitted["metadata"] = metadata
+            return _Submitted()
+
+        monkeypatch.setattr(
+            "services.job_submission_service.JobSubmissionService.create_and_enqueue_job",
+            _capture,
+        )
+
+        resp = client.post(f"/api/v2/stories/{story.id}/chapters/{chapter.id}/continue", json={})
+        assert resp.status_code == 200, resp.text
+
+        assert submitted["workflow"].get("tools", []) == []
+        assert submitted["metadata"]["max_agentic_images"] == 0
+        assert submitted["metadata"]["agentic"] is False

@@ -28,7 +28,6 @@ def test_create_load_balancer_uses_persisted_strategy(session: Session):
         priority=1,
         credentials={},
         config={},
-        container_config={"port": 8000},
     )
     session.add(provider)
     session.commit()

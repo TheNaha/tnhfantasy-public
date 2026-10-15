@@ -37,6 +37,20 @@ MEMORY_EXTRACTION_MIN_NEW_TURNS = 2
 MEMORY_DEDUP_MAX_DISTANCE = 0.06
 
 
+def memory_extraction_model(session) -> str:
+    """The model an extraction job should run on.
+
+    `ROLE_BY_KIND` routes `memory_extraction` to the `util` role, but the entry
+    was inert: this was the only roleplay-adjacent LLM path that passed no
+    `model` at all, so `workflow["model"]` was None and the engine silently fell
+    back to whatever the selected provider declares. An extraction could
+    therefore bill a model the router had explicitly ruled out for it.
+    """
+    from services.llm_config import model_for_kind
+
+    return model_for_kind("memory_extraction", None, session)
+
+
 def memory_extraction_enabled() -> bool:
     """Whether a chat reply may enqueue the memory-extraction LLM call.
 
@@ -156,6 +170,7 @@ async def enqueue_memory_extraction(
         # appeared as a second "X is thinking…" under the reply it was derived
         # from. Same mechanism that already suppresses a swipe, extended to
         # background work generally.
+        model=memory_extraction_model(session),
         background=True,
     )
 

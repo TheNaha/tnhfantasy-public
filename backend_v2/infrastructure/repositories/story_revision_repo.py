@@ -27,10 +27,19 @@ class StoryChapterRevisionRepository:
         return self.session.exec(stmt).first()
 
     def create_snapshot(self, chapter, source: str = "manual") -> StoryChapterRevision:
+        """Snapshot the beats with the prose.
+
+        A snapshot of `content` alone cannot be restored faithfully, because the
+        prose is a render of the beat list: restoring it without the beats put
+        the chapter back into a state where the two describe different text —
+        the exact drift the beat list exists to prevent, reintroduced by the one
+        route that rewinds state.
+        """
         revision = StoryChapterRevision(
             chapter_id=chapter.id,
             story_id=chapter.story_id,
             content=chapter.content or "",
+            beats=[dict(b) for b in (chapter.beats or []) if isinstance(b, dict)],
             source=source,
             word_count=len((chapter.content or "").split()),
             created_at=datetime.now(timezone.utc),

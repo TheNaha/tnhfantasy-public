@@ -9,6 +9,7 @@ from sqlmodel import Session, select, func
 from api.deps import get_session, get_location_repo
 from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
+from services.world_ownership import apply_world_id, require_world
 from core.entities import Location
 from core.exceptions import NotFoundError, ValidationError
 from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
@@ -33,6 +34,10 @@ class LocationCreate(BaseModel):
     atmosphere: str | None = None
     tags: list[str] | None = None
     image_path: str | None = None
+    # Which World this entity belongs to. Ownership of record lives on the
+    # member, not in an array on the `worlds` row — see `services/
+    # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.
+    world_id: str | None = None
 
 
 class LocationUpdate(BaseModel):
@@ -41,6 +46,10 @@ class LocationUpdate(BaseModel):
     atmosphere: str | None = None
     tags: list[str] | None = None
     image_path: str | None = None
+    # Which World this entity belongs to. Ownership of record lives on the
+    # member, not in an array on the `worlds` row — see `services/
+    # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.
+    world_id: str | None = None
 
     @model_validator(mode="after")
     def _reject_null_name(self):
@@ -60,12 +69,14 @@ def list_locations(session: Session = Depends(get_session), location_repo: Locat
 def create_location(location_in: LocationCreate, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
     if location_in.image_path:
         raise ValidationError("Use the image upload endpoint to set image_path")
+    require_world(session, location_in.world_id)
     location = Location(
         name=location_in.name,
         description=location_in.description,
         atmosphere=location_in.atmosphere,
         tags=location_in.tags or [],
         image_path=location_in.image_path,
+        world_id=location_in.world_id,
     )
     location.created_at = datetime.now(timezone.utc)
     location.updated_at = location.created_at
@@ -112,6 +123,8 @@ def update_location(location_id: str, update_data: LocationUpdate, session: Sess
     update_dict = update_data.model_dump(exclude_unset=True)
     if update_dict.get("image_path"):
         raise ValidationError("Use the image upload endpoint to set image_path")
+    apply_world_id(session, location, update_dict)
+    update_dict.pop("world_id", None)
     for key, value in update_dict.items():
         setattr(location, key, value)
 
@@ -131,6 +144,8 @@ def patch_location(location_id: str, update_data: LocationUpdate, session: Sessi
     update_dict = update_data.model_dump(exclude_unset=True)
     if update_dict.get("image_path"):
         raise ValidationError("Use the image upload endpoint to set image_path")
+    apply_world_id(session, location, update_dict)
+    update_dict.pop("world_id", None)
     for key, value in update_dict.items():
         setattr(location, key, value)
 
