@@ -145,3 +145,35 @@ def cleanup_provider_state_artifacts(
             session.close()
     except Exception as exc:
         logger.warning("provider_state_cleanup_failed", error=str(exc))
+
+
+def reset_interrupted_reconciliations() -> None:
+    """Reset any provider reconciliation states left in-progress across backend restarts."""
+    try:
+        from infrastructure.repositories import ProviderRepository
+        from services.provider_service import ProviderService
+
+        session = get_session_sync()
+        try:
+            repo = ProviderRepository(session)
+            service = ProviderService(session)
+            reset_count = 0
+            for p in repo.get_all():
+                recon = (p.config or {}).get("reconciliation_state", {})
+                if recon.get("status") in ("reconciling", "queued"):
+                    service.upsert_reconciliation_state(
+                        p.id,
+                        {
+                            "status": "idle",
+                            "phase": "idle",
+                            "message": "Reconciliation interrupted by backend restart; click Reconcile or Quick Sync to resume.",
+                        },
+                    )
+                    reset_count += 1
+            if reset_count:
+                session.commit()
+                logger.info("reconciliations_interrupted_reset", count=reset_count)
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning("reset_interrupted_reconciliations_failed", error=str(exc))

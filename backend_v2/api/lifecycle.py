@@ -254,6 +254,9 @@ async def startup_application(process_job, ws_manager):
     logger.info("startup_init", phase="worker_pool")
     configure_worker_pool()
 
+    from api.startup_helpers import reset_interrupted_reconciliations
+    await asyncio.to_thread(reset_interrupted_reconciliations)
+
     # Which hosts count as "one of our providers" decides whether an outbound
     # management call carries the shared worker token. That answer is read on
     # the event loop from a published set, so it has to be published before the
