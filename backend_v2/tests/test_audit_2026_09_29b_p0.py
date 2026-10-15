@@ -53,17 +53,17 @@ class TestQueueClaimScope:
         old test was really guarding: **no pool claims a task type it does not
         serve**, and every task type has exactly one home.
         """
-        from core.entities import CATEGORY_CLAIM_TASK_TYPES, VALID_CATEGORIES
+        from core.entities import CATEGORY_CLAIM_TASK_TYPES, VALID_TASK_TYPES
 
         manager = QueueManager()
-        for category in sorted(VALID_CATEGORIES):
+        for category in sorted(VALID_TASK_TYPES):
             queue = manager.get_queue(category)
             assert queue._claim_task_types == CATEGORY_CLAIM_TASK_TYPES[category]
             assert queue._claim_task_types == frozenset({category})
 
         # No task type has two homes, and no pool claims another's work.
         all_claimed = [t for c in CATEGORY_CLAIM_TASK_TYPES.values() for t in c]
-        assert sorted(all_claimed) == sorted(VALID_CATEGORIES)
+        assert sorted(all_claimed) == sorted(VALID_TASK_TYPES)
 
     def test_the_llm_pool_does_not_claim_container_work(self):
         manager = QueueManager()

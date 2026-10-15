@@ -105,8 +105,8 @@ VALID_CATEGORIES = {CATEGORY_IMAGE, CATEGORY_LLM, CATEGORY_TTS, CATEGORY_HYBRID}
 #: protocol endpoint. Kept under its old name because providers/crud.py and
 #: tests reference it; it is a *category* set, not an engine-type set, and TTS
 #: belongs to it for the reason above.
-ENGINE_TASK_TYPES = {CATEGORY_IMAGE, CATEGORY_TTS, CATEGORY_HYBRID}
-COMFY_CATEGORIES = ENGINE_TASK_TYPES
+ENGINE_TASK_TYPES = {CATEGORY_IMAGE, CATEGORY_TTS}
+COMFY_CATEGORIES = {CATEGORY_IMAGE, CATEGORY_TTS, CATEGORY_HYBRID}
 CONTAINER_TASK_TYPES = ENGINE_TASK_TYPES  # backward-compat alias
 
 #: Which task types each category's job pool may claim. One category, one pool,

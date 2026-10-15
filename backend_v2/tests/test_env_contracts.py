@@ -97,12 +97,8 @@ DYNAMIC_READS = {
     # Builds "COMFY_" + section.upper() + "_" + key.upper() from a pydantic
     # `Settings` field; the `env_prefix` is a class attribute, not a literal.
     "backend_v2/config.py",
-    # `provider_env_builder.py` used to be listed here as well, for
-    # `for env_name in ("PROVIDER_WORKER_TOKEN", "COMFY_DISCOVERY_TOKEN"):` —
-    # a tuple the AST hands over as a Name, so the walk could not resolve it.
-    # Collapsing the two tokens to one turned that loop into a plain
-    # `os.getenv("COMFY_PROVIDER_TOKEN", "")`, which the walk finds on its own,
-    # so the exemption is gone rather than renamed.
+    # Dynamic pass-through env forwarding for child deployment processes
+    "backend_v2/services/provider_deploy.py",
 }
 
 

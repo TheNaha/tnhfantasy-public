@@ -97,7 +97,6 @@ CONVERTED = {
     ("health.py", "health"),
     ("autopopulate.py", "get_autopopulate_pending"),
     ("autopopulate.py", "get_autopopulate_status"),
-    ("lifecycle.py", "get_provider_logs"),
     ("settings.py", "get_settings"),
     ("settings.py", "get_settings_schema"),
     ("settings.py", "get_system_prompts"),

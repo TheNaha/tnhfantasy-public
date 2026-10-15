@@ -78,7 +78,7 @@ def _derive_key(secret: str) -> bytes:
 
 def get_master_secret() -> str | None:
     """The configured master secret, or None when encryption is disabled."""
-    return (os.getenv(MASTER_SECRET_ENV) or "").strip() or None
+    return (os.getenv("COMFY_CREDENTIAL_SECRET") or "").strip() or None
 
 
 def encryption_status() -> dict[str, Any]:

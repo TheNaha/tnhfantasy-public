@@ -224,14 +224,14 @@ function ProviderListItem({
                         {provider.capabilities && provider.capabilities.length > 1 && (
                             <span className="flex items-center gap-1">
                                 {provider.capabilities.map((cap) => (
-                                    <span key={cap} className="rounded bg-gray-800 border border-gray-700 px-1.5 py-0.2 text-[10px] text-gray-300 uppercase">
+                                    <span key={cap} className="rounded bg-gray-800 border border-gray-700 px-1.5 py-0.2 text-[11px] text-gray-300 uppercase">
                                         {cap}
                                     </span>
                                 ))}
                             </span>
                         )}
                         {provider.config?.concurrency_policy && (
-                            <span className="rounded bg-indigo-950/60 border border-indigo-800/40 px-1.5 py-0.2 text-[10px] text-indigo-300">
+                            <span className="rounded bg-indigo-950/60 border border-indigo-800/40 px-1.5 py-0.2 text-[11px] text-indigo-300">
                                 Policy: {provider.config.concurrency_policy}
                             </span>
                         )}
