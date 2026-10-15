@@ -78,10 +78,10 @@ ERR
 fi
 
 case "$MODE" in
-    model|llm|tts) ;;
+    model|llm|tts|hybrid) ;;
     *)
-        echo "error: WORKER_MODE must be one of model|llm|tts, got '$MODE'" >&2
-        echo "hint: bash remote_agent/colab_start.sh llm" >&2
+        echo "error: WORKER_MODE must be one of model|llm|tts|hybrid, got '$MODE'" >&2
+        echo "hint: bash remote_agent/colab_start.sh hybrid" >&2
         exit 2
         ;;
 esac
@@ -154,6 +154,7 @@ export REMOTE_AGENT_TOKEN="$(cat "$TOKEN_FILE")"
 case "$MODE" in
     llm) ROOT="${LLM_DATA_DIR:-$DEFAULT_ROOT/llm}" ;;
     tts) ROOT="${TTS_DATA_DIR:-$DEFAULT_ROOT/tts}" ;;
+    hybrid) ROOT="${DATA_DIR:-$DEFAULT_ROOT}" ;;
     *)   ROOT="${DATA_DIR:-$DEFAULT_ROOT}" ;;
 esac
 mkdir -p "$ROOT"

@@ -359,6 +359,11 @@ DATA_ROOT = _resolve_data_root()
 UPSTREAM_BASE = (
     os.getenv("LLM_UPSTREAM_BASE", "http://127.0.0.1:8080/v1").rstrip("/")
 )
+UPSTREAM_OVERRIDE: str = ""
+REGISTRY = None
+REGISTRY_PATH = None
+STACK = None
+
 
 #: Where a synthesised clip is written under DATA_ROOT, and read back through
 #: the existing `/get-file` route.
@@ -447,7 +452,7 @@ def _topology() -> dict:
         "storage_root_env": DATA_ROOT_ENV,
         "gpu": _detect_gpu(),
     }
-    if WORKER_MODE == "llm":
+    if WORKER_MODE in ("llm", "hybrid"):
         info["llm_serving"] = "upstream" if UPSTREAM_OVERRIDE else "local"
         if UPSTREAM_OVERRIDE:
             host = (urlparse(UPSTREAM_OVERRIDE).hostname or "").lower()
@@ -471,14 +476,14 @@ async def info():
     requirement.
     """
     payload = _topology()
-    if WORKER_MODE == "llm":
+    if WORKER_MODE in ("llm", "hybrid"):
         # Which models this container actually holds, per role, with the reason a
         # missing one is missing. `modal_llm` answers the same shape, so a caller
         # polling health sees an actionable state on either transport — and a role
         # whose weights were not downloaded reads `not_downloaded` rather than as
         # a crash-loop to infer from retries.
         llm_health = {}
-        if REGISTRY is not None:
+        if REGISTRY is not None and STACK is not None:
             llm_health = STACK.health(REGISTRY)
             llm_health["registry"] = str(REGISTRY_PATH) if REGISTRY_PATH else None
         payload["llm"] = {
@@ -580,7 +585,7 @@ async def _download_registry_model(model_id: str):
     shape whether it fetched or not, so a second call is free and safe to drive
     from a button.
     """
-    if WORKER_MODE != "llm" or REGISTRY is None:
+    if WORKER_MODE not in ("llm", "hybrid") or REGISTRY is None:
         return {"ok": False, "model_id": model_id, "reason": "no_registry"}
 
     try:
@@ -1064,8 +1069,8 @@ async def validate_all_models(req: Optional[ValidateAllModelsRequest] = None):
 # ports, routed by the model id in the payload. Set `LLM_UPSTREAM_BASE` to opt
 # OUT and front a llama.cpp or vLLM you already run.
 # ---------------------------------------------------------------------------
-if WORKER_MODE == "llm":
-    from llama_server import LlamaStack, load as load_registry, resolve_registry_path
+if WORKER_MODE in ("llm", "hybrid"):
+    from llama_server import BUNDLED_REGISTRY, LlamaStack, load as load_registry, resolve_registry_path
 
     REGISTRY = load_registry()
     REGISTRY_PATH = resolve_registry_path()
@@ -1074,6 +1079,9 @@ if WORKER_MODE == "llm":
     #: myself", which is the whole parity claim: the tree this worker manages is
     #: then the tree that answers, and there is nothing to reconcile.
     UPSTREAM_OVERRIDE = os.getenv("LLM_UPSTREAM_BASE", "").strip().rstrip("/")
+    if not UPSTREAM_OVERRIDE and WORKER_MODE == "hybrid":
+        # In hybrid mode on Colab/self-hosted, llama-server runs on :8003
+        UPSTREAM_OVERRIDE = "http://127.0.0.1:8003/v1"
 
     #: The local stack, launched from the registry when there is no override.
     STACK = LlamaStack(models_dir=DATA_ROOT)
@@ -1094,10 +1102,11 @@ if WORKER_MODE == "llm":
         # No registry and no override. There is nothing to serve and nothing to
         # proxy, which is a configuration error rather than an empty answer.
         UPSTREAM_BASE = ""
-        raise RuntimeError(
-            "WORKER_MODE=llm needs either a models registry at "
-            f"{BUNDLED_REGISTRY} or LLM_UPSTREAM_BASE set"
-        )
+        if WORKER_MODE == "llm":
+            raise RuntimeError(
+                "WORKER_MODE=llm needs either a models registry at "
+                f"{BUNDLED_REGISTRY} or LLM_UPSTREAM_BASE set"
+            )
     else:
         _started = STACK.launch(REGISTRY)
         logger.info(
@@ -1221,8 +1230,6 @@ if WORKER_MODE == "llm":
 # that already runs the model agent needs no second file-serving path.
 # ---------------------------------------------------------------------------
 if WORKER_MODE == "tts":
-    from fastapi.responses import StreamingResponse
-
     @app.post("/synthesize", dependencies=[Depends(verify_token)])
     async def synthesize(req: SynthesizeRequest):
         """Synthesise speech and return the stored clip's address.
