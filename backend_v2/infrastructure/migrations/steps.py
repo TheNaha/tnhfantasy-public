@@ -1781,6 +1781,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Move story beats from the story_chapters.beats JSON array to a story_beats table, backfilled in position order, so a beat is independently addressable and a chapter can be pruned by beat window instead of selected whole",
             apply_fn=_migration_095_beats_as_rows,
         ),
+        MigrationStep(
+            version="096_encrypt_provider_credentials",
+            description="Rewrite plaintext providers.credentials rows into the Fernet envelope written by services/credential_crypto.py, so the tokens that moved out of .env are not sitting in a database dump. A no-op when COMFY_CREDENTIAL_SECRET is unset — the backfill runs again on the next start once the operator has chosen a key",
+            apply_fn=_migration_096_encrypt_provider_credentials,
+        ),
     ]
 
 
@@ -4715,3 +4720,84 @@ def _migration_089_fold_container_config_into_config(conn) -> bool:
                 keys=sorted(set(merged) - set(current)),
             )
     return ok
+
+
+def _migration_096_encrypt_provider_credentials(conn) -> bool:
+    """Rewrite plaintext credential bags into the encrypted envelope.
+
+    `services/credential_crypto.py` encrypts on the way in, so any row written
+    after that lands encrypted. Rows written before it — and there is at least
+    one, because credentials moved out of `.env` specifically so the Providers
+    UI could manage them — are still plaintext JSON sitting in a column that
+    any database dump reveals.
+
+    A backfill rather than a cutover, deliberately. `decrypt_credentials` passes
+    plaintext through, so an un-migrated row keeps working: an operator can
+    upgrade, run the app against their existing credentials, and only then
+    choose a secret. Forcing the choice at upgrade time would break every
+    deployment that had not yet chosen one, for a control they did not ask for.
+
+    NO-OP WITHOUT A KEY. With `COMFY_CREDENTIAL_SECRET` unset, encryption is
+    off and there is nothing to migrate to; recording the step as done would
+    stop it ever running, so this returns False and the runner tries again next
+    start. Every other migration here is `if "x" in tables: skip`, which is
+    right for a structural change and wrong for one gated on configuration the
+    operator supplies later.
+
+    Idempotent by inspection rather than by flag: a row that is already an
+    envelope is skipped, so re-running after a crash mid-sweep finishes the job
+    instead of double-encrypting. That check is `__enc__` presence, NOT a
+    decrypt — the backfill must work for rows whose key has since been rotated,
+    or a rotation would make them permanently un-migratable.
+    """
+    from services.credential_crypto import (
+        encrypt_credentials,
+        encryption_status,
+        is_encrypted,
+    )
+
+    if not encryption_status()["enabled"]:
+        logger.info(
+            "migration_096_deferred_no_master_secret",
+            env_var=encryption_status()["env_var"],
+        )
+        return False
+
+    inspector = inspect(conn)
+    if "providers" not in set(inspector.get_table_names()):
+        logger.info("migration_096_skipped", reason="no_providers_table")
+        return False
+
+    rows = conn.execute(
+        text("SELECT id, credentials FROM providers")
+    ).fetchall()
+
+    migrated = 0
+    for provider_id, raw in rows:
+        try:
+            bag = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (json.JSONDecodeError, TypeError):
+            # Not ours to interpret. Leaving it alone is better than guessing at
+            # a row some other tool wrote.
+            logger.warning(
+                "migration_096_unreadable_credentials", provider_id=provider_id
+            )
+            continue
+        if not isinstance(bag, dict) or not bag or is_encrypted(bag):
+            continue
+
+        envelope = encrypt_credentials(bag)
+        if envelope == bag:
+            continue
+        conn.execute(
+            text("UPDATE providers SET credentials = :credentials WHERE id = :id"),
+            {"credentials": json.dumps(envelope), "id": provider_id},
+        )
+        migrated += 1
+        logger.info("migration_096_encrypted", provider_id=provider_id)
+
+    if migrated:
+        logger.info("migration_096_encrypt_provider_credentials_done", migrated=migrated)
+    else:
+        logger.info("migration_096_no_plaintext_rows")
+    return True

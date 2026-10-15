@@ -24,6 +24,7 @@ there was nothing to write it in.
 | `modal/tts/modal_app.py` | Modal app **`comfy-modal-tts`** | `backend_v2/services/engines/modal_tts_engine.py:136` (`ModalTTSEngine`) |
 | `modal/llm/app.py` | Modal app **`tnh-llm`** (llama.cpp) | `backend_v2/services/engines/llm_engine.py` (`ModalLlamaCPPEngine`) |
 | `beam/beam_app.py` | Beam deployments `comfy-gpu`, `comfy-storage`, `comfy-download`, `comfyui-extractor` | `backend_v2/services/engines/beam_engine.py:69` (`BeamEngine`) |
+| `beam/llm_tts_app.py` | Beam deployments `comfy-llm`, `comfy-tts` | `backend_v2/services/engines/worker_transport_engines.py` (`BeamLLMEngine`, `BeamTTSEngine`) |
 | `provider_worker_core/` | `provider_core` modules the 2026-10-08 slimming deleted | imported by all three of the above |
 
 `modal/llm/app.py` is the odd one: its registry (`registry.py` +
@@ -44,39 +45,53 @@ Engines are selected by provider type in
 `backend_v2/services/engines/engine_factory.py:641` (`"comfy-modal-stack"`) and
 `:367` (`"comfy-modal-tts"`); both names are overridable per provider row.
 
-## The name contract, verified
+## The name contract — enforced, not asserted
 
-Every name below was checked against both sides — the revived source and the
-engine that looks it up. They agree. All ten exist, and no engine looks up a
-name that is absent here.
+This section used to be a hand-written table claiming "every name below was
+checked against both sides… all ten exist, and no engine looks up a name that
+is absent here." It was false, and false in the way that mattered: the
+`ModalLlamaCPPEngine` performed seven lookups against `tnh-llm` and the app
+published none of them, so every LLM job on a `modal_llm` provider failed at
+first dispatch while `check_health` reported the provider healthy. The LLM
+engine was simply absent from the table.
 
-**`comfy-modal-stack`** (`modal/image/modal_app.py:485`)
+Prose with file:line citations in it looks exactly like a verification and is
+not one. It was the only documentation of the contract, so when the engine
+gained lookups the table did not notice — and nothing executed either side.
 
-| Looked up by | Name | Defined at |
+It is now a test: `backend_v2/tests/test_deployable_contract.py`. It AST-parses
+each engine for every `modal.Cls.from_name` / `modal.Function.from_name` call
+and every method reached through the class handle, AST-parses each deployable
+for what it actually defines, and asserts the difference is empty in both
+directions. It also derives the served route table from each FastAPI deployable
+and checks it against what the URL-based engines dial, and it compares
+`registry.py`'s `app_name` default against the name the deployable publishes —
+the check that catches a UI-created provider pointing at an app that does not
+exist. Both sides are read from the real source, so neither the test nor this
+file can drift away from the code without CI going red.
+
+| Path | Cloud artifact | Engine |
 | --- | --- | --- |
-| `modal_engine.py:197,212` | `ComfyUISnapshot` / `ComfyUIStable` | `image/modal_app.py:757`, `:665` |
-| `modal_engine.py:567` | `ComfyUINodeExtractor` | `image/modal_app.py:863` |
-| `modal_engine.py:387,555,575` | `FileStorage` | `image/modal_app.py:1319` |
-| `modal_engine.py:158,363` | function `list_models_with_metadata` | `image/modal_app.py:1058` |
-| `modal_engine.py:487` | function `validate_models` | `image/modal_app.py:1074` |
-| `modal_engine.py:463` | function `download_model` | `image/modal_app.py:926` |
-| `modal_engine.py:520` | function `setup_models` | `image/modal_app.py:1485` |
+| `modal/image/modal_app.py` | `comfy-modal-stack` | `modal_engine.py` (`ModalEngine`) |
+| `modal/tts/modal_app.py` | `comfy-modal-tts` | `modal_tts_engine.py` (`ModalTTSEngine`) |
+| `modal/llm/app.py` | `tnh-llm` | `llm_engine.py` (`ModalLlamaCPPEngine`) |
+| `beam/beam_app.py` | `comfy-gpu`, `comfy-storage`, `comfy-download`, `comfyui-extractor` | `beam_engine.py` (`BeamEngine`) |
+| `beam/llm_tts_app.py` | `comfy-llm`, `comfy-tts` | `worker_transport_engines.py` (`BeamLLMEngine`, `BeamTTSEngine`) |
+| `remote_agent/server.py` | the `remote_agent` sidecar | `remote_agent_files.py`, `direct_comfy_engine.py` |
 
-**`comfy-modal-tts`** (`modal/tts/modal_app.py:94,280`)
+`beam/llm_tts_app.py` is separate from `beam_app.py` because its contract is a
+socket rather than a ComfyUI graph. `@realtime` binds one handler at a
+deployment root with no path routing — the one `comfy_gpu` docstring records —
+so `/llm` and `/tts` are `@asgi` FastAPI deployments, and `GET /health` on the
+same host is what makes those two engines' health check a real probe instead of
+a restatement of their own config.
 
-| Looked up by | Name | Defined at |
-| --- | --- | --- |
-| `modal_tts_engine.py:152,206,376` | `TTSWorker` | `tts/modal_app.py:297` |
-| `modal_tts_engine.py:153,261,312,346` | `TTSFileStorage` | `tts/modal_app.py:487` |
-
-**Beam** has no name contract — it is URLs, not SDK lookups. `BeamEngine`
-resolves `gpu_url` / `storage_url` / `download_url` / `extractor_url` from the
-provider row, and every route it calls exists in `beam/beam_app.py`:
-`/list-models` (`beam_app.py:440`), `/get-file` (`:496`), `/delete-file`
-(`:534`), `/delete-model` (`:463`), `/upload-file` (`:569`), `/validate-models`
-(`:589`), `/validate-all-models` (`:705`), `/setup` (`:322`), `/download-model`
-(`:893`, `:434`), `/object_info` (`:1000`), `/health`, and the `comfy_gpu`
-realtime websocket (`beam_app.py:797`).
+`provider_worker_core` is a deliberate fork of `remote_agent/provider_core` and
+should stay one: separate containers, separate deploy targets, no shared
+runtime. What must not drift is the semantics both copies share, which
+`backend_v2/tests/test_provider_core_parity.py` pins — it exists because
+`get_file_size_cap()` had already disagreed between the two about what `0`
+means, and the Beam guard read the wrong one as "reject everything".
 
 ## Deploying
 

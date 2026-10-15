@@ -1,10 +1,12 @@
-import { Wrench, Zap, Brain, RefreshCw, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Wrench, Zap, Brain, RefreshCw, CheckCircle, XCircle, Loader2, Rocket } from 'lucide-react';
 import { useState } from 'react';
 import { DataRow, StatusRow, ActionBtn } from './Shared';
 import { STATUS_TONE, humanize } from './utils';
 import { useLLMProviderTest } from '../../../hooks/useLLMProviderStatus';
 import { formatTimestamp } from '../../../utils/dateTime';
 import { providersApi } from '../../../api';
+import { getDeployTargetForProvider } from '../../../utils/providerStatus';
+
 
 // ── LLM-specific panel shown inside RuntimeTab for LLM workers ──────────────
 function LLMRuntimePanel({ provider }) {
@@ -151,7 +153,7 @@ function DiscoveredAssetsPanel({ provider }) {
 
 export default function RuntimeTab({
     runtime, runtimeStatus, provider, capabilities, loading,
-    onSetup,
+    onSetup, onDeploy,
     jobsAssigned, providerFailures,
 }) {
     const [pingStatus, setPingStatus] = useState(null); // null, 'loading', 'success', 'error'
@@ -218,6 +220,14 @@ export default function RuntimeTab({
                 {capabilities.setup && (
                     <ActionBtn onClick={onSetup} disabled={Boolean(loading)} tone="blue" icon={Wrench} label="Setup" />
                 )}
+                {(() => {
+                    const deployTarget = getDeployTargetForProvider(provider);
+                    if (!deployTarget || !onDeploy) return null;
+                    const label = deployTarget === 'image' ? 'Image' : deployTarget === 'llm' ? 'LLM' : deployTarget === 'tts' ? 'TTS' : 'Beam';
+                    return (
+                        <ActionBtn onClick={() => onDeploy(provider)} disabled={Boolean(loading)} tone="purple" icon={Rocket} label={`Deploy ${label} Worker`} />
+                    );
+                })()}
                 {!isLLM && (
                     <ActionBtn
                         onClick={handlePingTest}

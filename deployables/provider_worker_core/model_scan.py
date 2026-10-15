@@ -60,10 +60,17 @@ def scan_model_directory(target_dir: str) -> Tuple[List[Tuple[str, int]], Set[st
     """
     file_entries: List[Tuple[str, int]] = []
     entry_set: Set[str] = set()
-    with os.scandir(target_dir) as it:
-        for entry in it:
-            if entry.is_file():
-                entry_set.add(entry.name)
-                if is_model_file(entry.name):
-                    file_entries.append((entry.name, entry.stat().st_size))
+
+    def _scan_dir(current_dir: str, rel_prefix: str = "") -> None:
+        with os.scandir(current_dir) as it:
+            for entry in it:
+                rel_name = os.path.join(rel_prefix, entry.name).replace("\\", "/") if rel_prefix else entry.name
+                entry_set.add(rel_name)
+                if entry.is_file():
+                    if is_model_file(entry.name):
+                        file_entries.append((rel_name, entry.stat().st_size))
+                elif entry.is_dir():
+                    _scan_dir(entry.path, rel_name)
+
+    _scan_dir(target_dir)
     return file_entries, entry_set

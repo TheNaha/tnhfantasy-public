@@ -7,7 +7,7 @@
  * routes jobs between them.
  */
 
-import api, { API_V2_BASE } from './client';
+import api, { API_V2_BASE, getBaseUrl } from './client';
 
 const P = `${API_V2_BASE}/providers`;
 
@@ -119,6 +119,116 @@ export const providersApi = {
 
     /** Fetch deep real-time diagnostics and telemetry for a provider. */
     getDiagnostics: (providerId, options = {}) => api.get(`${P}/${providerId}/diagnostics`, options),
+
+    /** Fetch activity, deployment logs, recent job errors, and probe state for a provider. */
+    getLogs: (providerId, options = {}) => api.get(`${P}/${providerId}/logs`, options),
+
+    // -------------------------------------------------------------------------
+    // Credentials — write-only.
+    //
+    // There is no "read the token back" call here and there is not going to be
+    // one: `getCredentials` returns which keys are SET plus a masked hint, never
+    // a value. The form therefore cannot be pre-filled from the server, which
+    // is the point — a masked value that round-trips into an input is a value
+    // that has already left the backend.
+    // -------------------------------------------------------------------------
+
+    /** Which credentials are set, and whether the column is encrypted. */
+    getCredentials: (providerId, options = {}) =>
+        api.get(`${P}/${providerId}/credentials`, options),
+
+    /** Merge (or, with `replace`, swap) credential values. */
+    setCredentials: (providerId, credentials, { replace = false } = {}) =>
+        api.put(`${P}/${providerId}/credentials`, { credentials, replace }),
+
+    /** Remove one credential by name. */
+    deleteCredential: (providerId, key) =>
+        api.delete(`${P}/${providerId}/credentials/${encodeURIComponent(key)}`),
+
+    // -------------------------------------------------------------------------
+    // Deploy
+    // -------------------------------------------------------------------------
+
+    /** What can be deployed from the backend process, and whether it can see the script. */
+    getDeployTargets: (options = {}) => api.get(`${P}/deploy/targets`, options),
+
+    /**
+     * Deploy a cloud worker by shelling out to `scripts/deploy.sh`.
+     * Long-running and synchronous: the response carries the script's captured
+     * output, so callers should show a progress state rather than assume a
+     * quick reply.
+     */
+    deploy: (payload) => api.post(`${P}/deploy`, payload),
+
+    /**
+     * Deploy a cloud worker with live NDJSON output streaming.
+     * @param {Object} payload - { target, dry_run, provider_id, timeout }
+     * @param {Object} callbacks - { onChunk, onFinish, onError, signal }
+     */
+    deployStream: async (payload, { onChunk, onFinish, onError, signal } = {}) => {
+        try {
+            const url = `${getBaseUrl()}${P}/deploy`;
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ ...payload, stream: true }),
+                signal,
+            });
+
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                const msg = errorData.detail || errorData.message || `Deploy failed with HTTP ${res.status}`;
+                if (onError) onError(new Error(msg));
+                return;
+            }
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // keep remainder
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    try {
+                        const parsed = JSON.parse(trimmed);
+                        if (parsed.type === 'chunk') {
+                            if (onChunk) onChunk(parsed.chunk);
+                        } else if (parsed.type === 'finish') {
+                            if (onFinish) onFinish(parsed.result);
+                        } else if (parsed.type === 'error') {
+                            if (onError) onError(new Error(parsed.error));
+                        }
+                    } catch {
+                        if (onChunk) onChunk(trimmed + '\n');
+                    }
+                }
+            }
+
+            if (buffer.trim()) {
+                try {
+                    const parsed = JSON.parse(buffer.trim());
+                    if (parsed.type === 'chunk' && onChunk) onChunk(parsed.chunk);
+                    else if (parsed.type === 'finish' && onFinish) onFinish(parsed.result);
+                    else if (parsed.type === 'error' && onError) onError(new Error(parsed.error));
+                } catch {
+                    if (onChunk) onChunk(buffer.trim() + '\n');
+                }
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') return;
+            if (onError) onError(err);
+        }
+    },
 };
 
 export default providersApi;

@@ -523,7 +523,13 @@ async def get_file(request: Request):
 
     max_bytes = get_file_size_cap()
     size = os.path.getsize(full_path)
-    if max_bytes >= 0 and size > max_bytes:
+    # `0` (or negative) is the documented *disable* value, not a zero-byte limit.
+    # `>= 0` made an operator who set `PROVIDER_GET_FILE_MAX_BYTES=0` to disable
+    # the cap get a 413 for every file — the storage app unreadable rather than
+    # unlimited, from the setting that is supposed to open it up. The remote
+    # agent's twin of this guard was fixed for exactly this reason and this copy
+    # was not; `tests/test_provider_core_parity.py` now holds the two together.
+    if max_bytes > 0 and size > max_bytes:
         raise HTTPException(
             status_code=413,
             detail=f"{path} is {size} bytes, over the {max_bytes} byte get-file limit",

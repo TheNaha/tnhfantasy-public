@@ -23,14 +23,27 @@ def get_file_size_cap() -> int:
 
     Override with ``PROVIDER_GET_FILE_MAX_BYTES``. Zero or negative disables the
     cap (only for a deployment that genuinely streams model weights).
+
+    The negative clamp is not decoration — it is a fork fix. This copy returns
+    the raw `int(raw)`, while `backend_v2/services/engines/base.py`'s
+    `get_file_size_cap()` clamps with `cap if cap > 0 else 0`. The two then
+    disagreed about what the DOCUMENTED disable value meant: the caller reads 0
+    as "no limit", `beam_app.py`'s guard reads it as `if max_bytes >= 0 and
+    size > max_bytes` — true for every non-empty file — so setting
+    `PROVIDER_GET_FILE_MAX_BYTES=0` to disable the cap returned HTTP 413 on
+    EVERY `/get-file`, making the storage app unreadable rather than unlimited.
+
+    Both sides must agree that 0 means unlimited. `tests/test_provider_core_parity.py`
+    asserts this rather than trusting the two copies to stay in step.
     """
     raw = os.getenv("PROVIDER_GET_FILE_MAX_BYTES", "").strip()
     if not raw:
         return DEFAULT_GET_FILE_SIZE_CAP
     try:
-        return int(raw)
+        cap = int(raw)
     except ValueError:
         return DEFAULT_GET_FILE_SIZE_CAP
+    return cap if cap > 0 else 0
 
 
 async def relay_bytes(
@@ -51,7 +64,11 @@ async def relay_bytes(
     try:
         async for chunk in response.aiter_bytes(chunk_bytes):
             sent += len(chunk)
-            if max_bytes is not None and max_bytes >= 0 and sent > max_bytes:
+            # `> 0`, not `>= 0`, for the same reason `beam_app.py`'s guard and
+            # `remote_agent/server.py`'s both say it: 0 is the documented
+            # "no limit" value, and `>= 0` turned it into "a zero-byte limit"
+            # that rejects the first chunk of every stream.
+            if max_bytes is not None and max_bytes > 0 and sent > max_bytes:
                 raise httpx.RequestError(
                     f"response body exceeded the {max_bytes} byte limit"
                 )

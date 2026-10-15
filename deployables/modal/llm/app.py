@@ -49,6 +49,7 @@ a 23.5 GB GGUF off the Volume, ~26 s cold container to an answered SDK call,
 # import is not needed.
 
 import json
+import logging
 import os
 import sys
 import time
@@ -56,6 +57,12 @@ import urllib.request
 from pathlib import Path
 
 import modal
+
+# The storage surface added below (`FileStorage`, `list_models_with_metadata`,
+# `validate_models`) needs to report reload failures the way the image and TTS
+# apps already do. This module predates all three of those and had no logger of
+# its own, so there was nothing to reach for.
+logger = logging.getLogger(__name__)
 
 # `registry.py` and `models.json` do NOT sit beside this file any more — they
 # stayed in `backend_v2/modal_llm/`, because the backend's `llm_router` and
@@ -104,6 +111,29 @@ else:  # pragma: no cover - a broken checkout, reported by the import below
     )
 
 from registry import REGISTRY_PATH, load  # noqa: E402
+
+# `provider_core` is a sibling of nothing. It used to live next to every worker
+# that imported it by bare name; `acc86aa3` moved it under `remote_agent/`,
+# which the LLM app was not a consumer of and therefore never got the sibling
+# import for. The storage surface below needs the same helpers the image app
+# uses — path traversal rejection, the download entry point, the pipeline
+# sidecar sweep — so it resolves them the way `modal/image/modal_app.py` does.
+_HERE = Path(__file__).resolve().parent
+for _candidate in (
+    _HERE.parents[1] if len(_HERE.parents) > 1 else None,
+    *(p for p in _HERE.parents if (p / "remote_agent" / "provider_core").is_dir()),
+):
+    if _candidate and (candidate_core := _candidate / "remote_agent").is_dir():
+        if str(candidate_core) not in sys.path:
+            sys.path.insert(0, str(candidate_core))
+        break
+
+from provider_core.downloads import (  # noqa: E402
+    download_model_to_path,
+    pending_download_paths,
+    pipeline_artifacts,
+)
+from provider_core.utils import get_safe_path, is_model_candidate  # noqa: E402
 
 #: What both images `add_local_dir`. Resolved now, not at image-build time, so a
 #: local checkout packages the checkout's registry and the Modal container
@@ -274,6 +304,32 @@ _STARTUP_TIMEOUT_SECONDS = 900
 #: half; too small here turns a long reply into a 500.
 _REQUEST_TIMEOUT_SECONDS = 900
 
+#: `validate_models` sweeps every registry entry's weights across the volume,
+#: which on a cold gcsfuse mount is a stat per file. It has to outlast the
+#: engine's own `asyncio.wait_for` (llm_engine wraps it at 300s) or the sweep
+#: is abandoned and reported as a validation failure — i.e. "something is wrong
+#: with your models" for a scan that merely needed longer.
+VALIDATE_TIMEOUT = 600
+
+#: The engine calls `vol.reload()` through the lifecycle helper rather than
+#: reaching for the Volume object itself, so the storage classes stay free of
+#: Modal specifics and this stays the only place reload is issued.
+def safe_vol_reload() -> None:
+    try:
+        vol.reload()
+    except Exception as exc:  # noqa: BLE001 - a failed reload must not be fatal
+        logger.warning(f"vol.reload failed: {exc}")
+
+
+def _all_registry_models() -> list:
+    """Every model in the registry, enabled or not.
+
+    Validation needs the full set: a disabled entry's weights may still be
+    sitting on the volume, and "there is a file nobody declared" is exactly
+    the state worth reporting.
+    """
+    return list(registry.models.values())
+
 #: Concurrent inputs per container. `parallel` in models.json is how many slots
 #: llama-server opens, and WITHOUT this Modal sends one input at a time — so a
 #: util container declared with `parallel: 2` would serve one request while its
@@ -355,12 +411,17 @@ def _proxy(port: int, path: str, payload: dict | None = None):
         return json.loads(response.read().decode("utf-8"))
 
 
-def _proxy_stream(port: int, path: str, payload: dict):
+def _proxy_stream(port: int, path: str, payload: dict, timeout: float | None = None):
     """SSE from the in-container llama-server, yielding each parsed chunk.
 
     `urlopen` gives a file-like object, so `readline()` is the natural SSE
     reader — no client library and no buffering layer that has to be configured
     to stop holding lines back.
+
+    `timeout` is the caller's remaining budget. It is a read timeout on the
+    socket, which is the right granularity here: llama.cpp streams tokens as it
+    produces them, so a gap means the server has stalled, not that the answer
+    is unusually long. Omitting it falls back to the module default.
     """
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -374,7 +435,8 @@ def _proxy_stream(port: int, path: str, payload: dict):
         method="POST",
     )
     _server_for_port(port)
-    with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
+    deadline = float(timeout) if timeout else _REQUEST_TIMEOUT_SECONDS
+    with urllib.request.urlopen(request, timeout=deadline) as response:
         for raw in response:
             line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             line = line.strip()
@@ -589,6 +651,120 @@ class ChatLLM:
         """The rp role's model, for a caller that does not name one."""
         return ROLE_PRIMARY["rp"].id if "rp" in ROLE_PRIMARY else PRIMARY_IDS[0]
 
+    # ------------------------------------------------------------------
+    # The dispatch entry point. `ModalLlamaCPPEngine` calls exactly this:
+    #
+    #   instance.generate.remote_gen.aio(
+    #       model_id, messages, tools, timeout, sampling or None)
+    #
+    # It did not exist. The engine looked it up on an unhydrated class, which
+    # raises `NotFoundError: Class has no method generate` at hydration — so
+    # every LLM job on a `modal_llm` provider failed at first dispatch, for
+    # every provider, in a way `check_health` (config-only) could not see.
+    # `complete`/`stream` are the same capability under different names and
+    # different signatures; `generate` is the canonical one and the others are
+    # kept because the CLI entrypoints use them.
+    #
+    # It yields CANONICAL TaskEvents, not raw SSE chunks: the engine's reducer
+    # (`provider_client._LLMReducer`) accumulates `delta` and finishes on
+    # `completed`. It also understands the legacy `{"status": ...}` dialect, but
+    # emitting canonical events from the start keeps one code path.
+    # ------------------------------------------------------------------
+    @modal.method(is_generator=True)
+    def generate(
+        self,
+        model_id: str,
+        messages: list,
+        tools: list | None = None,
+        timeout: float | None = None,
+        sampling: dict | None = None,
+    ):
+        """Stream one chat completion as canonical TaskEvents.
+
+        `timeout` is the backend's remaining budget, forwarded to llama.cpp so
+        the in-container server gives up at the same deadline the backend will
+        rather than holding a GPU slot past it.
+        """
+        resolved = model_id or self._default_model()
+        try:
+            port = self._resolve(resolved)
+        except Exception as exc:
+            # A model this container does not serve is a permanent
+            # configuration state, not a blip: retrying it across the pool
+            # cannot succeed.
+            yield {
+                "event": "failed",
+                "message": str(exc),
+                "retryable": False,
+            }
+            return
+
+        payload: dict = {"model": resolved, "messages": messages, "stream": True}
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        # The backend's sampler keys are its own; llama.cpp speaks the OpenAI
+        # names. `max_output_tokens` is ours and is NOT forwarded under that
+        # name — forwarded verbatim it is ignored, so the engine would sit at
+        # llama.cpp's default length and the chat would truncate silently.
+        for backend_key, upstream_key in _SAMPLER_KEY_MAP.items():
+            if sampling and sampling.get(backend_key) is not None:
+                payload[upstream_key] = sampling[backend_key]
+
+        full_content = ""
+        tool_calls: list[dict] = []
+        try:
+            for chunk in _proxy_stream(port, "/v1/chat/completions", payload,
+                                       timeout=timeout):
+                for choice in chunk.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    text = delta.get("content")
+                    if text:
+                        full_content += text
+                        yield {"event": "delta", "text": text}
+                    for call in delta.get("tool_calls") or []:
+                        index = call.get("index", 0)
+                        while len(tool_calls) <= index:
+                            tool_calls.append({
+                                "id": "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            })
+                        if call.get("id"):
+                            tool_calls[index]["id"] = call["id"]
+                        if call.get("type"):
+                            tool_calls[index]["type"] = call["type"]
+                        function = call.get("function") or {}
+                        if function.get("name"):
+                            tool_calls[index]["function"]["name"] = function["name"]
+                        if function.get("arguments"):
+                            tool_calls[index]["function"]["arguments"] += function["arguments"]
+        except Exception as exc:
+            yield {
+                "event": "failed",
+                "message": f"llama.cpp generation failed: {exc}",
+                "retryable": not isinstance(exc, RuntimeError),
+            }
+            return
+
+        output: dict = {"role": "assistant", "content": full_content}
+        if tool_calls:
+            output["tool_calls"] = tool_calls
+        yield {"event": "completed", "outputs": [output]}
+
+
+#: Backend sampler key -> the OpenAI-compatible name llama.cpp expects. Keys
+#: absent from this map are NOT forwarded: `max_output_tokens` in particular is
+#: a backend name with no upstream equivalent, and passing it through unused is
+#: how a chat silently truncates at llama.cpp's default.
+_SAMPLER_KEY_MAP = {
+    "temperature": "temperature",
+    "top_p": "top_p",
+    "max_output_tokens": "max_tokens",
+    "frequency_penalty": "frequency_penalty",
+    "presence_penalty": "presence_penalty",
+}
+
 
 # ---------------------------------------------------------------------------
 # Weight download. CPU-only, on the slim image, so fetching never spends GPU.
@@ -724,6 +900,290 @@ def volume_state() -> dict:
             entry.update(_size(model))
         out["models"][model_id] = entry
     return out
+
+
+# ---------------------------------------------------------------------------
+# The model-file surface `ModalLlamaCPPEngine` declares it owns.
+#
+# `registry.py` sets `manages_model_files: True` for `modal_llm`, which is what
+# turns on reconciliation, the maintenance browse and the provider page's setup
+# button. All three then call names this app did not define: `FileStorage`,
+# `list_models_with_metadata`, `download_model`, `validate_models`,
+# `setup_models`. Not one of them existed — the engine inherited them from the
+# image engine's shape without the image app's implementation coming with it.
+# Reconciliation fanned out over ComfyUI's sixteen MODEL_DIRECTORIES and every
+# one raised `NotFoundError`.
+#
+# Paths are rooted at `/mnt/data`, which is what the engine's convention
+# expects (`ModalLlamaCPPEngine._MODEL_DIRS == ("models",)`, so it lists the
+# `models/` subtree). The Volume is mounted at BOTH `/models` — unchanged, for
+# the llama-server and the download helpers, which address
+# `/models/<volume_dir>/<gguf>` — and `/mnt/data/models`, so one Volume answers
+# both addressing schemes without a copy or a symlink that a Modal redeploy
+# would not reproduce.
+# ---------------------------------------------------------------------------
+
+#: Where the engine's paths resolve. `STORAGE_ROOT + "models"` is the same
+#: Volume mount as `MODELS_DIR`.
+STORAGE_ROOT = "/mnt/data"
+_STORAGE_IMAGE_TIMEOUT = 3600
+
+
+def _storage_volumes() -> dict:
+    return {MODELS_DIR: vol, f"{STORAGE_ROOT}/models": vol}
+
+
+@app.cls(
+    image=image,
+    volumes=_storage_volumes(),
+    timeout=300,
+    max_containers=1,
+    scaledown_window=5,
+)
+class FileStorage:
+    """Volume file operations for the LLM weights tree.
+
+    Byte-for-byte the contract `ModalEngine` publishes for the image app, and
+    the engine reads it through the same `file_size` / `read_file_range` /
+    `put_file` / `delete_file` calls.
+    """
+
+    @modal.method()
+    def file_size(self, path: str) -> int:
+        """Size of a file in bytes. Raises `FileNotFoundError` if absent."""
+        import os
+
+        safe_vol_reload()
+        full_path = get_safe_path(STORAGE_ROOT, path)
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"File not found: {path}")
+        return os.path.getsize(full_path)
+
+    @modal.method()
+    def read_file_range(self, path: str, offset: int, length: int) -> bytes:
+        """Read at most `length` bytes from `offset`.
+
+        Ranged rather than whole-file because a modal method serialises its
+        return value across the RPC boundary: a 24 GB GGUF read whole is 24 GB
+        in this container and 24 GB in the caller before anyone can do anything
+        with it. `offset` is validated rather than trusted — a negative offset
+        is an absolute seek.
+        """
+        import os
+
+        if offset < 0 or length < 0:
+            raise ValueError("offset and length must be non-negative")
+        if length == 0:
+            return b""
+
+        safe_vol_reload()
+        full_path = get_safe_path(STORAGE_ROOT, path)
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"File not found: {path}")
+
+        with open(full_path, "rb") as handle:
+            handle.seek(offset)
+            return handle.read(length)
+
+    @modal.method()
+    def put_file(self, path: str, content: bytes) -> bool:
+        """Write bytes, creating parents. Used for GGUF uploads."""
+        import os
+
+        safe_vol_reload()
+        full_path = get_safe_path(STORAGE_ROOT, path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, "wb") as handle:
+            handle.write(content)
+        vol.commit()
+        return True
+
+    @modal.method()
+    async def delete_file(self, path: str) -> bool:
+        """Remove a file and any pipeline sidecars beside it."""
+        import asyncio
+        import os
+
+        safe_vol_reload()
+        full_path = get_safe_path(STORAGE_ROOT, path)
+        if not os.path.exists(full_path) and not list(pending_download_paths(full_path)):
+            return False
+
+        try:
+            if os.path.exists(full_path):
+                os.remove(full_path)
+            for sidecar in pipeline_artifacts(full_path):
+                if os.path.exists(sidecar):
+                    os.remove(sidecar)
+            vol.commit()
+            return True
+        except OSError:
+            # A volume commit can race another container's write. Retrying the
+            # unlink alone is the whole fix; a raise here would surface as a
+            # provider failure for what is a transient FS conflict.
+            await asyncio.sleep(0.5)
+            try:
+                if os.path.exists(full_path):
+                    os.remove(full_path)
+                vol.commit()
+                return True
+            except OSError:
+                return False
+
+
+@app.function(
+    image=image,
+    volumes=_storage_volumes(),
+    timeout=_STORAGE_IMAGE_TIMEOUT,
+)
+@modal.concurrent(max_inputs=20, target_inputs=10)
+async def list_models_with_metadata(directory: str) -> list:
+    """Every file under `directory`, with size and type.
+
+    The shape `normalize_validation_result` and the reconciler both expect: a
+    flat list of `{name, path, type, size}`. `directory` is relative to
+    `/mnt/data` and rejected if it escapes it.
+    """
+    import os
+
+    safe_vol_reload()
+    root = get_safe_path(STORAGE_ROOT, directory or "models")
+    if not os.path.isdir(root):
+        return []
+
+    out: list = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                continue
+            out.append({
+                "name": name,
+                "path": os.path.relpath(full, STORAGE_ROOT),
+                "type": name.rsplit(".", 1)[-1].lower() if "." in name else "",
+                "size": size,
+            })
+    return sorted(out, key=lambda entry: entry["path"])
+
+
+@app.function(
+    image=download_image,
+    volumes=_storage_volumes(),
+    timeout=6 * 3600,
+)
+@modal.concurrent(max_inputs=1, target_inputs=1)
+async def download_model(url: str, path: str, token: str | None = None,
+                         preview_url: str | None = None, metadata: dict | None = None):
+    """Fetch one file into the volume. The engine's universal download entry."""
+    await download_model_to_path(url, get_safe_path(STORAGE_ROOT, path), token=token)
+    return {"ok": True, "path": path, **(metadata or {})}
+
+
+@app.function(
+    image=image,
+    volumes=_storage_volumes(),
+    timeout=VALIDATE_TIMEOUT,
+)
+@modal.concurrent(max_inputs=10, target_inputs=5)
+async def validate_models(directories: list[str], delete_invalid: bool = False):
+    """Classify every file under `directories` as valid / partial / invalid.
+
+    Returns the totals contract `normalize_validation_result` reads:
+    `total_valid` / `total_invalid` / `total_partial`, plus the per-directory
+    breakdown. A GGUF is "partial" when it is smaller than the registry entry
+    says it should be — the failure mode an interrupted download leaves behind,
+    and the one that otherwise presents as a model that simply will not load.
+    """
+    import os
+
+    safe_vol_reload()
+    expected: dict[str, int] = {}
+    for model in _all_registry_models():
+        if model.gguf:
+            expected[model.gguf] = model.size or 0
+
+    valid: list = []
+    partial: list = []
+    invalid: list = []
+    by_directory: dict = {}
+
+    for directory in directories or ["models"]:
+        roots = [get_safe_path(STORAGE_ROOT, directory)]
+        seen_valid: list = []
+        seen_partial: list = []
+        seen_invalid: list = []
+        for root in roots:
+            if not os.path.isdir(root):
+                continue
+            for dirpath, _dirnames, filenames in os.walk(root):
+                for name in filenames:
+                    if not is_model_candidate(name):
+                        continue
+                    full = os.path.join(dirpath, name)
+                    rel = os.path.relpath(full, STORAGE_ROOT)
+                    try:
+                        size = os.path.getsize(full)
+                    except OSError:
+                        continue
+                    if size == 0:
+                        seen_invalid.append(rel)
+                        if delete_invalid:
+                            try:
+                                os.remove(full)
+                            except OSError:
+                                pass
+                        continue
+                    floor = expected.get(name, 0)
+                    if floor and size < floor:
+                        seen_partial.append(rel)
+                    else:
+                        seen_valid.append(rel)
+        valid.extend(seen_valid)
+        partial.extend(seen_partial)
+        invalid.extend(seen_invalid)
+        by_directory[directory] = {
+            "valid": seen_valid,
+            "partial": seen_partial,
+            "invalid": seen_invalid,
+        }
+
+    vol.commit()
+    return {
+        "status": "ok",
+        "valid": valid,
+        "partial": partial,
+        "invalid": invalid,
+        "by_directory": by_directory,
+        "total_valid": len(valid),
+        "total_partial": len(partial),
+        "total_invalid": len(invalid),
+        "total_indeterminate": 0,
+    }
+
+
+@app.function(
+    image=image,
+    volumes=_storage_volumes(),
+    timeout=600,
+)
+@modal.concurrent(max_inputs=10, target_inputs=5)
+def setup_models():
+    """Create the storage layout the reconciler expects to find.
+
+    Deliberately NOT a weight fetch. `modal_llm` pulls weights through
+    `ensure_model`, which only fetches the primaries and pulls the rest on
+    demand — seeding the provider page's setup button with a multi-GB download
+    would spend the user's money on weights they may never select. This only
+    makes the tree exist so a listing returns [] rather than raising.
+    """
+    import os
+
+    safe_vol_reload()
+    os.makedirs(f"{STORAGE_ROOT}/models", exist_ok=True)
+    vol.commit()
+    return {"ok": True, "directories": ["models"]}
 
 
 def _refresh_volume() -> None:

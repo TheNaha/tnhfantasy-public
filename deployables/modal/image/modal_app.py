@@ -69,16 +69,49 @@ def _remove_if_present(path: str) -> None:
         pass
 
 
-def safe_vol_reload():
+_last_reload_time: float = 0.0
+_reload_lock: asyncio.Lock | None = None
+
+
+def _get_reload_lock() -> asyncio.Lock:
+    global _reload_lock
+    try:
+        loop = asyncio.get_running_loop()
+        if _reload_lock is None or getattr(_reload_lock, "_loop", None) is not loop:
+            _reload_lock = asyncio.Lock()
+    except Exception:
+        if _reload_lock is None:
+            _reload_lock = asyncio.Lock()
+    return _reload_lock
+
+
+def safe_vol_reload(min_interval: float = 3.0):
+    global _last_reload_time
+    now = time.monotonic()
+    if now - _last_reload_time < min_interval:
+        return
     try:
         vol.reload()
+        _last_reload_time = time.monotonic()
     except Exception as e:
         logger.warning(f"vol.reload failed: {e}")
-async def safe_vol_reload_aio():
-    try:
-        await vol.reload.aio()
-    except Exception as e:
-        logger.warning(f"vol.reload.aio failed: {e}")
+
+
+async def safe_vol_reload_aio(min_interval: float = 3.0):
+    global _last_reload_time
+    now = time.monotonic()
+    if now - _last_reload_time < min_interval:
+        return
+    lock = _get_reload_lock()
+    async with lock:
+        now = time.monotonic()
+        if now - _last_reload_time < min_interval:
+            return
+        try:
+            await vol.reload.aio()
+            _last_reload_time = time.monotonic()
+        except Exception as e:
+            logger.warning(f"vol.reload.aio failed: {e}")
 
 
 # =============================================================================
@@ -435,7 +468,14 @@ MEMORY_SNAPSHOT_HELPER_LOCAL_PATH = _HERE / "memory_snapshot_helper"
 # ComfyUI GPU function settings
 COMFYUI_GPU_TYPE = os.getenv("MODAL_GPU_TYPE", "L4")
 COMFYUI_CPU = int(os.getenv("MODAL_GPU_CPU", "2"))
-COMFYUI_TIMEOUT = int(os.getenv("MODAL_GPU_TIMEOUT", "600"))
+# 3600, not 600. The backend's image job budget is 3600s (`config.py`:
+# `jobs.timeout`), and `ModalEngine` clamps to 3600 by default — so a 600s
+# function timeout meant Modal killed any run past ten minutes while the
+# backend still believed it had budget, and the job surfaced as a *retryable*
+# provider failure. That is worse than slow: the retry re-ran a generation that
+# was two thirds done, and did so as often as the streak limit allowed.
+# The backend value wins; raise this only alongside it, never ahead of it.
+COMFYUI_TIMEOUT = int(os.getenv("MODAL_GPU_TIMEOUT", "3600"))
 COMFYUI_MAX_CONTAINERS = int(os.getenv("MODAL_GPU_MAX_CONTAINERS", "1"))
 COMFYUI_SCALEDOWN = int(os.getenv("MODAL_GPU_SCALEDOWN", "40"))
 COMFYUI_SCALEDOWN_SNAPSHOT = int(os.getenv("MODAL_GPU_SCALEDOWN_SNAPSHOT", "40"))
@@ -693,6 +733,8 @@ class ComfyUIStable:
         # torch, opencv, scipy) and a `models/` directory of 531 files on the
         # /mnt/data network volume, which ComfyUI enumerates at boot. Both are
         # image-specific. See `docs/audit-2026-09-29.md`.
+        os.makedirs("/mnt/data/output", exist_ok=True)
+        os.makedirs("/mnt/data/input", exist_ok=True)
         _t0 = time.time()
         logger.info("[boot] container_enter t=0.00")
         _start_comfy_server(self.port)
@@ -793,25 +835,27 @@ class ComfyUISnapshot:
         output_dir = "/root/comfy/ComfyUI/output"
         volume_output = "/mnt/data/output"
         
-        if os.path.exists(volume_output):
-            if os.path.islink(output_dir):
-                logger.info("[ComfyUISnapshot] Output already linked.")
-            elif os.path.isdir(output_dir):
-                logger.info("[ComfyUISnapshot] Linking output directory to volume...")
-                try:
-                    import shutil
-                    for f in os.listdir(output_dir):
-                        src = os.path.join(output_dir, f)
-                        dst = os.path.join(volume_output, f)
-                        if not os.path.exists(dst):
-                            shutil.move(src, dst)
-                    shutil.rmtree(output_dir)
-                    os.symlink(volume_output, output_dir)
-                    logger.info("[ComfyUISnapshot] Output linked successfully.")
-                except Exception as e:
-                    logger.info(f"[ComfyUISnapshot] Failed to link output: {e}")
-            else:
+        os.makedirs(volume_output, exist_ok=True)
+        os.makedirs("/mnt/data/input", exist_ok=True)
+
+        if os.path.islink(output_dir):
+            logger.info("[ComfyUISnapshot] Output already linked.")
+        elif os.path.isdir(output_dir):
+            logger.info("[ComfyUISnapshot] Linking output directory to volume...")
+            try:
+                import shutil
+                for f in os.listdir(output_dir):
+                    src = os.path.join(output_dir, f)
+                    dst = os.path.join(volume_output, f)
+                    if not os.path.exists(dst):
+                        shutil.move(src, dst)
+                shutil.rmtree(output_dir)
                 os.symlink(volume_output, output_dir)
+                logger.info("[ComfyUISnapshot] Output linked successfully.")
+            except Exception as e:
+                logger.info(f"[ComfyUISnapshot] Failed to link output: {e}")
+        else:
+            os.symlink(volume_output, output_dir)
     
     @modal.method()
     async def run(self, workflow_json: Dict[str, Any]):

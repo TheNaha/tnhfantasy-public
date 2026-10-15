@@ -72,6 +72,19 @@ check_modal() {
   else ok "modal CLI: $(modal --version 2>/dev/null | head -1)"
   fi
   if [[ -z "${MODAL_TOKEN_ID:-}" || -z "${MODAL_TOKEN_SECRET:-}" ]]; then
+    # If unpopulated, check if candidate env files exist in the project root
+    local cand
+    for cand in ${PROVIDER_ID:+.env."$PROVIDER_ID"} .env.modal-* .env; do
+      if [[ -f "$cand" ]]; then
+        set -a; # shellcheck disable=SC1090
+        source "$cand" 2>/dev/null; set +a
+        if [[ -n "${MODAL_TOKEN_ID:-}" && -n "${MODAL_TOKEN_SECRET:-}" ]]; then
+          break
+        fi
+      fi
+    done
+  fi
+  if [[ -z "${MODAL_TOKEN_ID:-}" || -z "${MODAL_TOKEN_SECRET:-}" ]]; then
     printf '\033[31mFAIL\033[0m  MODAL_TOKEN_ID / MODAL_TOKEN_SECRET unset (%s)\n' "$MODAL_ENV_HINT"
     missing=1
   else ok "modal credentials present"
@@ -84,6 +97,18 @@ check_beam() {
   if ! command -v beam >/dev/null 2>&1; then
     printf '\033[31mFAIL\033[0m  beam CLI not found (pip install beam-client)\n'; missing=1
   else ok "beam CLI: $(beam --version 2>/dev/null | head -1)"
+  fi
+  if [[ -z "${BEAM_API_KEY:-}" ]]; then
+    local cand
+    for cand in ${PROVIDER_ID:+.env."$PROVIDER_ID"} .env.beam-* .env; do
+      if [[ -f "$cand" ]]; then
+        set -a; # shellcheck disable=SC1090
+        source "$cand" 2>/dev/null; set +a
+        if [[ -n "${BEAM_API_KEY:-}" ]]; then
+          break
+        fi
+      fi
+    done
   fi
   note "beam needs an authenticated workspace: 'beam configure' if you have not"
   return $missing
@@ -154,18 +179,29 @@ for t in "${TARGETS[@]}"; do
       ;;
     beam)
       echo
-      echo "==> Beam worker (4 deployments)"
+      echo "==> Beam workers (6 deployments)"
       if ! check_beam; then note "skipped: preconditions not met"; rc=1; continue; fi
-      # Deploy from the repo root, not from deployables/beam: beam_app.py adds
-      # no source to its images and every decorator syncs the working directory,
-      # so workflow_executor.py / models_utils.py / provider_core /
-      # provider_worker_core have to be inside it. See deployables/README.md.
+      # Deploy from the repo root, not from deployables/beam: these files add
+      # no source to their images and every decorator syncs the working
+      # directory, so workflow_executor.py / models_utils.py / provider_core /
+      # provider_worker_core / remote_agent/llama_server.py have to be inside
+      # it. See deployables/README.md.
       for dep in comfy_gpu comfy_storage comfy_download comfy_extractor; do
         echo "     beam deploy deployables/beam/beam_app.py:$dep"
         [[ $DRY_RUN -eq 1 ]] && continue
         beam deploy "deployables/beam/beam_app.py:$dep" || rc=1
       done
-      [[ $DRY_RUN -eq 0 ]] && note "publish the four returned URLs into the provider row (gpu_url / storage_url / download_url / extractor_url)"
+      # The LLM and TTS cells live in their own module because their contract is
+      # a websocket, not a ComfyUI graph: `@realtime` binds one handler at a
+      # deployment root with no path routing, so `/llm` and `/tts` have to be
+      # `@asgi` FastAPI apps. Both engine types were advertised in the Providers
+      # modal before this existed and dialled paths nothing served.
+      for dep in comfy_llm comfy_tts; do
+        echo "     beam deploy deployables/beam/llm_tts_app.py:$dep"
+        [[ $DRY_RUN -eq 1 ]] && continue
+        beam deploy "deployables/beam/llm_tts_app.py:$dep" || rc=1
+      done
+      [[ $DRY_RUN -eq 0 ]] && note "publish the returned URLs into the provider row (gpu_url / storage_url / download_url / extractor_url)"
       ;;
   esac
 done

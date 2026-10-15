@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
     Circle,
     Server,
@@ -13,15 +14,22 @@ import { useActiveJobs } from '../../hooks/useActiveJobs';
 import RuntimeTab from './tabs/RuntimeTab';
 import SyncTab from './tabs/SyncTab';
 import DiagnosticsTab from './tabs/DiagnosticsTab';
+import CredentialsTab from './tabs/CredentialsTab';
+import LogsTab from './tabs/LogsTab';
+import DeployTab from './tabs/DeployTab';
 import { statusDotClass, humanize } from './tabs/utils';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { getDeployTargetForProvider } from '../../utils/providerStatus';
 
 const EMPTY_OBJECT = Object.freeze({});
 
 const TABS = [
     { id: 'runtime', label: 'Runtime' },
     { id: 'jobs', label: 'Active Jobs' },
+    { id: 'logs', label: 'Activity & Logs' },
+    { id: 'deploy', label: 'Deploy Worker' },
     { id: 'sync', label: 'Model Sync' },
+    { id: 'credentials', label: 'Credentials' },
     { id: 'diagnostics', label: 'Diagnostics' },
 ];
 
@@ -29,12 +37,18 @@ export default function ProviderDetailPanel({
     provider,
     onClose,
     loading,
-    onReconcile, onQuickSync, onResetStatus, onSetup,
+    onReconcile, onQuickSync, onResetStatus, onSetup, onDeploy,
     providerFailures = 0,
     jobsAssigned = 0,
+    initialTab = 'runtime',
 }) {
-    const [activeTab, setActiveTab] = useState('runtime');
+    const [activeTab, setActiveTab] = useState(initialTab);
+    const [prevInitialTab, setPrevInitialTab] = useState(initialTab);
     const panelRef = useRef(null);
+    if (initialTab !== prevInitialTab) {
+        setPrevInitialTab(initialTab);
+        setActiveTab(initialTab);
+    }
 
     // This covers the page behind it, so it has to answer the keyboard: Escape
     // dismisses, focus lands inside on open and goes back to the trigger on
@@ -77,33 +91,32 @@ export default function ProviderDetailPanel({
         [jobsAssigned, loading, provider, providerFailures],
     );
 
-    return (
-        <>
-            {/* Overlay */}
-            <motion.div
-                className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                onClick={onClose}
-            />
+    if (typeof document === 'undefined') return null;
 
-            {/* Drawer */}
+    return createPortal(
+        <motion.div
+            className="fixed inset-y-0 right-0 left-0 lg:left-64 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 sm:p-6 lg:p-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={onClose}
+        >
             <motion.div
                 ref={panelRef}
                 role="dialog"
                 aria-modal="true"
                 aria-label={`${provider.id} provider`}
                 tabIndex={-1}
-                className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-2xl overflow-y-auto bg-gray-950 border-l border-white/10 shadow-2xl outline-none"
-                initial={{ x: '100%' }}
-                animate={{ x: 0 }}
-                exit={{ x: '100%' }}
-                transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                className="relative flex flex-col w-full max-w-5xl xl:max-w-6xl h-[88vh] max-h-[92vh] overflow-hidden rounded-2xl border border-white/10 bg-gray-950 shadow-2xl outline-none"
+                initial={{ scale: 0.96, opacity: 0, y: 12 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.96, opacity: 0, y: 12 }}
+                transition={{ type: 'spring', damping: 30, stiffness: 350 }}
+                onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="sticky top-0 z-10 border-b border-white/[0.06] bg-gray-950/90 backdrop-blur-xl px-6 py-5">
+                <div className="flex-shrink-0 border-b border-white/[0.06] bg-gray-950/95 backdrop-blur-xl px-6 pt-5 pb-0">
                     <div className="flex items-start justify-between mb-4">
                         <div className="flex items-start gap-3 min-w-0">
                             <div className={`flex h-11 w-11 items-center justify-center rounded-xl border flex-shrink-0 ${
@@ -121,21 +134,25 @@ export default function ProviderDetailPanel({
                                 />
                             </div>
                             <div className="min-w-0">
-                                <h2 className="text-lg font-semibold text-white truncate">
-                                    {provider.id}
-                                </h2>
-                                <p className="text-xs text-gray-500 mt-0.5">
-                                    {provider.type} provider
-                                    {credentialSummary.account_label && ` · ${credentialSummary.account_label}`}
+                                <div className="flex items-center gap-2">
+                                    <h2 className="text-xl font-bold text-white truncate">
+                                        {provider.id}
+                                    </h2>
+                                    <span className="rounded-md bg-gray-800/80 px-2 py-0.5 text-xs font-mono text-gray-400 border border-gray-700/60">
+                                        {provider.type}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                    {credentialSummary.account_label ? `Account: ${credentialSummary.account_label}` : `${provider.type} provider`}
                                 </p>
                             </div>
                         </div>
                         <button
                             onClick={onClose}
-                            className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-800 hover:text-white"
+                            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-800 hover:text-white"
                             aria-label="Close"
                         >
-                            <X size={18} />
+                            <X size={20} />
                         </button>
                     </div>
 
@@ -185,6 +202,9 @@ export default function ProviderDetailPanel({
                             if (provider.worker_type === 'llm' && tab.id === 'sync') {
                                 return false;
                             }
+                            if (tab.id === 'deploy' && !getDeployTargetForProvider(provider)) {
+                                return false;
+                            }
                             return true;
                         }).map((tab) => {
                             const label = (runtime.mode === 'in_process' && tab.id === 'runtime') ? 'Overview' : tab.label;
@@ -203,7 +223,7 @@ export default function ProviderDetailPanel({
                 </div>
 
                 {/* Tab content */}
-                <div className="p-6 space-y-5">
+                <div className="flex-1 overflow-y-auto p-6 space-y-5">
                     {activeTab === 'runtime' && (
                         <RuntimeTab
                             runtime={runtime}
@@ -212,6 +232,7 @@ export default function ProviderDetailPanel({
                             capabilities={capabilities}
                             loading={loading}
                             onSetup={onSetup}
+                            onDeploy={onDeploy || (() => setActiveTab('deploy'))}
                             jobsAssigned={jobsAssigned}
                             providerFailures={providerFailures}
                         />
@@ -230,6 +251,12 @@ export default function ProviderDetailPanel({
                                 </div>
                             )}
                         </div>
+                    )}
+                    {activeTab === 'logs' && (
+                        <LogsTab providerId={provider.id} />
+                    )}
+                    {activeTab === 'deploy' && (
+                        <DeployTab provider={provider} />
                     )}
                     {activeTab === 'sync' && (
                         <SyncTab
@@ -254,8 +281,15 @@ export default function ProviderDetailPanel({
                             providerFailures={providerFailures}
                         />
                     )}
+                    {activeTab === 'credentials' && (
+                        <CredentialsTab
+                            providerId={provider.id}
+                            credentialSummary={credentialSummary}
+                        />
+                    )}
                 </div>
             </motion.div>
-        </>
+        </motion.div>,
+        document.body
     );
 }

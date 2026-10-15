@@ -71,6 +71,13 @@ describe('providersApi load balancer aliases', () => {
 
         expect(getMock).toHaveBeenCalledWith('/api/v2/providers/test-prov-1/diagnostics', {});
     });
+
+    it('calls getLogs with providerId', () => {
+        providersApi.getLogs('test-prov-1');
+
+        expect(getMock).toHaveBeenCalledWith('/api/v2/providers/test-prov-1/logs', {});
+    });
 });
+
 
 

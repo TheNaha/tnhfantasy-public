@@ -86,3 +86,10 @@ pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0
 
 h2>=4.1.0
+
+# At-rest encryption for provider credentials (`services/credential_crypto.py`).
+# Fernet is used rather than a hand-rolled stream cipher: the stdlib has no AEAD,
+# and a "good enough" XOR here is the kind of thing that is still protecting
+# Modal tokens three years later. Provides authenticated encryption, so a tampered
+# ciphertext fails to decrypt instead of yielding garbage.
+cryptography>=42.0.0

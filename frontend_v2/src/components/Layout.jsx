@@ -63,13 +63,39 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
     }), [providerStatsMap, providers]);
 
     const runningProviderCount = providerEntries.filter((entry) => entry.summary.isOnline).length;
+    const enabledProviderEntries = providerEntries.filter((entry) => !entry.summary.isDisabled);
+    const disabledProviderCount = providerEntries.length - enabledProviderEntries.length;
+
     // Collapsed by default: this is diagnostics, not navigation, and at ~200px it
     // was permanently eating the nav column on a 900px-tall viewport.
     const [expanded, setExpanded] = useState(false);
-    // `summarizeProviderStatus` exposes `errorCount`, not a boolean `hasError`.
-    const hasFailure = providerEntries.some(
-        (entry) => entry.summary.isDisabled || entry.summary.errorCount > 0
+
+    // Failures ONLY apply to enabled (active) providers. An intentionally paused provider is not a failure.
+    const hasFailure = enabledProviderEntries.some(
+        (entry) => entry.summary.errorCount > 0 || entry.summary.stage === 'error' || entry.summary.stage === 'deploy_failed'
     );
+    const hasWarning = !hasFailure && enabledProviderEntries.some(
+        (entry) => entry.summary.warningCount > 0 || entry.summary.stage === 'warning'
+    );
+
+    const statusDotTone = hasFailure
+        ? 'text-red-400 bg-red-400'
+        : hasWarning
+            ? 'text-amber-400 bg-amber-400'
+            : runningProviderCount > 0
+                ? 'text-green-400 bg-green-400'
+                : 'text-gray-500 bg-gray-500';
+
+    const statusText = useMemo(() => {
+        if (providerEntries.length === 0) return '0 providers';
+        if (disabledProviderCount === 0) {
+            return `${runningProviderCount}/${providerEntries.length} online`;
+        }
+        if (enabledProviderEntries.length === 0) {
+            return `${disabledProviderCount} paused`;
+        }
+        return `${runningProviderCount}/${enabledProviderEntries.length} online · ${disabledProviderCount} paused`;
+    }, [providerEntries.length, disabledProviderCount, enabledProviderEntries.length, runningProviderCount]);
 
     return (
         // `shrink-0` is load-bearing. Without it this panel is a flex child with
@@ -84,15 +110,22 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
                     onClick={() => setExpanded((open) => !open)}
                     aria-expanded={expanded}
                     className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/5 transition-colors"
+                    title={
+                        hasFailure
+                            ? 'One or more active providers report errors or failures'
+                            : disabledProviderCount > 0
+                                ? `${runningProviderCount} of ${enabledProviderEntries.length} active providers online (${disabledProviderCount} paused intentionally)`
+                                : `${runningProviderCount} of ${providerEntries.length} providers online`
+                    }
                 >
-                    <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full shadow-[0_0_6px_currentColor] ${hasFailure ? 'text-red-400 bg-red-400' : runningProviderCount > 0 ? 'text-green-400 bg-green-400' : 'text-gray-500 bg-gray-500'}`} />
+                    <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full shadow-[0_0_6px_currentColor] ${statusDotTone}`} />
                     <span className="text-xs font-medium text-gray-300 whitespace-nowrap">
-                        {runningProviderCount}/{providerEntries.length} online
+                        {statusText}
                     </span>
                     {hasFailure && (
                         <span
                             className="text-2xs font-medium text-red-400 truncate"
-                            title="At least one provider is disabled or reporting errors"
+                            title="Active provider is offline or reporting errors"
                         >
                             needs attention
                         </span>
@@ -125,7 +158,9 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
                                 summary.downloadsActive > 0 ? `${summary.downloadsActive} dl` : null,
                                 summary.downloadsQueued > 0 ? `${summary.downloadsQueued} queued` : null,
                             ].filter(Boolean).join(' · ');
-                            const subtitle = [summary.message, statusMeta].filter(Boolean).join(' · ');
+                            const subtitle = summary.isDisabled
+                                ? 'Intentionally paused — excluded from load balancer routing'
+                                : [summary.message, statusMeta].filter(Boolean).join(' · ');
 
                             return (
                                 <div
@@ -141,7 +176,12 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
                                         {summary.label}
                                     </span>
                                     {summary.isDisabled && (
-                                        <span className="text-2xs text-gray-500 ml-auto font-medium">off</span>
+                                        <span
+                                            className="text-2xs text-gray-400 ml-auto font-medium"
+                                            title="Paused by user — excluded from load balancer"
+                                        >
+                                            paused
+                                        </span>
                                     )}
                                 </div>
                             );
@@ -151,8 +191,13 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
                     <p className="text-xs text-gray-500">No providers connected</p>
                 )}
                         <div className="mt-2 pt-2 border-t border-white/5 text-xs font-medium text-gray-500 flex justify-between">
-                            <span>Active</span>
-                            <span className="text-gray-300">{runningProviderCount}/{providers.length}</span>
+                            <span>Active Pool</span>
+                            <span className="text-gray-300">
+                                {runningProviderCount}/{enabledProviderEntries.length} online
+                                {disabledProviderCount > 0 && (
+                                    <span className="text-gray-500 ml-1">({disabledProviderCount} paused)</span>
+                                )}
+                            </span>
                         </div>
                     </div>
                 )}
