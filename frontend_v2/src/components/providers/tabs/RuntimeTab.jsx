@@ -105,7 +105,7 @@ function DiscoveredAssetsPanel({ provider }) {
         }
     };
 
-    const isImage = provider.worker_type === 'image' || !provider.worker_type;
+    const isImage = provider.worker_type === 'image' || provider.worker_type === 'hybrid' || !provider.worker_type;
     const isVoice = provider.worker_type === 'tts' || provider.type?.includes('tts');
     const assetTitle = isVoice ? 'Discovered Voices' : isImage ? 'Upstream Models' : 'Available Models';
 

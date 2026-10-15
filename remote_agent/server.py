@@ -711,7 +711,7 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
         return empty
 
     valid, invalid, partial, indeterminate = [], [], [], []
-    entries = list(os.walk(target_dir))
+    entries = list(os.walk(target_dir, followlinks=True))
     for root, _, filenames in entries:
         for name in filenames:
             if name.startswith("."):
@@ -819,13 +819,17 @@ async def list_models(req: ListModelsRequest):
     def _walk():
         files = []
         if os.path.exists(target_dir):
-            for root, _, filenames in os.walk(target_dir):
+            for root, _, filenames in os.walk(target_dir, followlinks=True):
                 for filename in filenames:
                     if filename.startswith(".") or _is_sidecar(filename):
                         continue
                     full_path = os.path.join(root, filename)
                     rel_path = os.path.relpath(full_path, DATA_ROOT).replace("\\", "/")
-                    files.append({"name": filename, "path": rel_path, "type": "file", "size": os.path.getsize(full_path)})
+                    try:
+                        size = os.path.getsize(full_path)
+                    except OSError:
+                        size = 0
+                    files.append({"name": filename, "path": rel_path, "type": "file", "size": size})
         return files
 
     listed = await _bounded_to_thread(_walk)
@@ -1219,6 +1223,27 @@ if WORKER_MODE in ("llm", "hybrid"):
             status_code=status,
             media_type=content_type or "text/event-stream",
         )
+
+    @app.get("/v1/models", dependencies=[Depends(verify_token)])
+    @app.get("/models", dependencies=[Depends(verify_token)])
+    async def list_upstream_models():
+        """Proxy models list to the upstream llama-server / vLLM."""
+        from fastapi.responses import Response
+
+        base = UPSTREAM_BASE or "http://127.0.0.1:8003/v1"
+
+        def _forward() -> tuple[int, bytes, str]:
+            url = f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models"
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=10.0) as resp:
+                    return resp.status, resp.read(), resp.headers.get("Content-Type", "")
+            except Exception:
+                # Return empty list payload if upstream model server has no models or is starting
+                return 200, json.dumps({"object": "list", "data": []}).encode(), "application/json"
+
+        status, payload, content_type = await _bounded_to_thread(_forward)
+        return Response(content=payload, status_code=status, media_type=content_type or "application/json")
 
 
 # ---------------------------------------------------------------------------

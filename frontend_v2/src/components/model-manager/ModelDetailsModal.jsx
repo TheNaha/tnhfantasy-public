@@ -554,8 +554,10 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                                                 const p = providers.find(p => p.id === providerId);
                                                 if (!p) return true; // keep if provider info is missing
                                                 const isLlmFile = file.path?.startsWith('models/llm');
-                                                if (isLlmFile && p.worker_type !== 'llm') return false;
-                                                if (!isLlmFile && p.worker_type === 'llm') return false;
+                                                const servesLlm = p.worker_type === 'llm' || p.worker_type === 'hybrid' || (Array.isArray(p.capabilities) && p.capabilities.includes('llm'));
+                                                const servesImage = p.worker_type === 'image' || p.worker_type === 'hybrid' || !p.worker_type || (Array.isArray(p.capabilities) && p.capabilities.includes('image'));
+                                                if (isLlmFile && !servesLlm) return false;
+                                                if (!isLlmFile && !servesImage) return false;
                                                 return true;
                                             })
                                             .map(([providerId, statusData]) => {

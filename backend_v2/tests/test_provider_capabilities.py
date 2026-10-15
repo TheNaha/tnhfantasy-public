@@ -62,6 +62,18 @@ class TestServes:
         assert p.serves("tts") is True
         assert p.serves("llm") is False
 
+    def test_hybrid_provider_serves_both_image_and_llm(self):
+        """A hybrid provider inherently serves both image and llm."""
+        p = Provider(id="x", worker_type="hybrid")
+        assert p.serves("image") is True
+        assert p.serves("llm") is True
+        assert p.serves("tts") is False
+
+        p_with_tts = Provider(id="x", worker_type="hybrid", capabilities=["tts"])
+        assert p_with_tts.serves("image") is True
+        assert p_with_tts.serves("llm") is True
+        assert p_with_tts.serves("tts") is True
+
     def test_capabilities_are_additive_not_authoritative(self):
         """Declaring `tts` must not take the provider out of image rotation.
 

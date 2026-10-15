@@ -164,8 +164,8 @@ async def test_aggregated_health_check():
     """check_health combines image and llm statuses."""
     engine = HybridRemoteEngine("hyb-test", base_url="http://node", concurrency_policy="exclusive")
 
-    engine.image_engine.health = AsyncMock(return_value={"status": "healthy", "comfyui": "connected"})
-    engine.llm_engine.health = AsyncMock(return_value={"status": "healthy", "llama": "connected"})
+    engine.image_engine.check_health = AsyncMock(return_value={"status": "healthy", "comfyui": "connected"})
+    engine.llm_engine.check_health = AsyncMock(return_value={"status": "healthy", "llama": "connected"})
 
     health = await engine.check_health()
     assert health["status"] == "healthy"

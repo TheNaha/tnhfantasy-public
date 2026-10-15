@@ -223,9 +223,10 @@ class ProviderStatusService:
         """
         if provider is None:
             provider = await self.provider_service.get_provider(provider_id)
-
-        if (getattr(provider, "worker_type", None) or "image") != "image":
-            # LLM and TTS workers do not install image models. Reported as an
+        worker_type = getattr(provider, "worker_type", None) or "image"
+        serves_image = getattr(provider, "serves", lambda t: t == "image")("image") if provider else True
+        if worker_type not in ("image", "hybrid") and not serves_image:
+            # Standalone LLM and TTS workers do not install image models. Reported as an
             # explicit zero rather than a real query so the card never shows a
             # count. Keyed on "is it an image provider" rather than on an
             # enumeration of the kinds that are not, so the next worker type

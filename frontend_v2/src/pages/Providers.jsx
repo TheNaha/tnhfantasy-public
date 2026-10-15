@@ -90,8 +90,8 @@ export default function Providers() {
 
             const matchesFilter = (
                 filter === 'all'
-                || (filter === 'image' && (provider.worker_type === 'image' || (!provider.worker_type && !provider.capabilities?.length) || (Array.isArray(provider.capabilities) && provider.capabilities.includes('image'))))
-                || (filter === 'llm' && (provider.worker_type === 'llm' || (Array.isArray(provider.capabilities) && provider.capabilities.includes('llm'))))
+                || (filter === 'image' && (provider.worker_type === 'image' || provider.worker_type === 'hybrid' || (!provider.worker_type && !provider.capabilities?.length) || (Array.isArray(provider.capabilities) && provider.capabilities.includes('image'))))
+                || (filter === 'llm' && (provider.worker_type === 'llm' || provider.worker_type === 'hybrid' || (Array.isArray(provider.capabilities) && provider.capabilities.includes('llm'))))
                 || (filter === 'tts' && (provider.worker_type === 'tts' || (Array.isArray(provider.capabilities) && provider.capabilities.includes('tts'))))
                 || (filter === 'hybrid' && (provider.worker_type === 'hybrid' || (Array.isArray(provider.capabilities) && provider.capabilities.length > 1)))
                 || (filter === 'issues' && hasIssues)
@@ -291,11 +291,39 @@ export default function Providers() {
                 />
             ) : filteredProviders.length > 0 ? (
                 <div className="space-y-8">
-                    {filteredProviders.some(p => p.worker_type !== 'llm') && (
+                    {filteredProviders.some(p => p.worker_type === 'hybrid') && (
+                        <div>
+                            <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide flex items-center gap-2">
+                                <span>Hybrid Workers</span>
+                                <span className="text-xs font-normal text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider">Multi-Modal (Image + LLM)</span>
+                            </h2>
+                            <div className="space-y-4">
+                                {filteredProviders.filter(p => p.worker_type === 'hybrid').map((provider) => (
+                                    <ProviderListItem
+                                        key={provider.id}
+                                        provider={provider}
+                                        actionLabel={actionLoading[provider.id] ?? null}
+                                        isSelected={selectedProviderId === provider.id}
+                                        onSelect={(id) => {
+                                            setSelectedProviderId(selectedProviderId === id ? null : id);
+                                            setDrawerTab('runtime');
+                                        }}
+                                        onToggleEnabled={handleToggleEnabled}
+                                        onEdit={() => setEditingProvider(provider)}
+                                        onDelete={() => handleDelete(provider.id)}
+                                        onDeploy={handleDeployProvider}
+                                        providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
+                                        jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {filteredProviders.some(p => p.worker_type === 'image' || (!p.worker_type && p.worker_type !== 'hybrid' && p.worker_type !== 'llm' && p.worker_type !== 'tts')) && (
                         <div>
                             <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">Image Workers</h2>
                             <div className="space-y-4">
-                                {filteredProviders.filter(p => p.worker_type !== 'llm').map((provider) => (
+                                {filteredProviders.filter(p => p.worker_type === 'image' || (!p.worker_type && p.worker_type !== 'hybrid' && p.worker_type !== 'llm' && p.worker_type !== 'tts')).map((provider) => (
                                     <ProviderListItem
                                         key={provider.id}
                                         provider={provider}
@@ -321,6 +349,31 @@ export default function Providers() {
                             <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">LLM Workers</h2>
                             <div className="space-y-4">
                                 {filteredProviders.filter(p => p.worker_type === 'llm').map((provider) => (
+                                    <ProviderListItem
+                                        key={provider.id}
+                                        provider={provider}
+                                        actionLabel={actionLoading[provider.id] ?? null}
+                                        isSelected={selectedProviderId === provider.id}
+                                        onSelect={(id) => {
+                                            setSelectedProviderId(selectedProviderId === id ? null : id);
+                                            setDrawerTab('runtime');
+                                        }}
+                                        onToggleEnabled={handleToggleEnabled}
+                                        onEdit={() => setEditingProvider(provider)}
+                                        onDelete={() => handleDelete(provider.id)}
+                                        onDeploy={handleDeployProvider}
+                                        providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
+                                        jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {filteredProviders.some(p => p.worker_type === 'tts') && (
+                        <div>
+                            <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">Voice (TTS) Workers</h2>
+                            <div className="space-y-4">
+                                {filteredProviders.filter(p => p.worker_type === 'tts').map((provider) => (
                                     <ProviderListItem
                                         key={provider.id}
                                         provider={provider}

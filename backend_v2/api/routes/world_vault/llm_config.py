@@ -159,7 +159,7 @@ class LLMProviderInfo(BaseModel):
 def list_llm_providers(session: Session = Depends(get_session)):
     """List all registered LLM providers."""
     providers = session.exec(
-        select(Provider).where(Provider.worker_type == "llm")  # noqa: E712
+        select(Provider).where(Provider.worker_type.in_(["llm", "hybrid"]))  # noqa: E712
     ).all()
 
     # Try to get default without raising
@@ -254,6 +254,6 @@ def _llm_provider_row(session: Session, provider_id: str) -> Provider:
     be a plain `def` route and this lookup would run on the event loop.
     """
     provider = session.get(Provider, provider_id)
-    if not provider or provider.worker_type != "llm":
+    if not provider or (provider.worker_type not in ("llm", "hybrid") and not (hasattr(provider, "serves") and provider.serves("llm"))):
         raise NotFoundError("LLM provider", provider_id)
     return provider

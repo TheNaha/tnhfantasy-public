@@ -254,8 +254,8 @@ class HybridRemoteEngine(InProcessEngine):
     async def check_health(self) -> Dict[str, Any]:
         """Aggregate health probing ComfyUI, Agent, and LLM."""
         policy = await self._resolve_policy()
-        image_health = await self.image_engine.health()
-        llm_health = await self.llm_engine.health()
+        image_health = await self.image_engine.check_health()
+        llm_health = await self.llm_engine.check_health()
 
         image_ok = image_health.get("status") in ("healthy", "ok")
         llm_ok = llm_health.get("status") in ("healthy", "ok")
@@ -281,8 +281,23 @@ class HybridRemoteEngine(InProcessEngine):
     # Storage & Model Operations (Delegated to Sidecar Agent)
     # ----------------------------------------------------------------------
 
-    async def list_models(self, directory: str) -> List[Dict[str, Any]]:
+    async def list_models(self, directory: str = "") -> List[Dict[str, Any]]:
+        if directory in ("llm", "models/llm"):
+            return await self.llm_engine.list_models(directory)
+        if not directory:
+            img_models = await self.image_engine.list_models("")
+            try:
+                llm_models = await self.llm_engine.list_models("")
+            except Exception:
+                llm_models = []
+            return img_models + llm_models
         return await self.image_engine.list_models(directory)
+
+    async def get_storage_stats(self) -> Dict[str, Any]:
+        return await self.image_engine.get_storage_stats()
+
+    async def get_object_info(self) -> Dict[str, Any]:
+        return await self.image_engine.get_object_info()
 
     async def list_models_with_metadata(self, directory: str = "") -> List[Dict[str, Any]]:
         return await self.image_engine.list_models_with_metadata(directory)

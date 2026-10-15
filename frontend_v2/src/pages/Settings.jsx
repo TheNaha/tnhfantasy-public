@@ -1201,7 +1201,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
     const setDefaultMutation = useSetLLMDefault();
     const routing = useLLMRouting();
     
-    const llmProviders = providers.filter(p => p.worker_type === 'llm' || p.id.startsWith('llm'));
+    const llmProviders = providers.filter(p => p.worker_type === 'llm' || p.worker_type === 'hybrid' || (Array.isArray(p.capabilities) && p.capabilities.includes('llm')) || p.id.startsWith('llm'));
 
     const [providerId, setProviderId] = useState('');
     const [modelId, setModelId] = useState('');

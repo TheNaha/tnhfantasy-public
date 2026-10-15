@@ -33,8 +33,8 @@ export default function LoadBalancerBar({ config, stats, onUpdateStrategy, provi
 
     // If every visible provider is an LLM worker, the load balancer doesn't apply.
     // Show a compact informational banner instead of the full strategy picker.
-    const hasImageProviders = providers.some((p) => p.worker_type !== 'llm');
-    const hasLLMProviders   = providers.some((p) => p.worker_type === 'llm');
+    const hasImageProviders = providers.some((p) => p.worker_type === 'image' || p.worker_type === 'hybrid' || !p.worker_type || (Array.isArray(p.capabilities) && p.capabilities.includes('image')));
+    const hasLLMProviders   = providers.some((p) => p.worker_type === 'llm' || p.worker_type === 'hybrid' || (Array.isArray(p.capabilities) && p.capabilities.includes('llm')));
 
     if (!hasImageProviders && hasLLMProviders) {
         return (

@@ -97,22 +97,30 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
     Raises:
         ValueError if path traversal is detected.
     """
-    # Remove leading slashes to prevent absolute path interpretation
-    clean_path = requested_path.lstrip("/\\")
+    # Remove leading slashes to prevent absolute path interpretation and fold
+    # backslashes so Windows-style traversal cannot slip past the checks below.
+    clean_path = requested_path.lstrip("/\\").replace("\\", "/")
 
     # Resolve full path
-    if not clean_path.strip():
+    if not clean_path.strip() or clean_path.strip("/") == "":
         raise ValueError("Invalid path: path cannot be empty")
-        
-    full_path = os.path.realpath(os.path.join(base_dir, clean_path))
-        
-    base_path = os.path.realpath(base_dir)
 
-    # Check if the resolved path starts with the base path
-    if os.path.commonpath([base_path, full_path]) != base_path:
-         raise ValueError("Access denied: Path outside allowed directory")
+    if "\0" in requested_path:
+        raise ValueError("Invalid path: null bytes are not allowed")
 
-    return full_path
+    logical_base = os.path.abspath(base_dir)
+    logical_path = os.path.abspath(os.path.join(logical_base, clean_path))
+
+    # Check if the resolved path starts with the base path (prevent directory traversal)
+    try:
+        common = os.path.commonpath([logical_base, logical_path])
+    except ValueError:
+        raise ValueError("Access denied: Path outside allowed directory")
+
+    if common != logical_base:
+        raise ValueError("Access denied: Path outside allowed directory")
+
+    return logical_path
 
 
 def determine_download_token(

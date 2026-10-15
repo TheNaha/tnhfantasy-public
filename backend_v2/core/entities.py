@@ -290,6 +290,8 @@ class Provider(SQLModel, table=True):
         """
         if task_type == self.worker_type:
             return True
+        if self.worker_type == "hybrid" and task_type in ("image", "llm"):
+            return True
         return task_type in (self.capabilities or [])
 
     # Credentials (stored securely, used for container env vars)

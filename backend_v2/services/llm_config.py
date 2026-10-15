@@ -92,7 +92,7 @@ def _stored_provider_override(session: Session) -> tuple[str, str] | None:
     if not provider_id or not model_id:
         return None
     provider = session.get(Provider, provider_id)
-    if provider and provider.enabled and provider.worker_type == "llm":
+    if provider and provider.enabled and (provider.worker_type in ("llm", "hybrid") or (hasattr(provider, "serves") and provider.serves("llm"))):
         return provider_id, model_id
     return None
 
@@ -110,7 +110,7 @@ def resolve_default_provider(session: Session) -> tuple[str, str] | None:
 
     providers = session.exec(
         select(Provider)
-        .where(Provider.worker_type == "llm", Provider.enabled == True)  # noqa: E712
+        .where(Provider.worker_type.in_(["llm", "hybrid"]), Provider.enabled == True)  # noqa: E712
         # No ORDER BY means Postgres makes no ordering promise, so `providers[0]`
         # — the fallback whenever no provider matches the preferred-type test —
         # was whatever the plan happened to return. `resolve_default_provider()`
@@ -126,7 +126,7 @@ def resolve_default_provider(session: Session) -> tuple[str, str] | None:
 
     selected = (
         next(
-            (p for p in providers if p.type in ("direct_url", "openai_compat") or "local" in p.id.lower()),
+            (p for p in providers if p.type in ("direct_url", "openai_compat", "remote_hybrid", "remote_llm") or "local" in p.id.lower()),
             None,
         )
         or providers[0]
@@ -159,7 +159,7 @@ def _served_models(session: Session) -> set[str]:
     try:
         providers = session.exec(
             select(Provider).where(
-                Provider.worker_type == "llm",
+                Provider.worker_type.in_(["llm", "hybrid"]),
                 Provider.enabled == True,  # noqa: E712
             )
         ).all()
