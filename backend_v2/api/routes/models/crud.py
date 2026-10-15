@@ -252,13 +252,14 @@ async def add_model(
 
 
 
-@router.get("/directory/{directory}")
+@router.get("/directory/{directory:path}")
 async def list_models_by_directory(
     directory: str,
     service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """List models in a specific directory."""
-    return await service.list_models_by_directory(directory)
+    cleaned = directory.replace("models/", "", 1) if directory.startswith("models/") else directory
+    return await service.list_models_by_directory(cleaned)
 
 
 @router.get("/search")

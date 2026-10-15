@@ -636,7 +636,7 @@ class DirectComfyEngine(InProcessEngine):
         agent = self.get_agent_client()
         resp = await agent.post(
             "/validate-all-models",
-            json={"delete_invalid": delete_invalid},
+            json={"delete_invalid": delete_invalid, "fast": True},
             timeout=300.0,
         )
         if resp.status_code in (401, 403):

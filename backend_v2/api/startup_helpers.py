@@ -36,12 +36,15 @@ def configure_worker_pool() -> None:
             counts = {category: 0 for category in sorted(VALID_CATEGORIES)}
             for provider in enabled_providers:
                 # `category` is the `worker_type` column read through its proper
-                # name. An unrecognised value is counted under image, which is
-                # the column's default and the historical behaviour.
+                # name. Hybrid providers provide both image and LLM capability.
                 category = getattr(provider, "worker_type", "") or CATEGORY_IMAGE
-                if category not in counts:
-                    category = CATEGORY_IMAGE
-                counts[category] += 1
+                if category == "hybrid":
+                    counts[CATEGORY_IMAGE] += 1
+                    counts[CATEGORY_LLM] += 1
+                elif category in counts:
+                    counts[category] += 1
+                else:
+                    counts[CATEGORY_IMAGE] += 1
 
             sizing = {category: max(1, count) for category, count in counts.items()}
 

@@ -272,10 +272,12 @@ class UploadFileRequest(BaseModel):
 class ValidateModelsRequest(BaseModel):
     directory: str | List[str]
     delete_invalid: bool = False
+    fast: bool = True
 
 
 class ValidateAllModelsRequest(BaseModel):
     delete_invalid: bool = False
+    fast: bool = True
 
 
 def _data_path(requested_path: str) -> str:
@@ -715,7 +717,7 @@ async def download_model(req: DownloadRequest):
         return from_upstream(result)
 
 
-def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
+def _validate_dir(target_dir: str, delete_invalid: bool, fast: bool = True) -> Dict[str, Any]:
     empty = {
         "valid": [], "invalid": [], "partial": [], "indeterminate": [],
         "total_valid": 0, "total_invalid": 0, "total_partial": 0,
@@ -783,7 +785,24 @@ def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:
                     "issue": f"Could not stat file: {exc}",
                 })
                 continue
-            validation = validate_downloaded_file(full_path)
+            if fast:
+                if size < MIN_MODEL_SIZE:
+                    validation = {
+                        "valid": False,
+                        "indeterminate": False,
+                        "error": f"File too small: {size} bytes (min: {MIN_MODEL_SIZE})",
+                        "errors": [f"File too small: {size} bytes (min: {MIN_MODEL_SIZE})"],
+                        "format": name.split(".")[-1] if "." in name else "unknown",
+                    }
+                else:
+                    validation = {
+                        "valid": True,
+                        "indeterminate": False,
+                        "format": name.split(".")[-1] if "." in name else "unknown",
+                        "size": size,
+                    }
+            else:
+                validation = validate_downloaded_file(full_path)
             model_info = {"name": name, "path": rel_path, "size": size, "size_mb": round(size / (1024 ** 2), 1), "format": validation.get("format", "unknown")}
             if not validation["valid"]:
                 model_info["issues"] = validation.get("errors", [validation.get("error", "validation failed")])
@@ -1027,7 +1046,7 @@ async def validate_models(req: ValidateModelsRequest):
     # enough concurrent requests, to take every executor thread the single-process
     # agent has and stop the rig answering anything at all.
     payloads = await asyncio.gather(*[
-        _bounded_to_thread(_validate_dir, _data_path(d), req.delete_invalid)
+        _bounded_to_thread(_validate_dir, _data_path(d), req.delete_invalid, req.fast)
         for d in dirs
     ], return_exceptions=True)
     results = {"valid": [], "invalid": [], "partial": [], "indeterminate": [], "total_valid": 0, "total_invalid": 0, "total_partial": 0, "total_indeterminate": 0, "by_directory": {}}
@@ -1063,7 +1082,8 @@ async def validate_all_models(req: Optional[ValidateAllModelsRequest] = None):
     # every request without a body shared (and could mutate) one dict. The body
     # stays optional so `POST` with no payload still works.
     delete_invalid = req.delete_invalid if req is not None else False
-    return await validate_models(ValidateModelsRequest(directory=list(MODEL_DIRECTORIES), delete_invalid=delete_invalid))
+    fast = req.fast if req is not None else True
+    return await validate_models(ValidateModelsRequest(directory=list(MODEL_DIRECTORIES), delete_invalid=delete_invalid, fast=fast))
 
 
 # ---------------------------------------------------------------------------
