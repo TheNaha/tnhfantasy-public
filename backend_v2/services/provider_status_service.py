@@ -224,7 +224,8 @@ class ProviderStatusService:
         if provider is None:
             provider = await self.provider_service.get_provider(provider_id)
         worker_type = getattr(provider, "worker_type", None) or "image"
-        serves_image = getattr(provider, "serves", lambda t: t == "image")("image") if provider else True
+        serves_fn = getattr(provider, "serves", None)
+        serves_image = serves_fn("image") if callable(serves_fn) else (worker_type in ("image", "hybrid"))
         if worker_type not in ("image", "hybrid") and not serves_image:
             # Standalone LLM and TTS workers do not install image models. Reported as an
             # explicit zero rather than a real query so the card never shows a

@@ -159,6 +159,41 @@ def exclusive_path_lock(full_path: str) -> Iterator[_HeldPathLock]:
         os.close(handle)
 
 
+def _download_scratch_dir() -> Optional[str]:
+    scratch = os.getenv("PROVIDER_DOWNLOAD_SCRATCH_DIR", "").strip()
+    if scratch:
+        try:
+            os.makedirs(scratch, exist_ok=True)
+            return scratch
+        except OSError as exc:
+            logger.warning(f"Could not create PROVIDER_DOWNLOAD_SCRATCH_DIR {scratch!r}: {exc}")
+    return None
+
+
+def _replace_or_move(src: str, dst: str) -> None:
+    """Atomically replace dst with src, handling cross-device moves safely.
+
+    On the same filesystem, this is an atomic os.replace(2).
+    Across different filesystems (e.g. local NVMe SSD scratch -> Google Drive FUSE mount),
+    it copies to a transient .publishing file on the destination filesystem first,
+    atomically os.replace(2)s into place, and unlinks src.
+    """
+    os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+    try:
+        os.replace(src, dst)
+    except OSError as exc:
+        if exc.errno == errno.EXDEV:
+            dst_tmp = f"{dst}.{os.getpid()}.{uuid.uuid4().hex[:8]}.publishing"
+            shutil.copyfile(src, dst_tmp)
+            os.replace(dst_tmp, dst)
+            try:
+                os.remove(src)
+            except OSError:
+                pass
+        else:
+            raise
+
+
 def _unique_temp_path(full_path: str) -> str:
     """Per-attempt temp path.
 
@@ -166,7 +201,16 @@ def _unique_temp_path(full_path: str) -> str:
     attempts can no longer share a file, so interleaving is impossible. The
     previous deterministic `<path>.downloading` name was the root of the
     corruption described in exclusive_path_lock.
+
+    If PROVIDER_DOWNLOAD_SCRATCH_DIR is configured, the temp file is created in
+    that fast local scratch directory to protect network/FUSE mounts from high-I/O
+    saturation and disconnects during streaming downloads.
     """
+    scratch = _download_scratch_dir()
+    if scratch:
+        path_hash = hashlib.sha256(full_path.encode("utf-8", "replace")).hexdigest()[:8]
+        safe_name = os.path.basename(full_path)
+        return os.path.join(scratch, f"{safe_name}.{path_hash}.{os.getpid()}.{uuid.uuid4().hex[:8]}.downloading")
     return f"{full_path}.{os.getpid()}.{uuid.uuid4().hex[:8]}.downloading"
 
 
@@ -327,7 +371,7 @@ def _claim_resume_slot(full_path: str, temp_path: str) -> Tuple[Optional[str], i
 
     try:
         recovered = os.path.getsize(newest)
-        os.replace(newest, temp_path)
+        _replace_or_move(newest, temp_path)
     except OSError:
         return None, 0
     return identity, recovered
@@ -349,7 +393,7 @@ def _persist_partial(full_path: str, temp_path: str, identity: Optional[str]) ->
         return 0
 
     try:
-        os.replace(temp_path, _resume_slot_path(full_path, identity))
+        _replace_or_move(temp_path, _resume_slot_path(full_path, identity))
     except OSError as exc:
         # Keep the bytes where they are; the name still ends in .downloading so
         # delete_file and reconciliation can sweep it.
@@ -1118,13 +1162,9 @@ def _download_model_to_path_unlocked(
         actual_size = int(validation.get("size", on_disk))
         logger(f"[{log_prefix}] Validation passed: {detected_format}")
 
-        # `os.replace` is a single atomic `rename(2)` and already overwrites the
-        # destination. The `os.remove` in front of it opened a window in which
-        # the destination did not exist: a SIGKILL, an OOM-kill or a power loss
-        # between the two lines left neither the previously-good checkpoint nor
-        # the new one, and the resume slot had just been swept. Narrow window,
-        # total loss of a multi-GB artifact. `replace` is all that is needed.
-        os.replace(temp_path, full_path)
+        # `_replace_or_move` handles same-filesystem atomic rename and cross-device
+        # copies (e.g. fast local SSD scratch -> Google Drive FUSE) atomically.
+        _replace_or_move(temp_path, full_path)
         logger(f"[{log_prefix}] Moved to final path: {label}")
 
         # Nothing is left to resume now that the model is published.

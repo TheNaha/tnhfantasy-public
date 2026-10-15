@@ -110,6 +110,19 @@ SEED_MAX_CONCURRENT = int(os.getenv("REMOTE_AGENT_SEED_MAX_CONCURRENT", "3"))
 THREAD_MAX_CONCURRENT = int(os.getenv("REMOTE_AGENT_THREAD_MAX_CONCURRENT", "32"))
 _thread_semaphore: Optional[asyncio.Semaphore] = None
 
+# Concurrent /download-model requests. Defaults to 1 to protect remote network mounts
+# (e.g. Google Drive FUSE on Google Colab) from concurrent write saturation and
+# transport disconnects (Errno 107).
+DOWNLOAD_MAX_CONCURRENT = int(os.getenv("REMOTE_AGENT_DOWNLOAD_MAX_CONCURRENT", "1"))
+_download_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_download_semaphore() -> asyncio.Semaphore:
+    global _download_semaphore
+    if _download_semaphore is None:
+        _download_semaphore = asyncio.Semaphore(DOWNLOAD_MAX_CONCURRENT)
+    return _download_semaphore
+
 # Deadline on a single off-thread call.
 #
 # `_bounded_to_thread` bounded *concurrency* but not *time*: a thread whose peer
@@ -647,58 +660,59 @@ async def _download_registry_model(model_id: str):
 
 @app.post("/download-model", dependencies=[Depends(verify_token)])
 async def download_model(req: DownloadRequest):
-    if req.model_id:
-        # The registry path: name a model from models.json, and the repo and the
-        # destination are both derived rather than supplied.
-        return await _download_registry_model(req.model_id)
+    async with _get_download_semaphore():
+        if req.model_id:
+            # The registry path: name a model from models.json, and the repo and the
+            # destination are both derived rather than supplied.
+            return await _download_registry_model(req.model_id)
 
-    full_path = _data_path(req.path)
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        full_path = _data_path(req.path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
-    # download_model_to_path resolves HF/CivitAI tokens internally
-    # (build_authenticated_download_request), writes a `.downloading` temp file,
-    # validates the file (magic bytes / min size), then atomically renames —
-    # matching the Modal/Beam storage function semantics.
-    token = req.token or determine_download_token(req.url, HF_TOKEN, CIVITAI_TOKEN)
+        # download_model_to_path resolves HF/CivitAI tokens internally
+        # (build_authenticated_download_request), writes a `.downloading` temp file,
+        # validates the file (magic bytes / min size), then atomically renames —
+        # matching the Modal/Beam storage function semantics.
+        token = req.token or determine_download_token(req.url, HF_TOKEN, CIVITAI_TOKEN)
 
-    progress_dir = os.path.join(DATA_ROOT, "downloads")
-    os.makedirs(progress_dir, exist_ok=True)
-    safe_name = os.path.basename(full_path)
-    progress_file = os.path.join(progress_dir, f"{safe_name}.json")
+        progress_dir = os.path.join(DATA_ROOT, "downloads")
+        os.makedirs(progress_dir, exist_ok=True)
+        safe_name = os.path.basename(full_path)
+        progress_file = os.path.join(progress_dir, f"{safe_name}.json")
 
-    def progress_callback(payload: Dict[str, Any]):
-        try:
-            with open(progress_file, "w") as f:
-                json.dump(payload, f)
-        except Exception as exc:
-            logger.warning(f"progress_callback: could not write {progress_file}: {exc}")
+        def progress_callback(payload: Dict[str, Any]):
+            try:
+                with open(progress_file, "w") as f:
+                    json.dump(payload, f)
+            except Exception as exc:
+                logger.warning(f"progress_callback: could not write {progress_file}: {exc}")
 
-    def _do():
-        try:
-            return download_model_to_path(
-                url=req.url, full_path=full_path, path=req.path,
-                token=token, hf_token=HF_TOKEN, civitai_token=CIVITAI_TOKEN,
-                preview_url=req.preview_url, metadata=req.metadata,
-                log=print, log_prefix="Download",
-                progress_callback=progress_callback,
-                request_timeout_seconds=DOWNLOAD_TIMEOUT,
-            )
-        except Exception as e:
-            return failed(str(e))
+        def _do():
+            try:
+                return download_model_to_path(
+                    url=req.url, full_path=full_path, path=req.path,
+                    token=token, hf_token=HF_TOKEN, civitai_token=CIVITAI_TOKEN,
+                    preview_url=req.preview_url, metadata=req.metadata,
+                    log=print, log_prefix="Download",
+                    progress_callback=progress_callback,
+                    request_timeout_seconds=DOWNLOAD_TIMEOUT,
+                )
+            except Exception as e:
+                return failed(str(e))
 
-    result = await _bounded_to_thread(_do)
-    if os.path.exists(progress_file):
-        try:
-            os.remove(progress_file)
-        except OSError as exc:
-            logger.warning(f"could not remove progress file {progress_file}: {exc}")
-    # `from_upstream`, not a bare pass-through: `download_model_to_path` answers
-    # `{"status": "error", ...}` for a real failure, and forwarding that verbatim is
-    # one of the dialects the shared response module exists to remove. A non-dict
-    # return is a failure too, rather than an AttributeError three frames up.
-    if not isinstance(result, dict):
-        return failed("Download failed")
-    return from_upstream(result)
+        result = await _bounded_to_thread(_do)
+        if os.path.exists(progress_file):
+            try:
+                os.remove(progress_file)
+            except OSError as exc:
+                logger.warning(f"could not remove progress file {progress_file}: {exc}")
+        # `from_upstream`, not a bare pass-through: `download_model_to_path` answers
+        # `{"status": "error", ...}` for a real failure, and forwarding that verbatim is
+        # one of the dialects the shared response module exists to remove. A non-dict
+        # return is a failure too, rather than an AttributeError three frames up.
+        if not isinstance(result, dict):
+            return failed("Download failed")
+        return from_upstream(result)
 
 
 def _validate_dir(target_dir: str, delete_invalid: bool) -> Dict[str, Any]:

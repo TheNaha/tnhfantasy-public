@@ -4,6 +4,7 @@ from typing import Optional
 
 LOCK_SUFFIX = ".lock"
 DOWNLOADING_SUFFIX = ".downloading"
+PUBLISHING_SUFFIX = ".publishing"
 
 # Suffixes of files that live *beside* a model rather than being one.
 SIDECAR_SUFFIXES = (".json", ".preview.png", ".sha256", ".txt", ".yaml", ".yml")
@@ -25,7 +26,7 @@ SIDECAR_SUFFIXES = (".json", ".preview.png", ".sha256", ".txt", ".yaml", ".yml")
 # Unlinking the lock also defeats the lock: a second downloader `O_CREAT`s a new
 # inode, takes a *different* flock, and the interleaving corruption the lock
 # exists to prevent happens again.
-TRANSIENT_SUFFIXES = (LOCK_SUFFIX, DOWNLOADING_SUFFIX)
+TRANSIENT_SUFFIXES = (LOCK_SUFFIX, DOWNLOADING_SUFFIX, PUBLISHING_SUFFIX)
 
 
 def is_transient_artifact(name: str) -> bool:

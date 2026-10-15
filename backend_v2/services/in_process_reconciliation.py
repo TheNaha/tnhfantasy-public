@@ -62,6 +62,12 @@ def _max_concurrent_downloads(provider: Any = None) -> int:
             value = 0
         if value > 0:
             return value
+    # Default to 1 concurrent download for remote / hybrid providers to protect
+    # remote network storage (such as Google Drive FUSE) from transport disconnects.
+    worker_type = str(getattr(provider, "worker_type", "") or config.get("worker_type", "")).lower()
+    provider_type = str(getattr(provider, "type", "") or config.get("type", "")).lower()
+    if "remote" in provider_type or "remote" in worker_type or "hybrid" in worker_type:
+        return 1
     # Same default the container image workers reconciled under
     # (`MAX_CONCURRENT_DOWNLOADS=5` in image_worker/worker.py; the base
     # default of 2 never applied to them). Explicit per-provider
