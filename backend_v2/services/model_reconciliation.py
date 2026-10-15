@@ -1,5 +1,6 @@
 import re
 from typing import Any
+import unicodedata
 
 from sqlmodel import Session
 
@@ -86,7 +87,7 @@ class ModelReconciliationService:
         results = []
 
         for file_info in files:
-            storage_path = file_info.get("path", "")
+            storage_path = unicodedata.normalize("NFC", file_info.get("path") or "")
             size_bytes = file_info.get("size_bytes")
 
             if not storage_path:
@@ -94,7 +95,7 @@ class ModelReconciliationService:
                 results.append({"path": "", "file_id": None, "status": "error", "reason": "empty path"})
                 continue
 
-            if self.repo.is_tombstoned(storage_path):
+            if self.repo.is_tombstoned(storage_path) or self.repo.is_tombstoned(unicodedata.normalize("NFD", storage_path)):
                 skipped += 1
                 results.append({"path": storage_path, "file_id": None, "status": "deleted", "reason": "Tombstoned"})
                 continue
@@ -107,7 +108,7 @@ class ModelReconciliationService:
                 continue
 
             directory = "/".join(parts[:-1])
-            filename = parts[-1]
+            filename = unicodedata.normalize("NFC", parts[-1])
 
             try:
                 existing_file = self.repo.get_file_by_storage_path(directory, filename)

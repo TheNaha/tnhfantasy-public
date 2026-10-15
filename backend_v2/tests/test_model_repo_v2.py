@@ -379,3 +379,47 @@ class TestModelRepositoryV2Search:
         repo.create_model_with_versions(civitai_data, [67890])
         results = repo.get_models_by_type("LORA")
         assert len(results) == 0
+
+
+class TestModelRepositoryV2UnicodeNormalization:
+    def test_get_file_by_storage_path_matches_nfc_and_nfd(self, repo, session):
+        import unicodedata
+        from core.entities import ModelFile, ModelV2, ModelVersion
+
+        nfc_name = unicodedata.normalize("NFC", "ako_amau_天雨アコ_-_blue_archive_ブ_booru_430792.safetensors")
+        nfd_name = unicodedata.normalize("NFD", "ako_amau_天雨アコ_-_blue_archive_ブ_booru_430792.safetensors")
+        assert nfc_name != nfd_name
+
+        model = ModelV2(name="Ako", type="LORA", directory="loras")
+        session.add(model)
+        session.flush()
+
+        version = ModelVersion(model_id=model.id, name="v1.0", base_model="SDXL")
+        session.add(version)
+        session.flush()
+
+        file = ModelFile(
+            version_id=version.id,
+            original_filename=nfc_name,
+            storage_filename=nfc_name,
+            format="SafeTensor",
+            is_primary=True,
+            file_type="Model",
+        )
+        session.add(file)
+        session.commit()
+
+        # Looking up via NFD filename should find the NFC file record
+        found_via_nfd = repo.get_file_by_storage_path("loras", nfd_name)
+        assert found_via_nfd is not None
+        assert found_via_nfd.id == file.id
+
+        # Looking up via NFC filename should also find it
+        found_via_nfc = repo.get_file_by_storage_path("loras", nfc_name)
+        assert found_via_nfc is not None
+        assert found_via_nfc.id == file.id
+
+        # get_file_ids_by_storage_paths maps both NFC and NFD paths to file.id
+        path_map = repo.get_file_ids_by_storage_paths([f"models/loras/{nfd_name}"])
+        assert path_map.get(f"models/loras/{nfd_name}") == file.id
+        assert path_map.get(f"models/loras/{nfc_name}") == file.id

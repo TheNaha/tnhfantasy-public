@@ -292,3 +292,25 @@ class TestReconcilerStoragePathKeying:
 
         assert _storage_path_for_entry({"size": 12}, "models/checkpoints") is None
         assert _storage_path_for_entry({}, "models/checkpoints") is None
+
+    def test_decomposed_nfd_path_is_normalized_to_nfc(self):
+        """Filesystem returning NFD (e.g. Google Drive/Colab FUSE) is normalized to NFC."""
+        import unicodedata
+        from services.in_process_reconciliation import _storage_path_for_entry
+
+        nfd_filename = unicodedata.normalize("NFD", "ako_amau_天雨アコ_-_blue_archive_ブ_booru_430792.safetensors")
+        nfd_path = f"models/loras/{nfd_filename}"
+        assert nfd_filename != unicodedata.normalize("NFC", nfd_filename)
+
+        entry = {"name": nfd_filename, "path": nfd_path}
+        expected_nfc = unicodedata.normalize("NFC", nfd_path)
+        assert _storage_path_for_entry(entry, "models/loras") == expected_nfc
+
+    def test_decomposed_nfd_name_only_is_normalized_to_nfc(self):
+        import unicodedata
+        from services.in_process_reconciliation import _storage_path_for_entry
+
+        nfd_filename = unicodedata.normalize("NFD", "deltaデルタ_the_eminence_in_shado_v1_illustrious_1330640.safetensors")
+        entry = {"name": nfd_filename}
+        expected_nfc = unicodedata.normalize("NFC", f"models/loras/{nfd_filename}")
+        assert _storage_path_for_entry(entry, "models/loras") == expected_nfc

@@ -20,6 +20,7 @@ Step mapping to the container flow:
 import asyncio
 import os
 from typing import Any, Optional
+import unicodedata
 
 from core.events import emit_model_status_update, emit_model_sync_event
 from infrastructure.logging import get_logger
@@ -109,9 +110,9 @@ def _storage_path_for_entry(entry: dict[str, Any], directory: str) -> str | None
     """
     path = entry.get("path") or entry.get("storage_path")
     if path:
-        return str(path)
+        return unicodedata.normalize("NFC", str(path))
     name = entry.get("name")
-    return f"{directory}/{name}" if name else None
+    return unicodedata.normalize("NFC", f"{directory}/{name}") if name else None
 
 
 async def trigger_in_process_reconciliation(
@@ -356,7 +357,7 @@ async def _run_reconciliation(
 
             def _load_inputs() -> tuple[list[dict[str, Any]], set[str]]:
                 pending = model_service.reconciliation.get_pending_downloads(provider_id)
-                expected = set(model_service.repo.get_all_storage_paths())
+                expected = {unicodedata.normalize("NFC", p) for p in model_service.repo.get_all_storage_paths()}
                 return pending, expected
 
             pending_downloads, all_expected_paths = await asyncio.to_thread(_load_inputs)
@@ -453,7 +454,8 @@ async def _run_reconciliation(
                     chunk = paths[offset:offset + _BULK_WRITE_CHUNK]
                     path_to_id = model_service.repo.get_file_ids_by_storage_paths(chunk)
                     for storage_path in chunk:
-                        file_id = path_to_id.get(storage_path)
+                        norm_sp = unicodedata.normalize("NFC", storage_path)
+                        file_id = path_to_id.get(storage_path) or path_to_id.get(norm_sp)
                         if file_id is None:
                             continue
                         model_service.repo.update_provider_status(
@@ -484,14 +486,16 @@ async def _run_reconciliation(
                     paths = [i.get("storage_path") for i in chunk if i.get("file_id") is None and i.get("storage_path")]
                     path_to_id = model_service.repo.get_file_ids_by_storage_paths(paths) if paths else {}
                     for item in chunk:
-                        file_id = item.get("file_id") or path_to_id.get(item.get("storage_path") or "")
+                        sp = item.get("storage_path") or ""
+                        norm_sp = unicodedata.normalize("NFC", sp)
+                        file_id = item.get("file_id") or path_to_id.get(sp) or path_to_id.get(norm_sp)
                         if file_id is None:
                             continue
                         model_service.repo.update_provider_status(
                             file_id=file_id,
                             provider_id=provider_id,
                             status="ready",
-                            storage_path=item.get("storage_path"),
+                            storage_path=sp,
                             size_bytes=item.get("size_bytes"),
                             force_create=True,
                         )
@@ -499,7 +503,7 @@ async def _run_reconciliation(
             downloads_needed: list[dict[str, Any]] = []
             already_ready: list[dict[str, Any]] = []
             for file_info in pending_downloads:
-                storage_path = file_info.get("storage_path", "")
+                storage_path = unicodedata.normalize("NFC", file_info.get("storage_path", ""))
                 if storage_path in existing_files:
                     already_ready.append(
                         {
@@ -518,7 +522,7 @@ async def _run_reconciliation(
 
             # Safety net: every expected file present on storage reads ready,
             # even without a status row (post-cleanup, provider id change).
-            ready_paths = {item["storage_path"] for item in already_ready}
+            ready_paths = {unicodedata.normalize("NFC", item["storage_path"]) for item in already_ready}
             statusless = [
                 {"file_id": None, "status": "ready", "storage_path": path}
                 for path in all_expected_paths

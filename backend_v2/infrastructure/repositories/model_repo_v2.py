@@ -1,6 +1,7 @@
 # Model Repository V2 - Version-aware data access layer
 import json
 import re
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 
@@ -739,12 +740,15 @@ class ModelRepositoryV2:
     
     def get_file_by_storage_path(self, directory: str, filename: str) -> ModelFile | None:
         """Get a file by its storage path components."""
+        norm_nfc = unicodedata.normalize("NFC", filename)
+        norm_nfd = unicodedata.normalize("NFD", filename)
+        candidates = list(dict.fromkeys([filename, norm_nfc, norm_nfd]))
         stmt = select(ModelFile).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).join(
             ModelV2, ModelVersion.model_id == ModelV2.id
         ).where(
-            ModelFile.storage_filename == filename,
+            ModelFile.storage_filename.in_(candidates),
             ModelV2.directory == directory
         )
         return self.session.exec(stmt).first()
@@ -1602,16 +1606,24 @@ class ModelRepositoryV2:
             ModelV2, ModelVersion.model_id == ModelV2.id
         )
         if paths:
-            filenames = [p.split('/')[-1] for p in paths]
+            filenames = []
+            for p in paths:
+                fname = p.split('/')[-1]
+                filenames.extend([fname, unicodedata.normalize("NFC", fname), unicodedata.normalize("NFD", fname)])
+            filenames = list(dict.fromkeys(filenames))
             stmt = stmt.where(ModelFile.storage_filename.in_(filenames))
+
+        norm_paths = {unicodedata.normalize("NFC", p): p for p in paths} if paths else None
+
         for file, version, model in self.session.exec(stmt).all():
             storage_path = f"models/{model.directory}/{file.storage_filename}"
-            if paths and storage_path not in paths:
+            norm_storage_path = unicodedata.normalize("NFC", storage_path)
+            if norm_paths is not None and norm_storage_path not in norm_paths and storage_path not in norm_paths:
                 continue
             yield file, version, model, storage_path
 
     def get_all_storage_paths(self) -> list[str]:
-        return [p for _, _, _, p in self._iter_file_model_paths()]
+        return [unicodedata.normalize("NFC", p) for _, _, _, p in self._iter_file_model_paths()]
 
     def get_models_by_civitai_ids(self, civitai_ids: list[int]) -> list[ModelV2]:
         stmt = select(ModelV2).where(ModelV2.civitai_model_id.in_(civitai_ids))
@@ -1622,7 +1634,9 @@ class ModelRepositoryV2:
         return self.session.exec(stmt).all()
         
     def get_file_ids_by_storage_paths(self, paths: list[str]) -> dict[str, int]:
-        return {
-            path: file.id
-            for file, _, _, path in self._iter_file_model_paths(paths)
-        }
+        result = {}
+        for file, _, _, path in self._iter_file_model_paths(paths):
+            result[path] = file.id
+            result[unicodedata.normalize("NFC", path)] = file.id
+            result[unicodedata.normalize("NFD", path)] = file.id
+        return result
