@@ -1786,6 +1786,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Rewrite plaintext providers.credentials rows into the Fernet envelope written by services/credential_crypto.py, so the tokens that moved out of .env are not sitting in a database dump. A no-op when COMFY_CREDENTIAL_SECRET is unset — the backfill runs again on the next start once the operator has chosen a key",
             apply_fn=_migration_096_encrypt_provider_credentials,
         ),
+        MigrationStep(
+            version="097_provider_worker_type_hybrid",
+            description="Widen chk_providers_worker_type to allow hybrid; supports unified multi-modal workers (image + llm + tts) on a single provider row",
+            apply_fn=_migration_097_provider_worker_type_hybrid,
+        ),
     ]
 
 
@@ -4800,4 +4805,39 @@ def _migration_096_encrypt_provider_credentials(conn) -> bool:
         logger.info("migration_096_encrypt_provider_credentials_done", migrated=migrated)
     else:
         logger.info("migration_096_no_plaintext_rows")
+    return True
+
+
+def _migration_097_provider_worker_type_hybrid(conn) -> bool:
+    """Widen `chk_providers_worker_type` to allow `hybrid` for multi-modal workers."""
+    if conn.dialect.name != "postgresql":
+        return True
+
+    inspector = inspect(conn)
+    if "providers" not in set(inspector.get_table_names()):
+        return False
+
+    columns = {c["name"] for c in inspector.get_columns("providers")}
+    if "worker_type" not in columns:
+        return False
+
+    row = conn.execute(
+        text(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conname = 'chk_providers_worker_type'"
+        )
+    ).fetchone()
+    if row and "'hybrid'" in str(row[0]):
+        return True
+
+    conn.execute(
+        text("ALTER TABLE providers DROP CONSTRAINT IF EXISTS chk_providers_worker_type")
+    )
+    conn.execute(
+        text(
+            "ALTER TABLE providers ADD CONSTRAINT chk_providers_worker_type "
+            "CHECK (worker_type IN ('image', 'llm', 'tts', 'hybrid'))"
+        )
+    )
+    logger.info("provider_worker_type_constraint_widened", added="hybrid")
     return True

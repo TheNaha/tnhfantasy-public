@@ -61,6 +61,8 @@ def _normalize_capabilities(
     """
     if value is None:
         current = list(getattr(existing, "capabilities", None) or [])
+        if not current and worker_type == "hybrid":
+            return ["image", "llm", "tts"]
         return current or [worker_type]
 
     if not isinstance(value, (list, tuple, set)):
@@ -80,7 +82,7 @@ def _normalize_capabilities(
     # renders them and how a diff reads.
     seen: set[str] = set()
     ordered = [c for c in declared if not (c in seen or seen.add(c))]
-    return ordered or [worker_type]
+    return ordered or (["image", "llm", "tts"] if worker_type == "hybrid" else [worker_type])
 
 
 def _infer_worker_type(provider_id: str, provider_type: str, explicit: str | None = None) -> str:
@@ -91,6 +93,8 @@ def _infer_worker_type(provider_id: str, provider_type: str, explicit: str | Non
         return "llm"
     if str(provider_id).lower().startswith("llm") or str(provider_type).lower().startswith("llm"):
         return "llm"
+    if str(provider_type).lower() == "remote_hybrid" or "hybrid" in str(provider_type).lower():
+        return "hybrid"
     return "image"
 
 

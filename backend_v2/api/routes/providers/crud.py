@@ -52,8 +52,8 @@ router = APIRouter()
 # `declared_capabilities` rather than reusing the name `capabilities`, which on
 # the read path is the unrelated UI action map (`container`, `deploy`, `setup`,
 # ...) that the frontend has always consumed under that key.
-WorkerType = Literal["image", "llm", "tts"]
-DeclaredCapability = Literal["image", "llm", "tts"]
+WorkerType = Literal["image", "llm", "tts", "hybrid"]
+DeclaredCapability = Literal["image", "llm", "tts", "hybrid"]
 
 
 class ProviderRequest(BaseModel):

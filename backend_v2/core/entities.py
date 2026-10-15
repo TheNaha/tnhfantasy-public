@@ -222,8 +222,8 @@ class Provider(SQLModel, table=True):
     @field_validator("worker_type")
     @classmethod
     def _validate_worker_type(cls, value: str) -> str:
-        if value not in VALID_TASK_TYPES:
-            raise ValueError(f"worker_type must be one of {sorted(VALID_TASK_TYPES)}, got {value!r}")
+        if value not in VALID_CATEGORIES and value != "":
+            raise ValueError(f"worker_type must be one of {sorted(VALID_CATEGORIES)}, got {value!r}")
         return value
 
     @field_validator("capabilities")
