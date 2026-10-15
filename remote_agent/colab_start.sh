@@ -270,11 +270,7 @@ if [ "$PUBLIC_MODE" = "netbird" ]; then
   # reader next to you, from the thing you were just warned about above.
   if ! command -v netbird >/dev/null 2>&1; then
     echo "==> fetching netbird"
-    NB_ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
-    NB_DEB="/tmp/netbird_${NB_ARCH}.deb"
-    curl -fsSL "https://github.com/netbirdio/netbird/releases/latest/download/netbird_${NB_ARCH}.deb" \
-      -o "$NB_DEB"
-    dpkg -i "$NB_DEB" >/dev/null
+    curl -fsSL https://pkgs.netbird.io/install.sh | sh
   fi
   netbird version || echo "    (netbird installed)"
 

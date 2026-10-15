@@ -288,7 +288,7 @@ def _is_sidecar(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 WORKER_MODE = os.getenv("WORKER_MODE", "model").strip().lower()
-WORKER_MODES = ("model", "llm", "tts")
+WORKER_MODES = ("model", "llm", "tts", "hybrid")
 
 if WORKER_MODE not in WORKER_MODES:
     raise RuntimeError(
@@ -311,6 +311,7 @@ MODE_DATA_ENV = {
     "model": "DATA_DIR",
     "llm": "LLM_DATA_DIR",
     "tts": "TTS_DATA_DIR",
+    "hybrid": "DATA_DIR",
 }
 
 #: The storage root for THIS worker mode. `MODEL_DIRECTORIES` and every provider
@@ -380,6 +381,46 @@ async def health():
     return {"status": "healthy"}
 
 
+def _detect_gpu() -> dict:
+    """Query GPU device info and total VRAM via PyTorch or nvidia-smi."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            name = torch.cuda.get_device_name(0)
+            total_bytes = torch.cuda.get_device_properties(0).total_memory
+            return {
+                "available": True,
+                "name": name,
+                "vram_total_mb": int(total_bytes / (1024 * 1024)),
+                "count": torch.cuda.device_count(),
+            }
+    except Exception:
+        pass
+
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+        ).decode().strip()
+        if out:
+            line = out.splitlines()[0]
+            parts = [p.strip() for p in line.split(",")]
+            name = parts[0]
+            vram_mb = int(parts[1]) if len(parts) > 1 else 0
+            return {
+                "available": True,
+                "name": name,
+                "vram_total_mb": vram_mb,
+                "count": len(out.splitlines()),
+            }
+    except Exception:
+        pass
+
+    return {"available": False, "name": "None", "vram_total_mb": 0, "count": 0}
+
+
 def _topology() -> dict:
     """Where this container reads, writes and serves—the whole picture.
 
@@ -404,6 +445,7 @@ def _topology() -> dict:
         "worker_mode": WORKER_MODE,
         "storage_root": os.path.abspath(DATA_ROOT),
         "storage_root_env": DATA_ROOT_ENV,
+        "gpu": _detect_gpu(),
     }
     if WORKER_MODE == "llm":
         info["llm_serving"] = "upstream" if UPSTREAM_OVERRIDE else "local"

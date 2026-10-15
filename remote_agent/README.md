@@ -133,6 +133,16 @@ With no weights present the worker starts healthy and `/info` reports each role
 either side shows an actionable state instead of a crash-loop to infer from
 retries.
 
+## `WORKER_MODE=hybrid` runs Image + LLM + TTS concurrently
+
+A hybrid worker runs ComfyUI (`:8188`), the storage agent (`:8001`), and `llama-server` (`:8003`) on a single hardware node (such as Google Colab Pro, a local multi-modal workstation, or a dedicated GPU server).
+
+The backend's `remote_hybrid` engine inspects the node's GPU capabilities via the `/info` endpoint and schedules jobs according to the chosen hardware concurrency policy:
+- **`exclusive`**: Cooperative VRAM mutual exclusion. Ideal for budget 16-24GB cards (L4, T4). ComfyUI calls `/free` after image generation to flush CUDA cache before LLM tasks execute.
+- **`semi_concurrent`**: Co-locates RP chat and ComfyUI image tasks simultaneously; utility tasks swap exclusively (ideal for A100 40GB).
+- **`concurrent`**: Unconstrained parallel multi-modal processing (ideal for A100 80GB and H100).
+- **`auto`**: Auto-detects the GPU via `/info` and applies the policy based on reported VRAM.
+
 Fetch a model's weights, by registry id (repo and destination both come from
 `models.json`, so a typo cannot land a file where llama-server will not find it):
 
@@ -181,6 +191,18 @@ would drift, a second copy of the parser is not.
 
 ## Google Colab
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TheNaha/TNHComfy/blob/main/remote_agent/TNHComfy_Colab_Worker.ipynb)
+
+A ready-to-use Jupyter Notebook is provided at [`remote_agent/TNHComfy_Colab_Worker.ipynb`](TNHComfy_Colab_Worker.ipynb) (and copied to repo root [`TNHComfy_Colab_Worker.ipynb`](../TNHComfy_Colab_Worker.ipynb)). It provides a graphical Colab Form with step-by-step cells for:
+1. **Google Drive Persistence & GPU Detection**: Mounts `/content/drive/MyDrive` to persist NetBird configuration, bearer tokens, and model directories.
+2. **Private Repository Access**: Clones the private TNHComfy repository using your GitHub Personal Access Token (`GITHUB_TOKEN` from form or Colab Secrets).
+3. **NetBird by Default with Static IP**: Saves `/var/lib/netbird` to Google Drive upon initial setup so the setup key is only required **once**. On subsequent runs, it reconnects automatically with the **same static WireGuard IP** without burning peer licenses.
+4. **Google Drive ComfyUI Integration**: Directly mounts and runs your existing ComfyUI workspace from Google Drive (`/content/drive/MyDrive/comfyui` copied from Modal). All checkpoints, LoRAs, VAEs, and custom nodes are immediately available without re-downloading.
+5. **Multi-Model LLM Parity**: Serves curated roleplay (`rp`) and utility/tool (`util`) models matching `backend_v2/modal_llm/models.json` via CUDA-accelerated `llama-server`.
+6. **Zero Duplicate Secrets**: `HF_TOKEN` and `CIVITAI_TOKEN` are resolved on-demand directly from your TNHComfy backend per request.
+7. **Connection Card & Keep-Alive**: Renders a styled HTML card with connection parameters, and includes an inaudible audio context keep-alive to prevent Colab idle timeouts.
+
+Alternatively, if you prefer running via a direct bash script in a single cell:
 `colab_start.sh` runs the agent directly in a notebook runtime — no Docker, no
 Python, no GPU-adjacent host required — and exposes it through a Cloudflare quick
 tunnel so the backend can reach it:
