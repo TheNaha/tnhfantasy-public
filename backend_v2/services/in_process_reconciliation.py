@@ -813,6 +813,11 @@ async def _run_reconciliation(
                                 count=len(deletion_candidates),
                             )
 
+            try:
+                await emit_model_status_update(provider_id=provider_id, file_id=None, status="batch_updated")
+            except Exception as exc:
+                logger.warning("in_process_reconcile_batch_update_emit_failed", provider_id=provider_id, error=str(exc))
+
             await push_state("completed", phase="completed", message="Reconciliation complete!")
             logger.info("in_process_reconcile_done", provider_id=provider_id, stats=stats)
         except Exception as exc:

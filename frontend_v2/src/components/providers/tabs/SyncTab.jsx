@@ -103,7 +103,13 @@ export default function SyncTab({
                 )}
             </div>
 
-            {modelDelta > 0 && !isReconciling && (
+            {dbModels === 0 && storageModels > 0 && !isReconciling && (
+                <Notice
+                    tone="yellow"
+                    message={`Provider storage contains ${storageModels} models, but DB sync has not been registered yet. Click Reconcile to synchronize models with the database.`}
+                />
+            )}
+            {dbModels > 0 && modelDelta > 0 && !isReconciling && reconciliationStatus !== 'completed' && (
                 <Notice
                     tone="yellow"
                     message={`Model count mismatch detected: DB reports ${dbModels} while provider storage reports ${storageModels}. Run reconciliation to align state.`}

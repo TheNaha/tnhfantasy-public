@@ -1353,4 +1353,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", "8001"))
     _warn_insecure_bind()
-    uvicorn.run(app, host=_resolve_bind_host(), port=port)
+    uvicorn.run(app, host=_resolve_bind_host(), port=port, access_log=True, log_level="info")

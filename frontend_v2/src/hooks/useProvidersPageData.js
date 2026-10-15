@@ -174,7 +174,11 @@ async function ensureProvidersRealtime(queryClient) {
 
         unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_STARTED, patchReconciliation));
         unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_PROGRESS, patchReconciliation));
-        unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_COMPLETED, patchReconciliation));
+        unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_COMPLETED, (event) => {
+            patchReconciliation(event);
+            queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
+            queryClient.invalidateQueries({ queryKey: ['models'] });
+        }));
         unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_FAILED, () => {
             // An engine failure has no progress payload to patch in, so
             // `patchReconciliation` would be a no-op. Refetch instead: the card
