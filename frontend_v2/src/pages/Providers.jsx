@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Download, Plus, RefreshCw, Search, Wrench } from 'lucide-react';
+import { Download, Plus, RefreshCw, Rocket, Search, Wrench } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import ProviderListItem from '../components/providers/ProviderListItem';
@@ -7,6 +7,7 @@ import ProviderDetailPanel from '../components/providers/ProviderDetailPanel';
 import LoadBalancerBar from '../components/providers/LoadBalancerBar';
 import ProviderModal from '../components/providers/ProviderModal';
 import AddModelToProviderModal from '../components/providers/AddModelToProviderModal';
+import ActionOutputModal from '../components/providers/ActionOutputModal';
 import { useConfirmation } from '../store/confirmationStore';
 import { providersApi } from '../api';
 import { summarizeProviderStatus } from '../utils/providerStatus';
@@ -18,6 +19,7 @@ const FILTERS = [
     { id: 'image', label: 'Image' },
     { id: 'llm', label: 'LLM' },
     { id: 'tts', label: 'Voice' },
+    { id: 'hybrid', label: 'Hybrid' },
     { id: 'issues', label: 'Needs Attention' },
 ];
 
@@ -29,6 +31,8 @@ export default function Providers() {
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState('all');
     const [selectedProviderId, setSelectedProviderId] = useState(null);
+    const [drawerTab, setDrawerTab] = useState('runtime');
+    const [actionOutput, setActionOutput] = useState(null);
     const { confirm } = useConfirmation();
 
     const {
@@ -78,15 +82,18 @@ export default function Providers() {
                 provider.credential_summary?.account_label,
             ].filter(Boolean).some((value) => value.toLowerCase().includes(query));
 
-            const hasIssues = (provider.diagnostics?.warnings?.length || 0) > 0
+            const hasIssues = provider.enabled && (
+                (provider.diagnostics?.warnings?.length || 0) > 0
                 || (provider.diagnostics?.errors?.length || 0) > 0
-                || (provider.reconciliation_state?.status === 'failed');
+                || (provider.reconciliation_state?.status === 'failed')
+            );
 
             const matchesFilter = (
                 filter === 'all'
                 || (filter === 'image' && (provider.worker_type === 'image' || (!provider.worker_type && !provider.capabilities?.length) || (Array.isArray(provider.capabilities) && provider.capabilities.includes('image'))))
                 || (filter === 'llm' && (provider.worker_type === 'llm' || (Array.isArray(provider.capabilities) && provider.capabilities.includes('llm'))))
                 || (filter === 'tts' && (provider.worker_type === 'tts' || (Array.isArray(provider.capabilities) && provider.capabilities.includes('tts'))))
+                || (filter === 'hybrid' && (provider.worker_type === 'hybrid' || (Array.isArray(provider.capabilities) && provider.capabilities.length > 1)))
                 || (filter === 'issues' && hasIssues)
             );
 
@@ -116,8 +123,28 @@ export default function Providers() {
         try {
             const result = await setupProvider(providerId);
             toast.success(result.message || 'Provider setup completed');
-        } catch (error) { toast.error(`Setup failed: ${error.message}`); }
+            setActionOutput({
+                title: `Setup: ${providerId}`,
+                status: 'success',
+                message: result.message || 'Provider setup completed',
+                details: JSON.stringify(result, null, 2),
+            });
+        } catch (error) {
+            toast.error(`Setup failed: ${error.message}`);
+            setActionOutput({
+                title: `Setup: ${providerId}`,
+                status: 'failed',
+                message: error.message,
+                details: error?.response?.data ? JSON.stringify(error.response.data, null, 2) : error.stack || error.message,
+            });
+        }
     };
+    const handleDeployProvider = (provider) => {
+        if (!provider) return;
+        setSelectedProviderId(provider.id);
+        setDrawerTab('deploy');
+    };
+
     const handleDelete = async (providerId) => {
         // Destructive and immediate — no confirmation was wired up, so a stray
         // click on the delete icon removed the provider and its model status
@@ -164,6 +191,7 @@ export default function Providers() {
 
     // ── Stats helpers ──
     const onlineCount = providers.filter((p) => summarizeProviderStatus(p).isOnline).length;
+    const pausedCount = providers.filter((p) => !p.enabled).length;
 
     return (
         <motion.div
@@ -180,6 +208,9 @@ export default function Providers() {
                     {providers.length} provider{providers.length !== 1 ? 's' : ''} configured
                     {onlineCount > 0 && (
                         <span className="text-emerald-400 font-bold ml-1">· {onlineCount} online</span>
+                    )}
+                    {pausedCount > 0 && (
+                        <span className="text-gray-400 font-medium ml-1">· {pausedCount} paused</span>
                     )}
                 </p>
             </div>
@@ -203,6 +234,7 @@ export default function Providers() {
                     Cleanup
                 </button>
             </div>
+
 
             {/* ── Load Balancer Bar ── */}
             <LoadBalancerBar
@@ -269,10 +301,14 @@ export default function Providers() {
                                         provider={provider}
                                         actionLabel={actionLoading[provider.id] ?? null}
                                         isSelected={selectedProviderId === provider.id}
-                                        onSelect={(id) => setSelectedProviderId(selectedProviderId === id ? null : id)}
+                                        onSelect={(id) => {
+                                            setSelectedProviderId(selectedProviderId === id ? null : id);
+                                            setDrawerTab('runtime');
+                                        }}
                                         onToggleEnabled={handleToggleEnabled}
                                         onEdit={() => setEditingProvider(provider)}
                                         onDelete={() => handleDelete(provider.id)}
+                                        onDeploy={handleDeployProvider}
                                         providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
                                         jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
                                     />
@@ -290,10 +326,14 @@ export default function Providers() {
                                         provider={provider}
                                         actionLabel={actionLoading[provider.id] ?? null}
                                         isSelected={selectedProviderId === provider.id}
-                                        onSelect={(id) => setSelectedProviderId(selectedProviderId === id ? null : id)}
+                                        onSelect={(id) => {
+                                            setSelectedProviderId(selectedProviderId === id ? null : id);
+                                            setDrawerTab('runtime');
+                                        }}
                                         onToggleEnabled={handleToggleEnabled}
                                         onEdit={() => setEditingProvider(provider)}
                                         onDelete={() => handleDelete(provider.id)}
+                                        onDeploy={handleDeployProvider}
                                         providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
                                         jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
                                     />
@@ -334,7 +374,11 @@ export default function Providers() {
                 {selectedProvider && (
                     <ProviderDetailPanel
                         provider={selectedProvider}
-                        onClose={() => setSelectedProviderId(null)}
+                        initialTab={drawerTab}
+                        onClose={() => {
+                            setSelectedProviderId(null);
+                            setDrawerTab('runtime');
+                        }}
                         loading={actionLoading[selectedProvider.id]}
                         onReconcile={() => handleReconcile(selectedProvider.id)}
                         onQuickSync={() => handleQuickSync(selectedProvider.id)}
@@ -348,6 +392,9 @@ export default function Providers() {
                             if (accepted) executeResetStatus(selectedProvider.id);
                         }}
                         onSetup={() => handleSetup(selectedProvider.id)}
+                        onDeploy={() => {
+                            setDrawerTab('deploy');
+                        }}
                         providerFailures={providerStatsMap.get(selectedProvider.id)?.failures ?? 0}
                         jobsAssigned={providerStatsMap.get(selectedProvider.id)?.jobs_assigned ?? 0}
                     />
@@ -368,6 +415,13 @@ export default function Providers() {
                 <AddModelToProviderModal
                     providers={providers}
                     onClose={() => setShowAddModelModal(false)}
+                />
+            )}
+
+            {actionOutput && (
+                <ActionOutputModal
+                    output={actionOutput}
+                    onClose={() => setActionOutput(null)}
                 />
             )}
         </motion.div>

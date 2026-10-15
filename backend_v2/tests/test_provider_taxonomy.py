@@ -11,10 +11,12 @@ import pytest
 
 from core.entities import (
     CATEGORY_CLAIM_TASK_TYPES,
+    CATEGORY_HYBRID,
     CATEGORY_IMAGE,
     CATEGORY_LLM,
     CATEGORY_TTS,
     VALID_CATEGORIES,
+    VALID_TASK_TYPES,
     Provider,
 )
 from services.engines.registry import (
@@ -28,14 +30,14 @@ from services.engines.registry import (
 
 
 class TestTheMatrix:
-    def test_all_twelve_cells_are_declared(self):
-        """3 categories x 4 transports, all present — including the empty ones."""
+    def test_all_sixteen_cells_are_declared(self):
+        """4 categories x 4 transports, all present — including the empty ones."""
         assert set(PROVIDER_MATRIX) == set(TRANSPORTS)
         for transport, columns in PROVIDER_MATRIX.items():
             assert set(columns) == VALID_CATEGORIES, (
                 f"transport {transport!r} does not declare every category"
             )
-        assert len(matrix_cells()) == 12
+        assert len(matrix_cells()) == 16
 
     def test_every_filled_cell_names_a_real_spec(self):
         for cell in matrix_cells():
@@ -99,6 +101,7 @@ class TestTransportResolution:
         ("remote_comfy", "remote"),
         ("remote_llm", "remote"),
         ("remote_tts", "remote"),
+        ("remote_hybrid", "remote"),
         ("direct_url", "direct"),
         ("direct_tts", "direct"),
         ("openai_compat", "direct"),
@@ -186,7 +189,7 @@ class TestOneClaimSetPerCategory:
 
     def test_every_task_type_has_exactly_one_home(self):
         homes = [t for ts in CATEGORY_CLAIM_TASK_TYPES.values() for t in ts]
-        assert sorted(homes) == sorted(VALID_CATEGORIES)
+        assert sorted(homes) == sorted(VALID_TASK_TYPES)
 
 
 class TestTheSchemasEndpointServesTheGrid:
@@ -211,7 +214,7 @@ class TestTheSchemasEndpointServesTheGrid:
 
         assert "engines" in body and "categories" in body
         assert len(body["transports"]) == 4
-        assert len(body["matrix"]) == 12
+        assert len(body["matrix"]) == 16
 
         # Every cell the matrix declares must actually be servable: a filled
         # cell whose type is missing from `engines` is a choice the provider
@@ -255,6 +258,7 @@ class TestTheSchemasEndpointServesTheGrid:
             ("remote_llm", CATEGORY_LLM),
             ("remote_tts", CATEGORY_TTS),
             ("direct_tts", CATEGORY_TTS),
+            ("remote_hybrid", CATEGORY_HYBRID),
         ):
             is_beam = type_id.startswith("beam")
             provider = Provider(
@@ -272,12 +276,12 @@ class TestTheSchemasEndpointServesTheGrid:
                 f"{type_id} validates as a provider but the factory cannot build "
                 "its engine — a user could save it and every job would fail"
             )
-            # And it must actually be one of the five new engine classes.
+            # And it must actually be one of the six new engine classes.
             engine = get_engine(f"{type_id}-x", provider)
             assert engine is not None
             assert type(engine).__name__ in (
                 "BeamLLMEngine", "BeamTTSEngine", "RemoteLLMEngine",
-                "RemoteTTSEngine", "DirectTTSEngine",
+                "RemoteTTSEngine", "DirectTTSEngine", "HybridRemoteEngine",
             ), f"{type_id} resolved to {type(engine).__name__}"
 
     def test_an_unknown_type_degrades_to_its_category_not_to_a_broken_row(self):

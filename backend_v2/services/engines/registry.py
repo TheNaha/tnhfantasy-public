@@ -40,6 +40,7 @@ TRANSPORTS = (TRANSPORT_MODAL, TRANSPORT_BEAM, TRANSPORT_REMOTE, TRANSPORT_DIREC
 CATEGORY_IMAGE = "image"
 CATEGORY_LLM = "llm"
 CATEGORY_TTS = "tts"
+CATEGORY_HYBRID = "hybrid"
 
 #: transport -> (category -> provider type id), or None where the cell is empty.
 #: A cell may name a *family* — a tuple of types that share the cell and differ
@@ -51,16 +52,19 @@ PROVIDER_MATRIX: Dict[str, Dict[str, Optional[str]]] = {
         CATEGORY_IMAGE: "modal",
         CATEGORY_LLM: "modal_llm",
         CATEGORY_TTS: "modal_tts",
+        CATEGORY_HYBRID: None,
     },
     TRANSPORT_BEAM: {
         CATEGORY_IMAGE: "beam",
         CATEGORY_LLM: "beam_llm",
         CATEGORY_TTS: "beam_tts",
+        CATEGORY_HYBRID: None,
     },
     TRANSPORT_REMOTE: {
         CATEGORY_IMAGE: "remote_comfy",
         CATEGORY_LLM: "remote_llm",
         CATEGORY_TTS: "remote_tts",
+        CATEGORY_HYBRID: "remote_hybrid",
     },
     TRANSPORT_DIRECT: {
         CATEGORY_IMAGE: "direct_url",
@@ -71,6 +75,7 @@ PROVIDER_MATRIX: Dict[str, Dict[str, Optional[str]]] = {
         # OpenRouter) is a real option, not a gap.
         CATEGORY_LLM: ("openai_compat", "ollama", "anthropic", "google"),
         CATEGORY_TTS: "direct_tts",
+        CATEGORY_HYBRID: None,
     },
 }
 
@@ -120,6 +125,13 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
             {"key": "gpu_url", "label": "GPU Realtime / Webhook URL", "type": "text", "required": True, "placeholder": "https://...beam.run"},
             {"key": "storage_url", "label": "Storage REST App URL", "type": "text", "required": True, "placeholder": "https://...beam.run"},
             {"key": "download_url", "label": "Downloader URL (Optional)", "type": "text", "required": False, "placeholder": "Defaults to Storage URL"},
+            # The engine reads this for `/object_info` and it has no form field,
+            # so it fell back to `storage_url` — which serves no `/object_info`
+            # and 404s. The node catalogue was therefore broken for every Beam
+            # provider created through the Providers modal, while
+            # `scripts/deploy.sh` and `deployables/README.md` both told the
+            # operator to publish the URL they had no way to enter.
+            {"key": "extractor_url", "label": "Extractor REST URL", "type": "text", "required": False, "placeholder": "https://...beam.run"},
             {"key": "gpu_type", "label": "GPU Accelerator Type", "type": "select", "default": "RTX4090", "options": ["RTX4090", "A10G", "A100", "H100"]},
         ],
         "aliases": {
@@ -311,7 +323,18 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
             {"key": "token_secret", "label": "Modal Token Secret", "type": "password", "required": True, "placeholder": "as-..."},
         ],
         "config": [
-            {"key": "app_name", "label": "Modal App Name", "type": "text", "default": "comfy-modal-vllm", "placeholder": "comfy-modal-vllm"},
+            # `tnh-llm` is what `deployables/modal/llm/app.py` publishes
+            # (`APP_NAME`). This default is not cosmetic: the Providers modal
+            # seeds every save from the schema defaults
+            # (`ProviderModal.schemaConfigDefaults`), and `engine_factory`
+            # reads `config["app_name"]` BEFORE its own fallback. A wrong
+            # default here is therefore the app every UI-created `modal_llm`
+            # provider dials, and the engine's own `tnh-llm` fallback becomes
+            # unreachable through the UI. It read `comfy-modal-vllm` — the name
+            # of the deleted vLLM-era worker — until `test_deployable_contract`
+            # compared it against the deployable.
+            {"key": "app_name", "label": "Modal App Name", "type": "text", "default": "tnh-llm", "placeholder": "tnh-llm"},
+            {"key": "cls_name", "label": "Modal Class Name", "type": "text", "default": "ChatLLM", "placeholder": "ChatLLM"},
             {"key": "model", "label": "Model ID", "type": "text", "placeholder": "Model ID"},
         ],
         "aliases": {
@@ -465,6 +488,33 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         ],
         "aliases": {"credentials": {}, "config": {}},
     },
+    "remote_hybrid": {
+        "id": "remote_hybrid",
+        "transport": "remote",
+        "name": "Self-hosted Hybrid Worker",
+        "category": "hybrid",
+        "worker_type": "hybrid",
+        "capabilities": ["image", "llm", "tts"],
+        "description": "Unified self-hosted worker running ComfyUI (image/TTS) and llama-server (LLM) on a single GPU node. Supports auto-detected hardware capability markers and VRAM scheduling.",
+        "engine": "HybridRemoteEngine",
+        "manages_model_files": True,
+        "credentials": [
+            {"key": "agent_token", "label": "Service Token", "type": "password", "required": True},
+            {"key": "hf_token", "label": "HuggingFace Token", "type": "password", "required": False},
+            {"key": "civitai_token", "label": "CivitAI Token", "type": "password", "required": False},
+        ],
+        "config": [
+            {"key": "base_url", "label": "Worker Host URL (NetBird / Tunnel)", "type": "text", "required": True, "placeholder": "http://100.x.x.x"},
+            {"key": "comfy_port", "label": "ComfyUI Port", "type": "number", "default": 8188},
+            {"key": "agent_port", "label": "Agent Port", "type": "number", "default": 8001},
+            {"key": "llm_port", "label": "LLM Port", "type": "number", "default": 8003},
+            {"key": "concurrency_policy", "label": "Concurrency / VRAM Policy", "type": "select", "options": ["auto", "exclusive", "semi_concurrent", "concurrent"], "default": "auto", "help_text": "auto: auto-detect from GPU VRAM. exclusive: VRAM swap for L4/T4. semi_concurrent: concurrent RP + Comfy for A100-40GB. concurrent: unconstrained for A100-80GB."},
+        ],
+        "aliases": {
+            "credentials": {"agent_token": ["remote_agent_token", "token"]},
+            "config": {"base_url": ["url", "agent_url", "remote_agent_url"]},
+        },
+    },
 
 }
 
@@ -581,6 +631,8 @@ _ID_PREFIXES = (
     ("beam_llm_", "beam_llm"),
     ("beam-tts-", "beam_tts"),
     ("beam_tts_", "beam_tts"),
+    ("remote-hybrid-", "remote_hybrid"),
+    ("remote_hybrid_", "remote_hybrid"),
     ("remote-llm-", "remote_llm"),
     ("remote_llm_", "remote_llm"),
     ("remote-tts-", "remote_tts"),
@@ -604,6 +656,8 @@ _ID_PREFIXES = (
 
 def _capability_fallback(capabilities, worker_type: str) -> Optional[str]:
     caps = set(capabilities or [])
+    if worker_type == "hybrid" or ("image" in caps and "llm" in caps):
+        return "remote_hybrid"
     if "tts" in caps and "image" not in caps:
         return "modal_tts"
     if worker_type == "llm" or "llm" in caps:
@@ -649,6 +703,8 @@ def resolve_provider_type(
         if pid.startswith(prefix):
             return target
     lowered = pid.lower()
+    if "remote-hybrid" in lowered or "remote_hybrid" in lowered:
+        return "remote_hybrid"
     if "remote-comfy" in lowered or "remote_comfy" in lowered:
         return "remote_comfy"
     if "direct" in lowered:
@@ -664,7 +720,7 @@ def resolve_provider_type(
 #: cells are here because `RemoteAgentFileMixin` implements setup for all
 #: three, which is what closes the modal/remote parity gap.
 _SUPPORTS_SETUP = frozenset({
-    "modal", "beam", "direct_url", "remote_comfy", "modal_llm",
+    "modal", "beam", "direct_url", "remote_comfy", "modal_llm", "remote_hybrid",
     # Direct TTS shares DirectComfyEngine's no-op setup; a rig with no model
     # tree still answers True so the provider page's setup action does nothing
     # harmful rather than failing. The rest of the new cells host a container

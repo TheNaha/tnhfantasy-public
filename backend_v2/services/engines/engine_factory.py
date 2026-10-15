@@ -25,6 +25,7 @@ from services.engines.llm_engine import (
 )
 from services.engines.modal_engine import HAS_MODAL, ModalEngine, resolve_enable_memory_snapshot
 from services.engines.modal_tts_engine import ModalTTSEngine
+from services.engines.hybrid_engine import HybridRemoteEngine
 from services.engines.worker_transport_engines import (
     BeamLLMEngine,
     BeamTTSEngine,
@@ -183,7 +184,7 @@ def can_create_engine(provider: Any) -> bool:
 
     # Self-hosted containers: a service token and a URL. The same keys the image
     # agent sidecar uses, so a provider row written for one works for the other.
-    if rtype in ("remote_llm", "remote_tts"):
+    if rtype in ("remote_llm", "remote_tts", "remote_hybrid"):
         service_token = (
             creds.get("agent_token")
             or creds.get("token")
@@ -194,13 +195,16 @@ def can_create_engine(provider: Any) -> bool:
             or os.getenv("REMOTE_AGENT_TOKEN")
         )
         container_url = (
-            config.get("agent_url")
+            config.get("base_url")
+            or config.get("agent_url")
             or config.get("remote_agent_url")
             or config.get("url")
+            or creds.get("base_url")
             or creds.get("agent_url")
             or creds.get("remote_agent_url")
             or env_vars.get("AGENT_URL")
             or env_vars.get("REMOTE_AGENT_URL")
+            or env_vars.get("BASE_URL")
             or os.getenv("AGENT_URL")
             or os.getenv("REMOTE_AGENT_URL")
         )
@@ -322,7 +326,7 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
             session = get_session_sync()
             try:
                 repo = ProviderRepository(session)
-                provider = repo.get_by_id(provider_id)
+                provider = repo.get(provider_id)
             finally:
                 session.close()
         except Exception as exc:
@@ -555,6 +559,73 @@ def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InP
                     or ""
                 ),
             )
+        _ENGINE_CACHE[provider_id] = engine
+        return engine
+
+    # 2b2. Remote Hybrid Engine (unified Image + LLM + TTS on a single node)
+    if rtype == "remote_hybrid":
+        base_url = (
+            config.get("base_url")
+            or config.get("agent_url")
+            or config.get("url")
+            or creds.get("base_url")
+            or creds.get("agent_url")
+            or env_vars.get("AGENT_URL")
+            or env_vars.get("BASE_URL")
+            or os.getenv("AGENT_URL")
+            or "http://localhost"
+        )
+        service_token = (
+            creds.get("agent_token")
+            or creds.get("token")
+            or creds.get("remote_agent_token")
+            or env_vars.get("AGENT_TOKEN")
+            or env_vars.get("REMOTE_AGENT_TOKEN")
+            or os.getenv("AGENT_TOKEN")
+            or os.getenv("REMOTE_AGENT_TOKEN")
+            or ""
+        )
+        engine = HybridRemoteEngine(
+            provider_id=provider_id,
+            base_url=base_url,
+            agent_token=service_token,
+            comfy_url=config.get("comfy_url") or creds.get("comfy_url"),
+            agent_url=config.get("agent_url") or creds.get("agent_url"),
+            llm_url=config.get("llm_url") or creds.get("llm_url"),
+            comfy_port=int(config.get("comfy_port") or 8188),
+            agent_port=int(config.get("agent_port") or 8001),
+            llm_port=int(config.get("llm_port") or 8003),
+            concurrency_policy=config.get("concurrency_policy") or "auto",
+            hf_token=(
+                creds.get("hf_token")
+                or env_vars.get("HF_TOKEN")
+                or os.getenv("HF_TOKEN")
+                or ""
+            ),
+            civitai_token=(
+                creds.get("civitai_token")
+                or env_vars.get("CIVITAI_TOKEN")
+                or os.getenv("CIVITAI_TOKEN")
+                or ""
+            ),
+            default_model=(
+                config.get("default_model")
+                or config.get("model")
+                or env_vars.get("LLM_MODEL")
+                or os.getenv("LLM_MODEL")
+                or "default"
+            ),
+            default_rp_model=(
+                config.get("default_rp_model")
+                or config.get("rp_model")
+                or "rp"
+            ),
+            default_util_model=(
+                config.get("default_util_model")
+                or config.get("util_model")
+                or "util"
+            ),
+        )
         _ENGINE_CACHE[provider_id] = engine
         return engine
 

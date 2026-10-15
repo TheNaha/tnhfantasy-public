@@ -95,16 +95,17 @@ TERMINAL_JOB_STATUSES = (
 CATEGORY_IMAGE = "image"
 CATEGORY_LLM = "llm"
 CATEGORY_TTS = "tts"
+CATEGORY_HYBRID = "hybrid"
 
 VALID_TASK_TYPES = {CATEGORY_IMAGE, CATEGORY_LLM, CATEGORY_TTS}
-VALID_CATEGORIES = VALID_TASK_TYPES  # same three values, said properly
+VALID_CATEGORIES = {CATEGORY_IMAGE, CATEGORY_LLM, CATEGORY_TTS, CATEGORY_HYBRID}
 
 #: Categories whose workloads run as a ComfyUI graph — model files, a workflow
 #: dict, node-level progress. The remaining category (`llm`) is a plain HTTP
 #: protocol endpoint. Kept under its old name because providers/crud.py and
 #: tests reference it; it is a *category* set, not an engine-type set, and TTS
 #: belongs to it for the reason above.
-ENGINE_TASK_TYPES = {CATEGORY_IMAGE, CATEGORY_TTS}
+ENGINE_TASK_TYPES = {CATEGORY_IMAGE, CATEGORY_TTS, CATEGORY_HYBRID}
 COMFY_CATEGORIES = ENGINE_TASK_TYPES
 CONTAINER_TASK_TYPES = ENGINE_TASK_TYPES  # backward-compat alias
 

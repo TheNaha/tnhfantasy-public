@@ -243,3 +243,19 @@ export function providerBadgeToneClass(stage) {
     };
     return map[stage] || map.offline;
 }
+
+export function getDeployTargetForProvider(provider) {
+    if (!provider) return null;
+    const type = provider.type || '';
+    if (type === 'modal' || type === 'modal_image') return 'image';
+    if (type === 'modal_llm') return 'llm';
+    if (type === 'modal_tts') return 'tts';
+    if (type.startsWith('beam')) return 'beam';
+    if (provider.transport === 'modal') {
+        if (provider.worker_type === 'llm') return 'llm';
+        if (provider.worker_type === 'tts') return 'tts';
+        return 'image';
+    }
+    if (provider.transport === 'beam') return 'beam';
+    return null;
+}

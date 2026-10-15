@@ -5,6 +5,7 @@ import {
     Loader2,
     Power,
     PowerOff,
+    Rocket,
     Server,
     Trash2,
     ChevronRight,
@@ -12,6 +13,7 @@ import {
 import {
     providerBadgeToneClass,
     summarizeProviderStatus,
+    getDeployTargetForProvider,
 } from '../../utils/providerStatus';
 
 const EMPTY_OBJECT = Object.freeze({});
@@ -93,6 +95,7 @@ function ProviderListItem({
     onToggleEnabled,
     onEdit,
     onDelete,
+    onDeploy,
     providerFailures = 0,
     jobsAssigned = 0,
 }) {
@@ -184,8 +187,11 @@ function ProviderListItem({
                             P{provider.priority}
                         </span>
                         {!provider.enabled && (
-                            <span className="flex-shrink-0 rounded-lg bg-gray-500/10 border border-gray-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-gray-400 shadow-inner">
-                                Disabled
+                            <span
+                                className="flex-shrink-0 rounded-lg bg-gray-500/10 border border-gray-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-gray-400 shadow-inner"
+                                title="Intentionally paused. Excluded from load balancer routing."
+                            >
+                                Paused
                             </span>
                         )}
                         {!['online', 'offline', 'configured', 'disabled'].includes(statusSummary.stage) && (
@@ -193,8 +199,11 @@ function ProviderListItem({
                                 {statusSummary.label}
                             </span>
                         )}
-                        {hasIssues && (
-                            <span className="flex-shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-amber-300 shadow-inner">
+                        {provider.enabled && hasIssues && (
+                            <span
+                                className="flex-shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-amber-300 shadow-inner"
+                                title="Issues detected on this active provider"
+                            >
                                 ⚠
                             </span>
                         )}
@@ -205,7 +214,27 @@ function ProviderListItem({
                         )}
                     </div>
                     <div className="flex items-center gap-2 text-xs font-medium text-gray-500">
-                        <span className="uppercase tracking-widest">{provider.worker_type === 'llm' ? 'LLM' : provider.type} provider</span>
+                        <span className="uppercase tracking-widest">
+                            {provider.worker_type === 'llm'
+                                ? 'LLM'
+                                : provider.worker_type === 'hybrid'
+                                    ? 'Hybrid (All-in-One)'
+                                    : provider.type} provider
+                        </span>
+                        {provider.capabilities && provider.capabilities.length > 1 && (
+                            <span className="flex items-center gap-1">
+                                {provider.capabilities.map((cap) => (
+                                    <span key={cap} className="rounded bg-gray-800 border border-gray-700 px-1.5 py-0.2 text-[10px] text-gray-300 uppercase">
+                                        {cap}
+                                    </span>
+                                ))}
+                            </span>
+                        )}
+                        {provider.config?.concurrency_policy && (
+                            <span className="rounded bg-indigo-950/60 border border-indigo-800/40 px-1.5 py-0.2 text-[10px] text-indigo-300">
+                                Policy: {provider.config.concurrency_policy}
+                            </span>
+                        )}
                         {credentialSummary.account_label && (
                             <>
                                 <span className="text-gray-700">·</span>
@@ -214,8 +243,11 @@ function ProviderListItem({
                         )}
                     </div>
                     {statusSummary.message && (
-                        <p className="mt-1.5 truncate text-2xs font-medium text-gray-400/80" title={statusSummary.message}>
-                            {statusSummary.message}
+                        <p
+                            className="mt-1.5 truncate text-2xs font-medium text-gray-400/80"
+                            title={provider.enabled ? statusSummary.message : 'Intentionally paused — excluded from load balancer'}
+                        >
+                            {provider.enabled ? statusSummary.message : 'Intentionally paused — excluded from load balancer'}
                         </p>
                     )}
                     </div>
@@ -308,6 +340,25 @@ function ProviderListItem({
                     >
                         <Edit2 size={16} />
                     </button>
+                    {(() => {
+                        const deployTarget = getDeployTargetForProvider(provider);
+                        if (!deployTarget || !onDeploy) return null;
+                        const label = deployTarget === 'image' ? 'Image' : deployTarget === 'llm' ? 'LLM' : deployTarget === 'tts' ? 'TTS' : 'Beam';
+                        return (
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDeploy?.(provider);
+                                }}
+                                className="rounded-xl p-2.5 text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 hover:text-purple-300 transition-all duration-300"
+                                title={`Deploy ${label} Worker`}
+                                aria-label={`Deploy ${label} Worker`}
+                            >
+                                <Rocket size={16} />
+                            </button>
+                        );
+                    })()}
                     <button
                         type="button"
                         onClick={(e) => {

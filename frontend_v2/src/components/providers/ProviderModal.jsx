@@ -31,6 +31,7 @@ const CATEGORY_LABEL = {
     image: 'Image Generation',
     llm: 'Language Models',
     tts: 'Voice & Audio',
+    hybrid: 'Hybrid (All-in-One)',
 };
 
 // Display names for the fallback path, keyed by provider type id.
@@ -38,7 +39,7 @@ const FALLBACK_TYPE_NAMES = {
     modal: 'Modal (ComfyUI)', modal_tts: 'Modal (TTS)', modal_llm: 'Modal (LLM)',
     beam: 'Beam (ComfyUI)', beam_llm: 'Beam (LLM)', beam_tts: 'Beam (TTS)',
     remote_comfy: 'Container (ComfyUI + agent)', remote_llm: 'Self-hosted LLM container',
-    remote_tts: 'Self-hosted TTS container',
+    remote_tts: 'Self-hosted TTS container', remote_hybrid: 'Remote Hybrid (Image + LLM + TTS)',
     direct_url: 'Direct ComfyUI server', direct_tts: 'Direct ComfyUI (TTS)',
     openai_compat: 'Direct: OpenAI-compatible API', ollama: 'Direct: Ollama / LM Studio',
     anthropic: 'Direct: Anthropic Claude', google: 'Direct: Google Gemini',
@@ -47,10 +48,10 @@ const FALLBACK_TYPE_NAMES = {
 // (transport, category) -> provider type id. Mirrors the backend's
 // PROVIDER_MATRIX; the API's own `matrix` replaces this once loaded.
 const FALLBACK_MATRIX = {
-    modal:   { image: 'modal',          llm: null,                    tts: 'modal_tts' },
-    beam:    { image: 'beam',           llm: 'beam_llm',              tts: 'beam_tts' },
-    remote:  { image: 'remote_comfy',   llm: 'remote_llm',            tts: 'remote_tts' },
-    direct:  { image: 'direct_url',     llm: null,                    tts: 'direct_tts' },
+    modal:   { image: 'modal',          llm: null,                    tts: 'modal_tts',   hybrid: null },
+    beam:    { image: 'beam',           llm: 'beam_llm',              tts: 'beam_tts',    hybrid: null },
+    remote:  { image: 'remote_comfy',   llm: 'remote_llm',            tts: 'remote_tts',  hybrid: 'remote_hybrid' },
+    direct:  { image: 'direct_url',     llm: null,                    tts: 'direct_tts',  hybrid: null },
 };
 
 // Worker-type fallback for the save payload before schemas load.
@@ -59,6 +60,7 @@ const FALLBACK_WORKER_TYPE = {
     modal_llm: 'llm', beam_llm: 'llm', remote_llm: 'llm',
     openai_compat: 'llm', ollama: 'llm', anthropic: 'llm', google: 'llm',
     modal_tts: 'tts', beam_tts: 'tts', remote_tts: 'tts', direct_tts: 'tts',
+    remote_hybrid: 'hybrid',
 };
 
 // Defaults contributed by a schema's config fields (checkboxes, selects,
@@ -221,7 +223,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
             // TTS — keyed on the CATEGORY, not the option value: `order` is
             // keyed by category, so indexing it by a provider type id gave 0 for
             // every row and the sort was a silent no-op.
-            const order = { image: 0, llm: 1, tts: 2 };
+            const order = { image: 0, llm: 1, tts: 2, hybrid: 3 };
             // `??`, NOT `||`: `order['image']` is 0, and `0 || 9` is 9 — the
             // legitimate value for Image is falsy, so `||` ranks it LAST. No
             // error, just the three categories quietly reading LLM, TTS, Image.
@@ -259,6 +261,8 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         const effectiveWorkerType = currentSchema?.worker_type
             || FALLBACK_WORKER_TYPE[formData.type]
             || 'image';
+        const declaredCapabilities = currentSchema?.capabilities
+            || (effectiveWorkerType === 'hybrid' ? ['image', 'llm', 'tts'] : [effectiveWorkerType]);
         const engineConfig = { ...(formData.deploy_config || {}) };
         // Container-era baggage is never written: the backend resolves
         // in-process engines from credentials + engine config alone.
@@ -267,7 +271,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
             id: formData.id.trim(),
             type: formData.type,
             worker_type: effectiveWorkerType,
-            declared_capabilities: [effectiveWorkerType],
+            declared_capabilities: declaredCapabilities,
             enabled: formData.enabled,
             priority: Number(formData.priority) || 1,
             config: {

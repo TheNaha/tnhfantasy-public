@@ -301,6 +301,7 @@ def get_provider_schemas():
             {"id": "image", "label": "Image Generation", "icon": "image"},
             {"id": "llm", "label": "Language Models (LLM)", "icon": "message-square"},
             {"id": "tts", "label": "Voice & Audio (TTS)", "icon": "mic"},
+            {"id": "hybrid", "label": "Hybrid (Image + LLM + TTS)", "icon": "layers"},
         ],
         "transports": [
             {"id": "modal", "label": "Modal (serverless)", "icon": "cloud"},
@@ -338,21 +339,40 @@ def _raise_for_save_errors(
 
 
 @router.post("/test-connection")
-async def test_provider_connection(request: TestConnectionRequest):
+async def test_provider_connection(
+    request: TestConnectionRequest,
+    session: Session = Depends(get_session),
+):
     """Test connection and authentication for an engine configuration without saving."""
     from services.engines.engine_factory import can_create_engine, get_engine, invalidate_engine
 
     schema = ENGINE_SCHEMAS.get(request.type)
     worker_type = schema.get("worker_type", "image") if schema else "image"
+    capabilities = schema.get("capabilities", [worker_type]) if schema else [worker_type]
+    
+    merged_creds = dict(request.credentials or {})
+    merged_config = dict(request.config or {})
+    if request.id and request.id != "test-provider":
+        from infrastructure.repositories import ProviderRepository
+        repo = ProviderRepository(session)
+        existing = repo.get(request.id)
+        if existing:
+            for k, v in (existing.credentials or {}).items():
+                if k not in merged_creds or not merged_creds[k]:
+                    merged_creds[k] = v
+            for k, v in (existing.config or {}).items():
+                if k not in merged_config or merged_config[k] is None:
+                    merged_config[k] = v
+
     # uuid4: two rapid clicks on Test must never share a factory-cache key.
     temp_id = f"__test_conn_{uuid.uuid4().hex}__"
     mock_provider = SimpleNamespace(
         id=temp_id,
         type=request.type,
         worker_type=worker_type,
-        capabilities=[worker_type],
-        credentials=request.credentials,
-        config=request.config,
+        capabilities=capabilities,
+        credentials=merged_creds,
+        config=merged_config,
     )
 
     if not can_create_engine(mock_provider):
