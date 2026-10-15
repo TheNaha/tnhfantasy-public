@@ -305,8 +305,8 @@ class HybridRemoteEngine(InProcessEngine):
     async def validate_models(self, directories: Optional[List[str]] = None, delete_invalid: bool = False) -> Dict[str, Any]:
         return await self.image_engine.validate_models(directories=directories, delete_invalid=delete_invalid)
 
-    async def validate_all_models(self, delete_invalid: bool = False) -> Dict[str, Any]:
-        return await self.image_engine.validate_all_models(delete_invalid=delete_invalid)
+    async def validate_all_models(self, directories: Optional[List[str]] = None, delete_invalid: bool = False) -> Dict[str, Any]:
+        return await self.image_engine.validate_all_models(directories=directories, delete_invalid=delete_invalid)
 
     async def download_file(self, download_url: str, storage_path: str, token: Optional[str] = None, timeout: float = 1800.0) -> Dict[str, Any]:
         return await self.image_engine.download_file(download_url, storage_path, token=token, timeout=timeout)

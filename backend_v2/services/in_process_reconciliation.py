@@ -328,7 +328,10 @@ async def _run_reconciliation(
                     # non-200 instead of reporting a clean sweep).
                     validate_all = getattr(engine, "validate_all_models", None)
                     if callable(validate_all):
-                        validation_result = await validate_all(MODEL_DIRECTORIES, True)
+                        try:
+                            validation_result = await validate_all(MODEL_DIRECTORIES, True)
+                        except TypeError:
+                            validation_result = await validate_all(delete_invalid=True)
                     else:
                         try:
                             validation_result = await engine.validate_models(MODEL_DIRECTORIES, True)
