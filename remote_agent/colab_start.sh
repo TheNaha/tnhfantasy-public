@@ -275,6 +275,21 @@ if [ "$PUBLIC_MODE" = "netbird" ]; then
   fi
   netbird version || echo "    (netbird installed)"
 
+  # ── Ensure TUN node & Daemon in non-systemd environments ─────────────────
+  if [ ! -e /dev/net/tun ]; then
+    mkdir -p /dev/net
+    mknod /dev/net/tun c 10 200 2>/dev/null || true
+    chmod 600 /dev/net/tun 2>/dev/null || true
+  fi
+  if ! netbird status >/dev/null 2>&1; then
+    mkdir -p /var/log/netbird /var/run /var/lib/netbird
+    pkill -9 -f 'netbird service run' || true
+    netbird service run --log-file /var/log/netbird/client.log \
+      ${NETBIRD_MANAGEMENT_URL:+--management-url "$NETBIRD_MANAGEMENT_URL"} \
+      >/var/log/netbird/service.log 2>&1 &
+    sleep 2
+  fi
+
   # ── Join ─────────────────────────────────────────────────────────────────
   #
   # `--hostname` is what makes the peer identifiable in the dashboard, and a
