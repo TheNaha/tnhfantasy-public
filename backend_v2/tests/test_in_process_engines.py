@@ -1,3 +1,4 @@
+import json
 """
 Tests for In-Process Compute Engines and Integration.
 
@@ -15,7 +16,7 @@ import pytest
 
 from core.entities import JobStatus, Provider
 from services.engines.base import InProcessEngine
-from services.engines.direct_comfy_engine import DirectComfyEngine
+from services.engines.direct_comfy_engine import DirectComfyEngine, DirectTTSEngine
 from services.engines.engine_factory import (
     ENGINE_CACHE_TTL_SECONDS,
     _ENGINE_CACHE,
@@ -127,6 +128,181 @@ class TestDirectComfyEngine:
         assert engine.provider_id == "direct-local"
         assert engine.comfy_url == "http://127.0.0.1:8188"
         assert engine.api_key == "secret-key"
+
+    @pytest.mark.asyncio
+    async def test_a_job_envelope_is_unwrapped_before_posting_to_prompt(self):
+        """`build_voice_speak_workflow` returns an envelope, not a graph.
+
+        `job_runner` hands `job.workflow` through verbatim, so posting it as the
+        prompt sent ComfyUI a graph whose node keys were `prompt`,
+        `client_id` and `type` — none of them integers — and `validate_prompt`
+        rejected the whole thing. Every `direct_tts` job was a 400 on a rig
+        that was otherwise working. The Modal twin has unwrapped this since the
+        beginning; this engine did not.
+        """
+        engine = DirectComfyEngine("direct-tts", "http://127.0.0.1:8188")
+        graph = {"10": {"class_type": "QwenTTSSpeak", "inputs": {"text": "hi"}}}
+        envelope = {"prompt": graph, "client_id": None, "type": "tts"}
+
+        with patch.object(engine, "get_http_client") as mock_client_fn:
+            client = AsyncMock()
+            client.post.return_value = MagicMock(
+                status_code=200, json=lambda: {"prompt_id": "p1"}, text=""
+            )
+            mock_client_fn.return_value = client
+
+            with patch(
+                "services.engines.direct_comfy_engine._ws_connect_with_retry"
+            ) as ws_ctx:
+                ws = AsyncMock()
+                ws_ctx.return_value.__aenter__.return_value = ws
+                ws.recv.side_effect = asyncio.CancelledError
+
+                with pytest.raises((asyncio.CancelledError, Exception)):
+                    [e async for e in engine.inference(envelope, job_id="j1")]
+
+            posted = client.post.call_args_list[0]
+            assert posted.args[0] == "/prompt"
+            assert posted.kwargs["json"]["prompt"] == graph, (
+                "the envelope reached /prompt instead of the graph it wraps"
+            )
+
+    def test_a_bare_graph_is_posted_unchanged(self):
+        """Image jobs carry the bare graph; the unwrap must not touch them."""
+        graph = {"3": {"class_type": "KSampler", "inputs": {}}}
+        assert (graph.get("prompt") if isinstance(graph.get("prompt"), dict) else graph) is graph
+
+    @pytest.mark.asyncio
+    async def test_audio_outputs_are_not_looked_for_under_images(self):
+        """`SaveAudio` publishes `outputs[<node>]["audio"]`, never `images`.
+
+        The history walk only read `images`, so a TTS history document yielded
+        nothing: `completed` with `outputs: []`, which finalises the job green
+        with no clip attached to the message.
+        """
+        engine = DirectTTSEngine("direct-tts", "http://127.0.0.1:8188")
+        captured = {}
+
+        import services.engines.direct_comfy_engine as mod
+
+        client = AsyncMock()
+
+        async def _post(path, **kwargs):
+            captured["path"] = path
+            captured["json"] = kwargs.get("json")
+            return MagicMock(status_code=200, json=lambda: {"prompt_id": "p1"}, text="")
+
+        async def _get(path, **kwargs):
+            if path.startswith("/history/"):
+                return MagicMock(status_code=200, json=lambda: {
+                    "p1": {"outputs": {"11": {"audio": [
+                        {"filename": "tts_abc.wav", "subfolder": "chat_tts/1/2", "type": "output"}
+                    ]}}, "status": {"completed": True}}
+                })
+            return MagicMock(status_code=200, content=b"RIFF", headers={})
+
+        client.post.side_effect = _post
+        client.get.side_effect = _get
+
+        import contextlib
+
+        # One real terminal frame. This exercises BOTH fixes at once: the
+        # `execution_success` handler (which is what ends the wait now that
+        # ComfyUI no longer sends `executing {node: null}`) and the history
+        # walk that reads `audio`.
+        frames = [
+            json.dumps({"type": "execution_success", "data": {"prompt_id": "p1"}}),
+        ]
+
+        async def _recv():
+            if frames:
+                return frames.pop(0)
+            raise asyncio.CancelledError
+
+        async def _noop(*_a, **_k):
+            return None
+
+        @contextlib.asynccontextmanager
+        async def _ws(*_a, **_k):
+            yield SimpleNamespace(recv=_recv, send=_noop)
+
+        with patch.object(engine, "get_http_client", return_value=client), \
+             patch.object(mod, "_ws_connect_with_retry", _ws):
+            events = [e async for e in engine.inference(
+                {"prompt": {"11": {"class_type": "SaveAudio"}}}, job_id="j-tts"
+            )]
+
+        completed = [e for e in events if e["event"] == "completed"]
+        assert completed, f"no completed event: {events}"
+        outputs = completed[0]["outputs"]
+        assert outputs, "TTS completed with no outputs; the clip would never be attached"
+        assert outputs[0]["filename"] == "tts_abc.wav"
+        assert outputs[0]["subfolder"] == "chat_tts/1/2"
+        assert outputs[0]["type"] == "audio"
+        # A ref, not inline bytes: `build_job_outputs` opens every payload with
+        # PIL and cannot write a WAV, so the proven path is the one
+        # ModalTTSEngine already takes — pull the bytes through get_file_stream.
+        assert "data" not in outputs[0]
+
+    @pytest.mark.asyncio
+    async def test_the_loop_ends_on_execution_success_without_waiting_for_the_stall(self):
+        """The frame ComfyUI actually sends, and the one it stopped sending.
+
+        The loop's only exit used to be `executing` with `node is None`.
+        ComfyUI emits `executing` only while a real node is running and finishes
+        with `execution_success`, so every job waited out the full 300 s stall
+        timeout before the history probe broke the loop — and any generation
+        slower than that was reported `failed / workflow_stalled / retryable`
+        while ComfyUI was still executing it, which then re-ran a workflow that
+        had already succeeded.
+        """
+        engine = DirectComfyEngine("direct-1", "http://127.0.0.1:8188")
+        client = AsyncMock()
+        client.post.return_value = MagicMock(
+            status_code=200, json=lambda: {"prompt_id": "p1"}, text=""
+        )
+        client.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"p1": {"outputs": {"9": {"images": [
+                {"filename": "out.png", "subfolder": "", "type": "output"}
+            ]}}, "status": {"completed": True}}},
+            content=b"PNG", headers={},
+        )
+
+        import contextlib
+
+        import services.engines.direct_comfy_engine as mod
+
+        frames = [json.dumps({"type": "execution_success", "data": {"prompt_id": "p1"}})]
+
+        async def _recv():
+            if frames:
+                return frames.pop(0)
+            raise asyncio.CancelledError
+
+        async def _noop(*_a, **_k):
+            return None
+
+        @contextlib.asynccontextmanager
+        async def _ws(*_a, **_k):
+            yield SimpleNamespace(recv=_recv, send=_noop)
+
+        with patch.object(engine, "get_http_client", return_value=client), \
+             patch.object(mod, "_ws_connect_with_retry", _ws):
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            engine.stall_timeout = 30.0  # a stall would be unmistakable
+            events = [e async for e in engine.inference(
+                {"3": {"class_type": "KSampler"}}, job_id="j-img"
+            )]
+            elapsed = loop.time() - started
+
+        assert [e["event"] for e in events][-1] == "completed"
+        assert not any(e["event"] == "failed" for e in events), events
+        assert elapsed < 5.0, (
+            f"took {elapsed:.1f}s — the loop waited for the stall timeout rather "
+            f"than breaking on execution_success"
+        )
 
     @pytest.mark.asyncio
     async def test_check_health_healthy(self):

@@ -664,6 +664,15 @@ class ModalLlamaCPPEngine(InProcessEngine):
             "latency_ms": latency_ms,
             "engine": "modal_llm",
             "app_name": self.app_name,
+            # The verdict is CONFIG validity. `ChatLLM.health()` exists on the
+            # app and would answer for real, but calling it boots a GPU
+            # container, and a health check that bills GPU on every poll is not
+            # a health check. Said out loud so the Providers page renders this
+            # as "configured", never as "reachable" — `modal-zetsuke` read
+            # plain green for two months while `get_file` failed against a
+            # deployment whose `FileStorage` predated the engine's rename.
+            "probed": False,
+            "check": "config_only",
         }
 
     async def get_info(self) -> dict[str, Any]:
@@ -812,7 +821,11 @@ class ModalLlamaCPPEngine(InProcessEngine):
             func = modal.Function.from_name(self.app_name, "validate_models", client=client)
             result = await asyncio.wait_for(
                 func.remote.aio(target, delete_invalid),
-                timeout=300.0,
+                # Matches the app's own `VALIDATE_TIMEOUT`. The two were chosen
+                # independently and disagreed by 2x, so a long sweep was
+                # abandoned here and reported as a validation failure — which
+                # reads as "your models are broken", not "the scan was slow".
+                timeout=600.0,
             )
             return normalize_validation_result(result, target)
         except EngineAuthError:

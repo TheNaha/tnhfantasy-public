@@ -29,6 +29,11 @@ from services.engines.base import (
     retryable_for_status,
 )
 
+# The node whose `voice` input this engine feeds, and whose enum therefore IS
+# the catalogue. Same constant the graph builder uses, imported rather than
+# re-spelled — a rename of the pack must move both or neither.
+from services.tts_workflow_builder import NODE_SPEAK
+
 logger = get_logger("direct_comfy_engine")
 
 _STREAM_CHUNK_BYTES = 1024 * 1024  # 1 MiB
@@ -943,10 +948,23 @@ class DirectComfyEngine(InProcessEngine):
         try:
             async with _ws_connect_with_retry(ws_url, extra_headers) as ws:
                 # Submit workflow via POST /prompt
+                #
+                # Unwrap the job envelope when there is one. Image jobs carry
+                # the bare graph, but `tts_workflow_builder` returns
+                # `{"prompt": {...}, "client_id": ..., "type": "tts"}` and
+                # `job_runner` hands `job.workflow` through verbatim — so
+                # posting `workflow` as the prompt sent ComfyUI a graph whose
+                # node keys were `prompt`, `client_id` and `type`. Those are
+                # not integers, `validate_prompt` rejects the lot, and every
+                # `direct_tts` job failed 400 on a rig that was working
+                # perfectly. The Modal twin has unwrapped this since the start
+                # (`modal/tts/app.py`: `workflow_json.get("prompt",
+                # workflow_json)`); this engine never did.
+                graph = workflow.get("prompt") if isinstance(workflow.get("prompt"), dict) else workflow
                 prompt_resp = await client.post(
                     "/prompt",
-                    json={"prompt": workflow, "client_id": client_id},
-                    timeout=10.0,
+                    json={"prompt": graph, "client_id": client_id},
+                    timeout=30.0,
                 )
                 if prompt_resp.status_code != 200:
                     err_msg = f"ComfyUI prompt rejected: {prompt_resp.text}"
@@ -1043,6 +1061,34 @@ class DirectComfyEngine(InProcessEngine):
                                 last_node = str(node)
                                 yield {"event": "node", "job_id": job_id, "node": str(node)}
 
+                        elif msg_type == "execution_success":
+                            # The terminal frame, and the one this loop
+                            # actually terminates on.
+                            #
+                            # ComfyUI no longer ends a prompt with
+                            # `executing {node: null}` — `execution.py` emits
+                            # `executing` only while a real node is running and
+                            # finishes with `execution_success`. The old loop
+                            # had only the former as an exit, so EVERY job ran
+                            # to the `stall_timeout` (300s) before the history
+                            # probe below broke the loop — a five-minute tax on
+                            # every generation — and any job slower than the
+                            # stall timeout was reported `failed /
+                            # workflow_stalled / retryable` while ComfyUI was
+                            # still happily executing it. Worse, the retry
+                            # re-ran a workflow that had already succeeded.
+                            if msg_prompt_id == prompt_id:
+                                break
+
+                        elif msg_type == "execution_interrupted":
+                            # An out-of-band interrupt. Falling through to the
+                            # history probe reports it as `completed` with zero
+                            # outputs, which finalises green having produced
+                            # nothing.
+                            if msg_prompt_id == prompt_id:
+                                yield {"event": "cancelled", "job_id": job_id, "message": "Prompt interrupted"}
+                                return
+
                         elif msg_type == "progress":
                             if msg_prompt_id is None or msg_prompt_id == prompt_id:
                                 val = msg_data.get("value")
@@ -1122,6 +1168,34 @@ class DirectComfyEngine(InProcessEngine):
 
                 fetched = await asyncio.gather(*[_fetch_view(r) for r in refs]) if refs else []
                 outputs = [a for a in fetched if a is not None]
+
+                # Audio is not images. `SaveAudio` / `PreviewAudio` publish
+                # `outputs[<node>]["audio"]` and never `images`, so a TTS
+                # history document walked for images yields nothing at all:
+                # `completed` with `outputs: []`, which finalises the job green
+                # having produced no clip.
+                #
+                # Emitted as a REF, not fetched and inlined. The inline shape
+                # routes through `build_job_outputs`, which opens every payload
+                # with PIL and cannot write a WAV; the ref shape is what
+                # `ModalTTSEngine` returns and what `_fetch_remote_tts_outputs`
+                # was written for — it pulls the bytes through this engine's own
+                # `get_file_stream`, which for a direct rig is `/view` and
+                # defaults `type=output`, so the subfolder resolves without an
+                # `output/` prefix to get wrong.
+                if not outputs:
+                    audio_refs: list[dict[str, Any]] = []
+                    for node_output in history_doc.get("outputs", {}).values():
+                        for clip in node_output.get("audio", []) or []:
+                            fn = clip.get("filename")
+                            if fn:
+                                audio_refs.append({
+                                    "type": "audio",
+                                    "filename": fn,
+                                    "subfolder": clip.get("subfolder", ""),
+                                    "image_type": clip.get("type", "output"),
+                                })
+                    outputs = audio_refs
 
                 yield {"event": "completed", "job_id": job_id, "outputs": outputs, "details": history_doc.get("status", {})}
 
@@ -1225,8 +1299,60 @@ class DirectTTSEngine(DirectComfyEngine):
         The base signature takes a directory; a TTS rig has no model tree, so any
         directory argument is answered with the voice catalogue rather than with
         an empty list a caller cannot distinguish from a broken rig.
+
+        DISCOVERED FROM THE RIG, which is what this method's own docstring has
+        always claimed. It used to return `DEFAULT_VOICES` — Kokoro ids
+        (`af_bella`, `bm_george`, ...) — while the graph this engine drives is
+        built from `QwenTTSSpeak`, whose `voice` input is a Qwen3-TTS speaker
+        enum. Two taxonomies: every id the picker offered was rejected by the
+        node it fed. The names were also duplicated verbatim in
+        `api/routes/providers/crud.py`, so the mistake was in two places.
+
+        `/object_info` carries the node's input schema, so the real enum is one
+        request away. The static list survives only as a fallback for a rig that
+        does not answer, and it says so via `discovered: False` rather than
+        pretending to be what the node accepts.
         """
-        return [dict(voice) for voice in self.DEFAULT_VOICES]
+        discovered = await self._discover_voices()
+        if discovered:
+            return discovered
+        return [
+            {**dict(voice), "discovered": False}
+            for voice in self.DEFAULT_VOICES
+        ]
+
+    async def _discover_voices(self) -> list[dict[str, Any]]:
+        """The `voice` enum the rig's `QwenTTSSpeak` node actually accepts."""
+        try:
+            doc = await self.get_object_info()
+        except Exception as exc:
+            logger.info(
+                "direct_tts_voice_discovery_failed",
+                provider_id=self.provider_id,
+                error=str(exc),
+            )
+            return []
+
+        node = (doc or {}).get(NODE_SPEAK)
+        if not isinstance(node, dict):
+            return []
+        required = (node.get("input") or {}).get("required") or {}
+        spec = required.get("voice")
+        if not isinstance(spec, (list, tuple)) or len(spec) < 2:
+            return []
+        # ComfyUI's combo widgets are [name, default, {options: [...]}].
+        options = spec[2].get("options") if isinstance(spec[2], dict) else spec[1]
+        if not isinstance(options, (list, tuple)):
+            return []
+        return [
+            {
+                "name": str(option),
+                "id": str(option),
+                "type": "voice",
+                "discovered": True,
+            }
+            for option in options
+        ]
 
     async def check_health(self) -> dict[str, Any]:
         """Health of the rig itself — the base already probes ComfyUI directly."""

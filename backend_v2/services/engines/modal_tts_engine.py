@@ -213,6 +213,13 @@ class ModalTTSEngine(InProcessEngine):
                 "engine": "modal_tts",
                 "app_name": self.app_name,
                 "capabilities": ["tts"],
+                # Config validity, not reachability: `modal.Cls.from_name` is
+                # a lazy stub that performs no RPC, so a missing or renamed
+                # deployment answers healthy here and fails at first dispatch.
+                # Said explicitly so the UI can render "configured" instead of
+                # "reachable".
+                "probed": False,
+                "check": "config_only",
             }
         except Exception as exc:
             latency_ms = round((time.monotonic() - t0) * 1000, 2)

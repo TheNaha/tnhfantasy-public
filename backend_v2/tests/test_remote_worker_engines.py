@@ -63,7 +63,7 @@ class TestRemoteTTSEngineProtocol:
                 "voice": "af_bella",
             }}, {"content-type": "application/json"}),
         ])
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002",
             headers={"Authorization": "Bearer tok"},
             transport=transport,
@@ -83,7 +83,7 @@ class TestRemoteTTSEngineProtocol:
     async def test_a_200_with_no_result_is_a_failure_not_a_success(self):
         """A green job with nothing to download is worse than a red one."""
         engine = _tts_engine()
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002",
             headers={"Authorization": "Bearer tok"},
             transport=_MockTransport([(200, {"status": "success", "result": {}}, {})]),
@@ -99,7 +99,7 @@ class TestRemoteTTSEngineProtocol:
     async def test_an_auth_rejection_is_permanent(self):
         """A wrong service token is a config fault, not a transient failure."""
         engine = _tts_engine(token="wrong")
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002",
             headers={"Authorization": "Bearer wrong"},
             transport=_MockTransport([
@@ -115,7 +115,7 @@ class TestRemoteTTSEngineProtocol:
     @pytest.mark.asyncio
     async def test_an_empty_request_is_refused_before_any_network_call(self):
         engine = _tts_engine()
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002",
             transport=_MockTransport([]),
         )
@@ -128,7 +128,7 @@ class TestRemoteTTSEngineProtocol:
     @pytest.mark.asyncio
     async def test_a_missing_clip_is_file_not_found(self):
         engine = _tts_engine()
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002",
             transport=_MockTransport([(404, {"status": "error"}, {})]),
         )
@@ -141,7 +141,7 @@ class TestRemoteTTSEngineProtocol:
         """`POST /delete-file {"path": ...}`, not a path-shaped URL."""
         engine = _tts_engine()
         transport = _MockTransport([(200, {"status": "success", "message": "Deleted"}, {})])
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002", transport=transport
         )
         assert await engine.delete_file("audio/x.wav") is True
@@ -156,7 +156,7 @@ class TestRemoteTTSEngineProtocol:
     async def test_a_404_on_delete_is_success(self):
         """The clip is gone, which is what a delete is for."""
         engine = _tts_engine()
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002",
             transport=_MockTransport([
                 (404, {"status": "error", "message": "File not found"}, {}),
@@ -173,7 +173,7 @@ class TestRemoteTTSEngineProtocol:
         it still has is gone.
         """
         engine = _tts_engine()
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002",
             transport=_MockTransport([(410, {"status": "error", "message": "gone"}, {})]),
         )
@@ -199,10 +199,10 @@ class TestRemoteTTSEngineProtocol:
             async def aiter_bytes(self, n):
                 yield b"x" * (n + 1)
 
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002", transport=_MockTransport([])
         )
-        engine._http.stream = lambda *a, **kw: _Resp()
+        engine._agent_http.stream = lambda *a, **kw: _Resp()
 
         with patch("services.engines.worker_transport_engines.get_file_size_cap", return_value=10):
             with pytest.raises(Exception) as excinfo:
@@ -239,15 +239,51 @@ class TestBeamDialectEngines:
         assert engine._ws_target() == "http://beam.run/llm"
 
     @pytest.mark.asyncio
-    async def test_health_reports_config_not_a_round_trip(self):
-        """A cold Beam handler answers slowly; a probe would trip the streak."""
+    async def test_health_probes_the_deployment(self):
+        """A healthy answer has to come from the deployment, not from config.
+
+        This asserted `healthy is True` for an engine pointed at a URL nothing
+        was serving — which is the whole defect. `beam_llm` and `beam_tts` had
+        no server at all, `check_health` returned `healthy` off `bool(gpu_url)`,
+        and the load balancer kept paying to dispatch jobs that 404'd. `/llm`
+        and `/tts` are `@asgi` deployments with a plain `GET /health` on the
+        same host, so "is it there" is one cheap round trip.
+        """
+        transport = _MockTransport([(200, {"status": "healthy", "models": ["rp"]}, {})])
         engine = BeamLLMEngine("beam-llm-3", api_key="k", gpu_url="http://beam.run")
+        engine._http = httpx.AsyncClient(transport=transport)
         health = await engine.check_health()
         assert health["healthy"] is True
-        assert health["gpu_url_configured"] is True
+        assert health["probed"] is True
+        assert health["check"] == "deployment_health"
+        assert transport.requests[0].url == "http://beam.run/health"
 
+    @pytest.mark.asyncio
+    async def test_health_is_unhealthy_when_the_deployment_404s(self):
+        """The case that used to read green: a URL that answers nothing."""
+        transport = _MockTransport([(404, {"detail": "Not Found"}, {})])
+        engine = BeamLLMEngine("beam-llm-5", api_key="k", gpu_url="http://beam.run")
+        engine._http = httpx.AsyncClient(transport=transport)
+        health = await engine.check_health()
+        assert health["healthy"] is False
+        assert health["probed"] is True
+        # A 404 is not going to start answering on a retry.
+        assert health["retryable"] is False
+
+    @pytest.mark.asyncio
+    async def test_health_is_unhealthy_when_the_deployment_is_unreachable(self):
+        engine = BeamLLMEngine("beam-llm-6", api_key="k", gpu_url="http://beam.run")
+        engine._http = httpx.AsyncClient(transport=_MockTransport([]))
+        health = await engine.check_health()
+        assert health["healthy"] is False
+        assert health["probed"] is True
+
+    @pytest.mark.asyncio
+    async def test_health_without_a_url_is_rejected_without_probing(self):
         unconfigured = BeamLLMEngine("beam-llm-4", api_key="k", gpu_url="")
-        assert (await unconfigured.check_health())["healthy"] is False
+        health = await unconfigured.check_health()
+        assert health["healthy"] is False
+        assert health["gpu_url_configured"] is False
 
     @pytest.mark.asyncio
     async def test_no_model_tree(self):
@@ -287,6 +323,52 @@ class TestRemoteLLMEngine:
         )
         assert engine.default_rp_model == "rp"
         assert engine.default_util_model == "util"
+
+    def test_the_two_clients_do_not_share_one_attribute(self):
+        """The mixin and the OpenAI base must not cache on the same name.
+
+        Both used `_http`, with different base URLs: the mixin's is
+        `agent_url`, the LLM's is `agent_url + "/v1"`. Whichever parent ran
+        first won permanently, so a health check before the first completion
+        left inference POSTing to `/chat/completions` — a route that does not
+        exist; the agent serves `/v1/chat/completions`. It was order-dependent,
+        which is why it survived: whichever path happened to run first in
+        practice decided whether the provider appeared to work.
+        """
+        engine = RemoteLLMEngine(
+            "remote-llm-4", agent_url="http://gpu-box:8001", agent_token="t"
+        )
+        assert engine.agent_url == "http://gpu-box:8001"
+        assert engine.api_base == "http://gpu-box:8001/v1"
+
+        agent_client = engine.get_agent_client()
+        llm_client = engine.get_http_client()
+
+        assert agent_client is not llm_client
+        assert str(agent_client.base_url).rstrip("/") == "http://gpu-box:8001"
+        assert str(llm_client.base_url).rstrip("/") == "http://gpu-box:8001/v1"
+
+    @pytest.mark.asyncio
+    async def test_the_file_client_survives_the_first_completion(self):
+        """The inverse order must not corrupt the file routes either."""
+        engine = RemoteLLMEngine(
+            "remote-llm-5", agent_url="http://gpu-box:8001", agent_token="t"
+        )
+        engine.get_http_client()
+        agent_client = engine.get_agent_client()
+        assert str(agent_client.base_url).rstrip("/") == "http://gpu-box:8001"
+
+    @pytest.mark.asyncio
+    async def test_close_releases_both_clients(self):
+        """Two clients means two pools; closing one is not enough."""
+        engine = RemoteLLMEngine(
+            "remote-llm-6", agent_url="http://gpu-box:8001", agent_token="t"
+        )
+        agent_client = engine.get_agent_client()
+        llm_client = engine.get_http_client()
+        await engine.close()
+        assert agent_client.is_closed
+        assert llm_client.is_closed
 
 
 class TestTTSEnginesReadTheRealWorkflow:
@@ -344,7 +426,7 @@ class TestTTSEnginesReadTheRealWorkflow:
             }}, {}),
         ])
         engine = RemoteTTSEngine("remote-tts", "http://gpu-box:8002", "tok")
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002", transport=transport
         )
 
@@ -372,7 +454,7 @@ class TestTTSEnginesReadTheRealWorkflow:
     async def test_a_graph_with_no_text_fails_with_a_useful_message(self):
         transport = _MockTransport([])
         engine = RemoteTTSEngine("remote-tts", "http://gpu-box:8002", "tok")
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002", transport=transport
         )
         events = [e async for e in engine.inference({"prompt": {}}, job_id="tts-2")]

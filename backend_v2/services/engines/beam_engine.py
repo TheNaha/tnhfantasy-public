@@ -92,7 +92,13 @@ class BeamEngine(InProcessEngine):
         self.gpu_url = (gpu_url or "").strip().rstrip("/")
         self.storage_url = (storage_url or "").strip().rstrip("/")
         self.download_url = (download_url or "").strip().rstrip("/") or self.storage_url
-        self.extractor_url = (extractor_url or "").strip().rstrip("/") or self.storage_url
+        # NOT `or self.storage_url`. The storage app serves no `/object_info`,
+        # so that fallback turned a missing field into a bare 404 from the
+        # wrong deployment — indistinguishable, from the node catalogue, from
+        # "ComfyUI has no nodes". `registry.py` now declares `extractor_url` as
+        # a form field so it can actually be entered; when it is absent the
+        # caller gets told which deployment is missing.
+        self.extractor_url = (extractor_url or "").strip().rstrip("/")
         self.hf_token = hf_token or os.getenv("HF_TOKEN", "")
         self.civitai_token = civitai_token or os.getenv("CIVITAI_TOKEN", "")
         self.gpu_type = gpu_type
@@ -357,7 +363,19 @@ class BeamEngine(InProcessEngine):
             raise RuntimeError(f"Beam list-models failed for {directory}: {exc}") from exc
 
     async def get_object_info(self) -> Dict[str, Any]:
-        """Fetch /object_info from the extractor (or storage) app."""
+        """Fetch `/object_info` from the extractor deployment.
+
+        `comfyui-extractor` serves exactly this and nothing else — it is a
+        separate deployment precisely because the node catalogue is CPU work
+        that must not boot a GPU — so there is no sensible fallback. Saying so
+        beats a 404 from the storage app, which read as "ComfyUI has no nodes".
+        """
+        if not self.extractor_url:
+            raise RuntimeError(
+                f"Beam provider {self.provider_id!r} has no extractor_url; deploy "
+                f"comfyui-extractor and set it on the provider row (registry.py "
+                f"exposes it as the 'Extractor REST URL' field)"
+            )
         client = self.get_http_client()
         try:
             resp = await client.get(f"{self.extractor_url}/object_info", timeout=120.0)

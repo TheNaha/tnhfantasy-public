@@ -386,8 +386,17 @@ async def _run_reconciliation(
                     list_errors.append(directory)
                     return directory, []
 
+            # Bound concurrency to avoid race conditions on worker volume mounts
+            # (such as Modal volume reload storms when multiple directory scans fire simultaneously).
+            list_concurrency = max(1, int(os.getenv("COMFY_RECONCILIATION_LIST_CONCURRENCY", "1")))
+            sem = asyncio.Semaphore(list_concurrency)
+
+            async def _fetch_dir_bounded(directory: str) -> tuple[str, list[dict[str, Any]]]:
+                async with sem:
+                    return await _fetch_dir(directory)
+
             try:
-                listed = await asyncio.gather(*[_fetch_dir(d) for d in MODEL_DIRECTORIES])
+                listed = await asyncio.gather(*[_fetch_dir_bounded(d) for d in MODEL_DIRECTORIES])
             except EngineAuthError as exc:
                 errors.append(f"Listing failed: {exc}")
                 await push_state("failed", phase="failed", message=f"Reconciliation failed: {exc}")

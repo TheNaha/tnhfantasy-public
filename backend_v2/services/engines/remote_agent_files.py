@@ -40,6 +40,33 @@ from .base import (
 
 logger = get_logger("engines.remote_agent_files")
 
+
+def _envelope_succeeded(resp) -> bool:
+    """Did the agent say yes, in its body as well as its status line?
+
+    `remote_agent` answers failures as HTTP 200 carrying
+    `{"status": "error", ...}` or `{"success": false, "code": 404}` — that is
+    what its `failed()`/`from_upstream()` helpers produce, and the whole point
+    of an envelope is to carry a status the transport could not. Reading only
+    `status_code == 200` reported a 404 delete as success and a failed download
+    as installed, which reconciliation then recorded as "0 invalid cleaned" and
+    "downloads_completed" respectively. `DirectComfyEngine.delete_file` and
+    `.download_file` already read the envelope; this brings the shared mixin
+    into line with them.
+    """
+    if resp.status_code != 200:
+        return False
+    try:
+        body = resp.json()
+    except Exception:
+        # Not a JSON body at all — the status line is all there is.
+        return True
+    if not isinstance(body, dict):
+        return True
+    if body.get("success") is False:
+        return False
+    return body.get("status") != "error"
+
 #: The header the sidecar validates. Bearer rather than a bespoke
 #: `X-Service-Token` because `remote_agent/provider_core/auth.py` already does
 #: the constant-time comparison on `Authorization`; a second scheme would mean a
@@ -65,8 +92,10 @@ class RemoteAgentFileMixin:
     Multiple inheritance keeps each engine's inference identity while giving all
     three the same storage surface.
 
-    The consumer declares `agent_url`, `agent_token` and `_http`; everything else
-    is here.
+    The consumer declares `agent_url`, `agent_token` and `_agent_http`;
+    everything else is here. `_agent_http` deliberately does NOT collide with
+    the `_http` an `OpenAICompatLLMEngine` parent caches — see
+    `get_agent_client`.
     """
 
     #: True for all three: the sidecar owns a storage root in every mode.
@@ -117,10 +146,23 @@ class RemoteAgentFileMixin:
 
         Same shape `DirectComfyEngine` used, so a provider row written for the
         image sidecar points at the LLM or TTS container with no renaming.
+
+        The attribute is `_agent_http`, NOT `_http`, and that distinction is
+        load-bearing. `RemoteLLMEngine` mixes this class in ahead of
+        `OpenAICompatLLMEngine`, and that base class caches its own client on
+        `_http` (`llm_engine.get_http_client`) with a DIFFERENT base URL — the
+        `/v1`-suffixed one it needs for `/v1/chat/completions`. Sharing the
+        attribute meant whichever parent ran first won permanently: a health
+        check before the first completion left inference posting to
+        `/chat/completions` (404), and a completion first left the file routes
+        asking for `/v1/health` (404). `RemoteTTSEngine` had already worked
+        around this by aliasing `get_http_client` at the subclass; this is the
+        same fix applied where it belongs. `DirectComfyEngine` uses
+        `_agent_http` for the same reason.
         """
-        client = getattr(self, "_http", None)
+        client = getattr(self, "_agent_http", None)
         if client is None or client.is_closed:
-            self._http = httpx.AsyncClient(
+            self._agent_http = httpx.AsyncClient(
                 base_url=self.agent_url,
                 timeout=clamp_timeout(600.0, default=600.0),
                 headers={
@@ -128,7 +170,7 @@ class RemoteAgentFileMixin:
                     SERVICE_TOKEN_HEADER: f"Bearer {self.agent_token}",
                 },
             )
-        return self._http
+        return self._agent_http
 
     @property
     def _has_agent(self) -> bool:
@@ -320,7 +362,16 @@ class RemoteAgentFileMixin:
         try:
             resp = await client.post(
                 "/upload-file",
-                json={"content": content_base64, "directory": directory, "filename": filename},
+                # `content_base64`, not `content`. The agent's
+                # `UploadFileRequest` requires `content_base64`, and pydantic
+                # rejects the whole body when it is missing — a 422 that this
+                # function was collapsing to `False`, indistinguishable from
+                # "this provider cannot upload". Every agent upload failed.
+                json={
+                    "content_base64": content_base64,
+                    "directory": directory,
+                    "filename": filename,
+                },
                 timeout=clamp_timeout(1800.0, default=1800.0),
             )
         except Exception as exc:
@@ -328,7 +379,7 @@ class RemoteAgentFileMixin:
                 "remote_agent_upload_failed", provider_id=self.provider_id, error=str(exc)
             )
             return False
-        return resp.status_code == 200
+        return _envelope_succeeded(resp)
 
     async def delete_file(self, path: str) -> bool:
         if not self._has_agent:
@@ -343,7 +394,7 @@ class RemoteAgentFileMixin:
                 "remote_agent_delete_failed", provider_id=self.provider_id, error=str(exc)
             )
             return False
-        return resp.status_code == 200
+        return _envelope_succeeded(resp)
 
     async def download_file(
         self,
@@ -380,9 +431,24 @@ class RemoteAgentFileMixin:
         if resp.status_code != 200:
             return {"status": "failed", "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
         try:
-            return resp.json()
+            body = resp.json()
         except Exception:
             return {"status": "completed"}
+        # The agent reports a failed transfer INSIDE a 200 — its
+        # `from_upstream` envelope carries `{"status": "error", "message": ...}`
+        # for a 404/403/timeout on the upstream URL. Handing that back
+        # unchanged is not enough on its own: `in_process_reconciliation`
+        # ignores this return value entirely and unconditionally increments
+        # `downloads_completed`, sets the model to `ready` and raises
+        # `MODEL_SYNC_COMPLETED`. So a gated HuggingFace URL marked a model
+        # installed and dropped it out of the pending queue. Normalising the
+        # envelope to `failed` here is what lets the caller see it.
+        if isinstance(body, dict) and body.get("status") == "error":
+            return {
+                "status": "failed",
+                "error": str(body.get("message") or body.get("error") or "upstream refused"),
+            }
+        return body
 
     async def validate_models(self, directories: List[str]) -> Dict[str, Any]:
         """Ask the agent to hash-check what it holds.
@@ -397,7 +463,12 @@ class RemoteAgentFileMixin:
             resp = await client.post(
                 "/validate-models",
                 json={
-                    "directories": self._narrow_dirs(directories),
+                    # `directory`, not `directories`. The agent's
+                    # `ValidateModelsRequest` takes a singular
+                    # `directory: str | list[str]`, so sending the plural was a
+                    # 422 for the whole request. This is the key the deployed
+                    # agent accepts; the plural one it never has.
+                    "directory": self._narrow_dirs(directories),
                     "delete_invalid": False,
                 },
                 timeout=clamp_timeout(3600.0, default=3600.0),
@@ -407,7 +478,20 @@ class RemoteAgentFileMixin:
                 raise
             raise
         if resp.status_code != 200:
-            return normalize_validation_result({}, directories)
+            # NOT a clean sweep. Falling through to
+            # `normalize_validation_result({}, ...)` fabricated
+            # `total_invalid: 0`, which reconciliation records as "0 invalid
+            # cleaned" — so a corrupt-checkpoint sweep silently reported success
+            # forever. An upstream that cannot be asked has told us nothing,
+            # and the honest answer is an indeterminate result, not zero.
+            return normalize_validation_result(
+                {
+                    "status": "error",
+                    "total_indeterminate": len(self._narrow_dirs(directories)),
+                    "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
+                },
+                directories,
+            )
         try:
             payload = resp.json()
         except Exception:

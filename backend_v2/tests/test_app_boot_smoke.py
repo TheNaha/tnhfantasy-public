@@ -464,10 +464,17 @@ async def test_app_serves_requests_after_boot(client, boot):
     # 237 -> 238 for `POST /chapters/{id}/beats/{id}/select-alternate`, which is
     # the story counterpart of the chat swipe route and exists because retry
     # stopped being destructive.
-    assert len(spec["paths"]) == 238, (
+    # 238 -> 242 for the provider credential and deploy surface: `GET`/`PUT
+    # /providers/{id}/credentials`, `DELETE /providers/{id}/credentials/{key}`,
+    # `GET /providers/deploy/targets` and `POST /providers/deploy`. Four paths,
+    # five operations — the credential route is counted once for its GET and its
+    # PUT. This is the *rising* direction this assertion mostly exists to catch:
+    # credentials used to live only in `.env`, so the API had no reason to
+    # accept one, and now that the UI manages them it has to.
+    assert len(spec["paths"]) == 242, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 318
+    assert sum(len(ops) for ops in spec["paths"].values()) == 323
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 

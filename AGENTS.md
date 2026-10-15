@@ -148,6 +148,7 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
    (remote ComfyUI, a hosted agent) connect via `external_worker` / `remote_agent/`.
 - `POST /inference` streams NDJSON progress lines, finishes with a success or error JSON payload.
 - Model directories: `models/checkpoints`, `models/loras`, `models/vae`, `models/controlnet`, `models/unet`, `models/clip`.
+- Disabled providers (`enabled: false`): Intentionally excluded from load balancer routing. They represent a healthy, user-paused standby state (cost control, maxed billing, maintenance) and must never trigger "needs attention" or error states in system status.
 
 ## Docker gotchas
 
@@ -161,6 +162,7 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 - Commit checkpoints, output images, or `.env` — all are gitignored.
 - Bypass `api/deps.py` for dependency injection in routes.
 - Introduce parallel provider caches or standalone provider websocket hooks — data ownership is consolidated.
+- Treat a disabled provider (`enabled: false`) as broken, an error, or a candidate for deletion — disabling is an intentional operational choice to pause routing.
 
 ## Docs
 

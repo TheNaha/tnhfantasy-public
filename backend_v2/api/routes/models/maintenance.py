@@ -572,8 +572,15 @@ async def backfill_provider_statuses(
 
             results["providers_checked"] += 1
 
+            list_concurrency = max(1, int(os.getenv("COMFY_RECONCILIATION_LIST_CONCURRENCY", "1")))
+            prov_sem = asyncio.Semaphore(list_concurrency)
+
+            async def check_directory_bounded(pid, d, eng):
+                async with prov_sem:
+                    return await check_directory_engine(pid, d, eng)
+
             for directory in MODEL_DIRECTORIES:
-                tasks.append(check_directory_engine(provider.id, directory, engine))
+                tasks.append(check_directory_bounded(provider.id, directory, engine))
             continue
 
         # Only in-process engines can be queried; anything else is skipped.

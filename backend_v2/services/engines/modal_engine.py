@@ -150,7 +150,21 @@ class ModalEngine(InProcessEngine):
         return self._client
 
     async def check_health(self) -> Dict[str, Any]:
-        """Verify client authentication and function availability on Modal cloud."""
+        """Verify the app is NAMED correctly and credentials are present.
+
+        Not a reachability check, and it should not be read as one.
+        `modal.Function.from_name` is a lazy stub: it performs no RPC and raises
+        nothing, so a deleted deployment, a typo'd app name or a revoked token
+        all answer `healthy` here and only fail at first dispatch. Making it a
+        real call would mean booting a container, which is a GPU bill on every
+        poll.
+
+        So the verdict is CONFIG validity and says so, via `probed: False`. The
+        Providers page is expected to render that as "configured" rather than
+        "reachable" — `modal-zetsuke` sat here reading plain green for two
+        months against a deployment whose `FileStorage` predated the engine's
+        rename from `get_file_size` to `file_size`.
+        """
         t0 = time.monotonic()
         try:
             client = await self.get_client_async()
@@ -163,6 +177,8 @@ class ModalEngine(InProcessEngine):
                 "app_name": self.app_name,
                 "latency_ms": round(latency * 1000, 2),
                 "ready": True,
+                "probed": False,
+                "check": "config_only",
             }
         except Exception as exc:
             latency = time.monotonic() - t0
@@ -348,7 +364,7 @@ class ModalEngine(InProcessEngine):
             # Teardown must never fail a job finalisation path.
             logger.warning("modal_client_close_failed", provider_id=self.provider_id, error=str(exc))
 
-    async def list_models(self, directory: str, timeout: float = 60.0) -> List[Dict[str, Any]]:
+    async def list_models(self, directory: str, timeout: float = 1800.0) -> List[Dict[str, Any]]:
         """Query models in a directory directly from Modal Volume.
 
         Raises on failure instead of returning []: reconciliation and the
@@ -487,7 +503,13 @@ class ModalEngine(InProcessEngine):
             func = modal.Function.from_name(self.app_name, "validate_models", client=client)
             result = await asyncio.wait_for(
                 func.remote.aio(directories, delete_invalid),
-                timeout=300.0,
+                # 600, not 300, matching the app's own `VALIDATE_TIMEOUT`. A
+                # sweep stats every model in every directory, and on a cold
+                # gcsfuse volume that outlasts 300s — so the engine abandoned
+                # a sweep the app was still running and reported the outcome as
+                # a validation failure, which reconciliation then read as
+                # "something is wrong with your models".
+                timeout=600.0,
             )
             return normalize_validation_result(result, directories)
         except EngineAuthError:

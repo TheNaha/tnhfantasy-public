@@ -6,6 +6,7 @@ from core.entities import JobStatus
 from core.events import emit_job_event, EventType
 from core.progress import coerce_worker_percent
 from infrastructure.logging import get_logger
+from services.engines.base import EngineAuthError
 
 logger = get_logger("provider_client")
 
@@ -288,8 +289,6 @@ async def call_in_process_image_provider(
                 if result is not None:
                     return result
     except TimeoutError as exc:
-        from services.engines.base import EngineAuthError
-
         raise JobTimeoutError(f"Job timed out after {timeout}s") from exc
     except EngineAuthError as exc:
         raise ProviderCallError(str(exc), provider_id=provider_id, is_retryable=False) from exc
@@ -376,10 +375,6 @@ async def call_in_process_llm_provider(
                     return result
     except TimeoutError as exc:
         raise JobTimeoutError(f"Job timed out after {timeout}s") from exc
-    except Exception as exc:
-        from services.engines.base import EngineAuthError
-
-        if isinstance(exc, EngineAuthError):
-            raise ProviderCallError(str(exc), provider_id=provider_id, is_retryable=False) from exc
-        raise
+    except EngineAuthError as exc:
+        raise ProviderCallError(str(exc), provider_id=provider_id, is_retryable=False) from exc
     return reducer.finalize()

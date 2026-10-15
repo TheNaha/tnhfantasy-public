@@ -283,22 +283,81 @@ class _BeamLLMEngineBase(BeamEngine):
         return False
 
     async def check_health(self) -> dict[str, Any]:
-        """Report the URL as configured, not as reachable.
+        """Probe the deployment that serves this dialect.
 
-        A websocket dial from a health check would either block for the open
-        timeout or — worse — be counted as a failure on a provider that is fine,
-        because a ``@modal.concurrent``-style handler with no traffic answers
-        slowly on the first request. The 15 s health cache and the load
-        balancer's dispatch-time failure streak are the real signals; this
-        reports config validity, which is what the health endpoint can honestly
-        know without a round trip. Same trade BeamEngine's ``beam`` type makes.
+        The original reason this reported config only was that a *websocket*
+        dial is a bad health probe — it either blocks for the open timeout or
+        gets scored as a failure on a healthy provider. That reason no longer
+        applies, because `/llm` and `/tts` are `@asgi` deployments with a plain
+        `GET /health` on the same host (`deployables/beam/llm_tts_app.py`).
+
+        Which matters, because the config-only version was the reason
+        `beam_llm` and `beam_tts` looked fine while dialling paths nothing
+        served: `check_health` returned `healthy` for a deployment that did not
+        exist, so the load balancer kept dispatching paid jobs to a provider
+        that 404'd every one.
         """
+        result = await self._probe_deployment()
+        result.setdefault("provider_id", self.provider_id)
+        result.setdefault("engine", type(self).__name__)
+        result.setdefault("gpu_url_configured", bool(self.gpu_url))
+        return result
+
+    async def _probe_deployment(self) -> dict[str, Any]:
+        """GET `{gpu_url}/health` — the deployment that serves this dialect.
+
+        The `/llm` and `/tts` sockets are on the same `@asgi` deployment as a
+        plain `GET /health`, so reachability is a cheap round trip and there is
+        no excuse for answering from config alone.
+
+        Absolute URL on `get_http_client()`, which is how every other Beam REST
+        call here is made: `BeamEngine.get_http_client` builds a client with no
+        `base_url` and callers pass `f"{self.storage_url}/..."`.
+        """
+        if not self.gpu_url:
+            return {
+                "status": "rejected",
+                "healthy": False,
+                "probed": False,
+                "error": f"{self.ws_path} provider has no gpu_url",
+            }
+        url = f"{self.gpu_url.rstrip('/')}/health"
+        try:
+            client = self.get_http_client()
+            resp = await client.get(url, timeout=float(self.ws_open_timeout))
+        except Exception as exc:
+            return {
+                "status": "unhealthy",
+                "healthy": False,
+                "probed": True,
+                "error": f"{type(exc).__name__}: {exc}",
+                # A transport failure is worth a retry; a 4xx from the
+                # deployment means the credentials are wrong and it is not.
+                "retryable": not is_auth_error(exc),
+            }
+        if resp.status_code == 200:
+            body = resp.json() if resp.content else {}
+            return {
+                "status": "healthy",
+                "healthy": True,
+                "probed": True,
+                "check": "deployment_health",
+                "topology": body if isinstance(body, dict) else None,
+            }
+        if resp.status_code in (401, 403):
+            return {
+                "status": "unauthorized",
+                "healthy": False,
+                "probed": True,
+                "retryable": False,
+                "error": f"{self.ws_path} deployment rejected the credentials (HTTP {resp.status_code})",
+            }
         return {
-            "status": "healthy" if self.gpu_url else "rejected",
-            "healthy": bool(self.gpu_url),
-            "provider_id": self.provider_id,
-            "engine": type(self).__name__,
-            "gpu_url_configured": bool(self.gpu_url),
+            "status": "unhealthy",
+            "healthy": False,
+            "probed": True,
+            "retryable": resp.status_code >= 500,
+            "error": f"{self.ws_path} deployment /health returned HTTP {resp.status_code}",
         }
 
     async def setup_models(self) -> bool:
@@ -414,11 +473,45 @@ class RemoteLLMEngine(RemoteAgentFileMixin, OpenAICompatLLMEngine):
         ``remote_agent/provider_core`` already validates
         ``Authorization: Bearer`` — a second scheme would need the container
         changed for no gain.
+
+        Unused: `OpenAICompatLLMEngine.get_http_client` builds its own headers
+        from `self.api_key`, which `__init__` sets to the same agent token, so
+        the two agree. Kept because the mixin's `get_agent_client` needs exactly
+        this shape and inheriting it is less surprising than not having it.
         """
         return {
             "Content-Type": "application/json",
             SERVICE_TOKEN_HEADER: f"Bearer {self.api_key}",
         }
+
+    async def close(self) -> None:
+        """Close both HTTP clients this engine owns.
+
+        Unlike `RemoteTTSEngine`, which aliases `get_http_client` onto the
+        mixin's client and therefore only ever has one, this engine genuinely
+        holds two: `_http` for `/v1/chat/completions` (built by
+        `OpenAICompatLLMEngine`) and `_agent_http` for the mixin's file routes.
+        They are separate attributes precisely because their base URLs differ
+        (`agent_url` vs `agent_url + "/v1"`). Closing only the first leaks the
+        second's connection pool for the lifetime of the engine.
+        """
+        for attr in ("_http", "_agent_http"):
+            client = getattr(self, attr, None)
+            if client is None:
+                continue
+            setattr(self, attr, None)
+            if client.is_closed:
+                continue
+            try:
+                await client.aclose()
+            except Exception as exc:
+                # Teardown must never fail a job finalisation path.
+                logger.warning(
+                    "remote_llm_client_close_failed",
+                    provider_id=self.provider_id,
+                    attribute=attr,
+                    error=str(exc),
+                )
 
 
 def _tts_request_from_workflow(workflow: dict) -> dict:
@@ -556,10 +649,9 @@ class RemoteTTSEngine(RemoteAgentFileMixin, InProcessEngine):
         return self.get_agent_client()
 
     async def close(self) -> None:
-        # The mixin's client is the one in use, so that is the one to close. The
-        # old `close` only ever closed `self._http`, which the mixin never set.
-        client = getattr(self, "_http", None)
-        self._http = None
+        # The mixin's client is the one in use, so that is the one to close.
+        client = getattr(self, "_agent_http", None)
+        self._agent_http = None
         if client is not None and not client.is_closed:
             try:
                 await client.aclose()

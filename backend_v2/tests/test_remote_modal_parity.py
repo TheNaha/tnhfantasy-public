@@ -258,7 +258,40 @@ class TestModelDirectoryNarrowing:
 
         monkeypatch.setattr(engine, "get_agent_client", lambda: _Client())
         await engine.validate_models(["models", "checkpoints", "loras"])
-        assert sent["directories"] == ["models"]
+        # `directory`, singular, narrowed. This asserted the PLURAL
+        # `directories` key against a mock that accepts any 200 — so the test
+        # passed while every real request 422'd, because
+        # `ValidateModelsRequest` requires `directory: str | list[str]` and
+        # pydantic rejects the whole body when a required field is missing. The
+        # 422 was then normalised into `total_invalid: 0`, which reconciliation
+        # logs as a clean sweep. A mock that accepts any 200 cannot check a
+        # field name; asserting the field name is what checks it.
+        assert sent["directory"] == ["models"]
+
+    @pytest.mark.asyncio
+    async def test_validate_models_does_not_report_a_clean_sweep_when_upstream_refuses(
+        self, monkeypatch
+    ):
+        """A 422 must not be laundered into "0 invalid cleaned"."""
+        engine = RemoteLLMEngine("p", "http://x:8001", "tok")
+
+        class _Resp:
+            status_code = 422
+
+            def json(self):
+                return {"detail": "Field required: directory"}
+
+            text = "[{'loc': ['directory'], 'msg': 'Field required'}]"
+
+        class _Client:
+            async def post(self, path, json=None, **kw):
+                return _Resp()
+
+        monkeypatch.setattr(engine, "get_agent_client", lambda: _Client())
+        result = await engine.validate_models(["models"])
+        assert result["status"] == "error"
+        assert result["total_invalid"] == 0
+        assert result["total_indeterminate"] == 1
 
     @pytest.mark.asyncio
     async def test_a_models_subdirectory_is_still_allowed(self):
@@ -299,7 +332,7 @@ class TestTopologyIsReported:
                 (200, {"status": "healthy"}, {}),
             ]
         )
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8003", headers={"Authorization": "Bearer tok"},
             transport=transport,
         )
@@ -331,7 +364,7 @@ class TestTopologyIsReported:
         transport = _MockTransport(
             [(200, {"worker_mode": "llm", "storage_root": "/mnt/models/llm"}, {})]
         )
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8003", transport=transport
         )
 
@@ -354,7 +387,7 @@ class TestTopologyIsReported:
                 (200, {"status": "healthy"}, {}),
             ]
         )
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8003", transport=transport
         )
 
@@ -379,7 +412,7 @@ class TestTopologyIsReported:
                 (200, {"status": "healthy"}, {}),
             ]
         )
-        engine._http = httpx.AsyncClient(
+        engine._agent_http = httpx.AsyncClient(
             base_url="http://gpu-box:8002", transport=transport
         )
 

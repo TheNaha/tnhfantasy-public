@@ -354,12 +354,22 @@ class ProviderStatusService:
         provider_id: str,
         provider: Any | None = None,
     ) -> dict[str, Any]:
-        """Deploys no longer exist — in-process engines need none.
+        """Return the latest deployment state for this provider if one was run, else idle."""
+        from services.provider_deploy import get_last_deploy
 
-        Returns a stable idle payload so the status-card shape (and the
-        frontend DeployTab reading it) keeps working until the UI cleanup
-        lands.
-        """
+        last = get_last_deploy(provider_id=provider_id)
+        if last:
+            return {
+                "status": "completed" if last.get("ok") else "failed",
+                "target": last.get("target"),
+                "artifact": last.get("artifact"),
+                "ok": last.get("ok"),
+                "exit_code": last.get("exit_code"),
+                "elapsed_seconds": last.get("elapsed_seconds"),
+                "updated_at": last.get("timestamp"),
+                "dry_run": last.get("dry_run", False),
+                "output_tail": (last.get("output") or "")[-2000:] if last.get("output") else None,
+            }
         return {"status": "idle"}
 
     @staticmethod
