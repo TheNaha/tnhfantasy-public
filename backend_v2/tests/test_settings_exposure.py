@@ -455,3 +455,47 @@ class TestBlankDefaultCheckpointMeansUnset:
     def test_a_non_string_checkpoint_is_still_refused(self, client):
         response = client.put("/api/settings", json={"generator": {"default_checkpoint": 7}})
         assert response.status_code == 400
+
+
+class TestSchedulerEndpoint:
+    def test_scheduler_status_returns_registered_jobs(self, client):
+        response = client.get("/api/settings/scheduler")
+        assert response.status_code == 200
+        data = response.json()
+        assert "jobs" in data
+        assert isinstance(data["jobs"], list)
+        for job in data["jobs"]:
+            assert "id" in job
+            assert "trigger" in job
+            assert "last_status" in job
+
+
+class TestJobsCleanupAndCharGenPrompts:
+    def test_jobs_cleanup_persists(self, client):
+        response = client.put("/api/settings", json={
+            "jobs_cleanup": {
+                "max_age_hours": 48,
+                "auto_cleanup": True,
+                "cleanup_interval": 7200,
+            }
+        })
+        assert response.status_code == 200
+        cfg_data = cfg.get_config()["jobs_cleanup"]
+        assert cfg_data["max_age_hours"] == 48
+        assert cfg_data["auto_cleanup"] is True
+        assert cfg_data["cleanup_interval"] == 7200
+
+    def test_chargen_prompts_roundtrip(self, client):
+        prompts = client.get("/api/settings/system-prompts").json()["blocks"]
+        assert "charGenDescriptionPrompt" in prompts
+        assert "charGenPersonalityPrompt" in prompts
+
+        put_res = client.put("/api/settings/system-prompts", json={
+            "blocks": {
+                "charGenDescriptionPrompt": "Custom test description generator prompt",
+            }
+        })
+        assert put_res.status_code == 200
+        updated = client.get("/api/settings/system-prompts").json()["blocks"]
+        assert updated["charGenDescriptionPrompt"] == "Custom test description generator prompt"
+

@@ -445,6 +445,22 @@ def get_settings_schema() -> dict[str, Any]:
                     ),
                     "default": _default("ai.ragEnabled")
                 },
+                "ragMaxDistance": {
+                    "type": "number",
+                    "description": (
+                        "Cosine distance threshold for semantic retrieval of character memories and lorebook entries. "
+                        "0.0 is identical, 1.0 is orthogonal (unrelated), 2.0 is opposite. "
+                        "Lower values retrieve only close matches; higher values allow looser matches (2.0 = unconditional top-N)."
+                    ),
+                    "min": 0.0,
+                    "max": 2.0,
+                    "default": _default("ai.ragMaxDistance")
+                },
+                "memoryExtractionEnabled": {
+                    "type": "boolean",
+                    "description": "Whether chat replies enqueue background LLM calls to extract character memories",
+                    "default": _default("ai.memoryExtractionEnabled")
+                },
                 "idleSimEnabled": {
                     "type": "boolean",
                     "description": "Let dormant chats receive proactive in-character messages",
@@ -548,6 +564,7 @@ class SettingsUpdate(BaseModel):
     # or the settings route silently drops it: `model_dump(exclude_none=True)`
     # can only forward fields the model knows about.
     roleplay: dict[str, Any] | None = None
+    jobs_cleanup: dict[str, Any] | None = None
 
 
 @router.put("")
@@ -835,3 +852,11 @@ def get_presets(session: Session = Depends(get_session)):
         })
     
     return {"presets": presets}
+ 
+ 
+@router.get("/scheduler")
+def get_scheduler_status() -> dict[str, Any]:
+    """Return status of all registered background scheduler jobs and their run history."""
+    from infrastructure.scheduler import get_jobs_status
+    return {"jobs": get_jobs_status()}
+

@@ -226,7 +226,15 @@ DEFAULT_CONFIG = {
     "system_prompts": {
         "roleplay_default": "You are a highly descriptive AI roleplay character. Write engaging, detailed, and immersive responses in character. Stay true to the character's personality, background, and speech patterns. Do not act as an AI assistant.\n\nFormatting rules:\n- Put the character's spoken dialogue in double quotation marks, one line per dialogue.\n- Put actions, narration, sounds, and emphasis in asterisks: *she frowns*.\n- Write actions on their own line, separated from dialogue.\n- Never wrap narration or prose in quotation marks.\n- Never leave stray asterisks or quotes; every * and \" must be paired.\n- Keep dialogue on a single line; do not insert line breaks inside quotes.",
         "narrator": "You are the narrator of an interactive roleplay story. Your job is to describe the world around the conversation: the environment, the passage of time, off-screen events, and transitions between scenes. Decide whether the story needs: continuing the dialogue, adding background information, or cutting to a new scene. Write 2-5 evocative sentences in third person, past tense. Do not speak dialogue and do not act as the character.",
-        "suggest_instruction": "CRITICAL INSTRUCTION: You must act as the USER (the person talking to the character). Based on the context, write a single short action or sentence the USER is likely to say or do next. Output ONLY the raw text without wrapping it in quotes or labels."
+        "suggest_instruction": "CRITICAL INSTRUCTION: You must act as the USER (the person talking to the character). Based on the context, write a single short action or sentence the USER is likely to say or do next. Output ONLY the raw text without wrapping it in quotes or labels.",
+        "charGenDescriptionPrompt": "You are an expert character creator. Expand the provided character details into a rich, detailed background description. Return ONLY the text for the description, no markdown or extra chat.",
+        "charGenPersonalityPrompt": "You are an expert character creator. Expand the provided character details into a detailed personality profile covering traits, quirks, and mannerisms. Return ONLY the text, no markdown.",
+        "charGenScenarioPrompt": "You are an expert character creator. Create an engaging scenario/setting for this character based on their details. Return ONLY the text, no markdown.",
+        "charGenFirstMesPrompt": "You are an expert character creator. Write an engaging first message/greeting from this character in their unique voice. Return ONLY the text, no markdown.",
+        "charGenMesExamplePrompt": "You are an expert character creator. Write a few short dialogue examples showing how this character speaks. Use <START> to separate examples. Return ONLY the text, no markdown.",
+        "charGenSystemPromptPrompt": "You are an expert character creator. Write a custom system prompt that instructs an AI how to play this character. Return ONLY the text, no markdown.",
+        "charGenVisualTagsPrompt": "You are an expert character creator. Generate a comma-separated list of Danbooru-style visual tags that describe this character's appearance. Return ONLY the tags, no markdown.",
+        "charGenEnrichPrompt": "You are an expert character creator. Read the provided character details and fill in ALL missing fields to enrich the character profile. Output MUST be valid JSON matching exactly these keys: \"description\", \"personality\", \"scenario\", \"first_mes\", \"mes_example\", \"default_time\", \"default_location\". Do not include markdown code blocks, just raw JSON."
     }
 }
 
@@ -661,7 +669,19 @@ def _deep_merge(base: dict, updates: dict) -> dict:
 # Configurable system-prompt blocks. Defined here (the lowest-level module) so
 # validation can allow-list them; `api/routes/settings.py` re-exports the same
 # names for the /system-prompts route instead of maintaining a second list.
-SYSTEM_PROMPT_KEYS = frozenset({"roleplay_default", "narrator", "suggest_instruction"})
+SYSTEM_PROMPT_KEYS = frozenset({
+    "roleplay_default",
+    "narrator",
+    "suggest_instruction",
+    "charGenDescriptionPrompt",
+    "charGenPersonalityPrompt",
+    "charGenScenarioPrompt",
+    "charGenFirstMesPrompt",
+    "charGenMesExamplePrompt",
+    "charGenSystemPromptPrompt",
+    "charGenVisualTagsPrompt",
+    "charGenEnrichPrompt",
+})
 
 
 # Leaf allow-lists for the sections that are written by name at their read
@@ -853,6 +873,7 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError("jobs_cleanup.max_age_hours must be > 0")
         if "cleanup_interval" in cleanup and cleanup["cleanup_interval"] <= 0:
             raise ValueError("jobs_cleanup.cleanup_interval must be > 0")
+        _check_bool("jobs_cleanup", "auto_cleanup", cleanup.get("auto_cleanup"))
     
     # Image processing validations
     if "image_processing" in config:
@@ -867,22 +888,19 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError("image_processing.blurhash_resize_max must be > 0")
         _check_bool("image_processing", "output_date_hierarchy", img.get("output_date_hierarchy"))
         _check_bool("image_processing", "embed_metadata_in_png", img.get("embed_metadata_in_png"))
-        # See `get_roleplay_context_config`. Validated here so a typo in
-        # config.json is a warning at load rather than a prompt that quietly
-        # keeps the behaviour the user was trying to turn off.
-        #
-        # Guarded on presence, because `_section_body` is `config[section]` and
-        # this runs for EVERY settings write — so an update that touches only
-        # `image_processing` raised KeyError: 'roleplay' and 500'd the request.
-        if "roleplay" in config:
-            rp = _section_body(config, "roleplay")
-            _check_bool("roleplay", "label_speakers", rp.get("label_speakers"))
-            _check_str("roleplay", "narrator_prefix", rp.get("narrator_prefix"), allow_blank=True)
-            _check_str("roleplay", "image_prefix", rp.get("image_prefix"), allow_blank=True)
         _check_str("image_processing", "thumbnail_format", img.get("thumbnail_format"))
         _check_str("image_processing", "thumbnail_directory", img.get("thumbnail_directory"))
         if "thumbnail_sizes" in img and not isinstance(img["thumbnail_sizes"], dict):
             raise ValueError("image_processing.thumbnail_sizes must be an object")
+
+    # See `get_roleplay_context_config`. Validated here so a typo in
+    # config.json is a warning at load rather than a prompt that quietly
+    # keeps the behaviour the user was trying to turn off.
+    if "roleplay" in config:
+        rp = _section_body(config, "roleplay")
+        _check_bool("roleplay", "label_speakers", rp.get("label_speakers"))
+        _check_str("roleplay", "narrator_prefix", rp.get("narrator_prefix"), allow_blank=True)
+        _check_str("roleplay", "image_prefix", rp.get("image_prefix"), allow_blank=True)
 
     # AI validations
     #

@@ -4,6 +4,8 @@
 from collections.abc import Callable
 from datetime import datetime, timedelta
 import hashlib
+import time
+from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -116,6 +118,10 @@ class _AdvisoryRunLock:
                 logger.warning("scheduler_session_close_failed", job_id=self._job_id, error=str(exc))
 
 
+# In-memory execution history for scheduled jobs
+_JOB_HISTORY: dict[str, dict[str, Any]] = {}
+
+
 def _guarded(func: Callable, job_id: str) -> Callable:
     """Wrap a scheduled job so only one process runs each tick.
 
@@ -138,8 +144,35 @@ def _guarded(func: Callable, job_id: str) -> Callable:
             with _AdvisoryRunLock(job_id) as granted:
                 if not granted:
                     logger.debug("scheduler_tick_skipped", job_id=job_id, reason="held_by_another_process")
+                    if job_id not in _JOB_HISTORY:
+                        _JOB_HISTORY[job_id] = {
+                            "last_run_at": None,
+                            "last_status": "skipped",
+                            "last_duration_seconds": 0.0,
+                            "last_error": None,
+                        }
                     return None
-                return await func(*args, **kwargs)
+                start_time = time.monotonic()
+                run_at = datetime.now().isoformat()
+                try:
+                    res = await func(*args, **kwargs)
+                    duration = round(time.monotonic() - start_time, 3)
+                    _JOB_HISTORY[job_id] = {
+                        "last_run_at": run_at,
+                        "last_status": "success",
+                        "last_duration_seconds": duration,
+                        "last_error": None,
+                    }
+                    return res
+                except Exception as exc:
+                    duration = round(time.monotonic() - start_time, 3)
+                    _JOB_HISTORY[job_id] = {
+                        "last_run_at": run_at,
+                        "last_status": "failed",
+                        "last_duration_seconds": duration,
+                        "last_error": str(exc),
+                    }
+                    raise
 
         return _async_wrapper
 
@@ -148,8 +181,35 @@ def _guarded(func: Callable, job_id: str) -> Callable:
         with _AdvisoryRunLock(job_id) as granted:
             if not granted:
                 logger.debug("scheduler_tick_skipped", job_id=job_id, reason="held_by_another_process")
+                if job_id not in _JOB_HISTORY:
+                    _JOB_HISTORY[job_id] = {
+                        "last_run_at": None,
+                        "last_status": "skipped",
+                        "last_duration_seconds": 0.0,
+                        "last_error": None,
+                    }
                 return None
-            return func(*args, **kwargs)
+            start_time = time.monotonic()
+            run_at = datetime.now().isoformat()
+            try:
+                res = func(*args, **kwargs)
+                duration = round(time.monotonic() - start_time, 3)
+                _JOB_HISTORY[job_id] = {
+                    "last_run_at": run_at,
+                    "last_status": "success",
+                    "last_duration_seconds": duration,
+                    "last_error": None,
+                }
+                return res
+            except Exception as exc:
+                duration = round(time.monotonic() - start_time, 3)
+                _JOB_HISTORY[job_id] = {
+                    "last_run_at": run_at,
+                    "last_status": "failed",
+                    "last_duration_seconds": duration,
+                    "last_error": str(exc),
+                }
+                raise
 
     return _wrapper
 
@@ -288,17 +348,22 @@ def remove_job(job_id: str):
         logger.info("job_removed", job_id=job_id)
 
 
-def get_jobs_status() -> list:
-    """Get status of all scheduled jobs."""
+def get_jobs_status() -> list[dict[str, Any]]:
+    """Get status of all scheduled jobs including recent execution history."""
     scheduler = get_scheduler()
     jobs = []
     
     for job in scheduler.get_jobs():
+        history = _JOB_HISTORY.get(job.id, {})
         jobs.append({
             "id": job.id,
             "name": job.name,
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
             "trigger": str(job.trigger),
+            "last_run_at": history.get("last_run_at"),
+            "last_status": history.get("last_status", "idle"),
+            "last_duration_seconds": history.get("last_duration_seconds"),
+            "last_error": history.get("last_error"),
         })
     
     return jobs
