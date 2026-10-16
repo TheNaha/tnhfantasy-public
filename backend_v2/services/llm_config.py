@@ -244,12 +244,17 @@ def set_default_provider(provider_id: str, model_id: str) -> None:
     """
     import tempfile
 
+    current = _read_config() or {}
+    payload = dict(current)
+    payload["provider_id"] = provider_id
+    payload["model_id"] = model_id
+
     directory = os.path.dirname(_CONFIG_PATH)
     os.makedirs(directory, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".llm_config.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
-            json.dump({"provider_id": provider_id, "model_id": model_id}, f)
+            json.dump(payload, f)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, _CONFIG_PATH)
@@ -260,3 +265,70 @@ def set_default_provider(provider_id: str, model_id: str) -> None:
             pass
         raise
     _invalidate_cache()
+
+
+def get_active_models(registry: Any = None) -> dict[str, str]:
+    """Return active model IDs for rp, util, and image roles."""
+    data = _read_config() or {}
+    active_rp = data.get("active_rp")
+    active_util = data.get("active_util")
+    active_image = data.get("active_image") or data.get("default_image_model") or ""
+
+    if not active_rp or not active_util:
+        try:
+            if registry is None:
+                from services.llm_router import get_router
+
+                reg = get_router().registry
+            else:
+                reg = registry
+            if not active_rp:
+                active_rp = reg.primary("rp").id
+            if not active_util:
+                active_util = reg.primary("util").id
+        except Exception as exc:
+            logger.debug("get_active_models_fallback_failed", error=str(exc))
+            active_rp = active_rp or "artemis_31b"
+            active_util = active_util or active_rp
+
+    return {
+        "rp": active_rp,
+        "util": active_util,
+        "image": active_image,
+    }
+
+
+def set_active_models(
+    active_rp: str | None = None,
+    active_util: str | None = None,
+    active_image: str | None = None,
+) -> dict[str, str]:
+    """Persist active model choices in llm_config.json."""
+    import tempfile
+
+    current = _read_config() or {}
+    updated = dict(current)
+    if active_rp is not None:
+        updated["active_rp"] = active_rp
+    if active_util is not None:
+        updated["active_util"] = active_util
+    if active_image is not None:
+        updated["active_image"] = active_image
+
+    directory = os.path.dirname(_CONFIG_PATH)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".llm_config.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(updated, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, _CONFIG_PATH)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    _invalidate_cache()
+    return get_active_models()

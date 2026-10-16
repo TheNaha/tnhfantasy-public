@@ -113,7 +113,18 @@ class LLMRouter:
         if override:
             model = self.registry.get(override)
             return [model]
-        return self.registry.enabled_for(self.role_for_kind(kind))
+        role = self.role_for_kind(kind)
+        try:
+            from services.llm_config import get_active_models
+
+            active_id = get_active_models(self.registry).get(role)
+            if active_id and active_id in self.registry.models and self.registry.models[active_id].enabled:
+                active_model = self.registry.models[active_id]
+                others = [m for m in self.registry.enabled_for(role) if m.id != active_id]
+                return [active_model] + others
+        except Exception:
+            pass
+        return self.registry.enabled_for(role)
 
     def primary_for_kind(
         self, kind: Optional[str], *, override: Optional[str] = None
@@ -157,14 +168,31 @@ class LLMRouter:
 
     def describe(self) -> Dict[str, Any]:
         """For the settings UI: what each role currently resolves to."""
+        try:
+            from services.llm_config import get_active_models
+
+            active = get_active_models(self.registry)
+        except Exception:
+            active = {}
+
+        rp_active = active.get("rp") or self.registry.primary("rp").id
+        util_active = active.get("util") or self.registry.primary("util").id
+
         return {
             "roles": {
                 role: {
+                    "active": active.get(role) or self.registry.primary(role).id,
                     "primary": self.registry.primary(role).id,
                     "chain": [m.id for m in self.registry.enabled_for(role)],
                 }
                 for role in sorted(self.registry.fallback)
             },
+            "active": {
+                "rp": rp_active,
+                "util": util_active,
+                "image": active.get("image", ""),
+            },
+            "shared_weights": rp_active == util_active,
             "kinds": dict(sorted(ROLE_BY_KIND.items())),
             "default_role": DEFAULT_ROLE,
         }

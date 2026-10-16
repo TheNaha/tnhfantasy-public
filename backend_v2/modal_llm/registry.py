@@ -142,6 +142,30 @@ class Model:
         args += list(self.extra_args)
         return args
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Dictionary representation of this model including download specs."""
+        return {
+            "id": self.id,
+            "role": self.role,
+            "repo": self.repo,
+            "gguf": self.gguf,
+            "mmproj": self.mmproj,
+            "mmproj_repo": self.mmproj_repo,
+            "volume_dir": self.volume_dir,
+            "ctx": self.ctx,
+            "parallel": self.parallel,
+            "has_vision": self.has_vision,
+            "enabled": self.enabled,
+            "note": self.note,
+            "sampler": dict(self.sampler or {}),
+            "download_url": f"https://huggingface.co/{self.repo}/resolve/main/{self.gguf}",
+            "mmproj_download_url": (
+                f"https://huggingface.co/{self.mmproj_repo or self.repo}/resolve/main/{self.mmproj}"
+                if self.mmproj
+                else None
+            ),
+        }
+
 
 @dataclass(frozen=True)
 class Registry:
@@ -191,6 +215,25 @@ class Registry:
         if not ordered:
             raise LookupError(f"role {role!r} has no enabled model in the registry")
         return ordered[0]
+
+    def catalog(self) -> Dict[str, Dict[str, Any]]:
+        """Return all models as a dictionary keyed by model ID."""
+        return {mid: m.to_dict() for mid, m in self.models.items()}
+
+    def distinct_primaries(self) -> List[Model]:
+        """One Model per distinct weight set across every role's primary.
+
+        When `rp` and `util` resolve to the same weights, one server serves both.
+        """
+        distinct: List[Model] = []
+        for role in sorted(self.fallback):
+            try:
+                m = self.primary(role)
+            except LookupError:
+                continue
+            if not any(d.volume_dir == m.volume_dir for d in distinct):
+                distinct.append(m)
+        return distinct
 
 
 def load(path: Optional[Path] = None) -> Registry:

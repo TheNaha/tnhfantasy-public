@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from api.deps import get_session
 from core.entities import Provider
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, ValidationError
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from services.llm_config import resolve_default_provider, set_default_provider
@@ -18,6 +18,64 @@ router = APIRouter()
 class DefaultProviderResponse(BaseModel):
     provider_id: str
     model_id: str
+
+
+class UpdateActiveModelsRequest(BaseModel):
+    active_rp: str | None = None
+    active_util: str | None = None
+    active_image: str | None = None
+
+
+@router.get("/catalog")
+def get_model_catalog():
+    """Return the complete model catalog, roles, active selections, and download specifications."""
+    from services.llm_config import get_active_models
+    from services.llm_router import get_router
+
+    router_inst = get_router()
+    registry = router_inst.registry
+    active = get_active_models(registry)
+    rp_active = active.get("rp") or registry.primary("rp").id
+    util_active = active.get("util") or registry.primary("util").id
+
+    return {
+        "catalog": registry.catalog(),
+        "roles": {
+            role: {
+                "active": active.get(role) or registry.primary(role).id,
+                "primary": registry.primary(role).id,
+                "chain": [m.id for m in registry.enabled_for(role)],
+            }
+            for role in sorted(registry.fallback)
+        },
+        "active": {
+            "rp": rp_active,
+            "util": util_active,
+            "image": active.get("image", ""),
+        },
+        "shared_weights": rp_active == util_active,
+    }
+
+
+@router.put("/catalog/active")
+def set_active_models_endpoint(request: UpdateActiveModelsRequest):
+    """Update active rp, util, and image models."""
+    from services.llm_config import set_active_models
+    from services.llm_router import get_router, refresh_router
+
+    registry = get_router().registry
+    if request.active_rp and request.active_rp not in registry.models:
+        raise ValidationError(f"Model '{request.active_rp}' not found in registry")
+    if request.active_util and request.active_util not in registry.models:
+        raise ValidationError(f"Model '{request.active_util}' not found in registry")
+
+    active = set_active_models(
+        active_rp=request.active_rp,
+        active_util=request.active_util,
+        active_image=request.active_image,
+    )
+    refresh_router()
+    return {"status": "success", "active": active}
 
 
 @router.get("/default-provider", response_model=DefaultProviderResponse | None)

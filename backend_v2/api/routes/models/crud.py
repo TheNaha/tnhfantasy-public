@@ -44,6 +44,37 @@ async def list_all_models(service: ModelServiceV2 = Depends(get_model_service_v2
     return await service.list_models()
 
 
+@router.get("/catalog")
+def get_catalog():
+    """Return the LLM and base model catalog and active role mappings."""
+    from services.llm_config import get_active_models
+    from services.llm_router import get_router
+
+    router_inst = get_router()
+    registry = router_inst.registry
+    active = get_active_models(registry)
+    rp_active = active.get("rp") or registry.primary("rp").id
+    util_active = active.get("util") or registry.primary("util").id
+
+    return {
+        "catalog": registry.catalog(),
+        "roles": {
+            role: {
+                "active": active.get(role) or registry.primary(role).id,
+                "primary": registry.primary(role).id,
+                "chain": [m.id for m in registry.enabled_for(role)],
+            }
+            for role in sorted(registry.fallback)
+        },
+        "active": {
+            "rp": rp_active,
+            "util": util_active,
+            "image": active.get("image", ""),
+        },
+        "shared_weights": rp_active == util_active,
+    }
+
+
 @router.get("/check-installed/{civitai_model_id}")
 def check_installed_versions(
     civitai_model_id: int,
