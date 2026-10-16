@@ -167,4 +167,31 @@ export function useLLMRouting(options = {}) {
     });
 }
 
+export const LLM_CATALOG_KEY = ['llm', 'catalog'];
 
+/** Fetch the full model catalog with active selections. */
+async function fetchLLMCatalog({ signal } = {}) {
+    return api.get(`${API_V2_BASE}/llm/catalog`, { signal });
+}
+
+export function useLLMCatalog(options = {}) {
+    return useQuery({
+        queryKey: LLM_CATALOG_KEY,
+        queryFn: fetchLLMCatalog,
+        staleTime: 60_000,
+        ...options,
+    });
+}
+
+/** Set the active models (rp, util, image) in backend. */
+export function useSetActiveModels() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ active_rp, active_util, active_image }) =>
+            api.put(`${API_V2_BASE}/llm/catalog/active`, { active_rp, active_util, active_image }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: LLM_CATALOG_KEY });
+            queryClient.invalidateQueries({ queryKey: LLM_ROUTING_KEY });
+        },
+    });
+}

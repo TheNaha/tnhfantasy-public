@@ -8,7 +8,7 @@ import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings, GALLERY_VIEW_MODES } from '../store/settingsStore';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
-import { useLLMProviderStatus, useLLMRouting, useSetLLMDefault } from '../hooks/useLLMProviderStatus';
+import { useLLMProviderStatus, useLLMRouting, useSetLLMDefault, useLLMCatalog, useSetActiveModels } from '../hooks/useLLMProviderStatus';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import React, { useCallback, useEffect, useRef } from 'react';
 
@@ -1417,6 +1417,8 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
     const llmStatus = useLLMProviderStatus();
     const setDefaultMutation = useSetLLMDefault();
     const routing = useLLMRouting();
+    const catalog = useLLMCatalog();
+    const setActiveModelsMutation = useSetActiveModels();
     
     const llmProviders = providers.filter(p => p.worker_type === 'llm' || p.worker_type === 'hybrid' || (Array.isArray(p.capabilities) && p.capabilities.includes('llm')) || p.id.startsWith('llm'));
 
@@ -1629,37 +1631,71 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                             Routing is unavailable — chat still works, using the default model above.
                         </p>
                     ) : (
-                        <div className="grid gap-4 md:grid-cols-2">
-                            {Object.entries(routing.data?.roles || {}).map(([role, info]) => (
-                                <div key={role} className="rounded-xl border border-white/10 bg-gray-900/50 p-4">
-                                    <div className="flex items-center justify-between mb-1">
-                                        <span className="text-xs font-bold uppercase tracking-widest text-blue-300">
-                                            {role === 'rp' ? 'Roleplay (rp)' : role === 'util' ? 'Structured (util)' : role}
-                                        </span>
-                                        <span className="text-2xs text-gray-500">
-                                            {info.chain?.length || 0} in chain
-                                        </span>
-                                    </div>
-                                    <div className="text-sm font-semibold text-white">
-                                        {info.primary || '—'}
-                                    </div>
-                                    <div className="text-xs text-gray-400 mt-1">
-                                        {info.primary ? 'primary' : 'no enabled model'}
-                                    </div>
-                                    {(info.chain?.length || 0) > 1 && (
-                                        <div className="mt-3 pt-3 border-t border-white/5">
-                                            <div className="text-2xs uppercase tracking-widest text-gray-500 mb-1.5">Fallback</div>
-                                            <div className="flex flex-wrap gap-1">
-                                                {info.chain.slice(1).map((id) => (
-                                                    <span key={id} className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-gray-300 text-2xs">
-                                                        {id}
-                                                    </span>
-                                                ))}
+                        <div>
+                            <div className="grid gap-4 md:grid-cols-2">
+                                {Object.entries(routing.data?.roles || {}).map(([role, info]) => {
+                                    const currentActive = role === 'rp'
+                                        ? (catalog.data?.active?.rp || info.primary)
+                                        : (catalog.data?.active?.util || info.primary);
+
+                                    return (
+                                        <div key={role} className="rounded-xl border border-white/10 bg-gray-900/50 p-4">
+                                            <div className="flex items-center justify-between mb-1">
+                                                <span className="text-xs font-bold uppercase tracking-widest text-blue-300">
+                                                    {role === 'rp' ? 'Roleplay (rp)' : role === 'util' ? 'Structured (util)' : role}
+                                                </span>
+                                                <span className="text-2xs text-gray-500">
+                                                    {info.chain?.length || 0} in catalog
+                                                </span>
                                             </div>
+
+                                            <div className="mt-2">
+                                                <label htmlFor={`active-model-${role}`} className="text-2xs uppercase tracking-widest text-gray-400 block mb-1">Active Model</label>
+                                                <select
+                                                    id={`active-model-${role}`}
+                                                    aria-label={`Active ${role} model`}
+                                                    value={currentActive || ''}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        const activeRp = role === 'rp' ? val : (catalog.data?.active?.rp || routing.data?.roles?.rp?.primary);
+                                                        const activeUtil = role === 'util' ? val : (catalog.data?.active?.util || routing.data?.roles?.util?.primary);
+                                                        setActiveModelsMutation.mutate({ active_rp: activeRp, active_util: activeUtil });
+                                                    }}
+                                                    className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                                                    disabled={setActiveModelsMutation.isPending}
+                                                >
+                                                    {role === 'util' && (
+                                                        <option value="same_as_rp">⚡ Same as RP Model (Unified VRAM / Faster)</option>
+                                                    )}
+                                                    {info.chain?.map((mid) => (
+                                                        <option key={mid} value={mid}>{mid}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+
+                                            {(info.chain?.length || 0) > 1 && (
+                                                <div className="mt-3 pt-3 border-t border-white/5">
+                                                    <div className="text-2xs uppercase tracking-widest text-gray-500 mb-1.5">Fallback Chain</div>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {info.chain.map((id) => (
+                                                            <span key={id} className={`px-2 py-0.5 rounded text-2xs ${id === currentActive ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold' : 'bg-white/5 border border-white/10 text-gray-400'}`}>
+                                                                {id}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
-                                    )}
+                                    );
+                                })}
+                            </div>
+
+                            {routing.data?.shared_weights && (
+                                <div className="mt-3 px-3.5 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300 flex items-center gap-2">
+                                    <span>⚡</span>
+                                    <span><b>Unified VRAM Mode:</b> RP and Utility tasks share identical weights, enabling single-model residency and fast execution.</span>
                                 </div>
-                            ))}
+                            )}
                         </div>
                     )}
 
@@ -1680,8 +1716,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                     </details>
 
                     <p className="mt-4 text-xs text-gray-500">
-                        A per-chat or per-story model pin overrides all of this.
-                        Change the routing itself by editing <code className="text-gray-400">modal_llm/models.json</code>.
+                        Active model selections are stored in the backend and automatically pinned in high-speed RAM by connected remote workers. A per-chat or per-story model pin overrides these defaults.
                     </p>
                 </div>
 
