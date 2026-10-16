@@ -100,6 +100,7 @@ class HybridRemoteEngine(InProcessEngine):
         self._gpu_lock = asyncio.Lock()
         self._resolved_policy: Optional[str] = None
         self._detected_gpu: Optional[Dict[str, Any]] = None
+        self._last_workload: Optional[str] = None
 
     # ----------------------------------------------------------------------
     # Hardware Capability Marker & Policy Resolution
@@ -193,15 +194,16 @@ class HybridRemoteEngine(InProcessEngine):
             # Strict mutual exclusion for single-GPU budget nodes (e.g. L4, T4)
             async with self._gpu_lock:
                 if is_image:
-                    try:
-                        async for event in self.image_engine.inference(
-                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
-                        ):
-                            yield event
-                    finally:
-                        # Yield VRAM immediately back to system/LLM
-                        await self._free_comfy_vram()
+                    self._last_workload = "image"
+                    async for event in self.image_engine.inference(
+                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                    ):
+                        yield event
                 else:
+                    if self._last_workload != "llm":
+                        # Yield VRAM from ComfyUI to system/LLM before running LLM on budget GPU
+                        await self._free_comfy_vram()
+                        self._last_workload = "llm"
                     async for event in self.llm_engine.inference(
                         workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
                     ):

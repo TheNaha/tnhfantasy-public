@@ -108,7 +108,7 @@ async def test_auto_policy_fallback_on_agent_unreachable():
 
 @pytest.mark.asyncio
 async def test_image_workflow_detection_and_free_vram_in_exclusive_mode():
-    """Image generation in exclusive mode triggers ComfyUI /free after completion."""
+    """Image generation keeps models warm, and switching to LLM frees ComfyUI VRAM."""
     engine = HybridRemoteEngine("hyb-test", base_url="http://node", concurrency_policy="exclusive")
 
     # Mock image_engine.inference
@@ -118,23 +118,47 @@ async def test_image_workflow_detection_and_free_vram_in_exclusive_mode():
 
     engine.image_engine.inference = mock_image_inference
 
+    # Mock llm_engine.inference
+    async def mock_llm_inference(wf, **kwargs):
+        yield {"event": "delta", "text": "hello"}
+        yield {"event": "completed", "outputs": [{"text": "hello"}]}
+
+    engine.llm_engine.inference = mock_llm_inference
+
     # Mock free comfy vram
-    free_called = False
+    free_call_count = 0
     async def mock_free():
-        nonlocal free_called
-        free_called = True
+        nonlocal free_call_count
+        free_call_count += 1
 
     engine._free_comfy_vram = mock_free
 
-    workflow = {
+    image_workflow = {
         "3": {"class_type": "KSampler", "inputs": {}},
         "4": {"class_type": "SaveImage", "inputs": {}},
     }
 
-    events = [e async for e in engine.inference(workflow, job_id="job-1")]
+    # 1. Image generation runs: models remain warm (free Comfy VRAM is NOT called)
+    events = [e async for e in engine.inference(image_workflow, job_id="job-1")]
     assert len(events) == 2
     assert events[-1]["event"] == "completed"
-    assert free_called is True
+    assert free_call_count == 0
+
+    # 2. Second image generation runs: models still remain warm
+    events2 = [e async for e in engine.inference(image_workflow, job_id="job-2")]
+    assert len(events2) == 2
+    assert free_call_count == 0
+
+    # 3. Workload switch to LLM: ComfyUI VRAM is freed to yield GPU to LLM
+    llm_workflow = {"messages": [{"role": "user", "content": "hi"}]}
+    llm_events = [e async for e in engine.inference(llm_workflow, job_id="job-3")]
+    assert len(llm_events) == 2
+    assert free_call_count == 1
+
+    # 4. Another LLM job runs: ComfyUI VRAM is already freed, no redundant /free call
+    llm_events2 = [e async for e in engine.inference(llm_workflow, job_id="job-4")]
+    assert len(llm_events2) == 2
+    assert free_call_count == 1
 
 
 @pytest.mark.asyncio

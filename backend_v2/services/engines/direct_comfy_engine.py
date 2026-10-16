@@ -1147,11 +1147,49 @@ class DirectComfyEngine(InProcessEngine):
 
                 async def _fetch_view(ref: tuple[str, str, str]) -> dict[str, Any] | None:
                     fn, sub, f_type = ref
-                    view_url = f"/view?filename={urllib.parse.quote(fn)}&subfolder={urllib.parse.quote(sub)}&type={urllib.parse.quote(f_type)}"
-                    img_resp = await client.get(view_url, timeout=30.0)
-                    if img_resp.status_code != 200:
-                        return None
-                    b64_data = base64.b64encode(img_resp.content).decode("utf-8")
+                    content: Optional[bytes] = None
+                    t_fetch_start = time.monotonic()
+
+                    # High-speed path: when sidecar remote_agent is available, fetch WebP-compressed
+                    # stream via /get-file to drastically reduce WAN/NetBird transfer latency.
+                    if self._has_agent:
+                        try:
+                            agent_client = self.get_agent_client()
+                            rel_path = f"output/{sub}/{fn}" if sub else f"output/{fn}"
+                            agent_resp = await agent_client.get(
+                                f"/get-file/{urllib.parse.quote(rel_path)}",
+                                params={"format": "webp"},
+                                timeout=30.0,
+                            )
+                            if agent_resp.status_code == 200 and agent_resp.content:
+                                content = agent_resp.content
+                                fetch_duration = time.monotonic() - t_fetch_start
+                                logger.info(
+                                    "direct_comfy_image_fetched_via_agent",
+                                    provider_id=self.provider_id,
+                                    filename=fn,
+                                    bytes=len(content),
+                                    duration_seconds=round(fetch_duration, 2),
+                                )
+                        except Exception as exc:
+                            logger.debug("direct_comfy_agent_webp_fetch_failed", provider_id=self.provider_id, error=str(exc))
+
+                    if content is None:
+                        view_url = f"/view?filename={urllib.parse.quote(fn)}&subfolder={urllib.parse.quote(sub)}&type={urllib.parse.quote(f_type)}"
+                        img_resp = await client.get(view_url, timeout=30.0)
+                        if img_resp.status_code != 200:
+                            return None
+                        content = img_resp.content
+                        fetch_duration = time.monotonic() - t_fetch_start
+                        logger.info(
+                            "direct_comfy_image_fetched_via_view",
+                            provider_id=self.provider_id,
+                            filename=fn,
+                            bytes=len(content),
+                            duration_seconds=round(fetch_duration, 2),
+                        )
+
+                    b64_data = base64.b64encode(content).decode("utf-8")
                     # Canonical artifact keys, matching what the
                     # container's translate_task_events produced:
                     # type "image", storage type as image_type, and

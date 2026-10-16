@@ -2,10 +2,11 @@ import os
 import asyncio
 import base64
 import json
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Query, Depends
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from provider_core.auth import bearer_from_header, token_matches
@@ -22,13 +23,26 @@ from provider_core.downloads import (
     pending_download_paths,
     pipeline_artifacts,
 )
-from provider_core.validation import validate_downloaded_file
+from provider_core.validation import MIN_MODEL_SIZE, validate_downloaded_file
 from provider_core.models import MODEL_DIRECTORIES
 from provider_core.logging import get_logger
 
 logger = get_logger("server")
 
 app = FastAPI(title="TNHComfy Remote Agent")
+
+
+@app.middleware("http")
+async def log_incoming_requests(request: Request, call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = round((time.monotonic() - start) * 1000, 1)
+    if request.url.path not in ("/health",):
+        logger.info(
+            f"--> {request.method} {request.url.path} "
+            f"status={response.status_code} ({duration_ms}ms)"
+        )
+    return response
 
 
 TOKEN = os.getenv("REMOTE_AGENT_TOKEN", "").strip()
@@ -955,7 +969,12 @@ async def delete_file(req: DeleteModelRequest):
 
 
 @app.get("/get-file/{path:path}", dependencies=[Depends(verify_token)])
-async def get_file(path: str, type: str = Query(default="output"), subfolder: str = Query(default="")):
+async def get_file(
+    path: str,
+    type: str = Query(default="output"),
+    subfolder: str = Query(default=""),
+    format: Optional[str] = Query(default=None),
+):
     """Stream a file from DATA_ROOT.
 
     This read the whole file with `f.read()` inside an `async def` and returned it
@@ -977,6 +996,24 @@ async def get_file(path: str, type: str = Query(default="output"), subfolder: st
     full_path = _data_path(os.path.join(subfolder, path) if subfolder else path)
     if not os.path.isfile(full_path):
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+    # High-speed WAN path: Convert PNG/JPEG images to high-quality WebP on the fly
+    # when requested, reducing payload size by ~80% for fast network transfer.
+    if format == "webp" and full_path.lower().endswith((".png", ".jpg", ".jpeg")):
+        try:
+            from io import BytesIO
+            from PIL import Image
+
+            with Image.open(full_path) as im:
+                buf = BytesIO()
+                im.save(buf, format="WEBP", quality=98)
+                return Response(
+                    content=buf.getvalue(),
+                    media_type="image/webp",
+                    headers={"Content-Disposition": f'inline; filename="{os.path.basename(full_path)}.webp"'},
+                )
+        except Exception as exc:
+            logger.warning(f"get_file webp conversion failed for {path}: {exc}")
 
     max_bytes = get_file_size_cap()
     try:
