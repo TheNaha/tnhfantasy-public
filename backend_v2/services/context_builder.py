@@ -1685,7 +1685,7 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
     # prompt build rather than snapshotted at chat creation, so the link is true
     # for conversations that already exist. Without this the column is one more
     # write-only field, which is the defect class this schema has too many of.
-    lorebook_ids = _merge_ordered(lorebook_ids, _character_lorebook_ids(characters))
+    lorebook_ids = _merge_ordered(lorebook_ids, _character_lorebook_ids(characters, include_embedded=True))
 
     # The World is the owning container, so its membership is additive on top
     # of whatever the chat picked for itself. It was the one grouping in this
