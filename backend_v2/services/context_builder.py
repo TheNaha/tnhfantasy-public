@@ -17,6 +17,8 @@ from core.entities import (
     MessageKind,
     MessageRole,
     Persona,
+    Scenario,
+    Story,
 )
 from sqlmodel import Session, select
 
@@ -954,8 +956,8 @@ def build_system_prompt_sections(
 
             _memories = search_memories(
                 session, character_id, _mem_query, limit=_mem_top_k,
-                q_vec=_q_vec if _mem_query == _query_text else None,
-                q_vec_computed=_mem_query == _query_text,
+                q_vec=_q_vec if _mem_query == _lorebook_query else None,
+                q_vec_computed=_mem_query == _lorebook_query,
             )
             if _memories:
                 mem_block = "\n".join(f"- {m.content}" for m in _memories)
@@ -1736,4 +1738,175 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
         kwargs["include_roleplay_default"] = overrides["include_roleplay_default"]
     if overrides.get("active_character_id"):
         kwargs["active_character_id"] = overrides["active_character_id"]
+    if "trace_out" in overrides:
+        kwargs["trace_out"] = overrides["trace_out"]
     return kwargs
+
+
+def story_context_kwargs(
+    story: Story | None,
+    *,
+    characters: list = None,
+    session: Session = None,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Build kwargs for :func:`build_context` from a Story entity.
+
+    Mirrors `chat_context_kwargs`: resolves the library Persona, merges World
+    membership (lorebooks, locations, scenario), and pulls the story's own
+    writing preferences (genre, memory, pov, character_ids, location_ids).
+
+    All fields are nullable — an unset field reads as "inherit global" and the
+    context builder simply omits that section.
+    """
+    if story is None:
+        story = Story()
+
+    persona_name = story.persona_name
+    persona_description = story.persona_description
+    persona_id = story.persona_id
+    if persona_id and session is not None:
+        persona = session.get(Persona, persona_id)
+        if persona:
+            persona_name = persona_name or persona.name
+            persona_description = persona_description or persona.description
+
+    # World contribution — lorebooks, locations, scenario, name, description.
+    world = overrides.get("world") if "world" in overrides else None
+    world_id = story.world_id
+    if world is None and world_id and session is not None:
+        from core.entities import World
+
+        world = session.get(World, world_id)
+
+    world_lorebook_ids: list[str] = []
+    world_location_ids: list[str] = []
+    world_scenario: str | None = None
+    world_name = None
+    world_description = None
+    if world is not None:
+        world_name = world.name
+        world_description = world.description
+        from core.entities import Lorebook as _Lorebook, Location as _Location
+        from services.world_ownership import members_of as _members_of
+        from services.world_ownership import world_scenario as _world_scenario
+
+        world_lorebook_ids = [b.id for b in _members_of(session, world.id, _Lorebook)]
+        world_location_ids = [l.id for l in _members_of(session, world.id, _Location)]
+        _scenario = _world_scenario(session, world.id)
+        world_scenario = (
+            _scenario.prompt_template if _scenario and _scenario.prompt_template else None
+        )
+
+    # Scenario: story's own scenario_id first, then world fallback, then override.
+    story_scenario = overrides.get("story_scenario")
+    if story_scenario is None:
+        scenario_id = story.scenario_id
+        if scenario_id and session is not None:
+            _scenario_row = session.get(Scenario, scenario_id)
+            if _scenario_row:
+                story_scenario = _scenario_row.prompt_template or None
+        if story_scenario is None and world_scenario:
+            story_scenario = world_scenario
+
+    # Lorebooks: story's own + world's, merged in order.
+    explicit_lorebooks = overrides.get("lorebook_ids")
+    lorebook_ids = explicit_lorebooks
+    if lorebook_ids is None:
+        lorebook_ids = list(story.lorebook_ids or []) or None
+    lorebook_ids = _merge_ordered(lorebook_ids, world_lorebook_ids)
+
+    # Locations: story's own + world's, merged in order.
+    location_ids = list(story.location_ids or []) or None
+    location_ids = _merge_ordered(location_ids, world_location_ids)
+
+    # system_prompt_override: an explicit override passed in wins; otherwise the
+    # story's own. (Stories don't have append_system_prompt on the entity —
+    # that's a chat field — but the context builder accepts it.)
+    system_prompt_override = overrides.get("system_prompt_override")
+    if system_prompt_override is None:
+        system_prompt_override = getattr(story, "system_prompt_override", None)
+
+    kwargs: dict[str, Any] = {
+        "lorebook_ids": (
+            lorebook_ids if (lorebook_ids or explicit_lorebooks is not None) else None
+        ),
+        "location_ids": location_ids or None,
+        "persona_name": persona_name,
+        "persona_description": persona_description,
+        "story_genre": story.genre,
+        "story_memory": story.memory,
+        "story_pov": story.pov,
+        "story_scenario": story_scenario,
+        "story_character_ids": list(story.character_ids or []) or None,
+        "world_name": world_name,
+        "world_description": world_description,
+        "system_prompt_override": system_prompt_override,
+        "append_system_prompt": getattr(story, "append_system_prompt", None),
+    }
+    if "max_context_tokens" in overrides:
+        kwargs["max_context_tokens"] = overrides["max_context_tokens"]
+    if "include_roleplay_default" in overrides:
+        kwargs["include_roleplay_default"] = overrides["include_roleplay_default"]
+    if overrides.get("character_id"):
+        kwargs["character_id"] = overrides["character_id"]
+    if overrides.get("active_character_id"):
+        kwargs["active_character_id"] = overrides["active_character_id"]
+    return kwargs
+
+
+def build_context(
+    session: Session,
+    workspace: str,
+    entity,
+    messages: list = None,
+    sections_only: bool = False,
+    **overrides: Any,
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    """Unified context assembly for chat and story workspaces.
+
+    `workspace` is `"chat"` or `"story"`. `entity` is the owning Chat or Story
+    row. `messages` is the optional input transcript — ORM Message rows for
+    chat, beat/prior-chapter dicts for story.
+
+    Builds the workspace-specific kwargs (chat_context_kwargs or
+    story_context_kwargs), applies caller overrides, then runs a single pass
+    through `build_chat_context_with_sections` for the system prompt, message
+    list, and section breakdown.
+
+    When `sections_only` is True, only the system-prompt sections are built
+    (no message assembly, no pruning) and the joined section text is returned
+    as the first element with an empty message list — for paths like
+    `/suggest` and `/impersonate` that assemble their own message list.
+
+    Returns: (system_prompt_or_sections_text, messages_list, sections)
+    """
+    if workspace == "chat":
+        kwargs = chat_context_kwargs(
+            entity,
+            characters=overrides.pop("characters", None),
+            session=session,
+            **overrides,
+        )
+    elif workspace == "story":
+        kwargs = story_context_kwargs(
+            entity,
+            characters=overrides.pop("characters", None),
+            session=session,
+            **overrides,
+        )
+    else:
+        from core.exceptions import ValidationError
+
+        raise ValidationError(f"Unknown workspace: {workspace!r}")
+
+    if sections_only:
+        sections = build_system_prompt_sections(session, **kwargs)
+        sections_text = "\n\n".join(s["content"] for s in sections)
+        return sections_text, [], sections
+
+    return build_chat_context_with_sections(
+        session,
+        messages or [],
+        **kwargs,
+    )

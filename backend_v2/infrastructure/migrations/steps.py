@@ -1791,6 +1791,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Widen chk_providers_worker_type to allow hybrid; supports unified multi-modal workers (image + llm + tts) on a single provider row",
             apply_fn=_migration_097_provider_worker_type_hybrid,
         ),
+        MigrationStep(
+            version="098_chat_scenario_fk",
+            description="Add nullable scenario_id FK to chats so a chat references a Scenario template like a story does",
+            apply_fn=_migration_098_chat_scenario_fk,
+        ),
     ]
 
 
@@ -4840,4 +4845,53 @@ def _migration_097_provider_worker_type_hybrid(conn) -> bool:
         )
     )
     logger.info("provider_worker_type_constraint_widened", added="hybrid")
+    return True
+
+
+def _migration_098_chat_scenario_fk(conn) -> bool:
+    """Add nullable `scenario_id` FK to chats so a chat references a Scenario.
+
+    Stories already carry `scenario_id` (062). Chats did not, so a chat could
+    reference a Scenario only through the free-text `Character.scenario` field
+    or the chat-level `system_prompt_override`. A nullable FK makes the
+    Scenario library a first-class target for chats too, matching Story.
+
+    Nullable = unset; no backfill, no NOT NULL. A chat with no scenario_id
+    keeps its existing behaviour.
+    """
+    inspector = inspect(conn)
+    if "chats" not in set(inspector.get_table_names()):
+        return False
+    cols = {c["name"] for c in inspector.get_columns("chats")}
+    if "scenario_id" in cols:
+        logger.info("migration_noop", note="chats.scenario_id already present")
+        return True
+
+    col_type = "VARCHAR" if conn.dialect.name == "postgresql" else "TEXT"
+    conn.execute(
+        text(f"ALTER TABLE chats ADD COLUMN scenario_id {col_type}")
+    )
+    logger.info("migration_column_added", table="chats", column="scenario_id")
+
+    # Only add the FK if scenarios table exists and there are no pre-existing
+    # dangling values (the column is brand new, so there can't be any).
+    if "scenarios" in set(inspector.get_table_names()):
+        try:
+            if conn.dialect.name == "postgresql":
+                conn.execute(
+                    text(
+                        "ALTER TABLE chats "
+                        "ADD CONSTRAINT fk_chats_scenario_id "
+                        "FOREIGN KEY (scenario_id) REFERENCES scenarios(id)"
+                    )
+                )
+            else:
+                # SQLite: FKs are declared at table creation; ALTER TABLE cannot
+                # add one. The column still exists for ORM-level use.
+                pass
+        except Exception as exc:
+            logger.warning(
+                "migration_098_fk_add_failed", error=str(exc)
+            )
+
     return True

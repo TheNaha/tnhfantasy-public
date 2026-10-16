@@ -560,14 +560,13 @@ class TestStoryPersonaReachesTheModel:
         seen = {}
         import services.context_builder as context_builder
 
-        async def _spy(messages, **kwargs):
+        def _spy(session, messages=None, **kwargs):
             seen.update(kwargs)
-            return "sys", []
+            return "sys", [], []
 
-        # Patched on the source module, not the route: `_enqueue_story_continuation`
-        # imports the builder inside its own body, so an attribute on the route
-        # module is not what it calls.
-        monkeypatch.setattr(context_builder, "build_chat_context_async", _spy)
+        # Patched on the source module: `build_context` calls this internally
+        # with the fully-resolved kwargs from `story_context_kwargs`.
+        monkeypatch.setattr(context_builder, "build_chat_context_with_sections", _spy)
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
         )

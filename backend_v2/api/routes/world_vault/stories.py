@@ -18,7 +18,7 @@ from infrastructure.repositories.story_repo import StoryRepository
 from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
 from infrastructure.repositories.story_revision_repo import StoryChapterRevisionRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Story, StoryBeatRole, StoryChapter, StoryChapterRevision, Lorebook, Character, Location, Scenario, Asset, AssetKind, Persona
+from core.entities import Story, StoryBeatRole, StoryChapter, StoryChapterRevision, Lorebook, Character, Location, Scenario, Asset, AssetKind
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.world_integration_service import SOURCE_JOB_ID_METADATA_KEY
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow, sampler_overrides
@@ -1099,7 +1099,7 @@ async def _enqueue_story_continuation(
     a new beat; present, it appends an ALTERNATE to that one. The chat equivalent
     is `is_swipe` + `target_message_id` on the job metadata.
     """
-    from services.context_builder import build_chat_context_async
+    from services.context_builder import build_context
 
     story_id = chapter.story_id
 
@@ -1160,93 +1160,21 @@ async def _enqueue_story_continuation(
         *[t for t in chapter_turns if t["content"]],
     ]
 
-    # Both remaining reads go out together.
-    #
-    # They were three serial `to_thread` round trips — prior chapters, scenario,
-    # world — and the last two touch independent rows on a session that nothing
-    # else is using, so there is no reason to pay three round trips for them.
-    # Batch context tokens in as well: it is a pure config read with no session
-    # at all, so it is the cheapest of the four and free to overlap.
-    story_scenario_template: str | None = None
-    world_name = world_description = None
-    world_lorebook_ids: list[str] = []
-    world_location_ids: list[str] = []
-    world_scenario: str | None = None
-
-    # The persona, resolved the way `chat_context_kwargs` resolves it: the
-    # library row fills any of the three strings the story left blank, and the
-    # story's own values win where they are set. Read here rather than passed
-    # raw, because the library lookup is a session read and this block already
-    # has one.
-    story_persona_name = getattr(story, "persona_name", None) if story else None
-    story_persona_description = (
-        getattr(story, "persona_description", None) if story else None
-    )
-    persona_id = getattr(story, "persona_id", None) if story else None
-    if persona_id and session is not None:
-        persona = session.get(Persona, persona_id)
-        if persona:
-            story_persona_name = story_persona_name or persona.name
-            story_persona_description = story_persona_description or persona.description
-
-    scenario_task = world_task = tokens_task = None
-    if story and story.scenario_id:
-        # The scenario lookup is synchronous session work in an async helper.
-        scenario_task = asyncio.to_thread(
-            _scenario_prompt_template, session, story.scenario_id
-        )
-    if story is not None and story.world_id:
-        world_task = asyncio.to_thread(_world_prompt_parts, session, story)
-    tokens_task = asyncio.to_thread(_resolve_context_tokens)
-
-    context_tokens, world, story_scenario_template = await asyncio.gather(
-        tokens_task,
-        world_task or asyncio.sleep(0, None),
-        scenario_task or asyncio.sleep(0, None),
-    )
-    if world is not None:
-        world_name, world_description = world["name"], world["description"]
-        world_lorebook_ids = world["lorebook_ids"]
-        world_location_ids = world["location_ids"]
-        world_scenario = world["scenario"]
-
     if story_premise:
         base_prompt = f"{base_prompt}\n\n[Story premise]\n{story_premise}"
 
-    system_prompt, context = await build_chat_context_async(
-        messages,
-        # The chat-formatting block (put dialogue in quotes, actions in
-        # asterisks) was injected into prose continuations, where it
-        # contradicts the instruction above to "just output the next part of the
-        # prose". `build_chat_context_with_sections` had no
-        # `include_roleplay_default` parameter, so no caller could turn it off.
+    # Context tokens come from a pure config read, no session needed.
+    context_tokens = await asyncio.to_thread(_resolve_context_tokens)
+
+    # One assembly through the unified context builder. `story_context_kwargs`
+    # resolves persona (library row fills blanks), world membership
+    # (lorebooks, locations, scenario), and the story's own writing preferences
+    # from the Story row — no per-field manual resolution needed here.
+    system_prompt, context, _sections = await asyncio.to_thread(
+        build_context, session, "story", story, messages,
         include_roleplay_default=False,
-        # Same bound every chat reply path uses. Unpassed, this fell through to
-        # `DEFAULT_MAX_TOKENS` (4096) regardless of `ai.maxContextTokens`, and
-        # `prune_context` then truncated the user's own prose — not the chat
-        # formatting block that had eaten the budget.
         max_context_tokens=context_tokens,
-        lorebook_ids=list(dict.fromkeys(
-            [*(story.lorebook_ids if story else [] or []), *world_lorebook_ids]
-        )) or None,
         system_prompt_override=base_prompt,
-        story_genre=story.genre if story else None,
-        story_memory=story.memory if story else None,
-        story_pov=story.pov if story else None,
-        story_scenario=story_scenario_template or world_scenario,
-        story_character_ids=(story.character_ids if story else None) or None,
-        location_ids=list(dict.fromkeys(
-            [*(story.location_ids if story else [] or []), *world_location_ids]
-        )) or None,
-        world_name=world_name,
-        world_description=world_description,
-        # Who the reader character is, resolved the same way `chat_context_kwargs`
-        # does it for a chat: the library Persona fills any string the story left
-        # blank. This is the field that says the protagonist typing `> I draw my
-        # blade` is a person, and a story passed none of it — the world, the cast
-        # and the narrator all knew who they were while the reader was anonymous.
-        persona_name=story_persona_name,
-        persona_description=story_persona_description,
     )
 
     # Story agentic mode: offer the story-safe toolset so the model can
@@ -1464,16 +1392,11 @@ async def story_ai_action(story_id: str, chapter_id: str, data: StoryActionReque
         else f"{directive_line}\n\n{target_text}".strip()
     )
 
-    from services.context_builder import build_chat_context_async
-    system_prompt, context = await build_chat_context_async(
+    from services.context_builder import build_context
+    system_prompt, context, _sections = await asyncio.to_thread(
+        build_context, session, "story", story,
         [{"role": "user", "content": user_content}],
-        lorebook_ids=(story.lorebook_ids if story else None) or None,
         system_prompt_override=_ACTION_PROMPTS[action],
-        story_genre=story.genre if story else None,
-        story_memory=story.memory if story else None,
-        story_pov=story.pov if story else None,
-        story_character_ids=(story.character_ids if story else None) or None,
-        location_ids=(story.location_ids if story else None) or None,
     )
 
     workflow, metadata = build_llm_workflow(

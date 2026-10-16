@@ -43,9 +43,7 @@ from services.chat_utils import (
 )
 from services.context_builder import (
     speaker_context,
-    build_chat_context_with_sections_async,
-    build_system_prompt_sections_async,
-    chat_context_kwargs,
+    build_context,
     llm_turn_for,
     prune_context,
 )
@@ -121,11 +119,11 @@ def _load_characters_ordered(session: Session, primary_id: str | None, additiona
 
 def _chat_context_prep_sync(
     session: Session, chat_repo: ChatRepository, chat_id: str
-) -> tuple[Chat, list[Message], dict]:
-    """Load a chat, its context window and the context-builder kwargs.
+) -> tuple[Chat, list[Message], list]:
+    """Load a chat, its context window and its characters.
 
     Synchronous on purpose: the routes that need it also await the context
-    builders, so they cannot become plain `def` routes and these reads would
+    builder, so they cannot become plain `def` routes and these reads would
     otherwise run on the event loop. See `get_chat_system_prompt`.
     """
     chat = chat_repo.get(chat_id)
@@ -141,7 +139,7 @@ def _chat_context_prep_sync(
 
     characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
-    return chat, past_messages, chat_context_kwargs(chat, characters=characters, session=session)
+    return chat, past_messages, characters
 
 
 
@@ -774,27 +772,14 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
 
     # The context builders below are awaited, so this route cannot be a plain
     # `def` — but everything they need is read up front, in a worker thread.
-    chat, past_messages, ctx_kwargs = await asyncio.to_thread(
+    chat, past_messages, characters = await asyncio.to_thread(
         _chat_context_prep_sync, session, chat_repo, chat_id
     )
 
-    # One assembly, not two.
-    #
-    # This called `build_system_prompt_sections_async(**ctx_kwargs)` into
-    # `sections` and then `build_chat_context_async(past_messages, **ctx_kwargs)`,
-    # which calls `build_system_prompt_sections` again internally and threw the
-    # first result away. Each assembly runs an embedding forward pass and two
-    # pgvector queries, so the route paid for four of them and returned the
-    # second's, on the most-invalidated route in the app.
-    #
-    # `..._with_sections` is the same function plus the sections it already built
-    # on the way to the prompt, so `sections` and `system_prompt` now come from one
-    # pass. They did not before: the discarded call was made without `messages`, so
-    # its lorebook query had no conversation in it, and a chat with messages
-    # returned a section breakdown that did not match the prompt beside it.
-    system_prompt, context, sections = await build_chat_context_with_sections_async(
-        past_messages,
-        **ctx_kwargs,
+    # One assembly through the unified context builder.
+    system_prompt, context, sections = await asyncio.to_thread(
+        build_context, session, "chat", chat, past_messages,
+        characters=characters,
     )
 
     return {
@@ -968,7 +953,7 @@ def _add_message_prep_sync(
     session.refresh(message)
 
     past_messages: list[Message] = []
-    ctx_kwargs: dict | None = None
+    ctx_overrides: dict | None = None
     if message.role == MessageRole.USER and not request.no_reply:
         # The most recent MAX_CONTEXT_MESSAGES, fetched newest-first so the
         # database does the limiting. This was `list_by_chat(chat_id)` with no
@@ -990,15 +975,13 @@ def _add_message_prep_sync(
 
         characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
-        ctx_kwargs = chat_context_kwargs(
-            chat,
-            characters=characters,
-            session=session,
-            lorebook_ids=request.lorebook_ids,
-            max_context_tokens=_resolve_context_tokens(chat),
-            active_character_id=request.target_character_id,
-        )
-    return message, message.id, chat, past_messages, ctx_kwargs
+        ctx_overrides = {
+            "characters": characters,
+            "lorebook_ids": request.lorebook_ids,
+            "max_context_tokens": _resolve_context_tokens(chat),
+            "active_character_id": request.target_character_id,
+        }
+    return message, message.id, chat, past_messages, ctx_overrides
 
 
 @router.post("/{chat_id}/messages")
@@ -1047,24 +1030,20 @@ async def _send_message(
     # Persisting the message and assembling its context are synchronous session
     # work; the reply job below is awaited, so the route stays `async def` and
     # the reads run in a worker thread.
-    message, message_id, chat, past_messages, ctx_kwargs = await asyncio.to_thread(
+    message, message_id, chat, past_messages, ctx_overrides = await asyncio.to_thread(
         _add_message_prep_sync, session, chat_repo, message_repo, chat_id, request
     )
 
     job_id = None
 
     if message.role == MessageRole.USER and not request.no_reply:
-        # `_with_sections` plus a trace out-param, rather than the two-tuple
-        # `build_chat_context_async`: the trace is the only record of what THIS
-        # reply was actually told, and it can only be taken before the internal
-        # `_pinned` / `_kind` keys are stripped — which is to say here.
-        # Reconstructing it later would build today's context, not the one that
-        # produced this reply.
+        # One assembly through the unified context builder, run off the event
+        # loop like the previous async builder. The trace is the only record of
+        # what THIS reply was actually told.
         context_trace: dict[str, Any] = {}
-        system_prompt, context, _sections = await build_chat_context_with_sections_async(
-            past_messages,
-            trace_out=context_trace,
-            **ctx_kwargs,
+        system_prompt, context, _sections = await asyncio.to_thread(
+            build_context, session, "chat", chat, past_messages,
+            trace_out=context_trace, **ctx_overrides,
         )
 
         try:
@@ -1436,15 +1415,14 @@ async def generate_swipe(
 ) -> dict:
     # Reading up to CHAT_HISTORY_HARD_CAP messages is synchronous session work
     # and the context build below is awaited, so the reads run in a thread.
-    chat, remaining, prev_agentic, ctx_kwargs = await asyncio.to_thread(
+    chat, remaining, prev_agentic, ctx_overrides = await asyncio.to_thread(
         _swipe_prep_sync, session, chat_repo, chat_id, message_id
     )
 
     context_trace: dict[str, Any] = {}
-    system_prompt, context, _sections = await build_chat_context_with_sections_async(
-        remaining,
-        trace_out=context_trace,
-        **ctx_kwargs,
+    system_prompt, context, _sections = await asyncio.to_thread(
+        build_context, session, "chat", chat, remaining,
+        trace_out=context_trace, **ctx_overrides,
     )
 
 
@@ -1546,15 +1524,13 @@ def _swipe_prep_sync(
 
     characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
-    ctx_kwargs = chat_context_kwargs(
-        chat,
-        characters=characters,
-        session=session,
-        max_context_tokens=_resolve_context_tokens(chat),
-    )
+    ctx_overrides = {
+        "characters": characters,
+        "max_context_tokens": _resolve_context_tokens(chat),
+    }
     # Mirror agentic state
     prev_agentic = target_msg.tool_calls is not None or (target_msg.message_metadata or {}).get("agentic", False)
-    return chat, remaining, prev_agentic, ctx_kwargs
+    return chat, remaining, prev_agentic, ctx_overrides
 
 
 class PinMessageRequest(BaseModel):
@@ -1774,7 +1750,7 @@ async def regenerate_reply(
     """
     # The delete + history load is synchronous session work and the context
     # build below is awaited, so the whole prologue runs in a worker thread.
-    chat, anchor_character_id, anchor_branch_id, deleted, prev_agentic, prev_checkpoint, remaining, ctx_kwargs = await asyncio.to_thread(
+    chat, anchor_character_id, anchor_branch_id, deleted, prev_agentic, prev_checkpoint, remaining, ctx_overrides = await asyncio.to_thread(
         _regenerate_prep_sync, session, chat_repo, chat_id, req.message_id
     )
 
@@ -1785,10 +1761,9 @@ async def regenerate_reply(
     await _cancel_inflight_chat_jobs(session, chat_id, reason="chat regenerate")
 
     context_trace: dict[str, Any] = {}
-    system_prompt, context, _sections = await build_chat_context_with_sections_async(
-        remaining,
-        trace_out=context_trace,
-        **ctx_kwargs,
+    system_prompt, context, _sections = await asyncio.to_thread(
+        build_context, session, "chat", chat, remaining,
+        trace_out=context_trace, **ctx_overrides,
     )
 
 
@@ -1939,12 +1914,10 @@ def _regenerate_prep_sync(
     remaining = list(reversed(recent))
     characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
-    ctx_kwargs = chat_context_kwargs(
-        chat,
-        characters=characters,
-        session=session,
-        max_context_tokens=_resolve_context_tokens(chat),
-    )
+    ctx_overrides = {
+        "characters": characters,
+        "max_context_tokens": _resolve_context_tokens(chat),
+    }
     return (
         chat,
         getattr(anchor, "character_id", None),
@@ -1953,7 +1926,7 @@ def _regenerate_prep_sync(
         prev_agentic,
         prev_checkpoint,
         remaining,
-        ctx_kwargs,
+        ctx_overrides,
     )
 
 
@@ -1972,15 +1945,15 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     # The prologue (history, character, world-state kwargs) is synchronous
     # session work and the world-state sections below are awaited, so it runs in
     # a worker thread.
-    chat, user_name, char_name, sections_kwargs, past_messages = await asyncio.to_thread(
+    chat, user_name, char_name, ctx_overrides, past_messages = await asyncio.to_thread(
         _impersonate_prep_sync, session, chat_repo, character_repo, chat_id
     )
 
     # Build world-state context without character identity (same approach as suggest)
-    world_sections = await build_system_prompt_sections_async(
-        **sections_kwargs,
+    world_context_str = await asyncio.to_thread(
+        build_context, session, "chat", chat, None,
+        sections_only=True, **ctx_overrides,
     )
-    world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 
     hint_clause = f" Specifically: {req.hint.strip()}." if req.hint.strip() else ""
     imp_system = (
@@ -2069,14 +2042,15 @@ def _impersonate_prep_sync(
 
     character = character_repo.get(chat.character_id) if chat.character_id else None
 
-    sections_kwargs = chat_context_kwargs(
-        chat, character=None, include_roleplay_default=False, session=session
-    )
+    ctx_overrides = {
+        "character": None,
+        "include_roleplay_default": False,
+    }
     return (
         chat,
         chat.persona_name or "User",
         character.name if character else "the AI",
-        sections_kwargs,
+        ctx_overrides,
         past_messages,
     )
 
@@ -2090,16 +2064,16 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     # The prologue (history, character, world-state kwargs) is synchronous
     # session work and the world-state sections below are awaited, so it runs in
     # a worker thread.
-    chat, user_name, char_name, original, sections_kwargs, past_messages = await asyncio.to_thread(
+    chat, user_name, char_name, original, ctx_overrides, past_messages = await asyncio.to_thread(
         _suggest_prep_sync, session, chat_repo, character_repo, chat_id
     )
 
     from config import get_system_prompt_blocks
 
-    world_sections = await build_system_prompt_sections_async(
-        **sections_kwargs,
+    world_context_str = await asyncio.to_thread(
+        build_context, session, "chat", chat, None,
+        sections_only=True, **ctx_overrides,
     )
-    world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 
     # Macro inputs shared by both suggest instructions: SillyTavern config
     # prompts may reference {{persona}} / {{original}} as well as {{user}}.
@@ -2226,15 +2200,16 @@ def _suggest_prep_sync(
     if chat.character_id:
         character = character_repo.get(chat.character_id)
 
-    sections_kwargs = chat_context_kwargs(
-        chat, character=None, include_roleplay_default=False, session=session
-    )
+    ctx_overrides = {
+        "character": None,
+        "include_roleplay_default": False,
+    }
     return (
         chat,
         chat.persona_name or "User",
         character.name if character else "the AI",
         (character.description if character else "") or "",
-        sections_kwargs,
+        ctx_overrides,
         past_messages,
     )
 

@@ -1355,6 +1355,10 @@ class Chat(SQLModel, table=True):
     # world page and the graph, and the two can legitimately disagree for a chat
     # that was added to a world's index without being moved into it.
     world_id: str | None = Field(foreign_key="worlds.id", default=None, index=True)
+    # The Scenario template this chat applies, like Story.scenario_id. Nullable
+    # = unset; a chat can reference a Scenario row through this FK, or rely on
+    # its Character.scenario free-text and system_prompt_override instead.
+    scenario_id: str | None = Field(foreign_key="scenarios.id", default=None, index=True)
     persona_name: str | None = Field(default=None) # Used for {{user}} substitutions
     additional_character_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     story_time: str | None = Field(default=None)
