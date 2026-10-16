@@ -15,6 +15,9 @@ vi.mock('../hooks/useWorldVaultSearch', () => ({
     useGraphLayout: (...args) => mockGraphLayout(...args),
     useSaveGraphLayout: () => ({ mutate: mockSaveLayout, isPending: false }),
     useDeleteGraphLayout: () => ({ mutate: mockDeleteLayout, isPending: false }),
+    useGraphEdges: () => ({ data: { edges: [] }, isLoading: false }),
+    useCreateGraphEdge: () => ({ mutate: vi.fn() }),
+    useDeleteGraphEdge: () => ({ mutate: vi.fn() }),
 }));
 
 const graphData = {

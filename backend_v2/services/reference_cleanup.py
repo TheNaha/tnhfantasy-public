@@ -32,6 +32,7 @@ from core.entities import (
     StoryChapter,
     StoryChapterRevision,
     VoiceModel,
+    WorldEdge,
 )
 from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 
@@ -100,6 +101,22 @@ def _drop_graph_node(session: Session, entity_id: str) -> None:
         session.delete(layout)
 
 
+def _drop_edges_for_entity(session: Session, entity_id: str) -> None:
+    """Remove stored graph edges where `entity_id` is either endpoint.
+
+    An entity delete must not leave edges pointing at a row that no longer
+    exists. Matches on either endpoint because the relationship is directed in
+    storage but the scrub is symmetric.
+    """
+    for edge in session.exec(
+        select(WorldEdge).where(
+            (WorldEdge.source_entity_id == entity_id)
+            | (WorldEdge.target_entity_id == entity_id)
+        )
+    ).all():
+        session.delete(edge)
+
+
 def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None:
     """Remove `entity_id` from every reference to a deleted entity of `kind`.
 
@@ -123,6 +140,7 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
             voice.character_id = None
         _detach_from_world(session, Character, entity_id)
         _drop_graph_node(session, entity_id)
+        _drop_edges_for_entity(session, entity_id)
     elif kind == "lorebook":
         _scrub_stories(session, "lorebook_ids", entity_id)
         _scrub_chats(session, "active_lorebook_ids", entity_id)
@@ -141,6 +159,7 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         _scrub_json_array(session, Character, "lorebook_ids", entity_id)
         _detach_from_world(session, Lorebook, entity_id)
         _drop_graph_node(session, entity_id)
+        _drop_edges_for_entity(session, entity_id)
     elif kind == "voice":
         for character in session.exec(select(Character).where(Character.voice_model_id == entity_id)).all():
             character.voice_model_id = None
@@ -148,6 +167,7 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
             chat.tts_voice_id = None
         _detach_from_world(session, VoiceModel, entity_id)
         _drop_graph_node(session, entity_id)
+        _drop_edges_for_entity(session, entity_id)
     elif kind == "scenario":
         for story in session.exec(select(Story).where(Story.scenario_id == entity_id)).all():
             story.scenario_id = None
@@ -155,12 +175,14 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
             chat.scenario_id = None
         _detach_from_world(session, Scenario, entity_id)
         _drop_graph_node(session, entity_id)
+        _drop_edges_for_entity(session, entity_id)
     elif kind == "persona":
         for chat in session.exec(select(Chat).where(Chat.persona_id == entity_id)).all():
             chat.persona_id = None
         for story in session.exec(select(Story).where(Story.persona_id == entity_id)).all():
             story.persona_id = None
         _drop_graph_node(session, entity_id)
+        _drop_edges_for_entity(session, entity_id)
     elif kind == "world":
         # Delegates rather than repeating. Covers all seven member tables —
         # deleting a world used to leave Character, Lorebook, Location,
@@ -171,12 +193,14 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
 
         detach_world(session, entity_id)
         _drop_graph_node(session, entity_id)
+        _drop_edges_for_entity(session, entity_id)
     elif kind == "location":
         _scrub_stories(session, "location_ids", entity_id)
         for chat in session.exec(select(Chat).where(Chat.location_id == entity_id)).all():
             chat.location_id = None
         _detach_from_world(session, Location, entity_id)
         _drop_graph_node(session, entity_id)
+        _drop_edges_for_entity(session, entity_id)
     elif kind == "chat":
         # Direct SQL DELETE and a flush, ahead of the route's `session.delete(chat)`.
         # The ORM unit of work is free to issue the chat DELETE before the
@@ -188,6 +212,7 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         session.exec(delete(Message).where(Message.chat_id == entity_id))
         session.flush()
         _drop_graph_node(session, entity_id)
+        _drop_edges_for_entity(session, entity_id)
     elif kind == "story":
         # Everything here cascades by hand because the schema does not:
         # `story_beats.chapter_id` and `story_chapter_revisions.story_id` are
@@ -208,5 +233,6 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         for asset in session.exec(select(Asset).where(Asset.story_id == entity_id)).all():
             asset.story_id = None
         _drop_graph_node(session, entity_id)
+        _drop_edges_for_entity(session, entity_id)
     else:
         raise ValueError(f"scrub_entity_references: unknown entity kind {kind!r}")

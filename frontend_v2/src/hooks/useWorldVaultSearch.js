@@ -124,3 +124,39 @@ export const useDeleteGraphLayout = () => {
         },
     });
 };
+
+/**
+ * Stored graph edges — explicit, named relationships between vault entities
+ * that complement the derived FK-based edges from `get_relationships`.
+ */
+export const useGraphEdges = () => {
+    return useQuery({
+        queryKey: buildQueryKey(QUERY_KEYS.GRAPH_EDGES),
+        queryFn: ({ signal }) => api.get('/api/v2/world-vault/graph-edges', { signal }),
+        staleTime: 60000,
+    });
+};
+
+export const useCreateGraphEdge = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (edge) =>
+            api.post('/api/v2/world-vault/graph-edges', edge),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.GRAPH_EDGES) });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.RELATIONSHIPS) });
+        },
+    });
+};
+
+export const useDeleteGraphEdge = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ edgeId }) =>
+            api.delete(`/api/v2/world-vault/graph-edges/${encodeURIComponent(edgeId)}`),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.GRAPH_EDGES) });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.RELATIONSHIPS) });
+        },
+    });
+};

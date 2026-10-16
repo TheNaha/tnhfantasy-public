@@ -11,7 +11,7 @@ from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from core.entities import (
     Character, Chat, Lorebook, LorebookEntry,
     Story, Scenario, VoiceModel, CharacterMemory,
-    Location, World,
+    Location, World, WorldEdge,
 )
 
 router = APIRouter()
@@ -373,6 +373,13 @@ def get_relationships(
         if ch.scenario_id and ch.scenario_id in scenario_map
     ]
 
+    # Stored (explicit) edges — complements the derived FK-based edges above.
+    stored_edges = session.exec(
+        select(WorldEdge)
+        .order_by(WorldEdge.created_at.desc())
+        .limit(200)
+    ).all()
+
     return {
         "character_chats": char_chat_links,
         "character_stories": char_story_links,
@@ -385,6 +392,17 @@ def get_relationships(
         "chat_locations": chat_location_links,
         "story_scenarios": story_scenario_links,
         "chat_scenarios": chat_scenario_links,
+        "stored_edges": [
+            {
+                "source_entity_type": e.source_entity_type,
+                "source_entity_id": e.source_entity_id,
+                "target_entity_type": e.target_entity_type,
+                "target_entity_id": e.target_entity_id,
+                "relation_type": e.relation_type,
+                "label": e.label,
+            }
+            for e in stored_edges
+        ],
     }
 
 

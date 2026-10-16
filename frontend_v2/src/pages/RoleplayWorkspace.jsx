@@ -144,7 +144,7 @@ export default function RoleplayWorkspace() {
                 <div className="grid gap-4 md:grid-cols-3">
                     <ShortcutCard
                         icon={MessageSquare}
-                        title="Roleplay a character"
+                        title="Chat"
                         description="Chat with a character in a controlled scene."
                         actionLabel="New chat"
                         onClick={() => navigate('/chat?new=1')}

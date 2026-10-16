@@ -471,10 +471,10 @@ async def test_app_serves_requests_after_boot(client, boot):
     # PUT. This is the *rising* direction this assertion mostly exists to catch:
     # credentials used to live only in `.env`, so the API had no reason to
     # accept one, and now that the UI manages them it has to.
-    assert len(spec["paths"]) == 244, (
+    assert len(spec["paths"]) == 247, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 325
+    assert sum(len(ops) for ops in spec["paths"].values()) == 329
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 

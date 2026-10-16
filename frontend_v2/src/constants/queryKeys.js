@@ -39,6 +39,7 @@ export const QUERY_KEYS = {
     DASHBOARD: 'dashboard',
     RELATIONSHIPS: 'relationships',
     GRAPH_LAYOUT: 'graph-layout',
+    GRAPH_EDGES: 'graph-edges',
     TIMELINE: 'timeline',
 };
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw, Save, RotateCcw, X, Pencil, Sparkles } from 'lucide-react';
+import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw, Save, RotateCcw, X, Pencil, Sparkles, Link, Plus, Trash2, CirclePlus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useWorldVaultRelationships, useGraphLayout, useSaveGraphLayout, useDeleteGraphLayout } from '../hooks/useWorldVaultSearch';
+import { useWorldVaultRelationships, useGraphLayout, useSaveGraphLayout, useDeleteGraphLayout, useGraphEdges, useCreateGraphEdge, useDeleteGraphEdge } from '../hooks/useWorldVaultSearch';
 import RoleplayPageShell from '../components/RoleplayPageShell';
 import { QueryErrorState } from '../components/common/QueryState';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
@@ -244,6 +244,76 @@ function EditPanel({ node, onClose, onNavigate }) {
     );
 }
 
+function LinkDialog({ source, target, onClose, onCreate }) {
+    const [relationType, setRelationType] = useState('');
+    const [label, setLabel] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!relationType.trim()) return;
+        setSubmitting(true);
+        onCreate({
+            source_entity_type: source.type,
+            source_entity_id: source.id,
+            target_entity_type: target.type,
+            target_entity_id: target.id,
+            relation_type: relationType.trim(),
+            label: label.trim() || null,
+        }).then(() => {
+            setSubmitting(false);
+            onClose();
+        });
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+            <div className="bg-gray-800 border border-white/10 rounded-xl p-6 w-80 shadow-xl">
+                <h3 className="text-white font-semibold mb-4">Link {source.label} → {target.label}</h3>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                        <label htmlFor="link-relation-type" className="block text-xs text-gray-400 mb-1">Relation type</label>
+                        <input
+                            id="link-relation-type"
+                            value={relationType}
+                            onChange={(e) => setRelationType(e.target.value)}
+                            placeholder="e.g. enemy, references, sequel, loves"
+                            className="w-full px-3 py-2 bg-gray-900 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="link-label" className="block text-xs text-gray-400 mb-1">Label (optional)</label>
+                        <input
+                            id="link-label"
+                            value={label}
+                            onChange={(e) => setLabel(e.target.value)}
+                            placeholder="Human-readable edge label"
+                            className="w-full px-3 py-2 bg-gray-900 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                        />
+                    </div>
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={submitting || !relationType.trim()}
+                            className="px-4 py-2 text-sm bg-cyan-500 text-slate-950 hover:bg-cyan-400 disabled:opacity-50 rounded-lg transition-colors"
+                        >
+                            {submitting ? 'Linking…' : 'Create link'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 export default function RelationshipGraph() {
     const navigate = useNavigate();
     const [filter, setFilter] = useState('all');
@@ -251,12 +321,17 @@ export default function RelationshipGraph() {
     const [isDragging, setIsDragging] = useState(false);
     const [dragNodeId, setDragNodeId] = useState(null);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const [linkingFrom, setLinkingFrom] = useState(null);
+    const [linkDialog, setLinkDialog] = useState(null);
     const svgRef = useRef(null);
 
     const { data, isLoading, isError, error, refetch, isFetching } = useWorldVaultRelationships();
     const { data: savedLayout } = useGraphLayout('default');
     const saveLayout = useSaveGraphLayout();
     const deleteLayout = useDeleteGraphLayout();
+    const { data: edgesData, isLoading: edgesLoading } = useGraphEdges();
+    const createEdge = useCreateGraphEdge();
+    const deleteEdge = useDeleteGraphEdge();
 
     const nodeRouteMap = useMemo(() => ({
         character: '/characters',
@@ -302,6 +377,8 @@ export default function RelationshipGraph() {
         if (!data) return { nodes: [], edges: [] };
         const nodeMap = new Map();
         const edgeList = [];
+        const edgeKey = (s, t, r) => `${s}→${t}::${r}`;
+        const storedEdgeKeys = new Set();
 
         const addNode = (id, label, type, dangling = false) => {
             if (!nodeMap.has(id)) {
@@ -310,74 +387,89 @@ export default function RelationshipGraph() {
             return id;
         };
 
+        const addEdge = (source, target, type, label = null, stored = false, id = null) => {
+            const key = edgeKey(source, target, type);
+            if (storedEdgeKeys.has(key)) return;
+            edgeList.push({ source, target, type, label, stored, id });
+            if (stored) storedEdgeKeys.add(key);
+        };
+
         data.character_chats?.forEach(([charId, charName, chatId, chatName]) => {
             addNode(charId, charName, 'character');
             addNode(chatId, chatName, 'chat');
-            edgeList.push({ source: charId, target: chatId });
+            addEdge(charId, chatId, 'character-chats');
         });
 
         data.character_stories?.forEach(({ character_id, character_name, story_id, story_title, dangling }) => {
             addNode(character_id, character_name, 'character', dangling);
             addNode(story_id, story_title, 'story');
-            edgeList.push({ source: character_id, target: story_id });
+            addEdge(character_id, story_id, 'character-stories');
         });
 
         data.story_lorebooks?.forEach(({ story_id, story_title, lorebook_id, lorebook_name, dangling }) => {
             addNode(story_id, story_title, 'story');
             addNode(lorebook_id, lorebook_name, 'lorebook', dangling);
-            edgeList.push({ source: story_id, target: lorebook_id });
+            addEdge(story_id, lorebook_id, 'story-lorebooks');
         });
 
         data.chat_lorebooks?.forEach(({ chat_id, chat_title, lorebook_id, lorebook_name, dangling }) => {
             addNode(chat_id, chat_title, 'chat');
             addNode(lorebook_id, lorebook_name, 'lorebook', dangling);
-            edgeList.push({ source: chat_id, target: lorebook_id });
+            addEdge(chat_id, lorebook_id, 'chat-lorebooks');
         });
 
         data.character_lorebooks?.forEach(({ character_id, character_name, lorebook_id, lorebook_name, dangling }) => {
             addNode(character_id, character_name, 'character');
             addNode(lorebook_id, lorebook_name, 'lorebook', dangling);
-            edgeList.push({ source: character_id, target: lorebook_id });
+            addEdge(character_id, lorebook_id, 'character-lorebooks');
         });
 
         data.character_voices?.forEach(([voiceId, voiceName, charId, charName]) => {
             addNode(voiceId, voiceName, 'voice');
             addNode(charId, charName, 'character');
-            edgeList.push({ source: charId, target: voiceId });
+            addEdge(charId, voiceId, 'character-voices');
         });
 
         data.chat_voices?.forEach(([voiceId, voiceName, chatId, chatName]) => {
             addNode(voiceId, voiceName, 'voice');
             addNode(chatId, chatName, 'chat');
-            edgeList.push({ source: chatId, target: voiceId });
+            addEdge(chatId, voiceId, 'chat-voices');
         });
 
         data.story_locations?.forEach(({ story_id, story_title, location_id, location_name, dangling }) => {
             addNode(story_id, story_title, 'story');
             addNode(location_id, location_name, 'location', dangling);
-            edgeList.push({ source: story_id, target: location_id });
+            addEdge(story_id, location_id, 'story-locations');
         });
 
         data.chat_locations?.forEach(([chatId, chatName, locId, locName]) => {
             addNode(chatId, chatName, 'chat');
             addNode(locId, locName, 'location');
-            edgeList.push({ source: chatId, target: locId });
+            addEdge(chatId, locId, 'chat-locations');
         });
 
-        data.story_scenarios?.forEach(([storyId, storyTitle, scenarioId, scenarioTitle]) => {
+        data.story_scenarios?.forEach(([storyId, storyTitle, scenarioId]) => {
             addNode(storyId, storyTitle, 'story');
-            addNode(scenarioId, scenarioTitle, 'scenario');
-            edgeList.push({ source: storyId, target: scenarioId });
+            addNode(scenarioId, storyTitle, 'scenario');
+            addEdge(storyId, scenarioId, 'story-scenarios');
         });
 
         data.chat_scenarios?.forEach(([chatId, chatName, scenarioId, scenarioTitle]) => {
             addNode(chatId, chatName, 'chat');
             addNode(scenarioId, scenarioTitle, 'scenario');
-            edgeList.push({ source: chatId, target: scenarioId });
+            addEdge(chatId, scenarioId, 'chat-scenarios');
+        });
+
+        // Stored (explicit) edges complement derived FK-based edges. A stored
+        // edge with the same source+target+relation replaces its derived twin.
+        (edgesData?.edges || []).forEach((e) => {
+            addNode(e.source_entity_id, e.source_entity_id, e.source_entity_type);
+            addNode(e.target_entity_id, e.target_entity_id, e.target_entity_type);
+            addEdge(e.source_entity_id, e.target_entity_id, e.relation_type, e.label || null, true, e.id);
         });
 
         return { nodes: Array.from(nodeMap.values()), edges: edgeList };
-    }, [data]);
+    }, [data, edgesData]);
 
     const { positions, updatePosition } = useForceDirectedLayout(nodes, edges, 300, savedPositions);
 
@@ -442,8 +534,24 @@ export default function RelationshipGraph() {
 
     const handleNodeClick = useCallback((node) => {
         if (isDragging) return;
+        if (linkingFrom) {
+            if (linkingFrom.id === node.id) {
+                setLinkingFrom(null);
+                return;
+            }
+            setLinkDialog({ source: linkingFrom, target: node });
+            setLinkingFrom(null);
+            return;
+        }
         setSelectedNode(prev => prev?.id === node.id ? null : node);
-    }, [isDragging]);
+    }, [isDragging, linkingFrom]);
+
+    const handleEdgeClick = useCallback((edge) => {
+        if (!edge.stored || !edge.id) return;
+        if (window.confirm(`Delete edge “${edge.label || edge.type}” (${edge.source} → ${edge.target})?`)) {
+            deleteEdge.mutate({ edgeId: edge.id });
+        }
+    }, [deleteEdge]);
 
     useEffect(() => {
         if (isDragging) {
@@ -452,7 +560,7 @@ export default function RelationshipGraph() {
         }
     }, [isDragging, handleMouseUp]);
 
-    if (isLoading) {
+    if (isLoading || edgesLoading) {
         return (
             <div className="flex items-center justify-center h-64 text-gray-400">
                 <RefreshCw className="animate-spin mr-2" size={20} />
@@ -486,6 +594,17 @@ export default function RelationshipGraph() {
                             <option key={type} value={type}>{label}</option>
                         ))}
                     </select>
+                    <button
+                        onClick={() => {
+                            setLinkingFrom(null);
+                            setLinkDialog(null);
+                        }}
+                        className={`rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium transition-colors ${linkingFrom ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}
+                        title={linkingFrom ? 'Cancel link' : 'Link two nodes'}
+                    >
+                        <Link size={16} />
+                        {linkingFrom ? 'Linking…' : 'Link'}
+                    </button>
                     <button onClick={handleResetLayout} className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition hover:bg-white/10 hover:text-white" title="Reset layout">
                         <RotateCcw size={16} />
                     </button>
@@ -527,6 +646,15 @@ export default function RelationshipGraph() {
                     node={selectedNode}
                     onClose={() => setSelectedNode(null)}
                     onNavigate={handleNodeNavigate}
+                />
+            )}
+
+            {linkDialog && (
+                <LinkDialog
+                    source={linkDialog.source}
+                    target={linkDialog.target}
+                    onClose={() => setLinkDialog(null)}
+                    onCreate={createEdge.mutate}
                 />
             )}
 
@@ -573,18 +701,39 @@ export default function RelationshipGraph() {
                                             const targetPos = positions.get(edge.target);
                                             if (!sourcePos || !targetPos) return null;
                                             const isHighlighted = selectedNode && (edge.source === selectedNode.id || edge.target === selectedNode.id);
+                                            const isStored = edge.stored;
+                                            const midX = (sourcePos.x + targetPos.x) / 2;
+                                            const midY = (sourcePos.y + targetPos.y) / 2;
                                             return (
-                                                <line
-                                                    key={idx}
-                                                    x1={sourcePos.x}
-                                                    y1={sourcePos.y}
-                                                    x2={targetPos.x}
-                                                    y2={targetPos.y}
-                                                    stroke={isHighlighted ? '#8b5cf6' : '#4b5563'}
-                                                    strokeWidth={isHighlighted ? 2.5 : 1.5}
-                                                    markerEnd={isHighlighted ? 'url(#arrowhead-highlight)' : 'url(#arrowhead)'}
-                                                    opacity={selectedNode && !isHighlighted ? 0.3 : 1}
-                                                />
+                                                <>
+                                                    <line
+                                                        key={`edge-${idx}`}
+                                                        x1={sourcePos.x}
+                                                        y1={sourcePos.y}
+                                                        x2={targetPos.x}
+                                                        y2={targetPos.y}
+                                                        stroke={isStored ? '#8b5cf6' : isHighlighted ? '#8b5cf6' : '#4b5563'}
+                                                        strokeWidth={isStored ? 2 : isHighlighted ? 2.5 : 1.5}
+                                                        strokeDasharray={isStored ? null : '4 2'}
+                                                        markerEnd={isStored || isHighlighted ? 'url(#arrowhead-highlight)' : 'url(#arrowhead)'}
+                                                        opacity={selectedNode && !isHighlighted ? 0.3 : 1}
+                                                        onClick={() => handleEdgeClick(edge)}
+                                                        style={{ cursor: isStored ? 'pointer' : 'default' }}
+                                                        title={isStored ? edge.label || edge.type : edge.type}
+                                                    />
+                                                    {isStored && edge.label && (
+                                                        <text
+                                                            x={midX}
+                                                            y={midY - 4}
+                                                            textAnchor="middle"
+                                                            fontSize="10"
+                                                            fill="#8b5cf6"
+                                                            pointerEvents="none"
+                                                        >
+                                                            {edge.label}
+                                                        </text>
+                                                    )}
+                                                </>
                                             );
                                         })}
                                         {filteredNodes.map((node) => {

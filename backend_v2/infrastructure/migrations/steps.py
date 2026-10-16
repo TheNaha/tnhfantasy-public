@@ -939,8 +939,72 @@ def _migration_add_jobs_claimed_at(conn) -> bool:
                     "CREATE INDEX IF NOT EXISTS ix_jobs_claim "
                     "ON jobs (task_type, status) WHERE status = 'PENDING' AND claimed_at IS NULL"
                 ))
-                return True
-        return False
+    return True
+
+
+def _migration_099_world_edges(conn) -> bool:
+    """Create the `world_edges` table for explicit entity relationships.
+
+    Safe to re-run: the table and its unique index are created with
+    IF NOT EXISTS / a guard, so a second start is a no-op.
+    """
+    inspector = inspect(conn)
+    tables = set(inspector.get_table_names())
+    if "world_edges" in tables:
+        return True
+
+    conn.execute(
+        text(
+            """
+            CREATE TABLE world_edges (
+                id VARCHAR PRIMARY KEY,
+                source_entity_type VARCHAR NOT NULL,
+                source_entity_id VARCHAR NOT NULL,
+                target_entity_type VARCHAR NOT NULL,
+                target_entity_id VARCHAR NOT NULL,
+                relation_type VARCHAR NOT NULL,
+                label TEXT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+
+    conn.execute(
+        text(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_world_edge_unique
+            ON world_edges (
+                source_entity_type,
+                source_entity_id,
+                target_entity_type,
+                target_entity_id,
+                relation_type
+            )
+            """
+        )
+    )
+
+    conn.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS idx_world_edges_source
+            ON world_edges (source_entity_type, source_entity_id)
+            """
+        )
+    )
+
+    conn.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS idx_world_edges_target
+            ON world_edges (target_entity_type, target_entity_id)
+            """
+        )
+    )
+
+    return True
 
     if conn.dialect.name == "postgresql":
         conn.execute(text("ALTER TABLE jobs ADD COLUMN claimed_at TIMESTAMPTZ"))
@@ -1795,6 +1859,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="098_chat_scenario_fk",
             description="Add nullable scenario_id FK to chats so a chat references a Scenario template like a story does",
             apply_fn=_migration_098_chat_scenario_fk,
+        ),
+        MigrationStep(
+            version="099_world_edges",
+            description="Add world_edges table for explicit, named relationships between any two vault entities",
+            apply_fn=_migration_099_world_edges,
         ),
     ]
 

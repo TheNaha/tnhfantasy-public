@@ -1804,3 +1804,45 @@ class GraphLayout(SQLModel, table=True):
         Index('idx_graph_layout_name_entity', 'name', 'entity_type', 'entity_id', unique=True),
     )
 
+
+class WorldEdge(SQLModel, table=True):
+    """An explicit, named relationship between any two World Vault entities.
+
+    The relationship graph (`RelationshipGraph`) derives edges from foreign keys
+    today (Character.chat_id, Story.character_ids, etc.). That covers structural
+    membership but nothing else: a user cannot say "character A is enemy of
+    character B", "story X references location Y", or "chat Z is a sequel of chat
+    W" without a stored edge. `WorldEdge` is that store.
+
+    It is deliberately global (no `world_id`) to match the existing
+    `GET /api/v2/world-vault/relationships` contract, which returns all vault
+    relationships unfiltered by world. Stored edges complement derived edges;
+    the hub endpoint merges both and the frontend dedups by endpoint pair.
+
+    `relation_type` is a free-form label ("enemy", "references", "sequel",
+    "loves", …) so the graph can express anything the vault's static schema
+    cannot.
+    """
+    __tablename__ = "world_edges"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    source_entity_type: str = Field(index=True)  # "character", "story", "chat", …
+    source_entity_id: str = Field(index=True)
+    target_entity_type: str = Field(index=True)
+    target_entity_id: str = Field(index=True)
+    relation_type: str = Field(index=True)  # "enemy", "references", "sequel", …
+    label: str | None = Field(default=None, sa_column=Column(Text))  # human edge label
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index(
+            'idx_world_edge_unique',
+            'source_entity_type',
+            'source_entity_id',
+            'target_entity_type',
+            'target_entity_id',
+            'relation_type',
+            unique=True,
+        ),
+    )
+
