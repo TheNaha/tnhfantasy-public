@@ -227,3 +227,28 @@ async def test_free_vram_resets_warm_workload():
     assert engine.warm_workload is None
     engine._free_comfy_vram.assert_awaited_once()
 
+
+def test_llm_engine_targets_agent_url_gateway():
+    """Verify RemoteLLMEngine uses authenticated agent_url rather than raw loopback llm_port."""
+    # 1. Default configuration: no explicit llm_url
+    engine = HybridRemoteEngine("hyb-test", base_url="http://100.150.0.26")
+    assert engine.agent_url == "http://100.150.0.26:8001"
+    assert engine.llm_engine.agent_url == "http://100.150.0.26:8001"
+
+    # 2. When llm_url matches default host:llm_port (port 8003), it redirects to agent_url
+    engine_with_port = HybridRemoteEngine(
+        "hyb-test",
+        base_url="http://100.150.0.26",
+        llm_url="http://100.150.0.26:8003",
+    )
+    assert engine_with_port.llm_engine.agent_url == "http://100.150.0.26:8001"
+
+    # 3. Explicit custom agent url is preserved
+    engine_custom = HybridRemoteEngine(
+        "hyb-test",
+        base_url="http://100.150.0.26",
+        llm_url="http://100.150.0.99:9000",
+    )
+    assert engine_custom.llm_engine.agent_url == "http://100.150.0.99:9000"
+
+

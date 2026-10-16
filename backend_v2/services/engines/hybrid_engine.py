@@ -92,9 +92,16 @@ class HybridRemoteEngine(InProcessEngine):
             civitai_token=self.civitai_token,
         )
 
+        # On a unified hybrid worker, the authenticated storage agent on agent_url
+        # is the gateway for /v1/chat/completions (proxying internally to loopback llama-server)
+        # and manages model file storage. Raw llm_port is not directly reachable or authenticated.
+        llm_target_url = self.agent_url
+        if llm_url and llm_url.rstrip("/") != f"{scheme}://{host}:{llm_port}".rstrip("/"):
+            llm_target_url = llm_url.rstrip("/")
+
         self.llm_engine = RemoteLLMEngine(
             provider_id=f"{provider_id}_llm",
-            agent_url=self.llm_url,
+            agent_url=llm_target_url,
             agent_token=self.agent_token,
             default_model=default_model,
             default_rp_model=default_rp_model,
