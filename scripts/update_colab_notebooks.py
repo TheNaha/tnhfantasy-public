@@ -133,9 +133,16 @@ if mode_key in ("hybrid", "model"):
     extra_paths_content = f\"\"\"
 tnh_ram_cache:
     base_path: {ram_cache_dir}
+    is_default: true
     checkpoints: checkpoints
     loras: loras
     vae: vae
+tnh_ram_flat:
+    base_path: {ram_cache_dir}
+    is_default: true
+    checkpoints: .
+    loras: .
+    vae: .
 \"\"\"
     try:
         with open(extra_paths_file, "w") as f:
@@ -323,12 +330,12 @@ if tunnel_key == "netbird":
         print("⚠️ NetBird daemon took longer than expected to start; proceeding with connection attempt.")
 
     # Bring up connection
-    extra_flags = ["--extra-dns-hosts=false"]
+    extra_flags = []
     if mgmt_url:
         extra_flags.append(f"--management-url {mgmt_url}")
     if admin_url:
         extra_flags.append(f"--admin-url {admin_url}")
-    flags_str = " " + " ".join(extra_flags)
+    flags_str = (" " + " ".join(extra_flags)) if extra_flags else ""
 
     env_up = dict(
         os.environ,
@@ -615,6 +622,27 @@ if ram_status['spare_cached_models']:
     print(f"   • Spare Pre-warmed Models: {[s['model_id'] for s in ram_status['spare_cached_models']]}")
 
 # 6. Launch Background Processes
+if mode_key in ("hybrid", "model"):
+    extra_paths_file = f"{comfy_dir}/extra_model_paths.yaml"
+    extra_paths_content = \"\"\"tnh_ram_cache:
+    base_path: /dev/shm/tnh_ram_cache
+    is_default: true
+    checkpoints: checkpoints
+    loras: loras
+    vae: vae
+tnh_ram_flat:
+    base_path: /dev/shm/tnh_ram_cache
+    is_default: true
+    checkpoints: .
+    loras: .
+    vae: .
+\"\"\"
+    try:
+        with open(extra_paths_file, "w") as f:
+            f.write(extra_paths_content.strip() + "\\n")
+    except Exception:
+        pass
+
 if mode_key == "hybrid":
     print("🚀 [Hybrid] Starting ComfyUI server on :8188...")
     with open(log_comfy, "w") as out:
@@ -642,17 +670,27 @@ if mode_key == "hybrid":
 
     print(f"🚀 [Hybrid] Starting CUDA llama-server on :{llm_port}...")
     rp_ram_file = ""
-    if active_rp in ram_mgr.entries:
+    if active_rp in ram_mgr.entries and os.path.exists(ram_mgr.entries[active_rp].ram_path):
         rp_ram_file = ram_mgr.entries[active_rp].ram_path
-    elif active_rp in resolved_weights:
+    else:
+        for mid, entry in ram_mgr.entries.items():
+            if (active_rp in mid or mid in active_rp) and os.path.exists(entry.ram_path):
+                rp_ram_file = entry.ram_path
+                break
+    if not rp_ram_file and active_rp in resolved_weights:
         rp_ram_file = resolved_weights[active_rp]
 
     llama_args = ["llama-server", "--port", str(llm_port), "--host", "127.0.0.1", "-ngl", "99", "--jinja"]
     if rp_ram_file and os.path.exists(rp_ram_file):
-        print(f"  🧠 Loading RAM-cached GGUF: {os.path.basename(rp_ram_file)} (sub-second VRAM transfer)")
-        llama_args.extend(["-m", rp_ram_file, "--alias", active_rp, "--alias", "default"])
+        aliases = [active_rp, "default"]
         if shared_weights and active_util != active_rp:
-            llama_args.extend(["--alias", active_util])
+            aliases.append(active_util)
+        alias_str = ",".join(list(dict.fromkeys(aliases)))
+        llama_args.extend(["-m", rp_ram_file, "--alias", alias_str])
+        if rp_ram_file.startswith("/dev/shm") or "ram_cache" in rp_ram_file:
+            print(f"  🧠 Loading RAM-cached GGUF: {os.path.basename(rp_ram_file)} (sub-second VRAM transfer)")
+        else:
+            print(f"  📦 Loading GGUF from Drive storage: {os.path.basename(rp_ram_file)}")
     else:
         print("  🧠 Auto-loading Qwen2.5-1.5B via Hugging Face...")
         llama_args.extend(["--hf-repo", "Qwen/Qwen2.5-1.5B-Instruct-GGUF", "--hf-file", "qwen2.5-1.5b-instruct-q4_k_m.gguf", "--alias", "default"])
