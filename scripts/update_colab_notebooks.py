@@ -609,11 +609,11 @@ if tunnel_key == "netbird":
         time.sleep(1)
         res = subprocess.run(["netbird", "status"], capture_output=True, text=True)
         out = res.stdout
-        m = re.search(r"NetBird IP:\s*([0-9a-fA-F\.\:]+)", out)
+        m = re.search(r"NetBird IP:\\s*([0-9a-fA-F\\.:]+)", out)
         if m:
             assigned_ip = m.group(1).split("/")[0].strip()
             break
-        m2 = re.search(r"IP:\s*([0-9a-fA-F\.\:]+)", out)
+        m2 = re.search(r"IP:\\s*([0-9a-fA-F\\.:]+)", out)
         if m2:
             assigned_ip = m2.group(1).split("/")[0].strip()
             break
@@ -637,7 +637,7 @@ elif tunnel_key == "cloudflared":
         if os.path.exists(cf_log):
             with open(cf_log, "r") as f:
                 content = f.read()
-                m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", content)
+                m = re.search(r"https://[a-zA-Z0-9-]+\\.trycloudflare\\.com", content)
                 if m:
                     public_url = m.group(0)
                     break
@@ -728,7 +728,7 @@ banner_html = f'''
 display(HTML(banner_html))
 
 # 8. Live Background Streaming Monitor
-print("\n👀 Streaming service logs (Ctrl+C or interrupt cell anytime to stop streaming; processes will stay running):")
+print("\\n👀 Streaming service logs (Ctrl+C or interrupt cell anytime to stop streaming; processes will stay running):")
 try:
     with open(log_agent, "r") as fa:
         fa.seek(0, 2)
@@ -738,7 +738,7 @@ try:
                 print(f"[Agent] {line_a.rstrip()}")
             time.sleep(0.5)
 except KeyboardInterrupt:
-    print("\n🛑 Stopped live log monitor. Your background services are still running happily!")
+    print("\\n🛑 Stopped live log monitor. Your background services are still running happily!")
 """
     return [line + "\n" for line in code.split("\n")[:-1]]
 
