@@ -182,6 +182,7 @@ def build_job_diagnostics(job: Job) -> dict[str, Any]:
         "error_type": failure_kind or classify_job_error(error_message),
         "error_message": error_message,
         "duration_seconds": job_duration_seconds(job),
+        "timings": stored.get("timings"),
         "is_stale": failure_kind == FAILURE_STALE,
         "stale_seconds": stored.get("stale_seconds"),
         "is_retryable": is_job_retryable(job),
@@ -751,6 +752,15 @@ class JobService:
             elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
                 updates["completed_at"] = datetime.now(timezone.utc)
                 derived_keys.add("completed_at")
+
+            timings = updates.pop("timings", None)
+            if timings is not None and "metadata_" not in updates:
+                metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
+                diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
+                diagnostics["timings"] = timings
+                metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
+                updates["metadata_"] = metadata
+                derived_keys.add("metadata_")
 
             # Annotate failures with a machine-readable cause so the diagnostics
             # view can group them without parsing free-text errors. Callers that

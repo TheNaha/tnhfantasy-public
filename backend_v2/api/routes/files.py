@@ -1463,19 +1463,41 @@ async def list_files_endpoint(
                 # Provider statuses
                 provider_statuses = model.get("provider_statuses") or {}
 
-                # `trained_words`, `version_description` and `images` are NOT
-                # repeated here. They were copies of the default version's own
-                # fields, which are still in the payload under `versions`, and
-                # every reader of the top-level copy read it as a fallback that
-                # cannot fire: `ModelDetailsModal.jsx:252-254` uses
-                # `selectedVersion?.x || <the copy>`, and `selectedVersion` is
-                # that same version whenever it exists — and when `versions` is
-                # empty there is no image, trained word or version description to
-                # fall back to. `ModelSelector.jsx` reads `version.trained_words`
-                # off the version object, not off this row.
+                # `trained_words` and `version_description` ARE carried here, off
+                # the default version, despite a comment that used to sit in this
+                # spot removing them.
                 #
-                # Model-level `description` stays: it is a different field from
-                # the version's, and `ModelDetailsModal.jsx:239` renders it.
+                # That comment argued every reader treated them as a fallback
+                # that "cannot fire", on the grounds that a consumer would already
+                # hold the same version object. Three readers read them as the
+                # PRIMARY source, and one of them is the only path a user has:
+                #
+                #   ModelSection.jsx:218       `(lora.trained_words || [])` — the
+                #                             LoRA trigger-word pill. The store
+                #                             entry is whatever the picker handed
+                #                             back, which is the RAW model on the
+                #                             single-click path (see below).
+                #   ModelGridCard.jsx:42       `model.trained_words?.length` — the
+                #                             "Found trigger words!" toast, on the
+                #                             raw model, before any selection.
+                #   ModelSelector.jsx:219      the search haystack, so a LoRA could
+                #                             not be found by its own trigger word.
+                #
+                # `getModelWithVersion` (ModelSelector.jsx:180) does resolve
+                # `version.trained_words`, but only `handleVersionSelect` calls it,
+                # and that path is only reachable through the version dropdown —
+                # which renders only when `versions.length > 1`. The live LoRA
+                # directory is 484 files at one version each, so the path that
+                # resolved the field was the path nobody reaches.
+                #
+                # So this is a denormalised convenience the picker relies on, not
+                # a redundant copy. `versions` remains the authoritative list.
+                #
+                # `default_version` is None when `versions` is empty, and the
+                # outer `except` turns that into an empty DEGRADED listing, so a
+                # direct `.get` on it would silently blank a whole directory
+                # rather than fail loudly. Guarded once, here.
+                default_version_fields = default_version if isinstance(default_version, dict) else {}
                 file_data = {
                     # Actual filename for generator
                     "name": filename,
@@ -1493,6 +1515,10 @@ async def list_files_endpoint(
                     "base_model": default_version.get("base_model", "") if default_version else "",
                     "version_count": len(versions),
                     "default_version": default_version.get("name", "") if default_version else "",
+                    # Default version's own fields, for the readers that hold the
+                    # model rather than the version.
+                    "trained_words": default_version_fields.get("trained_words") or [],
+                    "version_description": default_version_fields.get("description") or "",
                     # Full versions list for version selector
                     "versions": versions,
                     # Model type

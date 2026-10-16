@@ -203,6 +203,61 @@ def test_list_files_models_search_covers_description(mock_list, client):
 
 
 @patch("services.model_service.ModelServiceV2.list_models_page")
+def test_list_files_models_exposes_default_version_trained_words(mock_list, client):
+    """The top-level `trained_words` the LoRA trigger-word pill reads.
+
+    A comment in `files.py` removed this field, arguing every reader treated it as
+    a fallback that "cannot fire" because a consumer would already hold the
+    version object. Three callers read it as the PRIMARY source, and the only
+    path that resolved it from `versions` was the version dropdown — which renders
+    only when `versions.length > 1`. The live LoRA directory is 484 files at one
+    version each, so the resolving path was the path nobody reaches:
+
+      frontend ModelSection.jsx:218   `(lora.trained_words || [])` — the pill
+      frontend ModelGridCard.jsx:42    `model.trained_words?.length` — the toast
+      frontend ModelSelector.jsx:219   the picker's search haystack
+
+    Net effect: a LoRA's trigger words were invisible in Simple Generator.
+    """
+    mock_list.side_effect = _mock_list_models_page([CHARACTER_LORA])
+
+    response = client.get("/api/files?directory=models/loras")
+    payload = response.json()["files"][0]
+
+    assert payload["trained_words"] == ["boob tent"]
+    # Default version's own description rides the same way, for the same reason.
+    assert payload["default_version"] == "v2"
+    # The authoritative list is still there and still wins where it is read.
+    assert [v["trained_words"] for v in payload["versions"]] == [["boob tent"]]
+
+
+@patch("services.model_service.ModelServiceV2.list_models_page")
+def test_list_files_models_trained_words_survive_no_default_version(mock_list, client):
+    """An absent or empty default version must not make the field itself absent.
+
+    `ModelSection` does `(lora.trained_words || [])`, so `undefined` and `[]` are
+    both handled — but `ModelGridCard` does `model.trained_words?.length`, and a
+    reader added later may not. Serialising `[]` keeps the contract a constant.
+    """
+    versionless = {
+        "id": "m-3",
+        "name": "noversions.safetensors",
+        "type": "LORA",
+        "stats": {},
+        "tags": [],
+        "versions": [],
+    }
+    mock_list.side_effect = _mock_list_models_page([versionless])
+
+    response = client.get("/api/files?directory=models/loras")
+    payload = response.json()["files"][0]
+
+    assert payload["trained_words"] == []
+    assert payload["default_version"] == ""
+    assert payload["version_count"] == 0
+
+
+@patch("services.model_service.ModelServiceV2.list_models_page")
 def test_list_files_models_search_covers_trained_words(mock_list, client):
     """Trained words are the trigger vocabulary and the only tag an
     HF-sourced LoRA has, so they have to be searchable too."""

@@ -347,8 +347,20 @@ export const useGeneratorStore = create(
                 return { prompt: currentPrompt + (currentPrompt ? ", " : "") + toAdd.join(", ") };
             }),
 
-            // Bulk Set (for loading saved prompts)
-            setAll: (newState) => set((state) => ({ ...state, ...newState }))
+            // Bulk Set (for loading saved prompts / reusing parameters).
+            // Locked parameters are never overwritten — a lock means "do not
+            // change this value", which applies to every bulk writer, including
+            // the "Reuse Parameters" button.
+            setAll: (newState) => set((state) => {
+                const locked = state.lockedParams || {};
+                const filtered = {};
+                for (const [key, value] of Object.entries(newState || {})) {
+                    if (!locked[key]) {
+                        filtered[key] = value;
+                    }
+                }
+                return { ...state, ...filtered };
+            })
         }),
         {
             name: 'generator-storage', // name of the item in the storage (must be unique)

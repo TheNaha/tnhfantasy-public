@@ -745,6 +745,37 @@ async def get_provider_logs(
         logger.warning("get_provider_logs_failed_jobs_query_error", provider_id=provider_id, error=str(exc))
         recent_failures = []
 
+    # Fetch recent jobs (both completed and failed) with performance & timing diagnostics
+    recent_jobs = []
+    try:
+        stmt_all = (
+            select(Job)
+            .where(Job.provider_id == provider_id)
+            .order_by(desc(Job.created_at))
+            .limit(10)
+        )
+        jobs = session.exec(stmt_all).all()
+        for j in jobs:
+            diag = (j.metadata_ or {}).get("diagnostics", {}) if isinstance(j.metadata_, dict) else {}
+            timings = diag.get("timings")
+            duration_s = None
+            if j.completed_at and j.created_at:
+                duration_s = round((j.completed_at - j.created_at).total_seconds(), 2)
+            recent_jobs.append({
+                "id": j.id,
+                "task_type": j.task_type,
+                "status": j.status.value if hasattr(j.status, "value") else str(j.status),
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+                "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+                "duration_seconds": duration_s,
+                "timings": timings,
+                "error": j.error,
+                "message": j.message,
+            })
+    except Exception as exc:
+        logger.warning("get_provider_logs_recent_jobs_query_error", provider_id=provider_id, error=str(exc))
+        recent_jobs = []
+
     # Get status card for diagnostics & connectivity summary
     status_card = await status_service.build_provider_status_card(provider_id, provider=provider)
 
@@ -753,10 +784,46 @@ async def get_provider_logs(
         "deploy": deploy_log,
         "active_deploy": active_deploy,
         "recent_failures": recent_failures,
+        "recent_jobs": recent_jobs,
         "diagnostics": status_card.get("diagnostics", {}),
         "runtime": status_card.get("runtime", {}),
         "reconciliation": status_card.get("reconciliation", {}),
     }
+
+
+@router.post("/{provider_id}/free-vram")
+async def free_provider_vram(
+    provider_id: str,
+    service: ProviderService = Depends(get_provider_service),
+):
+    """Purge GPU VRAM and reset model caching on remote worker engine."""
+    provider = await service.get_provider(provider_id)
+    if not provider:
+        raise NotFoundError("Provider", provider_id)
+
+    from services.engines.engine_factory import get_engine, can_create_engine
+    if not can_create_engine(provider):
+        raise ValidationError(f"Provider {provider_id} cannot run in-process engine")
+
+    engine = get_engine(provider_id, provider)
+    if not engine:
+        raise NotFoundError(f"Engine for provider {provider_id} could not be initialized")
+
+    if not hasattr(engine, "free_vram"):
+        raise ValidationError(f"Engine {engine.__class__.__name__} does not support free_vram")
+
+    try:
+        success = await engine.free_vram()
+        _invalidate_provider_runtime_caches(provider_id)
+        return {
+            "status": "success",
+            "provider_id": provider_id,
+            "freed": bool(success),
+            "message": "GPU VRAM successfully purged and models unloaded",
+        }
+    except Exception as exc:
+        logger.warning("provider_free_vram_failed", provider_id=provider_id, error=str(exc))
+        raise ComfyError(f"Failed to free GPU VRAM: {exc!s}") from exc
 
 
 

@@ -366,5 +366,24 @@ describe('useGeneratorStore', () => {
             expect(state.steps).toBe(15);
             expect(state.cfg).toBe(5.0);
         });
+
+        it('does not overwrite parameters that are locked', () => {
+            const store = useGeneratorStore.getState();
+            store.setSteps(25);
+            store.toggleParamLock('steps');
+
+            const live = useGeneratorStore.getState();
+            // Confirm the lock is engaged before bulk-setting.
+            expect(live.lockedParams.steps).toBe(true);
+
+            const { setAll } = useGeneratorStore.getState();
+            setAll({ steps: 99, cfg: 5.0 });
+
+            const state = useGeneratorStore.getState();
+            // Locked value survives the bulk write.
+            expect(state.steps).toBe(25);
+            // Unlocked values are still applied.
+            expect(state.cfg).toBe(5.0);
+        });
     });
 });

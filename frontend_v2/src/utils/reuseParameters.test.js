@@ -15,6 +15,7 @@ describe('buildGeneratorStateFromMetadata', () => {
             cfg: '6.5',
             sampler: 'euler_ancestral',
             scheduler: 'normal',
+            clipSkip: 2,
             width: '832',
             height: '1216',
             checkpoint: 'model_xl.safetensors',
@@ -31,6 +32,7 @@ describe('buildGeneratorStateFromMetadata', () => {
         expect(updates.width).toBe(832);
         expect(updates.height).toBe(1216);
         expect(updates.batchSize).toBe(2);
+        expect(updates.clipSkip).toBe(2);
 
         expect(updates.selectedCheckpoint).toEqual({
             name: 'model_xl.safetensors',
@@ -105,6 +107,7 @@ describe('buildGeneratorStateFromMetadata', () => {
                         cfg: 5.5,
                         sampler_name: 'dpmpp_2m',
                         scheduler: 'karras',
+                        clip_skip: 2,
                         model: ['2', 0],
                         positive: ['3', 0],
                         negative: ['4', 0],
@@ -123,6 +126,7 @@ describe('buildGeneratorStateFromMetadata', () => {
         expect(updates.cfg).toBe(5.5);
         expect(updates.sampler).toBe('dpmpp_2m');
         expect(updates.scheduler).toBe('karras');
+        expect(updates.clipSkip).toBe(2);
         expect(updates.width).toBe(896);
         expect(updates.height).toBe(1152);
         expect(updates.selectedCheckpoint?.name).toBe('checkpoint.safetensors');

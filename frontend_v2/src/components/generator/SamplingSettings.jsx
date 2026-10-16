@@ -5,6 +5,7 @@ import useSettingsStore from '../../store/settingsStore';
 import { useGeneratorStore } from '../../store/generatorStore';
 import toast from 'react-hot-toast';
 import { SAMPLERS, SCHEDULERS } from '../../constants/generation';
+import { withCurrentOption, isOutsideVocabulary } from '../../constants/options';
 
 const SamplingSettings = memo(function SamplingSettings() {
     const steps = useGeneratorStore(state => state.steps);
@@ -26,6 +27,14 @@ const SamplingSettings = memo(function SamplingSettings() {
 
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
     const updateSetting = useSettingsStore(state => state.updateSetting);
+
+    // A value reused off an old image can be outside this ComfyUI's vocabulary.
+    // See `constants/options.js` for why a `<select>` would otherwise show a
+    // blank control and submit an empty string.
+    const samplerOptions = withCurrentOption(SAMPLERS, sampler);
+    const schedulerOptions = withCurrentOption(SCHEDULERS, scheduler);
+    const samplerIsUnknown = isOutsideVocabulary(SAMPLERS, sampler);
+    const schedulerIsUnknown = isOutsideVocabulary(SCHEDULERS, scheduler);
 
     const renderLockIcon = (param) => (
         <button
@@ -83,35 +92,59 @@ const SamplingSettings = memo(function SamplingSettings() {
             <div className="grid grid-cols-2 gap-4 pt-2">
                 <div className="space-y-1.5 group">
                     <div className="flex items-center">
-                        <label className="block text-2xs font-bold text-gray-400 uppercase tracking-widest px-1">Sampler</label>
+                        <label
+                            htmlFor="generator-sampler"
+                            className="block text-2xs font-bold text-gray-400 uppercase tracking-widest px-1"
+                        >
+                            Sampler
+                        </label>
                         {renderLockIcon('sampler')}
                     </div>
                     <select
+                        id="generator-sampler"
                         value={sampler}
                         disabled={lockedParams.sampler}
                         onChange={(e) => { if (!lockedParams.sampler) setSampler(e.target.value); }}
                         className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-gray-500/50 outline-none transition-all glow-focus disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        {SAMPLERS.map(s => (
+                        {samplerOptions.map(s => (
                             <option key={s} value={s}>{s}</option>
                         ))}
                     </select>
+                    {samplerIsUnknown && (
+                        <p className="text-2xs text-amber-400/80 mt-1 px-1">
+                            Not in this ComfyUI&apos;s sampler list — kept from the image you
+                            reused. It will be submitted as-is.
+                        </p>
+                    )}
                 </div>
                 <div className="space-y-1.5 group">
                     <div className="flex items-center">
-                        <label className="block text-2xs font-bold text-gray-400 uppercase tracking-widest px-1">Scheduler</label>
+                        <label
+                            htmlFor="generator-scheduler"
+                            className="block text-2xs font-bold text-gray-400 uppercase tracking-widest px-1"
+                        >
+                            Scheduler
+                        </label>
                         {renderLockIcon('scheduler')}
                     </div>
                     <select
+                        id="generator-scheduler"
                         value={scheduler}
                         disabled={lockedParams.scheduler}
                         onChange={(e) => { if (!lockedParams.scheduler) setScheduler(e.target.value); }}
                         className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-gray-500/50 outline-none transition-all glow-focus disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        {SCHEDULERS.map(s => (
+                        {schedulerOptions.map(s => (
                             <option key={s} value={s}>{s}</option>
                         ))}
                     </select>
+                    {schedulerIsUnknown && (
+                        <p className="text-2xs text-amber-400/80 mt-1 px-1">
+                            Not in this ComfyUI&apos;s scheduler list — kept from the image you
+                            reused. It will be submitted as-is.
+                        </p>
+                    )}
                 </div>
             </div>
 

@@ -680,7 +680,7 @@ export function ChatWorkspaceProvider({ children }) {
             toast.error('Failed to generate scene');
             setIsGeneratingScene(false);
         }
-    }, [activeChatId, generateSceneMutation, queryClient]);
+    }, [activeChatId, generateSceneMutation]);
 
     const handleIllustrate = useCallback(async () => {
         if (!activeChatId || illustrateMutation.isPending) return;

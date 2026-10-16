@@ -76,10 +76,10 @@ def configure_app(app: FastAPI):
         duration_seconds = time.time() - start_time
         duration_ms = round(duration_seconds * 1000, 2)
         path = request.url.path
-        # `/api/files/events` was a server-sent-events endpoint that no longer
-        # exists. Left in the list it did nothing except look like `/api/files`
-        # requests were being skipped when they are not.
-        skip_paths = ["/api/live", "/metrics"]
+        # `/api/live`, `/api/ready`, and `/metrics` are probed on tight
+        # intervals by the orchestrator/load balancer. Logging every probe
+        # drowns out real request traffic with 200 OK noise.
+        skip_paths = ["/api/live", "/api/ready", "/metrics"]
 
         if not any(path.startswith(skip) for skip in skip_paths):
             route = request.scope.get("route")

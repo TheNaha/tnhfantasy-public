@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import urllib.parse
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -72,6 +73,10 @@ class HybridRemoteEngine(InProcessEngine):
         parsed = urllib.parse.urlparse(self.base_url)
         scheme = parsed.scheme or "http"
         host = parsed.hostname or self.base_url.replace("http://", "").replace("https://", "").split(":")[0]
+
+        self.comfy_port = comfy_port
+        self.agent_port = agent_port
+        self.llm_port = llm_port
 
         self.comfy_url = (comfy_url or f"{scheme}://{host}:{comfy_port}").rstrip("/")
         self.agent_url = (agent_url or f"{scheme}://{host}:{agent_port}").rstrip("/")
@@ -255,26 +260,66 @@ class HybridRemoteEngine(InProcessEngine):
 
     async def check_health(self) -> Dict[str, Any]:
         """Aggregate health probing ComfyUI, Agent, and LLM."""
+        t0 = time.monotonic()
         policy = await self._resolve_policy()
         image_health = await self.image_engine.check_health()
         llm_health = await self.llm_engine.check_health()
 
-        image_ok = image_health.get("status") in ("healthy", "ok")
-        llm_ok = llm_health.get("status") in ("healthy", "ok")
+        comfy_ok = image_health.get("comfy_reachable", False) or (image_health.get("status") in ("healthy", "ok"))
+        agent_ok = image_health.get("agent_reachable", True) if ("agent_reachable" in image_health) else (image_health.get("status") in ("healthy", "ok"))
+        llm_ok = llm_health.get("ready", False) or (llm_health.get("status") in ("healthy", "ok"))
 
-        is_healthy = image_ok or llm_ok
-        status = "healthy" if (image_ok and llm_ok) else ("degraded" if is_healthy else "unhealthy")
+        is_healthy = comfy_ok or llm_ok
+        status = "healthy" if (comfy_ok and llm_ok and agent_ok) else ("degraded" if is_healthy else "unhealthy")
+        latency_ms = round((time.monotonic() - t0) * 1000, 2)
 
-        return {
+        result = {
             "status": status,
             "engine": "remote_hybrid",
+            "latency_ms": latency_ms,
             "concurrency_policy": policy,
             "detected_gpu": self._detected_gpu,
+            "warm_workload": self._last_workload,
             "components": {
-                "comfyui": image_health,
-                "llm": llm_health,
+                "comfyui": {
+                    "status": "healthy" if comfy_ok else "unhealthy",
+                    "port": self.comfy_port,
+                    "url": self.comfy_url,
+                    "latency_ms": image_health.get("latency_ms", 0),
+                },
+                "agent": {
+                    "status": "healthy" if agent_ok else "unhealthy",
+                    "port": self.agent_port,
+                    "url": self.agent_url,
+                    "latency_ms": image_health.get("latency_ms", 0),
+                },
+                "llm": {
+                    "status": "healthy" if llm_ok else "unhealthy",
+                    "port": self.llm_port,
+                    "url": self.llm_url,
+                    "latency_ms": llm_health.get("latency_ms", 0),
+                },
             },
         }
+        self._last_health = result
+        return result
+
+    @property
+    def detected_gpu(self) -> Optional[Dict[str, Any]]:
+        return self._detected_gpu
+
+    @property
+    def warm_workload(self) -> Optional[str]:
+        return self._last_workload
+
+    async def free_vram(self) -> bool:
+        """Purge model weights from VRAM/RAM and reset warm workload state."""
+        async with self._gpu_lock:
+            await self._free_comfy_vram()
+            self._last_workload = None
+            if hasattr(self, "_last_health") and isinstance(self._last_health, dict):
+                self._last_health["warm_workload"] = None
+            return True
 
     async def health(self) -> Dict[str, Any]:
         return await self.check_health()

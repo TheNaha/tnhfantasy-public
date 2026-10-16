@@ -1,5 +1,6 @@
 """Tests for the canonical semantic retrieval pipeline (services/rag_pipeline.py)."""
 
+import pytest
 from sqlmodel import Session, select
 
 from core.entities import Character, CharacterMemory, Lorebook, LorebookEntry
@@ -139,7 +140,27 @@ class TestSearchLorebookEntries:
 
 class TestBackfillLorebookEmbeddings:
     def test_backfills_missing_embeddings(self, session, monkeypatch):
+        """A lorebook reindex must not depend on the embedding model.
 
+        This test used to patch only
+        `EmbeddingService.generate_embedding` — the PER-ROW method. But the
+        backfill calls `generate_embeddings`, the BATCH method, first, and only
+        falls back to the per-row one when the batch call raises or returns the
+        wrong count (`rag_pipeline.py:473`). The real model answered the batch
+        call, so the patched fallback never ran and `entry.embedding` came back
+        as a genuine 384-dimensional sentence-transformers vector:
+        `[0.0387915782..., ...] != [0.1, 0.1, ...]`.
+
+        The consequences were not just a wrong assertion. The suite is hermetic
+        everywhere else, so this one test silently loaded the real model on every
+        run — slow, and dependent on a model being downloaded — while asserting
+        nothing about the backfill's own logic. It is also why STATUS.md records
+        the reindex paths as "never executed by any suite": this test looked like
+        coverage and was not.
+
+        Both methods are patched, because which one runs is a property of the
+        implementation, not of the test.
+        """
         lb = _seed_lorebook(session)
         entry = _add_entry(session, lb.id, ["key"], "Some content")
         entry.embedding = None
@@ -151,9 +172,21 @@ class TestBackfillLorebookEmbeddings:
         def fake_embedding(self, text: str):
             return fake_vec
 
+        def fake_embeddings(self, texts: list[str]):
+            return [fake_vec for _ in texts]
+
+        # Patch the SERVICE module's class, and assert the patch took, because a
+        # `rag_pipeline`-level late import (`from services.embedding_service import
+        # get_embedding_service`, inside the function) means a setattr on the
+        # wrong object fails exactly as silently as patching the wrong method.
+        embedding_module = pytest.importorskip("services.embedding_service")
         monkeypatch.setattr(
             "services.embedding_service.EmbeddingService.generate_embedding",
             fake_embedding,
+        )
+        monkeypatch.setattr(
+            "services.embedding_service.EmbeddingService.generate_embeddings",
+            fake_embeddings,
         )
 
         from services.rag_pipeline import backfill_lorebook_embeddings
@@ -163,6 +196,10 @@ class TestBackfillLorebookEmbeddings:
         session.refresh(entry)
         assert entry.embedding == fake_vec
 
+        # And the patch was actually installed on the class the pipeline resolves
+        # lazily, rather than on a copy of it.
+        assert embedding_module.EmbeddingService.generate_embeddings is fake_embeddings
+
 
 class TestLorebookReindexRoute:
     def test_reindex_endpoint(self, client, session, monkeypatch):
@@ -171,9 +208,18 @@ class TestLorebookReindexRoute:
         session.exec(select(LorebookEntry).where(LorebookEntry.lorebook_id == lb.id)).one().embedding = None
         session.commit()
 
+        # Both methods, same reason as `test_backfills_missing_embeddings`
+        # above: the backfill calls the BATCH method first and only falls back
+        # to the per-row one, so patching only `generate_embedding` lets the real
+        # sentence-transformers model answer — and the endpoint's `reindexed`
+        # count then comes from the real model rather than from the stub.
         monkeypatch.setattr(
             "services.embedding_service.EmbeddingService.generate_embedding",
             lambda self, text: [0.2] * 384,
+        )
+        monkeypatch.setattr(
+            "services.embedding_service.EmbeddingService.generate_embeddings",
+            lambda self, texts: [[0.2] * 384 for _ in texts],
         )
 
         resp = client.post(f"/api/v2/lorebooks/{lb.id}/reindex")

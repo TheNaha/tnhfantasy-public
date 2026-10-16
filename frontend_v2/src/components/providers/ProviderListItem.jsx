@@ -1,6 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
+    Activity,
     Circle,
+    Cpu,
     Edit2,
     Loader2,
     Power,
@@ -9,12 +11,15 @@ import {
     Server,
     Trash2,
     ChevronRight,
+    Zap,
 } from 'lucide-react';
 import {
     providerBadgeToneClass,
     summarizeProviderStatus,
     getDeployTargetForProvider,
 } from '../../utils/providerStatus';
+import { providersApi } from '../../api';
+import { formatBytes, MB } from '../../utils/bytes';
 
 const EMPTY_OBJECT = Object.freeze({});
 
@@ -122,9 +127,26 @@ function ProviderListItem({
 
     const isReconciling = reconciliation.status === 'reconciling' || reconciliation.status === 'queued';
 
-    const telemetry = provider.hardware_telemetry || {};
+    const telemetry = provider.runtime_state?.telemetry || provider.diagnostics?.telemetry || provider.hardware_telemetry || {};
     const vramHistory = telemetry.vram_history || [];
     const tempHistory = telemetry.gpu_temp_history || [];
+    const detectedGpu = telemetry.detected_gpu;
+    const warmWorkload = telemetry.warm_workload;
+    const components = telemetry.components;
+
+    const [pingState, setPingState] = useState({ latency: null, pinging: false, error: null });
+
+    const handlePing = async (e) => {
+        e.stopPropagation();
+        setPingState({ latency: null, pinging: true, error: null });
+        try {
+            const res = await providersApi.testProvider(provider.id);
+            const lat = res?.latency_ms ?? res?.data?.latency_ms ?? res?.details?.latency_ms ?? res?.data?.details?.latency_ms;
+            setPingState({ latency: lat ?? null, pinging: false, error: null });
+        } catch (err) {
+            setPingState({ latency: null, pinging: false, error: err?.message || 'Failed' });
+        }
+    };
 
     return (
         <div
@@ -199,6 +221,42 @@ function ProviderListItem({
                                 {statusSummary.label}
                             </span>
                         )}
+                        {detectedGpu?.name && (
+                            <span
+                                className="flex-shrink-0 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-xs font-bold text-emerald-300 shadow-inner flex items-center gap-1"
+                                title={`GPU: ${detectedGpu.name}${detectedGpu.vram_total_mb ? ` (${formatBytes(detectedGpu.vram_total_mb * MB)} VRAM)` : ''}`}
+                            >
+                                <Cpu size={12} className="text-emerald-400" />
+                                <span>{detectedGpu.name.replace('NVIDIA ', '')}</span>
+                                {detectedGpu.vram_total_mb && (
+                                    <span className="text-emerald-400/70 font-mono text-2xs">
+                                        {formatBytes(detectedGpu.vram_total_mb * MB)}
+                                    </span>
+                                )}
+                            </span>
+                        )}
+                        {warmWorkload && (
+                            <span
+                                className="flex-shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-300 shadow-inner flex items-center gap-1"
+                                title={`Active warm workload loaded in VRAM: ${warmWorkload}`}
+                            >
+                                <Zap size={11} className="text-amber-400 fill-amber-400/20" />
+                                <span>{warmWorkload}</span>
+                            </span>
+                        )}
+                        {components && (
+                            <div className="flex-shrink-0 flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-black/40 border border-white/5" title="Sub-services: ComfyUI (:8188), Agent (:8001), LLM (:8003)">
+                                <span title={`ComfyUI (:8188) - ${components.comfyui?.status || 'unknown'}`} className="flex items-center gap-0.5 text-2xs text-gray-400 font-mono">
+                                    C<span className={`inline-block w-1.5 h-1.5 rounded-full ${components.comfyui?.status === 'healthy' ? 'bg-green-400' : 'bg-red-400'}`} />
+                                </span>
+                                <span title={`Remote Agent (:8001) - ${components.agent?.status || 'unknown'}`} className="flex items-center gap-0.5 text-2xs text-gray-400 font-mono">
+                                    A<span className={`inline-block w-1.5 h-1.5 rounded-full ${components.agent?.status === 'healthy' ? 'bg-green-400' : 'bg-red-400'}`} />
+                                </span>
+                                <span title={`llama-server (:8003) - ${components.llm?.status || 'unknown'}`} className="flex items-center gap-0.5 text-2xs text-gray-400 font-mono">
+                                    L<span className={`inline-block w-1.5 h-1.5 rounded-full ${components.llm?.status === 'healthy' ? 'bg-green-400' : 'bg-red-400'}`} />
+                                </span>
+                            </div>
+                        )}
                         {provider.enabled && hasIssues && (
                             <span
                                 className="flex-shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-amber-300 shadow-inner"
@@ -224,14 +282,14 @@ function ProviderListItem({
                         {provider.capabilities && provider.capabilities.length > 1 && (
                             <span className="flex items-center gap-1">
                                 {provider.capabilities.map((cap) => (
-                                    <span key={cap} className="rounded bg-gray-800 border border-gray-700 px-1.5 py-0.2 text-[11px] text-gray-300 uppercase">
+                                    <span key={cap} className="rounded bg-gray-800 border border-gray-700 px-1.5 py-0.2 text-2xs text-gray-300 uppercase">
                                         {cap}
                                     </span>
                                 ))}
                             </span>
                         )}
                         {provider.config?.concurrency_policy && (
-                            <span className="rounded bg-indigo-950/60 border border-indigo-800/40 px-1.5 py-0.2 text-[11px] text-indigo-300">
+                            <span className="rounded bg-indigo-950/60 border border-indigo-800/40 px-1.5 py-0.2 text-2xs text-indigo-300">
                                 Policy: {provider.config.concurrency_policy}
                             </span>
                         )}
@@ -305,6 +363,41 @@ function ProviderListItem({
                             {providerFailures} fail{providerFailures !== 1 ? 's' : ''}
                         </span>
                     )}
+                    {/* Live Ping Chip */}
+                    <button
+                        type="button"
+                        onClick={handlePing}
+                        disabled={pingState.pinging}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border transition-all text-xs font-mono font-medium shadow-inner ${
+                            pingState.pinging
+                                ? 'border-blue-500/30 bg-blue-500/10 text-blue-300'
+                                : pingState.latency !== null
+                                    ? pingState.latency < 100
+                                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                                        : pingState.latency < 250
+                                            ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20'
+                                            : 'border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                                    : pingState.error
+                                        ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                                        : 'border-white/5 bg-black/40 text-gray-400 hover:text-gray-200 hover:bg-white/5'
+                        }`}
+                        title="Click to ping worker over NetBird mesh / network"
+                    >
+                        {pingState.pinging ? (
+                            <Loader2 size={11} className="animate-spin text-blue-400" />
+                        ) : (
+                            <Activity size={11} className={pingState.latency !== null ? 'text-current' : 'text-gray-500'} />
+                        )}
+                        <span>
+                            {pingState.pinging
+                                ? 'Ping…'
+                                : pingState.latency !== null
+                                    ? `${Math.round(pingState.latency)}ms`
+                                    : pingState.error
+                                        ? 'Failed'
+                                        : 'Ping'}
+                        </span>
+                    </button>
                 </div>
 
                 {/* Actions */}

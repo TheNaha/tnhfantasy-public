@@ -189,6 +189,8 @@ class _ImageReducer:
                 self.final_result = {"images": base64_images, "outputs": persisted_outputs}
             else:
                 self.final_result = ev
+            if ev.get("timings"):
+                self.final_result["timings"] = ev["timings"]
         elif event == "failed":
             self._pending_progress = None
             raise ProviderCallError(ev.get("message", "Image generation failed"), provider_id=self.provider_id,

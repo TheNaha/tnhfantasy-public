@@ -402,6 +402,16 @@ class DirectComfyEngine(InProcessEngine):
             **({"agent_reachable": True} if self._has_agent else {}),
         }
 
+    async def free_vram(self) -> bool:
+        """Purge model weights from ComfyUI memory."""
+        client = self.get_http_client()
+        try:
+            resp = await client.post("/free", json={"unload_models": True, "free_memory": True}, timeout=10.0)
+            return resp.status_code == 200
+        except Exception as exc:
+            logger.warning("direct_comfy_free_vram_failed", provider_id=self.provider_id, error=str(exc))
+            return False
+
     async def _fetch_object_info(self) -> Dict[str, Any]:
         """Fetch and cache ComfyUI /object_info document with single-flight locking."""
         now = time.monotonic()
@@ -961,6 +971,7 @@ class DirectComfyEngine(InProcessEngine):
                 # (`modal/tts/app.py`: `workflow_json.get("prompt",
                 # workflow_json)`); this engine never did.
                 graph = workflow.get("prompt") if isinstance(workflow.get("prompt"), dict) else workflow
+                t_prompt_start = time.monotonic()
                 prompt_resp = await client.post(
                     "/prompt",
                     json={"prompt": graph, "client_id": client_id},
@@ -1145,7 +1156,12 @@ class DirectComfyEngine(InProcessEngine):
                             continue
                         refs.append((fn, img.get("subfolder", ""), img.get("type", "output")))
 
+                t_fetch_all_start = time.monotonic()
+                total_fetch_bytes = 0
+                used_webp = False
+
                 async def _fetch_view(ref: tuple[str, str, str]) -> dict[str, Any] | None:
+                    nonlocal total_fetch_bytes, used_webp
                     fn, sub, f_type = ref
                     content: Optional[bytes] = None
                     t_fetch_start = time.monotonic()
@@ -1163,6 +1179,7 @@ class DirectComfyEngine(InProcessEngine):
                             )
                             if agent_resp.status_code == 200 and agent_resp.content:
                                 content = agent_resp.content
+                                used_webp = True
                                 fetch_duration = time.monotonic() - t_fetch_start
                                 logger.info(
                                     "direct_comfy_image_fetched_via_agent",
@@ -1189,6 +1206,7 @@ class DirectComfyEngine(InProcessEngine):
                             duration_seconds=round(fetch_duration, 2),
                         )
 
+                    total_fetch_bytes += len(content)
                     b64_data = base64.b64encode(content).decode("utf-8")
                     # Canonical artifact keys, matching what the
                     # container's translate_task_events produced:
@@ -1206,6 +1224,18 @@ class DirectComfyEngine(InProcessEngine):
 
                 fetched = await asyncio.gather(*[_fetch_view(r) for r in refs]) if refs else []
                 outputs = [a for a in fetched if a is not None]
+
+                t_fetch_all_done = time.monotonic()
+                inference_sec = round(t_fetch_all_start - t_prompt_start, 2)
+                transfer_sec = round(t_fetch_all_done - t_fetch_all_start, 2)
+                total_sec = round(t_fetch_all_done - t_prompt_start, 2)
+                timings = {
+                    "inference_seconds": max(inference_sec, 0.0),
+                    "transfer_seconds": max(transfer_sec, 0.0),
+                    "total_seconds": max(total_sec, 0.0),
+                    "transfer_bytes": total_fetch_bytes,
+                    "transfer_format": "webp" if used_webp else "png",
+                }
 
                 # Audio is not images. `SaveAudio` / `PreviewAudio` publish
                 # `outputs[<node>]["audio"]` and never `images`, so a TTS
@@ -1235,7 +1265,13 @@ class DirectComfyEngine(InProcessEngine):
                                 })
                     outputs = audio_refs
 
-                yield {"event": "completed", "job_id": job_id, "outputs": outputs, "details": history_doc.get("status", {})}
+                yield {
+                    "event": "completed",
+                    "job_id": job_id,
+                    "outputs": outputs,
+                    "details": history_doc.get("status", {}),
+                    "timings": timings,
+                }
 
         except TimeoutError:
             yield {"event": "failed", "job_id": job_id, "message": f"Inference timed out after {int(timeout)}s", "retryable": True}

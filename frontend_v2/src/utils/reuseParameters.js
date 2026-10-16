@@ -409,6 +409,7 @@ function extractWorkflowHints(workflowInput) {
     let vae;
     let clip;
     let clip2;
+    let clipSkip;
     let adetailer = null;
     let adetailerModel;
 
@@ -422,6 +423,7 @@ function extractWorkflowHints(workflowInput) {
         cfg = toFiniteNumber(samplerInputs.cfg);
         sampler = samplerInputs.sampler_name;
         scheduler = samplerInputs.scheduler;
+        clipSkip = toFiniteNumber(samplerInputs.clip_skip);
 
         const positiveNodeId = linkedNodeId(samplerInputs.positive);
         const negativeNodeId = linkedNodeId(samplerInputs.negative);
@@ -514,6 +516,7 @@ function extractWorkflowHints(workflowInput) {
         cfg,
         sampler,
         scheduler,
+        clipSkip,
         width,
         height,
         batchSize,
@@ -567,6 +570,11 @@ export function buildGeneratorStateFromMetadata(metadataInput) {
     const scheduler = firstDefined(metadata, ['scheduler']) ?? workflowHints.scheduler;
     if (typeof scheduler === 'string' && scheduler) {
         updates.scheduler = scheduler;
+    }
+
+    const clipSkip = toFiniteNumber(firstDefined(metadata, ['clipSkip', 'clip_skip']) ?? workflowHints.clipSkip);
+    if (clipSkip !== null) {
+        updates.clipSkip = Math.floor(clipSkip);
     }
 
     const width = toFiniteNumber(

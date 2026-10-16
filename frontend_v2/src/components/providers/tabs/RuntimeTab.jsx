@@ -1,9 +1,11 @@
-import { Wrench, Zap, Brain, RefreshCw, CheckCircle, XCircle, Loader2, Rocket } from 'lucide-react';
+import { Wrench, Zap, Brain, RefreshCw, CheckCircle, XCircle, Loader2, Rocket, Cpu, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import toast from 'react-hot-toast';
 import { DataRow, StatusRow, ActionBtn } from './Shared';
 import { STATUS_TONE, humanize } from './utils';
 import { useLLMProviderTest } from '../../../hooks/useLLMProviderStatus';
 import { formatTimestamp } from '../../../utils/dateTime';
+import { formatBytes, MB } from '../../../utils/bytes';
 import { providersApi } from '../../../api';
 import { getDeployTargetForProvider } from '../../../utils/providerStatus';
 
@@ -158,7 +160,11 @@ export default function RuntimeTab({
 }) {
     const [pingStatus, setPingStatus] = useState(null); // null, 'loading', 'success', 'error'
     const [pingLatency, setPingLatency] = useState(null);
+    const [liveTelemetry, setLiveTelemetry] = useState(null);
+    const [freeingVram, setFreeingVram] = useState(false);
+
     const isLLM = provider.worker_type === 'llm';
+    const isHybridOrRemote = provider.worker_type === 'hybrid' || provider.type === 'remote_hybrid' || provider.type === 'direct_comfy';
     // Trust the backend's resolved mode: `in_process` is the in-process
     // engine, everything else a remote endpoint (external worker).
     const isInProcess = runtime.mode === 'in_process';
@@ -176,6 +182,13 @@ export default function RuntimeTab({
         provider.reconciliation?.last_contact_at ||
         null;
 
+    const telemetry = provider.runtime_state?.telemetry || provider.diagnostics?.telemetry || provider.hardware_telemetry || {};
+    const activeTelemetry = liveTelemetry || telemetry;
+    const detectedGpu = activeTelemetry.detected_gpu;
+    const concurrencyPolicy = activeTelemetry.concurrency_policy || provider.config?.concurrency_policy;
+    const warmWorkload = activeTelemetry.warm_workload;
+    const components = activeTelemetry.components;
+
     const handlePingTest = async () => {
         setPingStatus('loading');
         setPingLatency(null);
@@ -184,6 +197,14 @@ export default function RuntimeTab({
             if (data?.healthy || data?.status === 'healthy' || data?.ready) {
                 setPingLatency(data.latency_ms ?? null);
                 setPingStatus('success');
+                if (data?.telemetry || data?.details) {
+                    setLiveTelemetry(data?.telemetry || {
+                        detected_gpu: data.details?.detected_gpu,
+                        concurrency_policy: data.details?.concurrency_policy,
+                        warm_workload: data.details?.warm_workload,
+                        components: data.details?.components,
+                    });
+                }
                 setTimeout(() => setPingStatus(null), 3500);
             } else {
                 throw new Error(data?.error || 'Test failed');
@@ -191,6 +212,22 @@ export default function RuntimeTab({
         } catch {
             setPingStatus('error');
             setTimeout(() => setPingStatus(null), 3500);
+        }
+    };
+
+    const handleFreeVram = async () => {
+        setFreeingVram(true);
+        try {
+            await providersApi.freeVram(provider.id);
+            toast.success('GPU VRAM purged and model weights unloaded');
+            setLiveTelemetry((prev) => ({
+                ...(prev || activeTelemetry),
+                warm_workload: null,
+            }));
+        } catch (err) {
+            toast.error(err?.message || 'Failed to free GPU VRAM');
+        } finally {
+            setFreeingVram(false);
         }
     };
 
@@ -212,6 +249,89 @@ export default function RuntimeTab({
                 <DataRow label="Failures" value={String(providerFailures)} />
                 <DataRow label="Last Contact" value={lastContact ? formatTimestamp(lastContact) : 'N/A'} />
             </div>
+
+            {/* Hardware & Daemons Telemetry Panel */}
+            {(detectedGpu || components || concurrencyPolicy || warmWorkload) && (
+                <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">
+                    <div className="px-4 py-2.5 border-b border-white/[0.03] flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-widest text-emerald-400 flex items-center gap-2">
+                            <Cpu size={14} className="text-emerald-400" />
+                            Hardware & Daemons Telemetry
+                        </span>
+                        {warmWorkload && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                                <Zap size={10} className="fill-current text-amber-400" />
+                                Warm: {warmWorkload}
+                            </span>
+                        )}
+                    </div>
+                    <div className="p-4 space-y-3">
+                        {detectedGpu && (
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs bg-black/30 p-3 rounded-lg border border-white/5">
+                                <div>
+                                    <span className="text-gray-500 block text-2xs">GPU Model</span>
+                                    <span className="font-semibold text-gray-200">{detectedGpu.name || 'Generic GPU'}</span>
+                                </div>
+                                <div>
+                                    <span className="text-gray-500 block text-2xs">VRAM Capacity</span>
+                                    <span className="font-mono text-gray-200">
+                                        {detectedGpu.vram_total_mb ? formatBytes(detectedGpu.vram_total_mb * MB) : 'N/A'}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span className="text-gray-500 block text-2xs">Available VRAM</span>
+                                    <span className="font-mono text-emerald-400">
+                                        {detectedGpu.vram_free_mb ? `${formatBytes(detectedGpu.vram_free_mb * MB)} Free` : 'Active'}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {concurrencyPolicy && (
+                            <div className="flex items-center justify-between text-xs px-3 py-2 rounded-lg bg-indigo-950/20 border border-indigo-800/30">
+                                <span className="text-gray-400">GPU Concurrency Coordinator:</span>
+                                <span className="font-semibold text-indigo-300 uppercase tracking-wide">
+                                    {concurrencyPolicy}
+                                    <span className="normal-case font-normal text-gray-400 text-2xs ml-2">
+                                        {concurrencyPolicy === 'exclusive' ? '(Sequential lock between Image & LLM)' : concurrencyPolicy === 'semi_concurrent' ? '(Concurrent RP + Image)' : '(Full Parallel)'}
+                                    </span>
+                                </span>
+                            </div>
+                        )}
+
+                        {components && (
+                            <div className="space-y-1.5 pt-1">
+                                <span className="text-2xs font-bold uppercase tracking-wider text-gray-500 block">
+                                    Sub-Services Mesh Topology
+                                </span>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    {Object.entries(components).map(([name, comp]) => {
+                                        const label = name === 'comfyui' ? 'ComfyUI Server' : name === 'agent' ? 'Storage Agent' : 'llama-server';
+                                        const isHealthy = comp.status === 'healthy';
+                                        return (
+                                            <div key={name} className="flex items-center justify-between p-2.5 rounded-lg bg-black/40 border border-white/5 text-xs">
+                                                <div>
+                                                    <div className="font-medium text-gray-200">{label}</div>
+                                                    <div className="font-mono text-2xs text-gray-500">Port :{comp.port || '?'}</div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className={`flex items-center gap-1 font-semibold ${isHealthy ? 'text-green-400' : 'text-red-400'}`}>
+                                                        <span className={`w-2 h-2 rounded-full ${isHealthy ? 'bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.5)]' : 'bg-red-400'}`} />
+                                                        {isHealthy ? 'Online' : 'Offline'}
+                                                    </div>
+                                                    {comp.latency_ms !== undefined && comp.latency_ms !== null && (
+                                                        <span className="text-2xs font-mono text-gray-500">{Math.round(comp.latency_ms)}ms</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Model & Voice Discovery */}
             <DiscoveredAssetsPanel provider={provider} />
@@ -235,6 +355,15 @@ export default function RuntimeTab({
                         tone="green"
                         icon={Zap}
                         label={pingStatus === 'loading' ? "Testing..." : "Test Connection"}
+                    />
+                )}
+                {isHybridOrRemote && (
+                    <ActionBtn
+                        onClick={handleFreeVram}
+                        disabled={freeingVram}
+                        tone="amber"
+                        icon={Trash2}
+                        label={freeingVram ? "Purging VRAM…" : "Purge GPU VRAM"}
                     />
                 )}
                 {pingStatus === 'success' && (

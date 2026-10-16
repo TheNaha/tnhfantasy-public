@@ -13,7 +13,7 @@ import * as ws from '../api/websocket';
 // Hooks
 import { useGallery } from '../hooks/useGallery';
 import { useDashboardItems } from '../hooks/useDashboardItems';
-import { useLightboxNavigation } from '../hooks/useLightboxNavigation';
+import { useLightboxNavigation, identityOf } from '../hooks/useLightboxNavigation';
 import { useFavorites } from '../hooks/useFavorites';
 import { useSelectedImageState } from '../hooks/useSelectedImageState';
 import { useActiveJobs } from '../hooks/useActiveJobs';
@@ -352,7 +352,26 @@ export default function Dashboard() {
         try {
             await filesApi.deleteMultiple([filename]);
             queryClient.invalidateQueries({ queryKey: ['gallery', filters] });
-            if (selectedImage?.name === filename) closeSelectedImage();
+            // Compare IDENTITIES, not names.
+            //
+            // This was `if (selectedImage?.name === filename)`, and it never
+            // fired — not on the sibling path, not on the plain gallery path,
+            // ever. The lightbox deletes the currently DISPLAYED image, which it
+            // hands over as `assetPath(displayImage)`; `assetPath` prefers
+            // `relative_path`, which the backend builds as
+            // `<workspace>/<path>`. `selectedImage.name` is the basename. The two
+            // are never equal, so the modal stayed open over a deleted image.
+            //
+            // `identityOf` is the helper that resolves exactly this divergence:
+            // two assets in different workspaces can share a basename, so the
+            // basename is not an identity at all.
+            //
+            // `selectedImage` is the right thing to close unconditionally, for a
+            // second reason: `handleLightboxNavigate` selects the sibling being
+            // navigated to, so the open modal IS the deleted image's modal.
+            if (selectedImage && identityOf(selectedImage) === identityOf(filename)) {
+                closeSelectedImage();
+            }
             toast.success(`Successfully deleted ${filename}`, {
                 icon: '🗑️',
                 duration: toastSuccessDuration,

@@ -213,3 +213,17 @@ async def test_model_storage_delegation():
 
     setup_ok = await engine.setup_models()
     assert setup_ok is True
+
+
+@pytest.mark.asyncio
+async def test_free_vram_resets_warm_workload():
+    """free_vram unloads models from ComfyUI and clears warm workload tracking."""
+    engine = HybridRemoteEngine("hyb-test", base_url="http://node")
+    engine._last_workload = "flux_sdxl"
+    engine._free_comfy_vram = AsyncMock()
+
+    success = await engine.free_vram()
+    assert success is True
+    assert engine.warm_workload is None
+    engine._free_comfy_vram.assert_awaited_once()
+

@@ -114,6 +114,9 @@ export const providersApi = {
     /** Test connection and health of an existing provider. */
     testProvider: (providerId) => api.post(`${P}/${providerId}/test`),
 
+    /** Purge GPU VRAM and reset model caching on remote worker engine. */
+    freeVram: (providerId) => api.post(`${P}/${providerId}/free-vram`),
+
     /** Fetch live models or voices discovered upstream from the in-process engine. */
     getDiscoveredModels: (providerId, options = {}) => api.get(`${P}/${providerId}/models/discovered`, options),
 

@@ -157,6 +157,7 @@ async def complete_job(
     provider_id: str | None = None,
     load_balancer=None,
     event_extra: dict | None = None,
+    timings: dict[str, Any] | None = None,
 ) -> None:
     # Note: duration_seconds is already saved to image metadata in build_job_outputs
     # via full_metadata["job"] = {"duration_seconds": ...}
@@ -169,6 +170,8 @@ async def complete_job(
     }
     if event_extra is not None:
         update_args["event_extra"] = event_extra
+    if timings is not None:
+        update_args["timings"] = timings
     await job_service.update_job(job_id, **update_args)
 
     if load_balancer and provider_id:
@@ -242,6 +245,7 @@ async def finalize_persisted_job_outputs(
     load_balancer=None,
     process_image_background_fn: Callable[[str, str], Awaitable[Any]] | None = None,
     event_extra: dict | None = None,
+    timings: dict[str, Any] | None = None,
 ) -> None:
     try:
         job = await job_service.get_job(job_id)
@@ -382,6 +386,7 @@ async def finalize_persisted_job_outputs(
                     provider_id=provider_id,
                     load_balancer=load_balancer,
                     event_extra=event_extra,
+                    timings=timings,
                 )
                 logger.info("job_completed", job_id=job_id, outputs=len(outputs), provider_id=provider_id)
             except Exception as exc:
@@ -1035,6 +1040,7 @@ async def _finalize_image_job(
     provider_id: str,
     outputs: list,
     process_image_background_fn,
+    timings: dict[str, Any] | None = None,
 ) -> None:
     event_extra: dict[str, Any] | None = None
     metadata = job.metadata_ or {}
@@ -1086,6 +1092,7 @@ async def _finalize_image_job(
         load_balancer=load_balancer,
         process_image_background_fn=process_image_background_fn,
         event_extra=event_extra,
+        timings=timings,
     )
 
 
@@ -1178,4 +1185,5 @@ async def finalize_successful_job(
             provider_id=provider_id,
             outputs=outputs,
             process_image_background_fn=process_image_background_fn,
+            timings=final_result.get("timings"),
         )

@@ -20,6 +20,13 @@ from .schemas import *  # noqa: F401, F403
 
 logger = model_logger()
 
+# CivitAI rate-limits bursts, so models are resynced strictly one at a time and a
+# 429 is backed off (honoring `Retry-After`) and retried until the limit clears,
+# rather than failing the sweep or hammering the API.
+RESYNC_MAX_RETRIES = 8
+RESYNC_INITIAL_BACKOFF_SECONDS = 2.0
+RESYNC_MAX_BACKOFF_SECONDS = 60.0
+
 router = APIRouter()
 
 # Tag provenance. CivitAI owns the rows it scraped and replaces them wholesale
@@ -372,93 +379,112 @@ def remove_user_model_tag_endpoint(
     return {"status": "success", "model_id": model_id, "tag": tag}
 
 async def run_background_resync():
-    """Run a full metadata resync for all eligible models."""
+    """Run a full metadata resync for all eligible models.
+
+    Models are fetched strictly one at a time. CivitAI rate-limits bursts, so a
+    429 is backed off (honoring `Retry-After`) and retried until the limit
+    clears, rather than failing the sweep or hammering the API. Metadata is
+    applied off the event loop so a large library does not stall the app.
+    """
     from api.deps import get_model_repo_v2
     from core.exceptions import ComfyError
-    
+
     async with get_session_context() as bg_session:
         repo = get_model_repo_v2(bg_session)
         models = repo.get_models_for_resync()
-        
+
         if not models:
             return {"success": 0, "failed": 0, "errors": []}
-            
+
         results = {"success": 0, "failed": 0, "errors": []}
         total = len(models)
-        
-        await broadcast_to_all("RESYNC_PROGRESS", {
-            "status": "started",
-            "processed": 0,
-            "total": total,
-            "results": results,
-            "current_model": "Starting..."
-        })
-        
-        http_client = get_http_client()
-        import asyncio
 
-        batch_size = 5
-        for i in range(0, len(models), batch_size):
-            batch = models[i:i+batch_size]
-            
+        async def report(status, current_model, processed):
             await broadcast_to_all("RESYNC_PROGRESS", {
-                "status": "processing",
-                "processed": i,
+                "status": status,
+                "processed": processed,
                 "total": total,
                 "results": results,
-                "current_model": f"Batch {i//batch_size + 1}"
+                "current_model": current_model,
             })
-            
-            async def fetch_civitai(model):
-                url = f"https://civitai.com/api/v1/models/{model.civitai_model_id}"
+
+        await report("started", "Starting...", 0)
+
+        http_client = get_http_client()
+
+        async def fetch_one(model):
+            """Fetch one model's CivitAI metadata, backing off on 429 until clear."""
+            url = f"https://civitai.com/api/v1/models/{model.civitai_model_id}"
+            last_error = None
+            for attempt in range(RESYNC_MAX_RETRIES):
                 try:
                     response = await http_client.get(url, timeout=30.0)
-                    if response.status_code != 200:
-                        return model, None, ComfyError(f"API error: {response.status_code}")
-                    return model, response.json(), None
                 except Exception as exc:
-                    return model, None, exc
-            
-            fetch_tasks = [fetch_civitai(m) for m in batch]
-            fetched_results = await asyncio.gather(*fetch_tasks)
-            
-            # Off the loop. A resync fetches every eligible model from CivitAI in
-            # batches of five, and for a library of a few hundred that is minutes
-            # of `await`s — with `_apply_civitai_metadata` and `commit` running
-            # INLINE on the event loop between every batch. So the whole
-            # application was stalled for the duration of a background job that no
-            # user is waiting on. `api/lifecycle.py:290-295` also schedules this
-            # function every 24 h, so this is not a rare path.
-            def _apply_batch(rows, data_by_index):
-                applied = 0
-                failures = []
-                for (model, _data, exc), data in zip(rows, data_by_index, strict=True):
-                    if exc:
-                        failures.append({"model_id": str(model.id), "error": str(exc)})
-                        continue
-                    if not data:
-                        continue
-                    try:
-                        _apply_civitai_metadata(model, data, bg_session)
-                        applied += 1
-                    except Exception as e:
-                        failures.append({"model_id": str(model.id), "error": str(e)})
-                bg_session.commit()
-                return applied, failures
+                    return None, exc
 
-            applied, failures = await asyncio.to_thread(
-                _apply_batch, fetched_results, [r[1] for r in fetched_results]
-            )
-            results["success"] += applied
-            results["errors"].extend(failures)
-        
-        await broadcast_to_all("RESYNC_PROGRESS", {
-            "status": "completed",
-            "processed": total,
-            "total": total,
-            "results": results,
-            "current_model": "Done"
-        })
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after is not None:
+                        try:
+                            wait = float(retry_after)
+                        except ValueError:
+                            wait = RESYNC_INITIAL_BACKOFF_SECONDS
+                    else:
+                        wait = min(
+                            RESYNC_INITIAL_BACKOFF_SECONDS * (2 ** attempt),
+                            RESYNC_MAX_BACKOFF_SECONDS,
+                        )
+                    # Keep the frontend informed instead of appearing stalled.
+                    await report(
+                        "processing",
+                        f"{model.name or model.id} (rate limited, retrying in {int(wait)}s)",
+                        index_ref[0],
+                    )
+                    await asyncio.sleep(wait)
+                    last_error = ComfyError("API error: 429")
+                    continue
+
+                if response.status_code != 200:
+                    return None, ComfyError(f"API error: {response.status_code}")
+
+                return response.json(), None
+
+            return None, last_error
+
+        # Mutable so the nested `fetch_one` can report which model is being retried.
+        index_ref = [0]
+
+        for index, model in enumerate(models):
+            index_ref[0] = index
+            model_id_str = str(model.id)
+            current_model = model.name or model_id_str
+
+            await report("processing", current_model, index)
+
+            civitai_data, error = await fetch_one(model)
+
+            if civitai_data is None:
+                results["failed"] += 1
+                results["errors"].append({"model_id": model_id_str, "error": str(error)})
+                await report("processing", current_model, index + 1)
+                continue
+
+            # Off the loop: applying metadata and committing must not block the
+            # event loop between models.
+            def _apply_one():
+                _apply_civitai_metadata(model, civitai_data, bg_session)
+                bg_session.commit()
+
+            try:
+                await asyncio.to_thread(_apply_one)
+                results["success"] += 1
+            except Exception as exc:
+                results["failed"] += 1
+                results["errors"].append({"model_id": model_id_str, "error": str(exc)})
+
+            await report("processing", current_model, index + 1)
+
+        await report("completed", "Done", total)
         return results
 
 @router.post("/resync-all")

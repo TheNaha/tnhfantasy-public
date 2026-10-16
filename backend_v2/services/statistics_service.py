@@ -370,22 +370,27 @@ def _prompt_signature(session: Session, where: ColumnElement[bool] | None) -> st
     )
     # Ordered on Postgres, unordered on anything else.
     #
-    # `string_agg(pair, sep ORDER BY pair)` is Postgres syntax, and
-    # `sqlalchemy.dialects.postgresql.aggregate_order_by` cannot be rendered by
-    # any other dialect — including the SQLite the test suite runs on, which
-    # fails at COMPILE time rather than execution. So the ordering is applied
-    # only where it can be expressed, which is the only place it matters:
+    # `aggregate_order_by` must be passed as the separator argument (2nd
+    # position) so SQLAlchemy consumes it as the aggregate's `ORDER BY` clause
+    # rather than emitting it as a third positional argument — PostgreSQL's
+    # `string_agg(text, text)` takes exactly two arguments, and a third one
+    # raises `function string_agg(text, character varying, text) does not exist`.
+    # The construct cannot be rendered by any other dialect — including the
+    # SQLite the test suite runs on, which fails at COMPILE time rather than
+    # execution. So the ordering is applied only where it can be expressed,
+    # which is the only place it matters:
     #
     # An unordered `string_agg` emits rows in executor order. That is stable for
     # a sequential scan and NOT for a parallel or index-driven plan, so the same
     # table produced two different hashes depending on the plan the planner
     # picked. The cache then missed on data that had not changed, which is the
-    # whole 1.4s rebuild paid for a key that was read once.
+    # whole 1.4s rebuild paid for a key that was only ever read once. Sorting on
+    # the same pair keeps it injective and deterministic at the same time.
     #
     # The `_day_bucket` branch a few hundred lines below is the same call: one
     # definition of the truth, one dialect-specific rendering of it.
     if session.bind is not None and session.bind.dialect.name == "postgresql":
-        agg = func.string_agg(pair, literal(""), aggregate_order_by(pair, pair))
+        agg = func.string_agg(pair, aggregate_order_by(literal(""), pair))
     else:
         agg = func.string_agg(pair, literal(""))
     stmt = select(

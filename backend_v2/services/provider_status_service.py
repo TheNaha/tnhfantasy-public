@@ -476,6 +476,32 @@ class ProviderStatusService:
             model_sync=model_sync,
         )
 
+        from services.engines.engine_factory import _ENGINE_CACHE
+        cached_engine = _ENGINE_CACHE.get(provider_id)
+        telemetry = None
+        if cached_engine is not None:
+            last_health = getattr(cached_engine, "_last_health", None) or {}
+            gpu = getattr(cached_engine, "detected_gpu", None) or getattr(cached_engine, "_detected_gpu", None) or last_health.get("detected_gpu")
+            policy = getattr(cached_engine, "concurrency_policy", None) or getattr(cached_engine, "_resolved_policy", None) or last_health.get("concurrency_policy")
+            warm = getattr(cached_engine, "warm_workload", None) or getattr(cached_engine, "_last_workload", None) or last_health.get("warm_workload")
+            components = last_health.get("components")
+            if not components and hasattr(cached_engine, "comfy_port"):
+                components = {
+                    "comfyui": {"status": "unknown", "port": getattr(cached_engine, "comfy_port", 8188)},
+                    "agent": {"status": "unknown", "port": getattr(cached_engine, "agent_port", 8001)},
+                    "llm": {"status": "unknown", "port": getattr(cached_engine, "llm_port", 8003)},
+                }
+            if gpu or policy or warm or components:
+                telemetry = {
+                    "detected_gpu": gpu,
+                    "concurrency_policy": policy,
+                    "warm_workload": warm,
+                    "components": components,
+                }
+
+        if telemetry:
+            diagnostics["telemetry"] = telemetry
+
         return {
             "provider_id": provider_id,
             "provider_type": provider_info.get("type"),
@@ -488,6 +514,7 @@ class ProviderStatusService:
                 "status": runtime.status,
                 "connected": runtime.connected,
                 "capabilities": provider_info.get("capabilities") or {},
+                "telemetry": telemetry,
             },
             "model_sync": model_sync,
             "storage": redact_secrets(storage_stats),

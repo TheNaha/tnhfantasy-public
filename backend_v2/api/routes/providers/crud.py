@@ -436,12 +436,19 @@ async def test_existing_provider(provider_id: str, session: Session = Depends(ge
                 # already invalidate on write. Only __test_conn_* temp ids
                 # must be evicted (handled in /test-connection's finally).
                 is_healthy = _is_healthy_status(health)
+                telemetry = {
+                    "detected_gpu": health.get("detected_gpu"),
+                    "concurrency_policy": health.get("concurrency_policy"),
+                    "warm_workload": health.get("warm_workload"),
+                    "components": health.get("components"),
+                } if ("components" in health or "detected_gpu" in health) else None
                 return {
                     "healthy": is_healthy,
                     "status": health.get("status", "healthy" if is_healthy else "unhealthy"),
                     "ready": is_healthy,
                     "latency_ms": health.get("latency_ms"),
                     "details": health,
+                    "telemetry": telemetry,
                     "error": health.get("error"),
                 }
             except Exception as exc:

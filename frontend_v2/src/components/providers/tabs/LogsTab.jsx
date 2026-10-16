@@ -9,6 +9,7 @@ import {
     Clock,
     Copy,
     FileText,
+    Gauge,
     Loader2,
     RefreshCw,
     Rocket,
@@ -19,6 +20,7 @@ import toast from 'react-hot-toast';
 import { providersApi } from '../../../api';
 import { copyToClipboard } from '../../../utils/clipboard';
 import { formatTimestamp } from '../../../utils/dateTime';
+import { formatBytes } from '../../../utils/bytes';
 import { QueryErrorState } from '../../common/QueryState';
 
 export default function LogsTab({ providerId }) {
@@ -69,6 +71,7 @@ export default function LogsTab({ providerId }) {
 
     const deploy = data?.deploy;
     const failures = data?.recent_failures || [];
+    const recentJobs = data?.recent_jobs || [];
     const diagnostics = data?.diagnostics || {};
     const diagWarnings = diagnostics.warnings || [];
     const diagErrors = diagnostics.errors || [];
@@ -188,7 +191,111 @@ export default function LogsTab({ providerId }) {
                 )}
             </div>
 
-            {/* Section 2: Recent Job Failures & Errors */}
+            {/* Section 2: Recent Job Performance & Transfer Breakdown */}
+            <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">
+                <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.01] flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <Gauge size={15} className="text-cyan-400" />
+                        <span className="text-xs font-bold uppercase tracking-wider text-gray-300">
+                            Recent Job Latency & Transfer Breakdown ({recentJobs.length})
+                        </span>
+                    </div>
+                </div>
+
+                {recentJobs.length > 0 ? (
+                    <div className="divide-y divide-white/[0.03]">
+                        {recentJobs.map((j) => {
+                            const timings = j.timings;
+                            const hasTimings = timings && (timings.inference_seconds || timings.transfer_seconds);
+                            const totalTime = timings?.total_seconds || j.duration_seconds || 0;
+                            const inferenceTime = timings?.inference_seconds || Math.max(0, totalTime - (timings?.transfer_seconds || 0));
+                            const transferTime = timings?.transfer_seconds || 0;
+                            const inferencePct = totalTime > 0 ? Math.min(100, Math.max(5, (inferenceTime / totalTime) * 100)) : 100;
+                            const transferPct = totalTime > 0 && transferTime > 0 ? Math.min(100, Math.max(5, (transferTime / totalTime) * 100)) : 0;
+                            const isWebp = timings?.transfer_format === 'webp';
+                            const isSuccess = j.status === 'completed' || j.status === 'success';
+
+                            return (
+                                <div key={j.id} className="p-4 hover:bg-white/[0.01] transition-colors space-y-2.5">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                            <span className={`w-2 h-2 rounded-full ${isSuccess ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]' : 'bg-rose-400'}`} />
+                                            <span className="font-mono text-xs font-semibold text-gray-200">
+                                                Job {j.id.slice(0, 8)}…
+                                            </span>
+                                            <span className="text-2xs uppercase font-mono px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
+                                                {j.task_type || 'image'}
+                                            </span>
+                                            {isWebp && (
+                                                <span className="text-2xs font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="Wire optimized: WebP transport saves ~80% network transfer time">
+                                                    ⚡ WebP Wire
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-3 text-xs">
+                                            {j.created_at && (
+                                                <span className="text-gray-500 flex items-center gap-1 text-2xs">
+                                                    <Clock size={11} />
+                                                    {formatTimestamp(j.created_at)}
+                                                </span>
+                                            )}
+                                            <span className="font-mono font-semibold text-gray-200 bg-black/40 px-2 py-0.5 rounded border border-white/5">
+                                                {totalTime > 0 ? `${totalTime.toFixed(1)}s total` : '—'}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Dual-tone Progress Bar: Inference vs Transfer */}
+                                    {hasTimings && totalTime > 0 && (
+                                        <div className="space-y-1.5">
+                                            <div className="h-2 w-full bg-black/60 rounded-full overflow-hidden flex shadow-inner border border-white/5">
+                                                <div
+                                                    style={{ width: `${inferencePct}%` }}
+                                                    className="bg-blue-500 h-full transition-all"
+                                                    title={`Model Inference: ${inferenceTime.toFixed(1)}s`}
+                                                />
+                                                {transferPct > 0 && (
+                                                    <div
+                                                        style={{ width: `${transferPct}%` }}
+                                                        className="bg-emerald-400 h-full transition-all"
+                                                        title={`Wire Transfer: ${transferTime.toFixed(2)}s`}
+                                                    />
+                                                )}
+                                            </div>
+                                            <div className="flex items-center justify-between text-2xs font-mono">
+                                                <div className="flex items-center gap-1.5 text-blue-400">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                                    <span>Inference: {inferenceTime.toFixed(1)}s</span>
+                                                </div>
+                                                <div className="flex items-center gap-1.5 text-emerald-400">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                                    <span>
+                                                        Transfer: {transferTime.toFixed(2)}s
+                                                        {timings?.transfer_bytes ? ` (${formatBytes(timings.transfer_bytes)})` : ''}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {!hasTimings && (
+                                        <div className="text-2xs text-gray-500 font-mono">
+                                            Duration: {j.duration_seconds !== null ? `${j.duration_seconds}s` : 'Unknown'}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <div className="p-6 text-center text-xs text-gray-500 flex flex-col items-center gap-2">
+                        <Clock size={24} className="text-gray-600" />
+                        <span>No completed job history recorded for this provider yet.</span>
+                    </div>
+                )}
+            </div>
+
+            {/* Section 3: Recent Job Failures & Errors */}
             <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">
                 <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.01] flex items-center justify-between">
                     <div className="flex items-center gap-2">

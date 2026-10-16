@@ -19,6 +19,7 @@ import { assetUrl } from '../utils/assetUrl';
 import useSettingsStore from '../store/settingsStore';
 import { useGeneratorStore } from '../store/generatorStore';
 import { SAMPLERS, SCHEDULERS } from '../constants/generation';
+import { withCurrentOption } from '../constants/options';
 import NumberInput from '../components/common/NumberInput';
 import BatchPresetEditor from '../components/generator/BatchPresetEditor';
 import {
@@ -724,7 +725,7 @@ export default function BatchGenerate() {
                                     onChange={(event) => setSampler(event.target.value)}
                                     className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
                                 >
-                                    {SAMPLERS.map((option) => (
+                                    {withCurrentOption(SAMPLERS, sampler).map((option) => (
                                         <option key={option} value={option}>{option}</option>
                                     ))}
                                 </select>
@@ -737,7 +738,7 @@ export default function BatchGenerate() {
                                     onChange={(event) => setScheduler(event.target.value)}
                                     className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
                                 >
-                                    {SCHEDULERS.map((option) => (
+                                    {withCurrentOption(SCHEDULERS, scheduler).map((option) => (
                                         <option key={option} value={option}>{option}</option>
                                     ))}
                                 </select>
