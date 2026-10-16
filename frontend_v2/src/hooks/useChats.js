@@ -288,4 +288,16 @@ export const useSearchChats = (query) => {
     });
 };
 
+export const useExportChatToStory = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (chatId) => api.post(`/api/v2/chats/${chatId}/export-story`),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES) });
+            invalidateVaultAggregates(queryClient);
+        }
+    });
+};
+
+
 

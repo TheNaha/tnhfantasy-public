@@ -483,3 +483,16 @@ export const useUnpublishStory = () => {
         },
     });
 };
+
+export const useStartChatFromStory = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId }) =>
+            api.post(`/api/v2/stories/${storyId}/start-chat`, chapterId ? { chapter_id: chapterId } : {}),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHATS) });
+            invalidateVaultAggregates(queryClient);
+        },
+    });
+};
+

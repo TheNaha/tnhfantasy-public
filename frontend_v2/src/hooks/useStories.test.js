@@ -33,6 +33,7 @@ import {
     useExportStoryFormatted,
     useNarrateChapter,
     usePublishStory,
+    useStartChatFromStory,
 } from './useStories';
 
 function createWrapper() {
@@ -296,5 +297,21 @@ describe('useExportStoryFormatted', () => {
             HTMLAnchorElement.prototype.click = origClick;
             vi.unstubAllGlobals();
         }
+    });
+
+    it('useStartChatFromStory posts to start-chat endpoint and invalidates chats', async () => {
+        apiMock.post.mockResolvedValue({ chat_id: 'c100', title: 'Tale — Chapter 1' });
+        const { wrapper, queryClient } = createWrapper();
+        const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useStartChatFromStory(), { wrapper });
+
+        let res;
+        await act(async () => {
+            res = await result.current.mutateAsync({ storyId: 's1', chapterId: 'ch1' });
+        });
+
+        expect(apiMock.post).toHaveBeenCalledWith('/api/v2/stories/s1/start-chat', { chapter_id: 'ch1' });
+        expect(res).toEqual({ chat_id: 'c100', title: 'Tale — Chapter 1' });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats'] });
     });
 });

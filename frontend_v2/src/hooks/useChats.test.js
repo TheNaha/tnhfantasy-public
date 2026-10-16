@@ -29,6 +29,7 @@ import {
     useIllustrateChat,
     useChatImages,
     useSearchChats,
+    useExportChatToStory,
 } from './useChats';
 
 function createWrapper() {
@@ -287,5 +288,21 @@ describe('useChats mutations', () => {
         // A single character used to go straight to the server on every
         // keystroke, because the sidebar fired the query undebounced.
         expect(apiMock.get).not.toHaveBeenCalled();
+    });
+
+    it('useExportChatToStory posts to export-story endpoint and invalidates stories', async () => {
+        apiMock.post.mockResolvedValue({ story_id: 's100', title: 'Story from Chat' });
+        const { wrapper, queryClient } = createWrapper();
+        const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useExportChatToStory(), { wrapper });
+
+        let res;
+        await act(async () => {
+            res = await result.current.mutateAsync('c1');
+        });
+
+        expect(apiMock.post).toHaveBeenCalledWith('/api/v2/chats/c1/export-story');
+        expect(res).toEqual({ story_id: 's100', title: 'Story from Chat' });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'stories'] });
     });
 });
