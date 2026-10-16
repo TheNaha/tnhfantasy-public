@@ -3,7 +3,7 @@ import getCaretCoordinates from 'textarea-caret';
 import { Users, BookOpen } from 'lucide-react';
 import { useCharacters, useLorebooks } from '../../hooks/useWorldVault';
 
-export default function MentionPicker({ textareaRef, editorContent, onSelect }) {
+export default function MentionPicker({ textareaRef, editorContent, onSelect, placement = 'bottom' }) {
     const { data: characters = [] } = useCharacters();
     const { data: lorebooks = [] } = useLorebooks();
     
@@ -96,13 +96,14 @@ export default function MentionPicker({ textareaRef, editorContent, onSelect }) 
 
     if (!pickerState.isOpen || filteredItems.length === 0) return null;
 
+    const style = placement === 'top'
+        ? { left: Math.max(8, Math.min(pickerState.x, 260)), bottom: 'calc(100% + 8px)' }
+        : { left: pickerState.x, top: pickerState.y + 10 };
+
     return (
         <div 
             className="absolute z-50 bg-gray-900 border border-white/10 rounded-lg shadow-xl overflow-hidden min-w-[200px]"
-            style={{ 
-                left: pickerState.x, 
-                top: pickerState.y + 10 // small offset below text
-            }}
+            style={style}
         >
             <div className="px-3 py-1.5 bg-gray-800/50 border-b border-white/5 text-xs text-gray-500 uppercase tracking-wider font-semibold">
                 Link Entity

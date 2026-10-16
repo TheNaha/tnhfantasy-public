@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { X, ImageIcon, Loader2, Paperclip, MoreHorizontal, Palette, Wand2, BookOpen, Ghost, Sparkles, Send } from 'lucide-react';
 import clsx from 'clsx';
 import CommandPalette from './CommandPalette';
 import StreamingInput from './StreamingInput';
 import TokenMeter from './TokenMeter';
+import MentionPicker from '../story/MentionPicker';
 
 export default function ChatInputContainer({
     pendingAttachment, setPendingAttachment, activeChat, targetCharacterId,
@@ -16,6 +17,23 @@ export default function ChatInputContainer({
     handleImpersonate, impersonateMutation, suggestReplyMutation, suggestJobId,
     handleSendMessage, canSend
 }) {
+    const handleSelectMention = useCallback((item, startIndex, endIndex) => {
+        const textBefore = message.slice(0, startIndex);
+        const textAfter = message.slice(endIndex);
+        const mentionText = `@${item.name} `;
+        setMessage(textBefore + mentionText + textAfter);
+
+        if (item._type === 'character' && setTargetCharacterId && characters?.some(c => c.id === item.id)) {
+            setTargetCharacterId(item.id);
+        }
+
+        setTimeout(() => {
+            const textarea = textareaRef.current;
+            if (!textarea) return;
+            textarea.focus();
+            textarea.selectionStart = textarea.selectionEnd = startIndex + mentionText.length;
+        }, 0);
+    }, [message, setMessage, setTargetCharacterId, characters, textareaRef]);
     return (
         <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 pb-4 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
             <div className="max-w-4xl mx-auto">
@@ -62,6 +80,12 @@ export default function ChatInputContainer({
                                 textareaRef.current?.focus();
                             }
                         }}
+                    />
+                    <MentionPicker
+                        textareaRef={textareaRef}
+                        editorContent={message}
+                        onSelect={handleSelectMention}
+                        placement="top"
                     />
                     <input ref={fileInputRef} type="file" aria-label="Attach image" accept="image/*" onChange={handleAttachmentChange} className="sr-only" />
                     
