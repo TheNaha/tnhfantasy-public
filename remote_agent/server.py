@@ -1277,6 +1277,30 @@ if WORKER_MODE in ("llm", "hybrid"):
                     return resp.status, resp.read(), resp.headers.get("Content-Type", "")
             except urllib.error.HTTPError as exc:
                 return exc.code, exc.read(), exc.headers.get("Content-Type", "")
+            except urllib.error.URLError as exc:
+                err_payload = json.dumps({
+                    "status": "error",
+                    "error": {
+                        "message": f"Upstream LLM server unreachable on {base}: {exc.reason}",
+                        "type": "upstream_unavailable",
+                        "code": 503,
+                    },
+                    "message": f"Upstream LLM server unreachable on {base}: {exc.reason}",
+                    "retryable": False,
+                }).encode("utf-8")
+                return 503, err_payload, "application/json"
+            except Exception as exc:
+                err_payload = json.dumps({
+                    "status": "error",
+                    "error": {
+                        "message": f"Upstream LLM proxy error: {exc}",
+                        "type": "upstream_error",
+                        "code": 502,
+                    },
+                    "message": f"Upstream LLM proxy error: {exc}",
+                    "retryable": False,
+                }).encode("utf-8")
+                return 502, err_payload, "application/json"
 
         status, payload, content_type = await _bounded_to_thread(_forward)
 

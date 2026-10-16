@@ -370,6 +370,42 @@ class TestRemoteLLMEngine:
         assert agent_client.is_closed
         assert llm_client.is_closed
 
+    @pytest.mark.asyncio
+    async def test_upstream_unreachable_returns_rejected_failure(self):
+        """When remote agent returns 503 upstream unreachable, engine yields failure."""
+        import httpx
+
+        engine = RemoteLLMEngine(
+            "remote-llm-7", agent_url="http://gpu-box:8001", agent_token="t"
+        )
+
+        async def mock_handler(request: httpx.Request):
+            return httpx.Response(
+                503,
+                json={
+                    "status": "error",
+                    "message": "Upstream LLM server unreachable on http://127.0.0.1:8003/v1: Connection refused",
+                    "retryable": False,
+                },
+            )
+
+        transport = httpx.MockTransport(mock_handler)
+        engine._http = httpx.AsyncClient(base_url="http://gpu-box:8001/v1", transport=transport)
+
+        events = []
+        async for ev in engine.inference(
+            workflow={"messages": [{"role": "user", "content": "hi"}]},
+            job_id="job-1",
+        ):
+            events.append(ev)
+
+        assert len(events) == 2
+        assert events[0]["event"] == "started"
+        assert events[1]["event"] == "failed"
+        assert "503" in events[1]["message"]
+        assert events[1]["retryable"] is True
+        await engine.close()
+
 
 class TestTTSEnginesReadTheRealWorkflow:
     """The engines must read the workflow the app actually builds.
