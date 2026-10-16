@@ -262,6 +262,25 @@ class DownloadRequest(BaseModel):
     #: `models.json` rather than from the caller, so a typo cannot put a file where
     #: the launcher will not find it.
     model_id: Optional[str] = None
+    prewarm: bool = False
+
+
+class PrewarmModelSpec(BaseModel):
+    id: Optional[str] = None
+    source_path: str
+    role: str = "general"
+    is_anchor: bool = False
+
+
+class PrewarmRequest(BaseModel):
+    models: List[PrewarmModelSpec] = Field(default_factory=list)
+    anchors: Optional[List[str]] = None
+    max_spare_gb: Optional[float] = None
+
+
+class EvictRequest(BaseModel):
+    model_id: str
+    force: bool = False
 
 
 class ListModelsRequest(BaseModel):
@@ -671,6 +690,14 @@ async def _download_registry_model(model_id: str):
                 "expected": filename,
             }
         fetched.append(resolved)
+    try:
+        from ram_manager import get_ram_manager
+        mgr = get_ram_manager()
+        for f in fetched:
+            if f.endswith(".gguf"):
+                mgr.ensure_in_ram(f, model_id=model_id, role=model.role, is_anchor=(model_id in mgr.anchors))
+    except Exception as exc:
+        logger.warning(f"Could not prewarm registry model {model_id} into RAM: {exc}")
     return {"ok": True, "model_id": model_id, "fetched": fetched}
 
 
@@ -728,6 +755,12 @@ async def download_model(req: DownloadRequest):
         # return is a failure too, rather than an AttributeError three frames up.
         if not isinstance(result, dict):
             return failed("Download failed")
+        if req.prewarm and result.get("status") in ("success", "exists", "ok"):
+            try:
+                from ram_manager import get_ram_manager
+                get_ram_manager().ensure_in_ram(full_path, model_id=safe_name)
+            except Exception as exc:
+                logger.warning(f"Could not prewarm model {safe_name} to RAM: {exc}")
         return from_upstream(result)
 
 
@@ -1121,6 +1154,46 @@ async def validate_all_models(req: Optional[ValidateAllModelsRequest] = None):
     delete_invalid = req.delete_invalid if req is not None else False
     fast = req.fast if req is not None else True
     return await validate_models(ValidateModelsRequest(directory=list(MODEL_DIRECTORIES), delete_invalid=delete_invalid, fast=fast))
+
+
+# ---------------------------------------------------------------------------
+# High-Speed RAM Cache routes
+# ---------------------------------------------------------------------------
+@app.get("/ram-cache/status", dependencies=[Depends(verify_token)])
+async def ram_cache_status():
+    from ram_manager import get_ram_manager
+    return get_ram_manager().get_status()
+
+
+@app.post("/ram-cache/prewarm", dependencies=[Depends(verify_token)])
+async def ram_cache_prewarm(req: PrewarmRequest):
+    from ram_manager import get_ram_manager
+    mgr = get_ram_manager()
+    if req.anchors:
+        mgr.set_anchors(req.anchors)
+
+    def _do_prewarm():
+        specs = [s.model_dump() for s in req.models]
+        return mgr.prewarm_models(specs, max_spare_gb=req.max_spare_gb)
+
+    prewarmed = await _bounded_to_thread(_do_prewarm)
+    return {
+        "ok": True,
+        "prewarmed": prewarmed,
+        "status": mgr.get_status(),
+    }
+
+
+@app.post("/ram-cache/evict", dependencies=[Depends(verify_token)])
+async def ram_cache_evict(req: EvictRequest):
+    from ram_manager import get_ram_manager
+    mgr = get_ram_manager()
+    evicted = mgr.evict_model(req.model_id, force=req.force)
+    return {
+        "ok": evicted,
+        "model_id": req.model_id,
+        "status": mgr.get_status(),
+    }
 
 
 # ---------------------------------------------------------------------------

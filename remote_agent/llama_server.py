@@ -108,7 +108,7 @@ class Model:
     def has_vision(self) -> bool:
         return bool(self.mmproj)
 
-    def llama_args(self, models_dir: str) -> List[str]:
+    def llama_args(self, models_dir: str, ram_path: Optional[str] = None) -> List[str]:
         """The llama-server flags this model needs, in order.
 
         Order is not cosmetic: `-m` must precede the model path, and the KV-cache
@@ -116,8 +116,9 @@ class Model:
         rule `modal_llm/registry.py:llama_args` documents, mirrored here because
         the sidecar cannot import from backend_v2.
         """
+        model_path = ram_path or f"{models_dir}/{self.volume_dir}/{self.gguf}"
         args = [
-            "-m", f"{models_dir}/{self.volume_dir}/{self.gguf}",
+            "-m", model_path,
             "--alias", self.id,
             "-ngl", "99",
             "-c", str(self.ctx * self.parallel),
@@ -305,7 +306,20 @@ class LlamaStack:
         # PATH lookup covers a bare `python3 server.py` on a rig that has its own
         # llama-server installed.
         binary = self._llama_binary()
-        cmd = [binary] + model.llama_args(self.models_dir) + [
+        ram_path = None
+        try:
+            from ram_manager import get_ram_manager
+            mgr = get_ram_manager()
+            if mgr.is_cached(model.id):
+                ram_path = mgr.entries[model.id].ram_path
+            else:
+                disk_path = f"{self.models_dir}/{model.volume_dir}/{model.gguf}"
+                if os.path.isfile(disk_path):
+                    ram_path = str(mgr.ensure_in_ram(disk_path, model_id=model.id, role=model.role, is_anchor=True))
+        except Exception as exc:
+            print(f"[{model.id}] RAM pre-warming notice: {exc}", flush=True)
+
+        cmd = [binary] + model.llama_args(self.models_dir, ram_path=ram_path) + [
             "--host", "127.0.0.1",
             "--port", str(port),
         ]
