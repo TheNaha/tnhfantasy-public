@@ -16,6 +16,7 @@ import {
     useImportLorebookEntries,
     useBulkDeleteEntries,
 } from '../hooks/useLorebooks';
+import { useWorlds } from '../hooks/useWorlds';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 import RoleplayPageShell from '../components/RoleplayPageShell';
@@ -26,12 +27,13 @@ export default function Lorebooks() {
     const [searchQuery, setSearchQuery] = useState('');
     const [showForm, setShowForm] = useState(false);
     const [editingId, setEditingId] = useState(null);
-    const [form, setForm] = useState({ name: '', description: '' });
+    const [form, setForm] = useState({ name: '', description: '', world_id: '' });
     const [activeLorebookId, setActiveLorebookId] = useState(null);
 
     // See components/common/QueryState.jsx — a failed fetch used to render
     // "No lorebooks yet" next to a vault that already had one.
     const { data: lorebooks = [], isLoading, isError, error, refetch } = useLorebooks();
+    const { data: worlds = [] } = useWorlds();
     const createMutation = useCreateLorebook();
     const updateMutation = useUpdateLorebook();
     const deleteMutation = useDeleteLorebook();
@@ -49,7 +51,7 @@ export default function Lorebooks() {
     const activeLorebook = lorebooks.find(lb => lb.id === activeLorebookId) || null;
 
     const resetForm = () => {
-        setForm({ name: '', description: '' });
+        setForm({ name: '', description: '', world_id: '' });
         setEditingId(null);
         setShowForm(false);
     };
@@ -59,12 +61,17 @@ export default function Lorebooks() {
             toast.error('Name is required');
             return;
         }
+        const payload = {
+            ...form,
+            name: form.name.trim(),
+            world_id: form.world_id || null,
+        };
         try {
             if (editingId) {
-                await updateMutation.mutateAsync({ id: editingId, ...form, name: form.name.trim() });
+                await updateMutation.mutateAsync({ id: editingId, ...payload });
                 toast.success('Lorebook updated');
             } else {
-                await createMutation.mutateAsync({ ...form, name: form.name.trim() });
+                await createMutation.mutateAsync(payload);
                 toast.success('Lorebook created');
             }
             resetForm();
@@ -75,7 +82,7 @@ export default function Lorebooks() {
 
     const handleEdit = (lb) => {
         setEditingId(lb.id);
-        setForm({ name: lb.name || '', description: lb.description || '' });
+        setForm({ name: lb.name || '', description: lb.description || '', world_id: lb.world_id || '' });
         setShowForm(true);
     };
 
@@ -201,6 +208,7 @@ export default function Lorebooks() {
                         editingId={editingId}
                         form={form}
                         setForm={setForm}
+                        worlds={worlds}
                         onSave={handleSave}
                         onClose={resetForm}
                         isSubmitting={createMutation.isPending || updateMutation.isPending}
@@ -220,7 +228,7 @@ export default function Lorebooks() {
     );
 }
 
-function LorebookFormModal({ editingId, form, setForm, onSave, onClose, isSubmitting }) {
+function LorebookFormModal({ editingId, form, setForm, worlds = [], onSave, onClose, isSubmitting }) {
     // Escape dismisses, matching the shared ModalOverlay dialogs and the
     // "Esc → Close modals" line in KeyboardShortcutsModal.
     useEscapeKey(onClose, true);
@@ -258,6 +266,20 @@ function LorebookFormModal({ editingId, form, setForm, onSave, onClose, isSubmit
                             onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))}
                             placeholder="Lorebook name"
                         />
+                    </div>
+                    <div>
+                        <label htmlFor="lorebook-form-world" className="block text-sm font-medium text-gray-300 mb-1">World (Optional)</label>
+                        <select
+                            id="lorebook-form-world"
+                            className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={form.world_id || ''}
+                            onChange={(e) => setForm(f => ({ ...f, world_id: e.target.value }))}
+                        >
+                            <option value="">No World (Global)</option>
+                            {worlds.map(w => (
+                                <option key={w.id} value={w.id}>{w.name}</option>
+                            ))}
+                        </select>
                     </div>
                     <div>
                         <label htmlFor="lorebook-form-description" className="block text-sm font-medium text-gray-300 mb-1">Description</label>

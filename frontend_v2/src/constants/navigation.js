@@ -1,4 +1,4 @@
-import { Users, Contact, User, Calendar, Globe2, GitBranch, MapPin, Sparkles, Mic, BookMarked } from 'lucide-react';
+import { Users, Contact, User, Calendar, GitBranch, MapPin, Sparkles, Mic, BookMarked } from 'lucide-react';
 
 /**
  * Canonical navigation definitions.
@@ -22,7 +22,6 @@ export const EXPERT_TOOLS = [
     { to: '/characters', label: 'Characters', icon: Users, description: 'Your cast, with appearances and voices', color: 'text-purple-300' },
     { to: '/personas', label: 'Personas', icon: Contact, description: 'Who you are — sets {{user}} and the system prompt', color: 'text-sky-300' },
     { to: '/activity', label: 'Activity', icon: Calendar, description: 'Recent conversations, chapters, and memories', color: 'text-rose-300' },
-    { to: '/worlds', label: 'Worlds', icon: Globe2, description: 'Group characters, chats, and stories', color: 'text-cyan-300' },
     { to: '/world-graph', label: 'World Graph', icon: GitBranch, description: 'Explore relationships and connections', color: 'text-indigo-300' },
     { to: '/locations', label: 'Locations', icon: MapPin, description: 'Places, imagery, and atmosphere', color: 'text-amber-300' },
     { to: '/scenarios', label: 'Scenarios', icon: Sparkles, description: 'Reusable starting situations', color: 'text-cyan-300' },

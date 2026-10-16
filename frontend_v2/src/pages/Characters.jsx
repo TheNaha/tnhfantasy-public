@@ -17,7 +17,7 @@ import {
 import { Users, Plus, Upload, Search, X, Loader2, User, Images, Sparkles, Brain, LayoutGrid, Rows3, BookOpen } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, useExportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter, useLorebooks } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, useExportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter, useLorebooks, useWorlds } from '../hooks/useWorldVault';
 import { CARD_ACCEPT, cardExportFormatLabel } from '../api/characterCards';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
@@ -52,6 +52,7 @@ const DEFAULT_FORM = {
     first_mes: '', mes_example: '', system_prompt: '', creator_notes: '',
     default_time: '', default_location: '',
     visual_tags: [], lora_triggers: [], voice_profile: '', lorebook_ids: [],
+    world_id: '',
 };
 
 // Above this many books the list stops being scannable and a filter earns its
@@ -87,6 +88,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                 voice_profile: character.voice_profile || '',
                 voice_model_id: character.voice_model_id || null,
                 lorebook_ids: Array.isArray(character.lorebook_ids) ? character.lorebook_ids : [],
+                world_id: character.world_id || '',
             };
         }
         return { ...DEFAULT_FORM };
@@ -98,6 +100,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
 
     const { data: voices = [] } = useVoices();
     const { data: lorebooks = [] } = useLorebooks();
+    const { data: worlds = [] } = useWorlds();
 
     const isEditing = !!character;
     
@@ -207,7 +210,10 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
         }
         setSaving(true);
         try {
-            const result = await onSave(form);
+            const result = await onSave({
+                ...form,
+                world_id: form.world_id || null,
+            });
             const savedCharId = isEditing ? character.id : (result?.id || result?.data?.id);
             
             // Upload avatar if a file was selected during creation
@@ -301,18 +307,19 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
             return;
         }
         
-        let sysPrompt = '';
+        let promptKey = '';
         const aiSettings = settings.ai || {};
         switch(fieldKey) {
-            case 'description': sysPrompt = aiSettings.charGenDescriptionPrompt; break;
-            case 'personality': sysPrompt = aiSettings.charGenPersonalityPrompt; break;
-            case 'scenario': sysPrompt = aiSettings.charGenScenarioPrompt; break;
-            case 'first_mes': sysPrompt = aiSettings.charGenFirstMesPrompt; break;
-            case 'mes_example': sysPrompt = aiSettings.charGenMesExamplePrompt; break;
-            case 'system_prompt': sysPrompt = aiSettings.charGenSystemPromptPrompt; break;
-            case 'visual_tags': sysPrompt = aiSettings.charGenVisualTagsPrompt; break;
+            case 'description': promptKey = 'charGenDescriptionPrompt'; break;
+            case 'personality': promptKey = 'charGenPersonalityPrompt'; break;
+            case 'scenario': promptKey = 'charGenScenarioPrompt'; break;
+            case 'first_mes': promptKey = 'charGenFirstMesPrompt'; break;
+            case 'mes_example': promptKey = 'charGenMesExamplePrompt'; break;
+            case 'system_prompt': promptKey = 'charGenSystemPromptPrompt'; break;
+            case 'visual_tags': promptKey = 'charGenVisualTagsPrompt'; break;
             default: return;
         }
+        const sysPrompt = aiSettings[promptKey] || '';
         
         let context = `Name: ${form.name}\n`;
         if (form.description && fieldKey !== 'description') context += `Description: ${form.description}\n`;
@@ -742,6 +749,22 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
                                     {form.lorebook_ids.length} {form.lorebook_ids.length === 1 ? 'lorebook' : 'lorebooks'} attached
                                 </p>
                             )}
+                        </div>
+
+                        {/* World Assignment */}
+                        <div>
+                            <label htmlFor="character-form-world" className="text-xs font-semibold text-gray-400 uppercase tracking-wider">World (Optional)</label>
+                            <select
+                                id="character-form-world"
+                                value={form.world_id || ''}
+                                onChange={e => setForm(f => ({ ...f, world_id: e.target.value }))}
+                                className="mt-1 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-blue-500/50 transition-all"
+                            >
+                                <option value="">No World (Global)</option>
+                                {worlds.map(w => (
+                                    <option key={w.id} value={w.id}>{w.name}</option>
+                                ))}
+                            </select>
                         </div>
 
                         {/* Voice Profile */}

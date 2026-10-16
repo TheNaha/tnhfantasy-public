@@ -12,6 +12,7 @@ import {
     useDeleteLocation,
     useSearchLocations,
 } from '../hooks/useLocations';
+import { useWorlds } from '../hooks/useWorlds';
 import EmptyState from '../components/EmptyState';
 import FormInput from '../components/common/FormInput';
 import { useConfirmation } from '../store/confirmationStore';
@@ -69,6 +70,7 @@ export default function Locations() {
     // See components/common/QueryState.jsx — a failed fetch used to render
     // "No locations yet" next to a vault that already had one.
     const { data: locations = [], isLoading, isError, error, refetch } = useLocations();
+    const { data: worlds = [] } = useWorlds();
     const createMutation = useCreateLocation();
     const updateMutation = useUpdateLocation();
     const deleteMutation = useDeleteLocation();
@@ -104,9 +106,12 @@ export default function Locations() {
         }
         try {
             const payload = {
-                ...form,
                 name: form.name.trim(),
+                description: form.description || '',
+                atmosphere: form.atmosphere || '',
                 tags: form.tags || [],
+                image_path: form.image_path || '',
+                ...(form.world_id ? { world_id: form.world_id } : (editingLocation ? { world_id: null } : {})),
             };
             if (editingLocation) {
                 await updateMutation.mutateAsync({ id: editingLocation.id, ...payload });
@@ -129,6 +134,7 @@ export default function Locations() {
             atmosphere: location.atmosphere || '',
             tags: location.tags || [],
             image_path: location.image_path || '',
+            world_id: location.world_id || '',
         });
         setShowForm(true);
     };
@@ -345,6 +351,22 @@ export default function Locations() {
                                     />
                                 </div>
                             ))}
+                            <div className="mb-4">
+                                <label htmlFor="location-world-select" className="block text-sm font-medium text-gray-300 mb-1">
+                                    World (Optional)
+                                </label>
+                                <select
+                                    id="location-world-select"
+                                    value={form.world_id || ''}
+                                    onChange={(e) => setForm(f => ({ ...f, world_id: e.target.value }))}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="">No World (Global)</option>
+                                    {worlds.map(w => (
+                                        <option key={w.id} value={w.id}>{w.name}</option>
+                                    ))}
+                                </select>
+                            </div>
                             <div className="mb-4">
                                 <label htmlFor="location-tag-input" className="block text-sm font-medium text-gray-300 mb-1">
                                     {TAG_FIELD.label}

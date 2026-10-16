@@ -135,7 +135,7 @@ describe('ExportModal publish on an insecure origin', () => {
         renderModal(onClose);
         fireEvent.click(screen.getByRole('button', { name: /Publish to Web/i }));
 
-        await waitFor(() => expect(writeText).toHaveBeenCalledWith('/read/story/abc'), { timeout: 1000 });
+        await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/read/story/abc`), { timeout: 1000 });
         expect(toastMock.success).toHaveBeenCalledWith('Story published — link copied!');
         expect(onClose).toHaveBeenCalledTimes(1);
     });

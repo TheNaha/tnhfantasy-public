@@ -26,6 +26,7 @@ import ExportModal from '../components/story/ExportModal';
 import StoryContextPanel from '../components/story/StoryContextPanel';
 import CreateStoryModal from '../components/story/CreateStoryModal';
 import { useWorlds } from '../hooks/useWorlds';
+import { usePersonas } from '../hooks/usePersonas';
 import { warnIfWorldIgnored, WORLD_IGNORED_MESSAGE } from '../utils/worldLinkWarning';
 import { copyToClipboard } from '../utils/clipboard';
 import IllustrateModal from '../components/story/IllustrateModal';
@@ -68,6 +69,7 @@ export default function StorySandbox() {
     // passed down instead of an `isErrored` boolean because the panel gates
     // five different arrays and each needs its own noun.
     const { data: worlds = [], isError: isWorldsError, error: worldsError, refetch: refetchWorlds } = useWorlds();
+    const { data: personas = [] } = usePersonas();
     const { data: activeStory } = useStory(activeStoryId);
     const { data: chapters = [], isLoading: chaptersLoading, isError: isChaptersError, error: chaptersError, refetch: refetchChapters } = useStoryChapters(activeStoryId);
     const { data: lorebooks = [], isError: isLorebooksError, error: lorebooksError, refetch: refetchLorebooks } = useLorebooks();
@@ -1289,6 +1291,7 @@ export default function StorySandbox() {
                             locations={locations}
                             worlds={worlds}
                             scenarios={scenarios}
+                            personas={personas}
                             queryErrors={queryErrors}
                             storyImages={storyImages}
                             chapters={chapters}

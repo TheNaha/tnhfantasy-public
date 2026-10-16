@@ -88,7 +88,12 @@ function ChatContextPanel() {
         onEditLocation,
     } = useChatWorkspace();
     const activeStreamEntries = useActiveChatStreams(activeChat?.id);
-    const { data: locations = [] } = useLocations();
+    const {
+        data: locations = [],
+        isError: isLocationsError,
+        error: locationsError,
+        refetch: refetchLocations,
+    } = useLocations();
 
     const navigate = useNavigate();
 
@@ -823,7 +828,13 @@ function ChatContextPanel() {
                         <Plus size={14} />
                     </button>
                 </div>
-                {locations.length === 0 ? (
+                {(queryErrors.locations || isLocationsError) ? (
+                    <QueryErrorState
+                        noun={queryErrors.locations?.noun || 'locations'}
+                        error={queryErrors.locations?.error || locationsError}
+                        onRetry={queryErrors.locations?.refetch || refetchLocations}
+                    />
+                ) : locations.length === 0 ? (
                     <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
                         No locations
                     </p>

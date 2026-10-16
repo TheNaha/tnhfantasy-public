@@ -52,7 +52,11 @@ export default function ExportModal({ story, storyId, token, isOpen, onClose }) 
             // enabled. The next click was a second publish of an
             // already-published story.
             onSuccess: async (data) => {
-                const copied = await copyToClipboard(data?.read_url || '');
+                const rawUrl = data?.read_url || '';
+                const fullUrl = rawUrl
+                    ? (rawUrl.startsWith('http') ? rawUrl : `${window.location.origin}${rawUrl}`)
+                    : '';
+                const copied = await copyToClipboard(fullUrl);
                 // The publish succeeded either way, so it is announced as such.
                 // The copy is a separate fact with a separate answer.
                 if (copied) {

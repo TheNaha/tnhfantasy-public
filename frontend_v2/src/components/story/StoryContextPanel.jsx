@@ -17,6 +17,7 @@ export default React.memo(function StoryContextPanel({
     locations,
     worlds = [],
     scenarios = [],
+    personas = [],
     queryErrors = {},
     storyImages,
     chapters,
@@ -166,7 +167,13 @@ export default React.memo(function StoryContextPanel({
                     <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                         <Layers size={14} /> Characters
                     </h4>
-                    {characters.length === 0 ? (
+                    {queryErrors.characters ? (
+                        <QueryErrorState
+                            noun={queryErrors.characters.noun}
+                            error={queryErrors.characters.error}
+                            onRetry={queryErrors.characters.refetch}
+                        />
+                    ) : characters.length === 0 ? (
                         <p className="text-sm text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">No characters</p>
                     ) : (
                         <div className="space-y-2">
@@ -382,12 +389,6 @@ export default React.memo(function StoryContextPanel({
                           <div className="flex items-center justify-between mb-1.5">
                               <p className="text-xs text-gray-300 font-medium">Autonomous Illustration</p>
                               <span className="text-xs text-gray-500 font-mono">
-                                  {/* max_agentic_IMAGES, not max_agentic_DEPTH.
-                                      This slider was bound to the depth cap,
-                                      which counts LLM hops — so it read "images
-                                      max" while actually limiting how many
-                                      times the model may think. The two are
-                                      now separate columns. */}
                                   {activeStory?.max_agentic_images != null
                                       ? (activeStory.max_agentic_images > 0
                                           ? `${activeStory.max_agentic_images} image${activeStory.max_agentic_images === 1 ? '' : 's'} max`
@@ -419,32 +420,65 @@ export default React.memo(function StoryContextPanel({
                           )}
                       </div>
 
-                      {/* Who the reader character is.
-                          The world, the cast and the narrator all knew who they
-                          were and the protagonist was anonymous — `character_ids`
-                          named everyone else in the scene. A chat resolves this
-                          from the Persona library; a story passes it straight to
-                          the context builder. */}
                       <div>
                           <p className="text-xs text-gray-300 font-medium mb-1.5">Reader character</p>
+                          {(queryErrors.personas || personas.length > 0) && (
+                              <div className="mb-2">
+                                  <label htmlFor="story-library-persona" className="block text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                      Library Persona
+                                  </label>
+                                  {queryErrors.personas ? (
+                                      <QueryErrorState
+                                          noun={queryErrors.personas.noun}
+                                          error={queryErrors.personas.error}
+                                          onRetry={queryErrors.personas.refetch}
+                                      />
+                                  ) : (
+                                      <select
+                                          id="story-library-persona"
+                                          data-testid="story-persona-select"
+                                          value={activeStory?.persona_id || ''}
+                                          onChange={(e) => onUpdateStory({ persona_id: e.target.value || null })}
+                                          className="w-full bg-gray-900 border border-white/10 text-xs rounded-lg px-2.5 py-1.5 text-gray-300 focus:outline-none focus:border-purple-500/60"
+                                      >
+                                          <option value="">None (custom fields only)</option>
+                                          {personas.map(p => (
+                                              <option key={p.id} value={p.id}>{p.name}</option>
+                                          ))}
+                                      </select>
+                                  )}
+                              </div>
+                          )}
                           <input
-                              value={activeStory?.persona_name ?? ''}
-                              onChange={(e) => onUpdateStory({ persona_name: e.target.value })}
+                              key={`story-persona-name-${activeStory?.id}-${activeStory?.persona_name ?? ''}`}
+                              defaultValue={activeStory?.persona_name ?? ''}
+                              onBlur={(e) => {
+                                  const val = e.target.value.trim() || null;
+                                  if (val !== (activeStory?.persona_name || null)) {
+                                      onUpdateStory({ persona_name: val });
+                                  }
+                              }}
                               placeholder="Who “you” are in this story"
                               className="w-full bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-purple-500/60"
                               title="The character you play. The model writes the world's reaction to this person."
                           />
                           <textarea
-                              value={activeStory?.persona_description ?? ''}
-                              onChange={(e) => onUpdateStory({ persona_description: e.target.value })}
+                              key={`story-persona-desc-${activeStory?.id}-${activeStory?.persona_description ?? ''}`}
+                              defaultValue={activeStory?.persona_description ?? ''}
+                              onBlur={(e) => {
+                                  const val = e.target.value.trim() || null;
+                                  if (val !== (activeStory?.persona_description || null)) {
+                                      onUpdateStory({ persona_description: val });
+                                  }
+                              }}
                               rows={2}
                               placeholder="A tired courier with a bad knee…"
                               className="mt-1.5 w-full bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 placeholder:text-gray-600 resize-none focus:outline-none focus:border-purple-500/60"
                               title="How you present: appearance, manner, what others notice first."
                           />
-                          {(activeStory?.persona_name || activeStory?.persona_description) && (
+                          {(activeStory?.persona_name || activeStory?.persona_description || activeStory?.persona_id) && (
                               <button
-                                  onClick={() => onUpdateStory({ persona_name: null, persona_description: null })}
+                                  onClick={() => onUpdateStory({ persona_name: null, persona_description: null, persona_id: null })}
                                   className="mt-1 text-2xs text-gray-500 hover:text-red-400 transition-colors"
                               >
                                   Clear

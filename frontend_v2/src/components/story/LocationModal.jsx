@@ -4,6 +4,7 @@ import { X, Save, Tag } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCreateLocation, useUpdateLocation } from '../../hooks/useLocations';
+import { useWorlds } from '../../hooks/useWorlds';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { buildQueryKey, QUERY_KEYS } from '../../constants/queryKeys';
 
@@ -11,11 +12,13 @@ export function LocationModal({ isOpen, onClose, location }) {
     // Escape dismisses, matching every other dialog expectation.
     useEscapeKey(onClose, !!isOpen);
 
-    const [form, setForm] = useState({ name: '', description: '', atmosphere: '', tags: [] });
+    const [form, setForm] = useState({ name: '', description: '', atmosphere: '', tags: [], world_id: '' });
+    const [tagInput, setTagInput] = useState('');
     const [saving, setSaving] = useState(false);
     const queryClient = useQueryClient();
     const createLocation = useCreateLocation();
     const updateLocation = useUpdateLocation();
+    const { data: worlds = [] } = useWorlds();
 
     useEffect(() => {
         if (isOpen) {
@@ -24,24 +27,48 @@ export function LocationModal({ isOpen, onClose, location }) {
                 description: location?.description || '',
                 atmosphere: location?.atmosphere || '',
                 tags: location?.tags || [],
+                world_id: location?.world_id || '',
             });
+            setTagInput('');
         }
     }, [isOpen, location]);
 
     if (!isOpen) return null;
+
+    const addPendingTags = (raw) => {
+        const additions = raw
+            .split(',')
+            .map(t => t.trim())
+            .filter(Boolean);
+        if (!additions.length) return form.tags;
+        const merged = Array.from(new Set([...(form.tags || []), ...additions]));
+        setForm(prev => ({ ...prev, tags: merged }));
+        setTagInput('');
+        return merged;
+    };
+
+    const removeTag = (tagToRemove) => {
+        setForm(prev => ({ ...prev, tags: (prev.tags || []).filter(t => t !== tagToRemove) }));
+    };
 
     const handleSave = async () => {
         if (!form.name.trim()) {
             toast.error('Name is required');
             return;
         }
+        const finalTags = tagInput.trim() ? addPendingTags(tagInput) : form.tags;
+        const payload = {
+            ...form,
+            tags: finalTags,
+            world_id: form.world_id || null,
+        };
         setSaving(true);
         try {
             if (location) {
-                await updateLocation.mutateAsync({ id: location.id, ...form });
+                await updateLocation.mutateAsync({ id: location.id, ...payload });
                 toast.success('Location updated');
             } else {
-                await createLocation.mutateAsync(form);
+                await createLocation.mutateAsync(payload);
                 toast.success('Location created');
             }
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.LOCATIONS) });
@@ -94,6 +121,20 @@ export function LocationModal({ isOpen, onClose, location }) {
                                 />
                             </div>
                             <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-1.5">World (Optional)</label>
+                                <select
+                                    value={form.world_id || ''}
+                                    onChange={(e) => setForm(prev => ({ ...prev, world_id: e.target.value }))}
+                                    aria-label="Location World"
+                                    className="w-full bg-black/40 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                                >
+                                    <option value="">No World (Global)</option>
+                                    {worlds.map(w => (
+                                        <option key={w.id} value={w.id}>{w.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
                                 <label className="block text-sm font-medium text-gray-400 mb-1.5">Description</label>
                                 <textarea
                                     value={form.description}
@@ -116,13 +157,48 @@ export function LocationModal({ isOpen, onClose, location }) {
                                 <label className="block text-sm font-medium text-gray-400 mb-1.5 flex items-center gap-1.5">
                                     <Tag size={14} className="text-purple-400" /> Tags
                                 </label>
-                                <input
-                                    type="text"
-                                    value={form.tags.join(', ')}
-                                    onChange={(e) => setForm(prev => ({ ...prev, tags: e.target.value.split(',').map(t => t.trim()).filter(Boolean) }))}
-                                    className="w-full bg-black/40 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
-                                    placeholder="e.g. city, tavern, dungeon (comma-separated)"
-                                />
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={tagInput}
+                                        onChange={(e) => setTagInput(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ',') {
+                                                e.preventDefault();
+                                                addPendingTags(tagInput);
+                                            }
+                                        }}
+                                        onBlur={() => {
+                                            if (tagInput.trim()) addPendingTags(tagInput);
+                                        }}
+                                        className="flex-1 bg-black/40 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                                        placeholder="e.g. city, tavern, dungeon (press Enter or comma to add)"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => addPendingTags(tagInput)}
+                                        className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg border border-gray-700 transition-colors"
+                                    >
+                                        Add
+                                    </button>
+                                </div>
+                                {form.tags?.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 mt-2">
+                                        {form.tags.map(tag => (
+                                            <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                                                {tag}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeTag(tag)}
+                                                    aria-label={`Remove tag ${tag}`}
+                                                    className="hover:text-white"
+                                                >
+                                                    <X size={12} />
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
                                 <p className="text-xs text-gray-500 mt-1">Tags help with semantic lorebook lookups.</p>
                             </div>
                         </div>

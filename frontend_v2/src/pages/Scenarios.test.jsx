@@ -25,6 +25,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useUpdateScenario: () => ({ mutate: mockUpdateMutate }),
     useDeleteScenario: () => ({ mutate: mockDeleteMutate }),
     useApplyScenario: () => ({ mutate: mockApplyMutate }),
+    useWorlds: () => ({ data: [] }),
 }));
 
 // Mutable so a test can put a realistic number of chats behind the Apply

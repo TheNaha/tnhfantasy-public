@@ -35,6 +35,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useAnimateCharacterAvatar: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useCloneCharacter: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useLorebooks: () => mockUseLorebooks(),
+    useWorlds: () => ({ data: [] }),
     getAvatarUrl: () => '',
 }));
 

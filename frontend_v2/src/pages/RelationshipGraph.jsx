@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw, Save, RotateCcw, X, Pencil, GitBranch } from 'lucide-react';
+import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw, Save, RotateCcw, X, Pencil, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWorldVaultRelationships, useGraphLayout, useSaveGraphLayout, useDeleteGraphLayout } from '../hooks/useWorldVaultSearch';
 import RoleplayPageShell from '../components/RoleplayPageShell';
@@ -13,6 +13,7 @@ const NODE_COLORS = {
     lorebook: '#f59e0b',
     voice: '#ef4444',
     location: '#06b6d4',
+    scenario: '#ec4899',
 };
 
 const NODE_ICONS = {
@@ -22,6 +23,7 @@ const NODE_ICONS = {
     lorebook: Globe,
     voice: Volume2,
     location: MapPin,
+    scenario: Sparkles,
 };
 
 const NODE_LABELS = {
@@ -31,6 +33,7 @@ const NODE_LABELS = {
     lorebook: 'Lorebooks',
     voice: 'Voices',
     location: 'Locations',
+    scenario: 'Scenarios',
 };
 
 const SVG_WIDTH = 900;
@@ -190,6 +193,7 @@ function EditPanel({ node, onClose, onNavigate }) {
         lorebook: '/lorebooks',
         voice: '/voices',
         location: '/locations',
+        scenario: '/scenarios',
     };
 
     const color = NODE_COLORS[node.type] || '#6b7280';
@@ -261,6 +265,7 @@ export default function RelationshipGraph() {
         lorebook: '/lorebooks',
         voice: '/voices',
         location: '/locations',
+        scenario: '/scenarios',
     }), []);
 
     const handleNodeNavigate = useCallback((node, openPage = false) => {
@@ -323,10 +328,28 @@ export default function RelationshipGraph() {
             edgeList.push({ source: story_id, target: lorebook_id });
         });
 
+        data.chat_lorebooks?.forEach(({ chat_id, chat_title, lorebook_id, lorebook_name, dangling }) => {
+            addNode(chat_id, chat_title, 'chat');
+            addNode(lorebook_id, lorebook_name, 'lorebook', dangling);
+            edgeList.push({ source: chat_id, target: lorebook_id });
+        });
+
+        data.character_lorebooks?.forEach(({ character_id, character_name, lorebook_id, lorebook_name, dangling }) => {
+            addNode(character_id, character_name, 'character');
+            addNode(lorebook_id, lorebook_name, 'lorebook', dangling);
+            edgeList.push({ source: character_id, target: lorebook_id });
+        });
+
         data.character_voices?.forEach(([voiceId, voiceName, charId, charName]) => {
             addNode(voiceId, voiceName, 'voice');
             addNode(charId, charName, 'character');
             edgeList.push({ source: charId, target: voiceId });
+        });
+
+        data.chat_voices?.forEach(([voiceId, voiceName, chatId, chatName]) => {
+            addNode(voiceId, voiceName, 'voice');
+            addNode(chatId, chatName, 'chat');
+            edgeList.push({ source: chatId, target: voiceId });
         });
 
         data.story_locations?.forEach(({ story_id, story_title, location_id, location_name, dangling }) => {
@@ -339,6 +362,18 @@ export default function RelationshipGraph() {
             addNode(chatId, chatName, 'chat');
             addNode(locId, locName, 'location');
             edgeList.push({ source: chatId, target: locId });
+        });
+
+        data.story_scenarios?.forEach(([storyId, storyTitle, scenarioId, scenarioTitle]) => {
+            addNode(storyId, storyTitle, 'story');
+            addNode(scenarioId, scenarioTitle, 'scenario');
+            edgeList.push({ source: storyId, target: scenarioId });
+        });
+
+        data.chat_scenarios?.forEach(([chatId, chatName, scenarioId, scenarioTitle]) => {
+            addNode(chatId, chatName, 'chat');
+            addNode(scenarioId, scenarioTitle, 'scenario');
+            edgeList.push({ source: chatId, target: scenarioId });
         });
 
         return { nodes: Array.from(nodeMap.values()), edges: edgeList };

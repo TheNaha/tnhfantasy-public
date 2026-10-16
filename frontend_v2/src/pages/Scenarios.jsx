@@ -8,6 +8,7 @@ import {
     useUpdateScenario,
     useDeleteScenario,
     useApplyScenario,
+    useWorlds,
 } from '../hooks/useWorldVault';
 import { useChats } from '../hooks/useChats';
 import { useStories } from '../hooks/useStories';
@@ -37,6 +38,7 @@ export default function Scenarios() {
     // See components/common/QueryState.jsx — a failed fetch used to render
     // "No scenarios yet" next to a vault that already had one.
     const { data: scenarios = [], isLoading, isError, error, refetch } = useScenarios();
+    const { data: worlds = [] } = useWorlds();
     const { mutate: createScenario } = useCreateScenario();
     const { mutate: updateScenario } = useUpdateScenario();
     const { mutate: deleteScenario } = useDeleteScenario();
@@ -52,7 +54,9 @@ export default function Scenarios() {
             toast.error('Name is required');
             return;
         }
-        createScenario(formData, {
+        const payload = { ...formData };
+        if ('world_id' in payload) payload.world_id = payload.world_id || null;
+        createScenario(payload, {
             onSuccess: () => {
                 toast.success('Scenario created');
                 setShowCreate(false);
@@ -63,7 +67,9 @@ export default function Scenarios() {
     };
 
     const handleUpdate = () => {
-        updateScenario({ id: editingId, ...formData }, {
+        const payload = { id: editingId, ...formData };
+        if ('world_id' in payload) payload.world_id = payload.world_id || null;
+        updateScenario(payload, {
             onSuccess: () => {
                 toast.success('Scenario updated');
                 setEditingId(null);
@@ -112,6 +118,7 @@ export default function Scenarios() {
             prompt_template: scenario.prompt_template,
             default_checkpoint: scenario.default_checkpoint,
             default_voice_profile: scenario.default_voice_profile,
+            ...(scenario.world_id ? { world_id: scenario.world_id } : {}),
         });
         setShowCreate(true);
     };
@@ -177,6 +184,20 @@ export default function Scenarios() {
                                 />
                             )
                         ))}
+                        <div>
+                            <label htmlFor="scenario-world-select" className="block text-xs text-gray-400 mb-1">World (Optional)</label>
+                            <select
+                                id="scenario-world-select"
+                                value={formData.world_id || ''}
+                                onChange={(e) => setFormData({ ...formData, world_id: e.target.value })}
+                                className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3"
+                            >
+                                <option value="">No World (Global)</option>
+                                {worlds.map(w => (
+                                    <option key={w.id} value={w.id}>{w.name}</option>
+                                ))}
+                            </select>
+                        </div>
                         <div className="flex justify-end gap-3">
                             <button onClick={closeForm} className="px-4 py-2 text-gray-400 hover:text-white">
                                 Cancel
