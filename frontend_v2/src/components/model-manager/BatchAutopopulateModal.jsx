@@ -6,7 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api';
 import * as ws from '../../api/websocket';
 import { useAutopopulatePending, useBatchAutopopulateCandidates } from '../../hooks/useCivitaiSearch';
-import { useAutopopulateModel } from '../../hooks/useAutopopulate';
+import { useAutopopulateModel, useAutopopulateStatus } from '../../hooks/useAutopopulate';
 
 function CandidateSelector({ model, candidatesData, onDecision }) {
     const candidates = candidatesData?.data?.candidates || [];
@@ -121,6 +121,9 @@ export default function BatchAutopopulateModal({ onClose }) {
     const [isAutoPopulatingAll, setIsAutoPopulatingAll] = useState(false);
     
     const { data: pendingModels = [], isLoading: isPendingLoading } = useAutopopulatePending();
+    const { data: statusData } = useAutopopulateStatus({
+        refetchInterval: isAutoPopulatingAll ? 3000 : false,
+    });
     
     // Once pending models load, fetch batch candidates
     const modelIds = pendingModels.map(m => m.id);
@@ -132,6 +135,16 @@ export default function BatchAutopopulateModal({ onClose }) {
     }
 
     const loading = isPendingLoading || isBatchLoading;
+
+    useEffect(() => {
+        if (isAutoPopulatingAll && statusData && statusData.needs_population === 0) {
+            toast.success('Batch autopopulation complete!');
+            setIsAutoPopulatingAll(false);
+            setTimeout(() => {
+                onClose();
+            }, 1500);
+        }
+    }, [isAutoPopulatingAll, statusData, onClose]);
 
     useEffect(() => {
         const handleProgress = (payload) => {
@@ -199,8 +212,13 @@ export default function BatchAutopopulateModal({ onClose }) {
                             <Wand2 size={20} className="text-purple-400" />
                             Batch Autopopulate
                         </h2>
-                        <p className="text-sm text-gray-400 mt-1">
-                            Review and approve matching candidates for your auto-discovered models.
+                        <p className="text-sm text-gray-400 mt-1 flex items-center gap-2 flex-wrap">
+                            <span>Review and approve matching candidates for your auto-discovered models.</span>
+                            {statusData && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-2xs font-mono font-medium bg-purple-500/15 border border-purple-500/25 text-purple-300">
+                                    {statusData.needs_population ?? 0} needing population, {statusData.population_complete ?? 0} populated
+                                </span>
+                            )}
                         </p>
                     </div>
                     <div className="flex items-center gap-3">

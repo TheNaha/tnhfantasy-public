@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain, Loader2, CheckCircle, XCircle, Volume2 } from 'lucide-react';
+import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain, Loader2, CheckCircle, XCircle, Volume2, Clock, RefreshCw, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { settingsApi } from '../api/settingsApi';
@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 
 function SystemPromptsEditor() {
     const queryClient = useQueryClient();
+    const { updateCategory } = useUpdateSettings();
     const { data: blocksData, isLoading } = useQuery({
         queryKey: ['system_prompts_blocks'],
         queryFn: () => settingsApi.getSystemPrompts(),
@@ -22,6 +23,7 @@ function SystemPromptsEditor() {
     });
     const [draft, setDraft] = useState({});
     const [saving, setSaving] = useState(false);
+    const [showCharGen, setShowCharGen] = useState(false);
     // Seed once per mount. `refetchOnReconnect` is a global default, so a
     // reconnect mid-typing used to replace every textarea with the server copy
     // and silently discard the edit in progress.
@@ -37,7 +39,11 @@ function SystemPromptsEditor() {
         setSaving(true);
         try {
             await settingsApi.updateSystemPrompts({ blocks: draft });
-            toast.success('System prompts updated');
+            // Sync with local Zustand store for backward compatibility
+            if (updateCategory) {
+                updateCategory('ai', { ...draft });
+            }
+            toast.success('System prompts updated in config.json');
             queryClient.invalidateQueries({ queryKey: ['system_prompts_blocks'] });
         } catch {
             toast.error('Failed to save system prompts');
@@ -46,18 +52,29 @@ function SystemPromptsEditor() {
         }
     };
 
-    const fields = [
+    const coreFields = [
         { key: 'roleplay_default', label: 'Roleplay Default', desc: 'Default instructions used in every chat reply (before character prompt). Clear to disable.' },
         { key: 'narrator', label: 'Narrator Prompt', desc: 'Prompt used for narration scenes (narrate_scene tool and /narrate mode).' },
         { key: 'suggest_instruction', label: 'Suggest Instruction', desc: 'Instructions appended when suggesting user replies (/suggest).' },
     ];
 
+    const charGenFields = [
+        { key: 'charGenDescriptionPrompt', label: 'Description Prompt', desc: 'System prompt for generating character description' },
+        { key: 'charGenPersonalityPrompt', label: 'Personality Prompt', desc: 'System prompt for generating character personality' },
+        { key: 'charGenScenarioPrompt', label: 'Scenario Prompt', desc: 'System prompt for generating character scenario' },
+        { key: 'charGenFirstMesPrompt', label: 'First Message Prompt', desc: 'System prompt for generating character first greeting message' },
+        { key: 'charGenMesExamplePrompt', label: 'Message Examples Prompt', desc: 'System prompt for generating character dialogue examples' },
+        { key: 'charGenSystemPromptPrompt', label: 'Character System Prompt', desc: 'System prompt for generating the character instruction block' },
+        { key: 'charGenVisualTagsPrompt', label: 'Visual Tags Prompt', desc: 'System prompt for generating Danbooru-style appearance tags' },
+        { key: 'charGenEnrichPrompt', label: 'Profile Enrichment Prompt', desc: 'System prompt for generating and enriching full character JSON profile' },
+    ];
+
     if (isLoading) return <div className="text-xs text-gray-500">Loading prompts…</div>;
 
     return (
-        <SettingGroup title="System Prompt Blocks" description="These blocks make up the assembled prompt. The Roleplay Default applies to all chat replies. Edit and save to update config.json directly.">
+        <SettingGroup title="System Prompt Blocks" description="These blocks make up the assembled LLM prompt. Edit and save to update the server's config.json directly.">
             <div className="space-y-4">
-                {fields.map(f => (
+                {coreFields.map(f => (
                     <div key={f.key}>
                         <label htmlFor={`prompt-block-${f.key}`} className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-1">{f.label}</label>
                         <p className="text-xs text-gray-600 mb-1">{f.desc}</p>
@@ -70,15 +87,50 @@ function SystemPromptsEditor() {
                         />
                     </div>
                 ))}
+
+                {/* Character Generation Prompts Accordion */}
+                <div className="pt-2 border-t border-white/5">
+                    <button
+                        type="button"
+                        onClick={() => setShowCharGen(!showCharGen)}
+                        className="flex items-center justify-between w-full py-2 text-left group"
+                    >
+                        <div className="flex items-center gap-2">
+                            <Sparkles size={14} className="text-purple-400" />
+                            <span className="text-xs font-bold text-gray-300 uppercase tracking-wider group-hover:text-white transition-colors">
+                                Character Generator Prompts ({charGenFields.length})
+                            </span>
+                        </div>
+                        {showCharGen ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
+                    </button>
+
+                    {showCharGen && (
+                        <div className="space-y-4 mt-3 pl-2 border-l border-purple-500/20">
+                            {charGenFields.map(f => (
+                                <div key={f.key}>
+                                    <label htmlFor={`prompt-block-${f.key}`} className="block text-xs font-bold uppercase tracking-widest text-purple-300/80 mb-1">{f.label}</label>
+                                    <p className="text-xs text-gray-600 mb-1">{f.desc}</p>
+                                    <textarea
+                                        id={`prompt-block-${f.key}`}
+                                        value={draft[f.key] || ''}
+                                        onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+                                        rows={3}
+                                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-purple-500 resize-y min-h-[50px] font-sans"
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
             </div>
-            <div className="mt-3 flex justify-end">
+            <div className="mt-4 flex justify-end">
                 <button
                     onClick={handleSave}
                     disabled={saving || isLoading}
                     className="btn-primary px-4 py-2 text-xs flex items-center gap-2"
                 >
                     {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                    Save prompts
+                    Save prompts to server
                 </button>
             </div>
         </SettingGroup>
@@ -354,6 +406,26 @@ const BACKEND_GROUPS = [
         ],
     },
     {
+        section: 'roleplay',
+        title: 'Roleplay Turn Formatting',
+        description: 'How messages become LLM turns during story and character conversation generation',
+        fields: [
+            { key: 'label_speakers', label: 'Label Speakers', hint: 'Prefix each speaking turn with the character name' },
+            { key: 'narrator_prefix', label: 'Narrator Prefix', hint: 'Prefix for narration turns (e.g. [Narration])' },
+            { key: 'image_prefix', label: 'Image Prefix', hint: 'Prefix for illustration turns (e.g. [Scene])' },
+        ],
+    },
+    {
+        section: 'jobs_cleanup',
+        title: 'Job History Cleanup',
+        description: 'Automatic housekeeping of completed and failed inference jobs',
+        fields: [
+            { key: 'auto_cleanup', label: 'Auto Cleanup Enabled', hint: 'Periodically remove old job records from the database' },
+            { key: 'max_age_hours', label: 'Max Job Age (hours)', hint: 'Jobs older than this will be pruned' },
+            { key: 'cleanup_interval', label: 'Cleanup Interval (s)', hint: 'Interval between auto-cleanup runs in seconds' },
+        ],
+    },
+    {
         section: 'api',
         title: 'API Server',
         description: 'Bound once at startup, so changes here only take effect after a backend restart',
@@ -568,6 +640,151 @@ function BackendSettings({ onMirroredDefaultCheckpoint }) {
                         })}
                     </div>
                 ))}
+            </div>
+
+            {/* Scheduled Background Tasks Dashboard */}
+            <ScheduledTasksPanel />
+
+            {/* Data Integrity & Lost Artifact Recovery */}
+            <DataIntegrityPanel />
+        </div>
+    );
+}
+
+function ScheduledTasksPanel() {
+    const { data, isLoading, isError, refetch, isFetching } = useQuery({
+        queryKey: ['scheduler_status'],
+        queryFn: () => settingsApi.getSchedulerStatus(),
+        refetchInterval: 15000,
+    });
+
+    const jobs = data?.jobs || [];
+
+    const formatTime = (iso) => {
+        if (!iso) return 'Never';
+        try {
+            const d = new Date(iso);
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        } catch {
+            return iso;
+        }
+    };
+
+    const statusBadge = (status) => {
+        switch (status) {
+            case 'success':
+                return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-bold uppercase tracking-wider bg-emerald-500/15 border border-emerald-500/30 text-emerald-400"><CheckCircle2 size={10} /> Success</span>;
+            case 'failed':
+                return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-bold uppercase tracking-wider bg-red-500/15 border border-red-500/30 text-red-400"><AlertTriangle size={10} /> Failed</span>;
+            case 'skipped':
+                return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-bold uppercase tracking-wider bg-amber-500/15 border border-amber-500/30 text-amber-300">Skipped (Locked)</span>;
+            default:
+                return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-bold uppercase tracking-wider bg-gray-500/15 border border-gray-500/30 text-gray-400">Idle / Pending</span>;
+        }
+    };
+
+    return (
+        <div className="border border-white/5 rounded-2xl bg-white/5 shadow-inner p-5 space-y-4">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h3 className="font-bold text-white tracking-wide flex items-center gap-2">
+                        <Clock size={18} className="text-blue-400" />
+                        Scheduled Background Tasks
+                    </h3>
+                    <p className="text-sm font-medium text-gray-400 mt-1">
+                        Active APScheduler recurring jobs running across backend worker threads
+                    </p>
+                </div>
+                <button
+                    onClick={() => refetch()}
+                    disabled={isFetching}
+                    className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-gray-300 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                    title="Refresh scheduler status"
+                >
+                    <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
+                    Refresh
+                </button>
+            </div>
+
+            {isLoading ? (
+                <div className="flex items-center gap-2 text-xs text-gray-400 py-4">
+                    <Loader2 size={14} className="animate-spin text-blue-400" />
+                    Inspecting running tasks…
+                </div>
+            ) : isError ? (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400">
+                    Failed to query scheduler status.
+                </div>
+            ) : jobs.length === 0 ? (
+                <div className="text-xs text-gray-500 py-2">No scheduled jobs registered.</div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                        <thead>
+                            <tr className="border-b border-white/10 text-gray-400 uppercase tracking-wider font-semibold">
+                                <th className="pb-2.5">Job ID</th>
+                                <th className="pb-2.5">Schedule</th>
+                                <th className="pb-2.5">Next Run</th>
+                                <th className="pb-2.5">Last Status</th>
+                                <th className="pb-2.5">Last Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                            {jobs.map((job) => (
+                                <tr key={job.id} className="hover:bg-white/[0.02]">
+                                    <td className="py-2.5 font-mono text-purple-300 font-semibold">{job.id}</td>
+                                    <td className="py-2.5 text-gray-300 font-mono text-2xs">{job.trigger}</td>
+                                    <td className="py-2.5 text-gray-400">{formatTime(job.next_run)}</td>
+                                    <td className="py-2.5">{statusBadge(job.last_status)}</td>
+                                    <td className="py-2.5 text-gray-400 font-mono">
+                                        {job.last_duration_seconds != null ? `${job.last_duration_seconds}s` : '—'}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function DataIntegrityPanel() {
+    const [reconciling, setReconciling] = useState(false);
+
+    const handleReconcile = async () => {
+        setReconciling(true);
+        try {
+            const res = await settingsApi.reconcileChatReplies({ dry_run: false });
+            const recovered = res?.reconciled_count ?? res?.count ?? 0;
+            toast.success(`Integrity check complete: ${recovered} dropped chat artifact(s) recovered!`);
+        } catch (err) {
+            toast.error(err?.message ? `Reconciliation failed: ${err.message}` : 'Failed to reconcile chat artifacts');
+        } finally {
+            setReconciling(false);
+        }
+    };
+
+    return (
+        <div className="border border-white/5 rounded-2xl bg-white/5 shadow-inner p-5 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <h3 className="font-bold text-white tracking-wide flex items-center gap-2">
+                        <RotateCcw size={18} className="text-emerald-400" />
+                        Lost Artifact Recovery
+                    </h3>
+                    <p className="text-sm font-medium text-gray-400 mt-1">
+                        Find and recover paid chat replies, scene narrations, or story illustrations whose worker events were dropped under queue pressure.
+                    </p>
+                </div>
+                <button
+                    onClick={handleReconcile}
+                    disabled={reconciling}
+                    className="px-4 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs font-bold tracking-wide flex items-center gap-2 transition-all disabled:opacity-50 shrink-0"
+                >
+                    {reconciling ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                    Recover Dropped Artifacts
+                </button>
             </div>
         </div>
     );
@@ -1583,6 +1800,32 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                             ? 'RAG is enabled. Distant memories and lore entries are retrieved semantically into context.'
                             : 'RAG is disabled. No memories or lore entries are retrieved at all — there is no recency fallback, so the character relies only on the chat history already in context.'}
                     </p>
+                    {settings.ragEnabled !== false && (
+                        <div className="mt-4 pt-3 border-t border-white/5 space-y-1.5">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Semantic Distance Cutoff</span>
+                                <span className="text-xs font-mono text-purple-300 font-bold">{settings.ragMaxDistance ?? 0.6}</span>
+                            </div>
+                            <input
+                                type="range"
+                                min="0"
+                                max="2"
+                                step="0.05"
+                                value={settings.ragMaxDistance ?? 0.6}
+                                onChange={(e) => onUpdate('ragMaxDistance', parseFloat(e.target.value))}
+                                className="w-full accent-blue-500"
+                            />
+                            <div className="flex justify-between text-2xs text-gray-500">
+                                <span>0.0 (Strict / Identical)</span>
+                                <span>0.6 (Recommended)</span>
+                                <span>1.0 (Orthogonal)</span>
+                                <span>2.0 (Unconditional Top-N)</span>
+                            </div>
+                            <p className="text-2xs text-gray-500 mt-1">
+                                Cosine distance threshold: entries farther than this value are discarded from context injection to avoid noise.
+                            </p>
+                        </div>
+                    )}
                 </SettingGroup>
 
                 <SettingGroup
@@ -1645,63 +1888,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                     )}
                 </SettingGroup>
 
-                <SettingGroup title="CharGen: Description Prompt" description="System prompt for generating character description">
-                    <textarea
-                        value={settings.charGenDescriptionPrompt || ''}
-                        onChange={(e) => onUpdate('charGenDescriptionPrompt', e.target.value)}
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
-                    />
-                </SettingGroup>
-
-                <SettingGroup title="CharGen: Personality Prompt" description="System prompt for generating character personality">
-                    <textarea
-                        value={settings.charGenPersonalityPrompt || ''}
-                        onChange={(e) => onUpdate('charGenPersonalityPrompt', e.target.value)}
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
-                    />
-                </SettingGroup>
-
-                <SettingGroup title="CharGen: Scenario Prompt" description="System prompt for generating character scenario">
-                    <textarea
-                        value={settings.charGenScenarioPrompt || ''}
-                        onChange={(e) => onUpdate('charGenScenarioPrompt', e.target.value)}
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
-                    />
-                </SettingGroup>
-
-                <SettingGroup title="CharGen: First Message Prompt" description="System prompt for generating character first message">
-                    <textarea
-                        value={settings.charGenFirstMesPrompt || ''}
-                        onChange={(e) => onUpdate('charGenFirstMesPrompt', e.target.value)}
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
-                    />
-                </SettingGroup>
-
-                <SettingGroup title="CharGen: Message Examples Prompt" description="System prompt for generating character message examples">
-                    <textarea
-                        value={settings.charGenMesExamplePrompt || ''}
-                        onChange={(e) => onUpdate('charGenMesExamplePrompt', e.target.value)}
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
-                    />
-                </SettingGroup>
-
-                <SettingGroup title="CharGen: System Prompt Prompt" description="System prompt for generating character system prompt">
-                    <textarea
-                        value={settings.charGenSystemPromptPrompt || ''}
-                        onChange={(e) => onUpdate('charGenSystemPromptPrompt', e.target.value)}
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
-                    />
-                </SettingGroup>
-
-                <SettingGroup title="CharGen: Visual Tags Prompt" description="System prompt for generating character visual tags">
-                    <textarea
-                        value={settings.charGenVisualTagsPrompt || ''}
-                        onChange={(e) => onUpdate('charGenVisualTagsPrompt', e.target.value)}
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
-                    />
-                </SettingGroup>
-
-                {/* System Prompt Blocks (config-driven) */}
+                {/* System & Character Generator Prompt Blocks (server-persisted config) */}
                 <SystemPromptsEditor />
             </div>
         </div>

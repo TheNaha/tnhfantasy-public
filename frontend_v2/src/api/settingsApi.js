@@ -29,6 +29,9 @@ export const settingsApi = {
 
     getFavorites: (options = {}) => api.get(`${BASE}/favorites`, options),
     updateFavorites: (favorites) => api.post(`${BASE}/favorites`, { favorites }),
+
+    getSchedulerStatus: (options = {}) => api.get(`${BASE}/scheduler`, options),
+    reconcileChatReplies: (params = {}) => api.post('/api/jobs/reconcile-chat-replies', null, { params }),
 };
 
 export const TTS_ENABLE_PAYLOAD = { ai: { ttsEnabled: true } };

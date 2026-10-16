@@ -69,3 +69,17 @@ export const useSearchMemories = (characterId, query) => {
         enabled: !!characterId && !!query && query.length >= 2,
     });
 };
+
+export const useReindexMemories = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (params = {}) => api.post('/api/v2/memories/reindex', null, { params }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({
+                queryKey: [QUERY_KEYS.MEMORIES],
+            });
+            invalidateVaultAggregates(queryClient);
+        },
+    });
+};
+

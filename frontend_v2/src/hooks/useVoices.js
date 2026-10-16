@@ -36,3 +36,14 @@ export const useVoicePreview = () => {
         }
     });
 };
+
+export const useDesignVoice = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (data) => api.post('/api/v2/voices/design', data),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: VOICES_KEY });
+        },
+    });
+};
+

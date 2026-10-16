@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit3, Trash2, Play, Volume2, FileText, AlertCircle } from 'lucide-react';
+import { Plus, Edit3, Trash2, Play, Volume2, FileText, AlertCircle, Wand2, Loader2, Sparkles, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -9,12 +9,15 @@ import {
     useUpdateVoice,
     useDeleteVoice,
     useVoicePreview,
+    useDesignVoice,
+    useWorlds,
 } from '../hooks/useWorldVault';
 import { useJobStatus } from '../hooks/useJobStatus';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { assetUrl } from '../utils/assetUrl';
 import EmptyState from '../components/EmptyState';
 import FormInput from '../components/common/FormInput';
+import ModalOverlay from '../components/common/ModalOverlay';
 import { useConfirmation } from '../store/confirmationStore';
 import RoleplayPageShell from '../components/RoleplayPageShell';
 import { QueryErrorState } from '../components/common/QueryState';
@@ -30,7 +33,14 @@ const TYPE_OPTIONS = [
 export default function Voices() {
     const [editingId, setEditingId] = useState(null);
     const [showCreate, setShowCreate] = useState(false);
+    const [showDesign, setShowDesign] = useState(false);
     const [formData, setFormData] = useState({});
+    const [designForm, setDesignForm] = useState({
+        name: '',
+        description: '',
+        sample_text: '',
+        language: 'en',
+    });
     const [previewLoading, setPreviewLoading] = useState(false);
     const [previewJobId, setPreviewJobId] = useState(null);
     const queryClient = useQueryClient();
@@ -38,10 +48,12 @@ export default function Voices() {
     // See components/common/QueryState.jsx — a failed fetch used to render
     // "No voice models yet" next to a vault that already had one.
     const { data: voices = [], isLoading, isError, error, refetch } = useVoices();
+    const { data: worlds = [] } = useWorlds();
     const { mutate: createVoice } = useCreateVoice();
     const { mutate: updateVoice } = useUpdateVoice();
     const { mutate: deleteVoice } = useDeleteVoice();
     const { mutateAsync: previewVoice } = useVoicePreview();
+    const { mutateAsync: designVoice, isPending: isDesigning } = useDesignVoice();
     const { confirm } = useConfirmation();
 
     const { data: previewJob } = useJobStatus(previewJobId, { enabled: !!previewJobId });
@@ -62,7 +74,9 @@ export default function Voices() {
             toast.error('Name is required');
             return;
         }
-        createVoice(formData, {
+        const payload = { ...formData };
+        if ('world_id' in payload) payload.world_id = payload.world_id || null;
+        createVoice(payload, {
             onSuccess: () => {
                 toast.success('Voice model created');
                 setShowCreate(false);
@@ -73,7 +87,9 @@ export default function Voices() {
     };
 
     const handleUpdate = () => {
-        updateVoice({ id: editingId, ...formData }, {
+        const payload = { id: editingId, ...formData };
+        if ('world_id' in payload) payload.world_id = payload.world_id || null;
+        updateVoice(payload, {
             onSuccess: () => {
                 toast.success('Voice model updated');
                 setEditingId(null);
@@ -120,8 +136,37 @@ export default function Voices() {
             language: voice.language,
             preview_text: voice.preview_text,
             model_path: voice.model_path,
+            ...(voice.world_id ? { world_id: voice.world_id } : {}),
         });
         setShowCreate(true);
+    };
+
+    const handleDesign = async (e) => {
+        e?.preventDefault();
+        if (!designForm.name.trim() || !designForm.description.trim()) {
+            toast.error('Voice name and natural language description are required');
+            return;
+        }
+        try {
+            const res = await designVoice({
+                voices: [{
+                    name: designForm.name.trim(),
+                    description: designForm.description.trim(),
+                    sample_text: designForm.sample_text.trim() || undefined,
+                    language: designForm.language || 'en',
+                }],
+                sample_text: designForm.sample_text.trim() || undefined,
+                language: designForm.language || 'en',
+            });
+            toast.success('Voice design job started! Generating reference voice...');
+            if (res?.job_id) {
+                setPreviewJobId(res.job_id);
+            }
+            setShowDesign(false);
+            setDesignForm({ name: '', description: '', sample_text: '', language: 'en' });
+        } catch (err) {
+            toast.error(err?.message ? `Design failed: ${err.message}` : 'Failed to design voice');
+        }
     };
 
     const closeForm = () => {
@@ -155,12 +200,20 @@ export default function Voices() {
             description="Reusable voices for narration and text-to-speech."
             icon={Volume2}
             actions={
-                <button
-                    onClick={() => setShowCreate(true)}
-                    className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-cyan-400"
-                >
-                    <Plus size={18} /> Create Voice
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setShowDesign(true)}
+                        className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-2 font-medium text-white transition hover:from-purple-500 hover:to-indigo-500 shadow-md text-sm"
+                    >
+                        <Wand2 size={16} /> Design with AI
+                    </button>
+                    <button
+                        onClick={() => setShowCreate(true)}
+                        className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-cyan-400 text-sm"
+                    >
+                        <Plus size={16} /> Create Voice
+                    </button>
+                </div>
             }
         >
 
@@ -182,6 +235,18 @@ export default function Voices() {
                             value={formData.name}
                             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                         />
+                        <label htmlFor="voice-world-select" className="block text-xs text-gray-400 mb-1">World (Optional)</label>
+                        <select
+                            id="voice-world-select"
+                            value={formData.world_id || ''}
+                            onChange={(e) => setFormData({ ...formData, world_id: e.target.value })}
+                            className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3"
+                        >
+                            <option value="">No World (Global)</option>
+                            {worlds.map(w => (
+                                <option key={w.id} value={w.id}>{w.name}</option>
+                            ))}
+                        </select>
                         <label htmlFor="voice-type" className="block text-xs text-gray-400 mb-1">Type</label>
                         <select
                             id="voice-type"
@@ -305,6 +370,86 @@ export default function Voices() {
                         </motion.div>
                     ))}
                 </div>
+            )}
+
+            {/* Design Voice with AI Modal */}
+            {showDesign && (
+                <ModalOverlay onClose={() => setShowDesign(false)} className="z-[60] bg-black/80 backdrop-blur-sm">
+                    <div className="bg-gray-900 border border-purple-500/30 rounded-2xl p-6 w-full max-w-lg shadow-2xl space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                            <div className="flex items-center gap-2">
+                                <Sparkles className="text-purple-400" size={20} />
+                                <h3 className="text-lg font-bold text-white">Design Voice with AI</h3>
+                            </div>
+                            <button onClick={() => setShowDesign(false)} aria-label="Close design voice modal" className="text-gray-400 hover:text-white p-1 rounded-lg">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <p className="text-xs text-gray-300 leading-relaxed">
+                            Describe the voice in natural language. The TTS engine will synthesize a unique vocal reference matching your description.
+                        </p>
+                        <form onSubmit={handleDesign} className="space-y-4">
+                            <div>
+                                <label htmlFor="design-voice-name" className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                                    Voice Name *
+                                </label>
+                                <input
+                                    id="design-voice-name"
+                                    type="text"
+                                    required
+                                    placeholder="e.g. Morgana, Old Wizard, Silver-tongued Rogue"
+                                    value={designForm.name}
+                                    onChange={(e) => setDesignForm({ ...designForm, name: e.target.value })}
+                                    className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="design-voice-description" className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                                    Voice Description *
+                                </label>
+                                <textarea
+                                    id="design-voice-description"
+                                    required
+                                    rows={3}
+                                    placeholder="e.g. A deep, raspy, world-weary baritone with a Scottish accent, slow speaking cadence, and rich undertones."
+                                    value={designForm.description}
+                                    onChange={(e) => setDesignForm({ ...designForm, description: e.target.value })}
+                                    className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500 resize-none"
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="design-voice-sample-text" className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                                    Sample Passage (Optional)
+                                </label>
+                                <input
+                                    id="design-voice-sample-text"
+                                    type="text"
+                                    placeholder='Default: "The tide is out, and the harbour bell has not rung since spring."'
+                                    value={designForm.sample_text}
+                                    onChange={(e) => setDesignForm({ ...designForm, sample_text: e.target.value })}
+                                    className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+                                />
+                            </div>
+                            <div className="flex justify-end gap-3 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDesign(false)}
+                                    className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isDesigning || !designForm.name.trim() || !designForm.description.trim()}
+                                    className="px-5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 disabled:opacity-50 transition-all shadow-md"
+                                >
+                                    {isDesigning ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                                    Synthesize Voice
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </ModalOverlay>
             )}
         </RoleplayPageShell>
     );

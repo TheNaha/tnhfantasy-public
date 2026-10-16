@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Brain, Plus, Trash2, Search, X, Loader2, Pencil } from 'lucide-react';
+import { Brain, Plus, Trash2, Search, X, Loader2, Pencil, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
     useCharacterMemories,
@@ -7,6 +7,7 @@ import {
     useUpdateMemory,
     useDeleteMemory,
     useSearchMemories,
+    useReindexMemories,
 } from '../../hooks/useMemories';
 import { useDebounce } from '../../hooks/useDebounce';
 import EmptyState from '../EmptyState';
@@ -112,11 +113,23 @@ function MemoriesPanelBody({ characterId }) {
     const createMutation = useCreateMemory();
     const updateMutation = useUpdateMemory();
     const deleteMutation = useDeleteMemory();
+    const reindexMutation = useReindexMemories();
     const { confirm } = useConfirmation();
     const [editingMemory, setEditingMemory] = useState(null);
     const [editContent, setEditContent] = useState('');
     const [editImportance, setEditImportance] = useState(5);
     const [editTags, setEditTags] = useState('');
+
+    const handleReindex = async () => {
+        try {
+            const res = await reindexMutation.mutateAsync({ limit: 200 });
+            const count = res?.reindexed ?? 0;
+            const remaining = res?.remaining ?? 0;
+            toast.success(`Reindexed ${count} embeddings (${remaining} remaining)`);
+        } catch {
+            toast.error('Failed to reindex memory embeddings');
+        }
+    };
 
     const isSearching = settledQuery.length >= SEARCH_MIN_CHARS;
     // True from the first qualifying keystroke until its results have landed:
@@ -236,6 +249,18 @@ function MemoriesPanelBody({ characterId }) {
                         </button>
                     )}
                 </div>
+
+                {/* Reindex embeddings button */}
+                <button
+                    type="button"
+                    onClick={handleReindex}
+                    disabled={reindexMutation.isPending}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-white/5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors shrink-0 disabled:opacity-50"
+                    title="Reindex embeddings for semantic retrieval"
+                >
+                    {reindexMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                    <span>Reindex</span>
+                </button>
 
                 {/* Add button */}
                 <button

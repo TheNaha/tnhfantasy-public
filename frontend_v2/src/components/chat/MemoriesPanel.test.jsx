@@ -17,6 +17,7 @@ vi.mock('../../hooks/useMemories', () => ({
     useUpdateMemory: vi.fn(),
     useDeleteMemory: vi.fn(),
     useSearchMemories: vi.fn(),
+    useReindexMemories: vi.fn(),
 }));
 
 vi.mock('../../store/confirmationStore', () => ({
@@ -39,6 +40,7 @@ import {
     useUpdateMemory,
     useDeleteMemory,
     useSearchMemories,
+    useReindexMemories,
 } from '../../hooks/useMemories';
 
 function createWrapper() {
@@ -53,6 +55,7 @@ function createWrapper() {
 const mockMutateAsync = vi.fn();
 
 describe('MemoriesPanel', () => {
+    const mockReindexMutate = vi.fn();
     beforeEach(() => {
         vi.clearAllMocks();
 
@@ -61,6 +64,7 @@ describe('MemoriesPanel', () => {
         useUpdateMemory.mockReturnValue({ mutateAsync: mockMutateAsync, isPending: false });
         useDeleteMemory.mockReturnValue({ mutateAsync: mockMutateAsync, isPending: false });
         useSearchMemories.mockReturnValue({ data: null, isLoading: false });
+        useReindexMemories.mockReturnValue({ mutateAsync: mockReindexMutate, isPending: false });
         mockConfirm.mockResolvedValue(true);
     });
 
@@ -370,6 +374,16 @@ describe('MemoriesPanel', () => {
 
             expect(screen.getByText('No memories yet')).toBeTruthy();
             expect(screen.queryByRole('alert')).toBeNull();
+        });
+
+        it('triggers reindex mutation when Reindex button is clicked', () => {
+            const { wrapper } = createWrapper();
+            render(<MemoriesPanel characterId="char-1" />, { wrapper });
+
+            const reindexBtn = screen.getByRole('button', { name: /reindex/i });
+            expect(reindexBtn).toBeInTheDocument();
+            fireEvent.click(reindexBtn);
+            expect(mockReindexMutate).toHaveBeenCalledTimes(1);
         });
     });
 });

@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { QUERY_KEYS } from '../constants/queryKeys';
 import { installedVersionsKey } from './useCivitaiSearch';
@@ -56,5 +56,16 @@ export function useAutopopulateModel() {
                 queryClient.invalidateQueries({ queryKey: installedVersionsKey(variables.civitaiId) });
             }
         },
+    });
+}
+
+export function useAutopopulateStatus(options = {}) {
+    return useQuery({
+        queryKey: ['models', 'autopopulate-status'],
+        queryFn: async ({ signal }) => {
+            const res = await api.get('/api/v2/models/autopopulate-status', { signal });
+            return res?.data ?? res;
+        },
+        ...options,
     });
 }
