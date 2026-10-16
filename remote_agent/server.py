@@ -532,8 +532,8 @@ async def setup():
     directories = ["output", "input", "downloads"] + list(MODEL_DIRECTORIES)
     # Seed default upscaler + ADetailer models (mirrors Modal/Beam setup).
     default_models = [
-        "https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-Ultrasharp.pth",
-        "https://huggingface.co/Facehugger/4x-foolhardy-Remacri/resolve/main/4x_foolhardy_Remacri.pth",
+        "https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth",
+        "https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x_foolhardy_Remacri.pth",
         "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
         "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
         "https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8n.pt",

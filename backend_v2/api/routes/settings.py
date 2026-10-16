@@ -804,7 +804,7 @@ PRESETS = [
         "name": "4x_foolhardy_Remacri",
         "type": "upscale_models",
         "filename": "4x_foolhardy_Remacri.pth",
-        "url": "https://huggingface.co/Facehugger/4x-foolhardy-Remacri/resolve/main/4x_foolhardy_Remacri.pth",
+        "url": "https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x_foolhardy_Remacri.pth",
         "description": "Balanced upscaler with good detail."
     },
     # LoRAs
