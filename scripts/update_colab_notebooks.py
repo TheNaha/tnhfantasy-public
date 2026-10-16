@@ -94,6 +94,13 @@ elif "llm" in WORKER_MODE:
 def update_cell_4_source(existing_lines: list[str]) -> list[str]:
     content = "".join(existing_lines)
 
+    # 0. Ensure Google Drive is mounted for persistence if running Cell 4 directly
+    if "from google.colab import drive" not in content:
+        content = content.replace(
+            "import os\nimport sys",
+            """import os\nimport sys\n\ntry:\n    from google.colab import drive\n    if not os.path.exists("/content/drive/MyDrive"):\n        print("📁 Mounting Google Drive at /content/drive...")\n        drive.mount("/content/drive")\nexcept Exception:\n    pass""",
+        )
+
     # 1. Ensure huggingface_hub and psutil are in extra_packages
     if '"huggingface_hub"' not in content:
         content = content.replace(
@@ -163,6 +170,15 @@ from IPython.display import display, HTML
 mode_key = "hybrid" if "hybrid" in WORKER_MODE else ("model" if "image" in WORKER_MODE else ("llm" if "llm" in WORKER_MODE else "tts"))
 tunnel_key = "netbird" if "netbird" in TUNNEL_METHOD else "cloudflared"
 policy_key = "auto" if "auto" in CONCURRENCY_POLICY else ("exclusive" if "exclusive" in CONCURRENCY_POLICY else ("semi_concurrent" if "semi_concurrent" in CONCURRENCY_POLICY else "concurrent"))
+# 0. Ensure Google Drive is mounted for persistence
+try:
+    from google.colab import drive
+    if not os.path.exists("/content/drive/MyDrive"):
+        print("📁 Mounting Google Drive at /content/drive...")
+        drive.mount("/content/drive")
+except Exception:
+    pass
+
 gdrive_root = "/content/drive/MyDrive/tnhcomfy"
 os.makedirs(gdrive_root, exist_ok=True)
 
@@ -195,30 +211,69 @@ if tunnel_key == "netbird":
     netbird_dir = f"{gdrive_root}/netbird"
     os.makedirs(netbird_dir, exist_ok=True)
     os.makedirs("/var/lib/netbird", exist_ok=True)
+    os.makedirs("/etc/netbird", exist_ok=True)
     os.makedirs("/var/log/netbird", exist_ok=True)
+    os.makedirs("/var/run", exist_ok=True)
 
-    # Clean up stale pid/sock
+    # Clean up any stale netbird processes/sockets
+    subprocess.run("pkill -9 -f 'netbird' || true", shell=True)
     for p in ["/var/run/netbird.sock", "/var/run/netbird.pid"]:
         if os.path.exists(p):
             try: os.remove(p)
             except Exception: pass
 
-    # Resolve custom management URL
-    mgmt_url = NETBIRD_MANAGEMENT_URL.strip()
+    # Resolve custom management URL & admin URL
+    mgmt_url_file = os.path.join(netbird_dir, "management_url.txt")
+    admin_url_file = os.path.join(netbird_dir, "admin_url.txt")
+
+    mgmt_url = NETBIRD_MANAGEMENT_URL.strip() if "NETBIRD_MANAGEMENT_URL" in locals() else ""
     if not mgmt_url:
         try:
             from google.colab import userdata
             mgmt_url = userdata.get("NETBIRD_MANAGEMENT_URL", "").strip()
         except Exception: pass
+    if not mgmt_url and os.path.exists(mgmt_url_file):
+        try:
+            with open(mgmt_url_file, "r") as f:
+                mgmt_url = f.read().strip()
+        except Exception: pass
 
-    mgmt_flag = f"--management-url {mgmt_url}" if mgmt_url else ""
+    admin_url = NETBIRD_ADMIN_URL.strip() if "NETBIRD_ADMIN_URL" in locals() else ""
+    if not admin_url:
+        try:
+            from google.colab import userdata
+            admin_url = userdata.get("NETBIRD_ADMIN_URL", "").strip()
+        except Exception: pass
+    if not admin_url and os.path.exists(admin_url_file):
+        try:
+            with open(admin_url_file, "r") as f:
+                admin_url = f.read().strip()
+        except Exception: pass
+
     if mgmt_url:
+        if not mgmt_url.startswith("http://") and not mgmt_url.startswith("https://"):
+            mgmt_url = f"https://{mgmt_url}"
+        mgmt_url = mgmt_url.rstrip("/")
+        try:
+            with open(mgmt_url_file, "w") as f:
+                f.write(mgmt_url)
+        except Exception: pass
         print(f"🌐 Self-hosted NetBird Management Server: {mgmt_url}")
     else:
         print("🌐 Using default NetBird Cloud (api.netbird.io)")
 
+    if admin_url:
+        if not admin_url.startswith("http://") and not admin_url.startswith("https://"):
+            admin_url = f"https://{admin_url}"
+        admin_url = admin_url.rstrip("/")
+        try:
+            with open(admin_url_file, "w") as f:
+                f.write(admin_url)
+        except Exception: pass
+
     # Restore existing NetBird peer credentials from Google Drive
-    config_backed_up = os.path.exists(f"{netbird_dir}/config.json")
+    persisted_files = os.listdir(netbird_dir) if os.path.exists(netbird_dir) else []
+    config_backed_up = any(f.endswith(".json") for f in persisted_files) or ("config.json" in persisted_files) or ("default.json" in persisted_files)
     if config_backed_up:
         print("🔄 Restoring existing NetBird peer credentials from Google Drive (Static IP preserved!)...")
         for f in os.listdir(netbird_dir):
@@ -227,6 +282,10 @@ if tunnel_key == "netbird":
             try:
                 if os.path.isdir(src): shutil.copytree(src, dst, dirs_exist_ok=True)
                 else: shutil.copy2(src, dst)
+            except Exception: pass
+            dst_etc = os.path.join("/etc/netbird", f)
+            try:
+                if not os.path.isdir(src): shutil.copy2(src, dst_etc)
             except Exception: pass
 
     # Launch daemon in userspace netstack mode
@@ -238,15 +297,23 @@ if tunnel_key == "netbird":
         NB_WG_KERNEL_DISABLED="true",
         NB_INTERFACE_NAME="wt0",
         NB_NETSTACK_MODE="true",
+        NB_USE_NETSTACK_MODE="true",
+        NB_ENABLE_NETSTACK_LOCAL_FORWARDING="true",
     )
+    daemon_cmd = ["netbird", "service", "run", "--log-file", "/var/log/netbird/client.log"]
+    if mgmt_url:
+        daemon_cmd.extend(["--management-url", mgmt_url])
+    if admin_url:
+        daemon_cmd.extend(["--admin-url", admin_url])
     with open("/var/log/netbird/daemon.stdout.log", "w") as out:
-        subprocess.Popen(["netbird", "service", "run"], env=env_daemon, stdout=out, stderr=out)
+        subprocess.Popen(daemon_cmd, env=env_daemon, stdout=out, stderr=out)
 
     daemon_ready = False
     for _ in range(20):
         time.sleep(1)
         res = subprocess.run(["netbird", "status"], capture_output=True, text=True)
-        if "Management:" in res.stdout or "Signal:" in res.stdout or "NeedsLogin" in res.stdout or "Connected" in res.stdout:
+        out = (res.stdout or "") + (res.stderr or "")
+        if "Management:" in out or "Signal:" in out or "NeedsLogin" in out or "Connected" in out or "daemon version:" in out.lower():
             daemon_ready = True
             break
 
@@ -256,15 +323,28 @@ if tunnel_key == "netbird":
         print("⚠️ NetBird daemon took longer than expected to start; proceeding with connection attempt.")
 
     # Bring up connection
+    extra_flags = ["--extra-dns-hosts=false"]
+    if mgmt_url:
+        extra_flags.append(f"--management-url {mgmt_url}")
+    if admin_url:
+        extra_flags.append(f"--admin-url {admin_url}")
+    flags_str = " " + " ".join(extra_flags)
+
+    env_up = dict(
+        os.environ,
+        NB_WG_KERNEL_DISABLED="true",
+        NB_USE_NETSTACK_MODE="true",
+        NB_ENABLE_NETSTACK_LOCAL_FORWARDING="true",
+    )
+
     if config_backed_up:
         print("🚀 Bringing up restored NetBird connection...")
-        cmd_up = "netbird up --extra-dns-hosts=false"
-        env_up = dict(os.environ, NB_WG_KERNEL_DISABLED="true")
+        cmd_up = f"netbird up{flags_str}".strip()
         res_up = subprocess.run(cmd_up, shell=True, env=env_up, capture_output=True, text=True)
-        if res_up.returncode != 0:
+        if res_up.returncode != 0 and "already connected" not in res_up.stderr.lower() and "already connected" not in res_up.stdout.lower():
             print(f"⚠️ Restored connection notice: {res_up.stderr.strip() or res_up.stdout.strip()}")
     else:
-        setup_key = NETBIRD_SETUP_KEY.strip()
+        setup_key = NETBIRD_SETUP_KEY.strip() if "NETBIRD_SETUP_KEY" in locals() else ""
         if not setup_key:
             try:
                 from google.colab import userdata
@@ -272,11 +352,10 @@ if tunnel_key == "netbird":
             except Exception: pass
 
         if not setup_key:
-            print("❌ Error: NETBIRD_SETUP_KEY was not provided!")
+            print("❌ Error: NETBIRD_SETUP_KEY was not provided and no credentials found in Google Drive!")
         else:
             print("🔑 Registering new NetBird peer key...")
-            cmd_up = f"netbird up --setup-key {setup_key} {mgmt_flag} --extra-dns-hosts=false"
-            env_up = dict(os.environ, NB_WG_KERNEL_DISABLED="true")
+            cmd_up = f"netbird up --setup-key {setup_key} --hostname comfy-colab-worker{flags_str}".strip()
             res_up = subprocess.run(cmd_up, shell=True, env=env_up, capture_output=True, text=True)
             if res_up.returncode == 0:
                 print("✅ Peer registered! Backing up credentials to Google Drive for permanent static IP...")
@@ -288,6 +367,8 @@ if tunnel_key == "netbird":
                         else: shutil.copy2(src, dst)
                     except Exception: pass
                 print(f"💾 NetBird credentials securely saved to {netbird_dir}")
+            else:
+                print(f"❌ NetBird registration failed: {res_up.stderr.strip() or res_up.stdout.strip()}")
 
     # Wait for IP
     print("⏳ Waiting for NetBird IP assignment...")
@@ -306,6 +387,14 @@ if tunnel_key == "netbird":
 
     if assigned_ip:
         print(f"✅ Connected to NetBird Mesh with Static IP: {assigned_ip}")
+        # Keep Google Drive credentials fresh and in sync
+        for f in os.listdir("/var/lib/netbird"):
+            src = os.path.join("/var/lib/netbird", f)
+            dst = os.path.join(netbird_dir, f)
+            try:
+                if os.path.isdir(src): shutil.copytree(src, dst, dirs_exist_ok=True)
+                else: shutil.copy2(src, dst)
+            except Exception: pass
     else:
         print("⚠️ NetBird status details:")
         res = subprocess.run(["netbird", "status", "--detail"], capture_output=True, text=True)
