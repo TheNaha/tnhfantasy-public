@@ -10,11 +10,12 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 from sqlalchemy import func, delete
 
-from api.deps import get_session, get_chat_repo, get_message_repo, get_character_repo, get_location_repo
+from api.deps import get_session, get_chat_repo, get_message_repo, get_character_repo, get_location_repo, get_story_repo
 from infrastructure.repositories.chat_repo import ChatRepository
 from infrastructure.repositories.message_repo import MessageRepository
 from infrastructure.repositories.character_repo import CharacterRepository
 from infrastructure.repositories.location_repo import LocationRepository
+from infrastructure.repositories.story_repo import StoryRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import (
     ACTIVE_JOB_STATUSES,
@@ -27,6 +28,8 @@ from core.entities import (
     MessageRole,
     Persona,
     Scenario,
+    Story,
+    StoryChapter,
     VoiceModel,
 )
 from core.exceptions import ComfyError, NotFoundError, ValidationError
@@ -2473,3 +2476,101 @@ def list_chat_images(chat_id: str, session: Session = Depends(get_session), chat
         for m in rows
         if m.image_path
     ]
+
+
+@router.post("/{chat_id}/export-story")
+def export_chat_to_story(
+    chat_id: str,
+    session: Session = Depends(get_session),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
+    character_repo: CharacterRepository = Depends(get_character_repo),
+    story_repo: StoryRepository = Depends(get_story_repo),
+):
+    """Convert an existing roleplay chat session into a full Story in World Vault."""
+    chat = chat_repo.get(chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+
+    messages = session.exec(
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+    ).all()
+
+    character = character_repo.get(chat.character_id) if chat.character_id else None
+    char_name = character.name if character else "Character"
+    user_name = chat.persona_name or "User"
+
+    # Assemble dialogue and narration into story prose
+    prose_lines: list[str] = []
+    for msg in messages:
+        meta = msg.message_metadata or {}
+        if meta.get("source") == "world_state":
+            loc = meta.get("location")
+            tim = meta.get("time")
+            if loc or tim:
+                prose_lines.append(f"\n*— {' · '.join(filter(None, [loc, tim]))} —*\n")
+            continue
+
+        role = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+        content = (msg.content or "").strip()
+        if not content:
+            continue
+
+        if role == "user":
+            prose_lines.append(f'**{user_name}:** "{content}"\n')
+        elif role == "char":
+            speaker = char_name
+            if msg.character_id and msg.character_id != chat.character_id:
+                other_char = character_repo.get(msg.character_id)
+                if other_char:
+                    speaker = other_char.name
+            prose_lines.append(f'**{speaker}:** "{content}"\n')
+        else:
+            prose_lines.append(f"*{content}*\n")
+
+    chapter_content = "\n".join(prose_lines).strip()
+
+    char_ids = [chat.character_id] if chat.character_id else []
+    for cid in (chat.additional_character_ids or []):
+        if cid and cid not in char_ids:
+            char_ids.append(cid)
+
+    lore_ids = list(chat.active_lorebook_ids or [])
+    loc_ids = [chat.location_id] if chat.location_id else []
+
+    story_title = chat.name or f"Story of {char_name}"
+    story = Story(
+        title=story_title,
+        description=f"Story adapted from roleplay chat '{story_title}' with {char_name}.",
+        world_id=chat.world_id,
+        character_ids=char_ids,
+        lorebook_ids=lore_ids,
+        location_ids=loc_ids,
+        scenario_id=chat.scenario_id,
+        llm_model=chat.llm_model,
+        persona_name=chat.persona_name,
+        persona_description=chat.persona_description,
+    )
+    story.created_at = datetime.now(timezone.utc)
+    story.updated_at = story.created_at
+    link_to_world(session, story, chat.world_id)
+    session.add(story)
+    session.commit()
+    session.refresh(story)
+
+    # Initialise Chapter 1 with the converted prose
+    chapter = StoryChapter(
+        story_id=story.id,
+        chapter_number=1,
+        title="Chapter 1: The Encounter",
+        content=chapter_content,
+    )
+    session.add(chapter)
+    session.commit()
+    session.refresh(story)
+
+    return {
+        "story_id": story.id,
+        "title": story.title,
+        "chapter_id": chapter.id,
+    }
+

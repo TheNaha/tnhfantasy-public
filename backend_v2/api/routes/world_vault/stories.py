@@ -12,13 +12,28 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, delete, select
 
 import config as app_config
-from api.deps import get_session, get_story_repo, get_story_chapter_repo, get_story_revision_repo
+from api.deps import get_session, get_story_repo, get_story_chapter_repo, get_story_revision_repo, get_chat_repo
 from infrastructure.logging import get_logger
+from infrastructure.repositories.chat_repo import ChatRepository
 from infrastructure.repositories.story_repo import StoryRepository
 from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
 from infrastructure.repositories.story_revision_repo import StoryChapterRevisionRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Story, StoryBeatRole, StoryChapter, StoryChapterRevision, Lorebook, Character, Location, Scenario, Asset, AssetKind
+from core.entities import (
+    Asset,
+    AssetKind,
+    Character,
+    Chat,
+    Location,
+    Lorebook,
+    Message,
+    MessageRole,
+    Scenario,
+    Story,
+    StoryBeatRole,
+    StoryChapter,
+    StoryChapterRevision,
+)
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.world_integration_service import SOURCE_JOB_ID_METADATA_KEY
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow, sampler_overrides
@@ -2680,3 +2695,84 @@ Return a strictly valid JSON object in this format:
     job = await submit_llm_job(session, workflow, metadata)
     await asyncio.to_thread(session.commit)
     return {"job_id": job.id}
+
+
+class StartChatFromStoryRequest(BaseModel):
+    chapter_id: str | None = None
+
+
+@router.post("/{story_id}/start-chat")
+def start_chat_from_story(
+    story_id: str,
+    req: StartChatFromStoryRequest | None = None,
+    session: Session = Depends(get_session),
+    story_repo: StoryRepository = Depends(get_story_repo),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
+):
+    """Seed and launch a live Roleplay Chat directly from a Story scene."""
+    story = story_repo.get(story_id)
+    if not story:
+        raise NotFoundError("Story", story_id)
+
+    # Resolve primary and additional characters
+    char_ids = story.character_ids or []
+    primary_char_id = char_ids[0] if char_ids else None
+    additional_char_ids = char_ids[1:] if len(char_ids) > 1 else []
+
+    # Resolve active chapter
+    chapter = None
+    target_chapter_id = req.chapter_id if req else None
+    if target_chapter_id:
+        chapter = session.exec(
+            select(StoryChapter).where(StoryChapter.id == target_chapter_id, StoryChapter.story_id == story_id)
+        ).first()
+    if not chapter:
+        chapter = session.exec(
+            select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number)
+        ).first()
+
+    chat_name = f"{story.title} — {chapter.title or f'Chapter {chapter.chapter_number}' if chapter else 'Scene'}"
+    chat = Chat(
+        name=chat_name,
+        character_id=primary_char_id,
+        additional_character_ids=additional_char_ids,
+        world_id=story.world_id,
+        active_lorebook_ids=list(story.lorebook_ids or []),
+        location_id=story.location_ids[0] if story.location_ids else None,
+        scenario_id=story.scenario_id,
+        persona_id=story.persona_id,
+        persona_name=story.persona_name,
+        persona_description=story.persona_description,
+        llm_model=story.llm_model,
+    )
+    chat.created_at = datetime.now(timezone.utc)
+    chat.updated_at = chat.created_at
+    link_to_world(session, chat, story.world_id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    # If chapter content exists, add an introductory system scene beat to seed roleplay
+    if chapter and chapter.content and chapter.content.strip():
+        excerpt = chapter.content.strip()
+        if len(excerpt) > 1200:
+            excerpt = "..." + excerpt[-1200:]
+
+        seed_msg = Message(
+            chat_id=chat.id,
+            role=MessageRole.SYSTEM,
+            content=f"[Scene Setting from Story: {story.title} — {chapter.title or f'Chapter {chapter.chapter_number}'}]\n\n{excerpt}",
+            message_metadata={
+                "source": "story_seed",
+                "story_id": story.id,
+                "chapter_id": chapter.id,
+            },
+        )
+        session.add(seed_msg)
+        session.commit()
+
+    return {
+        "chat_id": chat.id,
+        "name": chat.name,
+    }
+
