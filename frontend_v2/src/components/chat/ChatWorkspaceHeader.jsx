@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PanelLeftOpen, PanelLeftClose, PanelRightOpen, MessageSquare, Sparkles, Loader2, Clock, MapPin, Download, FileJson, GitBranch, Search, X } from 'lucide-react';
+import { PanelLeftOpen, PanelLeftClose, PanelRightOpen, MessageSquare, Sparkles, Loader2, Clock, MapPin, Download, FileJson, BookOpen, GitBranch, Search, X } from 'lucide-react';
 import clsx from 'clsx';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 
@@ -14,6 +14,8 @@ export default function ChatWorkspaceHeader({
     activeChatId,
     handleExportChat,
     handleExportChatJsonl,
+    handleExportToStory,
+    exportToStoryMutation,
     messages,
     setTimelineVisible,
     contextCollapsed,
@@ -135,6 +137,14 @@ export default function ChatWorkspaceHeader({
                 title="Export chat as SillyTavern-compatible JSONL"
             >
                 <FileJson size={18} />
+            </button>
+            <button
+                onClick={handleExportToStory}
+                disabled={!activeChatId || !messages.length || exportToStoryMutation?.isPending}
+                className="p-2 text-indigo-400 hover:text-indigo-200 rounded-xl hover:bg-indigo-500/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed hidden lg:block"
+                title="Export chat to Story Sandbox"
+            >
+                {exportToStoryMutation?.isPending ? <Loader2 size={18} className="animate-spin" /> : <BookOpen size={18} />}
             </button>
             <button
                 onClick={() => setTimelineVisible(true)}

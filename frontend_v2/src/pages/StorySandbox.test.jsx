@@ -38,10 +38,12 @@ const mockStoryAiAction = vi.hoisted(() => vi.fn());
 const mockUpdateStoryBeat = vi.hoisted(() => vi.fn());
 const mockDeleteStoryBeat = vi.hoisted(() => vi.fn());
 const mockPublishStory = vi.hoisted(() => vi.fn());
+const mockStartChatFromStory = vi.hoisted(() => vi.fn());
+const mockStory = vi.hoisted(() => vi.fn(() => ({ data: { id: 'story-1', title: 'My Story' } })));
 
 vi.mock('../hooks/useWorldVault', () => ({
     useStories: (...a) => mockStories(...a),
-    useStory: () => ({ data: null }),
+    useStory: (...a) => mockStory(...a),
     useStoryChapters: (...a) => mockChapters(...a),
     useLorebooks: (...a) => mockLorebooks(...a),
     useCreateStory: (...a) => mockCreateStory(...a),
@@ -78,6 +80,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     usePublishStory: () => mockPublishStory(),
     useUnpublishStory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     useNarrateChapter: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    useStartChatFromStory: (...a) => mockStartChatFromStory(...a),
 }));
 
 vi.mock('../api/websocket', () => ({
@@ -204,6 +207,11 @@ describe('StorySandbox page', () => {
         mockPublishStory.mockReturnValue({
             mutate: vi.fn(),
             mutateAsync: vi.fn(),
+            isPending: false,
+        });
+        mockStartChatFromStory.mockReturnValue({
+            mutate: vi.fn(),
+            mutateAsync: vi.fn().mockResolvedValue({ chat_id: 'chat-1', title: 'Tale' }),
             isPending: false,
         });
     });
@@ -492,6 +500,25 @@ describe('StorySandbox page', () => {
             expect(screen.getByTestId('revisions-modal')).toBeInTheDocument();
         });
         expect(screen.queryAllByTestId('revision-row')).toHaveLength(0);
+    });
+
+    it('starts a live Roleplay Chat from active chapter and navigates to it', async () => {
+        const startChatFn = vi.fn().mockResolvedValue({ chat_id: 'chat-42', title: 'My Story — Chapter 1' });
+        mockStartChatFromStory.mockReturnValue({ mutateAsync: startChatFn, isPending: false });
+
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByTitle('Roleplay this scene in live Chat')).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByTitle('Roleplay this scene in live Chat'));
+
+        await waitFor(() => {
+            expect(startChatFn).toHaveBeenCalledWith({
+                storyId: 'story-1',
+                chapterId: 'ch-1',
+            });
+        });
     });
 });
 

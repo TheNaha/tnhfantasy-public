@@ -276,6 +276,7 @@ export function ChatWorkspaceProvider({ children }) {
     const {
         sendMessageMutation: rawSendMessageMutation, createChatMutation: rawCreateChatMutation,
         exportJsonlMutation: rawExportJsonlMutation, importChatMutation: rawImportChatMutation,
+        exportToStoryMutation: rawExportToStoryMutation,
         deleteChatMutation: rawDeleteChatMutation, renameChatMutation: rawRenameChatMutation,
         updateChatMutation: rawUpdateChatMutation, editMessageMutation: rawEditMessageMutation,
         rollbackMutation: rawRollbackMutation, regenerateMutation: rawRegenerateMutation,
@@ -302,6 +303,7 @@ export function ChatWorkspaceProvider({ children }) {
     const createChatMutation = useStableObject(rawCreateChatMutation);
     const exportJsonlMutation = useStableObject(rawExportJsonlMutation);
     const importChatMutation = useStableObject(rawImportChatMutation);
+    const exportToStoryMutation = useStableObject(rawExportToStoryMutation);
     const deleteChatMutation = useStableObject(rawDeleteChatMutation);
     const renameChatMutation = useStableObject(rawRenameChatMutation);
     const updateChatMutation = useStableObject(rawUpdateChatMutation);
@@ -1012,6 +1014,19 @@ export function ChatWorkspaceProvider({ children }) {
         }
     }, [activeChatId, activeChat?.name, exportJsonlMutation]);
 
+    const handleExportToStory = useCallback(async () => {
+        if (!activeChatId) { toast.error('No active chat to export'); return; }
+        try {
+            const res = await exportToStoryMutation.mutateAsync(activeChatId);
+            toast.success(`Exported to story: "${res.title}"`);
+            if (res.story_id) {
+                navigate(`/story/${res.story_id}`);
+            }
+        } catch (err) {
+            toast.error(err?.message || 'Failed to export chat to story');
+        }
+    }, [activeChatId, exportToStoryMutation, navigate]);
+
     const isImportingChat = importChatMutation.isPending;
     const handleImportChatFile = useCallback(async (file) => {
         if (!file) return;
@@ -1163,6 +1178,8 @@ export function ChatWorkspaceProvider({ children }) {
         handleEditMessage,
         handleExportChat,
         handleExportChatJsonl,
+        handleExportToStory,
+        exportToStoryMutation,
         handleImportChatFile,
         isImportingChat,
         handleGenerateScene,
@@ -1312,7 +1329,7 @@ export function ChatWorkspaceProvider({ children }) {
         greetingModal, handleAttachmentChange, handleAvatarClick,
         handleChatUpdate, handleCreateChat, handleDeleteChat,
         handleDeleteMessage, handleEditMessage, handleExportChat,
-        handleExportChatJsonl, handleImportChatFile,
+        handleExportChatJsonl, handleExportToStory, exportToStoryMutation, handleImportChatFile,
         isImportingChat, handleGenerateScene, handleGenerateSwipe,
         handleGenerateTTS, handleIllustrate, handleImpersonate,
         handleKeyDown, handleMessageIllustrate, handlePinMessage,

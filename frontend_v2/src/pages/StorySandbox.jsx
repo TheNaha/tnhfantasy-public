@@ -5,7 +5,7 @@ import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation, useSelectStoryBeatAlternate,
-    useUpdateStoryBeat, useDeleteStoryBeat, useChapterRevisions, useCreateChapterRevision, useRestoreChapterRevision, useScenarios } from '../hooks/useWorldVault';
+    useUpdateStoryBeat, useDeleteStoryBeat, useChapterRevisions, useCreateChapterRevision, useRestoreChapterRevision, useScenarios, useStartChatFromStory } from '../hooks/useWorldVault';
 import { useLLMJobResult, awaitJobText } from '../hooks/useLLMJobResult';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -152,6 +152,7 @@ export default function StorySandbox() {
     const parseStory = useParseStory();
     const publishStory = usePublishStory();
     const narrateChapter = useNarrateChapter();
+    const startChat = useStartChatFromStory();
 
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
@@ -988,6 +989,22 @@ export default function StorySandbox() {
      
     }, [activeStoryId, activeChapterId, editorContent, isStreaming, updateChapter]);
 
+    const handleStartChat = useCallback(async () => {
+        if (!activeStoryId) return;
+        try {
+            const res = await startChat.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId || undefined,
+            });
+            toast.success(`Roleplay Chat ready: "${res.title}"`);
+            if (res.chat_id) {
+                navigate(`/chat/${res.chat_id}`);
+            }
+        } catch (err) {
+            toast.error(err?.message || 'Failed to start chat from story');
+        }
+    }, [activeStoryId, activeChapterId, startChat, navigate]);
+
     useEffect(() => {
         const onKeyDown = (e) => {
             const target = e.target;
@@ -1204,6 +1221,8 @@ export default function StorySandbox() {
                                     onOpenContextMobile={() => { setIsPanelOpen(!isPanelOpen); setMobileTab('context'); }}
                                     onTitleChange={handleStoryTitleUpdate}
                                     onExport={handleExportStory}
+                                    onStartChat={handleStartChat}
+                                    isStartingChat={startChat.isPending}
                                 />
                                 <StoryEditor
                                     isPreviewMode={isPreviewMode}

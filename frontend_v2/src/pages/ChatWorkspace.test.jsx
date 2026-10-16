@@ -50,6 +50,7 @@ const mockRenameChat = vi.hoisted(() => vi.fn());
 const mockCharacters = vi.hoisted(() => vi.fn());
 const mockLorebooks = vi.hoisted(() => vi.fn());
 const mockUpdateChat = vi.hoisted(() => vi.fn());
+const mockExportChatToStory = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useWorldVault', () => ({
     useChats: (...a) => mockChats(...a),
@@ -87,6 +88,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useGenerateScene: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useSearchChats: () => ({ data: [] }),
     useExportChatJsonl: () => ({ mutateAsync: vi.fn(async () => ({ blob: new Blob(), filename: 'chat.jsonl' })), isPending: false }),
+    useExportChatToStory: (...a) => mockExportChatToStory(...a),
     useImportChat: () => ({ mutateAsync: vi.fn(), isPending: false }),
     getAvatarUrl: () => '',
 }));
@@ -171,6 +173,7 @@ describe('ChatWorkspace page', () => {
         mockRenameChat.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
         mockCharacters.mockReturnValue({ data: [], isLoading: false });
         mockLorebooks.mockReturnValue({ data: [], isLoading: false });
+        mockExportChatToStory.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ story_id: 'story-1', title: 'Exported Story' }), isPending: false });
     });
 
     it('renders the chat workspace layout', () => {
@@ -343,5 +346,18 @@ describe('ChatWorkspace page', () => {
                 expect.objectContaining({ chatId: 'chat-1', name: 'Updated Chat' })
             );
         });
+    });
+
+    it('exports chat to Story Sandbox and navigates to the story', async () => {
+        const exportFn = vi.fn().mockResolvedValue({ story_id: 'story-100', title: 'Exported Story' });
+        mockExportChatToStory.mockReturnValue({ mutateAsync: exportFn, isPending: false });
+        mockMessages.mockReturnValue({ data: [{ id: 'm-1', role: 'user', content: 'Hello' }], isLoading: false });
+
+        renderWithProviders(<ChatWorkspace />);
+        const exportBtn = screen.getByTitle('Export chat to Story Sandbox');
+        fireEvent.click(exportBtn);
+
+        await waitFor(() => expect(exportFn).toHaveBeenCalledWith('chat-1'));
+        expect(mockNavigate).toHaveBeenCalledWith('/story/story-100');
     });
 });

@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { BookOpen, Sparkles, Loader2, Save, Edit3, Book, Layers, ImageIcon, Download, FileText } from 'lucide-react';
+import { BookOpen, Sparkles, Loader2, Save, Edit3, Book, Layers, ImageIcon, Download, FileText, MessageSquare } from 'lucide-react';
 import clsx from 'clsx';
 
 export default React.memo(function StoryHeader({
@@ -19,6 +19,8 @@ export default React.memo(function StoryHeader({
     onOpenContextMobile,
     onTitleChange,
     onExport,
+    onStartChat,
+    isStartingChat,
 }) {
     const serverTitle = activeStory?.title || '';
     // The title box holds a local draft rather than `defaultValue`, so what is
@@ -110,6 +112,17 @@ export default React.memo(function StoryHeader({
                     >
                         {isSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={14} />}
                         Save
+                    </button>
+                )}
+                {onStartChat && activeStory && (
+                    <button
+                        onClick={onStartChat}
+                        disabled={isStartingChat}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-500/20 text-indigo-300 rounded-lg hover:bg-indigo-500/30 transition-colors disabled:opacity-30"
+                        title="Roleplay this scene in live Chat"
+                    >
+                        {isStartingChat ? <Loader2 size={12} className="animate-spin" /> : <MessageSquare size={14} />}
+                        <span className="hidden sm:inline">Roleplay Chat</span>
                     </button>
                 )}
                 {onExport && activeStory && (

@@ -4,7 +4,7 @@ import {
     useSuggestReply, useEditMessage, useRollbackChat, useRegenerateReply,
     usePatchCharacter, useImpersonateMessage, usePinMessage, useSwipeMessage,
     useGenerateSwipe, useIllustrateChat, useGenerateScene, useNarrateMessage,
-    useDeleteMessage, useExportChatJsonl, useImportChat,
+    useDeleteMessage, useExportChatJsonl, useImportChat, useExportChatToStory,
 } from '../hooks/useWorldVault';
 
 /**
@@ -18,6 +18,7 @@ export function useChatWorkspaceMutations() {
     const createChatMutation = useCreateChat();
     const exportJsonlMutation = useExportChatJsonl();
     const importChatMutation = useImportChat();
+    const exportToStoryMutation = useExportChatToStory();
     const deleteChatMutation = useDeleteChat();
     const renameChatMutation = useRenameChat();
     const updateChatMutation = useUpdateChat();
@@ -40,6 +41,7 @@ export function useChatWorkspaceMutations() {
         createChatMutation,
         exportJsonlMutation,
         importChatMutation,
+        exportToStoryMutation,
         deleteChatMutation,
         renameChatMutation,
         updateChatMutation,
@@ -58,6 +60,7 @@ export function useChatWorkspaceMutations() {
         suggestReplyMutation,
     }), [
         sendMessageMutation, createChatMutation, exportJsonlMutation, importChatMutation,
+        exportToStoryMutation,
         deleteChatMutation, renameChatMutation, updateChatMutation, editMessageMutation,
         rollbackMutation, regenerateMutation, patchCharacterMutation, deleteMessageMutation,
         impersonateMutation, pinMessageMutation, swipeMessageMutation, generateSwipeMutation,
