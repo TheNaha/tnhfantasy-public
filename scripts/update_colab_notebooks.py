@@ -103,7 +103,16 @@ def update_cell_4_source(existing_lines: list[str]) -> list[str]:
 
     # 2. Add RAM cache directory setup and ComfyUI extra_model_paths.yaml before "Environment setup complete!"
     ram_cache_setup = """
-# 5. Initialize High-Speed System RAM Cache & ComfyUI Extra Paths
+# 5. Initialize High-Speed System RAM Cache & Expand /dev/shm
+try:
+    import psutil
+    tot_ram = psutil.virtual_memory().total / (1024**3)
+    target_shm_gb = min(44, int(tot_ram * 0.82))
+    subprocess.run(["mount", "-o", f"remount,size={target_shm_gb}G", "/dev/shm"], check=False)
+    print(f"⚡ Expanded /dev/shm filesystem capacity to {target_shm_gb} GB.")
+except Exception:
+    pass
+
 ram_cache_dir = "/dev/shm/tnh_ram_cache"
 os.makedirs(ram_cache_dir, exist_ok=True)
 os.makedirs(f"{ram_cache_dir}/checkpoints", exist_ok=True)
@@ -143,7 +152,12 @@ import sys
 import time
 import re
 import secrets
+import shutil
 import subprocess
+import json
+import urllib.request
+import urllib.parse
+import ssl
 from IPython.display import display, HTML
 
 mode_key = "hybrid" if "hybrid" in WORKER_MODE else ("model" if "image" in WORKER_MODE else ("llm" if "llm" in WORKER_MODE else "tts"))
@@ -173,28 +187,166 @@ comfy_port = 8188
 agent_port = 8001 if mode_key in ("model", "hybrid") else (8003 if mode_key == "llm" else 8002)
 llm_port = 8003
 
-# 2. Sync Model Catalog with Backend (Sole Source of Truth)
+# 2. Networking Setup (Connect NetBird VPN Mesh First)
+assigned_ip = ""
+public_url = ""
+
+if tunnel_key == "netbird":
+    netbird_dir = f"{gdrive_root}/netbird"
+    os.makedirs(netbird_dir, exist_ok=True)
+    os.makedirs("/var/lib/netbird", exist_ok=True)
+    os.makedirs("/var/log/netbird", exist_ok=True)
+
+    # Clean up stale pid/sock
+    for p in ["/var/run/netbird.sock", "/var/run/netbird.pid"]:
+        if os.path.exists(p):
+            try: os.remove(p)
+            except Exception: pass
+
+    # Resolve custom management URL
+    mgmt_url = NETBIRD_MANAGEMENT_URL.strip()
+    if not mgmt_url:
+        try:
+            from google.colab import userdata
+            mgmt_url = userdata.get("NETBIRD_MANAGEMENT_URL", "").strip()
+        except Exception: pass
+
+    mgmt_flag = f"--management-url {mgmt_url}" if mgmt_url else ""
+    if mgmt_url:
+        print(f"🌐 Self-hosted NetBird Management Server: {mgmt_url}")
+    else:
+        print("🌐 Using default NetBird Cloud (api.netbird.io)")
+
+    # Restore existing NetBird peer credentials from Google Drive
+    config_backed_up = os.path.exists(f"{netbird_dir}/config.json")
+    if config_backed_up:
+        print("🔄 Restoring existing NetBird peer credentials from Google Drive (Static IP preserved!)...")
+        for f in os.listdir(netbird_dir):
+            src = os.path.join(netbird_dir, f)
+            dst = os.path.join("/var/lib/netbird", f)
+            try:
+                if os.path.isdir(src): shutil.copytree(src, dst, dirs_exist_ok=True)
+                else: shutil.copy2(src, dst)
+            except Exception: pass
+
+    # Launch daemon in userspace netstack mode
+    print("🚀 Starting NetBird daemon in Userspace Netstack mode (bypasses container TUN restrictions)...")
+    env_daemon = dict(
+        os.environ,
+        NB_LOG_FILE="/var/log/netbird/service.log",
+        NB_LOG_LEVEL="info",
+        NB_WG_KERNEL_DISABLED="true",
+        NB_INTERFACE_NAME="wt0",
+        NB_NETSTACK_MODE="true",
+    )
+    with open("/var/log/netbird/daemon.stdout.log", "w") as out:
+        subprocess.Popen(["netbird", "service", "run"], env=env_daemon, stdout=out, stderr=out)
+
+    daemon_ready = False
+    for _ in range(20):
+        time.sleep(1)
+        res = subprocess.run(["netbird", "status"], capture_output=True, text=True)
+        if "Management:" in res.stdout or "Signal:" in res.stdout or "NeedsLogin" in res.stdout or "Connected" in res.stdout:
+            daemon_ready = True
+            break
+
+    if daemon_ready:
+        print("✅ NetBird daemon is running and responsive in Netstack mode!")
+    else:
+        print("⚠️ NetBird daemon took longer than expected to start; proceeding with connection attempt.")
+
+    # Bring up connection
+    if config_backed_up:
+        print("🚀 Bringing up restored NetBird connection...")
+        cmd_up = "netbird up --extra-dns-hosts=false"
+        env_up = dict(os.environ, NB_WG_KERNEL_DISABLED="true")
+        res_up = subprocess.run(cmd_up, shell=True, env=env_up, capture_output=True, text=True)
+        if res_up.returncode != 0:
+            print(f"⚠️ Restored connection notice: {res_up.stderr.strip() or res_up.stdout.strip()}")
+    else:
+        setup_key = NETBIRD_SETUP_KEY.strip()
+        if not setup_key:
+            try:
+                from google.colab import userdata
+                setup_key = userdata.get("NETBIRD_SETUP_KEY", "").strip()
+            except Exception: pass
+
+        if not setup_key:
+            print("❌ Error: NETBIRD_SETUP_KEY was not provided!")
+        else:
+            print("🔑 Registering new NetBird peer key...")
+            cmd_up = f"netbird up --setup-key {setup_key} {mgmt_flag} --extra-dns-hosts=false"
+            env_up = dict(os.environ, NB_WG_KERNEL_DISABLED="true")
+            res_up = subprocess.run(cmd_up, shell=True, env=env_up, capture_output=True, text=True)
+            if res_up.returncode == 0:
+                print("✅ Peer registered! Backing up credentials to Google Drive for permanent static IP...")
+                for f in os.listdir("/var/lib/netbird"):
+                    src = os.path.join("/var/lib/netbird", f)
+                    dst = os.path.join(netbird_dir, f)
+                    try:
+                        if os.path.isdir(src): shutil.copytree(src, dst, dirs_exist_ok=True)
+                        else: shutil.copy2(src, dst)
+                    except Exception: pass
+                print(f"💾 NetBird credentials securely saved to {netbird_dir}")
+
+    # Wait for IP
+    print("⏳ Waiting for NetBird IP assignment...")
+    for _ in range(30):
+        time.sleep(1)
+        res = subprocess.run(["netbird", "status"], capture_output=True, text=True)
+        out = res.stdout
+        m = re.search(r"NetBird IP:\\s*([0-9a-fA-F\\.:]+)", out)
+        if m:
+            assigned_ip = m.group(1).split("/")[0].strip()
+            break
+        m2 = re.search(r"IP:\\s*([0-9a-fA-F\\.:]+)", out)
+        if m2:
+            assigned_ip = m2.group(1).split("/")[0].strip()
+            break
+
+    if assigned_ip:
+        print(f"✅ Connected to NetBird Mesh with Static IP: {assigned_ip}")
+    else:
+        print("⚠️ NetBird status details:")
+        res = subprocess.run(["netbird", "status", "--detail"], capture_output=True, text=True)
+        print(res.stdout or res.stderr)
+
+# 3. Sync Model Catalog with Backend (Sole Source of Truth)
 catalog = {}
 catalog_source = "local models.json"
 backend_sync_ok = False
 backend_url_clean = BACKEND_URL.strip().rstrip("/")
 
 if backend_url_clean:
+    candidates = [backend_url_clean]
     try:
-        import urllib.request
-        import json
-        cat_endpoint = f"{backend_url_clean}/api/v2/models/catalog"
-        req = urllib.request.Request(cat_endpoint, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            if resp.status == 200:
-                catalog = json.loads(resp.read().decode())
-                backend_sync_ok = True
-                catalog_source = f"backend ({backend_url_clean})"
-    except Exception as exc:
-        print(f"⚠️ Notice: Could not contact backend catalog at {backend_url_clean} ({exc}). Using local catalog.")
+        parsed = urllib.parse.urlparse(backend_url_clean)
+        if parsed.scheme == "http" and parsed.port == 8002:
+            candidates.append(f"https://{parsed.hostname}")
+            candidates.append(f"http://{parsed.hostname}")
+        elif parsed.scheme == "https" and not parsed.port:
+            candidates.append(f"http://{parsed.hostname}:8002")
+    except Exception:
+        pass
+
+    ctx = ssl._create_unverified_context()
+    for cand in candidates:
+        try:
+            cat_endpoint = f"{cand}/api/v2/models/catalog"
+            req = urllib.request.Request(cat_endpoint, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+                if resp.status == 200:
+                    catalog = json.loads(resp.read().decode())
+                    backend_sync_ok = True
+                    catalog_source = f"backend ({cand})"
+                    break
+        except Exception:
+            pass
+
+    if not backend_sync_ok:
+        print(f"⚠️ Notice: Could not contact backend catalog at {backend_url_clean}. Using local catalog.")
 
 if not catalog:
-    import json
     local_cat = "/content/tnhcomfy/backend_v2/modal_llm/models.json"
     if os.path.exists(local_cat):
         with open(local_cat, "r") as f:
@@ -214,7 +366,7 @@ print(f"   • Active Util Model: {active_util} (Shared Weights: {shared_weights
 if active_image:
     print(f"   • Active Image Model: {active_image}")
 
-# 3. Check & Auto-Download Active LLM GGUF Weights in Google Drive
+# 4. Check & Auto-Download Active LLM GGUF Weights in Google Drive
 llm_gdrive_dir = GDRIVE_LLM_PATH.strip() or "/content/drive/MyDrive/tnhcomfy/llm_models"
 os.makedirs(llm_gdrive_dir, exist_ok=True)
 
@@ -251,6 +403,12 @@ for mid in distinct_active_llm:
                         token=os.environ.get("HF_TOKEN") or None,
                     )
                 print(f"✅ Successfully downloaded [{mid}] to Google Drive!")
+                try:
+                    subprocess.run(["sync"], check=False)
+                    with open("/proc/sys/vm/drop_caches", "w") as f:
+                        f.write("3\\n")
+                except Exception:
+                    pass
             except Exception as exc:
                 print(f"⚠️ HF download error for {mid}: {exc}")
         else:
@@ -272,7 +430,15 @@ for mid in distinct_active_llm:
             if mid in resolved_weights:
                 break
 
-# 4. Tiered RAM Pre-warming (Anchors + Opportunistic Spare RAM)
+# 5. Tiered RAM Pre-warming (Anchors + Opportunistic Spare RAM)
+try:
+    import psutil
+    tot_ram = psutil.virtual_memory().total / (1024**3)
+    target_shm_gb = min(44, int(tot_ram * 0.82))
+    subprocess.run(["mount", "-o", f"remount,size={target_shm_gb}G", "/dev/shm"], check=False)
+except Exception:
+    pass
+
 if agent_dir not in sys.path:
     sys.path.insert(0, agent_dir)
 from ram_manager import RamModelManager
@@ -359,7 +525,7 @@ print(f"   • Anchors in RAM: {[a['model_id'] for a in ram_status['anchor_model
 if ram_status['spare_cached_models']:
     print(f"   • Spare Pre-warmed Models: {[s['model_id'] for s in ram_status['spare_cached_models']]}")
 
-# 5. Launch Background Processes
+# 6. Launch Background Processes
 if mode_key == "hybrid":
     print("🚀 [Hybrid] Starting ComfyUI server on :8188...")
     with open(log_comfy, "w") as out:
@@ -501,131 +667,8 @@ if mode_key in ("hybrid", "llm"):
         except Exception:
             time.sleep(1)
 
-# 6. Networking & Tunneling
-assigned_ip = ""
-public_url = ""
-
-if tunnel_key == "netbird":
-    netbird_dir = f"{gdrive_root}/netbird"
-    os.makedirs(netbird_dir, exist_ok=True)
-    os.makedirs("/var/lib/netbird", exist_ok=True)
-    os.makedirs("/var/log/netbird", exist_ok=True)
-
-    # Clean up stale pid/sock
-    for p in ["/var/run/netbird.sock", "/var/run/netbird.pid"]:
-        if os.path.exists(p):
-            try: os.remove(p)
-            except Exception: pass
-
-    # Resolve custom management URL
-    mgmt_url = NETBIRD_MANAGEMENT_URL.strip()
-    if not mgmt_url:
-        try:
-            from google.colab import userdata
-            mgmt_url = userdata.get("NETBIRD_MANAGEMENT_URL", "").strip()
-        except Exception: pass
-
-    mgmt_flag = f"--management-url {mgmt_url}" if mgmt_url else ""
-    if mgmt_url:
-        print(f"🌐 Self-hosted NetBird Management Server: {mgmt_url}")
-    else:
-        print("🌐 Using default NetBird Cloud (api.netbird.io)")
-
-    # Restore existing NetBird peer credentials from Google Drive
-    config_backed_up = os.path.exists(f"{netbird_dir}/config.json")
-    if config_backed_up:
-        print("🔄 Restoring existing NetBird peer credentials from Google Drive (Static IP preserved!)...")
-        for f in os.listdir(netbird_dir):
-            src = os.path.join(netbird_dir, f)
-            dst = os.path.join("/var/lib/netbird", f)
-            try:
-                if os.path.isdir(src): shutil.copytree(src, dst, dirs_exist_ok=True)
-                else: shutil.copy2(src, dst)
-            except Exception: pass
-
-    # Launch daemon in userspace netstack mode
-    print("🚀 Starting NetBird daemon in Userspace Netstack mode (bypasses container TUN restrictions)...")
-    env_daemon = dict(
-        os.environ,
-        NB_LOG_FILE="/var/log/netbird/service.log",
-        NB_LOG_LEVEL="info",
-        NB_WG_KERNEL_DISABLED="true",
-        NB_INTERFACE_NAME="wt0",
-        NB_NETSTACK_MODE="true",
-    )
-    with open("/var/log/netbird/daemon.stdout.log", "w") as out:
-        subprocess.Popen(["netbird", "service", "run"], env=env_daemon, stdout=out, stderr=out)
-
-    daemon_ready = False
-    for _ in range(20):
-        time.sleep(1)
-        res = subprocess.run(["netbird", "status"], capture_output=True, text=True)
-        if "Management:" in res.stdout or "Signal:" in res.stdout or "NeedsLogin" in res.stdout or "Connected" in res.stdout:
-            daemon_ready = True
-            break
-
-    if daemon_ready:
-        print("✅ NetBird daemon is running and responsive in Netstack mode!")
-    else:
-        print("⚠️ NetBird daemon took longer than expected to start; proceeding with connection attempt.")
-
-    # Bring up connection
-    if config_backed_up:
-        print("🚀 Bringing up restored NetBird connection...")
-        cmd_up = f"netbird up --extra-dns-hosts=false"
-        env_up = dict(os.environ, NB_WG_KERNEL_DISABLED="true")
-        res_up = subprocess.run(cmd_up, shell=True, env=env_up, capture_output=True, text=True)
-        if res_up.returncode != 0:
-            print(f"⚠️ Restored connection notice: {res_up.stderr.strip() or res_up.stdout.strip()}")
-    else:
-        setup_key = NETBIRD_SETUP_KEY.strip()
-        if not setup_key:
-            try:
-                from google.colab import userdata
-                setup_key = userdata.get("NETBIRD_SETUP_KEY", "").strip()
-            except Exception: pass
-
-        if not setup_key:
-            print("❌ Error: NETBIRD_SETUP_KEY was not provided!")
-        else:
-            print("🔑 Registering new NetBird peer key...")
-            cmd_up = f"netbird up --setup-key {setup_key} {mgmt_flag} --extra-dns-hosts=false"
-            env_up = dict(os.environ, NB_WG_KERNEL_DISABLED="true")
-            res_up = subprocess.run(cmd_up, shell=True, env=env_up, capture_output=True, text=True)
-            if res_up.returncode == 0:
-                print("✅ Peer registered! Backing up credentials to Google Drive for permanent static IP...")
-                for f in os.listdir("/var/lib/netbird"):
-                    src = os.path.join("/var/lib/netbird", f)
-                    dst = os.path.join(netbird_dir, f)
-                    try:
-                        if os.path.isdir(src): shutil.copytree(src, dst, dirs_exist_ok=True)
-                        else: shutil.copy2(src, dst)
-                    except Exception: pass
-                print(f"💾 NetBird credentials securely saved to {netbird_dir}")
-
-    # Wait for IP
-    print("⏳ Waiting for NetBird IP assignment...")
-    for _ in range(30):
-        time.sleep(1)
-        res = subprocess.run(["netbird", "status"], capture_output=True, text=True)
-        out = res.stdout
-        m = re.search(r"NetBird IP:\\s*([0-9a-fA-F\\.:]+)", out)
-        if m:
-            assigned_ip = m.group(1).split("/")[0].strip()
-            break
-        m2 = re.search(r"IP:\\s*([0-9a-fA-F\\.:]+)", out)
-        if m2:
-            assigned_ip = m2.group(1).split("/")[0].strip()
-            break
-
-    if assigned_ip:
-        print(f"✅ Connected to NetBird Mesh with Static IP: {assigned_ip}")
-    else:
-        print("⚠️ NetBird status details:")
-        res = subprocess.run(["netbird", "status", "--detail"], capture_output=True, text=True)
-        print(res.stdout or res.stderr)
-
-elif tunnel_key == "cloudflared":
+# 7. Cloudflare Tunnel (if selected)
+if tunnel_key == "cloudflared":
     print("🌐 Starting Cloudflare Named / Quick Tunnel...")
     cf_log = "/content/cloudflared.log"
     target_tunnel_port = comfy_port if mode_key == "model" else agent_port
@@ -646,7 +689,7 @@ elif tunnel_key == "cloudflared":
     else:
         print("⚠️ Could not extract Cloudflare URL; check /content/cloudflared.log.")
 
-# 7. Worker Credentials & Visual Banner
+# 8. Worker Credentials & Visual Banner with Live Stream Box
 provider_category = "Hybrid" if mode_key == "hybrid" else ("Image" if mode_key == "model" else ("LLM" if mode_key == "llm" else "TTS"))
 provider_type = "remote_hybrid" if mode_key == "hybrid" else ("remote_comfy" if mode_key == "model" else ("remote_llm" if mode_key == "llm" else "remote_tts"))
 
@@ -666,79 +709,209 @@ else:
     agent_endpoint = f"http://<YOUR_IP>:{agent_port}"
     llm_endpoint = f"http://<YOUR_IP>:{llm_port}"
 
-def _copy_btn(text):
-    return f'''<button onclick="navigator.clipboard.writeText('{text}').then(() => {{ this.innerText = '✅ Copied!'; setTimeout(() => this.innerText = '📋 Copy', 2000); }})" style="background: #2563eb; color: white; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: bold;">📋 Copy</button>'''
+def _credential_row(label, val, color="#a5f3fc"):
+    if not val:
+        return ""
+    return f'''
+        <div style="margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="color: #64748b; font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">{label}</span>
+                <button onclick="if (navigator.clipboard) {{ let b = this; navigator.clipboard.writeText('{val}').then(() => {{ b.innerText='✓ Copied'; b.style.color='#34d399'; setTimeout(() => {{ b.innerText='📋 Copy'; b.style.color='#94a3b8'; }}, 1500); }}); }}" style="background: rgba(51, 65, 85, 0.4); border: 1px solid #475569; border-radius: 4px; color: #94a3b8; font-size: 10px; padding: 1px 7px; cursor: pointer;">📋 Copy</button>
+            </div>
+            <div style="font-family: monospace; font-size: 14px; color: {color}; word-break: break-all; margin-top: 2px;">{val}</div>
+        </div>
+    '''
 
-rows_html = f'''
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">Provider Category & Type</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;"><b>{provider_category}</b> &rarr; <code>{provider_type}</code></td><td style="padding: 8px 12px;"></td></tr>
-'''
-
+rows_html = ""
 if mode_key == "hybrid":
+    rows_html += _credential_row("Unified Base URL (base_url)", base_endpoint)
+    rows_html += _credential_row("ComfyUI Server URL (comfy_url)", comfy_endpoint)
+    rows_html += _credential_row("Remote Agent URL (agent_url)", agent_endpoint)
+    rows_html += _credential_row("LLM Server URL (llm_url)", llm_endpoint)
     rows_html += f'''
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">Unified Base URL (base_url)</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;">{base_endpoint}</td><td style="padding: 8px 12px;">{_copy_btn(base_endpoint)}</td></tr>
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">ComfyUI Server URL (comfy_url)</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;">{comfy_endpoint}</td><td style="padding: 8px 12px;">{_copy_btn(comfy_endpoint)}</td></tr>
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">Remote Agent URL (agent_url)</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;">{agent_endpoint}</td><td style="padding: 8px 12px;">{_copy_btn(agent_endpoint)}</td></tr>
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">LLM Server URL (llm_url)</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;">{llm_endpoint}</td><td style="padding: 8px 12px;">{_copy_btn(llm_endpoint)}</td></tr>
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">Hardware Concurrency Policy</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;"><b>{policy_key}</b></td><td style="padding: 8px 12px;"></td></tr>
-'''
+        <div style="margin-bottom: 12px;">
+            <span style="color: #64748b; font-size: 11px; text-transform: uppercase; font-weight: bold;">Hardware Concurrency Policy</span>
+            <div style="font-family: monospace; font-size: 14px; color: #f59e0b; margin-top: 2px;">{policy_key}</div>
+        </div>
+    '''
 elif mode_key == "model":
-    rows_html += f'''
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">ComfyUI Server URL (comfy_url)</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;">{comfy_endpoint}</td><td style="padding: 8px 12px;">{_copy_btn(comfy_endpoint)}</td></tr>
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">Remote Storage Agent URL (agent_url)</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;">{agent_endpoint}</td><td style="padding: 8px 12px;">{_copy_btn(agent_endpoint)}</td></tr>
-'''
+    rows_html += _credential_row("ComfyUI Server URL (comfy_url)", comfy_endpoint)
+    rows_html += _credential_row("Remote Storage Agent URL (agent_url)", agent_endpoint)
 elif mode_key == "llm":
-    rows_html += f'''
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">Remote LLM Base URL (base_url)</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;">{agent_endpoint}</td><td style="padding: 8px 12px;">{_copy_btn(agent_endpoint)}</td></tr>
-'''
+    rows_html += _credential_row("Remote LLM Base URL (base_url)", agent_endpoint)
 elif mode_key == "tts":
-    rows_html += f'''
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">Remote TTS Base URL (base_url)</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;">{agent_endpoint}</td><td style="padding: 8px 12px;">{_copy_btn(agent_endpoint)}</td></tr>
-'''
+    rows_html += _credential_row("Remote TTS Base URL (base_url)", agent_endpoint)
 
-rows_html += f'''
-<tr><td style="padding: 8px 12px; font-weight: 600; color: #475569;">Remote Agent Token (agent_token)</td><td style="padding: 8px 12px; font-family: monospace; color: #0f172a;">{agent_token}</td><td style="padding: 8px 12px;">{_copy_btn(agent_token)}</td></tr>
-'''
+rows_html += _credential_row("Remote Agent Token (agent_token)", agent_token, color="#34d399")
 
-ram_badge = f'''
-<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin: 12px 0; font-size: 13px;">
-  <span style="font-weight: 700; color: #0f172a;">⚡ High-Speed RAM Cache Status:</span>
-  <span style="color: #2563eb; font-weight: 600; margin-left: 8px;">{ram_status['used_gb']} GB / {ram_status['budget_gb']} GB ({ram_status['percent_used']}%)</span>
-  <div style="margin-top: 6px; color: #64748b; font-size: 12px;">
-    <b>Pinned Anchors (Protected):</b> {", ".join([a["model_id"] for a in ram_status["anchor_models"]]) or "None"}
-  </div>
+ram_badge_html = f'''
+<div style="background: rgba(30, 41, 59, 0.7); border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-weight: 700; color: #38bdf8;">⚡ High-Speed RAM Cache Status:</span>
+        <span style="color: #60a5fa; font-weight: 600;">{ram_status['used_gb']} GB / {ram_status['budget_gb']} GB ({ram_status['percent_used']}%)</span>
+    </div>
+    <div style="margin-top: 4px; color: #94a3b8; font-size: 11px;">
+        <b>Pinned Anchors (Protected):</b> {", ".join([a["model_id"] for a in ram_status["anchor_models"]]) or "None"}
+    </div>
 </div>
 '''
 
-banner_html = f'''
-<div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 4px 12px rgba(0,0,0,0.06); max-width: 820px; margin: 16px 0;">
-  <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 14px;">
-    <h3 style="margin: 0; color: #0f172a; font-size: 18px; font-weight: 700;">✨ TNHComfy Colab Worker is Ready! ({provider_category} Mode)</h3>
-    <span style="background: #22c55e; color: white; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; text-transform: uppercase;">● Online</span>
-  </div>
-  <p style="color: #64748b; margin: 0 0 12px 0; font-size: 13px;">Your worker is online, connected, and primed. Copy the credentials below into your TNHComfy Providers page:</p>
-  {ram_badge}
-  <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; background: #f8fafc; border-radius: 8px; overflow: hidden;">
-    {rows_html}
-  </table>
-  <div style="margin-top: 14px; padding: 10px 14px; background: #ecfdf5; border-left: 4px solid #10b981; border-radius: 4px; font-size: 12px; color: #065f46;">
-    <b>💡 Static Configuration:</b> Because your NetBird state and token are saved in Google Drive, the IP and token above are permanent. You do not need to reconfigure the TNHComfy provider on subsequent restarts.
-  </div>
+card_header_html = f'''
+<style>
+.tnh-log-box {{
+    background-color: #020617 !important;
+    color: #cbd5e1 !important;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace !important;
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: #475569 #020617 !important;
+}}
+.tnh-log-box pre {{
+    color: inherit !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    white-space: pre-wrap !important;
+    word-break: break-all !important;
+}}
+</style>
+<div style="color: #f8fafc; font-family: system-ui, -apple-system, sans-serif;">
+    <h2 style="margin: 0 0 12px 0; color: #60a5fa; font-size: 20px; display: flex; align-items: center; gap: 8px;">
+        ✨ TNHComfy Colab Worker is Ready! ({provider_category} Mode)
+    </h2>
+    <p style="margin: 0 0 16px 0; font-size: 14px; color: #94a3b8;">
+        Your worker is online and connected. Copy the credentials below into your TNHComfy Providers page:
+    </p>
+
+    {ram_badge_html}
+
+    <div style="background: rgba(15, 23, 42, 0.85); border: 1px solid #334155; border-radius: 10px; padding: 16px; margin-bottom: 16px;">
+        <div style="margin-bottom: 12px;">
+            <span style="color: #64748b; font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Provider Category & Type</span>
+            <div style="font-family: monospace; font-size: 14px; color: #38bdf8; font-weight: bold; margin-top: 2px;">{provider_category} &rarr; <code>{provider_type}</code></div>
+        </div>
+        {rows_html}
+    </div>
+
+    <div style="font-size: 13px; color: #cbd5e1; background: rgba(59, 130, 246, 0.15); border-left: 4px solid #3b82f6; padding: 12px 16px; border-radius: 4px; line-height: 1.5; margin-bottom: 18px;">
+        💡 <b>Static Configuration:</b><br/>
+        Because your NetBird state and token are saved in Google Drive, the IP and token above are <b>permanent</b>. You do not need to update your provider row when restarting Colab!
+    </div>
+
+    <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 12px; border-top: 1px solid rgba(59, 130, 246, 0.25); margin-bottom: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 8px #22c55e;"></span>
+            <span style="font-size: 13px; font-weight: 700; color: #e2e8f0; letter-spacing: 0.02em;">
+                Live Worker Activity & Traffic Log
+            </span>
+        </div>
+        <div style="font-size: 11px; color: #64748b;">
+            Scroll wheel inside log window to inspect history • Colab ⏹️ to stop
+        </div>
+    </div>
 </div>
 '''
-display(HTML(banner_html))
 
-# 8. Live Background Streaming Monitor
-print("\\n👀 Streaming service logs (Ctrl+C or interrupt cell anytime to stop streaming; processes will stay running):")
 try:
-    with open(log_agent, "r") as fa:
-        fa.seek(0, 2)
-        while True:
-            line_a = fa.readline()
-            if line_a:
-                print(f"[Agent] {line_a.rstrip()}")
-            time.sleep(0.5)
+    import ipywidgets as widgets
+    card_widget = widgets.HTML(card_header_html)
+    log_box = widgets.Output(layout=widgets.Layout(
+        height="320px",
+        max_height="400px",
+        overflow_y="auto",
+        border="1px solid #334155",
+        border_radius="10px",
+        padding="12px 16px",
+        background_color="#020617"
+    ))
+    log_box.add_class("tnh-log-box")
+    panel = widgets.VBox([card_widget, log_box], layout=widgets.Layout(
+        background="linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)",
+        border="1px solid #3b82f6",
+        border_radius="16px",
+        padding="24px",
+        margin="20px 0 10px 0",
+        box_shadow="0 10px 25px -5px rgba(0, 0, 0, 0.5)"
+    ))
+    display(panel)
+    with log_box:
+        print("📡 Connected to worker service log streams. Waiting for incoming events...", flush=True)
+except Exception:
+    display(HTML(f'<div style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); border: 1px solid #3b82f6; border-radius: 16px; padding: 24px; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); margin: 20px 0 10px 0;">{card_header_html}</div>'))
+    log_box = None
+
+log_files = {"Agent": log_agent}
+if mode_key in ("hybrid", "model", "tts"):
+    log_files["ComfyUI"] = log_comfy
+if mode_key in ("hybrid", "llm"):
+    log_files["LLM"] = log_llm
+
+handles = {}
+for label, p in log_files.items():
+    if os.path.exists(p):
+        f = open(p, "r", errors="replace")
+        sz = os.path.getsize(p)
+        if sz > 16384:
+            f.seek(max(0, sz - 8192), os.SEEK_SET)
+        handles[label] = f
+
+TAG_COLORS = {
+    "Agent": "\033[92m[Agent]\033[0m",
+    "ComfyUI": "\033[94m[ComfyUI]\033[0m",
+    "LLM": "\033[93m[LLM]\033[0m",
+    "Status": "\033[95m[Status]\033[0m",
+}
+
+total_lines = 0
+
+try:
+    while True:
+        activity = False
+        batch = []
+        for label, f in list(handles.items()):
+            for _ in range(50):
+                line = f.readline()
+                if not line:
+                    break
+                activity = True
+                line_clean = line.strip()
+                if line_clean:
+                    batch.append([label, line_clean])
+
+        for label, p in log_files.items():
+            if label not in handles and os.path.exists(p):
+                f = open(p, "r", errors="replace")
+                handles[label] = f
+
+        if batch:
+            total_lines += len(batch)
+            if log_box:
+                if total_lines > 2000:
+                    log_box.clear_output(wait=True)
+                    total_lines = len(batch)
+                with log_box:
+                    for l, t in batch:
+                        tag = TAG_COLORS.get(l, f"[{l}]")
+                        print(f"{tag} {t}", flush=True)
+            else:
+                for l, t in batch:
+                    print(f"[{l}] {t}", flush=True)
+
+        if not activity:
+            time.sleep(0.3)
 except KeyboardInterrupt:
-    print("\\n🛑 Stopped live log monitor. Your background services are still running happily!")
+    if log_box:
+        with log_box:
+            print("\\n\\033[91m🛑 Stopped live log monitor. Your background services are still running happily!\\033[0m", flush=True)
+    else:
+        print("\\n🛑 Stopped live log monitor. Your background services are still running happily!")
+finally:
+    for f in handles.values():
+        try:
+            f.close()
+        except Exception:
+            pass
 """
     return [line + "\n" for line in code.split("\n")[:-1]]
 

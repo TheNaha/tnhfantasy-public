@@ -41,17 +41,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # No `ports:` on purpose. This is the security boundary, and it was
-    # invisible: a bare "8002:8002" published the entire unauthenticated API on
-    # every interface, so anything that could route to this host could read every
-    # prompt and call DELETE /api/jobs — which is what happened on 2026-10-01.
-    #
-    # Traefik reaches this container directly on the `proxy` docker network below,
-    # so no host port is needed for the app to work. For a shell:
-    #   docker compose exec backend_v2 curl -s localhost:8002/api/live
-    #
-    # Reachability is governed by the NetBird ACL on the reverse proxy, not by
-    # anything in this file.
+    # Port 8002 bound specifically to the private NetBird mesh interface
+    # (never published to 0.0.0.0 public internet).
+    ports:
+      - "${COMFY_BACKEND_BIND:-100.150.0.4}:8002:8002"
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy

@@ -10,12 +10,40 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 logger = logging.getLogger("ram_manager")
+
+
+def drop_page_cache() -> None:
+    """Flush and drop kernel page cache after large I/O to restore available system RAM."""
+    try:
+        subprocess.run(["sync"], check=False)
+        with open("/proc/sys/vm/drop_caches", "w") as f:
+            f.write("3\n")
+    except Exception:
+        pass
+
+
+def ensure_shm_capacity(needed_bytes: int = 0) -> None:
+    """Expand /dev/shm filesystem capacity beyond Linux 50% default if running with privileges."""
+    try:
+        if not os.path.exists("/dev/shm"):
+            return
+        usage = shutil.disk_usage("/dev/shm")
+        if usage.free < needed_bytes or usage.free < (10 * 1024 * 1024 * 1024):
+            total_ram, _ = _get_system_ram_info()
+            max_shm_gb = min(45, int((total_ram * 0.82) / (1024**3)))
+            current_total_gb = int(usage.total / (1024**3))
+            if max_shm_gb > current_total_gb:
+                subprocess.run(["mount", "-o", f"remount,size={max_shm_gb}G", "/dev/shm"], check=False)
+                logger.info("shm_capacity_expanded", extra={"new_size_gb": max_shm_gb})
+    except Exception as exc:
+        logger.debug(f"Could not expand /dev/shm: {exc}")
 
 
 def _get_system_ram_info() -> tuple[int, int]:
@@ -239,6 +267,16 @@ class RamModelManager:
         if self.current_usage_bytes + needed > self.budget_bytes:
             self.evict_lru(needed)
 
+        # Ensure physical filesystem mount (/dev/shm) has capacity
+        ensure_shm_capacity(needed)
+        try:
+            while shutil.disk_usage(self.ram_dir).free < needed:
+                freed = self.evict_lru(needed)
+                if freed == 0:
+                    break
+        except Exception:
+            pass
+
         # 3. Stream / Copy into RAM cache atomically
         dest_filename = f"{mid}_{src.name}" if not src.name.startswith(mid) else src.name
         dest_path = self.ram_dir / dest_filename
@@ -290,6 +328,8 @@ class RamModelManager:
             is_anchor=is_anchor,
             last_used=time.time(),
         )
+
+        drop_page_cache()
 
         return dest_path
 
