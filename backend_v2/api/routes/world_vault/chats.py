@@ -26,6 +26,7 @@ from core.entities import (
     MessageKind,
     MessageRole,
     Persona,
+    Scenario,
     VoiceModel,
 )
 from core.exceptions import ComfyError, NotFoundError, ValidationError
@@ -38,6 +39,7 @@ from core.upload_validation import (
 from services.chat_utils import (
     insert_world_state_marker,
     link_embedded_lorebook,
+    resolve_scenario_defaults,
     resolve_voice_for_character,
     substitute_tavern_vars,
 )
@@ -161,6 +163,7 @@ class UpdateChatRequest(BaseModel):
     # field is `exclude_unset`), so a chat is only detached through an explicit
     # empty string, which `update_chat` maps to `None`.
     world_id: str | None = None
+    scenario_id: str | None = None
     character_id: str | None = None
     # The group-chat roster. This was missing, and pydantic's default
     # `extra='ignore'` dropped it silently: `ChatContextPanel` PATCHed it and
@@ -218,6 +221,7 @@ class CreateChatRequest(BaseModel):
     # introduced the World entity and nothing ever wrote it, so a World could
     # not own a chat and the world page had no chats to show.
     world_id: str | None = None
+    scenario_id: str | None = None
     character_id: str | None = None
     additional_character_ids: list[str] = []
     chat_type: str = "chat"
@@ -650,6 +654,10 @@ def create_chat(req: CreateChatRequest, session: Session = Depends(get_session),
         persona = session.get(Persona, req.persona_id)
         if not persona:
             raise NotFoundError("Persona", req.persona_id)
+    if req.scenario_id:
+        scenario = session.get(Scenario, req.scenario_id)
+        if not scenario:
+            raise NotFoundError("Scenario", req.scenario_id)
     require_world(session, req.world_id)
 
     # A character card's embedded ("character_book") lorebook is active in every
@@ -659,6 +667,7 @@ def create_chat(req: CreateChatRequest, session: Session = Depends(get_session),
     chat = Chat(
         name=req.name,
         character_id=req.character_id,
+        scenario_id=req.scenario_id,
         chat_type=req.chat_type,
         persona_name=req.persona_name,
         story_time=req.story_time,
@@ -829,6 +838,11 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
         persona = session.get(Persona, update_fields["persona_id"])
         if not persona:
             raise NotFoundError("Persona", update_fields["persona_id"])
+    if "scenario_id" in update_fields:
+        scen_id = (update_fields["scenario_id"] or "").strip() or None
+        if scen_id is not None and not session.get(Scenario, scen_id):
+            raise NotFoundError("Scenario", scen_id)
+        update_fields["scenario_id"] = scen_id
     # An explicit empty string detaches; an unknown id is a 404 rather than a
     # silent drop, so a typo is visible instead of leaving a chat that looks
     # owned and is not. `_UNSET` rather than `None` because `None` is also the
@@ -1316,7 +1330,7 @@ def _narrate_message_prep_sync(
     if not message.content:
         raise ComfyError("Message has no content to narrate")
 
-    # Resolve voice profile: explicit voice_id → chat override → character voice → default
+    # Resolve voice profile: explicit voice_id → chat override → character voice → scenario default → default
     voice_profile = voice_model_id = language = None
     chosen_voice_id = (data.voice_id if data else None) or chat.tts_voice_id
     if chosen_voice_id:
@@ -1329,6 +1343,10 @@ def _narrate_message_prep_sync(
     elif chat.character_id:
         char = character_repo.get(chat.character_id)
         voice_profile, voice_model_id, language = resolve_voice_for_character(session, char)
+    if not voice_profile:
+        _, scenario_voice = resolve_scenario_defaults(session, chat)
+        if scenario_voice:
+            voice_profile = scenario_voice
     if data and data.language:
         language = data.language
 
@@ -2263,12 +2281,15 @@ def _scene_job_prep_sync(
 
     context_text = "\n".join([f"{m.role.value}: {m.content}" for m in past_messages[-10:] if m.content])
 
-    # Resolve checkpoint: character > configured default > any installed model
+    # Resolve checkpoint: character > scenario default > configured default > any installed model
     checkpoint = None
     if chat.character_id:
         character = character_repo.get(chat.character_id)
         if character and character.checkpoint:
             checkpoint = character.checkpoint
+    if not checkpoint:
+        scenario_ckpt, _ = resolve_scenario_defaults(session, chat)
+        checkpoint = scenario_ckpt
     if not checkpoint:
         from services.model_availability_service import ModelAvailabilityService
         checkpoint = ModelAvailabilityService(session).resolve_checkpoint()
@@ -2415,6 +2436,9 @@ def _illustrate_prep_sync(
     character = character_repo.get(chat.character_id) if chat.character_id else None
 
     checkpoint = (character.checkpoint if character and character.checkpoint else None)
+    if not checkpoint:
+        scenario_ckpt, _ = resolve_scenario_defaults(session, chat)
+        checkpoint = scenario_ckpt
     if not checkpoint:
         checkpoint = ModelAvailabilityService(session).resolve_checkpoint()
 

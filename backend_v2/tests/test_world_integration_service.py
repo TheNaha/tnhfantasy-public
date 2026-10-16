@@ -11,6 +11,7 @@ from core.entities import (
     Collection,
     CollectionImage,
     Job,
+    Location,
     Lorebook,
     Message,
     MessageKind,
@@ -495,13 +496,18 @@ async def test_handle_story_parse_creates_characters_and_lorebooks(session, wire
         assert alice.personality == "Bold"
 
         lorebooks = check.exec(select(Lorebook).where(Lorebook.name.in_(["The Shire", "Ancient Lore"]))).all()
-        assert len(lorebooks) == 2
+        assert len(lorebooks) == 1
+        assert lorebooks[0].name == "Ancient Lore"
+
+        locations = check.exec(select(Location).where(Location.name == "The Shire")).all()
+        assert len(locations) == 1
+        assert locations[0].description == "A peaceful valley"
 
         updated_story = check.get(Story, story.id)
         assert "Alice" in [check.get(Character, cid).name for cid in updated_story.character_ids]
         assert "Bob" in [check.get(Character, cid).name for cid in updated_story.character_ids]
-        # The Shire and Ancient Lore are linked as lorebooks
-        assert len(updated_story.lorebook_ids) == 2
+        assert len(updated_story.lorebook_ids) == 1
+        assert len(updated_story.location_ids) == 1
 
 
 @pytest.mark.asyncio

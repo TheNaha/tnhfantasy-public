@@ -569,6 +569,10 @@ async def _tool_update_world_state(
 
     async with get_session_context() as session:
         try:
+            from sqlalchemy import func
+            from sqlmodel import select
+            from core.entities import Location
+
             chat = session.get(Chat, chat_id)
             if not chat:
                 return {"status": "error", "error": f"Chat {chat_id} not found."}
@@ -579,6 +583,25 @@ async def _tool_update_world_state(
             if location_value:
                 chat.story_location = location_value
                 updated["location"] = location_value
+                matched_loc = None
+                if chat.world_id:
+                    matched_loc = session.exec(
+                        select(Location)
+                        .where(
+                            Location.world_id == chat.world_id,
+                            func.lower(Location.name) == location_value.lower(),
+                        )
+                        .limit(1)
+                    ).first()
+                if matched_loc is None:
+                    matched_loc = session.exec(
+                        select(Location)
+                        .where(func.lower(Location.name) == location_value.lower())
+                        .limit(1)
+                    ).first()
+                if matched_loc is not None:
+                    chat.location_id = matched_loc.id
+                    updated["location_id"] = matched_loc.id
             session.add(chat)
             session.commit()
 

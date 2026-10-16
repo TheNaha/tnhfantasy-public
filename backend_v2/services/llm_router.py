@@ -54,6 +54,7 @@ ROLE_BY_KIND: Dict[str, str] = {
     # Suggesting a reply has to sound like the *character* would write it, so it
     # is prose even though it is short.
     "suggest_reply": "rp",
+    "impersonation": "rp",
 
     # --- util: the things a program evaluates as structured output ---------
     # Writing chapters back into the DB is parsing, not prose.

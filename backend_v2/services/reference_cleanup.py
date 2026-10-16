@@ -122,6 +122,7 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         for voice in session.exec(select(VoiceModel).where(VoiceModel.character_id == entity_id)).all():
             voice.character_id = None
         _detach_from_world(session, Character, entity_id)
+        _drop_graph_node(session, entity_id)
     elif kind == "lorebook":
         _scrub_stories(session, "lorebook_ids", entity_id)
         _scrub_chats(session, "active_lorebook_ids", entity_id)
@@ -139,19 +140,27 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         # path, three lines below the helper that already does this correctly.
         _scrub_json_array(session, Character, "lorebook_ids", entity_id)
         _detach_from_world(session, Lorebook, entity_id)
+        _drop_graph_node(session, entity_id)
     elif kind == "voice":
         for character in session.exec(select(Character).where(Character.voice_model_id == entity_id)).all():
             character.voice_model_id = None
         for chat in session.exec(select(Chat).where(Chat.tts_voice_id == entity_id)).all():
             chat.tts_voice_id = None
         _detach_from_world(session, VoiceModel, entity_id)
+        _drop_graph_node(session, entity_id)
     elif kind == "scenario":
         for story in session.exec(select(Story).where(Story.scenario_id == entity_id)).all():
             story.scenario_id = None
+        for chat in session.exec(select(Chat).where(Chat.scenario_id == entity_id)).all():
+            chat.scenario_id = None
         _detach_from_world(session, Scenario, entity_id)
+        _drop_graph_node(session, entity_id)
     elif kind == "persona":
         for chat in session.exec(select(Chat).where(Chat.persona_id == entity_id)).all():
             chat.persona_id = None
+        for story in session.exec(select(Story).where(Story.persona_id == entity_id)).all():
+            story.persona_id = None
+        _drop_graph_node(session, entity_id)
     elif kind == "world":
         # Delegates rather than repeating. Covers all seven member tables —
         # deleting a world used to leave Character, Lorebook, Location,
@@ -161,11 +170,13 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         from services.world_ownership import detach_world
 
         detach_world(session, entity_id)
+        _drop_graph_node(session, entity_id)
     elif kind == "location":
         _scrub_stories(session, "location_ids", entity_id)
         for chat in session.exec(select(Chat).where(Chat.location_id == entity_id)).all():
             chat.location_id = None
         _detach_from_world(session, Location, entity_id)
+        _drop_graph_node(session, entity_id)
     elif kind == "chat":
         # Direct SQL DELETE and a flush, ahead of the route's `session.delete(chat)`.
         # The ORM unit of work is free to issue the chat DELETE before the

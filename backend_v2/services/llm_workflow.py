@@ -78,6 +78,8 @@ def build_llm_workflow(
         role_sampler = {}
     if role_sampler:
         workflow.update(role_sampler)
+        if "max_tokens" in role_sampler and "max_output_tokens" not in role_sampler:
+            workflow["max_output_tokens"] = role_sampler["max_tokens"]
 
     if samplers:
         workflow.update(samplers)

@@ -95,13 +95,13 @@ class TestBranchFilteredContextReads:
 
         seen: list[list[str]] = []
 
-        async def _spy(messages, **kwargs):
+        def _spy(_session, _workspace, _entity, messages, **kwargs):
             seen.append([m.content for m in messages])
             # Three values: the trace-carrying builder's contract.
             return "sys", [{"role": "user", "content": "x"}], []
 
         monkeypatch.setattr(
-            "api.routes.world_vault.chats.build_chat_context_with_sections_async", _spy
+            "api.routes.world_vault.chats.build_context", _spy
         )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
@@ -132,13 +132,13 @@ class TestBranchFilteredContextReads:
 
         seen: list[list[str]] = []
 
-        async def _spy(messages, **kwargs):
+        def _spy(_session, _workspace, _entity, messages, **kwargs):
             seen.append([m.content for m in messages])
             # Three values: the trace-carrying builder's contract.
             return "sys", [{"role": "user", "content": "x"}], []
 
         monkeypatch.setattr(
-            "api.routes.world_vault.chats.build_chat_context_with_sections_async", _spy
+            "api.routes.world_vault.chats.build_context", _spy
         )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
@@ -178,13 +178,13 @@ class TestBranchFilteredContextReads:
 
         seen: list[list[str]] = []
 
-        async def _spy(messages, **kwargs):
+        def _spy(_session, _workspace, _entity, messages, **kwargs):
             seen.append([m.content for m in messages])
             # Three values: the trace-carrying builder's contract.
             return "sys", [{"role": "user", "content": "x"}], []
 
         monkeypatch.setattr(
-            "api.routes.world_vault.chats.build_chat_context_with_sections_async", _spy
+            "api.routes.world_vault.chats.build_context", _spy
         )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
@@ -311,8 +311,8 @@ class TestBranchContinuation:
         branch = _create_branch(client, chat.id, m1.id)
 
         monkeypatch.setattr(
-            "api.routes.world_vault.chats.build_chat_context_with_sections_async",
-            AsyncMock(return_value=("sys", [], [])),
+            "api.routes.world_vault.chats.build_context",
+            lambda *a, **kw: ("sys", [], []),
         )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)
@@ -350,8 +350,8 @@ class TestBranchContinuation:
         branch = _create_branch(client, chat.id, m1.id)
 
         monkeypatch.setattr(
-            "api.routes.world_vault.chats.build_chat_context_with_sections_async",
-            AsyncMock(return_value=("sys", [], [])),
+            "api.routes.world_vault.chats.build_context",
+            lambda *a, **kw: ("sys", [], []),
         )
         monkeypatch.setattr(
             "services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True)

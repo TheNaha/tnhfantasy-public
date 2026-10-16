@@ -144,6 +144,10 @@ def apply_scenario(scenario_id: str, req: ApplyScenarioRequest, session: Session
         raise NotFoundError("Scenario", scenario_id)
 
     result = {"scenario_id": scenario_id, "scenario_name": scenario.name}
+    if scenario.default_checkpoint:
+        result["default_checkpoint"] = scenario.default_checkpoint
+    if scenario.default_voice_profile:
+        result["default_voice_profile"] = scenario.default_voice_profile
 
     if req.target_type == "chat":
         chat = session.get(Chat, req.target_id)
@@ -165,6 +169,7 @@ def apply_scenario(scenario_id: str, req: ApplyScenarioRequest, session: Session
         # the explicit "Chat Prompt" tab, and its replace-semantics are
         # documented in the builder. What was wrong was this button reaching
         # for it.
+        chat.scenario_id = scenario_id
         chat.append_system_prompt = _append_directive(chat.append_system_prompt, scenario.prompt_template)
         session.add(chat)
         session.commit()
@@ -184,3 +189,4 @@ def apply_scenario(scenario_id: str, req: ApplyScenarioRequest, session: Session
         result["story_id"] = req.target_id
 
     return result
+

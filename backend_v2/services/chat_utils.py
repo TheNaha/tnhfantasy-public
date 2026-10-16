@@ -451,3 +451,33 @@ def resolve_voice_for_character(session: Session, char) -> tuple:
     if not voice_profile:
         voice_profile = getattr(char, "voice_profile", None)
     return voice_profile, voice_model_id, language
+
+
+def resolve_scenario_defaults(
+    session: Session, entity
+) -> tuple[str | None, str | None]:
+    """Resolve ``(default_checkpoint, default_voice_profile)`` from an entity's Scenario.
+
+    Checks ``entity.scenario_id`` first, then falls back to the owning World's
+    scenario via :func:`services.world_ownership.world_scenario`.
+    """
+    if not entity or session is None:
+        return None, None
+    from core.entities import Scenario
+    from services.world_ownership import world_scenario
+
+    scenario = None
+    scenario_id = getattr(entity, "scenario_id", None)
+    if scenario_id:
+        scenario = session.get(Scenario, scenario_id)
+    if scenario is None:
+        world_id = getattr(entity, "world_id", None)
+        if world_id:
+            scenario = world_scenario(session, world_id)
+    if scenario is None:
+        return None, None
+    return (
+        (scenario.default_checkpoint or "").strip() or None,
+        (scenario.default_voice_profile or "").strip() or None,
+    )
+

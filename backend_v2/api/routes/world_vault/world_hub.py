@@ -81,7 +81,7 @@ def get_relationships(
     own ceiling as a separate upper bound, so a page asking for `limit=1000` still
     cannot pull more than a section's cap.
     """
-    # Character → Chats
+    # Character → Chats (primary character_id + additional_character_ids)
     char_chat_links = [
         tuple(row) for row in session.exec(
             select(Character.id, Character.name, Chat.id, Chat.name)
@@ -94,11 +94,38 @@ def get_relationships(
         ).all()
     ]
 
+    chats = session.exec(
+        select(
+            Chat.id,
+            Chat.name,
+            Chat.additional_character_ids,
+            Chat.active_lorebook_ids,
+            Chat.tts_voice_id,
+            Chat.scenario_id,
+        )
+        .order_by(Chat.created_at.desc(), Chat.id)
+        .limit(min(limit, 200))
+        .offset(offset)
+    ).all()
+
+    extra_chat_char_ids = {
+        c_id
+        for ch in chats
+        for c_id in (ch.additional_character_ids or [])
+    }
+
     # Character → Stories (via character_ids JSON).
     # Cap the number of stories loaded into memory to keep this endpoint
     # bounded as the vault grows.
     stories = session.exec(
-        select(Story.id, Story.title, Story.character_ids, Story.lorebook_ids, Story.location_ids)
+        select(
+            Story.id,
+            Story.title,
+            Story.character_ids,
+            Story.lorebook_ids,
+            Story.location_ids,
+            Story.scenario_id,
+        )
         .order_by(Story.created_at.desc())
         .limit(min(limit, 200))
         .offset(offset)
@@ -107,7 +134,7 @@ def get_relationships(
         char_id
         for story in stories
         for char_id in (story.character_ids or [])
-    }
+    } | extra_chat_char_ids
     if char_ids:
         characters = session.exec(
             select(Character.id, Character.name).where(Character.id.in_(char_ids))
@@ -115,6 +142,15 @@ def get_relationships(
     else:
         characters = []
     char_name_map = dict(characters)
+
+    seen_char_chat = {(c_id, chat_id) for c_id, _, chat_id, _ in char_chat_links}
+    for ch in chats:
+        for c_id in ch.additional_character_ids or []:
+            c_name = char_name_map.get(c_id)
+            if c_name is not None and (c_id, ch.id) not in seen_char_chat:
+                seen_char_chat.add((c_id, ch.id))
+                char_chat_links.append((c_id, c_name, ch.id, ch.name))
+
     char_story_links = []
     for story in stories:
         for char_id in story.character_ids or []:
@@ -138,13 +174,30 @@ def get_relationships(
                     "dangling": True,
                 })
 
-    # Story → Lorebooks (via lorebook_ids JSON)
+    # Characterrows with lorebooks / voices
+    char_rows = session.exec(
+        select(
+            Character.id,
+            Character.name,
+            Character.lorebook_ids,
+            Character.embedded_lorebook_id,
+            Character.voice_model_id,
+        )
+        .order_by(Character.created_at.desc(), Character.id)
+        .limit(min(limit, 200))
+        .offset(offset)
+    ).all()
+
+    # Story / Chat / Character → Lorebooks
     story_lorebook_links = []
-    lorebook_ids = {
-        lb_id
-        for story in stories
-        for lb_id in (story.lorebook_ids or [])
-    }
+    chat_lorebook_links = []
+    character_lorebook_links = []
+    lorebook_ids = (
+        {lb_id for story in stories for lb_id in (story.lorebook_ids or [])}
+        | {lb_id for ch in chats for lb_id in (ch.active_lorebook_ids or [])}
+        | {lb_id for cr in char_rows for lb_id in (cr.lorebook_ids or [])}
+        | {cr.embedded_lorebook_id for cr in char_rows if cr.embedded_lorebook_id}
+    )
     if lorebook_ids:
         lorebooks = session.exec(
             select(Lorebook).where(Lorebook.id.in_(lorebook_ids))
@@ -171,11 +224,40 @@ def get_relationships(
                     "dangling": True,
                 })
 
-    # Character → VoiceModels
-    #
-    # Ordered for the same reason as `char_chat_links` above: an unordered join
-    # with `.offset()` can repeat or skip rows across pages, because Postgres is
-    # free to return a different row order for each execution.
+    for ch in chats:
+        for lb_id in ch.active_lorebook_ids or []:
+            lb = lorebook_map.get(lb_id)
+            if lb:
+                chat_lorebook_links.append({
+                    "chat_id": ch.id,
+                    "chat_name": ch.name,
+                    "lorebook_id": lb.id,
+                    "lorebook_name": lb.name,
+                })
+            else:
+                chat_lorebook_links.append({
+                    "chat_id": ch.id,
+                    "chat_name": ch.name,
+                    "lorebook_id": lb_id,
+                    "lorebook_name": None,
+                    "dangling": True,
+                })
+
+    for cr in char_rows:
+        linked_lbs = list(cr.lorebook_ids or [])
+        if cr.embedded_lorebook_id and cr.embedded_lorebook_id not in linked_lbs:
+            linked_lbs.append(cr.embedded_lorebook_id)
+        for lb_id in linked_lbs:
+            lb = lorebook_map.get(lb_id)
+            if lb:
+                character_lorebook_links.append({
+                    "character_id": cr.id,
+                    "character_name": cr.name,
+                    "lorebook_id": lb.id,
+                    "lorebook_name": lb.name,
+                })
+
+    # Character → VoiceModels (both VoiceModel.character_id and Character.voice_model_id)
     voice_links = [
         tuple(row) for row in session.exec(
             select(VoiceModel.id, VoiceModel.name, Character.id, Character.name)
@@ -185,6 +267,34 @@ def get_relationships(
             .offset(offset)
         ).all()
     ]
+    seen_voice_char = {(v_id, c_id) for v_id, _, c_id, _ in voice_links}
+    referenced_voice_ids = (
+        {cr.voice_model_id for cr in char_rows if cr.voice_model_id}
+        | {ch.tts_voice_id for ch in chats if ch.tts_voice_id}
+    )
+    voice_map = {}
+    if referenced_voice_ids:
+        voice_map = dict(
+            session.exec(
+                select(VoiceModel.id, VoiceModel.name).where(VoiceModel.id.in_(referenced_voice_ids))
+            ).all()
+        )
+    for cr in char_rows:
+        if cr.voice_model_id and cr.voice_model_id in voice_map:
+            pair = (cr.voice_model_id, cr.id)
+            if pair not in seen_voice_char:
+                seen_voice_char.add(pair)
+                voice_links.append((cr.voice_model_id, voice_map[cr.voice_model_id], cr.id, cr.name))
+
+    chat_voice_links = []
+    for ch in chats:
+        if ch.tts_voice_id and ch.tts_voice_id in voice_map:
+            chat_voice_links.append({
+                "chat_id": ch.id,
+                "chat_name": ch.name,
+                "voice_id": ch.tts_voice_id,
+                "voice_name": voice_map[ch.tts_voice_id],
+            })
 
     # Story → Locations (via location_ids JSON)
     story_location_links = []
@@ -230,13 +340,51 @@ def get_relationships(
         ).all()
     ]
 
+    # Story / Chat → Scenarios (via scenario_id FK)
+    scenario_ids = (
+        {story.scenario_id for story in stories if story.scenario_id}
+        | {ch.scenario_id for ch in chats if ch.scenario_id}
+    )
+    scenario_map = {}
+    if scenario_ids:
+        scenario_map = dict(
+            session.exec(
+                select(Scenario.id, Scenario.name).where(Scenario.id.in_(scenario_ids))
+            ).all()
+        )
+    story_scenario_links = [
+        {
+            "story_id": story.id,
+            "story_title": story.title,
+            "scenario_id": story.scenario_id,
+            "scenario_name": scenario_map.get(story.scenario_id),
+        }
+        for story in stories
+        if story.scenario_id and story.scenario_id in scenario_map
+    ]
+    chat_scenario_links = [
+        {
+            "chat_id": ch.id,
+            "chat_name": ch.name,
+            "scenario_id": ch.scenario_id,
+            "scenario_name": scenario_map.get(ch.scenario_id),
+        }
+        for ch in chats
+        if ch.scenario_id and ch.scenario_id in scenario_map
+    ]
+
     return {
         "character_chats": char_chat_links,
         "character_stories": char_story_links,
         "story_lorebooks": story_lorebook_links,
+        "chat_lorebooks": chat_lorebook_links,
+        "character_lorebooks": character_lorebook_links,
         "character_voices": voice_links,
+        "chat_voices": chat_voice_links,
         "story_locations": story_location_links,
         "chat_locations": chat_location_links,
+        "story_scenarios": story_scenario_links,
+        "chat_scenarios": chat_scenario_links,
     }
 
 

@@ -2395,16 +2395,21 @@ def _illustrate_chapter_prep_sync(
     chapter_id: str,
 ) -> tuple[Story | None, StoryChapter, str]:
     """Load the chapter, its story and the checkpoint to illustrate with."""
+    from services.chat_utils import resolve_scenario_defaults
+
     story, chapter = _story_chapter_pair_sync(
         story_repo, story_chapter_repo, story_id, chapter_id
     )
 
-    # Resolve checkpoint: story characters > fallback to an installed model
-    checkpoint = _resolve_default_checkpoint(session)
+    # Resolve checkpoint: story characters > scenario default > fallback to an installed model
+    preferred_ckpt = None
     if story and story.character_ids:
         char = session.get(Character, story.character_ids[0])
         if char and char.checkpoint:
-            checkpoint = _resolve_default_checkpoint(session, char.checkpoint)
+            preferred_ckpt = char.checkpoint
+    if not preferred_ckpt and story:
+        preferred_ckpt, _ = resolve_scenario_defaults(session, story)
+    checkpoint = _resolve_default_checkpoint(session, preferred_ckpt)
     return story, chapter, checkpoint
 
 
@@ -2592,7 +2597,7 @@ def _narrate_chapter_prep_sync(
     chapter_id: str,
 ) -> tuple[str, str | None, str | None, str | None, str]:
     """Load the chapter text and resolve the voice to narrate it with."""
-    from services.chat_utils import resolve_voice_for_character
+    from services.chat_utils import resolve_scenario_defaults, resolve_voice_for_character
     from services.tts_workflow_builder import _require_tts_capable
 
     # The same guard `voices.py` calls, first, before it reads anything or builds
@@ -2613,11 +2618,15 @@ def _narrate_chapter_prep_sync(
     if not text:
         raise ComfyError("Chapter has no content to narrate")
 
-    # Resolve voice model from story or first character
+    # Resolve voice model from story or first character, falling back to scenario default
     voice_profile = voice_model_id = language = None
     if story.character_ids:
         char = session.get(Character, story.character_ids[0])
         voice_profile, voice_model_id, language = resolve_voice_for_character(session, char)
+    if not voice_profile:
+        _, scenario_voice = resolve_scenario_defaults(session, story)
+        if scenario_voice:
+            voice_profile = scenario_voice
     return (
         text,
         voice_profile,

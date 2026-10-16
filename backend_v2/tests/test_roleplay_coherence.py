@@ -497,12 +497,14 @@ class TestStoryContinuation:
 
         captured: dict = {}
 
-        async def _fake(messages, **kwargs):
-            captured["messages"] = [m["content"] for m in messages]
+        def _fake(session_arg, workspace, entity, messages=None, sections_only=False, **overrides):
+            from services.context_builder import story_context_kwargs
+            captured["messages"] = [m["content"] for m in (messages or [])]
+            kwargs = story_context_kwargs(entity, session=session_arg, **overrides)
             captured.update(kwargs)
-            return "SYSTEM", [{"role": "user", "content": "x"}]
+            return "SYSTEM", [{"role": "user", "content": "x"}], []
 
-        with patch("services.context_builder.build_chat_context_async", _fake):
+        with patch("services.context_builder.build_context", _fake):
             import asyncio
 
             asyncio.run(

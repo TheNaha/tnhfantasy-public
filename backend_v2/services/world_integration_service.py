@@ -972,12 +972,38 @@ async def _handle_story_parse(job_data: dict[str, Any]):
     if not isinstance(parsed, dict):
         return
 
+    from services.embedding_service import get_embedding_service
+
+    entries_to_build: list[dict[str, Any]] = []
+    for lore_data in (parsed.get("lorebooks") or []):
+        if not lore_data.get("name"):
+            continue
+        desc = lore_data.get("description") or ""
+        name = lore_data.get("name", "")
+        text_for_embed = f"{name} {desc}".strip()
+        emb = None
+        if text_for_embed:
+            try:
+                emb = await asyncio.to_thread(
+                    get_embedding_service().generate_embedding, text_for_embed
+                )
+            except Exception as exc:
+                logger.warning("story_parse_embedding_failed", name=name, error=str(exc))
+        entries_to_build.append({
+            "name": name,
+            "description": lore_data.get("description"),
+            "content": desc,
+            "keys": [name],
+            "embedding": emb,
+        })
+
     async with get_session_context() as session:
         try:
             story = session.get(Story, story_id)
             if not story:
                 return
 
+            world_id = story.world_id
             new_character_ids: list[str] = []
 
             for char_data in (parsed.get("characters") or []):
@@ -987,6 +1013,7 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                     name=char_data.get("name", ""),
                     description=char_data.get("description"),
                     personality=char_data.get("personality"),
+                    world_id=world_id,
                 )
                 session.add(character)
                 new_character_ids.append(character.id)
@@ -1002,50 +1029,44 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                     description=loc_data.get("description"),
                     atmosphere=loc_data.get("atmosphere"),
                     tags=loc_data.get("tags", []),
+                    world_id=world_id,
                 )
                 session.add(location)
                 new_location_ids.append(location.id)
-                # Also create a Lorebook entry so the location's description
-                # is available in chat/story context via the lorebook pipeline.
-                lorebook = Lorebook(
-                    name=loc_data.get("name", ""),
-                    description=loc_data.get("description"),
-                )
-                session.add(lorebook)
-                entry = LorebookEntry(
-                    lorebook_id=lorebook.id,
-                    content=loc_data.get("description", ""),
-                    keys=[loc_data.get("name", "")],
-                )
-                session.add(entry)
-                new_lorebook_ids.append(lorebook.id)
 
-            for lore_data in (parsed.get("lorebooks") or []):
-                if not lore_data.get("name"):
-                    continue
+            for item in entries_to_build:
                 lorebook = Lorebook(
-                    name=lore_data.get("name", ""),
-                    description=lore_data.get("description"),
+                    name=item["name"],
+                    description=item["description"],
+                    world_id=world_id,
                 )
                 session.add(lorebook)
                 entry = LorebookEntry(
                     lorebook_id=lorebook.id,
-                    content=lore_data.get("description", ""),
-                    keys=[lore_data.get("name", "")],
+                    content=item["content"],
+                    keys=item["keys"],
+                    embedding=item["embedding"],
                 )
                 session.add(entry)
                 new_lorebook_ids.append(lorebook.id)
 
             # One flush for every entity, then ONE commit.
-            #
-            # This used to commit (and refresh) once per created entity. Every
-            # one of those is a blocking round trip on the event loop, inside
-            # the single consumer that is the only writer of chat replies — so a
-            # story_parse with 20 locations (each creating a Lorebook + entry
-            # too) head-of-line-blocked every other handler for the duration. A
-            # batch is also the correct unit of work: either the whole parse
-            # lands or none of it does, rather than a half-linked story.
             session.flush()
+
+            if world_id:
+                from services.world_ownership import link_to_world
+                for c_id in new_character_ids:
+                    c_row = session.get(Character, c_id)
+                    if c_row:
+                        link_to_world(session, c_row, world_id)
+                for l_id in new_location_ids:
+                    l_row = session.get(Location, l_id)
+                    if l_row:
+                        link_to_world(session, l_row, world_id)
+                for lb_id in new_lorebook_ids:
+                    lb_row = session.get(Lorebook, lb_id)
+                    if lb_row:
+                        link_to_world(session, lb_row, world_id)
 
             # Link created entities to the story
             if new_character_ids or new_lorebook_ids or new_location_ids:
@@ -1093,6 +1114,63 @@ async def _handle_voice_preview(job_data: dict[str, Any]):
         except Exception as e:
             session.rollback()
             logger.warning("voice_preview_failed", job_id=job_data.get("id"), error=str(e))
+
+
+async def _handle_voice_design(job_data: dict[str, Any]):
+    """Persist designed VoiceModel rows and attach to characters if requested."""
+    from core.entities import VoiceModel
+
+    metadata = job_data.get("metadata") or {}
+    specs = metadata.get("voices") or []
+    outputs = job_data.get("outputs") or []
+    if not specs:
+        return
+
+    output_paths: list[str] = []
+    for out in outputs:
+        if isinstance(out, dict):
+            path = out.get("relative_path") or out.get("filename") or out.get("path")
+            if path:
+                output_paths.append(path)
+    if not output_paths and job_data.get("image_path"):
+        output_paths.append(job_data["image_path"])
+
+    async with get_session_context() as session:
+        try:
+            for idx, spec in enumerate(specs):
+                if not isinstance(spec, dict) or not spec.get("name"):
+                    continue
+                audio_path = (
+                    output_paths[idx]
+                    if idx < len(output_paths)
+                    else (output_paths[0] if output_paths else None)
+                )
+                char_id = spec.get("character_id")
+                char = session.get(Character, char_id) if char_id else None
+                world_id = char.world_id if char else metadata.get("world_id")
+                voice = VoiceModel(
+                    name=spec["name"],
+                    description=spec.get("description"),
+                    sample_audio_path=audio_path,
+                    preview_path=audio_path,
+                    character_id=char.id if char else None,
+                    world_id=world_id,
+                    provider="qwen3_tts",
+                )
+                session.add(voice)
+                session.flush()
+                if char:
+                    char.voice_model_id = voice.id
+                    if not char.tts_voice_profile and spec.get("description"):
+                        char.tts_voice_profile = spec["description"]
+                    session.add(char)
+                if world_id:
+                    from services.world_ownership import link_to_world
+                    link_to_world(session, voice, world_id)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.warning("voice_design_failed", job_id=job_data.get("id"), error=str(e))
 
 
 async def start_world_integration_service():
@@ -1253,6 +1331,7 @@ _EVENT_DISPATCH: dict[str, Any] = {
     "chat_image": _handle_chat_image,
     "chat_tts": _handle_chat_tts,
     "voice_preview": _handle_voice_preview,
+    "voice_design": _handle_voice_design,
     "story_tts": _handle_story_tts,
     "story_image": _handle_story_image,
     "story_parse": _handle_story_parse,

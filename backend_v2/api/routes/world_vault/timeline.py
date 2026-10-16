@@ -8,7 +8,7 @@ from sqlalchemy import and_, or_
 from sqlmodel import Session, func, select
 
 from api.deps import get_session
-from core.entities import Asset, Chat, CharacterMemory, Message, Story, StoryChapter
+from core.entities import Asset, Character, Chat, CharacterMemory, Message, Story, StoryChapter
 from services.statistics_service import ASSET_GALLERY_TIMESTAMP
 
 # The four sources are merged and then sorted, so a page of the merged timeline
@@ -215,6 +215,13 @@ def get_timeline(
     if character_id:
         memory_count_query = memory_count_query.where(CharacterMemory.character_id == character_id)
         memory_query = memory_query.where(CharacterMemory.character_id == character_id)
+    if world_id:
+        memory_count_query = memory_count_query.join(
+            Character, Character.id == CharacterMemory.character_id
+        ).where(Character.world_id == world_id)
+        memory_query = memory_query.join(
+            Character, Character.id == CharacterMemory.character_id
+        ).where(Character.world_id == world_id)
     total_memories = session.exec(memory_count_query).one()
     memories = session.exec(memory_query).all()
     for mem in memories:
@@ -269,6 +276,19 @@ def get_timeline(
     if story_id:
         asset_count_query = asset_count_query.where(Asset.story_id == story_id)
         asset_query = asset_query.where(Asset.story_id == story_id)
+    if world_id:
+        asset_count_query = (
+            asset_count_query
+            .outerjoin(Character, Character.id == Asset.character_id)
+            .outerjoin(Story, Story.id == Asset.story_id)
+            .where(or_(Character.world_id == world_id, Story.world_id == world_id))
+        )
+        asset_query = (
+            asset_query
+            .outerjoin(Character, Character.id == Asset.character_id)
+            .outerjoin(Story, Story.id == Asset.story_id)
+            .where(or_(Character.world_id == world_id, Story.world_id == world_id))
+        )
     total_assets = session.exec(asset_count_query).one()
     for a_id, a_filename, a_relative_path, a_character_id, a_story_id, a_generated_at, a_created_at, a_prompt in session.exec(asset_query).all():
         created = a_generated_at or a_created_at
@@ -297,7 +317,16 @@ def get_timeline(
     # Sort by timestamp descending
     events.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
 
-    total = total_messages + total_chapters + total_memories + total_assets
+    counts_by_type = {
+        "message": total_messages,
+        "chapter": total_chapters,
+        "memory": total_memories,
+        "asset": total_assets,
+    }
+    if wanted is not None:
+        total = sum(counts_by_type[t] for t in wanted if t in counts_by_type)
+    else:
+        total = sum(counts_by_type.values())
     return {
         "events": events[offset:offset + limit],
         "total": total,

@@ -1592,12 +1592,16 @@ def _merge_ordered(*groups) -> list[str]:
     return out
 
 
-def _character_lorebook_ids(characters) -> list[str]:
+def _character_lorebook_ids(characters, *, include_embedded: bool = False) -> list[str]:
     out: list[str] = []
     for character in characters or []:
         for lid in getattr(character, "lorebook_ids", None) or []:
             if lid and lid not in out:
                 out.append(lid)
+        if include_embedded:
+            embedded_lid = getattr(character, "embedded_lorebook_id", None)
+            if embedded_lid and embedded_lid not in out:
+                out.append(embedded_lid)
     return out
 
 
@@ -1702,6 +1706,18 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
         [chat_location_id] if chat_location_id else None, world_location_ids
     )
 
+    chat_scenario: str | None = None
+    has_chat_scenario = False
+    chat_scenario_id = getattr(chat, "scenario_id", None)
+    if chat_scenario_id and session is not None:
+        _chat_scenario_row = session.get(Scenario, chat_scenario_id)
+        if _chat_scenario_row and _chat_scenario_row.prompt_template:
+            has_chat_scenario = True
+            tpl = _chat_scenario_row.prompt_template.strip()
+            existing_append = getattr(chat, "append_system_prompt", None) or ""
+            if tpl and tpl not in existing_append:
+                chat_scenario = _chat_scenario_row.prompt_template
+
     kwargs: dict[str, Any] = {
         "characters": characters,
         "character_id": overrides.get("character_id", getattr(chat, "character_id", None)),
@@ -1724,7 +1740,9 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
         "authors_note": getattr(chat, "authors_note", None),
         "authors_note_depth": getattr(chat, "authors_note_depth", None),
     }
-    if world_scenario and not kwargs.get("story_scenario"):
+    if chat_scenario:
+        kwargs["story_scenario"] = chat_scenario
+    elif world_scenario and not has_chat_scenario and not kwargs.get("story_scenario"):
         kwargs["story_scenario"] = world_scenario
     # A caller's own `story_scenario` must survive. It was silently dropped
     # unless a World happened to supply one — so on every World-less chat, the
@@ -1809,11 +1827,29 @@ def story_context_kwargs(
         if story_scenario is None and world_scenario:
             story_scenario = world_scenario
 
-    # Lorebooks: story's own + world's, merged in order.
+    # Resolve story characters so their attached and embedded lorebooks reach the
+    # story prompt just as they do in chats.
+    story_char_ids = list(story.character_ids or [])
+    story_characters = characters
+    if story_characters is None and story_char_ids and session is not None:
+        rows = session.exec(select(Character).where(Character.id.in_(story_char_ids))).all()
+        by_id = {c.id: c for c in rows}
+        story_characters = [by_id[cid] for cid in story_char_ids if cid in by_id]
+
+    # Lorebooks: story's own + character lorebooks + world's, merged in order.
     explicit_lorebooks = overrides.get("lorebook_ids")
     lorebook_ids = explicit_lorebooks
     if lorebook_ids is None:
         lorebook_ids = list(story.lorebook_ids or []) or None
+        lorebook_ids = _merge_ordered(
+            lorebook_ids,
+            _character_lorebook_ids(story_characters, include_embedded=True),
+        )
+    else:
+        lorebook_ids = _merge_ordered(
+            lorebook_ids,
+            _character_lorebook_ids(story_characters, include_embedded=True),
+        )
     lorebook_ids = _merge_ordered(lorebook_ids, world_lorebook_ids)
 
     # Locations: story's own + world's, merged in order.
@@ -1827,6 +1863,10 @@ def story_context_kwargs(
     if system_prompt_override is None:
         system_prompt_override = getattr(story, "system_prompt_override", None)
 
+    primary_character_id = overrides.get("character_id") or (
+        story_char_ids[0] if story_char_ids else None
+    )
+
     kwargs: dict[str, Any] = {
         "lorebook_ids": (
             lorebook_ids if (lorebook_ids or explicit_lorebooks is not None) else None
@@ -1838,18 +1878,18 @@ def story_context_kwargs(
         "story_memory": story.memory,
         "story_pov": story.pov,
         "story_scenario": story_scenario,
-        "story_character_ids": list(story.character_ids or []) or None,
+        "story_character_ids": story_char_ids or None,
         "world_name": world_name,
         "world_description": world_description,
         "system_prompt_override": system_prompt_override,
         "append_system_prompt": getattr(story, "append_system_prompt", None),
     }
+    if primary_character_id:
+        kwargs["character_id"] = primary_character_id
     if "max_context_tokens" in overrides:
         kwargs["max_context_tokens"] = overrides["max_context_tokens"]
     if "include_roleplay_default" in overrides:
         kwargs["include_roleplay_default"] = overrides["include_roleplay_default"]
-    if overrides.get("character_id"):
-        kwargs["character_id"] = overrides["character_id"]
     if overrides.get("active_character_id"):
         kwargs["active_character_id"] = overrides["active_character_id"]
     return kwargs

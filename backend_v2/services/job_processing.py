@@ -1018,6 +1018,10 @@ def artifact_event_type(
 
     if metadata.get("type") == "voice_preview" and metadata.get("voice_id"):
         return "voice_preview"
+    if metadata.get("type") == "voice_design":
+        return "voice_design"
+    if metadata.get("source") == "character_avatar_animate" and metadata.get("character_id"):
+        return "character_avatar_animate"
 
     chat_id = metadata.get("chat_id")
     story_id = metadata.get("story_id")
@@ -1059,6 +1063,19 @@ async def _finalize_image_job(
                 "type": "voice_preview",
                 "voice_id": metadata.get("voice_id"),
                 "image_path": image_path,
+            }
+        elif event_type == "voice_design":
+            event_extra = {
+                "type": "voice_design",
+                "image_path": image_path,
+                "metadata": metadata,
+            }
+        elif event_type == "character_avatar_animate":
+            event_extra = {
+                "type": "character_avatar_animate",
+                "character_id": metadata.get("character_id"),
+                "image_path": image_path,
+                "metadata": metadata,
             }
         elif chat_id:
             event_extra = {
