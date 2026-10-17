@@ -42,8 +42,9 @@ MODEL_LOADER_NODES: dict[str, tuple[str, str]] = {
     # Style models
     "StyleModelLoader": ("style_model_name", "style_models"),
     
-    # Embeddings/Textual Inversion are typically loaded by name reference in prompts
-    # Not file-based in the same way, so we skip them for now
+    # Embeddings / Textual Inversion — loaded by name reference in prompts
+    # and/or via an EmbeddingLoader node in custom workflows.
+    "EmbeddingLoader": ("embedding_name", "embeddings"),
 }
 
 # Nodes with multiple model inputs

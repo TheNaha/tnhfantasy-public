@@ -72,6 +72,10 @@ const DEFAULT_SETTINGS = {
         autoRandomizeSeed: true,     // randomise seed before each generation
         redirectAfterGenerate: true, // navigate to dashboard after submitting a job
         redirectDelay: 1000,         // delay before redirect (ms) – lets the user see the job appear
+        // Prompt shortcut tokens (e.g. `lazypos`) expanded by the backend before
+        // dispatching to ComfyUI. Mirror of config.json `generator.prompt_shortcuts`.
+        // Seeded from server config on the Settings page; users do not edit this.
+        prompt_shortcuts: {},
         // MIRROR of config.json `generator.default_checkpoint`, not a second
         // source of truth. The Settings page reads and writes the server value
         // through PUT /api/settings and seeds this from it, because

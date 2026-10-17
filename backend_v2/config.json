@@ -59,7 +59,11 @@
     "blurhash_resize_max": 64
   },
   "generator": {
-    "default_checkpoint": "_janku_trained_chenkin_noobai__v777_2786084.safetensors"
+    "default_checkpoint": "_janku_trained_chenkin_noobai__v777_2786084.safetensors",
+    "prompt_shortcuts": {
+      "lazypos": "masterpiece, newest, absurdres, best quality, amazing quality, very aesthetic, ultra-detailed, highly detailed",
+      "lazyneg": "worst quality, low quality, bad anatomy, bad hands, missing fingers, extra limbs, extra digit, text, signature, watermark, username"
+    }
   },
   "ai": {
     "maxContextTokens": 4096,

@@ -28,6 +28,7 @@ const ModelSection = memo(function ModelSection({
     vaeModels,
     clipModels,
     embeddingModels,
+    promptShortcuts,
     setViewingMetadata,
     providers,
     providersLoading,
@@ -197,6 +198,46 @@ const ModelSection = memo(function ModelSection({
                                     type="button"
                                 >
                                     {emb.name}
+                                    {isActive && <span className="ml-1">✓</span>}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {Object.keys(promptShortcuts).length > 0 && (
+                <div className="space-y-2">
+                    <label className="text-xs font-medium text-gray-500 flex items-center gap-2">
+                        Prompt Shortcuts
+                        <span className="text-xs text-gray-600">(Click to insert token)</span>
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                        {Object.entries(promptShortcuts).map(([name, expansion]) => {
+                            const token = name;
+                            const isInPositive = prompt.includes(token);
+                            const isInNegative = negativePrompt.includes(token);
+                            const isActive = isInPositive || isInNegative;
+                            return (
+                                <button
+                                    key={name}
+                                    onClick={() => {
+                                        if (isInNegative) {
+                                            setNegativePrompt(negativePrompt ? `${negativePrompt}, ${token}` : token);
+                                            toast.success(`Added ${token} to Negative Prompt`, { icon: '✨' });
+                                        } else {
+                                            setPrompt(prompt ? `${prompt}, ${token}` : token);
+                                            toast.success(`Added ${token} to Positive Prompt`, { icon: '✨' });
+                                        }
+                                    }}
+                                    className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${isActive
+                                        ? 'bg-purple-900/40 border-purple-700 text-purple-300 ring-1 ring-purple-500/50'
+                                        : 'bg-purple-900/20 border-purple-800 text-purple-400 hover:bg-purple-900/40'}`}
+                                    title={`“${name}” → ${expansion}
+Click to insert “${token}” into ${isActive ? "the prompt (already added)" : "positive prompt"}`}
+                                    type="button"
+                                >
+                                    {name}
                                     {isActive && <span className="ml-1">✓</span>}
                                 </button>
                             );

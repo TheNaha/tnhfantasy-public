@@ -146,12 +146,16 @@ export default function Settings() {
     const [activeTab, setActiveTab] = useState('ui');
     const [resetting, setResetting] = useState(false);
 
-    // `generator.default_checkpoint` lives on the server; the local store key is
-    // only a mirror (ChatWorkspaceContext sends it per message). Keeping the
-    // mirror in step here means any path that writes the category — including
-    // the Generator tab's Reset — cannot leave it stale.
-    const handleMirroredDefaultCheckpoint = useCallback((value) => {
-        if (updateSetting) updateSetting('generator', 'defaultCheckpoint', value);
+    // `generator.default_checkpoint` and `generator.prompt_shortcuts` live on
+    // the server; the local store keys are mirrors (ChatWorkspaceContext sends
+    // default_checkpoint per message as `generator_checkpoint`). Keeping the
+    // mirrors in step here means any path that writes the category — including
+    // the Generator tab's Reset — cannot leave them stale.
+    const handleMirroredGeneratorSettings = useCallback((settings) => {
+        if (updateSetting) {
+            updateSetting('generator', 'defaultCheckpoint', settings.generator?.default_checkpoint || null);
+            updateSetting('generator', 'prompt_shortcuts', settings.generator?.prompt_shortcuts || {});
+        }
     }, [updateSetting]);
 
     const handleUpdateSetting = (category, key, value) => {
@@ -309,12 +313,12 @@ export default function Settings() {
                                 settings={settings.generator}
                                 onUpdate={(key, value) => handleUpdateSetting('generator', key, value)}
                                 onReset={() => handleResetCategory('generator')}
-                                onMirrorDefaultCheckpoint={handleMirroredDefaultCheckpoint}
+                                onMirrorDefaultCheckpoint={handleMirroredGeneratorSettings}
                             />
                         )}
 
                         {activeTab === 'backend' && (
-                            <BackendSettings onMirroredDefaultCheckpoint={handleMirroredDefaultCheckpoint} />
+                            <BackendSettings onMirroredGeneratorSettings={handleMirroredGeneratorSettings} />
                         )}
                     </div>
                 </div>
@@ -521,7 +525,7 @@ function ServerConfigControl({ field, spec, value, onChange, envVar, disabled })
     );
 }
 
-function BackendSettings({ onMirroredDefaultCheckpoint }) {
+function BackendSettings({ onMirroredGeneratorSettings }) {
     const queryClient = useQueryClient();
     const { data: configResponse, isLoading } = useSettingsConfig();
     const { data: schemaResponse } = useSettingsSchema();
@@ -529,17 +533,17 @@ function BackendSettings({ onMirroredDefaultCheckpoint }) {
     const [saving, setSaving] = useState(false);
     const [saveState, setSaveState] = useState('idle');
 
-    // Seed the draft from the server config, and mirror the fallback checkpoint
-    // into the local store so ChatWorkspaceContext can keep sending it per
-    // message as `generator_checkpoint`.
+    // Seed the draft from the server config, and mirror generator settings
+    // (default_checkpoint, prompt_shortcuts) into the local store so the
+    // generator page can read them.
     useEffect(() => {
         const settings = configResponse?.settings;
         if (!settings) return;
         setDraft(settings);
-        if (onMirroredDefaultCheckpoint) {
-            onMirroredDefaultCheckpoint(settings.generator?.default_checkpoint || null);
+        if (onMirroredGeneratorSettings) {
+            onMirroredGeneratorSettings(settings);
         }
-    }, [configResponse, onMirroredDefaultCheckpoint]);
+    }, [configResponse, onMirroredGeneratorSettings]);
 
     const envOverrides = schemaResponse?.env_overrides || {};
 
@@ -1540,10 +1544,16 @@ function DirectorPlaygroundCard() {
                             </div>
 
                             <div className="bg-black/30 p-3 rounded-lg border border-white/5 space-y-1.5">
-                                <div className="text-2xs uppercase tracking-wider text-gray-400 font-bold">Visuals &amp; Expression</div>
+                                <div className="text-2xs uppercase tracking-wider text-gray-400 font-bold">Visuals &amp; Fate Check</div>
                                 <div className="text-gray-300"><b>Expression:</b> <span className="text-amber-300">{result.character_expression}</span></div>
                                 <div className="text-gray-300"><b>Image Focus:</b> {result.image_focus}</div>
                                 <div className="text-gray-300"><b>Trigger Image:</b> {Math.round((result.trigger_image_prob || 0) * 100)}%</div>
+                                <div className="text-gray-300">
+                                    <b>Action Risk:</b>{' '}
+                                    <span className="text-amber-300">
+                                        {Math.round((result.is_risky_action_probability || 0) * 100)}% ({result.action_difficulty_label || 'normal'})
+                                    </span>
+                                </div>
                                 {result.director_instruction && (
                                     <div className="mt-1 pt-1 border-t border-white/5 text-2xs text-gray-400 italic">
                                         &ldquo;{result.director_instruction}&rdquo;

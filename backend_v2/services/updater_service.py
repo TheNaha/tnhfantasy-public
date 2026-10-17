@@ -23,6 +23,8 @@ from core.entities import (
     LorebookEntry,
     Message,
     MessageRole,
+    Scenario,
+    WorldEdge,
 )
 from infrastructure.logging import get_logger
 from services.chat_utils import insert_world_state_marker
@@ -31,6 +33,295 @@ from services.llm_config import model_for_kind
 from services.memory_extraction import create_memories_from_extraction
 
 logger = get_logger("updater_service")
+
+
+def _extract_skills_from_text(text: Optional[str]) -> List[str]:
+    """Extract RPG/roleplay skill tags from character or persona text."""
+    if not text:
+        return []
+    t_low = text.lower()
+    skills: List[str] = []
+    skill_cues = (
+        ("hack", "Netrunning / Hacking"),
+        ("netrun", "Netrunning"),
+        ("magic", "Arcane Magic"),
+        ("spell", "Spellcasting"),
+        ("pyroman", "Pyromancy"),
+        ("sword", "Swordplay"),
+        ("blade", "Blade Combat"),
+        ("archery", "Archery"),
+        ("bow", "Marksmanship"),
+        ("sniper", "Precision Marksmanship"),
+        ("stealth", "Stealth & Infiltration"),
+        ("infiltrat", "Infiltration"),
+        ("heal", "Healing Arts"),
+        ("medic", "Field Medicine"),
+        ("alchem", "Alchemy"),
+        ("detective", "Investigation & Deduction"),
+        ("engineer", "Engineering & Tech"),
+        ("pilot", "Piloting"),
+        ("bard", "Music & Performance"),
+        ("diploma", "Diplomacy & Persuasion"),
+        ("tactic", "Tactical Command"),
+        ("guard", "Tactical Defense"),
+    )
+    for cue, label in skill_cues:
+        if cue in t_low and label not in skills:
+            skills.append(label)
+    return skills[:6]
+
+
+def _infer_outfit_from_text(*texts: Optional[str]) -> Optional[str]:
+    combined = "\n".join(filter(None, texts))
+    if not combined:
+        return None
+    m = re.search(
+        r"(?:wearing|dressed in|clad in|wears|adjusts\s+(?:her|his|their))\s+([^.,;!\n*\"“”]{4,65})",
+        combined,
+        flags=re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _infer_mood_from_text(*texts: Optional[str]) -> Optional[str]:
+    combined = "\n".join(filter(None, texts)).lower()
+    if not combined:
+        return None
+    if any(w in combined[:700] for w in ("glare", "scowl", "furious", "cold", "hostile", "suspicious", "guarded")):
+        return "Guarded & watchful"
+    if any(w in combined[:700] for w in ("smile", "grin", "warm", "welcome", "cheerful", "laugh")):
+        return "Warm & welcoming"
+    if any(w in combined[:700] for w in ("blush", "nervous", "shy", "fidget", "hesitate")):
+        return "Flustered & hesitant"
+    if any(w in combined[:700] for w in ("sigh", "sad", "tears", "lonely", "weary")):
+        return "Melancholic & weary"
+    return "Attentive & curious"
+
+
+def _infer_activity_from_text(*texts: Optional[str]) -> Optional[str]:
+    for t in texts:
+        if not t:
+            continue
+        action_match = re.search(r"\*([^*]{8,95})\*", t)
+        if action_match:
+            return action_match.group(1).strip()[:85]
+    return None
+
+
+def _infer_location_from_text(*texts: Optional[str]) -> Optional[str]:
+    combined = "\n".join(filter(None, texts))
+    if not combined:
+        return None
+    patterns = [
+        r"\b(?:inside|into|at|within|beneath|atop)\s+the\s+([A-Z][A-Za-z0-9\s\-']{3,45}?)(?=[.,;!\n*\"“”]|\s+(?:at|as|where|when|while)\b)",
+        r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b",
+    ]
+    m = re.search(patterns[0], combined)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _infer_time_from_text(*texts: Optional[str]) -> Optional[str]:
+    combined = "\n".join(filter(None, texts))
+    if not combined:
+        return None
+    m = re.search(
+        r"\b(Midnight|Dawn|Dusk|Twilight|Sunset|Sunrise|Morning|Afternoon|Evening|Late Night|Starlight Dusk|High Noon)\b",
+        combined,
+        flags=re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).title()
+    return None
+
+
+def _infer_relationship_from_text(*texts: Optional[str]) -> Optional[str]:
+    combined = "\n".join(filter(None, texts)).lower()
+    if not combined:
+        return None
+    if any(w in combined for w in ("enemy", "rival", "captive", "nemesis")):
+        return "Tense rivals / adversaries"
+    if any(w in combined for w in ("bodyguard", "protector", "knight", "companion")):
+        return "Sworn companion / ally"
+    if any(w in combined for w in ("childhood friend", "best friend", "old friend", "partner")):
+        return "Close companions"
+    if any(w in combined for w in ("wife", "husband", "lover", "girlfriend", "boyfriend", "fiance")):
+        return "Romantic partners"
+    if any(w in combined for w in ("master", "mentor", "commander", "employer", "boss")):
+        return "Professional / hierarchical bond"
+    return None
+
+
+def seed_initial_state_snapshot(
+    *,
+    character: Optional[Character] = None,
+    scenario: Optional[Scenario] = None,
+    persona: Optional[Any] = None,
+    first_mes: Optional[str] = None,
+    override_greeting: Optional[str] = None,
+    persona_name: Optional[str] = None,
+    persona_description: Optional[str] = None,
+    story_location: Optional[str] = None,
+    story_time: Optional[str] = None,
+    additional_characters: Optional[List[Character]] = None,
+    existing_snapshot: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a rich Turn-0 Statekeeper snapshot from character/scenario metadata & opening prose."""
+    snap: Dict[str, Any] = dict(existing_snapshot or {})
+    user_label = (persona_name or (getattr(persona, "name", None) if persona else None) or "User").strip() or "User"
+    effective_persona_desc = persona_description or (getattr(persona, "description", None) if persona else None)
+    effective_greeting = override_greeting or first_mes or (character.first_mes if character else None)
+
+    # Check if card_metadata carries pre-extracted TNH onboarding blueprint data
+    card_meta = (character.card_metadata or {}) if character else {}
+    tnh_ext = (
+        card_meta.get("data", {}).get("extensions", {}).get("tnh_onboarding")
+        or card_meta.get("tnh_onboarding")
+        or {}
+    )
+    if isinstance(tnh_ext, dict):
+        for k in (
+            "character_mood",
+            "current_activity",
+            "character_outfit",
+            "relationship_status",
+            "relationships",
+            "character_skills",
+            "user_skills",
+            "wardrobe",
+            "inventory",
+            "world_clock",
+        ):
+            if k not in snap and tnh_ext.get(k):
+                snap[k] = tnh_ext[k]
+
+    scenario_text = (
+        (getattr(scenario, "description", None) or getattr(scenario, "prompt_template", None))
+        if scenario
+        else (character.scenario if character else None)
+    )
+    prose = "\n".join(
+        filter(
+            None,
+            [
+                effective_greeting,
+                scenario_text,
+                character.description if character else None,
+                character.personality if character else None,
+            ],
+        )
+    )
+
+    # 1. Outfit extraction from visual_tags or prose
+    if not snap.get("character_outfit"):
+        outfit_keywords = (
+            "armor", "cloak", "dress", "robe", "jacket", "coat", "uniform", "suit",
+            "hoodie", "kimono", "tunic", "gown", "leather", "shirt", "skirt", "cape",
+        )
+        visual_tags = list((character.visual_tags if character else None) or [])
+        outfit_tags = [
+            t for t in visual_tags
+            if any(kw in t.lower() for kw in outfit_keywords)
+        ]
+        if outfit_tags:
+            snap["character_outfit"] = ", ".join(outfit_tags[:4])
+        else:
+            inferred_outfit = _infer_outfit_from_text(prose)
+            if inferred_outfit:
+                snap["character_outfit"] = inferred_outfit
+            elif character:
+                snap["character_outfit"] = f"{character.name}'s signature attire"
+
+    # 2. Wardrobe presets
+    if not isinstance(snap.get("wardrobe"), list) or not snap.get("wardrobe"):
+        default_outfit = snap.get("character_outfit") or "Signature attire"
+        snap["wardrobe"] = [
+            {"name": "Signature Attire", "outfit": default_outfit, "visual_tags": ", ".join((character.visual_tags or [])[:4]) if character else ""},
+            {"name": "Casual / Rest", "outfit": f"Relaxed off-duty attire for {character.name if character else 'character'}", "visual_tags": "casual clothes, relaxed"},
+        ]
+
+    # 3. Mood extraction
+    if not snap.get("character_mood"):
+        snap["character_mood"] = _infer_mood_from_text(effective_greeting, character.personality if character else None, prose) or "Attentive & curious"
+
+    # 4. Current activity extraction from opening greeting
+    if not snap.get("current_activity"):
+        inferred_act = _infer_activity_from_text(effective_greeting, scenario_text)
+        if inferred_act:
+            snap["current_activity"] = inferred_act
+        elif story_location or (character and character.default_location):
+            loc_str = story_location or character.default_location
+            snap["current_activity"] = f"Present at {loc_str}"
+        else:
+            snap["current_activity"] = "Engaging in conversation"
+
+    # 5. Multi-target Relationships & primary relationship_status
+    if not snap.get("relationship_status"):
+        snap["relationship_status"] = _infer_relationship_from_text(prose) or f"New encounter with {user_label}"
+
+    if not isinstance(snap.get("relationships"), list) or not snap.get("relationships"):
+        rels: List[Dict[str, Any]] = [
+            {
+                "target_name": user_label,
+                "target_type": "user",
+                "target_id": None,
+                "status": snap["relationship_status"],
+                "affinity": "neutral",
+            }
+        ]
+        for add_char in additional_characters or []:
+            if add_char and add_char.name:
+                rels.append(
+                    {
+                        "target_name": add_char.name,
+                        "target_type": "character",
+                        "target_id": add_char.id,
+                        "status": "Scene companion",
+                        "affinity": "neutral",
+                    }
+                )
+        snap["relationships"] = rels
+
+    # 6. Character & User Skillsets
+    if not isinstance(snap.get("character_skills"), list) or not snap.get("character_skills"):
+        skills = _extract_skills_from_text(prose)
+        snap["character_skills"] = skills or ["Observation", "Composure"]
+
+    if not isinstance(snap.get("user_skills"), list) or not snap.get("user_skills"):
+        u_skills = _extract_skills_from_text(effective_persona_desc or scenario_text)
+        snap["user_skills"] = u_skills or ["Situational Awareness", "Resolve"]
+
+    # 7. Inventory
+    if not isinstance(snap.get("inventory"), list):
+        snap["inventory"] = []
+
+    # 8. Fate / Skill check settings (toggleable, default off with auto difficulty/outcome)
+    snap.setdefault("fate_check_enabled", False)
+    snap.setdefault("fate_difficulty", "auto")
+    snap.setdefault("fate_outcome_override", "auto")
+
+    # 9. Cohesive World Clock & Chronology Log
+    loc_label = story_location or (character.default_location if character else None) or "Starting Scene"
+    time_label = story_time or (character.default_time if character else None) or "Day 1 · Evening"
+    if not isinstance(snap.get("world_clock"), dict):
+        snap["world_clock"] = {
+            "day": 1,
+            "time_of_day": time_label,
+            "location": loc_label,
+            "chronology_log": [
+                {
+                    "day": 1,
+                    "time": time_label,
+                    "location": loc_label,
+                    "event": f"Scene begins with {character.name if character else 'the cast'} at {loc_label}.",
+                }
+            ],
+        }
+
+    return snap
 
 
 def record_director_decision(
@@ -50,6 +341,11 @@ def record_director_decision(
     snapshot["character_expression"] = decision.character_expression
     snapshot["pacing_directive"] = decision.pacing_directive
     snapshot["pacing_speed"] = decision.pacing_speed
+    snapshot["is_risky_action_probability"] = decision.is_risky_action_probability
+    snapshot["action_difficulty"] = decision.action_difficulty
+    snapshot["last_fate_outcome"] = decision.fate_outcome
+    snapshot["last_fate_directive"] = decision.fate_directive
+    snapshot["matched_skills"] = decision.matched_skills
     snapshot["last_director_decision"] = decision.to_dict()
     snapshot["director_updated_at"] = now_iso
 
@@ -77,7 +373,9 @@ def build_state_updater_prompt(
     if "gate_world_state" in gates:
         schema_lines.append(
             '  "story_location": "updated location name if changed, else null",\n'
-            '  "story_time": "updated time/weather if changed, else null"'
+            '  "story_time": "updated time/weather if changed, else null",\n'
+            '  "clock_day_delta": "integer days elapsed (0 if same day, 1 if next day, etc.)",\n'
+            '  "chronology_event": "1 concise sentence logging any canon timeline milestone or location/time transition, else null"'
         )
     if "gate_character_state" in gates:
         schema_lines.append(
@@ -85,6 +383,9 @@ def build_state_updater_prompt(
             f'  "current_activity": "what {character_name} is currently doing",\n'
             f'  "character_outfit": "current clothing/attire of {character_name} if known or changed, else null",\n'
             f'  "relationship_status": "current dynamic with {user_name} (e.g. \'Warming up — playful banter\')",\n'
+            '  "relationships_update": [{"target_name": "name of person/character", "target_type": "user|character", "status": "updated dynamic", "affinity": 50}],\n'
+            '  "character_skills_add": ["any newly demonstrated skill or ability of the character"],\n'
+            '  "user_skills_add": ["any newly demonstrated skill or ability of the player/user"],\n'
             '  "scene_summary": "1-2 sentence factual summary of the current scene state"'
         )
     if "gate_inventory_or_items" in gates:
@@ -109,6 +410,9 @@ def build_state_updater_prompt(
         "current_activity": state_snapshot.get("current_activity"),
         "character_outfit": state_snapshot.get("character_outfit"),
         "relationship_status": state_snapshot.get("relationship_status"),
+        "relationships": state_snapshot.get("relationships") or [],
+        "character_skills": state_snapshot.get("character_skills") or [],
+        "user_skills": state_snapshot.get("user_skills") or [],
         "inventory": state_snapshot.get("inventory") or [],
         "scene_summary": state_snapshot.get("scene_summary"),
     }
@@ -260,7 +564,7 @@ def apply_updater_result(
     snapshot = dict(chat.state_snapshot or {})
     world_updates: Dict[str, Any] = {}
 
-    # 1. World State (location & time)
+    # 1. World State (location & time) + Auto-Materialize Location in World Vault
     new_loc = deltas.get("story_location")
     if isinstance(new_loc, str) and new_loc.strip() and new_loc.strip().lower() != "null":
         loc_clean = new_loc.strip()
@@ -283,6 +587,19 @@ def apply_updater_result(
                     .where(func.lower(Location.name) == loc_clean.lower())
                     .limit(1)
                 ).first()
+            if matched_loc is None and snapshot.get("auto_create_locations", True):
+                # Materialize a new Location row in the World Vault automatically
+                matched_loc = Location(
+                    name=loc_clean,
+                    description=deltas.get("scene_summary") or f"Discovered during roleplay in {chat.name}.",
+                    atmosphere=deltas.get("story_time") or chat.story_time or "Atmospheric roleplay setting",
+                    tags=["auto-discovered"],
+                    world_id=chat.world_id,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(matched_loc)
+                session.flush()
             if matched_loc is not None:
                 chat.location_id = matched_loc.id
                 world_updates["location_id"] = matched_loc.id
@@ -294,7 +611,46 @@ def apply_updater_result(
             chat.story_time = time_clean
             world_updates["time"] = time_clean
 
-    # 2. Character & Scene State Snapshot
+    # 1b. Cohesive World Clock & Canon Chronology Log
+    clock = dict(snapshot.get("world_clock") or {})
+    cur_day = int(clock.get("day") or 1)
+    try:
+        day_delta = int(deltas.get("clock_day_delta") or 0)
+    except (TypeError, ValueError):
+        day_delta = 0
+    if day_delta > 0:
+        cur_day += day_delta
+    clock["day"] = max(1, cur_day)
+    clock["time_of_day"] = chat.story_time or clock.get("time_of_day") or "Day 1"
+    clock["location"] = chat.story_location or clock.get("location") or "Scene"
+
+    chronology_log: List[Dict[str, Any]] = list(clock.get("chronology_log") or [])
+    chrono_event = deltas.get("chronology_event")
+    if isinstance(chrono_event, str) and chrono_event.strip() and chrono_event.strip().lower() != "null":
+        chronology_log.append(
+            {
+                "day": clock["day"],
+                "time": clock["time_of_day"],
+                "location": clock["location"],
+                "event": chrono_event.strip(),
+                "timestamp": now.isoformat(),
+            }
+        )
+    elif world_updates:
+        summary_ev = deltas.get("scene_summary") or f"Transitioned to {clock['location']} ({clock['time_of_day']})."
+        chronology_log.append(
+            {
+                "day": clock["day"],
+                "time": clock["time_of_day"],
+                "location": clock["location"],
+                "event": str(summary_ev).strip(),
+                "timestamp": now.isoformat(),
+            }
+        )
+    clock["chronology_log"] = chronology_log[-50:]
+    snapshot["world_clock"] = clock
+
+    # 2. Character & Scene State Snapshot + Wardrobe Presets
     for field_key in (
         "character_mood",
         "current_activity",
@@ -305,6 +661,112 @@ def apply_updater_result(
         val = deltas.get(field_key)
         if isinstance(val, str) and val.strip() and val.strip().lower() != "null":
             snapshot[field_key] = val.strip()
+
+    # Auto-save newly detected outfit into character's wardrobe presets
+    new_outfit = snapshot.get("character_outfit")
+    if isinstance(new_outfit, str) and new_outfit.strip():
+        wardrobe: List[Dict[str, str]] = list(snapshot.get("wardrobe") or [])
+        existing_descs = {str(w.get("description", "")).strip().lower() for w in wardrobe if isinstance(w, dict)}
+        if new_outfit.strip().lower() not in existing_descs:
+            label = f"Outfit #{len(wardrobe) + 1}" if wardrobe else "Default"
+            wardrobe.append({"name": label, "description": new_outfit.strip()})
+            snapshot["wardrobe"] = wardrobe[:20]
+
+    # 2b. Multi-Target Relationships & WorldEdge Graph Sync
+    user_label = (chat.persona_name or "User").strip() or "User"
+    current_rels: List[Dict[str, Any]] = list(snapshot.get("relationships") or [])
+    rel_by_target: Dict[str, Dict[str, Any]] = {}
+    for r in current_rels:
+        if isinstance(r, dict) and r.get("target_name"):
+            rel_by_target[str(r["target_name"]).strip().lower()] = dict(r)
+
+    # Keep primary user relationship synced if relationship_status changed
+    if snapshot.get("relationship_status"):
+        u_key = user_label.lower()
+        existing_u = rel_by_target.get(u_key) or {
+            "target_name": user_label,
+            "target_type": "user",
+            "target_id": chat.persona_id,
+            "affinity": 50,
+        }
+        existing_u["status"] = snapshot["relationship_status"]
+        rel_by_target[u_key] = existing_u
+
+    rels_update = deltas.get("relationships_update")
+    if isinstance(rels_update, list):
+        for r_up in rels_update:
+            if not isinstance(r_up, dict):
+                continue
+            t_name = str(r_up.get("target_name") or "").strip()
+            t_status = str(r_up.get("status") or "").strip()
+            if not t_name or not t_status or t_status.lower() == "null":
+                continue
+            t_key = t_name.lower()
+            entry = rel_by_target.get(t_key) or {
+                "target_name": t_name,
+                "target_type": str(r_up.get("target_type") or ("user" if t_key == user_label.lower() else "character")),
+                "target_id": r_up.get("target_id"),
+                "affinity": 50,
+            }
+            entry["status"] = t_status
+            if isinstance(r_up.get("affinity"), (int, float)):
+                entry["affinity"] = max(0, min(100, int(r_up["affinity"])))
+            rel_by_target[t_key] = entry
+
+            # Sync character-to-character or character-to-chat relationship to WorldEdge
+            if character_id:
+                try:
+                    target_char = session.exec(
+                        select(Character).where(func.lower(Character.name) == t_key).limit(1)
+                    ).first()
+                    if target_char and target_char.id != character_id:
+                        entry["target_id"] = target_char.id
+                        entry["target_type"] = "character"
+                        existing_edge = session.exec(
+                            select(WorldEdge).where(
+                                WorldEdge.source_entity_type == "character",
+                                WorldEdge.source_entity_id == character_id,
+                                WorldEdge.target_entity_type == "character",
+                                WorldEdge.target_entity_id == target_char.id,
+                                WorldEdge.relation_type == "relationship",
+                            )
+                        ).first()
+                        if existing_edge:
+                            existing_edge.label = t_status[:250]
+                            existing_edge.updated_at = now
+                            session.add(existing_edge)
+                        else:
+                            session.add(
+                                WorldEdge(
+                                    source_entity_type="character",
+                                    source_entity_id=character_id,
+                                    target_entity_type="character",
+                                    target_entity_id=target_char.id,
+                                    relation_type="relationship",
+                                    label=t_status[:250],
+                                    created_at=now,
+                                    updated_at=now,
+                                )
+                            )
+                except Exception as exc:
+                    logger.debug("state_updater_world_edge_sync_skipped", error=str(exc))
+
+    snapshot["relationships"] = list(rel_by_target.values())
+
+    # 2c. Character & User Skillsets
+    for delta_key, snap_key in (
+        ("character_skills_add", "character_skills"),
+        ("user_skills_add", "user_skills"),
+    ):
+        existing_skills: List[str] = [str(s).strip() for s in (snapshot.get(snap_key) or []) if str(s).strip()]
+        seen_lower = {s.lower() for s in existing_skills}
+        added = deltas.get(delta_key)
+        if isinstance(added, list):
+            for s in added:
+                if isinstance(s, str) and s.strip() and s.strip().lower() not in seen_lower:
+                    existing_skills.append(s.strip())
+                    seen_lower.add(s.strip().lower())
+        snapshot[snap_key] = existing_skills
 
     # 3. Inventory / Items
     current_inv: List[str] = list(snapshot.get("inventory") or [])

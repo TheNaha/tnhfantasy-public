@@ -1,9 +1,13 @@
 import { useGeneratorCore } from './useGeneratorCore';
 import { generateApi, createIdempotencyKey } from '../api';
 import { isUnetModel, isFluxModel, isAuraFlowModel, isPonyModel } from '../utils/modelType';
+import { useSettings } from '../store/settingsStore';
 
 export function useWorkflowBuilder(mode) {
     const { store, preflight: { runWithPreflight } } = useGeneratorCore();
+    const settings = useSettings();
+    const promptShortcuts = (settings.generator?.prompt_shortcuts) || {};
+    const shortcutNames = Object.keys(promptShortcuts);
 
     const extractEmbeddingsFromPrompt = (positivePrompt, negativePrompt) => {
         const embeddingRegex = /embedding:([\w_-]+(?:\.\w+)?)/g;
@@ -16,6 +20,16 @@ export function useWorkflowBuilder(mode) {
         while ((match = embeddingRegex.exec(negativePrompt)) !== null) {
             negative.push(match[1]);
         }
+        return { positive, negative };
+    };
+
+    const extractShortcutsFromPrompt = (positivePrompt, negativePrompt) => {
+        const positive = [];
+        const negative = [];
+        shortcutNames.forEach((name) => {
+            if (positivePrompt.includes(name)) positive.push(name);
+            if (negativePrompt.includes(name)) negative.push(name);
+        });
         return { positive, negative };
     };
 
@@ -75,6 +89,7 @@ export function useWorkflowBuilder(mode) {
                 width, height, batchSize,
                 checkpoint: selectedCheckpoint, vae: selectedVae,
                 embeddings: extractEmbeddingsFromPrompt(prompt, negativePrompt),
+                shortcuts: extractShortcutsFromPrompt(prompt, negativePrompt),
                 hiresFix, hiresUpscaler
             };
         } else if (mode === 'img2img') {

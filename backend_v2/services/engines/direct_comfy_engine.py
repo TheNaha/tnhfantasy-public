@@ -99,11 +99,13 @@ NODE_TO_DIRECTORY = {
     "CLIPVisionLoader": "clip_vision",
     "HypernetworkLoader": "hypernetworks",
     "unCLIPCheckpointLoader": "checkpoints",
+    "EmbeddingLoader": "embeddings",
 }
 
 MODEL_INPUT_NAMES = {
     "ckpt_name", "model_name", "lora_name", "vae_name", "control_net_name",
     "model_name1", "clip_name", "upscaler_name", "hypernetwork_name",
+    "embedding_name",
 }
 
 

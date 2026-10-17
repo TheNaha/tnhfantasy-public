@@ -106,6 +106,18 @@ vi.mock('../store/settingsStore', () => ({
                 autoRandomizeSeed: false,
                 redirectAfterGenerate: true,
                 redirectDelay: 0,
+                prompt_shortcuts: {},
+                ...mocks.settingsOverrides.value,
+            },
+        },
+    }),
+    useSettings: () => ({
+        settings: {
+            generator: {
+                autoRandomizeSeed: false,
+                redirectAfterGenerate: true,
+                redirectDelay: 0,
+                prompt_shortcuts: {},
                 ...mocks.settingsOverrides.value,
             },
         },

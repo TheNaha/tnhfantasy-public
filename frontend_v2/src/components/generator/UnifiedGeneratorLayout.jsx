@@ -5,6 +5,7 @@ import { useGeneratorCore } from '../../hooks/useGeneratorCore';
 import { useActiveJobs } from '../../hooks/useActiveJobs';
 import { useModelDirectories } from '../../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../../constants/modelDirectories';
+import { useSettings } from '../../store/settingsStore';
 import GeneratorShell from './GeneratorShell';
 import PromptPanel from './PromptPanel';
 import ModelSection from './ModelSection';
@@ -71,6 +72,9 @@ export default function UnifiedGeneratorLayout({
     const embeddingModels = modelsByKey.embeddingModels || [];
     const adetailerModels = modelsByKey.adetailerModels || [];
 
+    const settings = useSettings();
+    const promptShortcuts = (settings.generator?.prompt_shortcuts) || {};
+
     const { data: activeJobs = [] } = useActiveJobs();
     const activeJobCount = activeJobs.length;
 
@@ -134,6 +138,7 @@ export default function UnifiedGeneratorLayout({
                                 vaeModels={vaeModels}
                                 clipModels={clipModels}
                                 embeddingModels={embeddingModels}
+                                promptShortcuts={promptShortcuts}
                                 setViewingMetadata={setViewingMetadata}
                                 providers={providers}
                                 providersLoading={providersLoading}

@@ -1,7 +1,11 @@
 import math
+import os
+import re
 from typing import Any, Optional, Union
 from datetime import datetime
 from pydantic import BaseModel, Field
+
+from core.exceptions import ValidationError
 
 
 # Single source of truth for the last-resort checkpoint filename.
@@ -16,7 +20,72 @@ from pydantic import BaseModel, Field
 # Re-exported from config, which is the lowest-level module: infrastructure
 # imports config, so config cannot import from core without a cycle. Keeping the
 # literal in two places is how they drifted.
-from config import DEFAULT_CHECKPOINT  # noqa: E402,F401
+from config import DEFAULT_CHECKPOINT, settings  # noqa: E402,F401
+
+
+# ---------------------------------------------------------------------------
+# Prompt shortcut / textual-inversion embedding expansion
+# ---------------------------------------------------------------------------
+
+#: File extensions recognised for embedding files in `models/embeddings/`.
+_EMBEDDING_EXTENSIONS = (".safetensors", ".pt", ".bin", ".ckpt")
+
+
+def _resolve_embeddings_dir() -> str:
+    """Return the absolute path to `models/embeddings/`.
+
+    Uses `settings.input_dir` (default `data/input`) and resolves `models/`
+    as a sibling directory, mirroring how ComfyUI lays out its model tree.
+    """
+    data_dir = os.path.dirname(os.path.abspath(settings.input_dir))
+    return os.path.join(data_dir, "models", "embeddings")
+
+
+def _embedding_file_exists(name: str) -> bool:
+    """Check whether an embedding file exists for `name`.
+
+    Tries the name verbatim first, then appends each known extension.
+    """
+    embeddings_dir = _resolve_embeddings_dir()
+    if not os.path.isdir(embeddings_dir):
+        return False
+    candidates = [name]
+    if not os.path.splitext(name)[1]:
+        candidates = [name + ext for ext in _EMBEDDING_EXTENSIONS] + [name]
+    for cand in candidates:
+        if os.path.isfile(os.path.join(embeddings_dir, cand)):
+            return True
+    return False
+
+
+def extract_embedding_names(text: str) -> list[str]:
+    """Extract `embedding:NAME` tokens from a prompt string.
+
+    Returns a list of embedding names (without the `embedding:` prefix).
+    """
+    return re.findall(r"embedding:([\w_\-]+(?:\.[\w]+)?)", text)
+
+
+def expand_prompt_shortcuts(text: str) -> str:
+    """Expand configured prompt shortcut tokens in `text`.
+
+    Shortcut names are matched on word boundaries, longest-first, so
+    `lazypos_v2` takes precedence over `lazypos`. Unmatched text passes
+    through unchanged. Returns the expanded string.
+    """
+    from config import get_config
+
+    shortcuts = (get_config().get("generator", {}) or {}).get("prompt_shortcuts", {})
+    if not shortcuts:
+        return text
+
+    # Sort by length descending so longer names match first (e.g. lazypos_v2
+    # before lazypos). Word boundaries prevent partial matches inside other
+    # words.
+    pattern = re.compile(
+        r"\b(" + "|".join(re.escape(name) for name in sorted(shortcuts, key=len, reverse=True)) + r")\b"
+    )
+    return pattern.sub(lambda m: shortcuts[m.group(0)], text)
 
 
 class LoraOption(BaseModel):
@@ -369,14 +438,31 @@ class WorkflowBuilder:
 
         current_model = self.apply_ip_adapters(current_model, options.ipAdapters)
 
-        # CLIP Encoding
+        # CLIP Encoding — expand prompt shortcuts and validate embedding
+        # references before the text reaches ComfyUI.
+        expanded_prompt = expand_prompt_shortcuts(options.prompt)
+        expanded_negative = expand_prompt_shortcuts(options.negativePrompt)
+
+        embedding_names = (
+            extract_embedding_names(expanded_prompt)
+            + extract_embedding_names(expanded_negative)
+        )
+        if embedding_names:
+            missing = [n for n in embedding_names if not _embedding_file_exists(n)]
+            if missing:
+                raise ValidationError(
+                    "Embedding file(s) not found in models/embeddings/: "
+                    + ", ".join(missing),
+                    field="prompt",
+                )
+
         positive_cond = [self.add_node("CLIPTextEncode", {
-            "text": options.prompt,
+            "text": expanded_prompt,
             "clip": current_clip
         }), 0]
 
         negative_cond = [self.add_node("CLIPTextEncode", {
-            "text": options.negativePrompt,
+            "text": expanded_negative,
             "clip": current_clip
         }), 0]
 
