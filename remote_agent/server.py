@@ -1336,7 +1336,16 @@ if WORKER_MODE in ("llm", "hybrid"):
         is_streaming = bool(payload.get("stream", True))
 
         from fastapi.responses import StreamingResponse, Response
-        import httpx
+        # In hybrid mode, ensure ComfyUI yields its VRAM back to the system before LLM token generation
+        if WORKER_MODE == "hybrid":
+            try:
+                async with httpx.AsyncClient(timeout=2.0) as free_client:
+                    await free_client.post(
+                        "http://127.0.0.1:8188/free",
+                        json={"unload_models": True, "free_memory": True},
+                    )
+            except Exception:
+                pass
 
         client = httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT)
 

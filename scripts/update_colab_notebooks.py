@@ -909,6 +909,22 @@ def launch_llm_track():
     if not rp_ram_file and src_expected and os.path.exists(src_expected):
         rp_ram_file = src_expected
 
+    global spawn_cmd, env_llm
+
+    # Ensure ComfyUI yields any held VRAM before llama-server loads weights into GPU
+    if mode_key in ("hybrid", "model"):
+        try:
+            req_free = urllib.request.Request(
+                f"http://127.0.0.1:{comfy_port}/free",
+                data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req_free, timeout=2) as _:
+                pass
+            time.sleep(0.5)
+        except Exception:
+            pass
+
     # Dynamic VRAM budgeting & safe layer offload calculation
     ngl = 99
     try:
@@ -916,19 +932,20 @@ def launch_llm_track():
         if torch.cuda.is_available():
             total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             weight_gb = os.path.getsize(rp_ram_file) / (1024**3) if (rp_ram_file and os.path.exists(rp_ram_file)) else 0.0
-            safe_budget_gb = max(0.0, total_vram_gb - 2.5)
+            # Reserve 5.0 GB for KV cache (1.5GB), CUDA runtime/overhead (1.5GB), and scratch/activations (2.0GB)
+            safe_budget_gb = max(0.0, total_vram_gb - 5.0)
             if weight_gb > safe_budget_gb > 0:
                 fraction = safe_budget_gb / weight_gb
-                ngl = max(20, min(60, int(64 * fraction)))
+                ngl = max(20, min(56, int(64 * fraction)))
                 print(f"  ⚡ GPU VRAM: {total_vram_gb:.1f} GB | Model: {weight_gb:.1f} GB")
-                print(f"  🎯 Calculated safe layer offload: -ngl {ngl} (GPU: ~{safe_budget_gb:.1f} GB, CPU RAM: ~{weight_gb - safe_budget_gb:.1f} GB) to prevent CUDA OOM")
+                print(f"  🎯 Calculated safe layer offload: -ngl {ngl} (GPU: ~{safe_budget_gb:.1f} GB, RAM Cache: ~{weight_gb - safe_budget_gb:.1f} GB) to prevent CUDA OOM")
             else:
                 ngl = 99
                 if weight_gb > 0:
                     print(f"  ⚡ Model ({weight_gb:.1f} GB) fits entirely in GPU VRAM ({total_vram_gb:.1f} GB): -ngl 99 (100% GPU offload, zero CPU latency)")
     except Exception as exc:
-        ngl = 99
-        print(f"  Notice: VRAM layer budgeting bypassed ({exc}); using -ngl 99")
+        ngl = 50
+        print(f"  Notice: VRAM layer budgeting fallback ({exc}); using -ngl 50")
 
     llama_args = [
         llama_exec,
@@ -1256,11 +1273,24 @@ try:
         now = time.time()
         if now - last_watchdog > 10.0:
             last_watchdog = now
-            if mode_key in ("hybrid", "llm") and "proc_llm" in locals() and "spawn_cmd" in locals() and proc_llm.poll() is not None:
+            proc_llm = worker_procs.get("llm")
+            if mode_key in ("hybrid", "llm") and proc_llm and proc_llm.poll() is not None:
                 tag = TAG_COLORS.get("LLM", "[LLM]")
                 print(f"{tag} ⚠️ llama-server process exited (code {proc_llm.returncode}). Auto-restarting...", flush=True)
+                # Ensure ComfyUI yields VRAM before restarting llama-server
+                try:
+                    req_free = urllib.request.Request(
+                        f"http://127.0.0.1:{comfy_port}/free",
+                        data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}
+                    )
+                    with urllib.request.urlopen(req_free, timeout=2) as _:
+                        pass
+                    time.sleep(0.5)
+                except Exception:
+                    pass
                 with open(log_llm, "a", buffering=1) as out:
-                    proc_llm = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
+                    worker_procs["llm"] = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
 
         if not activity:
             time.sleep(0.3)

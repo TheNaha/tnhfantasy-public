@@ -123,11 +123,12 @@ class Model:
             if torch.cuda.is_available() and os.path.exists(model_path):
                 total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
                 weight_gb = os.path.getsize(model_path) / (1024**3)
-                safe_budget_gb = max(0.0, total_vram_gb - 2.5)
+                # Reserve 5.0 GB for KV cache, CUDA driver/runtime, and compute scratch buffers
+                safe_budget_gb = max(0.0, total_vram_gb - 5.0)
                 if weight_gb > safe_budget_gb > 0:
-                    ngl = max(20, min(60, int(64 * (safe_budget_gb / weight_gb))))
+                    ngl = max(20, min(56, int(64 * (safe_budget_gb / weight_gb))))
         except Exception:
-            ngl = 99
+            ngl = 50
 
         args = [
             "-m", model_path,
