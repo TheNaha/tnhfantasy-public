@@ -310,11 +310,15 @@ def engine_supports_setup(provider: Any) -> bool:
     return _registry_supports_setup(rtype)
 
 
-def get_engine(provider_id: str, provider: Optional[Any] = None) -> Optional[InProcessEngine]:
+def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InProcessEngine]:
     """
     Retrieve or construct an InProcessEngine instance for provider_id.
     Instances are cached by provider_id.
     """
+    if hasattr(provider_id, "id") and not isinstance(provider_id, str):
+        provider = provider_id
+        provider_id = str(provider.id)
+
     if provider_id in _ENGINE_CACHE:
         return _ENGINE_CACHE[provider_id]
 

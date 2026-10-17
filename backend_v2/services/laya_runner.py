@@ -17,9 +17,9 @@ from infrastructure.logging import get_logger
 logger = get_logger("laya_runner")
 
 _MODEL_REPO_BY_ID: Dict[str, str] = {
-    "laya_multilingual": "TurnstileLabs/laya-multilingual-tuned",
-    "laya_typed_decisions": "TurnstileLabs/laya-typed-decisions",
-    "laya_english": "TurnstileLabs/laya-english-tuned",
+    "laya_multilingual": "convaiinnovations/laya-multilingual",
+    "laya_typed_decisions": "convaiinnovations/laya-typed-decisions",
+    "laya_english": "convaiinnovations/laya",
 }
 
 
@@ -91,55 +91,74 @@ class LayaRunner:
         laya, model = self._ensure_loaded(model_id)
         started = time.perf_counter()
 
-        decide_kwargs: Dict[str, Any] = {}
+        questions_dict: Dict[str, Any] = {}
+        min_rubric_val: Dict[str, int] = {}
         for q in questions:
             key = q["key"]
-            q_type = q["type"]
+            q_type = q.get("type")
             if q_type == "choice":
-                decide_kwargs[key] = laya.choice(
-                    question=q["question"],
-                    options=q["options"],
-                )
+                opts = q.get("options")
+                if isinstance(opts, dict):
+                    criteria = opts
+                elif isinstance(opts, list):
+                    criteria = opts
+                else:
+                    criteria = []
+                questions_dict[key] = {
+                    "type": "choice",
+                    "instructions": q.get("question") or q.get("prompt") or "",
+                    "criteria": criteria,
+                }
             elif q_type == "score":
-                rubric = {int(k): v for k, v in (q.get("rubric") or {}).items()}
-                decide_kwargs[key] = laya.score(
-                    question=q["question"],
-                    rubric=rubric,
-                )
-            elif q_type == "noul":
-                decide_kwargs[key] = laya.noul(statement=q["statement"])
+                rubric_raw = q.get("rubric") or {}
+                if isinstance(rubric_raw, dict):
+                    sorted_keys = sorted(rubric_raw.keys(), key=lambda x: int(x))
+                    min_rubric_val[key] = int(sorted_keys[0]) if sorted_keys else 1
+                    criteria = [rubric_raw[k] for k in sorted_keys]
+                else:
+                    min_rubric_val[key] = 1
+                    criteria = [str(x) for x in (q.get("options") or [])]
+                questions_dict[key] = {
+                    "type": "score",
+                    "instructions": q.get("question") or q.get("prompt") or "",
+                    "criteria": criteria or ["1", "2", "3", "4", "5"],
+                }
+            elif q_type in ("noul", "yes_no"):
+                questions_dict[key] = {
+                    "type": "noul",
+                    "instructions": q.get("statement") or q.get("prompt") or q.get("question") or "",
+                }
 
-        raw_result = model.decide(state=context_text, **decide_kwargs)
+        raw_result = model.predict(context_text, questions_dict)
         latency_ms = round((time.perf_counter() - started) * 1000, 1)
 
+        raw_answers = raw_result.get("answers", {}) if isinstance(raw_result, dict) else {}
         answers: Dict[str, Any] = {}
         for q in questions:
             key = q["key"]
-            q_type = q["type"]
-            ans = raw_result[key] if isinstance(raw_result, dict) else getattr(raw_result, key, None)
+            q_type = q.get("type")
+            ans = raw_answers.get(key)
             if ans is None:
                 continue
             if q_type == "choice":
-                choice_val = getattr(ans, "choice", getattr(ans, "selected", None))
-                probs_val = getattr(ans, "probabilities", getattr(ans, "probs", None))
-                if isinstance(ans, dict):
-                    choice_val = ans.get("choice") or ans.get("selected")
-                    probs_val = ans.get("probabilities") or ans.get("probs") or {}
+                choice_val = ans.get("choice") or ans.get("selected")
+                probs_val = ans.get("probabilities") or ans.get("probs") or {}
                 answers[key] = {
                     "choice": str(choice_val) if choice_val is not None else "",
                     "probabilities": dict(probs_val or {}),
                 }
             elif q_type == "score":
-                score_val = getattr(ans, "score", getattr(ans, "expected", None))
-                if isinstance(ans, dict):
-                    score_val = ans.get("score", ans.get("expected", 0.0))
-                answers[key] = {"score": float(score_val) if score_val is not None else 0.0}
-            elif q_type == "noul":
-                prob_val = getattr(ans, "probability", getattr(ans, "true_probability", None))
-                if isinstance(ans, dict):
-                    prob_val = ans.get("probability", ans.get("true_probability", 0.0))
-                elif isinstance(ans, (int, float)):
-                    prob_val = float(ans)
+                score_raw = ans.get("score")
+                if score_raw is None:
+                    score_raw = ans.get("expected", 0.0)
+                # Laya scores expected 0-based index: sum(p_i * i). Map to rubric start if needed:
+                score_num = float(score_raw)
+                offset = min_rubric_val.get(key, 0)
+                if offset > 0:
+                    score_num += float(offset)
+                answers[key] = {"score": round(score_num, 2)}
+            elif q_type in ("noul", "yes_no"):
+                prob_val = ans.get("noul") if "noul" in ans else ans.get("probability", 0.0)
                 answers[key] = {"probability": float(prob_val) if prob_val is not None else 0.0}
 
         return {

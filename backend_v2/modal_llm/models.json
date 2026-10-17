@@ -423,7 +423,7 @@
     "laya_multilingual": {
       "role": "decisions",
       "engine_type": "system1_laya",
-      "repo": "TurnstileLabs/laya-multilingual-tuned",
+      "repo": "convaiinnovations/laya-multilingual",
       "gguf": "",
       "ctx": 8192,
       "parallel": 1,
@@ -434,7 +434,7 @@
     "laya_typed_decisions": {
       "role": "decisions",
       "engine_type": "system1_laya",
-      "repo": "TurnstileLabs/laya-typed-decisions",
+      "repo": "convaiinnovations/laya-typed-decisions",
       "gguf": "",
       "ctx": 8192,
       "parallel": 1,
@@ -445,7 +445,7 @@
     "laya_english": {
       "role": "decisions",
       "engine_type": "system1_laya",
-      "repo": "TurnstileLabs/laya-english-tuned",
+      "repo": "convaiinnovations/laya",
       "gguf": "",
       "ctx": 8192,
       "parallel": 1,

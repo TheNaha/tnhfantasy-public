@@ -390,6 +390,94 @@ class BeamLLMEngine(_BeamLLMEngineBase):
 
     ws_path = "/llm"
     request_fields = ("messages",)
+    manages_model_files = True
+    _MODEL_DIRS = ("models",)
+
+    def _http_url(self, path: str) -> str:
+        base = (self.gpu_url or "").rstrip("/")
+        return f"{base}/{path.lstrip('/')}"
+
+    async def list_models(self, directory: str = "") -> list[dict[str, Any]]:
+        if not self.gpu_url:
+            return []
+        try:
+            client = self.get_http_client()
+            resp = await client.post(self._http_url("/list-models"), json={"directory": directory}, timeout=15.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data if isinstance(data, list) else []
+            return []
+        except Exception as exc:
+            logger.warning("beam_llm_list_models_failed", provider_id=self.provider_id, error=str(exc))
+            return []
+
+    async def download_file(
+        self,
+        download_url: str,
+        storage_path: str,
+        token: Optional[str] = None,
+        timeout: float = 3600.0,
+        preview_url: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        client = self.get_http_client()
+        resp = await client.post(
+            self._http_url("/download-model"),
+            json={
+                "url": download_url,
+                "path": storage_path,
+                "token": token,
+                "preview_url": preview_url,
+                "metadata": metadata,
+            },
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Beam LLM download failed: HTTP {resp.status_code} {resp.text}")
+        return resp.json()
+
+    async def validate_models(
+        self, directories: list[str], delete_invalid: bool = False
+    ) -> Dict[str, Any]:
+        client = self.get_http_client()
+        resp = await client.post(
+            self._http_url("/validate-models"),
+            json={"directory": directories, "delete_invalid": delete_invalid},
+            timeout=60.0,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        return {}
+
+    async def validate_all_models(
+        self, directories: Optional[list[str]] = None, delete_invalid: bool = False
+    ) -> Dict[str, Any]:
+        return await self.validate_models(directories or list(self._MODEL_DIRS), delete_invalid)
+
+    async def delete_file(self, path: str) -> bool:
+        try:
+            client = self.get_http_client()
+            resp = await client.post(self._http_url("/delete-model"), json={"path": path}, timeout=10.0)
+            return resp.status_code == 200
+        except Exception:
+            return False
+
+    async def evaluate_decisions(
+        self,
+        model_id: str,
+        context_text: str,
+        questions: Any,
+        timeout: float = 30.0,
+    ) -> Dict[str, Any]:
+        client = self.get_http_client()
+        resp = await client.post(
+            self._http_url("/v1/decisions"),
+            json={"model": model_id, "context": context_text, "questions": questions},
+            timeout=timeout,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        raise RuntimeError(f"Beam evaluate_decisions failed: HTTP {resp.status_code} {resp.text}")
 
 
 class BeamTTSEngine(_BeamLLMEngineBase):

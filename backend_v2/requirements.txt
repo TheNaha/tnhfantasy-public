@@ -58,6 +58,7 @@ APScheduler>=3.10.0
 structlog>=23.2.0
 
 # LLM and Embeddings
+laya>=0.4.10
 sentence-transformers>=2.2.2
 # `--extra-index-url` on its own line, NOT trailing the requirement.
 #

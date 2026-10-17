@@ -287,16 +287,16 @@ class TestBeamDialectEngines:
 
     @pytest.mark.asyncio
     async def test_no_model_tree(self):
-        """Hosted endpoints do not own model files, so the lifecycle is honest."""
-        for engine in (
-            BeamLLMEngine("b1", api_key="k", gpu_url="http://x"),
-            BeamTTSEngine("b2", api_key="k", gpu_url="http://x"),
-        ):
-            assert engine.manages_model_files is False
-            assert await engine.list_models("models") == []
-            assert await engine.delete_file("x") is False
-            assert await engine.upload_file("x", "eA==") is False
-            assert await engine.setup_models() is True
+        """BeamTTSEngine does not own model files; BeamLLMEngine manages its weights."""
+        tts_engine = BeamTTSEngine("b2", api_key="k", gpu_url="http://x")
+        assert tts_engine.manages_model_files is False
+        assert await tts_engine.list_models("models") == []
+        assert await tts_engine.delete_file("x") is False
+        assert await tts_engine.upload_file("x", "eA==") is False
+        assert await tts_engine.setup_models() is True
+
+        llm_engine = BeamLLMEngine("b1", api_key="k", gpu_url="http://x")
+        assert llm_engine.manages_model_files is True
 
 
 class TestRemoteLLMEngine:

@@ -384,7 +384,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         "capabilities": ["llm"],
         "description": "Serverless LLM on Beam.cloud: a llama.cpp or vLLM endpoint behind Beam's realtime handler.",
         "engine": "BeamLLMEngine",
-        "manages_model_files": False,
+        "manages_model_files": True,
         "credentials": [
             {"key": "api_key", "label": "Beam API Key", "type": "password", "required": True},
             {"key": "workspace_id", "label": "Workspace ID", "type": "text", "required": False},

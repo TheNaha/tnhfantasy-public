@@ -40,13 +40,16 @@ websocket handler has no reliable request context to read a header from, and
 the client sends the key in both places. Comparison is constant-time.
 """
 from beta9 import asgi, Image, Volume
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+import httpx
 import json
 import os
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterator, List, Optional
 
 # The same positional problem `beam_app.py` solves, for the same reason:
 # `llama_server.py` lives under `remote_agent/` and is not a sibling of this
@@ -62,8 +65,11 @@ _REPO_ROOT = next(
     None,
 )
 for _candidate in (_REPO_ROOT, _HERE):
-    if _candidate and str(_candidate) not in sys.path:
-        sys.path.append(str(_candidate))
+    if _candidate:
+        if str(_candidate) not in sys.path:
+            sys.path.append(str(_candidate))
+        if (_candidate / "remote_agent").is_dir() and str(_candidate / "remote_agent") not in sys.path:
+            sys.path.append(str(_candidate / "remote_agent"))
 
 VOL_NAME = os.getenv("BEAM_VOLUME_NAME", "comfy-storage")
 LLM_DIR = os.getenv("BEAM_LLM_DIR", "llm")
@@ -105,6 +111,7 @@ llm_image = (
         "websockets",
         "httpx",
         "huggingface_hub",
+        "laya>=0.4.10",
     ])
     .build_with_gpu(gpu=GPU_TYPE)
 )
@@ -300,6 +307,311 @@ async def _llama_sse(port: int, body: Dict[str, Any]) -> Iterator[Dict[str, Any]
                     continue
                 if isinstance(frame, dict):
                     yield frame
+
+
+# ---------------------------------------------------------------------------
+# Models & Auth for HTTP routes
+# ---------------------------------------------------------------------------
+
+
+async def verify_beam_token(request: Request):
+    """Authenticate HTTP request via Authorization: Bearer <key> or X-Worker-Token."""
+    auth_header = request.headers.get("Authorization", "")
+    token = ""
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    elif request.headers.get("X-Worker-Token"):
+        token = request.headers.get("X-Worker-Token", "").strip()
+    elif "token" in request.query_params:
+        token = request.query_params["token"].strip()
+
+    if not _token_ok(token):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return True
+
+
+class DownloadRequest(BaseModel):
+    url: str = ""
+    path: str = ""
+    token: Optional[str] = None
+    preview_url: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    model_id: Optional[str] = None
+
+
+class ListModelsRequest(BaseModel):
+    directory: str = ""
+
+
+class DeleteModelRequest(BaseModel):
+    path: str
+
+
+class ValidateModelsRequest(BaseModel):
+    directory: str | List[str]
+    delete_invalid: bool = False
+
+
+class DecisionsRequest(BaseModel):
+    model: str = "laya_multilingual"
+    context: str = ""
+    state: str = ""
+    questions: Any = Field(default_factory=list)
+
+
+_LAYA_REPO_MAP = {
+    "laya_multilingual": "convaiinnovations/laya-multilingual",
+    "laya_typed_decisions": "convaiinnovations/laya-typed-decisions",
+    "laya_english": "convaiinnovations/laya",
+}
+_LAYA_LOADED_MODELS: Dict[str, Any] = {}
+
+
+def _evaluate_laya_cpu_sync(model_id: str, context_text: str, questions: Any) -> Dict[str, Any]:
+    import time
+    import laya  # type: ignore
+
+    repo_or_path = _LAYA_REPO_MAP.get(model_id, model_id)
+    candidate = os.path.join(MODELS_ROOT, model_id)
+    if os.path.isdir(candidate) and os.listdir(candidate):
+        repo_or_path = candidate
+
+    laya_model = _LAYA_LOADED_MODELS.get(repo_or_path)
+    if laya_model is None:
+        laya_model = laya.load(repo_or_path, device="cpu")
+        _LAYA_LOADED_MODELS[repo_or_path] = laya_model
+
+    if isinstance(questions, dict):
+        q_list = [{"key": k, **v} for k, v in questions.items() if isinstance(v, dict)]
+    elif isinstance(questions, list):
+        q_list = [q for q in questions if isinstance(q, dict) and "key" in q]
+    else:
+        q_list = []
+
+    questions_dict: Dict[str, Any] = {}
+    min_rubric_val: Dict[str, int] = {}
+    for q in q_list:
+        key = q["key"]
+        q_type = q.get("type")
+        if q_type == "choice":
+            opts = q.get("options")
+            criteria = opts if isinstance(opts, (list, dict)) else []
+            questions_dict[key] = {
+                "type": "choice",
+                "instructions": q.get("question") or q.get("prompt") or "",
+                "criteria": criteria,
+            }
+        elif q_type == "score":
+            rubric_raw = q.get("rubric") or {}
+            if isinstance(rubric_raw, dict):
+                sorted_keys = sorted(rubric_raw.keys(), key=lambda x: int(x))
+                min_rubric_val[key] = int(sorted_keys[0]) if sorted_keys else 1
+                criteria = [rubric_raw[k] for k in sorted_keys]
+            else:
+                min_rubric_val[key] = 1
+                criteria = [str(x) for x in (q.get("options") or [])]
+            questions_dict[key] = {
+                "type": "score",
+                "instructions": q.get("question") or q.get("prompt") or "",
+                "criteria": criteria or ["1", "2", "3", "4", "5"],
+            }
+        elif q_type in ("noul", "yes_no"):
+            questions_dict[key] = {
+                "type": "noul",
+                "instructions": q.get("statement") or q.get("prompt") or q.get("question") or "",
+            }
+
+    t0 = time.perf_counter()
+    raw_result = laya_model.predict(context_text, questions_dict)
+    latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+
+    raw_answers = raw_result.get("answers", {}) if isinstance(raw_result, dict) else {}
+    answers: Dict[str, Any] = {}
+    for q in q_list:
+        key = q["key"]
+        q_type = q.get("type")
+        ans = raw_answers.get(key)
+        if ans is None:
+            continue
+        if q_type == "choice":
+            choice_val = ans.get("choice") or ans.get("selected")
+            probs_val = ans.get("probabilities") or ans.get("probs") or {}
+            answers[key] = {
+                "choice": str(choice_val) if choice_val is not None else "",
+                "probabilities": dict(probs_val or {}),
+            }
+        elif q_type == "score":
+            score_raw = ans.get("score")
+            if score_raw is None:
+                score_raw = ans.get("expected", 0.0)
+            score_num = float(score_raw)
+            offset = min_rubric_val.get(key, 0)
+            if offset > 0:
+                score_num += float(offset)
+            answers[key] = {"score": round(score_num, 2)}
+        elif q_type in ("noul", "yes_no"):
+            prob_val = ans.get("noul") if "noul" in ans else ans.get("probability", 0.0)
+            answers[key] = {"probability": float(prob_val) if prob_val is not None else 0.0}
+
+    return {
+        "status": "success",
+        "model_id": model_id,
+        "engine_used": "beam_laya_cpu",
+        "provider_tier": "beam_laya",
+        "latency_ms": latency_ms,
+        "answers": answers,
+        "results": answers,
+    }
+
+
+@llm_app.post("/v1/chat/completions", dependencies=[Depends(verify_beam_token)])
+async def chat_completions(request: Request):
+    stack = _llm_state.get("stack")
+    if stack is None or not _llm_state.get("ready"):
+        raise HTTPException(status_code=503, detail="llama.cpp is still loading")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    try:
+        port = stack.resolve(body.get("model") or "")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    stream = body.get("stream", False)
+    if stream:
+        async def _stream_generator():
+            async for frame in _llama_sse(port, body):
+                yield f"data: {json.dumps(frame)}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(_stream_generator(), media_type="text/event-stream")
+    else:
+        async with httpx.AsyncClient(timeout=float(GPU_TIMEOUT)) as client:
+            resp = await client.post(f"http://127.0.0.1:{port}/v1/chat/completions", json=body)
+            return JSONResponse(status_code=resp.status_code, content=resp.json())
+
+
+@llm_app.get("/v1/models", dependencies=[Depends(verify_beam_token)])
+async def list_models_v1():
+    stack = _llm_state.get("stack")
+    servers = getattr(stack, "servers", {}) or {}
+    data = [
+        {"id": m, "object": "model", "owned_by": "beam", "permission": []}
+        for m in sorted(servers)
+    ]
+    return {"object": "list", "data": data}
+
+
+@llm_app.post("/v1/decisions", dependencies=[Depends(verify_beam_token)])
+async def evaluate_decisions(req: DecisionsRequest):
+    """Evaluate parallel typed System 1 questions using Laya on CPU (0 MB GPU VRAM)."""
+    import asyncio
+    try:
+        res = await asyncio.to_thread(
+            _evaluate_laya_cpu_sync,
+            req.model,
+            req.context or req.state,
+            req.questions,
+        )
+        return res
+    except ImportError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "message": f"laya package not installed on Beam worker: {exc}",
+                "retryable": False,
+            },
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "status": "error",
+                "message": f"Laya CPU evaluation failed: {exc}",
+                "retryable": False,
+            },
+        )
+
+
+@llm_app.post("/download-model", dependencies=[Depends(verify_beam_token)])
+async def download_model(req: DownloadRequest):
+    if req.model_id:
+        from remote_agent.llama_server import load as load_registry
+        reg = load_registry()
+        try:
+            model = reg.get(req.model_id)
+        except Exception:
+            return {"ok": False, "model_id": req.model_id, "reason": "not_in_registry"}
+        from huggingface_hub import snapshot_download
+        target = f"{MODELS_ROOT}/{model.volume_dir}"
+        os.makedirs(target, exist_ok=True)
+        if getattr(model, "engine_type", "gguf") == "system1_laya":
+            snapshot_download(model.repo, local_dir=target)
+        else:
+            patterns = [model.gguf]
+            if model.mmproj:
+                patterns.append(model.mmproj)
+            snapshot_download(model.repo, allow_patterns=patterns, local_dir=target)
+        return {"ok": True, "model_id": req.model_id, "fetched": [target]}
+
+    # Direct URL download
+    from provider_core.downloads import download_model_to_path
+    from provider_core.utils import get_safe_path
+    full_path = get_safe_path(MODELS_ROOT, req.path)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    res = download_model_to_path(
+        url=req.url,
+        full_path=full_path,
+        path=req.path,
+        token=req.token,
+        preview_url=req.preview_url,
+        metadata=req.metadata,
+    )
+    return res
+
+
+@llm_app.post("/list-models", dependencies=[Depends(verify_beam_token)])
+async def list_models(req: ListModelsRequest):
+    from provider_core.utils import is_model_candidate
+    from pathlib import Path
+    target_dir = Path(MODELS_ROOT) / (req.directory.lstrip("/")) if req.directory else Path(MODELS_ROOT)
+    if not target_dir.is_dir():
+        return []
+    items = []
+    for root, _, files in os.walk(target_dir):
+        for f in files:
+            if is_model_candidate(f):
+                p = Path(root) / f
+                items.append({
+                    "name": f,
+                    "path": str(p.relative_to(MODELS_ROOT)),
+                    "size": p.stat().st_size,
+                    "type": "model",
+                })
+    return items
+
+
+@llm_app.post("/validate-models", dependencies=[Depends(verify_beam_token)])
+async def validate_models(req: ValidateModelsRequest):
+    dirs = [req.directory] if isinstance(req.directory, str) else req.directory
+    results = {}
+    for d in dirs:
+        results[d] = {"valid": [], "invalid": [], "corrupted": []}
+    return results
+
+
+@llm_app.post("/delete-model", dependencies=[Depends(verify_beam_token)])
+async def delete_model(req: DeleteModelRequest):
+    from provider_core.utils import get_safe_path
+    try:
+        full_path = get_safe_path(MODELS_ROOT, req.path)
+        if os.path.exists(full_path):
+            os.remove(full_path)
+            return {"status": "success", "deleted": True}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+    return {"status": "success", "deleted": False}
 
 
 # =============================================================================

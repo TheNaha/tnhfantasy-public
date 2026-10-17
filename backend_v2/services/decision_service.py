@@ -63,7 +63,7 @@ class DecisionService:
             for provider in providers:
                 if provider.type not in ("remote_hybrid", "remote_llm"):
                     continue
-                engine = get_engine(provider)
+                engine = get_engine(provider.id, provider)
                 if engine is None:
                     continue
                 agent_url = getattr(engine, "agent_url", None) or getattr(engine, "base_url", None)
@@ -129,6 +129,94 @@ class DecisionService:
             )
             return None
 
+    async def _try_modal_laya(
+        self,
+        *,
+        context_text: str,
+        questions: List[Dict[str, Any]],
+        model_id: str,
+        allow_image_generation: bool,
+    ) -> Optional[DirectorDecisionResult]:
+        """Dispatch to Modal CPU function `evaluate_decisions`."""
+        try:
+            from services.engines.engine_factory import get_engine
+
+            providers = self.session.exec(
+                select(Provider)
+                .where(
+                    Provider.type == "modal_llm",
+                    Provider.enabled == True,  # noqa: E712
+                )
+                .order_by(Provider.priority, Provider.id)
+            ).all()
+            for provider in providers:
+                engine = get_engine(provider.id, provider)
+                if engine and hasattr(engine, "evaluate_decisions"):
+                    started = time.perf_counter()
+                    res = await engine.evaluate_decisions(
+                        model_id=model_id,
+                        context_text=context_text,
+                        questions=questions,
+                        timeout=15.0,
+                    )
+                    if res and res.get("status") == "success":
+                        answers = res.get("answers") or res
+                        latency_ms = float(res.get("latency_ms") or ((time.perf_counter() - started) * 1000))
+                        return parse_director_result(
+                            answers,
+                            engine_used=f"modal_laya_cpu:{provider.id}",
+                            model_id=str(res.get("model_id") or model_id),
+                            latency_ms=latency_ms,
+                            allow_image_generation=allow_image_generation,
+                        )
+        except Exception as exc:
+            logger.debug("director_modal_laya_call_failed", error=str(exc))
+        return None
+
+    async def _try_beam_laya(
+        self,
+        *,
+        context_text: str,
+        questions: List[Dict[str, Any]],
+        model_id: str,
+        allow_image_generation: bool,
+    ) -> Optional[DirectorDecisionResult]:
+        """Dispatch to Beam `/v1/decisions` on CPU."""
+        try:
+            from services.engines.engine_factory import get_engine
+
+            providers = self.session.exec(
+                select(Provider)
+                .where(
+                    Provider.type == "beam_llm",
+                    Provider.enabled == True,  # noqa: E712
+                )
+                .order_by(Provider.priority, Provider.id)
+            ).all()
+            for provider in providers:
+                engine = get_engine(provider.id, provider)
+                if engine and hasattr(engine, "evaluate_decisions"):
+                    started = time.perf_counter()
+                    res = await engine.evaluate_decisions(
+                        model_id=model_id,
+                        context_text=context_text,
+                        questions=questions,
+                        timeout=15.0,
+                    )
+                    if res and res.get("status") == "success":
+                        answers = res.get("answers") or res
+                        latency_ms = float(res.get("latency_ms") or ((time.perf_counter() - started) * 1000))
+                        return parse_director_result(
+                            answers,
+                            engine_used=f"beam_laya_cpu:{provider.id}",
+                            model_id=str(res.get("model_id") or model_id),
+                            latency_ms=latency_ms,
+                            allow_image_generation=allow_image_generation,
+                        )
+        except Exception as exc:
+            logger.debug("director_beam_laya_call_failed", error=str(exc))
+        return None
+
     async def _try_local_laya(
         self,
         *,
@@ -182,7 +270,7 @@ class DecisionService:
             from services.engines.engine_factory import get_engine
             from services.llm_config import model_for_kind
 
-            engine = get_engine(provider)
+            engine = get_engine(provider.id, provider)
             if engine is None:
                 return None
 
@@ -285,7 +373,7 @@ class DecisionService:
 
         # Explicit "same_as_util" bypasses Laya and goes straight to Tier 3
         if active_model != "same_as_util":
-            # Tier 1: Remote Agent (`remote_hybrid` / `remote_llm`) CPU/RAM Laya
+            # Tier 1: Remote Providers (remote_agent, modal_llm, beam_llm) CPU/RAM Laya
             remote_res = await self._try_remote_agent(
                 context_text=context_text,
                 questions=questions,
@@ -294,6 +382,24 @@ class DecisionService:
             )
             if remote_res is not None:
                 return remote_res
+
+            modal_res = await self._try_modal_laya(
+                context_text=context_text,
+                questions=questions,
+                model_id=active_model,
+                allow_image_generation=allow_image_generation,
+            )
+            if modal_res is not None:
+                return modal_res
+
+            beam_res = await self._try_beam_laya(
+                context_text=context_text,
+                questions=questions,
+                model_id=active_model,
+                allow_image_generation=allow_image_generation,
+            )
+            if beam_res is not None:
+                return beam_res
 
             # Tier 2: Local Backend CPU LayaRunner
             local_res = await self._try_local_laya(
@@ -306,15 +412,15 @@ class DecisionService:
                 return local_res
 
         # Tier 3: Generative JSON fallback on active `util` LLM provider
-        if active_model == "same_as_util":
-            gen_res = await self._try_generative_util_fallback(
-                context_text=context_text,
-                has_secondary_character=has_secondary_character,
-                allow_image_generation=allow_image_generation,
-                allow_narration=allow_narration,
-            )
-            if gen_res is not None:
-                return gen_res
+        # Attempted when explicitly requested ("same_as_util") OR as fallback when Tier 1 & Tier 2 both failed
+        gen_res = await self._try_generative_util_fallback(
+            context_text=context_text,
+            has_secondary_character=has_secondary_character,
+            allow_image_generation=allow_image_generation,
+            allow_narration=allow_narration,
+        )
+        if gen_res is not None:
+            return gen_res
 
         # Tier 4: Deterministic Heuristic Fallback
         return heuristic_director_decision(

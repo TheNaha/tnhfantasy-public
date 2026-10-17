@@ -367,6 +367,8 @@ BEAM_EXPECTATIONS = {
     # root with no path routing — so they are `@asgi` FastAPI deployments.
     "deployables/beam/llm_tts_app.py": {
         "/llm", "/tts", "/health",
+        "/v1/chat/completions", "/v1/models", "/v1/decisions",
+        "/download-model", "/list-models", "/validate-models", "/delete-model",
     },
 }
 

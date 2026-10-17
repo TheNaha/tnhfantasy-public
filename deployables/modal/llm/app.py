@@ -173,7 +173,7 @@ image = (
 #: uses. A debian_slim base starts in seconds.
 download_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("huggingface_hub[hf_transfer]")
+    .pip_install("huggingface_hub[hf_transfer]", "laya>=0.4.10")
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
     .add_local_dir(_REGISTRY_SRC, "/app/modal_llm")
 )
@@ -798,6 +798,18 @@ def download(key: str = ""):
     targets = _download_targets(key)
     done = set()
     for model in targets:
+        if getattr(model, "engine_type", None) == "system1_laya":
+            marker = (model.volume_dir, model.repo, "laya")
+            if marker in done:
+                continue
+            done.add(marker)
+            print(f"[{model.id}] {model.repo} :: snapshot (laya)", flush=True)
+            snapshot_download(
+                model.repo,
+                local_dir=f"{MODELS_DIR}/{model.volume_dir}",
+            )
+            print(f"   ok laya snapshot {model.volume_dir}", flush=True)
+            continue
         jobs = [(model.repo, model.gguf)]
         if model.mmproj:
             jobs.append((model.mmproj_repo or model.repo, model.mmproj))
@@ -861,6 +873,21 @@ def ensure_model(model_id: str) -> dict:
     _refresh_volume()
     if _present(model):
         return {"ok": True, "model_id": model_id, "downloaded": False, **_size(model)}
+
+    if getattr(model, "engine_type", None) == "system1_laya":
+        print(f"[{model_id}] {model.repo} :: snapshot (laya)", flush=True)
+        snapshot_download(
+            model.repo,
+            local_dir=f"{MODELS_DIR}/{model.volume_dir}",
+        )
+        if not _present(model):
+            return {
+                "ok": False,
+                "model_id": model_id,
+                "reason": "download_left_nothing",
+            }
+        vol.commit()
+        return {"ok": True, "model_id": model_id, "downloaded": True, **_size(model)}
 
     jobs = [(model.repo, model.gguf)]
     if model.mmproj:
@@ -1219,12 +1246,15 @@ def _refresh_volume() -> None:
 
 
 def _present(model) -> bool:
-    """Is the model's GGUF (and projector, if it has one) on the Volume?
+    """Is the model's GGUF (and projector, if it has one) or Laya directory on the Volume?
 
     Pure filesystem — no reload, so it is safe to call at any point in the
     container's life, including while a model is loaded. Refresh first with
     `_refresh_volume()`.
     """
+    if getattr(model, "engine_type", None) == "system1_laya":
+        target = Path(MODELS_DIR, model.volume_dir)
+        return target.is_dir() and any(target.iterdir())
     for pattern in filter(None, [model.gguf, model.mmproj]):
         try:
             _resolve(model.volume_dir, pattern)
@@ -1236,12 +1266,133 @@ def _present(model) -> bool:
 def _size(model) -> dict:
     """Byte size of the model's files, 0 when unreadable."""
     total = 0
+    if getattr(model, "engine_type", None) == "system1_laya":
+        target = Path(MODELS_DIR, model.volume_dir)
+        if target.is_dir():
+            for p in target.rglob("*"):
+                if p.is_file():
+                    total += p.stat().st_size
+        return {"bytes": total, "gb": round(total / 1e9, 2)}
     for pattern in filter(None, [model.gguf, model.mmproj]):
         try:
             total += Path(_resolve(model.volume_dir, pattern)).stat().st_size
         except RuntimeError:
             continue
     return {"bytes": total, "gb": round(total / 1e9, 2)}
+
+
+@app.function(
+    image=download_image,
+    volumes={MODELS_DIR: vol},
+    timeout=120,
+    cpu=2,
+    memory="2Gi",
+)
+def evaluate_decisions(
+    model_id: str,
+    context_text: str,
+    questions: dict | list,
+) -> dict:
+    """Evaluate parallel typed decisions using Laya on CPU without GPU billing."""
+    import time
+    import laya  # type: ignore
+
+    t0 = time.perf_counter()
+    _refresh_volume()
+    repo_or_dir = model_id
+    try:
+        model_entry = registry.get(model_id)
+        if getattr(model_entry, "engine_type", None) == "system1_laya":
+            local_dir = Path(MODELS_DIR, model_entry.volume_dir)
+            if local_dir.is_dir() and any(local_dir.iterdir()):
+                repo_or_dir = str(local_dir)
+            elif model_entry.repo:
+                repo_or_dir = model_entry.repo
+    except Exception:
+        pass
+
+    laya_model = laya.load(repo_or_dir, device="cpu")
+
+    if isinstance(questions, dict):
+        q_list = [{"key": k, **v} for k, v in questions.items() if isinstance(v, dict)]
+    elif isinstance(questions, list):
+        q_list = [q for q in questions if isinstance(q, dict) and "key" in q]
+    else:
+        q_list = []
+
+    questions_dict: dict = {}
+    min_rubric_val: dict = {}
+    for q in q_list:
+        key = q["key"]
+        q_type = q.get("type")
+        if q_type == "choice":
+            opts = q.get("options")
+            criteria = opts if isinstance(opts, (list, dict)) else []
+            questions_dict[key] = {
+                "type": "choice",
+                "instructions": q.get("question") or q.get("prompt") or "",
+                "criteria": criteria,
+            }
+        elif q_type == "score":
+            rubric_raw = q.get("rubric") or {}
+            if isinstance(rubric_raw, dict):
+                sorted_keys = sorted(rubric_raw.keys(), key=lambda x: int(x))
+                min_rubric_val[key] = int(sorted_keys[0]) if sorted_keys else 1
+                criteria = [rubric_raw[k] for k in sorted_keys]
+            else:
+                min_rubric_val[key] = 1
+                criteria = [str(x) for x in (q.get("options") or [])]
+            questions_dict[key] = {
+                "type": "score",
+                "instructions": q.get("question") or q.get("prompt") or "",
+                "criteria": criteria or ["1", "2", "3", "4", "5"],
+            }
+        elif q_type in ("noul", "yes_no"):
+            questions_dict[key] = {
+                "type": "noul",
+                "instructions": q.get("statement") or q.get("prompt") or q.get("question") or "",
+            }
+
+    raw_result = laya_model.predict(context_text, questions_dict)
+    latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+
+    raw_answers = raw_result.get("answers", {}) if isinstance(raw_result, dict) else {}
+    answers: dict = {}
+    for q in q_list:
+        key = q["key"]
+        q_type = q.get("type")
+        ans = raw_answers.get(key)
+        if ans is None:
+            continue
+        if q_type == "choice":
+            choice_val = ans.get("choice") or ans.get("selected")
+            probs_val = ans.get("probabilities") or ans.get("probs") or {}
+            answers[key] = {
+                "choice": str(choice_val) if choice_val is not None else "",
+                "probabilities": dict(probs_val or {}),
+            }
+        elif q_type == "score":
+            score_raw = ans.get("score")
+            if score_raw is None:
+                score_raw = ans.get("expected", 0.0)
+            score_num = float(score_raw)
+            offset = min_rubric_val.get(key, 0)
+            if offset > 0:
+                score_num += float(offset)
+            answers[key] = {"score": round(score_num, 2)}
+        elif q_type in ("noul", "yes_no"):
+            prob_val = ans.get("noul") if "noul" in ans else ans.get("probability", 0.0)
+            answers[key] = {"probability": float(prob_val) if prob_val is not None else 0.0}
+
+    return {
+        "status": "success",
+        "model_id": model_id,
+        "engine_used": "modal_laya_cpu",
+        "provider_tier": "modal_laya",
+        "latency_ms": latency_ms,
+        "answers": answers,
+        "results": answers,
+    }
 
 
 @app.local_entrypoint()

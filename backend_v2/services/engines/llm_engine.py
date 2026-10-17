@@ -926,6 +926,28 @@ class ModalLlamaCPPEngine(InProcessEngine):
                 return retryable_for_status(status)
         return False
 
+    async def evaluate_decisions(
+        self,
+        model_id: str,
+        context_text: str,
+        questions: Any,
+        timeout: float = 60.0,
+    ) -> Dict[str, Any]:
+        """Evaluate typed decisions using Laya CPU function on Modal."""
+        if not HAS_MODAL or modal is None:
+            raise RuntimeError("modal package is required for ModalLlamaCPPEngine")
+        client = await self.get_client_async()
+        func = modal.Function.from_name(self.app_name, "evaluate_decisions", client=client)
+        result = await asyncio.wait_for(
+            func.remote.aio(
+                model_id=model_id,
+                context_text=context_text,
+                questions=questions,
+            ),
+            timeout=timeout,
+        )
+        return result if isinstance(result, dict) else {}
+
     async def inference(
         self,
         workflow: Dict[str, Any],
