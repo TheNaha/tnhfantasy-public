@@ -1,5 +1,10 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, BookOpen, Images, Sparkles, ChevronDown, Layers3, Command, HelpCircle, FileText, ImagePlus, Paintbrush, Image as ImageIcon } from 'lucide-react';
+import {
+    Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server,
+    Globe, MessageSquare, BookOpen, Images, Sparkles, ChevronDown, Layers3,
+    Command, HelpCircle, FileText, ImagePlus, Paintbrush, Image as ImageIcon,
+    PanelLeftClose, PanelLeft
+} from 'lucide-react';
 import { useMemo, useState, memo, useEffect, useRef } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -15,7 +20,7 @@ import {
     summarizeProviderStatus,
 } from '../utils/providerStatus';
 
-const NavItem = ({ to, icon: Icon, label, onNavigate }) => {
+const NavItem = ({ to, icon: Icon, label, onNavigate, isCollapsed }) => {
     const location = useLocation();
     const isActive = to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
 
@@ -23,26 +28,29 @@ const NavItem = ({ to, icon: Icon, label, onNavigate }) => {
         <Link
             to={to}
             onClick={onNavigate}
+            aria-label={label}
+            title={label}
             aria-current={isActive ? 'page' : undefined}
             className={clsx(
-                "group flex items-center gap-3 px-4 py-2 rounded-xl transition-all duration-300 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
+                "group flex items-center rounded-xl transition-all duration-300 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
+                isCollapsed ? "lg:justify-center lg:px-0 lg:w-10 lg:h-10 mx-auto gap-3 px-4 py-2" : "gap-3 px-4 py-2",
                 isActive
                     ? "nav-active text-white font-medium shadow-[0_0_15px_rgba(59,130,246,0.15)]"
                     : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
             )}
         >
             <Icon size={20} className={clsx(
-                "transition-all duration-300",
+                "transition-all duration-300 shrink-0",
                 isActive ? "text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "text-gray-500 group-hover:text-gray-300"
             )} aria-hidden="true" />
-            <span className="font-medium tracking-wide text-sm">{label}</span>
+            <span className={clsx("font-medium tracking-wide text-sm truncate", isCollapsed && "lg:hidden")}>{label}</span>
         </Link>
     );
 };
 
 const EMPTY_STATS = Object.freeze({});
 
-const ProviderStatusPanel = memo(function ProviderStatusPanel() {
+const ProviderStatusPanel = memo(function ProviderStatusPanel({ isCollapsed }) {
     const { providers, lbStats } = useProvidersPageData();
 
     const providerStatsMap = useMemo(() => {
@@ -96,6 +104,22 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
         }
         return `${runningProviderCount}/${enabledProviderEntries.length} online · ${disabledProviderCount} paused`;
     }, [providerEntries.length, disabledProviderCount, enabledProviderEntries.length, runningProviderCount]);
+
+    if (isCollapsed) {
+        return (
+            <div className="shrink-0 p-2 border-t border-white/5 hidden lg:flex justify-center">
+                <Link
+                    to="/providers"
+                    className="relative p-2 rounded-xl text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors"
+                    title={`Providers: ${statusText}`}
+                    aria-label={`Providers: ${statusText}`}
+                >
+                    <Server size={18} />
+                    <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${statusDotTone}`} />
+                </Link>
+            </div>
+        );
+    }
 
     return (
         // `shrink-0` is load-bearing. Without it this panel is a flex child with
@@ -207,6 +231,27 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
 });
 
 export default function Layout({ children }) {
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+        try {
+            return localStorage.getItem('tnh_sidebar_collapsed') === 'true';
+        } catch {
+            /* ignore storage quota/security error */
+            return false;
+        }
+    });
+
+    const toggleSidebarCollapse = () => {
+        setIsSidebarCollapsed((prev) => {
+            const next = !prev;
+            try {
+                localStorage.setItem('tnh_sidebar_collapsed', String(next));
+            } catch {
+                /* ignore storage quota/security error */
+            }
+            return next;
+        });
+    };
+
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [showRoleplayTools, setShowRoleplayTools] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
@@ -356,16 +401,34 @@ export default function Layout({ children }) {
 
             {/* Sidebar */}
             <div id="mobile-sidebar" className={clsx(
-                "fixed inset-y-0 left-0 z-50 w-64 bg-[#0B0E14]/95 backdrop-blur-xl border-r border-white/5 flex flex-col transition-transform duration-300 lg:static lg:translate-x-0 shadow-2xl shadow-black/50",
-                isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
+                "fixed inset-y-0 left-0 z-50 bg-[#0B0E14]/95 backdrop-blur-xl border-r border-white/5 flex flex-col transition-all duration-300 lg:static lg:translate-x-0 shadow-2xl shadow-black/50",
+                isMobileMenuOpen ? "translate-x-0" : "-translate-x-full",
+                isSidebarCollapsed ? "w-64 lg:w-16" : "w-64"
             )}>
-                <div className="p-4 md:p-6 flex items-center justify-between border-b border-white/5 h-16 lg:h-auto">
-                    <div className="flex items-center gap-3">
-                        <img src={safeBranding.logoUrl} alt="Logo" className="w-8 h-8 drop-shadow-[0_0_10px_rgba(59,130,246,0.3)]" />
-                        <h1 className="text-xl font-bold text-gradient-primary tracking-tight">
+                <div className={clsx(
+                    "p-4 flex items-center border-b border-white/5 h-16 transition-all",
+                    isSidebarCollapsed ? "lg:p-2 lg:justify-center justify-between" : "md:p-6 justify-between"
+                )}>
+                    <div className="flex items-center gap-3 min-w-0">
+                        <img src={safeBranding.logoUrl} alt="Logo" className="w-8 h-8 shrink-0 drop-shadow-[0_0_10px_rgba(59,130,246,0.3)]" />
+                        <h1 className={clsx("text-xl font-bold text-gradient-primary tracking-tight truncate", isSidebarCollapsed && "lg:hidden")}>
                             {safeBranding.appName}
                         </h1>
                     </div>
+
+                    {/* Collapse toggle button on desktop (shown when expanded) */}
+                    <button
+                        type="button"
+                        onClick={toggleSidebarCollapse}
+                        className={clsx(
+                            "hidden lg:flex items-center justify-center p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors",
+                            isSidebarCollapsed && "hidden"
+                        )}
+                        aria-label="Collapse sidebar"
+                        title="Collapse sidebar"
+                    >
+                        <PanelLeftClose size={18} />
+                    </button>
 
                     {/* Close button only for mobile overlay mode */}
                     <button
@@ -377,13 +440,31 @@ export default function Layout({ children }) {
                     </button>
                 </div>
 
+                {/* When collapsed on desktop, show expand button */}
+                {isSidebarCollapsed && (
+                    <div className="hidden lg:flex justify-center py-2 border-b border-white/5">
+                        <button
+                            type="button"
+                            onClick={toggleSidebarCollapse}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                            aria-label="Expand sidebar"
+                            title="Expand sidebar"
+                        >
+                            <PanelLeft size={18} />
+                        </button>
+                    </div>
+                )}
+
                 {/* `flex-1 min-h-0` is what makes this actually scroll: without
                     `min-h-0` a flex child refuses to shrink below its content, so
                     the column overflowed the viewport instead of scrolling.
                     The mask fades the final row so a scrollable nav reads as
                     scrollable — at 900px tall there are more items below. */}
                 <nav
-                    className="flex-1 min-h-0 px-4 pt-4 pb-1 space-y-1 overflow-y-auto custom-scrollbar"
+                    className={clsx(
+                        "flex-1 min-h-0 pt-4 pb-1 space-y-1 overflow-y-auto custom-scrollbar transition-all",
+                        isSidebarCollapsed ? "lg:px-2 px-4" : "px-4"
+                    )}
                     // A 16px fade left the last item looking greyed-out — people read
                     // it as "disabled" rather than "scroll". 40px plus a short hold
                     // reads unmistakably as content continuing past the edge.
@@ -392,85 +473,74 @@ export default function Layout({ children }) {
                         WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 44px), transparent 100%)',
                     }}
                 >
-                    {/* Grouped by how the app is meant to be used, most
-                        prominent first: the roleplay front door, then image
-                        generation, then resources and system admin. Previously
-                        this was one flat "Menu" list with 8 image-generation
-                        entries above the roleplay ones, so 4 of 17 items
-                        signalled what the product actually is. Every
-                        destination is still here — only the reading order and
-                        the section headers changed. The "Menu" header went away
-                        with the reorder: Home is the roleplay front door, so it
-                        belongs under "Roleplay" rather than in a group of one. */}
-                    <div className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">Roleplay</div>
-                    {/* Points at the roleplay front door. This used to be `/`, which
-                        was the workspace picker, so "Home" and "Roleplay Home" were
-                        two names for two different landing pages. Now there is one
-                        front door and one nav item for it. */}
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/roleplay" icon={Home} label="Home" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Play" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Stories" />
-                    {/* `/worlds`, not `/world-vault`. Both exist, they are different
-                        pages, and the roleplay front door's "Shape a world" already
-                        linked here — so the one nav item named "World" landed on the
-                        vault search page and read as a broken "Worlds" link. The route
-                        stays: it is still the search hub, just not what "World" means. */}
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/worlds" icon={Globe} label="World" />
-                    <button
-                        type="button"
-                        onClick={() => setShowRoleplayTools((open) => !open)}
-                        aria-expanded={showRoleplayTools}
-                        className="mt-2 flex w-[calc(100%_-_2rem)] items-center gap-3 rounded-xl px-4 py-2.5 text-left text-xs font-medium text-gray-500 transition hover:bg-white/5 hover:text-gray-200"
-                    >
-                        <Layers3 size={17} aria-hidden="true" />
-                        <span className="flex-1">Expert tools</span>
-                        <ChevronDown size={14} className={showRoleplayTools ? 'rotate-180 transition-transform' : 'transition-transform'} aria-hidden="true" />
-                    </button>
-                    {showRoleplayTools && (
-                        <div className="mt-1 space-y-1 border-l border-white/10 pl-3 ml-4">
-                            {/* Rendered from the same definition the Roleplay
-                                front door and the command palette use, so the
-                                two "Expert tools" lists cannot drift again. */}
-                            {EXPERT_TOOLS.map(({ to, icon: Icon, label }) => (
-                                <NavItem key={to} onNavigate={() => setIsMobileMenuOpen(false)} to={to} icon={Icon} label={label} />
-                            ))}
-                        </div>
+                    <div className={clsx("text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4", isSidebarCollapsed && "lg:hidden")}>Roleplay</div>
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/roleplay" icon={Home} label="Home" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Play" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Stories" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/worlds" icon={Globe} label="World" isCollapsed={isSidebarCollapsed} />
+                    {!isSidebarCollapsed ? (
+                        <>
+                            <button
+                                type="button"
+                                onClick={() => setShowRoleplayTools((open) => !open)}
+                                aria-expanded={showRoleplayTools}
+                                className="mt-2 flex w-[calc(100%_-_2rem)] items-center gap-3 rounded-xl px-4 py-2.5 text-left text-xs font-medium text-gray-500 transition hover:bg-white/5 hover:text-gray-200"
+                            >
+                                <Layers3 size={17} aria-hidden="true" />
+                                <span className="flex-1">Expert tools</span>
+                                <ChevronDown size={14} className={showRoleplayTools ? 'rotate-180 transition-transform' : 'transition-transform'} aria-hidden="true" />
+                            </button>
+                            {showRoleplayTools && (
+                                <div className="mt-1 space-y-1 border-l border-white/10 pl-3 ml-4">
+                                    {EXPERT_TOOLS.map(({ to, icon: Icon, label }) => (
+                                        <NavItem key={to} onNavigate={() => setIsMobileMenuOpen(false)} to={to} icon={Icon} label={label} isCollapsed={isSidebarCollapsed} />
+                                    ))}
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <div className="hidden lg:block my-2 border-t border-white/5" />
                     )}
 
-                    <div className="mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider">Image generation</div>
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/gallery" icon={Images} label="Gallery" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/generate" icon={Wand2} label="Simple Generate" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/batch-generate" icon={Sparkles} label="Batch Generate" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/prompts" icon={FileText} label="Prompt Library" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/img2img" icon={ImagePlus} label="Img2Img" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/inpaint" icon={Paintbrush} label="Inpaint" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/advanced" icon={Settings} label="Advanced" />
+                    <div className={clsx("mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider", isSidebarCollapsed && "lg:hidden")}>Image generation</div>
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/gallery" icon={Images} label="Gallery" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/generate" icon={Wand2} label="Simple Generate" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/batch-generate" icon={Sparkles} label="Batch Generate" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/prompts" icon={FileText} label="Prompt Library" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/img2img" icon={ImagePlus} label="Img2Img" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/inpaint" icon={Paintbrush} label="Inpaint" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/advanced" icon={Settings} label="Advanced" isCollapsed={isSidebarCollapsed} />
 
-                    <div className="mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider">Resources</div>
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/discover" icon={Globe} label="Discover Models" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/providers" icon={Server} label="Providers" />
-                    <div className="mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider">System</div>
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/statistics" icon={BarChart3} label="Statistics" />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/settings" icon={Settings2} label="Settings" />
+                    <div className={clsx("mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider", isSidebarCollapsed && "lg:hidden")}>Resources</div>
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/discover" icon={Globe} label="Discover Models" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/providers" icon={Server} label="Providers" isCollapsed={isSidebarCollapsed} />
+                    <div className={clsx("mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider", isSidebarCollapsed && "lg:hidden")}>System</div>
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/statistics" icon={BarChart3} label="Statistics" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/settings" icon={Settings2} label="Settings" isCollapsed={isSidebarCollapsed} />
                 </nav>
 
-                <ProviderStatusPanel />
+                <ProviderStatusPanel isCollapsed={isSidebarCollapsed} />
 
-                <div className="flex items-center gap-1 p-2 border-t border-white/5">
+                <div className={clsx("flex items-center p-2 border-t border-white/5", isSidebarCollapsed ? "lg:flex-col lg:gap-2 justify-center" : "gap-1")}>
                     <button
                         onClick={() => setShowCommandPalette(true)}
-                        className="flex items-center gap-2 px-3 py-2 rounded-xl text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors text-xs font-medium"
+                        className={clsx(
+                            "flex items-center rounded-xl text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors text-xs font-medium",
+                            isSidebarCollapsed ? "lg:justify-center lg:p-2 lg:w-10 lg:h-10 gap-2 px-3 py-2 w-full" : "gap-2 px-3 py-2 w-full"
+                        )}
                         aria-label="Open command palette"
+                        title="Quick search (Cmd/Ctrl+K)"
                     >
                         <Command size={15} aria-hidden="true" />
-                        <span>Quick search</span>
-                        <kbd className="kbd ml-auto">⌘K</kbd>
+                        <span className={clsx(isSidebarCollapsed && "lg:hidden")}>Quick search</span>
+                        <kbd className={clsx("kbd ml-auto", isSidebarCollapsed && "lg:hidden")}>⌘K</kbd>
                     </button>
                     <button
                         onClick={() => setShowShortcutsModal(true)}
                         className="p-2 rounded-xl text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors"
                         aria-label="Keyboard shortcuts"
+                        title="Keyboard shortcuts (?)"
                     >
                         <HelpCircle size={16} aria-hidden="true" />
                     </button>

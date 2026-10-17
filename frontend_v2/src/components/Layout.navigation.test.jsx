@@ -39,4 +39,21 @@ describe('Layout sidebar — where "World" goes', () => {
         const world = screen.getByRole('link', { name: 'World' });
         expect(world.getAttribute('href')).not.toContain('world-vault');
     });
+
+    it('can collapse and expand the sidebar via toggle button', async () => {
+        const { fireEvent } = await import('@testing-library/react');
+        renderLayout();
+        const collapseBtn = screen.getByRole('button', { name: 'Collapse sidebar' });
+        expect(collapseBtn).toBeInTheDocument();
+
+        fireEvent.click(collapseBtn);
+        const expandBtn = screen.getByRole('button', { name: 'Expand sidebar' });
+        expect(expandBtn).toBeInTheDocument();
+
+        // Accessible link still resolves cleanly when collapsed
+        expect(screen.getByRole('link', { name: 'World' })).toHaveAttribute('href', '/worlds');
+
+        fireEvent.click(expandBtn);
+        expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toBeInTheDocument();
+    });
 });

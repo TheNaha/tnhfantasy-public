@@ -575,8 +575,13 @@ export function ChatWorkspaceProvider({ children }) {
             setPendingAttachment(null);
             setActiveCommand(null);
             if (res.job_id) {
-
-                setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: chatIdToUse });
+                setStreamingJob(queryClient, res.job_id, {
+                    text: '',
+                    status: 'running',
+                    chatId: chatIdToUse,
+                    directorDecision: res.director_decision || null,
+                    contextTrace: res.context_trace || null,
+                });
             }
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, chatIdToUse) });
         } catch {

@@ -109,7 +109,9 @@ export function useChatStreaming({
                     chatId: eventChatId,
                     type: meta.workspace || existingJob?.type,
                     taskType: job.task_type ?? existingJob?.taskType ?? null,
-                    progress: job.overall_progress ?? job.progress ?? null
+                    progress: job.overall_progress ?? job.progress ?? null,
+                    directorDecision: existingJob?.directorDecision || meta.context_trace?.director_decision || null,
+                    contextTrace: existingJob?.contextTrace || meta.context_trace || null,
                 });
                 // Every token is proof of life. `armStallTimer` clears any
                 // previous timer before setting a new one, so this is a reset

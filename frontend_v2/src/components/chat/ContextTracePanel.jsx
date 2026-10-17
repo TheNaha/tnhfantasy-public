@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ChevronRight, Eye, Pin, PinOff, Scissors } from 'lucide-react';
+import { ChevronRight, Eye, Pin, PinOff, Scissors, Brain } from 'lucide-react';
+import clsx from 'clsx';
 
 /**
  * What a single reply was actually told.
@@ -62,6 +63,7 @@ export default function ContextTracePanel({ trace }) {
     const speakers = trace.speakers || {};
     const config = trace.config || {};
     const dropped = Array.isArray(trace.dropped) ? trace.dropped : [];
+    const decision = trace.director_decision && typeof trace.director_decision === 'object' ? trace.director_decision : null;
     const visible = showAll ? turns : turns.slice(-12);
     const hidden = turns.length - visible.length;
 
@@ -88,6 +90,68 @@ export default function ContextTracePanel({ trace }) {
                     <p className="text-gray-400 text-3xs leading-relaxed bg-black/20 p-2 rounded-lg border border-white/5">
                         💡 <strong>Prompt Context Inspector:</strong> The snapshot of dialogue history and system lore that was assembled and sent to the AI model to generate this reply.
                     </p>
+
+                    {decision && (
+                        <div className="rounded-lg border border-purple-500/25 bg-purple-950/20 p-2.5 space-y-2">
+                            <div className="flex items-center justify-between pb-1.5 border-b border-purple-500/20">
+                                <div className="flex items-center gap-1.5 font-bold uppercase tracking-wider text-purple-300 text-3xs">
+                                    <Brain size={12} className="text-purple-400" />
+                                    <span>Director Decision Snapshot</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                    {decision.pacing_directive && (
+                                        <span className="px-1.5 py-0.5 rounded bg-blue-500/20 border border-blue-500/30 text-blue-300 font-mono text-3xs">
+                                            {decision.pacing_directive}
+                                        </span>
+                                    )}
+                                    {(decision.scene_tension != null || decision.tension_level != null) && (
+                                        <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 text-amber-300 font-mono text-3xs">
+                                            Tension {decision.scene_tension ?? decision.tension_level}/5
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-3xs text-gray-300">
+                                <div>
+                                    <span className="text-gray-500 block">Speaker</span>
+                                    <span className="font-semibold text-gray-200">{decision.next_speaker || 'AI'}</span>
+                                </div>
+                                <div>
+                                    <span className="text-gray-500 block">Emotional Tone</span>
+                                    <span className="font-semibold text-purple-300">{decision.emotional_tone || 'neutral'}</span>
+                                </div>
+                                <div>
+                                    <span className="text-gray-500 block">Expression</span>
+                                    <span className="font-semibold text-amber-300">{decision.character_expression || decision.visual_expression || 'normal'}</span>
+                                </div>
+                                <div>
+                                    <span className="text-gray-500 block">Fate Check</span>
+                                    <span className={clsx(
+                                        "font-semibold",
+                                        decision.fate_outcome?.includes('success') ? "text-emerald-400" :
+                                        decision.fate_outcome?.includes('fail') ? "text-rose-400" : "text-gray-400"
+                                    )}>
+                                        {decision.fate_outcome ? `${decision.fate_outcome} (DC ${decision.fate_dc || 12})` : (decision.fate_check_needed ? 'Needed' : 'None')}
+                                    </span>
+                                </div>
+                            </div>
+                            {decision.suggested_action_chips?.length > 0 && (
+                                <div className="pt-1.5 border-t border-white/5 flex flex-wrap items-center gap-1.5 text-3xs">
+                                    <span className="text-gray-500 font-medium">Continuation hints:</span>
+                                    {decision.suggested_action_chips.map((chip, idx) => (
+                                        <span key={idx} className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-gray-300">
+                                            {chip}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                            {decision.reasoning_summary && (
+                                <p className="text-3xs text-gray-400 italic pt-1 border-t border-white/5">
+                                    &ldquo;{decision.reasoning_summary}&rdquo;
+                                </p>
+                            )}
+                        </div>
+                    )}
 
                     {/* The mapping: was a narration labelled, were speakers named */}
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-500 text-3xs">

@@ -102,6 +102,18 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                     {isIdleSim && (
                         <span className="ml-1.5 text-amber-400/80">· 💤 Idle sim</span>
                     )}
+                    {meta.context_trace?.director_decision && (
+                        <span
+                            className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300/90 text-3xs font-mono"
+                            title={`Director Pacing: ${meta.context_trace.director_decision.pacing_directive || 'standard'}`}
+                        >
+                            <span className="text-blue-400">⚡</span>
+                            <span>{meta.context_trace.director_decision.pacing_directive || 'pacing'}</span>
+                            {(meta.context_trace.director_decision.scene_tension != null || meta.context_trace.director_decision.tension_level != null) && (
+                                <span className="opacity-70">· T{meta.context_trace.director_decision.scene_tension ?? meta.context_trace.director_decision.tension_level}/5</span>
+                            )}
+                        </span>
+                    )}
                 </div>
                 {editing ? (
                     <div className="flex flex-col gap-2">

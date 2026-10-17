@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { Loader2, Wand2, ImageIcon, MessageSquare } from 'lucide-react';
 import MessageItem from './MessageItem';
 import TavernMessage from './TavernMessage';
+import DirectorReasoningHUD from './DirectorReasoningHUD';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 import useSettingsStore from '../../store/settingsStore';
 import { useChatWorkspace } from '../../contexts/ChatWorkspaceContext';
@@ -125,6 +126,7 @@ export default function MessageTimeline() {
                             <span className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '300ms' }} />
                         </span>
                     </div>
+                    <DirectorReasoningHUD jobData={jobData} pendingSpeaker={pendingSpeaker} />
                     <div className="px-4 py-3 rounded-2xl rounded-tl-sm text-sm bg-gray-800/50 text-gray-200 border border-gray-700/40 leading-relaxed">
                         {jobData.text ? (
                             <div className="space-y-2">

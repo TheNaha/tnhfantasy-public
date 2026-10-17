@@ -1265,7 +1265,12 @@ async def _send_message(
         except Exception as e:
             raise ComfyError(str(e))
 
-    return {"user_message_id": message_id, "job_id": job_id}
+    return {
+        "user_message_id": message_id,
+        "job_id": job_id,
+        "director_decision": director_decision_dict if (message.role == MessageRole.USER and not request.no_reply) else None,
+        "context_trace": context_trace if (message.role == MessageRole.USER and not request.no_reply) else None,
+    }
 
 @router.delete("/{chat_id}/messages/{message_id}")
 def delete_message(chat_id: str, message_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo)):

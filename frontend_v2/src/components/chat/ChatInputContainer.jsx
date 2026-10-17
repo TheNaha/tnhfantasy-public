@@ -1,5 +1,9 @@
-import React, { useCallback } from 'react';
-import { X, ImageIcon, Loader2, Paperclip, MoreHorizontal, Palette, Wand2, BookOpen, Ghost, Sparkles, Send, Square } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import {
+    X, ImageIcon, Loader2, Paperclip, MoreHorizontal, Palette, Wand2,
+    BookOpen, Ghost, Sparkles, Send, Square, Dices, MapPin, Clock,
+    Shirt, Smile, Heart, Shield, Activity, ChevronRight
+} from 'lucide-react';
 import clsx from 'clsx';
 import CommandPalette from './CommandPalette';
 import StreamingInput from './StreamingInput';
@@ -35,6 +39,36 @@ export default function ChatInputContainer({
             textarea.selectionStart = textarea.selectionEnd = startIndex + mentionText.length;
         }, 0);
     }, [message, setMessage, setTargetCharacterId, characters, textareaRef]);
+
+    const [showFateMenu, setShowFateMenu] = useState(false);
+    const [fateDifficulty, setFateDifficulty] = useState(13);
+    const [fateSkill, setFateSkill] = useState('Persuasion');
+    const [showStateDetails, setShowStateDetails] = useState(false);
+
+    const snapshot = activeChat?.state_snapshot || {};
+    const actionChips = snapshot.last_director_decision?.suggested_action_chips || [];
+    const hasState = Boolean(snapshot.location || snapshot.time_of_day || snapshot.mood || snapshot.outfit || snapshot.relationship);
+
+    const handleRollFate = useCallback(() => {
+        const roll = Math.floor(Math.random() * 20) + 1;
+        let outcome = 'Failure';
+        if (roll === 20) outcome = 'Critical Success!';
+        else if (roll === 1) outcome = 'Critical Failure!';
+        else if (roll >= fateDifficulty) outcome = 'Success!';
+        else outcome = 'Failure';
+
+        const fateText = `*Attempts a [${fateSkill}] check (DC ${fateDifficulty}) — Rolled ${roll} → ${outcome}* `;
+        setMessage((prev) => (prev ? `${prev.trim()}\n${fateText}` : fateText));
+        setShowFateMenu(false);
+        setTimeout(() => textareaRef.current?.focus(), 10);
+    }, [fateDifficulty, fateSkill, setMessage, textareaRef]);
+
+    const handleInsertFateGate = useCallback(() => {
+        const gateText = `[Fate Check Gate: Require ${fateSkill} (DC ${fateDifficulty})] `;
+        setMessage((prev) => (prev ? `${prev.trim()}\n${gateText}` : gateText));
+        setShowFateMenu(false);
+        setTimeout(() => textareaRef.current?.focus(), 10);
+    }, [fateDifficulty, fateSkill, setMessage, textareaRef]);
     return (
         <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 pb-4 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
             <div className="max-w-4xl mx-auto">
@@ -47,6 +81,99 @@ export default function ChatInputContainer({
                         </button>
                     </div>
                 )}
+
+                {/* Statekeeper Quick Bar */}
+                {hasState && (
+                    <div className="flex items-center gap-1.5 mb-2 text-3xs text-gray-400 overflow-x-auto custom-scrollbar py-0.5">
+                        <button
+                            type="button"
+                            onClick={() => setShowStateDetails(v => !v)}
+                            className="text-gray-400 hover:text-white font-semibold uppercase tracking-wider shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                            title="Toggle Statekeeper details"
+                        >
+                            <Activity size={10} className="text-purple-400" />
+                            <span>State</span>
+                            <ChevronRight size={10} className={clsx("transition-transform", showStateDetails && "rotate-90")} />
+                        </button>
+                        {snapshot.location && (
+                            <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300">
+                                <MapPin size={9} /> {snapshot.location}
+                            </span>
+                        )}
+                        {snapshot.time_of_day && (
+                            <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300">
+                                <Clock size={9} /> {snapshot.time_of_day}
+                            </span>
+                        )}
+                        {snapshot.outfit && (
+                            <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300">
+                                <Shirt size={9} /> {snapshot.outfit}
+                            </span>
+                        )}
+                        {snapshot.mood && (
+                            <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
+                                <Smile size={9} /> {snapshot.mood}
+                            </span>
+                        )}
+                        {snapshot.relationship && (
+                            <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-300">
+                                <Heart size={9} /> {snapshot.relationship}
+                            </span>
+                        )}
+                    </div>
+                )}
+
+                {/* Statekeeper Details Popover */}
+                {showStateDetails && hasState && (
+                    <div className="mb-2 p-3 rounded-xl border border-purple-500/20 bg-gray-900/95 backdrop-blur-md text-xs text-gray-300 space-y-2 animate-in fade-in slide-in-from-top-1 shadow-xl">
+                        <div className="font-semibold text-purple-300 text-3xs uppercase tracking-wider flex items-center justify-between pb-1.5 border-b border-white/5">
+                            <span className="flex items-center gap-1.5">
+                                <Shield size={11} className="text-purple-400" />
+                                Active Statekeeper Snapshot
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setShowStateDetails(false)}
+                                className="text-gray-500 hover:text-white px-1"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-3xs">
+                            <div><strong className="text-gray-500 block">Location</strong><span className="text-gray-200">{snapshot.location || '—'}</span></div>
+                            <div><strong className="text-gray-500 block">Time of Day</strong><span className="text-gray-200">{snapshot.time_of_day || '—'}</span></div>
+                            <div><strong className="text-gray-500 block">Outfit</strong><span className="text-gray-200">{snapshot.outfit || '—'}</span></div>
+                            <div><strong className="text-gray-500 block">Mood</strong><span className="text-gray-200">{snapshot.mood || '—'}</span></div>
+                            <div><strong className="text-gray-500 block">Relationship</strong><span className="text-gray-200">{snapshot.relationship || '—'}</span></div>
+                            {snapshot.inventory?.length > 0 && (
+                                <div><strong className="text-gray-500 block">Key Items</strong><span className="text-gray-200">{snapshot.inventory.map(i => i.name).join(', ')}</span></div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* In-Chat Suggested Action Chips */}
+                {actionChips.length > 0 && (
+                    <div className="flex items-center gap-1.5 mb-2 overflow-x-auto custom-scrollbar pb-1">
+                        <span className="text-3xs text-gray-500 uppercase font-semibold shrink-0 flex items-center gap-1">
+                            <Sparkles size={10} className="text-blue-400" /> Suggested:
+                        </span>
+                        {actionChips.map((chip, idx) => (
+                            <button
+                                key={idx}
+                                type="button"
+                                onClick={() => {
+                                    setMessage(prev => (prev ? `${prev.trim()} ${chip}` : chip));
+                                    setTimeout(() => textareaRef.current?.focus(), 10);
+                                }}
+                                className="shrink-0 text-xs px-2.5 py-1 rounded-full bg-gray-800/80 hover:bg-blue-600/20 border border-gray-700/60 hover:border-blue-500/40 text-gray-300 hover:text-blue-200 transition-colors"
+                            >
+                                {chip}
+                            </button>
+                        ))}
+                    </div>
+                )}
+
                 <div className="relative">
                     {activeChat?.additional_character_ids?.length > 0 && (
                         <div className="absolute -top-10 right-0 flex items-center gap-2 bg-gray-900/80 backdrop-blur border border-gray-700 rounded-lg px-2 py-1 shadow-xl">
@@ -172,6 +299,96 @@ export default function ChatInputContainer({
                                         <Sparkles size={16} className="text-blue-400" />
                                         {(suggestReplyMutation.isPending || suggestJobId) ? 'Suggesting...' : 'Suggest reply'}
                                     </button>
+                                    <button
+                                        onClick={() => { setShowMoreTools(false); setShowFateMenu(true); }}
+                                        className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-amber-300"
+                                    >
+                                        <Dices size={16} className="text-amber-400" />
+                                        Fate / Skill Check
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Fate / Skill Check Gate Popover */}
+                        {showFateMenu && (
+                            <div className="absolute bottom-full right-0 mb-3 w-80 bg-gray-900/95 backdrop-blur-xl border border-amber-500/30 rounded-2xl shadow-2xl p-3 z-50 animate-in fade-in slide-in-from-bottom-2 text-xs">
+                                <div className="flex items-center justify-between pb-2 border-b border-white/10 mb-2">
+                                    <span className="font-bold text-amber-300 flex items-center gap-1.5 uppercase tracking-wider text-3xs">
+                                        <Dices size={14} className="text-amber-400" />
+                                        Fate / Skill Check Gate
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowFateMenu(false)}
+                                        className="text-gray-500 hover:text-white p-0.5 rounded"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                                <div className="space-y-2.5">
+                                    <div>
+                                        <label className="text-3xs font-semibold text-gray-400 uppercase tracking-wider block mb-1">
+                                            Tested Skill / Attribute
+                                        </label>
+                                        <select
+                                            value={fateSkill}
+                                            onChange={(e) => setFateSkill(e.target.value)}
+                                            className="w-full bg-gray-800 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-amber-500"
+                                        >
+                                            {['Persuasion', 'Athletics', 'Stealth', 'Arcana', 'Perception', 'Deception', 'Insight', 'Survival', 'Luck / Fate'].map(s => (
+                                                <option key={s} value={s}>{s}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-3xs font-semibold text-gray-400 uppercase tracking-wider block mb-1">
+                                            Difficulty Class (DC): <span className="text-amber-300 font-bold">{fateDifficulty}</span>
+                                        </label>
+                                        <div className="grid grid-cols-5 gap-1">
+                                            {[
+                                                { dc: 10, label: '10 Easy' },
+                                                { dc: 13, label: '13 Med' },
+                                                { dc: 15, label: '15 Hard' },
+                                                { dc: 18, label: '18 V.Hard' },
+                                                { dc: 20, label: '20 Ext' },
+                                            ].map(({ dc, label }) => (
+                                                <button
+                                                    key={dc}
+                                                    type="button"
+                                                    onClick={() => setFateDifficulty(dc)}
+                                                    className={clsx(
+                                                        "py-1 px-0.5 rounded text-3xs font-semibold border transition-colors text-center",
+                                                        fateDifficulty === dc
+                                                            ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                                                            : "bg-gray-800/60 border-white/5 text-gray-400 hover:text-white"
+                                                    )}
+                                                >
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={handleRollFate}
+                                            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 font-semibold text-xs transition-colors"
+                                            title="Roll d20 now and insert outcome into your message"
+                                        >
+                                            <Dices size={14} />
+                                            <span>Roll d20 Now</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleInsertFateGate}
+                                            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-200 font-semibold text-xs transition-colors"
+                                            title="Enforce a Fate Check for AI on next response"
+                                        >
+                                            <Shield size={14} />
+                                            <span>Set Gate</span>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -251,6 +468,20 @@ export default function ChatInputContainer({
                                 {(suggestReplyMutation.isPending || suggestJobId) 
                                     ? <Loader2 size={16} className="animate-spin" />
                                     : <Sparkles size={16} />}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setShowFateMenu(v => !v)}
+                                className={clsx(
+                                    "p-1.5 sm:p-2 transition-all rounded-xl",
+                                    showFateMenu
+                                        ? "text-amber-300 bg-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.2)]"
+                                        : "text-gray-400 hover:text-amber-400 hover:bg-amber-500/10"
+                                )}
+                                title="Fate / Skill Check Gate"
+                                aria-label="Fate / Skill Check Gate"
+                            >
+                                <Dices size={18} />
                             </button>
                         </div>
                         

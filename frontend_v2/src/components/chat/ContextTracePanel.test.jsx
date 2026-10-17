@@ -168,4 +168,32 @@ describe('ContextTracePanel execution line', () => {
         fireEvent.click(screen.getByRole('button', { name: /what this reply was told/i }));
         expect(screen.queryByText((_t, el) => el?.tagName === 'P' && el?.textContent?.includes('ran on'))).not.toBeInTheDocument();
     });
+
+    it('renders the Director Decision Snapshot when director_decision is in the trace', () => {
+        const traceWithDecision = {
+            ...TRACE,
+            director_decision: {
+                turn_type: 'dialogue',
+                pacing_directive: 'escalate_conflict',
+                scene_tension: 3,
+                emotional_tone: 'tense',
+                character_expression: 'glaring intently',
+                fate_check_needed: true,
+                fate_outcome: 'success',
+                fate_dc: 14,
+                suggested_action_chips: ['Defend the entrance', 'Cast counterspell'],
+                reasoning_summary: 'Target is aggressive and preparing a lethal strike.'
+            }
+        };
+        render(<ContextTracePanel trace={traceWithDecision} />);
+        fireEvent.click(screen.getByRole('button', { name: /what this reply was told/i }));
+
+        expect(screen.getByText('Director Decision Snapshot')).toBeInTheDocument();
+        expect(screen.getByText('escalate_conflict')).toBeInTheDocument();
+        expect(screen.getByText('Tension 3/5')).toBeInTheDocument();
+        expect(screen.getByText('tense')).toBeInTheDocument();
+        expect(screen.getByText('glaring intently')).toBeInTheDocument();
+        expect(screen.getByText('Defend the entrance')).toBeInTheDocument();
+        expect(screen.getByText(/Target is aggressive and preparing a lethal strike/)).toBeInTheDocument();
+    });
 });

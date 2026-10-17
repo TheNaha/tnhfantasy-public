@@ -14,6 +14,12 @@ vi.mock('../../hooks/useWorldVault', () => ({
     getAvatarUrl: (id) => `/avatars/${id}.png`,
     useEvaluateChatDirector: () => ({ mutate: vi.fn(), isPending: false }),
     useUpdateChatStateSnapshot: () => ({ mutate: vi.fn(), isPending: false }),
+    useCommitChatToCanon: () => ({ mutate: vi.fn(), isPending: false }),
+    useCompileChatToStory: () => ({ mutate: vi.fn(), isPending: false }),
+    useRunWorldTick: () => ({ mutate: vi.fn(), isPending: false }),
+    useReverseVisionSync: () => ({ mutate: vi.fn(), isPending: false }),
+    useFastTravelChat: () => ({ mutate: vi.fn(), isPending: false }),
+    useVisualizeInventoryItem: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../hooks/useStreamingJobs', () => ({ useActiveChatStreams: () => [] }));
 
