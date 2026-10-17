@@ -246,9 +246,35 @@ export const useSendMessage = () => {
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
+            queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
             queryClient.invalidateQueries({ queryKey: [...MESSAGES_ROOT_KEY, variables.chatId] });
             invalidateVaultAggregates(queryClient);
         }
+    });
+};
+
+export const useEvaluateChatDirector = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, force_updater = false }) =>
+            api.post(`/api/v2/chats/${chatId}/director/evaluate`, { force_updater }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
+            queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
+            invalidateVaultAggregates(queryClient);
+        },
+    });
+};
+
+export const useUpdateChatStateSnapshot = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, state_snapshot }) =>
+            api.patch(`/api/v2/chats/${chatId}/state-snapshot`, { state_snapshot }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
+            queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
+        },
     });
 };
 
@@ -304,6 +330,7 @@ export const useExportChatToStory = () => {
         }
     });
 };
+
 
 
 

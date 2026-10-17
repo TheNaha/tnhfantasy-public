@@ -23,7 +23,21 @@ class DefaultProviderResponse(BaseModel):
 class UpdateActiveModelsRequest(BaseModel):
     active_rp: str | None = None
     active_util: str | None = None
+    active_decisions: str | None = None
     active_image: str | None = None
+
+
+class EvaluateDecisionsRequest(BaseModel):
+    character_name: str = "Aria"
+    user_name: str = "Traveler"
+    story_location: str | None = "Moonlit Balcony"
+    story_time: str | None = "Late Night"
+    last_speaker: str = "user"
+    transcript_snippet: str = ""
+    recent_messages: list[dict] | None = None
+    state_snapshot: dict | None = None
+    has_secondary_character: bool = False
+    model_override: str | None = None
 
 
 @router.get("/catalog")
@@ -38,6 +52,11 @@ def get_model_catalog():
     rp_active = active.get("rp") or registry.primary("rp").id
     util_raw = active.get("util")
     util_active = rp_active if util_raw in ("same_as_rp", "same") else (util_raw or registry.primary("util").id)
+    try:
+        decisions_default = registry.primary("decisions").id
+    except LookupError:
+        decisions_default = "laya_multilingual"
+    decisions_active = active.get("decisions") or decisions_default
     shared_weights = (rp_active == util_active) or (util_raw in ("same_as_rp", "same"))
 
     return {
@@ -53,6 +72,7 @@ def get_model_catalog():
         "active": {
             "rp": rp_active,
             "util": util_raw or util_active,
+            "decisions": decisions_active,
             "image": active.get("image", ""),
         },
         "shared_weights": shared_weights,
@@ -61,7 +81,7 @@ def get_model_catalog():
 
 @router.put("/catalog/active")
 def set_active_models_endpoint(request: UpdateActiveModelsRequest):
-    """Update active rp, util, and image models."""
+    """Update active rp, util, decisions, and image models."""
     from services.llm_config import set_active_models
     from services.llm_router import get_router, refresh_router
 
@@ -74,14 +94,73 @@ def set_active_models_endpoint(request: UpdateActiveModelsRequest):
         and request.active_util not in registry.models
     ):
         raise ValidationError(f"Model '{request.active_util}' not found in registry")
+    if (
+        request.active_decisions
+        and request.active_decisions not in ("same_as_util", "disabled")
+        and request.active_decisions not in registry.models
+    ):
+        raise ValidationError(f"Model '{request.active_decisions}' not found in registry")
 
     active = set_active_models(
         active_rp=request.active_rp,
         active_util=request.active_util,
+        active_decisions=request.active_decisions,
         active_image=request.active_image,
     )
     refresh_router()
     return {"status": "success", "active": active}
+
+
+@router.post("/decisions/evaluate")
+async def evaluate_director_playground(
+    request: EvaluateDecisionsRequest,
+    session: Session = Depends(get_session),
+):
+    """Run a live System 1 Director evaluation on sample or custom scene text."""
+    from services.decision_service import DecisionService
+
+    svc = DecisionService(session)
+    recent_messages = list(request.recent_messages or [])
+    if not recent_messages and request.transcript_snippet.strip():
+        for line in request.transcript_snippet.strip().splitlines():
+            line_clean = line.strip()
+            if not line_clean:
+                continue
+            if line_clean.lower().startswith((f"{request.user_name.lower()}:", "user:", "player:")):
+                content = line_clean.split(":", 1)[1].strip()
+                recent_messages.append({"role": "user", "speaker": request.user_name, "content": content})
+            elif line_clean.lower().startswith(("narrator:", "[narrator]")):
+                content = line_clean.split(":", 1)[-1].strip()
+                recent_messages.append({"role": "system", "speaker": "Narrator", "content": content})
+            else:
+                content = line_clean.split(":", 1)[1].strip() if ":" in line_clean else line_clean
+                recent_messages.append({"role": "char", "speaker": request.character_name, "content": content})
+    elif not recent_messages:
+        recent_messages = [
+            {
+                "role": "char",
+                "speaker": request.character_name,
+                "content": "*She leans against the stone balustrade, her silver cloak catching the moonlight as she hands you an ancient brass key.* \"Promise me you won't open the vault beneath the cathedral until dawn.\"",
+            },
+            {
+                "role": "user",
+                "speaker": request.user_name,
+                "content": "*I take the brass key and slip it into my coat pocket, stepping closer to look into her eyes.* \"I promise. Let's head inside the tavern before the storm hits.\"",
+            },
+        ]
+
+    decision = await svc.evaluate_scene(
+        character_name=request.character_name,
+        user_name=request.user_name,
+        story_location=request.story_location,
+        story_time=request.story_time,
+        state_snapshot=request.state_snapshot,
+        recent_messages=recent_messages,
+        last_speaker=request.last_speaker,
+        has_secondary_character=request.has_secondary_character,
+        model_override=request.model_override,
+    )
+    return decision.to_dict()
 
 
 @router.get("/default-provider", response_model=DefaultProviderResponse | None)

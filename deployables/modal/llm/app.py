@@ -179,12 +179,16 @@ download_image = (
 )
 
 registry = load(REGISTRY_PATH)
-ENABLED = registry.enabled_ids()
+ENABLED = [mid for mid in registry.enabled_ids() if registry.get(mid).engine_type == "gguf"]
 
-#: What a fresh deployment fetches: each role's PRIMARY only, ~47 GB rather than
+#: What a fresh deployment fetches: each GGUF role's PRIMARY only, ~47 GB rather than
 #: ~150 GB for every enabled model. `ensure_model` pulls the rest on demand and
 #: `volume_state` reports what is genuinely there.
-ROLES = sorted(registry.fallback)
+ROLES = [
+    role
+    for role in sorted(registry.fallback)
+    if registry.primary(role).engine_type == "gguf"
+]
 ROLE_PRIMARY = {role: registry.primary(role) for role in ROLES}
 
 
@@ -322,13 +326,13 @@ def safe_vol_reload() -> None:
 
 
 def _all_registry_models() -> list:
-    """Every model in the registry, enabled or not.
+    """Every GGUF model in the registry, enabled or not.
 
-    Validation needs the full set: a disabled entry's weights may still be
+    Validation needs the full GGUF set: a disabled entry's weights may still be
     sitting on the volume, and "there is a file nobody declared" is exactly
     the state worth reporting.
     """
-    return list(registry.models.values())
+    return [m for m in registry.models.values() if m.engine_type == "gguf"]
 
 #: Concurrent inputs per container. `parallel` in models.json is how many slots
 #: llama-server opens, and WITHOUT this Modal sends one input at a time — so a
@@ -337,20 +341,20 @@ def _all_registry_models() -> list:
 #: captioning and tool calls behind it. Class-level because `@modal.concurrent`
 #: is not per-parameter, so it takes the widest model in the registry.
 _MAX_INPUTS = max(
-    (m.parallel for m in registry.models.values() if m.enabled), default=1
+    (m.parallel for m in _all_registry_models() if m.enabled), default=1
 ) * 2
 
 #: Scale-to-zero is class-level for a parameterized class, so it cannot be
 #: per-model. Every registry entry declares the same value; reading it back is
 #: what keeps models.json the one place to change it.
 _IDLE_SECONDS = next(
-    iter({m.idle for m in registry.models.values() if m.enabled}), 60
+    iter({m.idle for m in _all_registry_models() if m.enabled}), 60
 )
 
 #: GPU is class-level for a parameterized class, so it cannot be per-model.
 #: Every model in the registry targets the same card; assert that rather than
 #: silently picking one, because a 48 GB model on a smaller card fails at load.
-_GPU = next(iter({m.gpu for m in registry.models.values() if m.enabled}), "L40S")
+_GPU = next(iter({m.gpu for m in _all_registry_models() if m.enabled}), "L40S")
 
 
 def _server_for_port(port: int) -> "_LaunchedServer":

@@ -5,7 +5,7 @@ import {
     User, Clock, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown, NotebookPen,
     MapPin, Plus, Edit2, Calendar, Layers,
 } from 'lucide-react';
-import { getAvatarUrl } from '../../hooks/useWorldVault';
+import { getAvatarUrl, useEvaluateChatDirector, useUpdateChatStateSnapshot } from '../../hooks/useWorldVault';
 import { useLocations } from '../../hooks/useLocations';
 import { isJobComplete, isJobFailed, isJobRunning } from '../../utils/jobStatus';
 import ContextField from './ContextField';
@@ -36,17 +36,23 @@ const LOREBOOK_CONTEXT_TAIL = 12;
 const ChatJobRow = memo(function ChatJobRow({ job }) {
     const isRunning = isJobRunning(job.status);
     const isImage = job.task_type === 'image' || job.type === 'image' || job.type === 'agentic_image';
+    const isStateUpdater = job.type === 'state_updater' || job.metadata?.source === 'state_updater';
     const isFailed = isJobFailed(job.status);
     const isComplete = isJobComplete(job.status);
+    const label = isImage
+        ? (job.type === 'agentic_image' ? 'Image generation' : 'Image job')
+        : isStateUpdater
+            ? 'Statekeeper update'
+            : 'LLM reply';
     return (
         <div className={clsx(
             "flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs border",
             isFailed ? "bg-red-500/5 border-red-500/15 text-red-300" :
-                isComplete ? (isImage ? "bg-emerald-500/5 border-emerald-500/15 text-emerald-300" : "bg-blue-500/5 border-blue-500/15 text-blue-300") :
+                isComplete ? (isImage ? "bg-emerald-500/5 border-emerald-500/15 text-emerald-300" : isStateUpdater ? "bg-purple-500/5 border-purple-500/15 text-purple-300" : "bg-blue-500/5 border-blue-500/15 text-blue-300") :
                     isRunning ? "bg-amber-500/5 border-amber-500/15 text-amber-300" : "bg-gray-800/30 border-gray-700/30 text-gray-400"
         )}>
-            <span className={clsx("w-1.5 h-1.5 rounded-full shrink-0", isFailed ? "bg-red-400" : isComplete ? (isImage ? "bg-emerald-400" : "bg-blue-400") : isRunning ? "bg-amber-400 animate-pulse" : "bg-gray-600")} />
-            <span className="truncate flex-1 font-medium">{isImage ? (job.type === 'agentic_image' ? 'Image generation' : 'Image job') : 'LLM reply'}</span>
+            <span className={clsx("w-1.5 h-1.5 rounded-full shrink-0", isFailed ? "bg-red-400" : isComplete ? (isImage ? "bg-emerald-400" : isStateUpdater ? "bg-purple-400" : "bg-blue-400") : isRunning ? "bg-amber-400 animate-pulse" : "bg-gray-600")} />
+            <span className="truncate flex-1 font-medium">{label}</span>
             <span className="text-xs text-gray-500 shrink-0">{isFailed ? 'Failed' : isComplete ? 'Done' : isRunning ? 'Active' : job.status}</span>
             {/* The sampler percentage, not the node counter.
                 `overall_progress` is frozen while a checkpoint sampler runs —
@@ -243,6 +249,12 @@ function ChatContextPanel() {
 
             <SceneOverridesSection
                 key={`so-${activeChat?.id}`}
+                chat={activeChat}
+                onSave={onChatUpdate}
+            />
+
+            <DirectorStatekeeperSection
+                key={`dir-${activeChat?.id}`}
                 chat={activeChat}
                 onSave={onChatUpdate}
             />
@@ -1016,6 +1028,269 @@ function SceneOverridesSection({ chat, onSave }) {
                     The real picker also mirrors its choice into
                     `story_location`, so this text is still what reaches the
                     prompt's `Current Location:` line. */}
+            </div>
+        </details>
+    );
+}
+
+function DirectorStatekeeperSection({ chat, onSave }) {
+    const evaluateDirector = useEvaluateChatDirector();
+    const updateSnapshot = useUpdateChatStateSnapshot();
+    const [inventoryInput, setInventoryInput] = useState('');
+
+    if (!chat?.id) return null;
+
+    const directorEnabled = chat.director_enabled !== false;
+    const snap = chat.state_snapshot || {};
+    const lastDecision = snap.last_director_decision || snap.last_decision || null;
+    const tension = Number(snap.scene_tension || lastDecision?.scene_tension || 2);
+    const tensionLabel = snap.scene_tension_label || lastDecision?.scene_tension_label || 'normal';
+    const inventoryList = Array.isArray(snap.inventory) ? snap.inventory : [];
+
+    const handleFieldSave = (key, val) => {
+        updateSnapshot.mutate({
+            chatId: chat.id,
+            state_snapshot: { [key]: val || '' },
+        });
+    };
+
+    const handleAddInventory = (e) => {
+        e.preventDefault();
+        const item = inventoryInput.trim();
+        if (!item) return;
+        const next = Array.from(new Set([...inventoryList, item]));
+        setInventoryInput('');
+        updateSnapshot.mutate({
+            chatId: chat.id,
+            state_snapshot: { inventory: next },
+        });
+    };
+
+    const handleRemoveInventory = (item) => {
+        const next = inventoryList.filter((x) => x !== item);
+        updateSnapshot.mutate({
+            chatId: chat.id,
+            state_snapshot: { inventory: next },
+        });
+    };
+
+    return (
+        <details
+            data-testid="director-statekeeper-panel"
+            open
+            className="group glass-panel rounded-xl border border-emerald-500/20 bg-emerald-950/5"
+        >
+            <summary className="flex items-center justify-between gap-2 p-4 cursor-pointer list-none">
+                <h4 className="text-xs font-semibold text-emerald-300 uppercase tracking-widest flex items-center gap-1.5">
+                    <Sparkles size={12} className="text-emerald-400" /> Director &amp; Statekeeper
+                </h4>
+                <span className="flex items-center gap-1.5 min-w-0">
+                    <span className={clsx(
+                        "px-1.5 py-0.5 rounded text-2xs font-bold uppercase",
+                        directorEnabled
+                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                            : "bg-gray-800 text-gray-500"
+                    )}>
+                        {directorEnabled ? `Active • T${tension}/5` : 'Paused'}
+                    </span>
+                    <ChevronDown size={14} className="shrink-0 text-gray-500 transition-transform group-open:rotate-180" />
+                </span>
+            </summary>
+
+            <div className="px-4 pb-4 -mt-1 space-y-3 text-xs">
+                {/* Toggle & Quick Actions */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/5">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={directorEnabled}
+                            onChange={(e) => onSave({ director_enabled: e.target.checked })}
+                            className="accent-emerald-500"
+                        />
+                        <span className="text-xs text-gray-300 font-medium">System 1 Auto-Director</span>
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                        <button
+                            type="button"
+                            onClick={() => evaluateDirector.mutate({ chatId: chat.id, force_updater: false })}
+                            disabled={evaluateDirector.isPending}
+                            className="px-2 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-2xs font-semibold flex items-center gap-1 transition-colors disabled:opacity-50"
+                            title="Evaluate the current scene with the 13-question System 1 Director (0 MB GPU VRAM)"
+                        >
+                            {evaluateDirector.isPending ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                            Evaluate
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => evaluateDirector.mutate({ chatId: chat.id, force_updater: true })}
+                            disabled={evaluateDirector.isPending}
+                            className="px-2 py-1 rounded bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 text-2xs font-semibold flex items-center gap-1 transition-colors disabled:opacity-50"
+                            title="Force the Statekeeper (Updater) to extract world state deltas on the Util model"
+                        >
+                            <Brain size={10} />
+                            Sync State
+                        </button>
+                    </div>
+                </div>
+
+                {/* Scene Tension & Pacing Meter */}
+                <div className="bg-black/30 rounded-lg p-2.5 border border-white/5 space-y-1.5">
+                    <div className="flex items-center justify-between text-2xs">
+                        <span className="text-gray-400 uppercase tracking-wider font-bold">Scene Tension</span>
+                        <span className="text-amber-300 font-bold uppercase">{tension}/5 · {tensionLabel}</span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1">
+                        {[1, 2, 3, 4, 5].map((lvl) => (
+                            <div
+                                key={lvl}
+                                className={clsx(
+                                    "h-1.5 rounded-full transition-colors",
+                                    lvl <= tension
+                                        ? (tension >= 4 ? "bg-rose-400" : tension >= 3 ? "bg-amber-400" : "bg-emerald-400")
+                                        : "bg-gray-800"
+                                )}
+                            />
+                        ))}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-1 pt-1 text-2xs text-gray-400">
+                        <span>Tone: <b className="text-purple-300">{snap.emotional_tone || lastDecision?.emotional_tone || 'neutral'}</b></span>
+                        <span>Pacing: <b className="text-blue-300">{snap.pacing_directive || lastDecision?.pacing_directive || 'continue_conversation'}</b></span>
+                    </div>
+                </div>
+
+                {/* Live Statekeeper World State Snapshot */}
+                <div className="space-y-2">
+                    <div className="text-2xs font-bold uppercase tracking-wider text-gray-400 flex items-center justify-between">
+                        <span>Live State Snapshot (Statekeeper)</span>
+                        {snap.character_expression && (
+                            <span className="text-amber-300 font-mono text-2xs">Expr: {snap.character_expression}</span>
+                        )}
+                    </div>
+
+                    <ContextField
+                        inline
+                        showLabel
+                        label="Mood"
+                        value={snap.character_mood}
+                        placeholder="e.g. Curious, Guarded"
+                        onSave={(val) => handleFieldSave('character_mood', val)}
+                    />
+                    <ContextField
+                        inline
+                        showLabel
+                        label="Activity"
+                        value={snap.current_activity}
+                        placeholder="e.g. Examining the artifact"
+                        onSave={(val) => handleFieldSave('current_activity', val)}
+                    />
+                    <ContextField
+                        inline
+                        showLabel
+                        label="Outfit"
+                        value={snap.character_outfit}
+                        placeholder="e.g. Traveling cloak"
+                        onSave={(val) => handleFieldSave('character_outfit', val)}
+                    />
+                    <ContextField
+                        inline
+                        showLabel
+                        label="Relationship"
+                        value={snap.relationship_status}
+                        placeholder="e.g. Cautious allies (+1 trust)"
+                        onSave={(val) => handleFieldSave('relationship_status', val)}
+                    />
+
+                    {/* Inventory Pills */}
+                    <div className="pt-1">
+                        <div className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                            Active Inventory / Key Items
+                        </div>
+                        <div className="flex flex-wrap gap-1 mb-1.5">
+                            {inventoryList.length === 0 ? (
+                                <span className="text-2xs text-gray-600 italic">No tracked items yet</span>
+                            ) : (
+                                inventoryList.map((item) => (
+                                    <span
+                                        key={item}
+                                        className="px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-2xs flex items-center gap-1"
+                                    >
+                                        <span>{item}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleRemoveInventory(item)}
+                                            className="text-indigo-400 hover:text-white ml-0.5"
+                                            title={`Remove ${item}`}
+                                        >
+                                            ×
+                                        </button>
+                                    </span>
+                                ))
+                            )}
+                        </div>
+                        <form onSubmit={handleAddInventory} className="flex gap-1">
+                            <input
+                                type="text"
+                                value={inventoryInput}
+                                onChange={(e) => setInventoryInput(e.target.value)}
+                                placeholder="Add item..."
+                                className="flex-1 bg-gray-800/60 border border-white/5 rounded px-2 py-1 text-2xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-emerald-500/40"
+                            />
+                            <button
+                                type="submit"
+                                className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-2xs text-gray-300"
+                            >
+                                Add
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                {/* Last System 1 Decision Breakdown */}
+                {lastDecision && (
+                    <div className="pt-2 border-t border-white/5 space-y-1.5">
+                        <div className="flex items-center justify-between text-2xs">
+                            <span className="text-gray-400 uppercase tracking-wider font-bold">
+                                Last System 1 Decision
+                            </span>
+                            <span className="font-mono text-emerald-400">
+                                {lastDecision.provider_tier || lastDecision.engine_used} · {lastDecision.latency_ms}ms
+                            </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1 text-2xs">
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                                Next: {lastDecision.next_speaker}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/25">
+                                Speed: {lastDecision.pacing_speed_label || `${lastDecision.pacing_speed}/3`}
+                            </span>
+                            {lastDecision.should_run_updater && (
+                                <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
+                                    Statekeeper Triggered
+                                </span>
+                            )}
+                        </div>
+                        {lastDecision.updater_gates && (
+                            <div className="grid grid-cols-2 gap-1.5 pt-1">
+                                {[
+                                    ['Loc/Time', lastDecision.updater_gates.gate_world_state],
+                                    ['Char State', lastDecision.updater_gates.gate_character_state],
+                                    ['Inventory', lastDecision.updater_gates.gate_inventory_or_items],
+                                    ['Memory', lastDecision.updater_gates.gate_durable_memory],
+                                    ['Lore', lastDecision.updater_gates.gate_lore_discovery],
+                                ].map(([lbl, prob]) => {
+                                    const pct = Math.round((prob || 0) * 100);
+                                    const fired = (prob || 0) >= 0.55;
+                                    return (
+                                        <div key={lbl} className="flex items-center justify-between bg-black/25 px-2 py-0.5 rounded text-2xs">
+                                            <span className={fired ? "text-purple-300 font-semibold" : "text-gray-500"}>{lbl}</span>
+                                            <span className={clsx("font-mono", fired ? "text-purple-300 font-bold" : "text-gray-500")}>{pct}%</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </details>
     );

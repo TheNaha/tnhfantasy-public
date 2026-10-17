@@ -183,15 +183,22 @@ export function useLLMCatalog(options = {}) {
     });
 }
 
-/** Set the active models (rp, util, image) in backend. */
+/** Set the active models (rp, util, decisions, image) in backend. */
 export function useSetActiveModels() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ active_rp, active_util, active_image }) =>
-            api.put(`${API_V2_BASE}/llm/catalog/active`, { active_rp, active_util, active_image }),
+        mutationFn: ({ active_rp, active_util, active_decisions, active_image }) =>
+            api.put(`${API_V2_BASE}/llm/catalog/active`, { active_rp, active_util, active_decisions, active_image }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: LLM_CATALOG_KEY });
             queryClient.invalidateQueries({ queryKey: LLM_ROUTING_KEY });
         },
+    });
+}
+
+/** Live playground evaluation of the System 1 Director (13 parallel typed questions). */
+export function useEvaluateDirectorDecisions() {
+    return useMutation({
+        mutationFn: (payload) => api.post(`${API_V2_BASE}/llm/decisions/evaluate`, payload),
     });
 }

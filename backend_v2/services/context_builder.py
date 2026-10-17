@@ -603,6 +603,8 @@ def build_system_prompt_sections(
     location_ids: list[str] | None = None,
     world_name: str | None = None,
     world_description: str | None = None,
+    state_snapshot: dict[str, Any] | None = None,
+    director_directive: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build the ordered list of system-prompt sections that make up a chat context.
@@ -831,6 +833,41 @@ def build_system_prompt_sections(
             "key": "world_state",
             "label": "World state",
             "content": "\n".join(world_state_parts),
+            "source": "world_state",
+        })
+
+    if state_snapshot and isinstance(state_snapshot, dict):
+        snap_lines: list[str] = []
+        if state_snapshot.get("character_mood"):
+            snap_lines.append(f"Character Mood: {state_snapshot['character_mood']}")
+        if state_snapshot.get("current_activity"):
+            snap_lines.append(f"Current Activity: {state_snapshot['current_activity']}")
+        if state_snapshot.get("character_outfit"):
+            snap_lines.append(f"Current Attire/Outfit: {state_snapshot['character_outfit']}")
+        if state_snapshot.get("relationship_status"):
+            snap_lines.append(f"Relationship Dynamic: {state_snapshot['relationship_status']}")
+        inv = state_snapshot.get("inventory")
+        if isinstance(inv, list) and inv:
+            snap_lines.append(f"Held Items / Inventory: {', '.join(str(x) for x in inv)}")
+        if state_snapshot.get("scene_summary"):
+            snap_lines.append(f"Scene Summary: {state_snapshot['scene_summary']}")
+        if state_snapshot.get("emotional_tone"):
+            snap_lines.append(f"Emotional Tone: {state_snapshot['emotional_tone']}")
+        if state_snapshot.get("scene_tension") is not None:
+            snap_lines.append(f"Scene Tension: {state_snapshot['scene_tension']}/5")
+        if snap_lines:
+            sections.append({
+                "key": "state_snapshot",
+                "label": "Live State Snapshot (Statekeeper)",
+                "content": "[Live Scene & Character State]\n" + "\n".join(snap_lines),
+                "source": "world_state",
+            })
+
+    if director_directive and director_directive.strip():
+        sections.append({
+            "key": "director_directive",
+            "label": "Director Pacing Directive (System 1)",
+            "content": f"[Director Pacing Directive]\n{director_directive.strip()}",
             "source": "world_state",
         })
 
@@ -1304,6 +1341,8 @@ def build_chat_context_with_sections(
     world_description: str | None = None,
     include_roleplay_default: bool = True,
     trace_out: dict[str, Any] | None = None,
+    state_snapshot: dict[str, Any] | None = None,
+    director_directive: str | None = None,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Build the complete chat context AND the sections it was assembled from.
@@ -1383,6 +1422,8 @@ def build_chat_context_with_sections(
         world_name=world_name,
         world_description=world_description,
         include_roleplay_default=include_roleplay_default,
+        state_snapshot=state_snapshot,
+        director_directive=director_directive,
     )
     system_prompt = "\n\n".join(s["content"] for s in sections)
 
@@ -1758,6 +1799,12 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
         kwargs["active_character_id"] = overrides["active_character_id"]
     if "trace_out" in overrides:
         kwargs["trace_out"] = overrides["trace_out"]
+    if getattr(chat, "director_enabled", True):
+        snap = overrides.get("state_snapshot", getattr(chat, "state_snapshot", None))
+        if snap and isinstance(snap, dict):
+            kwargs["state_snapshot"] = snap
+    if overrides.get("director_directive"):
+        kwargs["director_directive"] = overrides["director_directive"]
     return kwargs
 
 

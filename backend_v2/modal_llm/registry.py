@@ -65,6 +65,7 @@ REGISTRY_PATH = _resolve_registry_path()
 #: Defaults a model entry may omit. Mirrored in the JSON's own DEFAULTS comment
 #: so a reader of the file alone can see what an omitted key means.
 DEFAULTS: Dict[str, Any] = {
+    "engine_type": "gguf",
     "mmproj": None,
     "mmproj_repo": None,
     "dir": None,
@@ -92,6 +93,7 @@ class Model:
     role: str
     repo: str
     gguf: str
+    engine_type: str = "gguf"
     mmproj: Optional[str] = None
     mmproj_repo: Optional[str] = None
     dir: Optional[str] = None
@@ -147,6 +149,7 @@ class Model:
         return {
             "id": self.id,
             "role": self.role,
+            "engine_type": self.engine_type,
             "repo": self.repo,
             "gguf": self.gguf,
             "mmproj": self.mmproj,
@@ -154,11 +157,16 @@ class Model:
             "volume_dir": self.volume_dir,
             "ctx": self.ctx,
             "parallel": self.parallel,
+            "gpu": self.gpu,
             "has_vision": self.has_vision,
             "enabled": self.enabled,
             "note": self.note,
             "sampler": dict(self.sampler or {}),
-            "download_url": f"https://huggingface.co/{self.repo}/resolve/main/{self.gguf}",
+            "download_url": (
+                f"https://huggingface.co/{self.repo}/resolve/main/{self.gguf}"
+                if self.gguf
+                else f"https://huggingface.co/{self.repo}"
+            ),
             "mmproj_download_url": (
                 f"https://huggingface.co/{self.mmproj_repo or self.repo}/resolve/main/{self.mmproj}"
                 if self.mmproj
@@ -221,15 +229,19 @@ class Registry:
         return {mid: m.to_dict() for mid, m in self.models.items()}
 
     def distinct_primaries(self) -> List[Model]:
-        """One Model per distinct weight set across every role's primary.
+        """One GGUF Model per distinct weight set across every role's primary.
 
         When `rp` and `util` resolve to the same weights, one server serves both.
+        Non-GGUF models (such as System 1 Laya CPU models) are excluded so
+        llama-server never attempts to load them.
         """
         distinct: List[Model] = []
         for role in sorted(self.fallback):
             try:
                 m = self.primary(role)
             except LookupError:
+                continue
+            if m.engine_type != "gguf":
                 continue
             if not any(d.volume_dir == m.volume_dir for d in distinct):
                 distinct.append(m)

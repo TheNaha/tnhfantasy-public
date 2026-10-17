@@ -76,7 +76,8 @@ class TestTheSharedRegistry:
         assert registry is not None
         # The same file the Modal app and llm_router read, so these are the same
         # roles those sides see.
-        assert set(registry.roles) == {"rp", "util"}
+        assert set(registry.roles) == {"rp", "util", "decisions"}
+        assert registry.primary("decisions").engine_type == "system1_laya"
 
     def test_both_roles_primary_to_the_same_model(self):
         """The shared-model setting, which is what makes `distinct_primaries` matter."""
@@ -89,7 +90,7 @@ class TestTheSharedRegistry:
         )
 
     def test_one_model_is_launched_where_two_roles_share_weights(self):
-        """Starting the same GGUF twice doubles the VRAM for nothing."""
+        """Starting the same GGUF twice doubles the VRAM for nothing, and system1_laya is CPU-only."""
         registry = _registry()
         assert [m.id for m in registry.distinct_primaries()] == [registry.primary("rp").id]
 

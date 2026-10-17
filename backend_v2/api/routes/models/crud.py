@@ -58,6 +58,10 @@ def get_catalog():
     util_active = rp_active if util_raw in ("same_as_rp", "same") else (util_raw or registry.primary("util").id)
     shared_weights = (rp_active == util_active) or (util_raw in ("same_as_rp", "same"))
 
+    decisions_raw = active.get("decisions") or (
+        registry.primary("decisions").id if "decisions" in registry.roles else "laya_multilingual"
+    )
+
     return {
         "catalog": registry.catalog(),
         "roles": {
@@ -71,6 +75,7 @@ def get_catalog():
         "active": {
             "rp": rp_active,
             "util": util_raw or util_active,
+            "decisions": decisions_raw,
             "image": active.get("image", ""),
         },
         "shared_weights": shared_weights,

@@ -648,6 +648,31 @@ async def _download_registry_model(model_id: str):
             "known": sorted(REGISTRY.models),
         }
 
+    if getattr(model, "engine_type", "gguf") == "system1_laya":
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as exc:
+            return {
+                "ok": False,
+                "model_id": model_id,
+                "reason": "huggingface_hub_not_installed",
+                "detail": str(exc),
+            }
+        target = os.path.join(DATA_ROOT, model.volume_dir)
+        os.makedirs(target, exist_ok=True)
+        print(f"[{model.id}] {model.repo} (System 1 Laya directory)", flush=True)
+        snapshot_download(
+            model.repo,
+            local_dir=target,
+            token=HF_TOKEN or None,
+        )
+        try:
+            from ram_manager import get_ram_manager
+            get_ram_manager().ensure_dir_in_ram(target, model_id=model_id, role="decisions", is_anchor=True)
+        except Exception as exc:
+            logger.warning(f"Could not prewarm Laya directory {model_id} into RAM: {exc}")
+        return {"ok": True, "model_id": model_id, "fetched": [target]}
+
     # The projectors too: a vision model whose mmproj is missing launches and
     # then cannot read an image, which is worse than not launching.
     jobs = [(model.gguf, model.repo)]
@@ -1434,6 +1459,161 @@ if WORKER_MODE in ("llm", "hybrid"):
 
         status, payload, content_type = await _bounded_to_thread(_forward)
         return Response(content=payload, status_code=status, media_type=content_type or "application/json")
+
+
+# ---------------------------------------------------------------------------
+# System 1 Decision Maker (Laya CPU/RAM Engine) — 0 MB GPU VRAM
+# ---------------------------------------------------------------------------
+_LAYA_LOADED_MODELS: Dict[str, Any] = {}
+
+_LAYA_REPO_MAP = {
+    "laya_multilingual": "TurnstileLabs/laya-multilingual-tuned",
+    "laya_typed_decisions": "TurnstileLabs/laya-typed-decisions",
+    "laya_english": "TurnstileLabs/laya-english-tuned",
+}
+
+
+class DecisionsRequest(BaseModel):
+    model: str = "laya_multilingual"
+    context: str = ""
+    state: str = ""
+    questions: Any = Field(default_factory=list)
+
+
+def _evaluate_laya_cpu_sync(model_id: str, context_text: str, questions: Any) -> Dict[str, Any]:
+    import laya  # type: ignore
+
+    repo_or_path = _LAYA_REPO_MAP.get(model_id, model_id)
+    try:
+        from ram_manager import get_ram_manager
+        mgr = get_ram_manager()
+        ram_candidate = mgr.ram_dir / "decisions" / model_id
+        if ram_candidate.exists() and any(ram_candidate.iterdir()):
+            repo_or_path = str(ram_candidate)
+        else:
+            disk_candidate = os.path.join(DATA_ROOT, "decisions", model_id)
+            if os.path.isdir(disk_candidate) and os.listdir(disk_candidate):
+                try:
+                    ram_synced = mgr.ensure_dir_in_ram(disk_candidate, model_id=model_id, role="decisions", is_anchor=True)
+                    repo_or_path = str(ram_synced)
+                except Exception:
+                    repo_or_path = disk_candidate
+    except Exception:
+        pass
+
+    laya_model = _LAYA_LOADED_MODELS.get(repo_or_path)
+    if laya_model is None:
+        laya_model = laya.load(repo_or_path, device="cpu")
+        _LAYA_LOADED_MODELS[repo_or_path] = laya_model
+
+    if isinstance(questions, dict):
+        q_list = [{"key": k, **v} for k, v in questions.items() if isinstance(v, dict)]
+    elif isinstance(questions, list):
+        q_list = [q for q in questions if isinstance(q, dict) and "key" in q]
+    else:
+        q_list = []
+
+    decide_kwargs: Dict[str, Any] = {}
+    for q in q_list:
+        key = q["key"]
+        q_type = q.get("type")
+        if q_type == "choice":
+            decide_kwargs[key] = laya.choice(
+                question=q.get("question") or q.get("prompt", ""),
+                options=q.get("options", []),
+            )
+        elif q_type == "score":
+            rubric_raw = q.get("rubric") or {}
+            if isinstance(rubric_raw, dict):
+                rubric = {int(k): v for k, v in rubric_raw.items()}
+            else:
+                rubric = {idx + 1: str(v) for idx, v in enumerate(q.get("options") or [])}
+            decide_kwargs[key] = laya.score(
+                question=q.get("question") or q.get("prompt", ""),
+                rubric=rubric,
+            )
+        elif q_type in ("noul", "yes_no"):
+            decide_kwargs[key] = laya.noul(
+                statement=q.get("statement") or q.get("prompt", "")
+            )
+
+    t0 = time.perf_counter()
+    raw_result = laya_model.decide(state=context_text, **decide_kwargs)
+    latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+
+    answers: Dict[str, Any] = {}
+    for q in q_list:
+        key = q["key"]
+        q_type = q.get("type")
+        ans = raw_result[key] if isinstance(raw_result, dict) else getattr(raw_result, key, None)
+        if ans is None:
+            continue
+        if q_type == "choice":
+            choice_val = getattr(ans, "choice", getattr(ans, "selected", None))
+            probs_val = getattr(ans, "probabilities", getattr(ans, "probs", None))
+            if isinstance(ans, dict):
+                choice_val = ans.get("choice") or ans.get("selected")
+                probs_val = ans.get("probabilities") or ans.get("probs") or {}
+            answers[key] = {
+                "choice": str(choice_val) if choice_val is not None else "",
+                "probabilities": dict(probs_val or {}),
+            }
+        elif q_type == "score":
+            score_val = getattr(ans, "score", getattr(ans, "expected", None))
+            if isinstance(ans, dict):
+                score_val = ans.get("score", ans.get("expected", 0.0))
+            answers[key] = {"score": float(score_val) if score_val is not None else 0.0}
+        elif q_type in ("noul", "yes_no"):
+            prob_val = getattr(ans, "probability", getattr(ans, "true_probability", None))
+            if isinstance(ans, dict):
+                prob_val = ans.get("probability", ans.get("true_probability", 0.0))
+            elif isinstance(ans, (int, float)):
+                prob_val = float(ans)
+            answers[key] = {"probability": float(prob_val) if prob_val is not None else 0.0}
+
+    return {
+        "status": "success",
+        "model_id": model_id,
+        "engine_used": "remote_laya_cpu",
+        "provider_tier": "remote_laya",
+        "latency_ms": latency_ms,
+        "answers": answers,
+        "results": answers,
+    }
+
+
+@app.post("/v1/decisions", dependencies=[Depends(verify_token)])
+async def evaluate_decisions(req: DecisionsRequest):
+    """Evaluate parallel typed System 1 questions using Laya on CPU/RAM (0 MB GPU VRAM)."""
+    try:
+        res = await _bounded_to_thread(
+            _evaluate_laya_cpu_sync,
+            req.model,
+            req.context or req.state,
+            req.questions,
+            timeout_seconds=15.0,
+        )
+        return res
+    except ImportError as exc:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "message": f"laya package not installed on remote agent: {exc}",
+                "retryable": False,
+            },
+        )
+    except Exception as exc:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=502,
+            content={
+                "status": "error",
+                "message": f"Laya CPU evaluation failed: {exc}",
+                "retryable": False,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -75,6 +75,7 @@ class Model:
     role: str
     repo: str
     gguf: str
+    engine_type: str = "gguf"
     mmproj: Optional[str] = None
     mmproj_repo: Optional[str] = None
     dir: Optional[str] = None
@@ -183,17 +184,20 @@ class Registry:
         return sorted(self.fallback)
 
     def distinct_primaries(self) -> List[Model]:
-        """One Model per distinct weight set across every role's primary.
+        """One GGUF Model per distinct weight set across every role's primary.
 
         A role per model, not a role per server: when `rp` and `util` resolve to
         the same weights — which is the whole point of the shared-model setting —
         one server serves both and the second is never started. Launching the
         same GGUF twice would double the VRAM for no gain. This is the rule
-        `ChatLLM.start` documents, applied here.
+        `ChatLLM.start` documents, applied here. Non-GGUF models (such as System 1
+        Laya CPU models) are skipped.
         """
         distinct: List[Model] = []
         for role in self.roles:
             model = self.primary(role)
+            if model.engine_type != "gguf":
+                continue
             if model.id not in {m.id for m in distinct}:
                 distinct.append(model)
         return distinct
@@ -232,7 +236,7 @@ def load(path: Optional[Path] = None) -> Optional[Registry]:
         raise ValueError(f"{registry_path} declares no models")
 
     defaults: Dict[str, Any] = {
-        "mmproj": None, "mmproj_repo": None, "dir": None, "ctx": 32768,
+        "engine_type": "gguf", "mmproj": None, "mmproj_repo": None, "dir": None, "ctx": 32768,
         "parallel": 1, "kv": None, "sampler": {}, "extra_args": [], "enabled": True,
     }
     meta_keys = {"role", "enabled", "_note", "_comment"}
@@ -447,6 +451,8 @@ class LlamaStack:
             }
         for role in registry.roles:
             model = registry.primary(role)
+            if model.engine_type != "gguf":
+                continue
             if model.id in self.unavailable:
                 out["roles"][role] = {
                     "status": "not_downloaded",

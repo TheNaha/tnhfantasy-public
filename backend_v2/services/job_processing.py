@@ -426,7 +426,7 @@ def _classify_llm_job_type(job, final_result: dict[str, Any]) -> str:
 
     Returns one of: "chat_reply", "story_continue", "narrator",
     "story_illustrate_prompt", "impersonation", "suggest_reply",
-    "memory_extraction".
+    "memory_extraction", "state_updater".
     """
     workflow_type = (job.workflow or {}).get("type") if isinstance(job.workflow, dict) else None
     result_type = final_result.get("type")
@@ -436,11 +436,13 @@ def _classify_llm_job_type(job, final_result: dict[str, Any]) -> str:
         return "story_illustrate_prompt"
     if (job.metadata_ or {}).get("is_impersonation") is True or metadata_source == "impersonation":
         return "impersonation"
+    if metadata_source == "state_updater" or workflow_type == "state_updater":
+        return "state_updater"
     if metadata_source == "auto_memory" or workflow_type == "memory_extraction":
         return "memory_extraction"
 
     for candidate in (result_type, workflow_type):
-        if candidate in {"chat_reply", "story_continue", "narrator", "suggest_reply", "story_parse"}:
+        if candidate in {"chat_reply", "story_continue", "narrator", "suggest_reply", "story_parse", "state_updater"}:
             return candidate
 
     return "chat_reply"
@@ -547,6 +549,36 @@ async def _finalize_llm_job(
             "chat_id": chat_id,
             "content": assistant_content,
         }
+    elif job_type == "state_updater":
+        from services.updater_service import apply_updater_result
+        text = extract_first_text(final_result) or ""
+        chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
+        character_id = job.metadata_.get("character_id") if job.metadata_ else None
+        applied_summary = {}
+        if chat_id and hasattr(job_service, "session") and job_service.session:
+            applied_summary = await asyncio.to_thread(
+                apply_updater_result,
+                job_service.session,
+                chat_id=chat_id,
+                character_id=character_id,
+                raw_text=text,
+            )
+        await finalize_persisted_job_outputs(
+            job_service=job_service,
+            job_id=job_id,
+            outputs=[],
+            provider_id=provider_id,
+            load_balancer=load_balancer,
+            process_image_background_fn=None,
+            event_extra={
+                "type": "state_updater",
+                "metadata": {"chat_id": chat_id, "character_id": character_id, "type": "state_updater"},
+                "chat_id": chat_id,
+                "character_id": character_id,
+                "applied": applied_summary,
+            },
+        )
+        return
     elif job_type == "memory_extraction":
         from services.memory_extraction import parse_extraction_result, create_memories_from_extraction
         text = extract_first_text(final_result) or ""
@@ -735,7 +767,7 @@ async def _finalize_llm_job(
         event_extra=event_extra,
     )
 
-    if job_type == "chat_reply":
+    if job_type in ("chat_reply", "narrator"):
         chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
         character_id = job.metadata_.get("character_id") if job.metadata_ else None
         # A swipe or a regeneration re-runs a turn the user already has. The
@@ -745,17 +777,58 @@ async def _finalize_llm_job(
         # `generate_swipe` and `regenerate_reply`.
         if job.metadata_ and job.metadata_.get("suppress_memory_extraction"):
             logger.debug("memory_extraction_suppressed", job_id=job_id, chat_id=chat_id)
-        elif chat_id and character_id:
+        elif chat_id and hasattr(job_service, "session") and job_service.session:
             try:
-                from services.memory_extraction import enqueue_memory_extraction
-                await enqueue_memory_extraction(
-                    session=job_service.session if hasattr(job_service, "session") else None,
-                    chat_id=chat_id,
-                    character_id=character_id,
-                    job_service=job_service,
-                )
+                from core.entities import Chat, Character
+                from infrastructure.repositories.message_repo import MessageRepository
+                from services.decision_service import DecisionService
+                from services.updater_service import record_director_decision, enqueue_state_updater_if_needed
+
+                session = job_service.session
+                chat_obj = session.get(Chat, chat_id)
+                if chat_obj and getattr(chat_obj, "director_enabled", True):
+                    char_obj = session.get(Character, character_id or chat_obj.character_id) if (character_id or chat_obj.character_id) else None
+                    msg_repo = MessageRepository(session)
+                    recent_msgs_objs = msg_repo.list_by_chat(chat_id, limit=8, newest_first=True)
+                    recent_msgs = [
+                        {
+                            "role": m.role.value if hasattr(m.role, "value") else str(m.role),
+                            "content": m.content or "",
+                        }
+                        for m in recent_msgs_objs
+                    ]
+                    last_speaker = "narrator" if job_type == "narrator" else "character"
+                    decision = await DecisionService(session).evaluate_scene(
+                        character_name=char_obj.name if char_obj else "Character",
+                        user_name=chat_obj.persona_name or "User",
+                        story_location=chat_obj.story_location,
+                        story_time=chat_obj.story_time,
+                        state_snapshot=chat_obj.state_snapshot or {},
+                        recent_messages=recent_msgs,
+                        last_speaker=last_speaker,
+                        has_secondary_character=bool(chat_obj.additional_character_ids),
+                        allow_image_generation=bool(chat_obj.allow_image_generation),
+                        allow_narration=bool(chat_obj.allow_narration),
+                    )
+                    await asyncio.to_thread(record_director_decision, session, chat_id, decision)
+                    if decision.should_run_updater and (character_id or chat_obj.character_id):
+                        await enqueue_state_updater_if_needed(
+                            session,
+                            chat_id=chat_id,
+                            character_id=character_id or chat_obj.character_id,
+                            decision=decision,
+                            job_service=job_service,
+                        )
+                elif character_id:
+                    from services.memory_extraction import enqueue_memory_extraction
+                    await enqueue_memory_extraction(
+                        session=session,
+                        chat_id=chat_id,
+                        character_id=character_id,
+                        job_service=job_service,
+                    )
             except Exception as exc:
-                logger.debug("memory_extraction_hook_failed", job_id=job_id, error=str(exc))
+                logger.debug("post_turn_director_or_memory_hook_failed", job_id=job_id, error=str(exc))
 
 
 _AUDIO_OUTPUT_SUFFIXES = (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac", ".opus")

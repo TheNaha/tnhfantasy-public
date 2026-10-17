@@ -10,7 +10,11 @@ vi.mock('../../contexts/ChatWorkspaceContext', () => ({
 
 const mockUseLocations = vi.hoisted(() => vi.fn(() => ({ data: [] })));
 vi.mock('../../hooks/useLocations', () => ({ useLocations: () => mockUseLocations() }));
-vi.mock('../../hooks/useWorldVault', () => ({ getAvatarUrl: (id) => `/avatars/${id}.png` }));
+vi.mock('../../hooks/useWorldVault', () => ({
+    getAvatarUrl: (id) => `/avatars/${id}.png`,
+    useEvaluateChatDirector: () => ({ mutate: vi.fn(), isPending: false }),
+    useUpdateChatStateSnapshot: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock('../../hooks/useStreamingJobs', () => ({ useActiveChatStreams: () => [] }));
 
 // The panel's neighbours each own their own fetching; stub them so this test

@@ -1865,6 +1865,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add world_edges table for explicit, named relationships between any two vault entities",
             apply_fn=_migration_099_world_edges,
         ),
+        MigrationStep(
+            version="100_chat_director_state_snapshot",
+            description="Add chats.director_enabled and chats.state_snapshot for System 1 Director and Statekeeper (Updater) live state tracking",
+            apply_fn=_migration_100_chat_director_state_snapshot,
+        ),
     ]
 
 
@@ -4964,3 +4969,29 @@ def _migration_098_chat_scenario_fk(conn) -> bool:
             )
 
     return True
+
+
+def _migration_100_chat_director_state_snapshot(conn) -> bool:
+    """Add `director_enabled` and `state_snapshot` to `chats`."""
+    inspector = inspect(conn)
+    if "chats" not in set(inspector.get_table_names()):
+        return False
+    cols = {c["name"] for c in inspector.get_columns("chats")}
+    is_postgres = conn.dialect.name == "postgresql"
+
+    if "director_enabled" not in cols:
+        bool_default = "TRUE" if is_postgres else "1"
+        conn.execute(
+            text(f"ALTER TABLE chats ADD COLUMN director_enabled BOOLEAN NOT NULL DEFAULT {bool_default}")
+        )
+        logger.info("migration_column_added", table="chats", column="director_enabled")
+
+    if "state_snapshot" not in cols:
+        json_type = "JSONB NOT NULL DEFAULT '{}'::jsonb" if is_postgres else "TEXT NOT NULL DEFAULT '{}'"
+        conn.execute(
+            text(f"ALTER TABLE chats ADD COLUMN state_snapshot {json_type}")
+        )
+        logger.info("migration_column_added", table="chats", column="state_snapshot")
+
+    return True
+

@@ -73,6 +73,13 @@ ROLE_BY_KIND: Dict[str, str] = {
     "caption": "util",
     "summarize": "util",
     "summary": "util",
+    # Statekeeper (Updater): extracts structured JSON state deltas (mood, outfit,
+    # inventory, location, memories, lore) after turns where Director gates fire.
+    "state_updater": "util",
+
+    # --- decisions: System 1 Director (typed choice/score/probability) -----
+    "director": "decisions",
+    "decisions": "decisions",
 }
 
 #: What a kind that is not in the table above routes to.
@@ -121,6 +128,10 @@ class LLMRouter:
             active_id = active.get(role)
             if role == "util" and active_id in ("same_as_rp", "same"):
                 active_id = active.get("rp")
+            elif role == "decisions" and active_id == "same_as_util":
+                return self.models_for_kind("tool_call")
+            elif role == "decisions" and active_id == "disabled":
+                return []
 
             if active_id and active_id in self.registry.models and self.registry.models[active_id].enabled:
                 active_model = self.registry.models[active_id]
@@ -182,6 +193,11 @@ class LLMRouter:
         rp_active = active.get("rp") or self.registry.primary("rp").id
         util_raw = active.get("util")
         util_active = rp_active if util_raw in ("same_as_rp", "same") else (util_raw or self.registry.primary("util").id)
+        try:
+            decisions_default = self.registry.primary("decisions").id
+        except LookupError:
+            decisions_default = "laya_multilingual"
+        decisions_active = active.get("decisions") or decisions_default
         shared_weights = (rp_active == util_active) or (util_raw in ("same_as_rp", "same"))
 
         return {
@@ -196,6 +212,7 @@ class LLMRouter:
             "active": {
                 "rp": rp_active,
                 "util": util_raw or util_active,
+                "decisions": decisions_active,
                 "image": active.get("image", ""),
             },
             "shared_weights": shared_weights,

@@ -109,6 +109,33 @@ export default function ChatWorkspaceHeader({
                 >
                     {searchOpen ? <X size={18} /> : <Search size={18} />}
                 </button>
+                {activeChat?.id && (
+                    <div
+                        className={clsx(
+                            "px-2.5 py-1 rounded text-2xs font-medium flex items-center gap-1.5 shadow-sm border",
+                            activeChat.director_enabled !== false
+                                ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-300"
+                                : "bg-gray-800/50 border-white/5 text-gray-400"
+                        )}
+                        title={
+                            activeChat.director_enabled !== false
+                                ? `System 1 Director Active${activeChat.state_snapshot?.scene_tension_label ? ` • Tension: ${activeChat.state_snapshot.scene_tension}/5 (${activeChat.state_snapshot.scene_tension_label})` : ''}${activeChat.state_snapshot?.character_mood ? ` • Mood: ${activeChat.state_snapshot.character_mood}` : ''}`
+                                : 'System 1 Director Paused'
+                        }
+                    >
+                        <Sparkles size={11} className={activeChat.director_enabled !== false ? "text-emerald-400" : "text-gray-500"} />
+                        <span>
+                            {activeChat.director_enabled !== false
+                                ? `Director${activeChat.state_snapshot?.scene_tension ? ` • T${activeChat.state_snapshot.scene_tension}/5` : ''}`
+                                : 'Director Off'}
+                        </span>
+                        {activeChat.state_snapshot?.character_mood && (
+                            <span className="text-emerald-200/80 max-w-[90px] truncate">
+                                · {activeChat.state_snapshot.character_mood}
+                            </span>
+                        )}
+                    </div>
+                )}
                 {activeChat?.story_time && (
                     <div className="px-2.5 py-1 bg-gray-800/50 border border-white/5 rounded text-2xs font-medium text-gray-300 flex items-center gap-1.5 shadow-sm" title="Story Time">
                         <Clock size={12} className="text-indigo-400/70" /> 

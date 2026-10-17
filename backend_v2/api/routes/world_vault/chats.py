@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 from sqlalchemy import func, delete
 
-from api.deps import get_session, get_chat_repo, get_message_repo, get_character_repo, get_location_repo, get_story_repo
+from api.deps import get_session, get_chat_repo, get_message_repo, get_character_repo, get_location_repo, get_story_repo, get_job_service
 from infrastructure.repositories.chat_repo import ChatRepository
 from infrastructure.repositories.message_repo import MessageRepository
 from infrastructure.repositories.character_repo import CharacterRepository
@@ -210,6 +210,8 @@ class UpdateChatRequest(BaseModel):
     persona_id: str | None = None
     authors_note: str | None = None
     authors_note_depth: int | None = None
+    director_enabled: bool | None = None
+    state_snapshot: dict | None = None
 
 
 class NarrateRequest(BaseModel):
@@ -242,6 +244,8 @@ class CreateChatRequest(BaseModel):
     max_agentic_narrations: int | None = None
     idle_sim_enabled: bool = False
     persona_id: str | None = None
+    director_enabled: bool = True
+    state_snapshot: dict | None = None
 
 
 class SendMessageRequest(BaseModel):
@@ -680,6 +684,8 @@ def create_chat(req: CreateChatRequest, session: Session = Depends(get_session),
         max_agentic_depth=req.max_agentic_depth,
         idle_sim_enabled=req.idle_sim_enabled,
         persona_id=req.persona_id,
+        director_enabled=req.director_enabled,
+        state_snapshot=req.state_snapshot or {},
     )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
@@ -1054,6 +1060,65 @@ async def _send_message(
     job_id = None
 
     if message.role == MessageRole.USER and not request.no_reply:
+        director_decision_dict: dict[str, Any] | None = None
+        if getattr(chat, "director_enabled", True) and ctx_overrides is not None:
+            try:
+                from services.decision_service import DecisionService
+                from services.updater_service import record_director_decision
+
+                chars_list = ctx_overrides.get("characters") or []
+                primary_char_name = chars_list[0].name if chars_list and getattr(chars_list[0], "name", None) else "Character"
+                recent_transcript = [
+                    {
+                        "role": m.role.value if hasattr(m.role, "value") else str(m.role),
+                        "content": m.content or "",
+                    }
+                    for m in (past_messages or [])[-6:]
+                ]
+                decision = await DecisionService(session).evaluate_scene(
+                    character_name=primary_char_name,
+                    user_name=chat.persona_name or "User",
+                    story_location=chat.story_location,
+                    story_time=chat.story_time,
+                    state_snapshot=chat.state_snapshot or {},
+                    recent_messages=recent_transcript,
+                    last_speaker="user",
+                    has_secondary_character=bool(chat.additional_character_ids),
+                    allow_image_generation=bool(chat.allow_image_generation),
+                    allow_narration=bool(chat.allow_narration),
+                )
+                director_decision_dict = decision.to_dict()
+                updated_snap = await asyncio.to_thread(
+                    record_director_decision, session, chat_id, decision
+                )
+                ctx_overrides["state_snapshot"] = updated_snap
+
+                # Format human-readable pacing directive for the actor LLM
+                directive_map = {
+                    "continue_conversation": "Continue the dialogue and interaction naturally.",
+                    "sensory_detail": "Slow down and emphasize rich sensory, physical, and atmospheric detail.",
+                    "escalate_tension": "Escalate dramatic tension, stakes, or emotional intensity.",
+                    "advance_time_or_scene": "Advance the scene forward in time or transition to the next beat.",
+                    "de_escalate_reflect": "Slow the pace down for emotional reflection, comfort, or aftermath.",
+                }
+                speed_map = {1: "Slow-motion", 2: "Real-time", 3: "Fast-forward"}
+                speed_label = speed_map.get(round(decision.pacing_speed), "Real-time")
+                ctx_overrides["director_directive"] = (
+                    f"{directive_map.get(decision.pacing_directive, decision.pacing_directive)} "
+                    f"(Pacing speed: {speed_label}; Emotional tone: {decision.emotional_tone}; "
+                    f"Suggested expression: {decision.character_expression})"
+                )
+
+                # Group chat secondary character auto-routing when user didn't pin target_character_id
+                if (
+                    decision.next_speaker == "secondary_character"
+                    and not request.target_character_id
+                    and chat.additional_character_ids
+                ):
+                    ctx_overrides["active_character_id"] = chat.additional_character_ids[0]
+            except Exception as dir_exc:
+                logger.debug("send_message_director_eval_skipped", chat_id=chat_id, error=str(dir_exc))
+
         # One assembly through the unified context builder, run off the event
         # loop like the previous async builder. The trace is the only record of
         # what THIS reply was actually told.
@@ -1062,6 +1127,8 @@ async def _send_message(
             build_context, session, "chat", chat, past_messages,
             trace_out=context_trace, **ctx_overrides,
         )
+        if director_decision_dict is not None:
+            context_trace["director_decision"] = director_decision_dict
 
         try:
             if request.narrate:
@@ -2573,4 +2640,128 @@ def export_chat_to_story(
         "title": story.title,
         "chapter_id": chapter.id,
     }
+
+
+class TriggerDirectorRequest(BaseModel):
+    run_updater: bool = False
+    force_updater: bool = False
+
+
+class PatchStateSnapshotRequest(BaseModel):
+    state_snapshot: dict[str, Any] | None = None
+    character_mood: str | None = None
+    current_activity: str | None = None
+    character_outfit: str | None = None
+    relationship_status: str | None = None
+    scene_summary: str | None = None
+    inventory: list[str] | None = None
+    scene_tension: float | None = None
+    emotional_tone: str | None = None
+    character_expression: str | None = None
+
+
+@router.post("/{chat_id}/director/evaluate")
+async def evaluate_chat_director(
+    chat_id: str,
+    request: TriggerDirectorRequest | None = None,
+    session: Session = Depends(get_session),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
+    character_repo: CharacterRepository = Depends(get_character_repo),
+    message_repo: MessageRepository = Depends(get_message_repo),
+    job_service: Any = Depends(get_job_service),
+):
+    """Evaluate the 13-question System 1 Director on this chat and optionally enqueue the Statekeeper."""
+    from services.decision_service import DecisionService
+    from services.updater_service import (
+        enqueue_state_updater_if_needed,
+        record_director_decision,
+    )
+
+    req = request or TriggerDirectorRequest()
+    chat = chat_repo.get(chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+
+    character = character_repo.get(chat.character_id) if chat.character_id else None
+    char_name = character.name if character else "Character"
+    recent = message_repo.list_by_chat(chat_id, limit=8, newest_first=True)
+    recent_transcript = [
+        {
+            "role": m.role.value if hasattr(m.role, "value") else str(m.role),
+            "content": m.content or "",
+        }
+        for m in recent
+    ]
+    last_speaker = "user"
+    if recent:
+        last_msg = recent[-1]
+        if last_msg.kind == MessageKind.NARRATOR:
+            last_speaker = "narrator"
+        elif last_msg.role == MessageRole.CHAR:
+            last_speaker = "character"
+
+    decision = await DecisionService(session).evaluate_scene(
+        character_name=char_name,
+        user_name=chat.persona_name or "User",
+        story_location=chat.story_location,
+        story_time=chat.story_time,
+        state_snapshot=chat.state_snapshot or {},
+        recent_messages=recent_transcript,
+        last_speaker=last_speaker,
+        has_secondary_character=bool(chat.additional_character_ids),
+        allow_image_generation=bool(chat.allow_image_generation),
+        allow_narration=bool(chat.allow_narration),
+    )
+    updated_snapshot = await asyncio.to_thread(
+        record_director_decision, session, chat_id, decision
+    )
+
+    updater_job_id = None
+    if req.run_updater or req.force_updater:
+        updater_job_id = await enqueue_state_updater_if_needed(
+            session,
+            chat_id=chat_id,
+            character_id=chat.character_id,
+            decision=decision,
+            job_service=job_service,
+            force=req.force_updater,
+        )
+
+    return {
+        "chat_id": chat_id,
+        "decision": decision.to_dict(),
+        "state_snapshot": updated_snapshot,
+        "updater_job_id": updater_job_id,
+    }
+
+
+@router.patch("/{chat_id}/state-snapshot")
+def patch_chat_state_snapshot(
+    chat_id: str,
+    request: PatchStateSnapshotRequest,
+    session: Session = Depends(get_session),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
+):
+    """Directly update fields inside `Chat.state_snapshot` from the UI Statekeeper panel."""
+    chat = chat_repo.get(chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+
+    snapshot = dict(chat.state_snapshot or {})
+    updates = request.model_dump(exclude_unset=True)
+    nested = updates.pop("state_snapshot", None)
+    if isinstance(nested, dict):
+        for k, v in nested.items():
+            snapshot[k] = v
+    for k, v in updates.items():
+        snapshot[k] = v
+    snapshot["statekeeper_updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    chat.state_snapshot = snapshot
+    chat.updated_at = datetime.now(timezone.utc)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+    return {"chat_id": chat_id, "state_snapshot": chat.state_snapshot}
+
 

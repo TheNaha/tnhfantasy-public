@@ -1403,6 +1403,9 @@ class Chat(SQLModel, table=True):
     # SillyTavern-style Author's Note — injected as a system message N turns from the tail
     authors_note: str | None = Field(default=None, sa_column=Column(Text))
     authors_note_depth: int | None = Field(default=None)  # None → default depth 4
+    # System 1 Director (Decision Maker) & Statekeeper (Updater) live state snapshot
+    director_enabled: bool = Field(default=True)
+    state_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSONColumn))
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

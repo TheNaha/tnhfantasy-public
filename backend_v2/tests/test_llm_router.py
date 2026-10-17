@@ -51,9 +51,13 @@ class TestRoleByKind:
     def test_structured_kinds_route_to_util(self):
         """These are the kinds a finetune is worst at, and where vision lives."""
         for kind in ("story_parse", "story_illustrate_prompt",
-                     "memory_extraction", "tool_call", "agentic",
+                     "memory_extraction", "state_updater", "tool_call", "agentic",
                      "vision", "caption", "summarize"):
             assert ROLE_BY_KIND[kind] == "util", kind
+
+    def test_decision_kinds_route_to_decisions(self):
+        for kind in ("director", "decisions"):
+            assert ROLE_BY_KIND[kind] == "decisions", kind
 
     def test_an_unknown_kind_falls_back_not_crashes(self, router):
         """A new workflow kind still gets a reply, just from the prose model."""
@@ -128,7 +132,7 @@ class TestTheRegistryParses:
     def test_it_parses_and_validates(self):
         reg = refresh_router().registry
         assert reg.models
-        assert set(reg.fallback) == {"rp", "util"}
+        assert set(reg.fallback) == {"rp", "util", "decisions"}
 
     def test_a_typo_in_a_fallbentry_names_a_model_that_does_not_exist(self, tmp_path):
         """Both mistakes are silent in JSON and expensive at deploy time."""

@@ -317,7 +317,23 @@ class RamModelManager:
                     return ram_p
 
             # Determine subfolder according to role (ComfyUI extra paths & LLM layout)
-            subfolder = "checkpoints" if role in ("image", "image_secondary") else ("loras" if role == "lora" else ("vae" if role == "vae" else ("llm" if role in ("rp", "util", "llm") else "")))
+            subfolder = (
+                "checkpoints"
+                if role in ("image", "image_secondary")
+                else (
+                    "loras"
+                    if role == "lora"
+                    else (
+                        "vae"
+                        if role == "vae"
+                        else (
+                            "llm"
+                            if role in ("rp", "util", "llm")
+                            else ("decisions" if role == "decisions" else "")
+                        )
+                    )
+                )
+            )
             subfolder_dir = self.ram_dir / subfolder if subfolder else self.ram_dir
             subfolder_dir.mkdir(parents=True, exist_ok=True)
 
@@ -464,6 +480,49 @@ class RamModelManager:
         drop_page_cache()
 
         return dest_path
+
+    def ensure_dir_in_ram(
+        self,
+        source_dir: str,
+        model_id: str,
+        role: str = "decisions",
+        is_anchor: bool = True,
+    ) -> Path:
+        """Ensure an entire HuggingFace / Laya model directory is synced into RAM (/dev/shm)."""
+        src = Path(source_dir).resolve()
+        if not src.exists() or not src.is_dir():
+            raise FileNotFoundError(f"Source model directory does not exist: {source_dir}")
+
+        subfolder = "decisions" if role == "decisions" else role
+        dest_dir = self.ram_dir / subfolder / model_id
+        dest_dir.parent.mkdir(parents=True, exist_ok=True)
+
+        total_bytes = sum(f.stat().st_size for f in src.rglob("*") if f.is_file())
+        with self._lock:
+            if model_id in self.entries and dest_dir.exists():
+                cached_bytes = sum(f.stat().st_size for f in dest_dir.rglob("*") if f.is_file())
+                if cached_bytes == total_bytes and total_bytes > 0:
+                    self.entries[model_id].last_used = time.time()
+                    self.entries[model_id].is_anchor = self.entries[model_id].is_anchor or is_anchor
+                    return dest_dir
+
+            ensure_shm_capacity(total_bytes)
+            if self.current_usage_bytes + total_bytes > self.budget_bytes:
+                self.evict_lru(total_bytes)
+
+        shutil.copytree(src, dest_dir, dirs_exist_ok=True)
+        with self._lock:
+            self.entries[model_id] = CacheEntry(
+                model_id=model_id,
+                role=role,
+                source_path=str(src),
+                ram_path=str(dest_dir),
+                size_bytes=total_bytes,
+                is_anchor=is_anchor,
+                last_used=time.time(),
+            )
+        drop_page_cache()
+        return dest_dir
 
     def prewarm_models(
         self,

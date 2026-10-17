@@ -268,13 +268,14 @@ def set_default_provider(provider_id: str, model_id: str) -> None:
 
 
 def get_active_models(registry: Any = None) -> dict[str, str]:
-    """Return active model IDs for rp, util, and image roles."""
+    """Return active model IDs for rp, util, decisions, and image roles."""
     data = _read_config() or {}
     active_rp = data.get("active_rp")
     active_util = data.get("active_util")
+    active_decisions = data.get("active_decisions")
     active_image = data.get("active_image") or data.get("default_image_model") or ""
 
-    if not active_rp or not active_util:
+    if not active_rp or not active_util or not active_decisions:
         try:
             if registry is None:
                 from services.llm_router import get_router
@@ -286,14 +287,21 @@ def get_active_models(registry: Any = None) -> dict[str, str]:
                 active_rp = reg.primary("rp").id
             if not active_util:
                 active_util = reg.primary("util").id
+            if not active_decisions:
+                try:
+                    active_decisions = reg.primary("decisions").id
+                except Exception:
+                    active_decisions = "laya_multilingual"
         except Exception as exc:
             logger.debug("get_active_models_fallback_failed", error=str(exc))
             active_rp = active_rp or "artemis_31b"
             active_util = active_util or active_rp
+            active_decisions = active_decisions or "laya_multilingual"
 
     return {
         "rp": active_rp,
         "util": active_util,
+        "decisions": active_decisions,
         "image": active_image,
     }
 
@@ -301,6 +309,7 @@ def get_active_models(registry: Any = None) -> dict[str, str]:
 def set_active_models(
     active_rp: str | None = None,
     active_util: str | None = None,
+    active_decisions: str | None = None,
     active_image: str | None = None,
 ) -> dict[str, str]:
     """Persist active model choices in llm_config.json."""
@@ -312,6 +321,8 @@ def set_active_models(
         updated["active_rp"] = active_rp
     if active_util is not None:
         updated["active_util"] = active_util
+    if active_decisions is not None:
+        updated["active_decisions"] = active_decisions
     if active_image is not None:
         updated["active_image"] = active_image
 

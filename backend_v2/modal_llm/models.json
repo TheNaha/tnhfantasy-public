@@ -56,6 +56,14 @@
         "mistral_small_32_it",
         "qwen2.5_14b"
       ]
+    },
+    "decisions": {
+      "_comment": "System 1 Decision Maker (Director): evaluates typed choice, score, and yes/no probability questions in parallel on CPU/RAM (~1.5 GB RAM, 0 MB GPU VRAM, ~150ms latency) without generating text.",
+      "fallback": [
+        "laya_multilingual",
+        "laya_typed_decisions",
+        "laya_english"
+      ]
     }
   },
   "models": {
@@ -411,6 +419,39 @@
       },
       "enabled": true,
       "_note": "Lightweight 9.3 GB uncensored RP finetune with vision. Extremely fast on 24G GPUs (~40 t/s) and shares weights with util primary."
+    },
+    "laya_multilingual": {
+      "role": "decisions",
+      "engine_type": "system1_laya",
+      "repo": "TurnstileLabs/laya-multilingual-tuned",
+      "gguf": "",
+      "ctx": 8192,
+      "parallel": 1,
+      "gpu": "CPU",
+      "enabled": true,
+      "_note": "Laya System 1 Decision Model (Multilingual, mDeBERTa-v3-base, ~1.5 GB RAM, 0 MB GPU VRAM). Evaluates all 13 Director routing, pacing, visual, and Statekeeper gate decisions in parallel in ~150ms on CPU."
+    },
+    "laya_typed_decisions": {
+      "role": "decisions",
+      "engine_type": "system1_laya",
+      "repo": "TurnstileLabs/laya-typed-decisions",
+      "gguf": "",
+      "ctx": 8192,
+      "parallel": 1,
+      "gpu": "CPU",
+      "enabled": true,
+      "_note": "Laya System 1 Decision Model (Typed Decisions base, ~1.4 GB RAM, 0 MB GPU VRAM). Evaluates choice, score, and yes/no probability rubrics in parallel on CPU."
+    },
+    "laya_english": {
+      "role": "decisions",
+      "engine_type": "system1_laya",
+      "repo": "TurnstileLabs/laya-english-tuned",
+      "gguf": "",
+      "ctx": 8192,
+      "parallel": 1,
+      "gpu": "CPU",
+      "enabled": true,
+      "_note": "Laya System 1 Decision Model (English-tuned DeBERTa-v3-large, ~1.8 GB RAM, 0 MB GPU VRAM). High-precision English decision heads on CPU."
     }
   },
   "shared_model_experiment": {

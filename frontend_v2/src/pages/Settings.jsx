@@ -8,7 +8,7 @@ import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings, GALLERY_VIEW_MODES } from '../store/settingsStore';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
-import { useLLMProviderStatus, useLLMRouting, useSetLLMDefault, useLLMCatalog, useSetActiveModels } from '../hooks/useLLMProviderStatus';
+import { useLLMProviderStatus, useLLMRouting, useSetLLMDefault, useLLMCatalog, useSetActiveModels, useEvaluateDirectorDecisions } from '../hooks/useLLMProviderStatus';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import React, { useCallback, useEffect, useRef } from 'react';
 
@@ -1411,6 +1411,186 @@ function SettingGroup({ title, description, children, action }) {
     );
 }
 
+function DirectorPlaygroundCard() {
+    const evalMutation = useEvaluateDirectorDecisions();
+    const [sampleDialogue, setSampleDialogue] = useState(
+        "User: *I step into the neon-lit alley and hand Lyra the encrypted data shard.*\nCharacter: *Lyra's eyes widen as the holographic seal flickers.* \"Wait—this is the Arasaka vault key. We need to move before the drones lock onto our signal!\""
+    );
+    const [lastSpeaker, setLastSpeaker] = useState('character');
+    const [hasSecondary, setHasSecondary] = useState(false);
+
+    const handleRunTest = () => {
+        const lines = sampleDialogue.split('\n').filter(Boolean);
+        const recent_messages = lines.map((line) => {
+            if (line.toLowerCase().startsWith('user:')) {
+                return { role: 'user', content: line.slice(5).trim() };
+            }
+            if (line.toLowerCase().startsWith('narrator:')) {
+                return { role: 'system', content: line.slice(9).trim() };
+            }
+            const cleaned = line.toLowerCase().startsWith('character:') ? line.slice(10).trim() : line.trim();
+            return { role: 'assistant', content: cleaned };
+        });
+
+        evalMutation.mutate({
+            recent_messages,
+            character_name: 'Lyra',
+            scenario: 'Cyberpunk infiltration in Neo-Veridia.',
+            has_secondary_character: hasSecondary,
+            last_speaker: lastSpeaker,
+            chain_depth: 0,
+            state_snapshot: {
+                story_location: 'Sector 7 Neon Alley',
+                story_time: 'Midnight, Heavy Rain',
+                character_mood: 'Alert',
+            },
+        });
+    };
+
+    const result = evalMutation.data;
+
+    return (
+        <details className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-950/10 p-4 group">
+            <summary className="cursor-pointer flex items-center justify-between text-xs font-bold uppercase tracking-widest text-emerald-300 hover:text-emerald-200 list-none">
+                <span className="flex items-center gap-2">
+                    <Sparkles size={14} className="text-emerald-400" />
+                    System 1 Director &amp; Statekeeper Gate Tester (13 Parallel Typed Decisions)
+                </span>
+                <ChevronDown size={14} className="text-emerald-400 transition-transform group-open:rotate-180" />
+            </summary>
+
+            <div className="mt-3 space-y-3">
+                <p className="text-xs text-gray-400">
+                    Test how the System 1 Decision Maker (Laya CPU/RAM or active fallback) evaluates a turn in parallel: choosing the next speaker, scene tension, pacing directive, visual expression, and which Statekeeper world-update gates fire.
+                </p>
+
+                <textarea
+                    rows={3}
+                    value={sampleDialogue}
+                    onChange={(e) => setSampleDialogue(e.target.value)}
+                    aria-label="Sample dialogue for Director evaluation"
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-200 font-mono focus:outline-none focus:border-emerald-500/50"
+                />
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-4 text-xs text-gray-300">
+                        <label className="flex items-center gap-1.5">
+                            <span className="text-gray-400">Last Speaker:</span>
+                            <select
+                                value={lastSpeaker}
+                                onChange={(e) => setLastSpeaker(e.target.value)}
+                                className="bg-gray-900 border border-white/10 rounded px-2 py-1 text-xs text-white"
+                            >
+                                <option value="user">User</option>
+                                <option value="character">Character</option>
+                                <option value="narrator">Narrator</option>
+                            </select>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={hasSecondary}
+                                onChange={(e) => setHasSecondary(e.target.checked)}
+                                className="accent-emerald-500"
+                            />
+                            <span>Multi-character scene</span>
+                        </label>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={handleRunTest}
+                        disabled={evalMutation.isPending}
+                        className="px-3.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                    >
+                        {evalMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                        Evaluate 13 Typed Questions
+                    </button>
+                </div>
+
+                {result && (
+                    <div className="mt-3 pt-3 border-t border-white/10 space-y-3 text-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-2 bg-black/30 px-3 py-2 rounded-lg border border-white/5">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-bold uppercase text-2xs">
+                                    Tier: {result.provider_tier}
+                                </span>
+                                <span className="text-gray-400 font-mono text-2xs">
+                                    Model: {result.model_id}
+                                </span>
+                                <span className="text-emerald-400 font-mono text-2xs">
+                                    ⚡ {result.latency_ms} ms
+                                </span>
+                            </div>
+                            <div className="text-2xs font-semibold text-gray-300">
+                                Next Turn: <span className="text-emerald-300 uppercase font-bold">{result.next_speaker}</span>
+                                {' • '}
+                                Tension: <span className="text-amber-300 font-bold">{result.scene_tension}/5 ({result.scene_tension_label})</span>
+                            </div>
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-3">
+                            <div className="bg-black/30 p-3 rounded-lg border border-white/5 space-y-1.5">
+                                <div className="text-2xs uppercase tracking-wider text-gray-400 font-bold">Turn &amp; Pacing</div>
+                                <div className="text-gray-300"><b>Speaker:</b> <span className="text-emerald-300">{result.next_speaker}</span></div>
+                                <div className="text-gray-300"><b>Directive:</b> <span className="text-blue-300">{result.pacing_directive}</span></div>
+                                <div className="text-gray-300"><b>Speed:</b> {result.pacing_speed_label} ({result.pacing_speed}/4)</div>
+                                <div className="text-gray-300"><b>Tone:</b> <span className="text-purple-300">{result.emotional_tone}</span></div>
+                                <div className="text-gray-300"><b>Continue Chain:</b> {Math.round((result.continue_chain_prob || 0) * 100)}%</div>
+                            </div>
+
+                            <div className="bg-black/30 p-3 rounded-lg border border-white/5 space-y-1.5">
+                                <div className="text-2xs uppercase tracking-wider text-gray-400 font-bold">Visuals &amp; Expression</div>
+                                <div className="text-gray-300"><b>Expression:</b> <span className="text-amber-300">{result.character_expression}</span></div>
+                                <div className="text-gray-300"><b>Image Focus:</b> {result.image_focus}</div>
+                                <div className="text-gray-300"><b>Trigger Image:</b> {Math.round((result.trigger_image_prob || 0) * 100)}%</div>
+                                {result.director_instruction && (
+                                    <div className="mt-1 pt-1 border-t border-white/5 text-2xs text-gray-400 italic">
+                                        &ldquo;{result.director_instruction}&rdquo;
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="bg-black/30 p-3 rounded-lg border border-white/5 space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-2xs uppercase tracking-wider text-gray-400 font-bold">Statekeeper Gates</span>
+                                    <span className={`px-1.5 py-0.5 rounded text-2xs font-bold ${result.should_run_updater ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-gray-800 text-gray-500'}`}>
+                                        {result.should_run_updater ? 'UPDATER FIRES' : 'IDLE'}
+                                    </span>
+                                </div>
+                                {[
+                                    ['Location / Time', result.updater_gates?.gate_world_state],
+                                    ['Char / Outfit / Rel', result.updater_gates?.gate_character_state],
+                                    ['Inventory / Items', result.updater_gates?.gate_inventory_or_items],
+                                    ['Durable Memory', result.updater_gates?.gate_durable_memory],
+                                    ['Lore Discovery', result.updater_gates?.gate_lore_discovery],
+                                ].map(([label, prob]) => {
+                                    const pct = Math.round((prob || 0) * 100);
+                                    const active = (prob || 0) >= 0.55;
+                                    return (
+                                        <div key={label} className="space-y-0.5">
+                                            <div className="flex justify-between text-2xs">
+                                                <span className={active ? 'text-purple-300 font-semibold' : 'text-gray-400'}>{label}</span>
+                                                <span className="font-mono text-gray-400">{pct}%</span>
+                                            </div>
+                                            <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                                                <div
+                                                    className={`h-full rounded-full ${active ? 'bg-purple-400' : 'bg-gray-600'}`}
+                                                    style={{ width: `${Math.min(100, Math.max(4, pct))}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </details>
+    );
+}
+
 // AI Settings Component
 function AISettings({ settings, onUpdate, onSync, onReset }) {
     const { providers = [] } = useProvidersPageData();
@@ -1617,10 +1797,8 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                     <div className="mb-4">
                         <h3 className="font-bold text-white tracking-wide">Model Routing</h3>
                         <p className="text-sm font-medium text-gray-400 mt-1">
-                            Which model handles which kind of work. Roleplay prose and
-                            structured tasks are deliberately separate models — an
-                            rp finetune is worse at tool calls and extraction, and most
-                            have no vision at all.
+                            Which model handles which kind of work. Roleplay prose (<b>rp</b>),
+                            structured extraction/Statekeeper updates (<b>util</b>), and instant turn/pacing/gate routing (<b>decisions</b> via System 1 CPU/RAM) are separated so each engine does what it is best at.
                         </p>
                     </div>
 
@@ -1632,62 +1810,101 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                         </p>
                     ) : (
                         <div>
-                            <div className="grid gap-4 md:grid-cols-2">
-                                {Object.entries(routing.data?.roles || {}).map(([role, info]) => {
+                            <div className="grid gap-4 md:grid-cols-3">
+                                {['rp', 'util', 'decisions'].filter(r => routing.data?.roles?.[r]).map((role) => {
+                                    const info = routing.data.roles[role];
                                     const currentActive = role === 'rp'
                                         ? (catalog.data?.active?.rp || info.primary)
-                                        : (catalog.data?.active?.util || info.primary);
+                                        : role === 'util'
+                                            ? (catalog.data?.active?.util || info.primary)
+                                            : (catalog.data?.active?.decisions || info.active || info.primary);
+
+                                    const roleLabel = role === 'rp'
+                                        ? 'Roleplay (rp)'
+                                        : role === 'util'
+                                            ? 'Structured / Updater (util)'
+                                            : 'Decision Maker (decisions)';
 
                                     return (
-                                        <div key={role} className="rounded-xl border border-white/10 bg-gray-900/50 p-4">
-                                            <div className="flex items-center justify-between mb-1">
-                                                <span className="text-xs font-bold uppercase tracking-widest text-blue-300">
-                                                    {role === 'rp' ? 'Roleplay (rp)' : role === 'util' ? 'Structured (util)' : role}
-                                                </span>
-                                                <span className="text-2xs text-gray-500">
-                                                    {info.chain?.length || 0} in catalog
-                                                </span>
-                                            </div>
+                                        <div key={role} className="rounded-xl border border-white/10 bg-gray-900/50 p-4 flex flex-col justify-between">
+                                            <div>
+                                                <div className="flex items-center justify-between mb-1 gap-2">
+                                                    <span className={`text-xs font-bold uppercase tracking-widest ${role === 'decisions' ? 'text-emerald-300' : role === 'util' ? 'text-purple-300' : 'text-blue-300'}`}>
+                                                        {roleLabel}
+                                                    </span>
+                                                    <span className="text-2xs text-gray-500 shrink-0">
+                                                        {info.chain?.length || 0} in catalog
+                                                    </span>
+                                                </div>
 
-                                            <div className="mt-2">
-                                                <label htmlFor={`active-model-${role}`} className="text-2xs uppercase tracking-widest text-gray-400 block mb-1">Active Model</label>
-                                                <select
-                                                    id={`active-model-${role}`}
-                                                    aria-label={`Active ${role} model`}
-                                                    value={currentActive || ''}
-                                                    onChange={(e) => {
-                                                        const val = e.target.value;
-                                                        const activeRp = role === 'rp' ? val : (catalog.data?.active?.rp || routing.data?.roles?.rp?.primary);
-                                                        const activeUtil = role === 'util' ? val : (catalog.data?.active?.util || routing.data?.roles?.util?.primary);
-                                                        setActiveModelsMutation.mutate({ active_rp: activeRp, active_util: activeUtil });
-                                                    }}
-                                                    className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
-                                                    disabled={setActiveModelsMutation.isPending}
-                                                >
-                                                    {role === 'util' && (
-                                                        <option value="same_as_rp">⚡ Same as RP Model (Unified VRAM / Faster)</option>
-                                                    )}
-                                                    {info.chain?.map((mid) => {
-                                                        const modelMeta = catalog.data?.catalog?.[mid];
-                                                        const badges = [];
-                                                        if (modelMeta?.has_vision) badges.push('👁️ Vision');
-                                                        if (mid.includes('a4b')) badges.push('⚡ Fast MoE');
-                                                        if (mid.includes('q4')) badges.push('Q4');
-                                                        const badgeStr = badges.length > 0 ? ` (${badges.join(', ')})` : '';
-                                                        return (
-                                                            <option key={mid} value={mid}>{mid}{badgeStr}</option>
-                                                        );
-                                                    })}
-                                                </select>
-                                                {currentActive === 'same_as_rp' ? (
-                                                    <div className="mt-1.5 text-2xs text-blue-400/90 italic">
-                                                        ⚡ Using active RP weights ({catalog.data?.active?.rp || routing.data?.roles?.rp?.primary || 'RP'}) with low temperature (0.3) for extraction and tools.
+                                                {role === 'decisions' && (
+                                                    <div className="mb-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/25 text-2xs font-semibold text-emerald-300">
+                                                        <span>🧠 System 1 CPU / RAM</span>
+                                                        <span>•</span>
+                                                        <span>0 MB GPU VRAM</span>
                                                     </div>
-                                                ) : catalog.data?.catalog?.[currentActive]?.note ? (
-                                                    <div className="mt-1.5 text-2xs text-gray-400/90 italic">
-                                                        {catalog.data.catalog[currentActive].note}
-                                                    </div>
-                                                ) : null}
+                                                )}
+
+                                                <div className="mt-2">
+                                                    <label htmlFor={`active-model-${role}`} className="text-2xs uppercase tracking-widest text-gray-400 block mb-1">Active Model</label>
+                                                    <select
+                                                        id={`active-model-${role}`}
+                                                        aria-label={`Active ${role} model`}
+                                                        value={currentActive || ''}
+                                                        onChange={(e) => {
+                                                            const val = e.target.value;
+                                                            const activeRp = role === 'rp' ? val : (catalog.data?.active?.rp || routing.data?.roles?.rp?.primary);
+                                                            const activeUtil = role === 'util' ? val : (catalog.data?.active?.util || routing.data?.roles?.util?.primary);
+                                                            const activeDecisions = role === 'decisions' ? val : (catalog.data?.active?.decisions || routing.data?.roles?.decisions?.primary || 'laya_multilingual');
+                                                            setActiveModelsMutation.mutate({
+                                                                active_rp: activeRp,
+                                                                active_util: activeUtil,
+                                                                active_decisions: activeDecisions,
+                                                            });
+                                                        }}
+                                                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                                                        disabled={setActiveModelsMutation.isPending}
+                                                    >
+                                                        {role === 'util' && (
+                                                            <option value="same_as_rp">⚡ Same as RP Model (Unified VRAM / Faster)</option>
+                                                        )}
+                                                        {role === 'decisions' && (
+                                                            <>
+                                                                <option value="same_as_util">🔄 Fallback: Use Util LLM (JSON Schema)</option>
+                                                                <option value="disabled">⏸️ Disabled (Direct Turn / No Director)</option>
+                                                            </>
+                                                        )}
+                                                        {info.chain?.map((mid) => {
+                                                            const modelMeta = catalog.data?.catalog?.[mid];
+                                                            const badges = [];
+                                                            if (modelMeta?.engine_type === 'system1_laya') badges.push('🧠 CPU/RAM 0MB VRAM');
+                                                            if (modelMeta?.has_vision) badges.push('👁️ Vision');
+                                                            if (mid.includes('a4b')) badges.push('⚡ Fast MoE');
+                                                            if (mid.includes('q4')) badges.push('Q4');
+                                                            const badgeStr = badges.length > 0 ? ` (${badges.join(', ')})` : '';
+                                                            return (
+                                                                <option key={mid} value={mid}>{mid}{badgeStr}</option>
+                                                            );
+                                                        })}
+                                                    </select>
+                                                    {role === 'util' && currentActive === 'same_as_rp' ? (
+                                                        <div className="mt-1.5 text-2xs text-blue-400/90 italic">
+                                                            ⚡ Using active RP weights ({catalog.data?.active?.rp || routing.data?.roles?.rp?.primary || 'RP'}) with low temperature (0.3) for Statekeeper updates and tools.
+                                                        </div>
+                                                    ) : role === 'decisions' && currentActive === 'same_as_util' ? (
+                                                        <div className="mt-1.5 text-2xs text-purple-300/90 italic">
+                                                            🔄 Evaluating Director decisions via structured JSON on the active Util model ({catalog.data?.active?.util || 'util'}).
+                                                        </div>
+                                                    ) : role === 'decisions' && currentActive === 'disabled' ? (
+                                                        <div className="mt-1.5 text-2xs text-gray-500 italic">
+                                                            ⏸️ Director evaluation bypassed globally; turns go directly to the selected character.
+                                                        </div>
+                                                    ) : catalog.data?.catalog?.[currentActive]?.note ? (
+                                                        <div className="mt-1.5 text-2xs text-gray-400/90 italic">
+                                                            {catalog.data.catalog[currentActive].note}
+                                                        </div>
+                                                    ) : null}
+                                                </div>
                                             </div>
 
                                             {(info.chain?.length || 0) > 1 && (
@@ -1699,8 +1916,13 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                                                                 ⚡ same_as_rp
                                                             </span>
                                                         )}
+                                                        {role === 'decisions' && (currentActive === 'same_as_util' || currentActive === 'disabled') && (
+                                                            <span className="px-2 py-0.5 rounded text-2xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+                                                                {currentActive}
+                                                            </span>
+                                                        )}
                                                         {info.chain.map((id) => (
-                                                            <span key={id} className={`px-2 py-0.5 rounded text-2xs ${id === currentActive ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold' : 'bg-white/5 border border-white/10 text-gray-400'}`}>
+                                                            <span key={id} className={`px-2 py-0.5 rounded text-2xs ${id === currentActive ? (role === 'decisions' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold' : 'bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold') : 'bg-white/5 border border-white/10 text-gray-400'}`}>
                                                                 {id}
                                                             </span>
                                                         ))}
@@ -1715,11 +1937,13 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                             {routing.data?.shared_weights && (
                                 <div className="mt-3 px-3.5 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300 flex items-center gap-2">
                                     <span>⚡</span>
-                                    <span><b>Unified VRAM Mode:</b> RP and Utility tasks share identical weights, enabling single-model residency and fast execution.</span>
+                                    <span><b>Unified VRAM Mode:</b> RP and Utility tasks share identical GPU weights, while the System 1 Decision Maker runs on CPU/RAM (0 MB GPU VRAM).</span>
                                 </div>
                             )}
                         </div>
                     )}
+
+                    <DirectorPlaygroundCard />
 
                     <details className="mt-4 group">
                         <summary className="cursor-pointer text-xs font-bold uppercase tracking-widest text-gray-500 hover:text-gray-300">
@@ -1729,7 +1953,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                             {Object.entries(routing.data?.kinds || {}).map(([kind, role]) => (
                                 <div key={kind} className="flex items-center justify-between text-xs">
                                     <span className="font-mono text-gray-300">{kind}</span>
-                                    <span className={role === 'rp' ? 'text-blue-300' : 'text-purple-300'}>
+                                    <span className={role === 'rp' ? 'text-blue-300' : role === 'decisions' ? 'text-emerald-300' : 'text-purple-300'}>
                                         {role}
                                     </span>
                                 </div>
