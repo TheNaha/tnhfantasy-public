@@ -9,3 +9,4 @@ requests==2.32.3
 # this line the import raises ModuleNotFoundError and the route answers a bare
 # 500 "Internal Server Error" rather than anything actionable.
 huggingface_hub>=0.24
+tqdm>=4.66.0

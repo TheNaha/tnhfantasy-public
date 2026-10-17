@@ -424,9 +424,57 @@ class RamModelManager:
         )
 
         try:
-            # Stream with large 16MB buffer across FUSE/NVMe
+            # Stream with 16MB chunks with live progress tracking (tqdm or interval logger)
+            chunk_size = 16 * 1024 * 1024
+            copied_bytes = 0
+            last_log_time = start_time
+
+            # Try interactive tqdm if available and not explicitly disabled
+            pbar = None
+            try:
+                from tqdm.auto import tqdm
+                # In Jupyter/Colab tqdm.auto provides an interactive HTML/widget or clean terminal bar
+                pbar = tqdm(
+                    total=size_bytes,
+                    unit="B",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                    desc=f"🚀 [RAM Cache] {mid[:24]}",
+                    dynamic_ncols=True,
+                    mininterval=0.4,
+                )
+            except Exception:
+                pbar = None
+
             with open(src, "rb") as fsrc, open(tmp_path, "wb") as fdst:
-                shutil.copyfileobj(fsrc, fdst, length=16 * 1024 * 1024)
+                while True:
+                    chunk = fsrc.read(chunk_size)
+                    if not chunk:
+                        break
+                    fdst.write(chunk)
+                    copied_bytes += len(chunk)
+                    if pbar is not None:
+                        pbar.update(len(chunk))
+                    else:
+                        now = time.time()
+                        if now - last_log_time >= 3.0 or copied_bytes == size_bytes:
+                            pct = (copied_bytes / size_bytes) * 100 if size_bytes else 100
+                            cur_elapsed = max(now - start_time, 0.001)
+                            speed_mb = (copied_bytes / (1024 * 1024)) / cur_elapsed
+                            remaining_bytes = max(size_bytes - copied_bytes, 0)
+                            eta_s = (remaining_bytes / (1024 * 1024)) / speed_mb if speed_mb > 0 else 0
+                            eta_str = f"{int(eta_s // 60)}m {int(eta_s % 60):02d}s"
+                            print(
+                                f"  ⚡ [RAM Cache] Pre-warming {mid[:24]}: "
+                                f"{copied_bytes / (1024**3):.2f}/{size_bytes / (1024**3):.2f} GB "
+                                f"({pct:.1f}%) @ {speed_mb:.1f} MB/s (ETA: {eta_str})",
+                                flush=True,
+                            )
+                            last_log_time = now
+
+            if pbar is not None:
+                pbar.close()
+
             os.replace(tmp_path, dest_path)
         except Exception as exc:
             if tmp_path.exists():
@@ -449,15 +497,21 @@ class RamModelManager:
 
         elapsed = max(time.time() - start_time, 0.01)
         mb = size_bytes / (1024 * 1024)
+        avg_speed = mb / elapsed
         logger.info(
             "ram_cache_prewarmed",
             extra={
                 "model_id": mid,
                 "size_mb": round(mb, 1),
                 "elapsed_s": round(elapsed, 2),
-                "speed_mb_s": round(mb / elapsed, 1),
+                "speed_mb_s": round(avg_speed, 1),
                 "is_anchor": is_anchor,
             },
+        )
+        print(
+            f"  ✅ [RAM Cache] Pre-warmed {mid} ({mb / 1024:.2f} GB) in {elapsed:.1f}s "
+            f"({avg_speed:.1f} MB/s)",
+            flush=True,
         )
 
         # 5. Record cache entry under lock

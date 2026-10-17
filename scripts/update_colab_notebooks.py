@@ -50,6 +50,12 @@ BACKEND_URL = "" #@param {type:"string"}
 GITHUB_TOKEN = "" #@param {type:"string"}
 
 #@markdown ---
+#@markdown #### ⚡ Model Storage & Download Strategy:
+#@markdown - `direct_download_fast` (Recommended): Download directly from Hugging Face CDN into local NVMe SSD / RAM (~150-250 MB/s, ~2 min for 20GB). Bypasses Google Drive FUSE throttling!
+#@markdown - `gdrive_persistent`: Download & cache models in Google Drive across reconnects (~25-40 MB/s FUSE read).
+STORAGE_STRATEGY = "direct_download_fast (recommended: 150+ MB/s from HF)" #@param ["direct_download_fast (recommended: 150+ MB/s from HF)", "gdrive_persistent (Google Drive FUSE)"]
+
+#@markdown ---
 #@markdown #### 🎨 Image / Hybrid Mode — Google Drive ComfyUI:
 #@markdown Path to your ComfyUI folder copied from Modal (default is /content/drive/MyDrive/comfyui):
 GDRIVE_COMFY_PATH = "/content/drive/MyDrive/comfyui" #@param {type:"string"}
@@ -74,6 +80,7 @@ except Exception:
 print("⚙️ Configuration saved!")
 print(f"• Mode: {WORKER_MODE}")
 print(f"• Network: {TUNNEL_METHOD}")
+print(f"• Storage Strategy: {STORAGE_STRATEGY}")
 if BACKEND_URL.strip():
     print(f"• Backend Sync: {BACKEND_URL.strip()} (single source of truth for active models)")
 if "netbird" in TUNNEL_METHOD and NETBIRD_MANAGEMENT_URL.strip():
@@ -582,9 +589,13 @@ print(f"   • Active Util Model: {active_util} (Shared Weights: {shared_weights
 if active_image:
     print(f"   • Active Image Model: {active_image}")
 
-# 4. Check & Auto-Download Active LLM GGUF Weights in Google Drive
+# 4. Check & Auto-Download Active LLM GGUF Weights (Direct NVMe or Google Drive)
+storage_strat_key = "direct" if ("STORAGE_STRATEGY" in locals() and "direct" in str(STORAGE_STRATEGY).lower()) else "gdrive"
 llm_gdrive_dir = GDRIVE_LLM_PATH.strip() or "/content/drive/MyDrive/tnhcomfy/llm_models"
-os.makedirs(llm_gdrive_dir, exist_ok=True)
+llm_local_dir = "/content/models/llm"
+os.makedirs(llm_local_dir, exist_ok=True)
+if storage_strat_key == "gdrive":
+    os.makedirs(llm_gdrive_dir, exist_ok=True)
 
 resolved_weights = {}
 for mid in distinct_active_llm:
@@ -595,14 +606,28 @@ for mid in distinct_active_llm:
     mmproj_name = spec.get("mmproj")
     mmproj_repo = spec.get("mmproj_repo") or repo
 
-    target_folder = os.path.join(llm_gdrive_dir, vol_dir)
+    # Determine primary target folder based on strategy
+    if storage_strat_key == "direct":
+        target_folder = os.path.join(llm_local_dir, vol_dir)
+        download_target_desc = f"local NVMe SSD ({target_folder})"
+    else:
+        target_folder = os.path.join(llm_gdrive_dir, vol_dir)
+        download_target_desc = f"Google Drive ({target_folder})"
     os.makedirs(target_folder, exist_ok=True)
+
     local_gguf = os.path.join(target_folder, gguf_name) if gguf_name else ""
+
+    # Check if file exists in either target folder or existing Google Drive cache
+    gdrive_candidate = os.path.join(llm_gdrive_dir, vol_dir, gguf_name) if (gguf_name and os.path.exists(llm_gdrive_dir)) else ""
+    if not (local_gguf and os.path.exists(local_gguf)) and gdrive_candidate and os.path.exists(gdrive_candidate):
+        print(f"📁 Found [{mid}] in Google Drive cache: {gdrive_candidate}")
+        local_gguf = gdrive_candidate
 
     if not (local_gguf and os.path.exists(local_gguf)):
         if repo and gguf_name:
-            print(f"📥 Active LLM weights for [{mid}] not found in Google Drive.")
-            print(f"   Downloading {repo} :: {gguf_name} directly to Google Drive...")
+            speed_note = "⚡ High-speed direct CDN transfer" if storage_strat_key == "direct" else "📁 Google Drive transfer"
+            print(f"📥 Active LLM weights for [{mid}] not found locally or in Drive.")
+            print(f"   Downloading {repo} :: {gguf_name} directly to {download_target_desc} ({speed_note})...")
             try:
                 from huggingface_hub import snapshot_download
                 snapshot_download(
@@ -618,7 +643,10 @@ for mid in distinct_active_llm:
                         local_dir=target_folder,
                         token=os.environ.get("HF_TOKEN") or None,
                     )
-                print(f"✅ Successfully downloaded [{mid}] to Google Drive!")
+                downloaded_file = os.path.join(target_folder, gguf_name)
+                if os.path.exists(downloaded_file):
+                    local_gguf = downloaded_file
+                    print(f"✅ Successfully downloaded [{mid}] ({os.path.getsize(downloaded_file) / (1024**3):.2f} GB) to {download_target_desc}!")
                 try:
                     subprocess.run(["sync"], check=False)
                     with open("/proc/sys/vm/drop_caches", "w") as f:
@@ -634,7 +662,7 @@ for mid in distinct_active_llm:
         resolved_weights[mid] = local_gguf
     else:
         # Fallback candidate scan
-        for cdir in [llm_gdrive_dir, "/content/agent-data/llm/models", "/content/ComfyUI/models/llm"]:
+        for cdir in [llm_local_dir, llm_gdrive_dir, "/content/agent-data/llm/models", "/content/ComfyUI/models/llm", "/dev/shm/tnh_ram_cache/llm"]:
             if os.path.exists(cdir):
                 for root, _, files in os.walk(cdir):
                     for f in files:
