@@ -117,7 +117,11 @@ class LLMRouter:
         try:
             from services.llm_config import get_active_models
 
-            active_id = get_active_models(self.registry).get(role)
+            active = get_active_models(self.registry)
+            active_id = active.get(role)
+            if role == "util" and active_id in ("same_as_rp", "same"):
+                active_id = active.get("rp")
+
             if active_id and active_id in self.registry.models and self.registry.models[active_id].enabled:
                 active_model = self.registry.models[active_id]
                 others = [m for m in self.registry.enabled_for(role) if m.id != active_id]
@@ -176,7 +180,9 @@ class LLMRouter:
             active = {}
 
         rp_active = active.get("rp") or self.registry.primary("rp").id
-        util_active = active.get("util") or self.registry.primary("util").id
+        util_raw = active.get("util")
+        util_active = rp_active if util_raw in ("same_as_rp", "same") else (util_raw or self.registry.primary("util").id)
+        shared_weights = (rp_active == util_active) or (util_raw in ("same_as_rp", "same"))
 
         return {
             "roles": {
@@ -189,10 +195,10 @@ class LLMRouter:
             },
             "active": {
                 "rp": rp_active,
-                "util": util_active,
+                "util": util_raw or util_active,
                 "image": active.get("image", ""),
             },
-            "shared_weights": rp_active == util_active,
+            "shared_weights": shared_weights,
             "kinds": dict(sorted(ROLE_BY_KIND.items())),
             "default_role": DEFAULT_ROLE,
         }

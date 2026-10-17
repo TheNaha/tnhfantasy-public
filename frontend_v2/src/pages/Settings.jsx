@@ -1667,16 +1667,38 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                                                     {role === 'util' && (
                                                         <option value="same_as_rp">⚡ Same as RP Model (Unified VRAM / Faster)</option>
                                                     )}
-                                                    {info.chain?.map((mid) => (
-                                                        <option key={mid} value={mid}>{mid}</option>
-                                                    ))}
+                                                    {info.chain?.map((mid) => {
+                                                        const modelMeta = catalog.data?.catalog?.[mid];
+                                                        const badges = [];
+                                                        if (modelMeta?.has_vision) badges.push('👁️ Vision');
+                                                        if (mid.includes('a4b')) badges.push('⚡ Fast MoE');
+                                                        if (mid.includes('q4')) badges.push('Q4');
+                                                        const badgeStr = badges.length > 0 ? ` (${badges.join(', ')})` : '';
+                                                        return (
+                                                            <option key={mid} value={mid}>{mid}{badgeStr}</option>
+                                                        );
+                                                    })}
                                                 </select>
+                                                {currentActive === 'same_as_rp' ? (
+                                                    <div className="mt-1.5 text-2xs text-blue-400/90 italic">
+                                                        ⚡ Using active RP weights ({catalog.data?.active?.rp || routing.data?.roles?.rp?.primary || 'RP'}) with low temperature (0.3) for extraction and tools.
+                                                    </div>
+                                                ) : catalog.data?.catalog?.[currentActive]?.note ? (
+                                                    <div className="mt-1.5 text-2xs text-gray-400/90 italic">
+                                                        {catalog.data.catalog[currentActive].note}
+                                                    </div>
+                                                ) : null}
                                             </div>
 
                                             {(info.chain?.length || 0) > 1 && (
                                                 <div className="mt-3 pt-3 border-t border-white/5">
                                                     <div className="text-2xs uppercase tracking-widest text-gray-500 mb-1.5">Fallback Chain</div>
                                                     <div className="flex flex-wrap gap-1">
+                                                        {role === 'util' && currentActive === 'same_as_rp' && (
+                                                            <span className="px-2 py-0.5 rounded text-2xs bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold">
+                                                                ⚡ same_as_rp
+                                                            </span>
+                                                        )}
                                                         {info.chain.map((id) => (
                                                             <span key={id} className={`px-2 py-0.5 rounded text-2xs ${id === currentActive ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold' : 'bg-white/5 border border-white/10 text-gray-400'}`}>
                                                                 {id}

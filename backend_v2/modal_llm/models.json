@@ -33,6 +33,10 @@
         "artemis_31b_q4",
         "artemis_31b",
         "sompoa_26b_a4b",
+        "goetia_26b_a4b",
+        "styletune_v2_26b_a4b",
+        "dark_thoughts_v2_31b",
+        "split_untied_31b",
         "weirdcompound_24b",
         "gemma3_12b_heretic",
         "writers_31b_v2",
@@ -41,12 +45,16 @@
       ]
     },
     "util": {
-      "_comment": "Everything structured: image captioning, tool calls, memory extraction, summaries, image prompts. SAME MODEL as rp by deliberate choice \u2014 the container dedupes by model, so both roles share one llama-server and one cold start. The cost is extraction and tool-call quality on a roleplay finetune; the gain is ~12 GB of VRAM (enough for --swa-full on Artemis), a ~10 s faster cold start, and no model switching. Reorder this fallback to the 12B to go back, and vice versa.",
+      "_comment": "Everything structured: image captioning, tool calls, memory extraction, summaries, image prompts. SAME MODEL as rp by deliberate choice — the container dedupes by model, so both roles share one llama-server and one cold start. The cost is extraction and tool-call quality on a roleplay finetune; the gain is ~12 GB of VRAM (enough for --swa-full on Artemis), a ~10 s faster cold start, and no model switching. Reorder this fallback to the 12B to go back, and vice versa.",
       "fallback": [
         "artemis_31b_q4",
         "artemis_31b",
-        "qwen2.5_14b",
-        "gemma3_12b_heretic_util"
+        "sompoa_26b_a4b",
+        "gemma3_12b_heretic_util",
+        "gemma4_26b_a4b_heretic_util",
+        "gemma4_31b_heretic_util",
+        "mistral_small_32_it",
+        "qwen2.5_14b"
       ]
     }
   },
@@ -216,7 +224,7 @@
         "max_tokens": 2048
       },
       "enabled": false,
-      "_note": "BENCH. Best multilingual behaviour among the 31B finetunes \u2014 enable this if you roleplay outside English."
+      "_note": "BENCH. Best multilingual behaviour among the 31B finetunes — enable this if you roleplay outside English."
     },
     "split_untied_31b": {
       "role": "rp",
@@ -236,7 +244,7 @@
         "top_k": 64,
         "max_tokens": 2048
       },
-      "enabled": false,
+      "enabled": true,
       "_note": "BENCH. Needs its own preset or it leaks English."
     },
     "goetia_26b_a4b": {
@@ -257,7 +265,7 @@
         "top_k": 64,
         "max_tokens": 2048
       },
-      "enabled": false,
+      "enabled": true,
       "_note": "BENCH. Highest UGI writing score of the bench (40.9, 47.9 with thinking)."
     },
     "styletune_v2_26b_a4b": {
@@ -278,7 +286,7 @@
         "top_k": 64,
         "max_tokens": 2048
       },
-      "enabled": false,
+      "enabled": true,
       "_note": "BENCH. ~63 tok/s on a 16GB card per Reddit; speculation hurts RP on this MoE."
     },
     "gemma4_31b_heretic_util": {
@@ -299,8 +307,8 @@
         "top_p": 0.95,
         "top_k": 64
       },
-      "enabled": false,
-      "_note": "BENCH (needs its own container). Too large to co-exist with a 31B rp model: util primary. Same GGUF as the gemma4_31b_heretic rp entry (shared download), so NSFW extraction and captioning do not refuse. Vision uses the STOCK Gemma 4 projector on an abliterated model \u2014 works in practice but test with a real image."
+      "enabled": true,
+      "_note": "BENCH (needs its own container). Too large to co-exist with a 31B rp model: util primary. Same GGUF as the gemma4_31b_heretic rp entry (shared download), so NSFW extraction and captioning do not refuse. Vision uses the STOCK Gemma 4 projector on an abliterated model — works in practice but test with a real image."
     },
     "gemma4_26b_a4b_heretic_util": {
       "role": "util",
@@ -319,7 +327,7 @@
         "top_p": 0.95,
         "top_k": 64
       },
-      "enabled": false,
+      "enabled": true,
       "_note": "BENCH (needs its own container). Too large to co-exist with a 31B rp model: Fast util. UGI 45.0, W/10 8.8. Its own repo ships the vision file, so no cross-repo projector."
     },
     "mistral_small_32_it": {

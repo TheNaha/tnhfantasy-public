@@ -54,7 +54,9 @@ def get_catalog():
     registry = router_inst.registry
     active = get_active_models(registry)
     rp_active = active.get("rp") or registry.primary("rp").id
-    util_active = active.get("util") or registry.primary("util").id
+    util_raw = active.get("util")
+    util_active = rp_active if util_raw in ("same_as_rp", "same") else (util_raw or registry.primary("util").id)
+    shared_weights = (rp_active == util_active) or (util_raw in ("same_as_rp", "same"))
 
     return {
         "catalog": registry.catalog(),
@@ -68,10 +70,10 @@ def get_catalog():
         },
         "active": {
             "rp": rp_active,
-            "util": util_active,
+            "util": util_raw or util_active,
             "image": active.get("image", ""),
         },
-        "shared_weights": rp_active == util_active,
+        "shared_weights": shared_weights,
     }
 
 

@@ -56,8 +56,8 @@ GDRIVE_COMFY_PATH = "/content/drive/MyDrive/comfyui" #@param {type:"string"}
 
 #@markdown ---
 #@markdown #### 💬 LLM / Hybrid Mode — Curated Models from models.json:
-LLM_RP_MODEL = "artemis_31b_q4" #@param ["artemis_31b_q4", "artemis_31b", "sompoa_26b_a4b", "weirdcompound_24b", "gemma3_12b_heretic", "writers_31b_v2", "gemma4_31b_heretic", "magnum_diamond_24b"]
-LLM_UTIL_MODEL = "same_as_rp" #@param ["same_as_rp", "qwen2.5_14b", "gemma3_12b_heretic_util", "mistral_small_32_it"]
+LLM_RP_MODEL = "artemis_31b_q4" #@param ["artemis_31b_q4", "artemis_31b", "sompoa_26b_a4b", "goetia_26b_a4b", "styletune_v2_26b_a4b", "dark_thoughts_v2_31b", "split_untied_31b", "weirdcompound_24b", "gemma3_12b_heretic", "writers_31b_v2", "gemma4_31b_heretic", "magnum_diamond_24b"]
+LLM_UTIL_MODEL = "same_as_rp" #@param ["same_as_rp", "artemis_31b_q4", "artemis_31b", "sompoa_26b_a4b", "gemma3_12b_heretic_util", "gemma4_26b_a4b_heretic_util", "gemma4_31b_heretic_util", "mistral_small_32_it", "qwen2.5_14b"]
 GDRIVE_LLM_PATH = "/content/drive/MyDrive/tnhcomfy/llm_models" #@param {type:"string"}
 
 # Try resolving tokens from Google Colab Secrets (the Key icon on left sidebar)
