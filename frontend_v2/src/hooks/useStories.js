@@ -61,7 +61,12 @@ export const useCreateChapter = () => {
 export const useContinueChapter = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ storyId, chapterId, prompt }) => api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/continue`, { prompt: prompt || '' }),
+        mutationFn: ({ storyId, chapterId, prompt, directive, directorPreset }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/continue`, {
+                prompt: prompt || '',
+                directive: directive || undefined,
+                director_preset: directorPreset || undefined,
+            }),
         onMutate: async ({ storyId, chapterId, prompt }) => {
             const key = STORY_CHAPTERS_KEY(storyId);
             await queryClient.cancelQueries({ queryKey: key });
@@ -89,6 +94,26 @@ export const useContinueChapter = () => {
                 old?.map((ch) => ch.id === variables.chapterId ? { ...ch, _isStreaming: false } : ch)
             );
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
+            invalidateVaultAggregates(queryClient);
+        },
+    });
+};
+
+export const useDiscoverWorldbuilding = () => {
+    return useMutation({
+        mutationFn: ({ storyId, chapterId }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/discover-worldbuilding`),
+    });
+};
+
+export const useAdoptWorldbuilding = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, data }) =>
+            api.post(`/api/v2/stories/${storyId}/adopt-worldbuilding`, data),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: QUERY_KEYS.LOCATIONS });
+            queryClient.invalidateQueries({ queryKey: QUERY_KEYS.LOREBOOKS });
             invalidateVaultAggregates(queryClient);
         },
     });

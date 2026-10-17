@@ -97,9 +97,10 @@ class TestDigestShape:
         )
         assert trace["turns"][0]["label"] == "Bram: The door is barred."
 
-    def test_a_non_assistant_turn_has_no_preview(self):
+    def test_user_turn_has_preview(self):
         trace = _trace(turns=[{"role": "user", "content": "I knock.", "_pinned": False}])
-        assert trace["turns"][0]["label"] is None
+        assert trace["turns"][0]["label"] == "I knock."
+
 
     def test_world_state_is_expected_and_not_reported_as_dropped(self):
         """It is derived state, rebuilt on every build."""

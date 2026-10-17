@@ -1113,8 +1113,8 @@ def context_trace_digest(
                 # decides and the thing a user cannot otherwise verify: whether a
                 # narration was labelled, and whether a speaker was named.
                 "label": (
-                    (t.get("content") or "")[:TRACE_CONTENT_PREVIEW]
-                    if t.get("role") == "assistant"
+                    ((t.get("content") or "").strip())[:TRACE_CONTENT_PREVIEW]
+                    if (t.get("content") or "").strip()
                     else None
                 ),
                 "kind": t.get("_kind"),

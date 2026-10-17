@@ -81,6 +81,19 @@ def _model_for_kind(kind: str, override: str | None, session):
 
 class StoryContinueRequest(BaseModel):
     prompt: str = ""
+    directive: str | None = None
+    director_preset: str | None = None
+
+
+class AdoptWorldbuildingRequest(BaseModel):
+    name: str
+    category: str = "location"  # "location" | "faction" | "lore" | "character"
+    summary: str = ""
+    tags: list[str] = []
+    target_action: str = "create_location"  # "create_location" | "create_lorebook_entry"
+    world_id: str | None = None
+    lorebook_id: str | None = None
+
 
 
 class StoryActionRequest(BaseModel):
@@ -1064,7 +1077,9 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         _continue_story_prep_sync, session, story_repo, story_chapter_repo, story_id, chapter_id, data.prompt
     )
 
-    job_id = await _enqueue_story_continuation(session, story, chapter)
+    job_id = await _enqueue_story_continuation(
+        session, story, chapter, directive=data.directive, director_preset=data.director_preset
+    )
     return {"job_id": job_id}
 
 
@@ -1101,6 +1116,8 @@ async def _enqueue_story_continuation(
     story: Story | None,
     chapter: StoryChapter,
     retry_of: str | None = None,
+    directive: str | None = None,
+    director_preset: str | None = None,
 ) -> str:
     """Build the story-continue LLM job for a chapter and enqueue it.
 
@@ -1174,6 +1191,25 @@ async def _enqueue_story_continuation(
         *[{"role": "assistant", "content": text} for text in prior_chapters],
         *[t for t in chapter_turns if t["content"]],
     ]
+
+    DIRECTOR_PRESETS = {
+        "conflict": "Introduce an immediate complication, obstacle, or dramatic plot twist that raises the stakes.",
+        "atmosphere": "Deepen the sensory atmosphere, physical textures, lighting, weather, and environmental mood.",
+        "dialogue": "Focus on an intense, nuanced dialogue exchange with character subtext and emotional undercurrents.",
+        "action": "Escalate into visceral, fast-paced kinetic action, physical momentum, and urgent peril.",
+        "introspection": "Reveal intimate internal thoughts, private doubts, and emotional revelations from the character's perspective.",
+    }
+
+    directive_text = (directive or "").strip()
+    if director_preset and director_preset in DIRECTOR_PRESETS:
+        preset_text = DIRECTOR_PRESETS[director_preset]
+        directive_text = f"{preset_text} {directive_text}".strip()
+
+    if directive_text:
+        messages.append({
+            "role": "system",
+            "content": f"[Director's Guidance]\n{directive_text}\nFollow this guidance strictly while continuing the narrative naturally.",
+        })
 
     if story_premise:
         base_prompt = f"{base_prompt}\n\n[Story premise]\n{story_premise}"
@@ -1341,6 +1377,122 @@ def _scenario_prompt_template(session: Session, scenario_id: str) -> str | None:
     if scenario and scenario.prompt_template:
         return scenario.prompt_template
     return None
+
+
+@router.post("/{story_id}/chapters/{chapter_id}/discover-worldbuilding")
+def discover_chapter_worldbuilding(
+    story_id: str,
+    chapter_id: str,
+    session: Session = Depends(get_session),
+    story_repo: StoryRepository = Depends(get_story_repo),
+    story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo),
+):
+    """Scan the chapter text and beats for novel worldbuilding entities."""
+    chapter = story_chapter_repo.get(chapter_id, story_id)
+    if not chapter:
+        raise NotFoundError("StoryChapter", chapter_id)
+    story = story_repo.get(story_id)
+
+    # Gather known names
+    existing_names: set[str] = set()
+    if story:
+        if story.world_id:
+            from core.entities import Character, Location, Lorebook
+            from services.world_ownership import members_of
+
+            for loc in members_of(session, story.world_id, Location):
+                existing_names.add(loc.name)
+            for char in members_of(session, story.world_id, Character):
+                existing_names.add(char.name)
+            for lb in members_of(session, story.world_id, Lorebook):
+                for entry in lb.entries:
+                    for k in entry.keys:
+                        existing_names.add(k)
+        for cid in story.character_ids or []:
+            from core.entities import Character
+            c = session.get(Character, cid)
+            if c:
+                existing_names.add(c.name)
+
+    # Combine chapter text
+    text_parts = [chapter.content or ""]
+    for beat in chapter.beats or []:
+        if isinstance(beat, dict) and beat.get("content"):
+            text_parts.append(beat["content"])
+    full_text = "\n\n".join(text_parts)
+
+    from services.world_discovery import extract_world_entities
+    discoveries = extract_world_entities(full_text, existing_names=existing_names)
+    return {"discoveries": discoveries, "chapter_id": chapter_id, "story_id": story_id}
+
+
+@router.post("/{story_id}/adopt-worldbuilding")
+def adopt_worldbuilding_entity(
+    story_id: str,
+    data: AdoptWorldbuildingRequest,
+    session: Session = Depends(get_session),
+    story_repo: StoryRepository = Depends(get_story_repo),
+):
+    """Adopt an extracted discovery into the World Vault as a Location or LorebookEntry."""
+    story = story_repo.get(story_id)
+    if not story:
+        raise NotFoundError("Story", story_id)
+
+    target_world_id = data.world_id or story.world_id
+
+    from services.embedding_service import EmbeddingService
+    emb_svc = EmbeddingService()
+
+    if data.target_action == "create_location":
+        from core.entities import Location
+        loc = Location(
+            name=data.name,
+            description=data.summary,
+            atmosphere=data.summary if len(data.summary) > 20 else None,
+            tags=data.tags or ["discovered", "location"],
+            world_id=target_world_id,
+        )
+        session.add(loc)
+        session.commit()
+        session.refresh(loc)
+        return {"status": "created", "entity_type": "location", "entity_id": loc.id, "name": loc.name}
+    else:
+        from core.entities import Lorebook, LorebookEntry
+        target_lb_id = data.lorebook_id
+        if not target_lb_id and target_world_id:
+            from services.world_ownership import members_of
+            existing_lbs = members_of(session, target_world_id, Lorebook)
+            if existing_lbs:
+                target_lb_id = existing_lbs[0].id
+        if not target_lb_id:
+            lb = Lorebook(
+                name=f"{story.title or 'Story'} Worldbook",
+                description=f"Auto-collected lore for {story.title or 'story'}",
+                world_id=target_world_id,
+            )
+            session.add(lb)
+            session.commit()
+            session.refresh(lb)
+            target_lb_id = lb.id
+            if story and not story.lorebook_ids:
+                story.lorebook_ids = [lb.id]
+                session.add(story)
+                session.commit()
+
+        embedding = emb_svc.generate_embedding(f"{data.name}: {data.summary}")
+        entry = LorebookEntry(
+            lorebook_id=target_lb_id,
+            keys=[data.name],
+            content=data.summary or f"{data.name} is a known {data.category} in the world.",
+            category=data.category,
+            tags=data.tags or ["discovered"],
+            embedding=embedding,
+        )
+        session.add(entry)
+        session.commit()
+        session.refresh(entry)
+        return {"status": "created", "entity_type": "lorebook_entry", "entity_id": entry.id, "name": data.name, "lorebook_id": target_lb_id}
+
 
 
 _ACTION_PROMPTS = {
@@ -2728,7 +2880,7 @@ def start_chat_from_story(
         ).first()
     if not chapter:
         chapter = session.exec(
-            select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number)
+            select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number).limit(1)
         ).first()
 
     chat_name = f"{story.title} — {chapter.title or f'Chapter {chapter.chapter_number}' if chapter else 'Scene'}"

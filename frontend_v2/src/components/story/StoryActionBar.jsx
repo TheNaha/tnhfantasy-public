@@ -1,8 +1,16 @@
 import React from 'react';
-import { GitBranch, Play, ImageIcon, Loader2, FileDown, BookOpen, Wand2, PenLine, Maximize2, ScrollText, RotateCcw, History } from 'lucide-react';
+import { GitBranch, Play, ImageIcon, Loader2, FileDown, BookOpen, Wand2, PenLine, Maximize2, ScrollText, RotateCcw, History, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 
 const iconBtn = "flex items-center justify-center px-3 py-2 rounded-lg font-medium transition-all text-sm";
+
+const DIRECTOR_PRESETS = [
+    { id: 'conflict', label: '⚡ Conflict', text: 'Introduce an immediate complication or dramatic plot twist that raises the stakes.' },
+    { id: 'atmosphere', label: '🌧️ Atmosphere', text: 'Deepen the sensory atmosphere, physical textures, lighting, and environmental mood.' },
+    { id: 'dialogue', label: '💬 Dialogue', text: 'Focus on an intense, nuanced dialogue exchange with character subtext.' },
+    { id: 'action', label: '⏱️ Action', text: 'Escalate into visceral, fast-paced kinetic action and physical momentum.' },
+    { id: 'introspection', label: '🎭 Introspect', text: 'Reveal intimate internal thoughts and emotional revelations.' },
+];
 
 export default React.memo(function StoryActionBar({
     beatCount,
@@ -31,6 +39,8 @@ export default React.memo(function StoryActionBar({
     activeChapterId,
     onBatchVariations,
     hasIllustration,
+    onScanWorldbuilding,
+    isDiscoveringWorld,
 }) {
     return (
         // Stacked until `2xl`, not `sm`. At >=640px this was
@@ -118,7 +128,7 @@ export default React.memo(function StoryActionBar({
                         "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all text-sm",
                         isIllustrating
                             ? "bg-amber-500/50 text-white/50 cursor-not-allowed"
-                            : "bg-amber-700 text-white hover:bg-amber-600"  // white on amber-600 is 3.19:1; -700 is 5.02:1
+                            : "bg-amber-700 text-white hover:bg-amber-600"
                     )}
                 >
                     {isIllustrating ? (
@@ -146,7 +156,7 @@ export default React.memo(function StoryActionBar({
                 <div className="flex gap-2 w-full">
                     {onBeatRoleChange && (
                         <div className="flex shrink-0 rounded-lg border border-gray-700/50 overflow-hidden" role="group" aria-label="New beat role">
-                            {['user', 'narrator'].map((r) => (
+                            {['user', 'narrator', 'director'].map((r) => (
                                 <button
                                     key={r}
                                     type="button"
@@ -156,10 +166,12 @@ export default React.memo(function StoryActionBar({
                                         beatRole === r
                                             ? r === 'user'
                                                 ? "bg-blue-500/20 text-blue-300"
-                                                : "bg-purple-500/20 text-purple-300"
+                                                : r === 'director'
+                                                    ? "bg-amber-500/20 text-amber-300"
+                                                    : "bg-purple-500/20 text-purple-300"
                                             : "bg-gray-800/60 text-gray-500 hover:text-gray-300"
                                     )}
-                                    title={r === 'user' ? "Add as your own input (prefixed with > in the prose)" : "Add as narrator prose"}
+                                    title={r === 'user' ? "Add as user input (>)" : r === 'director' ? "Add as director guidance note" : "Add as narrator prose"}
                                 >
                                     {r}
                                 </button>
@@ -183,18 +195,59 @@ export default React.memo(function StoryActionBar({
                     </button>
                 </div>
                 {onAiDirectiveChange && (
-                    <input
-                        type="text"
-                        value={aiDirective || ''}
-                        onChange={(e) => onAiDirectiveChange(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && !isStreaming && !isContinuePending && onContinue()}
-                        placeholder="Direct the AI before continuing (optional) — e.g. 'introduce a storm', 'in first person'"
-                        className="w-full bg-gray-800/30 border border-gray-700/30 rounded-lg px-3 sm:px-4 py-1.5 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500/50 min-w-0"
-                    />
+                    <div className="flex flex-col gap-1 w-full">
+                        <input
+                            type="text"
+                            value={aiDirective || ''}
+                            onChange={(e) => onAiDirectiveChange(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && !isStreaming && !isContinuePending && onContinue()}
+                            placeholder="Direct the AI before continuing (optional) — e.g. 'introduce a storm', 'in first person'"
+                            className="w-full bg-gray-800/30 border border-gray-700/30 rounded-lg px-3 sm:px-4 py-1.5 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500/50 min-w-0"
+                        />
+                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                            <span className="text-3xs text-gray-500 font-medium">Director Presets:</span>
+                            {DIRECTOR_PRESETS.map((p) => {
+                                const isActive = aiDirective?.includes(p.text);
+                                return (
+                                    <button
+                                        key={p.id}
+                                        type="button"
+                                        onClick={() => {
+                                            if (isActive) {
+                                                onAiDirectiveChange(aiDirective.replace(p.text, '').trim());
+                                            } else {
+                                                onAiDirectiveChange(aiDirective ? `${aiDirective.trim()} ${p.text}` : p.text);
+                                            }
+                                        }}
+                                        className={clsx(
+                                            "px-2 py-0.5 rounded-full text-3xs font-medium transition-all",
+                                            isActive
+                                                ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm"
+                                                : "bg-gray-800/60 text-gray-400 hover:text-gray-200 hover:bg-gray-700/60 border border-white/5"
+                                        )}
+                                        title={p.text}
+                                    >
+                                        {p.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
                 )}
             </div>
 
             <div className="flex gap-2 shrink-0">
+                {onScanWorldbuilding && (
+                    <button
+                        onClick={onScanWorldbuilding}
+                        disabled={isDiscoveringWorld}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-600/80 to-amber-700/80 hover:from-amber-600 hover:to-amber-700 text-white rounded-lg font-medium transition-all text-sm shadow-sm"
+                        title="Discover novel entities and lore from this scene"
+                    >
+                        {isDiscoveringWorld ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                        <span className="hidden sm:inline">Discover Lore</span>
+                    </button>
+                )}
                 {activeChapterId && onNarrate && (
                     <button
                         onClick={() => onNarrate(activeChapterId)}

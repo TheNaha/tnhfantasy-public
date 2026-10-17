@@ -96,13 +96,19 @@ export function useChatStreaming({
 
             const existingJob = getStreamingJob(queryClient, eventId);
             const eventChatId = meta.chat_id || existingJob?.chatId;
-            if (streamText && eventChatId) {
+            if (eventChatId && (streamText != null || job.phase || job.status === 'evaluating_prompt')) {
                 setStreamingJob(queryClient, eventId, {
-                    text: streamText,
-                    status: 'running',
+                    text: streamText ?? existingJob?.text ?? '',
+                    status: job.status || 'running',
+                    phase: job.phase || (streamText ? 'generating' : 'evaluating_prompt'),
+                    speedTps: job.speed_tps ?? meta.speed_tps ?? existingJob?.speedTps ?? null,
+                    tokenCount: job.token_count ?? meta.token_count ?? existingJob?.tokenCount ?? 0,
+                    elapsedSeconds: job.elapsed_seconds ?? existingJob?.elapsedSeconds ?? null,
+                    providerId: job.provider_id ?? meta.provider_id ?? existingJob?.providerId ?? null,
+                    model: job.model ?? meta.model ?? existingJob?.model ?? null,
                     chatId: eventChatId,
-                    type: meta.workspace,
-                    taskType: job.task_type ?? null,
+                    type: meta.workspace || existingJob?.type,
+                    taskType: job.task_type ?? existingJob?.taskType ?? null,
                     progress: job.overall_progress ?? job.progress ?? null
                 });
                 // Every token is proof of life. `armStallTimer` clears any

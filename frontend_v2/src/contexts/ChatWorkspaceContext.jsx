@@ -12,7 +12,7 @@ import { useAddImagesToCollection } from '../hooks/useCollections';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useConfirmation } from '../store/confirmationStore';
 import useSettingsStore from '../store/settingsStore';
-import { useWebSocket, EventTypes } from '../api/websocket';
+import { useWebSocket, EventTypes, cancelJob } from '../api/websocket';
 import { useDebounce } from '../hooks/useDebounce';
 import { useChatStreaming } from '../hooks/useChatStreaming';
 import { CHAT_LIST_KEY } from '../hooks/useChats';
@@ -269,9 +269,13 @@ export function ChatWorkspaceProvider({ children }) {
     const activeStreamEntries = useActiveChatStreams(activeChatId);
     const activeStreams = useMemo(
         () => activeStreamEntries
-            .filter(item => item.jobData?.status === 'running')
+            .filter(item => item.jobData && item.jobData.status !== 'completed' && item.jobData.status !== 'failed' && item.jobData.status !== 'cancelled')
             .map(item => ({ _key: `stream-${item.jobId}`, jobId: item.jobId, jobData: item.jobData })),
         [activeStreamEntries]
+    );
+    const isGeneratingReply = useMemo(
+        () => activeStreams.some(item => item.jobData?.taskType !== 'image' && item.jobData?.type !== 'image'),
+        [activeStreams]
     );
     const {
         sendMessageMutation: rawSendMessageMutation, createChatMutation: rawCreateChatMutation,
@@ -464,7 +468,7 @@ export function ChatWorkspaceProvider({ children }) {
         // impatient one does — produced two identical user messages and two
         // paid LLM jobs for one thought. Neither chat nor story write routes
         // carry an Idempotency-Key, so the server has no way to collapse them.
-        if (sendMessageMutation.isPending) return;
+        if (sendMessageMutation.isPending || isGeneratingReply) return;
 
         const msgContentRaw = message.trim();
         if (!msgContentRaw && !pendingAttachment && !activeCommand?.noArgs) {
@@ -578,7 +582,7 @@ export function ChatWorkspaceProvider({ children }) {
         } catch {
             toast.error('Failed to send message');
         }
-    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, generatorCheckpoint, updateChatMutation, suggestReplyMutation, activeCommand, targetCharacterId, selectChat]);
+    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, generatorCheckpoint, updateChatMutation, suggestReplyMutation, activeCommand, targetCharacterId, selectChat, isGeneratingReply]);
 
     const handleSuggestClick = useCallback(async () => {
         if (!activeChatId) return;
@@ -639,10 +643,22 @@ export function ChatWorkspaceProvider({ children }) {
         }
     }, [handleSendMessage, message, activeCommand]);
 
-        const canSend = useMemo(
-            () => !!(message.trim() || pendingAttachment || activeCommand?.noArgs) && !sendMessageMutation.isPending,
-            [message, pendingAttachment, activeCommand, sendMessageMutation]
-        );
+    const handleCancelStreaming = useCallback(async () => {
+        const activeTextStream = activeStreams.find(item => item.jobData?.taskType !== 'image' && item.jobData?.type !== 'image');
+        if (activeTextStream?.jobId) {
+            try {
+                await cancelJob(activeTextStream.jobId);
+                toast('Generation stopped', { icon: '⏹️' });
+            } catch (err) {
+                console.warn('Failed to cancel job:', err);
+            }
+        }
+    }, [activeStreams]);
+
+    const canSend = useMemo(
+        () => !!(message.trim() || pendingAttachment || activeCommand?.noArgs) && !sendMessageMutation.isPending && !isGeneratingReply,
+        [message, pendingAttachment, activeCommand, sendMessageMutation, isGeneratingReply]
+    );
 
     const handleGenerateScene = useCallback(async () => {
         if (!activeChatId) return;
@@ -1171,6 +1187,7 @@ export function ChatWorkspaceProvider({ children }) {
         greetingModal,
         handleAttachmentChange,
         handleAvatarClick,
+        handleCancelStreaming,
         handleChatUpdate,
         handleCreateChat,
         handleDeleteChat,
@@ -1214,6 +1231,7 @@ export function ChatWorkspaceProvider({ children }) {
         refetchChats,
         queryErrors,
         isChatsLoading,
+        isGeneratingReply,
         isGeneratingScene,
         isGeneratingTitle,
         isUploading,
@@ -1326,7 +1344,7 @@ export function ChatWorkspaceProvider({ children }) {
         editingCharacter, editingLocation, editingLorebook,
         emptyLorebooks, fileInputRef, finishRename,
         generateSceneMutation, generateSwipeMutation,
-        greetingModal, handleAttachmentChange, handleAvatarClick,
+        greetingModal, handleAttachmentChange, handleAvatarClick, handleCancelStreaming,
         handleChatUpdate, handleCreateChat, handleDeleteChat,
         handleDeleteMessage, handleEditMessage, handleExportChat,
         handleExportChatJsonl, handleExportToStory, exportToStoryMutation, handleImportChatFile,
@@ -1340,7 +1358,7 @@ export function ChatWorkspaceProvider({ children }) {
         hasMoreMessages, illustrateMutation, impersonateMutation,
         // With the rest of the error surface — see the note at the publish site.
         isChatsError, chatsError, refetchChats, queryErrors,
-        isChatsLoading, isGeneratingScene, isGeneratingTitle,
+        isChatsLoading, isGeneratingReply, isGeneratingScene, isGeneratingTitle,
         isUploading, lastLoadedPageFull, linkedCharacter,
         listContainerRef, listItems, loadOlderMessages,
         location, lorebooks, message, messagePageCount,

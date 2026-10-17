@@ -215,33 +215,92 @@ class _LLMReducer:
         self.workflow = workflow
         self.full_content = ""
         self.last_emit = 0.0
+        self.token_count = 0
+        self.start_time = time.monotonic()
+        self.first_token_time = None
 
     async def __call__(self, ev: dict) -> None:
         event = ev.get("event")
-        if event == "delta":
+        if event == "started":
+            await emit_job_event(EventType.JOB_PROGRESS, {
+                "id": self.job_id,
+                "status": "evaluating_prompt",
+                "stream_chunk": "",
+                "text": "",
+                "phase": "evaluating_prompt",
+                "provider_id": self.provider_id,
+                "model": self.workflow.get("model"),
+                "metadata_": {
+                    "chat_id": self.workflow.get("chat_id"),
+                    "story_id": self.workflow.get("story_id"),
+                    "chapter_id": self.workflow.get("chapter_id"),
+                    "type": self.workflow.get("type"),
+                    "provider_id": self.provider_id,
+                    "model": self.workflow.get("model"),
+                    "phase": "evaluating_prompt",
+                },
+            })
+        elif event == "delta":
             msg = ev.get("text") or ""
             self.full_content += msg
+            self.token_count += 1
             now = time.monotonic()
+            if self.first_token_time is None:
+                self.first_token_time = now
+            elapsed = now - self.first_token_time
+            speed_tps = round(self.token_count / max(elapsed, 0.001), 1) if elapsed > 0 else 0.0
+
             if now - self.last_emit >= LLM_PROGRESS_THROTTLE_SECONDS:
                 self.last_emit = now
                 await emit_job_event(EventType.JOB_PROGRESS, {
-                    "id": self.job_id, "status": "generating", "stream_chunk": msg, "text": self.full_content,
+                    "id": self.job_id,
+                    "status": "generating",
+                    "stream_chunk": msg,
+                    "text": self.full_content,
+                    "phase": "generating",
+                    "token_count": self.token_count,
+                    "speed_tps": speed_tps,
+                    "elapsed_seconds": round(now - self.start_time, 1),
+                    "provider_id": self.provider_id,
+                    "model": self.workflow.get("model"),
                     "metadata_": {
                         "chat_id": self.workflow.get("chat_id"),
                         "story_id": self.workflow.get("story_id"),
                         "chapter_id": self.workflow.get("chapter_id"),
                         "type": self.workflow.get("type"),
+                        "provider_id": self.provider_id,
+                        "model": self.workflow.get("model"),
+                        "phase": "generating",
+                        "token_count": self.token_count,
+                        "speed_tps": speed_tps,
                     },
                 })
         elif event == "completed":
+            now = time.monotonic()
+            elapsed_total = max(now - self.start_time, 0.001)
+            avg_speed_tps = round(self.token_count / elapsed_total, 1) if self.token_count > 0 else 0.0
             if self.full_content:
                 await emit_job_event(EventType.JOB_PROGRESS, {
-                    "id": self.job_id, "status": "generating", "stream_chunk": "", "text": self.full_content,
+                    "id": self.job_id,
+                    "status": "generating",
+                    "stream_chunk": "",
+                    "text": self.full_content,
+                    "phase": "generating",
+                    "token_count": self.token_count,
+                    "speed_tps": avg_speed_tps,
+                    "elapsed_seconds": round(elapsed_total, 1),
+                    "provider_id": self.provider_id,
+                    "model": self.workflow.get("model"),
                     "metadata_": {
                         "chat_id": self.workflow.get("chat_id"),
                         "story_id": self.workflow.get("story_id"),
                         "chapter_id": self.workflow.get("chapter_id"),
                         "type": self.workflow.get("type"),
+                        "provider_id": self.provider_id,
+                        "model": self.workflow.get("model"),
+                        "phase": "generating",
+                        "token_count": self.token_count,
+                        "speed_tps": avg_speed_tps,
                     },
                 })
             outputs = ev.get("outputs") or []
@@ -256,12 +315,18 @@ class _LLMReducer:
                 "chat_id": self.workflow.get("chat_id"),
                 "story_id": self.workflow.get("story_id"),
                 "chapter_id": self.workflow.get("chapter_id"),
+                "metrics": {
+                    "token_count": self.token_count,
+                    "speed_tps": avg_speed_tps,
+                    "elapsed_seconds": round(elapsed_total, 1),
+                },
             }
         elif event == "failed":
             raise ProviderCallError(ev.get("message", "Unknown error"), provider_id=self.provider_id,
                                     is_retryable=bool(ev.get("retryable", False)))
         elif event == "cancelled":
             raise JobCancelledError(ev.get("message") or "Job cancelled by user", provider_id=self.provider_id)
+
 
     def finalize(self):
         raise ProviderCallError("No completed event received from worker", provider_id=self.provider_id, is_retryable=True)

@@ -123,9 +123,9 @@ class Model:
             if torch.cuda.is_available() and os.path.exists(model_path):
                 total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
                 weight_gb = os.path.getsize(model_path) / (1024**3)
-                safe_budget_gb = max(0.0, total_vram_gb - 5.0)
+                safe_budget_gb = max(0.0, total_vram_gb - 2.5)
                 if weight_gb > safe_budget_gb > 0:
-                    ngl = max(20, min(55, int(64 * (safe_budget_gb / weight_gb))))
+                    ngl = max(20, min(60, int(64 * (safe_budget_gb / weight_gb))))
         except Exception:
             ngl = 99
 
@@ -335,8 +335,26 @@ class LlamaStack:
             "--host", "127.0.0.1",
             "--port", str(port),
         ]
+        cuda_dirs = [
+            "/usr/local/llama.cpp",
+            "/usr/local/lib",
+            "/usr/local/cuda/lib64",
+            "/usr/local/cuda-12/lib64",
+            "/usr/lib64-nvidia",
+            "/usr/lib/x86_64-linux-gnu",
+        ]
+        import glob
+        for pat in [
+            "/usr/local/lib/python*/dist-packages/nvidia/*/lib",
+            f"{sys.prefix}/lib/python*/dist-packages/nvidia/*/lib",
+        ]:
+            cuda_dirs.extend(glob.glob(pat))
+        cuda_dirs = [p for p in list(dict.fromkeys(cuda_dirs)) if os.path.isdir(p)]
+        ld_path = ":".join(cuda_dirs) + ":/usr/local/llama.cpp:/usr/local/lib:" + os.environ.get("LD_LIBRARY_PATH", "")
+        env = dict(os.environ, LD_LIBRARY_PATH=ld_path, PYTHONUNBUFFERED="1")
+
         print(f"[{model.id}] launching on :{port}", flush=True)
-        process = subprocess.Popen(cmd)
+        process = subprocess.Popen(cmd, env=env)
         launched_at = time.time()
         deadline = launched_at + MODEL_LOAD_TIMEOUT_SECONDS
         while time.time() < deadline:

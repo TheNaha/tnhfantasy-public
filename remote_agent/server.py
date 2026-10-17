@@ -1333,64 +1333,75 @@ if WORKER_MODE in ("llm", "hybrid"):
             # instead of backing off against this one.
             return _unavailable_payload(exc)
 
-        def _forward() -> tuple[int, bytes, str]:
-            req = urllib.request.Request(
+        is_streaming = bool(payload.get("stream", True))
+
+        from fastapi.responses import StreamingResponse, Response
+        import httpx
+
+        client = httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT)
+
+        try:
+            upstream_req = client.build_request(
+                "POST",
                 f"{base}/chat/completions",
-                data=body,
+                content=body,
                 headers={
                     "Content-Type": "application/json",
-                    # The upstream is loopback in this container; it is not
-                    # exposed, so no key is sent.
-                    "Accept": "text/event-stream",
+                    "Accept": "text/event-stream" if is_streaming else "application/json",
                 },
-                method="POST",
             )
-            try:
-                with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as resp:
-                    return resp.status, resp.read(), resp.headers.get("Content-Type", "")
-            except urllib.error.HTTPError as exc:
-                return exc.code, exc.read(), exc.headers.get("Content-Type", "")
-            except urllib.error.URLError as exc:
-                err_payload = json.dumps({
-                    "status": "error",
-                    "error": {
-                        "message": f"Upstream LLM server unreachable on {base}: {exc.reason}",
-                        "type": "upstream_unavailable",
-                        "code": 503,
-                    },
-                    "message": f"Upstream LLM server unreachable on {base}: {exc.reason}",
-                    "retryable": False,
-                }).encode("utf-8")
-                return 503, err_payload, "application/json"
-            except Exception as exc:
-                err_payload = json.dumps({
-                    "status": "error",
-                    "error": {
-                        "message": f"Upstream LLM proxy error: {exc}",
-                        "type": "upstream_error",
-                        "code": 502,
-                    },
+            upstream_resp = await client.send(upstream_req, stream=True)
+        except httpx.ConnectError as exc:
+            await client.aclose()
+            err_payload = {
+                "status": "error",
+                "error": {
+                    "message": f"Upstream LLM server unreachable on {base}: {exc}",
+                    "type": "upstream_unavailable",
+                    "code": 503,
+                },
+                "message": f"Upstream LLM server unreachable on {base}: {exc}",
+                "retryable": False,
+            }
+            return Response(content=json.dumps(err_payload), status_code=503, media_type="application/json")
+        except Exception as exc:
+            await client.aclose()
+            err_payload = {
+                "status": "error",
+                "error": {
                     "message": f"Upstream LLM proxy error: {exc}",
-                    "retryable": False,
-                }).encode("utf-8")
-                return 502, err_payload, "application/json"
+                    "type": "upstream_error",
+                    "code": 502,
+                },
+                "message": f"Upstream LLM proxy error: {exc}",
+                "retryable": False,
+            }
+            return Response(content=json.dumps(err_payload), status_code=502, media_type="application/json")
 
-        status, payload, content_type = await _bounded_to_thread(_forward)
+        if upstream_resp.status_code != 200:
+            err_bytes = await upstream_resp.aread()
+            await upstream_resp.aclose()
+            await client.aclose()
+            return Response(
+                content=err_bytes,
+                status_code=upstream_resp.status_code,
+                media_type=upstream_resp.headers.get("Content-Type", "application/json"),
+            )
 
-        from fastapi.responses import StreamingResponse
-
-        async def _relay():
-            # A non-200 is a single JSON error body, not a stream.
-            if status != 200:
-                yield payload
-                return
-            yield payload
+        async def _stream_generator():
+            try:
+                async for chunk in upstream_resp.aiter_bytes():
+                    yield chunk
+            finally:
+                await upstream_resp.aclose()
+                await client.aclose()
 
         return StreamingResponse(
-            _relay(),
-            status_code=status,
-            media_type=content_type or "text/event-stream",
+            _stream_generator(),
+            status_code=200,
+            media_type=upstream_resp.headers.get("Content-Type", "text/event-stream"),
         )
+
 
     @app.get("/v1/models", dependencies=[Depends(verify_token)])
     @app.get("/models", dependencies=[Depends(verify_token)])

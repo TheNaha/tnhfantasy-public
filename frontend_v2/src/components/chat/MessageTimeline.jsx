@@ -127,11 +127,40 @@ export default function MessageTimeline() {
                     </div>
                     <div className="px-4 py-3 rounded-2xl rounded-tl-sm text-sm bg-gray-800/50 text-gray-200 border border-gray-700/40 leading-relaxed">
                         {jobData.text ? (
-                            <TavernMessage content={jobData.text + '\u25CD'} />
+                            <div className="space-y-2">
+                                <TavernMessage content={jobData.text + '\u25CD'} />
+                                {(jobData.speedTps || jobData.tokenCount > 0) && (
+                                    <div className="pt-1.5 border-t border-white/5 flex items-center gap-2 text-3xs text-gray-400 font-mono">
+                                        <span className="flex items-center gap-1 text-emerald-400">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                            {jobData.speedTps ? `${jobData.speedTps} tok/s` : 'streaming'}
+                                        </span>
+                                        <span>·</span>
+                                        <span>{jobData.tokenCount} tokens</span>
+                                        {jobData.providerId && (
+                                            <>
+                                                <span>·</span>
+                                                <span className="text-gray-500">{jobData.providerId}</span>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         ) : (
-                            <span className="flex items-center gap-2 text-gray-400 text-sm italic">
-                                *{pendingSpeaker?.name || 'AI'} is thinking...*
-                            </span>
+                            <div className="flex flex-col gap-2 py-0.5">
+                                <span className="flex items-center gap-2 text-blue-300 text-xs font-mono">
+                                    <Loader2 size={13} className="animate-spin text-blue-400" />
+                                    {jobData.phase === 'evaluating_prompt' ? 'Evaluating prompt context...' : `*${pendingSpeaker?.name || 'AI'} is thinking...*`}
+                                    {jobData.providerId && (
+                                        <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-blue-300 text-3xs">
+                                            {jobData.providerId}
+                                        </span>
+                                    )}
+                                </span>
+                                <div className="h-1.5 w-40 rounded-full bg-gray-700/60 overflow-hidden">
+                                    <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full animate-pulse w-3/4" />
+                                </div>
+                            </div>
                         )}
                     </div>
                 </div>

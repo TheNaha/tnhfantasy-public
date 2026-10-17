@@ -5,7 +5,7 @@ import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation, useSelectStoryBeatAlternate,
-    useUpdateStoryBeat, useDeleteStoryBeat, useChapterRevisions, useCreateChapterRevision, useRestoreChapterRevision, useScenarios, useStartChatFromStory } from '../hooks/useWorldVault';
+    useUpdateStoryBeat, useDeleteStoryBeat, useChapterRevisions, useCreateChapterRevision, useRestoreChapterRevision, useScenarios, useStartChatFromStory, useDiscoverWorldbuilding } from '../hooks/useWorldVault';
 import { useLLMJobResult, awaitJobText } from '../hooks/useLLMJobResult';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -37,6 +37,7 @@ import ParseStoryModal from '../components/story/ParseStoryModal';
 import { CharacterModal } from './Characters';
 import { LorebookModal } from '../components/story/LorebookModal';
 import { LocationModal } from '../components/story/LocationModal';
+import WorldDiscoveryDrawer from '../components/story/WorldDiscoveryDrawer';
 
 export default function StorySandbox() {
     // Only default the context panel open on desktop — on phones/tablets the
@@ -153,6 +154,7 @@ export default function StorySandbox() {
     const publishStory = usePublishStory();
     const narrateChapter = useNarrateChapter();
     const startChat = useStartChatFromStory();
+    const discoverWorldbuilding = useDiscoverWorldbuilding();
 
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
@@ -196,6 +198,8 @@ export default function StorySandbox() {
     const [showLorebookModal, setShowLorebookModal] = useState(false);
     const [editingLocation, setEditingLocation] = useState(null);
     const [showLocationModal, setShowLocationModal] = useState(false);
+    const [discoveryDrawerOpen, setDiscoveryDrawerOpen] = useState(false);
+    const [discoveredEntities, setDiscoveredEntities] = useState([]);
 
     const updateCharacter = useUpdateCharacter();
 
@@ -494,7 +498,13 @@ export default function StorySandbox() {
         setIsStreaming(true);
         streamingBaseRef.current = editorContent;
         try {
-            await continueChapter.mutateAsync({ storyId: activeStoryId, chapterId: activeChapterId, prompt: aiDirective.trim() });
+            const dir = aiDirective.trim();
+            await continueChapter.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                prompt: '',
+                ...(dir ? { directive: dir } : {}),
+            });
             setAiDirective('');
             toast('AI is continuing the story...', { icon: '📖' });
         } catch {
@@ -503,6 +513,21 @@ export default function StorySandbox() {
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeStoryId, activeChapterId, isStreaming, continueChapter, editorContent, aiDirective]);
+
+    const handleScanWorldbuilding = useCallback(async () => {
+        if (!activeStoryId || !activeChapterId || discoverWorldbuilding.isPending) return;
+        try {
+            toast('Scanning scene for worldbuilding lore...', { icon: '🔍' });
+            const result = await discoverWorldbuilding.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+            });
+            setDiscoveredEntities(result?.discoveries || []);
+            setDiscoveryDrawerOpen(true);
+        } catch {
+            toast.error('Failed to discover worldbuilding elements');
+        }
+    }, [activeStoryId, activeChapterId, discoverWorldbuilding]);
 
     const captureEditorSelection = useCallback(() => {
         if (textareaRef.current) {
@@ -1280,6 +1305,8 @@ export default function StorySandbox() {
                                             activeChapterId={activeChapter?.id}
                                             onBatchVariations={handleBatchVariations}
                                             hasIllustration={!!lastIllustrationPrompt}
+                                            onScanWorldbuilding={handleScanWorldbuilding}
+                                            isDiscoveringWorld={discoverWorldbuilding.isPending}
                                         />
                                     </div>
                                 )}
@@ -1399,6 +1426,15 @@ export default function StorySandbox() {
                 collectionsList={collectionsList}
                 onSaveToCollection={handleSaveImageToCollection}
                 onClose={() => setShowGallery(false)}
+            />
+
+            <WorldDiscoveryDrawer
+                isOpen={discoveryDrawerOpen}
+                onClose={() => setDiscoveryDrawerOpen(false)}
+                discoveries={discoveredEntities}
+                storyId={activeStoryId}
+                worldId={activeStory?.world_id}
+                chapterTitle={activeChapter?.title}
             />
 
             {/* Shared mobile bottom tab bar for the StorySandbox workspaces. */}

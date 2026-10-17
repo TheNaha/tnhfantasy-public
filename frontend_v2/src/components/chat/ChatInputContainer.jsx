@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { X, ImageIcon, Loader2, Paperclip, MoreHorizontal, Palette, Wand2, BookOpen, Ghost, Sparkles, Send } from 'lucide-react';
+import { X, ImageIcon, Loader2, Paperclip, MoreHorizontal, Palette, Wand2, BookOpen, Ghost, Sparkles, Send, Square } from 'lucide-react';
 import clsx from 'clsx';
 import CommandPalette from './CommandPalette';
 import StreamingInput from './StreamingInput';
@@ -15,7 +15,8 @@ export default function ChatInputContainer({
     handleGenerateScene, isGeneratingScene, handleIllustrate, illustrateMutation,
     agenticMode, setAgenticMode, narrateMode, setNarrateMode,
     handleImpersonate, impersonateMutation, suggestReplyMutation, suggestJobId,
-    handleSendMessage, canSend
+    handleSendMessage, canSend,
+    isGeneratingReply, handleCancelStreaming
 }) {
     const handleSelectMention = useCallback((item, startIndex, endIndex) => {
         const textBefore = message.slice(0, startIndex);
@@ -94,8 +95,8 @@ export default function ChatInputContainer({
                         value={message}
                         onChange={handleTextChange}
                         onKeyDown={handleKeyDown}
-                        placeholder={activeCommand ? activeCommand.argPlaceholder : (activeChatId ? 'Type a message...' : 'Select a chat to start...')}
-                        disabled={sendMessageMutation.isPending || !activeChatId}
+                        placeholder={isGeneratingReply ? 'AI is generating a reply...' : (activeCommand ? activeCommand.argPlaceholder : (activeChatId ? 'Type a message...' : 'Select a chat to start...'))}
+                        disabled={isGeneratingReply || sendMessageMutation.isPending || !activeChatId}
                         activeCommand={activeCommand}
                         onClearCommand={() => { setActiveCommand(null); setMessage(activeCommand.cmd + ' ' + message); }}
                     />
@@ -255,22 +256,33 @@ export default function ChatInputContainer({
                         
                         <div className="flex items-center">
                             <TokenMeter text={message} />
-                            <button
-                                onClick={handleSendMessage}
-                                disabled={!canSend}
-                                aria-label="Send message"
-                            className={clsx(
-                                "p-1.5 sm:p-2 transition-all rounded-xl",
-                                canSend
-                                    ? "bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.4)] hover:bg-blue-500 hover:scale-105"
-                                    : "bg-gray-800 text-gray-500 cursor-not-allowed"
+                            {isGeneratingReply ? (
+                                <button
+                                    onClick={handleCancelStreaming}
+                                    aria-label="Stop generation"
+                                    title="Stop generation"
+                                    className="p-1.5 sm:p-2 transition-all rounded-xl bg-red-600/80 hover:bg-red-500 text-white shadow-[0_0_12px_rgba(239,68,68,0.4)] hover:scale-105 flex items-center justify-center animate-pulse"
+                                >
+                                    <Square size={16} fill="currentColor" />
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={handleSendMessage}
+                                    disabled={!canSend}
+                                    aria-label="Send message"
+                                    className={clsx(
+                                        "p-1.5 sm:p-2 transition-all rounded-xl",
+                                        canSend
+                                            ? "bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.4)] hover:bg-blue-500 hover:scale-105"
+                                            : "bg-gray-800 text-gray-500 cursor-not-allowed"
+                                    )}
+                                >
+                                    {sendMessageMutation.isPending
+                                        ? <Loader2 size={16} className="animate-spin" />
+                                        : <Send size={16} className={canSend ? "translate-x-0.5 -translate-y-0.5" : ""} />
+                                    }
+                                </button>
                             )}
-                        >
-                            {sendMessageMutation.isPending
-                                ? <Loader2 size={16} className="animate-spin" />
-                                : <Send size={16} className={canSend ? "translate-x-0.5 -translate-y-0.5" : ""} />
-                            }
-                        </button>
                         </div>
                     </div>
                 </div>

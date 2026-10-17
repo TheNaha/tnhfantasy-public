@@ -113,6 +113,12 @@ describe('useChatStreaming', () => {
             type: 'chat',
             taskType: 'llm',
             progress: null,
+            phase: 'generating',
+            tokenCount: 0,
+            speedTps: null,
+            elapsedSeconds: null,
+            model: null,
+            providerId: null,
         });
     });
 

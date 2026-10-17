@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -141,6 +142,7 @@ class RamModelManager:
         self.entries: Dict[str, CacheEntry] = {}
         self.aliases: Dict[str, str] = {}
         self.anchors: Set[str] = set()
+        self._lock = threading.RLock()
 
         # Rescan ram_dir if files already exist
         self._rescan_ram_dir()
@@ -200,75 +202,80 @@ class RamModelManager:
 
     def set_anchors(self, anchor_ids: Iterable[str]) -> None:
         """Mark given model IDs as protected anchors (immune to LRU eviction)."""
-        self.anchors = {str(a).strip() for a in anchor_ids if a and str(a).strip()}
-        for mid, entry in self.entries.items():
-            entry.is_anchor = mid in self.anchors or any(a in mid for a in self.anchors)
+        with self._lock:
+            self.anchors = {str(a).strip() for a in anchor_ids if a and str(a).strip()}
+            for mid, entry in self.entries.items():
+                entry.is_anchor = mid in self.anchors or any(a in mid for a in self.anchors)
 
     def is_cached(self, model_id: str) -> bool:
-        target_id = self.aliases.get(model_id, model_id)
-        entry = self.entries.get(target_id)
-        if not entry:
-            for e in self.entries.values():
-                if model_id in e.model_id or Path(e.ram_path).name == model_id:
-                    p = Path(e.ram_path)
-                    return p.exists() and p.is_file() and (e.size_bytes <= 0 or p.stat().st_size == e.size_bytes)
-            return False
-        p = Path(entry.ram_path)
-        return p.exists() and p.is_file() and (entry.size_bytes <= 0 or p.stat().st_size == entry.size_bytes)
+        with self._lock:
+            target_id = self.aliases.get(model_id, model_id)
+            entry = self.entries.get(target_id)
+            if not entry:
+                for e in self.entries.values():
+                    if model_id in e.model_id or Path(e.ram_path).name == model_id:
+                        p = Path(e.ram_path)
+                        return p.exists() and p.is_file() and (e.size_bytes <= 0 or p.stat().st_size == e.size_bytes)
+                return False
+            p = Path(entry.ram_path)
+            return p.exists() and p.is_file() and (entry.size_bytes <= 0 or p.stat().st_size == entry.size_bytes)
 
     def touch(self, model_id: str) -> None:
         """Mark model as recently used."""
-        target_id = self.aliases.get(model_id, model_id)
-        if target_id in self.entries:
-            self.entries[target_id].last_used = time.time()
+        with self._lock:
+            target_id = self.aliases.get(model_id, model_id)
+            if target_id in self.entries:
+                self.entries[target_id].last_used = time.time()
 
     def evict_lru(self, needed_bytes: int) -> int:
         """Evict least-recently-used non-anchor models to free up needed_bytes."""
-        freed = 0
-        unpinned = [e for e in self.entries.values() if not e.is_anchor]
-        unpinned.sort(key=lambda x: x.last_used)
+        with self._lock:
+            freed = 0
+            unpinned = [e for e in self.entries.values() if not e.is_anchor]
+            unpinned.sort(key=lambda x: x.last_used)
 
-        for entry in unpinned:
-            if self.current_usage_bytes + needed_bytes <= self.budget_bytes:
-                break
+            for entry in unpinned:
+                if self.current_usage_bytes + needed_bytes <= self.budget_bytes:
+                    break
+                try:
+                    p = Path(entry.ram_path)
+                    if p.exists():
+                        p.unlink()
+                    sz = entry.size_bytes
+                    freed += sz
+                    del self.entries[entry.model_id]
+                    # Clean up aliases pointing to this model
+                    self.aliases = {k: v for k, v in self.aliases.items() if v != entry.model_id}
+                    logger.info(
+                        "ram_cache_lru_evicted",
+                        extra={"model_id": entry.model_id, "size_mb": round(sz / (1024 * 1024), 1)},
+                    )
+                except Exception as exc:
+                    logger.warning(f"Could not evict {entry.ram_path}: {exc}")
+
+            return freed
+
+    def evict_model(self, model_id: str, force: bool = False) -> bool:
+        """Explicitly evict a single model from RAM."""
+        with self._lock:
+            target_id = self.aliases.get(model_id, model_id)
+            entry = self.entries.get(target_id)
+            if not entry:
+                return False
+            if entry.is_anchor and not force:
+                logger.warning(f"Refusing to evict anchor model {model_id} without force=True")
+                return False
             try:
                 p = Path(entry.ram_path)
                 if p.exists():
                     p.unlink()
-                sz = entry.size_bytes
-                freed += sz
-                del self.entries[entry.model_id]
-                # Clean up aliases pointing to this model
-                self.aliases = {k: v for k, v in self.aliases.items() if v != entry.model_id}
-                logger.info(
-                    "ram_cache_lru_evicted",
-                    extra={"model_id": entry.model_id, "size_mb": round(sz / (1024 * 1024), 1)},
-                )
+                del self.entries[target_id]
+                self.aliases = {k: v for k, v in self.aliases.items() if v != target_id}
+                logger.info("ram_cache_model_evicted", extra={"model_id": model_id})
+                return True
             except Exception as exc:
-                logger.warning(f"Could not evict {entry.ram_path}: {exc}")
-
-        return freed
-
-    def evict_model(self, model_id: str, force: bool = False) -> bool:
-        """Explicitly evict a single model from RAM."""
-        target_id = self.aliases.get(model_id, model_id)
-        entry = self.entries.get(target_id)
-        if not entry:
-            return False
-        if entry.is_anchor and not force:
-            logger.warning(f"Refusing to evict anchor model {model_id} without force=True")
-            return False
-        try:
-            p = Path(entry.ram_path)
-            if p.exists():
-                p.unlink()
-            del self.entries[target_id]
-            self.aliases = {k: v for k, v in self.aliases.items() if v != target_id}
-            logger.info("ram_cache_model_evicted", extra={"model_id": model_id})
-            return True
-        except Exception as exc:
-            logger.warning(f"Failed to evict {model_id}: {exc}")
-            return False
+                logger.warning(f"Failed to evict {model_id}: {exc}")
+                return False
 
     def ensure_in_ram(
         self,
@@ -289,103 +296,105 @@ class RamModelManager:
         is_anchor = is_anchor or (mid in self.anchors)
         size_bytes = src.stat().st_size
 
-        # 1. Fast Cache Hit: check in-memory dictionary first
-        if mid in self.entries:
-            entry = self.entries[mid]
-            ram_p = Path(entry.ram_path)
-            if ram_p.exists() and ram_p.stat().st_size == size_bytes:
-                entry.last_used = time.time()
-                entry.is_anchor = entry.is_anchor or is_anchor
-                return ram_p
+        # 1-3. Cache check, discovery, and headroom reservation under lock
+        with self._lock:
+            # 1. Fast Cache Hit: check in-memory dictionary first
+            if mid in self.entries:
+                entry = self.entries[mid]
+                ram_p = Path(entry.ram_path)
+                if ram_p.exists() and ram_p.stat().st_size == size_bytes:
+                    entry.last_used = time.time()
+                    entry.is_anchor = entry.is_anchor or is_anchor
+                    return ram_p
 
-        target_id = self.aliases.get(mid) or self.aliases.get(src.name)
-        if target_id and target_id in self.entries:
-            entry = self.entries[target_id]
-            ram_p = Path(entry.ram_path)
-            if ram_p.exists() and ram_p.stat().st_size == size_bytes:
-                entry.last_used = time.time()
-                entry.is_anchor = entry.is_anchor or is_anchor
-                return ram_p
+            target_id = self.aliases.get(mid) or self.aliases.get(src.name)
+            if target_id and target_id in self.entries:
+                entry = self.entries[target_id]
+                ram_p = Path(entry.ram_path)
+                if ram_p.exists() and ram_p.stat().st_size == size_bytes:
+                    entry.last_used = time.time()
+                    entry.is_anchor = entry.is_anchor or is_anchor
+                    return ram_p
 
-        # Determine subfolder according to role (ComfyUI extra paths & LLM layout)
-        subfolder = "checkpoints" if role in ("image", "image_secondary") else ("loras" if role == "lora" else ("vae" if role == "vae" else ("llm" if role in ("rp", "util", "llm") else "")))
-        subfolder_dir = self.ram_dir / subfolder if subfolder else self.ram_dir
-        subfolder_dir.mkdir(parents=True, exist_ok=True)
+            # Determine subfolder according to role (ComfyUI extra paths & LLM layout)
+            subfolder = "checkpoints" if role in ("image", "image_secondary") else ("loras" if role == "lora" else ("vae" if role == "vae" else ("llm" if role in ("rp", "util", "llm") else "")))
+            subfolder_dir = self.ram_dir / subfolder if subfolder else self.ram_dir
+            subfolder_dir.mkdir(parents=True, exist_ok=True)
 
-        dest_filename = f"{mid}_{src.name}" if not src.name.startswith(mid) else src.name
-        dest_path = subfolder_dir / dest_filename
-        flat_dest_path = self.ram_dir / dest_filename
+            dest_filename = f"{mid}_{src.name}" if not src.name.startswith(mid) else src.name
+            dest_path = subfolder_dir / dest_filename
+            flat_dest_path = self.ram_dir / dest_filename
 
-        # 2. Check if file already exists on disk in subfolder or flat ram_dir
-        candidates_to_check = [dest_path, flat_dest_path, subfolder_dir / src.name, self.ram_dir / src.name]
-        for existing in candidates_to_check:
-            if existing.exists() and existing.is_file():
-                if existing.stat().st_size == size_bytes:
-                    existing_entry = CacheEntry(
-                        model_id=mid,
-                        role=role,
-                        source_path=str(src),
-                        ram_path=str(existing),
-                        size_bytes=size_bytes,
-                        is_anchor=is_anchor,
-                        last_used=time.time(),
-                    )
-                    self.entries[mid] = existing_entry
-                    self.aliases[src.name] = mid
-                    self.aliases[existing.name] = mid
-                    if "_" in existing.name:
-                        self.aliases[existing.name.split("_", 1)[0]] = mid
-                    try:
-                        if subfolder and existing.parent == subfolder_dir and not flat_dest_path.exists():
-                            flat_dest_path.symlink_to(existing)
-                        elif subfolder and existing.parent == self.ram_dir and not dest_path.exists():
-                            dest_path.symlink_to(existing)
-                    except Exception:
-                        pass
-                    return existing
-                else:
-                    # Stale or truncated file from an interrupted copy. Delete to free space.
-                    logger.warning(
-                        "ram_cache_removing_truncated",
-                        extra={"path": str(existing), "actual_bytes": existing.stat().st_size, "expected_bytes": size_bytes},
-                    )
-                    try:
-                        existing.unlink()
-                    except Exception:
-                        pass
-                    if mid in self.entries and self.entries[mid].ram_path == str(existing):
-                        del self.entries[mid]
+            # 2. Check if file already exists on disk in subfolder or flat ram_dir
+            candidates_to_check = [dest_path, flat_dest_path, subfolder_dir / src.name, self.ram_dir / src.name]
+            for existing in candidates_to_check:
+                if existing.exists() and existing.is_file():
+                    if existing.stat().st_size == size_bytes:
+                        existing_entry = CacheEntry(
+                            model_id=mid,
+                            role=role,
+                            source_path=str(src),
+                            ram_path=str(existing),
+                            size_bytes=size_bytes,
+                            is_anchor=is_anchor,
+                            last_used=time.time(),
+                        )
+                        self.entries[mid] = existing_entry
+                        self.aliases[src.name] = mid
+                        self.aliases[existing.name] = mid
+                        if "_" in existing.name:
+                            self.aliases[existing.name.split("_", 1)[0]] = mid
+                        try:
+                            if subfolder and existing.parent == subfolder_dir and not flat_dest_path.exists():
+                                flat_dest_path.symlink_to(existing)
+                            elif subfolder and existing.parent == self.ram_dir and not dest_path.exists():
+                                dest_path.symlink_to(existing)
+                        except Exception:
+                            pass
+                        return existing
+                    else:
+                        # Stale or truncated file from an interrupted copy. Delete to free space.
+                        logger.warning(
+                            "ram_cache_removing_truncated",
+                            extra={"path": str(existing), "actual_bytes": existing.stat().st_size, "expected_bytes": size_bytes},
+                        )
+                        try:
+                            existing.unlink()
+                        except Exception:
+                            pass
+                        if mid in self.entries and self.entries[mid].ram_path == str(existing):
+                            del self.entries[mid]
 
-        # 3. Determine headroom and free up space if needed
-        needed = size_bytes
+            # 3. Determine headroom and free up space if needed
+            needed = size_bytes
 
-        # Check system available memory to prevent kernel OOM
-        _, sys_avail = _get_system_ram_info()
-        if sys_avail - needed < self.min_reserve_bytes:
-            self.evict_lru(needed + self.min_reserve_bytes)
+            # Check system available memory to prevent kernel OOM
+            _, sys_avail = _get_system_ram_info()
+            if sys_avail - needed < self.min_reserve_bytes:
+                self.evict_lru(needed + self.min_reserve_bytes)
 
-        if self.current_usage_bytes + needed > self.budget_bytes:
-            self.evict_lru(needed)
+            if self.current_usage_bytes + needed > self.budget_bytes:
+                self.evict_lru(needed)
 
-        # Ensure physical filesystem mount (/dev/shm) has capacity
-        ensure_shm_capacity(needed)
-        try:
-            while shutil.disk_usage(self.ram_dir).free < needed:
-                freed = self.evict_lru(needed)
-                if freed == 0:
-                    break
-        except Exception:
-            pass
+            # Ensure physical filesystem mount (/dev/shm) has capacity
+            ensure_shm_capacity(needed)
+            try:
+                while shutil.disk_usage(self.ram_dir).free < needed:
+                    freed = self.evict_lru(needed)
+                    if freed == 0:
+                        break
+            except Exception:
+                pass
 
-        # Abort if physical filesystem space is strictly less than needed to prevent Errno 28
-        free_shm = shutil.disk_usage(self.ram_dir).free
-        if free_shm < needed:
-            raise RuntimeError(
-                f"Insufficient RAM cache space on {self.ram_dir}: needed {needed / (1024**3):.2f} GB, "
-                f"available {free_shm / (1024**3):.2f} GB after evictions."
-            )
+            # Abort if physical filesystem space is strictly less than needed to prevent Errno 28
+            free_shm = shutil.disk_usage(self.ram_dir).free
+            if free_shm < needed:
+                raise RuntimeError(
+                    f"Insufficient RAM cache space on {self.ram_dir}: needed {needed / (1024**3):.2f} GB, "
+                    f"available {free_shm / (1024**3):.2f} GB after evictions."
+                )
 
-        # 4. Stream / Copy into RAM cache atomically
+        # 4. Stream / Copy into RAM cache atomically (OUTSIDE lock so other models can stream concurrently)
         tmp_path = subfolder_dir / f".{dest_filename}.tmp"
 
         start_time = time.time()
@@ -435,21 +444,22 @@ class RamModelManager:
             },
         )
 
-        # 5. Record cache entry
-        entry = CacheEntry(
-            model_id=mid,
-            role=role,
-            source_path=str(src),
-            ram_path=str(dest_path),
-            size_bytes=size_bytes,
-            is_anchor=is_anchor,
-            last_used=time.time(),
-        )
-        self.entries[mid] = entry
-        self.aliases[src.name] = mid
-        self.aliases[dest_path.name] = mid
-        if "_" in dest_path.name:
-            self.aliases[dest_path.name.split("_", 1)[0]] = mid
+        # 5. Record cache entry under lock
+        with self._lock:
+            entry = CacheEntry(
+                model_id=mid,
+                role=role,
+                source_path=str(src),
+                ram_path=str(dest_path),
+                size_bytes=size_bytes,
+                is_anchor=is_anchor,
+                last_used=time.time(),
+            )
+            self.entries[mid] = entry
+            self.aliases[src.name] = mid
+            self.aliases[dest_path.name] = mid
+            if "_" in dest_path.name:
+                self.aliases[dest_path.name.split("_", 1)[0]] = mid
 
         drop_page_cache()
 
@@ -514,16 +524,19 @@ class RamModelManager:
     def get_status(self) -> Dict[str, Any]:
         """Return comprehensive status of RAM cache and system memory."""
         sys_total, sys_avail = _get_system_ram_info()
-        used = self.current_usage_bytes
-        budget = self.budget_bytes
+        with self._lock:
+            used = self.current_usage_bytes
+            budget = self.budget_bytes
 
-        anchors_list = []
-        spare_list = []
-        for e in sorted(self.entries.values(), key=lambda x: x.last_used, reverse=True):
-            if e.is_anchor:
-                anchors_list.append(e.to_dict())
-            else:
-                spare_list.append(e.to_dict())
+            anchors_list = []
+            spare_list = []
+            for e in sorted(self.entries.values(), key=lambda x: x.last_used, reverse=True):
+                if e.is_anchor:
+                    anchors_list.append(e.to_dict())
+                else:
+                    spare_list.append(e.to_dict())
+            anchors_set = list(self.anchors)
+            models_cnt = len(self.entries)
 
         return {
             "ram_dir": str(self.ram_dir),
@@ -537,8 +550,8 @@ class RamModelManager:
                 "total_gb": round(sys_total / (1024 * 1024 * 1024), 2),
                 "available_gb": round(sys_avail / (1024 * 1024 * 1024), 2),
             },
-            "anchors": list(self.anchors),
-            "models_count": len(self.entries),
+            "anchors": anchors_set,
+            "models_count": models_cnt,
             "anchor_models": anchors_list,
             "spare_cached_models": spare_list,
         }

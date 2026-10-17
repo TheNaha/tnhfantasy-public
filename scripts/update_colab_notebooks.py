@@ -156,6 +156,33 @@ print("\\n🎉 Environment setup complete!")
     if "tnh_ram_cache" not in content:
         content = content.replace('print("\n🎉 Environment setup complete!")', ram_cache_setup.strip())
 
+    # 3. Enhance CUDA runtime linking and device detection in Cell 4
+    old_ld = 'subprocess.run(["ldconfig"], check=False)\n        os.environ["LD_LIBRARY_PATH"] = f"{llama_dir}:/usr/local/lib:" + os.environ.get("LD_LIBRARY_PATH", "")'
+    new_ld = '''# Clean up any stray symlinks in /usr/local/lib to prevent PyTorch cuDNN conflicts
+        for f_pat in ("libcudart.so*", "libcublas.so*", "libcublasLt.so*", "libcuda.so*", "libggml*.so*", "libllama*.so*"):
+            for p in glob.glob(f"/usr/local/lib/{f_pat}"):
+                if os.path.islink(p):
+                    try: os.remove(p)
+                    except Exception: pass
+        subprocess.run(["ldconfig"], check=False)
+        # Discover and link CUDA runtime libraries into /usr/local/llama.cpp ONLY
+        cuda_dirs = [llama_dir, "/usr/local/cuda/lib64", "/usr/local/cuda-12/lib64", "/usr/lib64-nvidia", "/usr/lib/x86_64-linux-gnu"]
+        import glob
+        for pat in ["/usr/local/lib/python*/dist-packages/nvidia/*/lib", f"{sys.prefix}/lib/python*/dist-packages/nvidia/*/lib"]:
+            cuda_dirs.extend(glob.glob(pat))
+        cuda_dirs = [p for p in list(dict.fromkeys(cuda_dirs)) if os.path.isdir(p)]
+        for c_dir in cuda_dirs:
+            for root, dirs, files in os.walk(c_dir):
+                for f in files:
+                    if f.startswith(("libcudart.so", "libcublas.so", "libcublasLt.so", "libcuda.so")):
+                        dst = os.path.join(llama_dir, f)
+                        if not os.path.exists(dst):
+                            try: os.symlink(os.path.join(root, f), dst)
+                            except Exception: pass
+        ld_path = ":".join(cuda_dirs) + ":/usr/local/llama.cpp:" + os.environ.get("LD_LIBRARY_PATH", "")'''
+    if old_ld in content:
+        content = content.replace(old_ld, new_ld)
+
     return [line + "\n" for line in content.split("\n")[:-1]]
 
 
@@ -457,7 +484,7 @@ if not catalog:
         with open(local_cat, "r") as f:
             catalog = json.load(f)
 
-models_dict = catalog.get("models", {})
+models_dict = catalog.get("models") or catalog.get("catalog", {})
 active_spec = catalog.get("active", {})
 active_rp = active_spec.get("rp") or LLM_RP_MODEL
 active_util = active_spec.get("util") or LLM_UTIL_MODEL
@@ -535,7 +562,7 @@ for mid in distinct_active_llm:
             if mid in resolved_weights:
                 break
 
-# 5. Tiered RAM Pre-warming (Anchors + Opportunistic Spare RAM)
+# 5. High-Speed RAM Setup & Anchor Configuration
 try:
     import psutil
     tot_ram = psutil.virtual_memory().total / (1024**3)
@@ -554,17 +581,6 @@ if not shared_weights:
     anchor_ids.append(active_util)
 if active_image:
     anchor_ids.append(active_image)
-ram_mgr.set_anchors(anchor_ids)
-
-prewarm_queue = []
-for mid in distinct_active_llm:
-    if mid in resolved_weights:
-        prewarm_queue.append({
-            "id": mid,
-            "source_path": resolved_weights[mid],
-            "role": "rp" if mid == active_rp else "util",
-            "is_anchor": True,
-        })
 
 comfy_dir = "/content/ComfyUI"
 ckpt_dir = f"{comfy_dir}/models/checkpoints"
@@ -585,52 +601,21 @@ if active_image:
 if not active_ckpt_path and all_ckpts:
     active_ckpt_path = all_ckpts[0]
 
-if active_ckpt_path:
-    img_id = os.path.basename(active_ckpt_path)
-    prewarm_queue.append({
-        "id": img_id,
-        "source_path": active_ckpt_path,
-        "role": "image",
-        "is_anchor": True,
-    })
+img_id = os.path.basename(active_ckpt_path) if active_ckpt_path else ""
+if img_id:
     anchor_ids.append(img_id)
-    ram_mgr.set_anchors(anchor_ids)
 
-# Opportunistic: Most recently used secondary checkpoint & recent LoRAs
-if len(all_ckpts) > 1:
-    sec_ckpt = all_ckpts[1] if all_ckpts[0] == active_ckpt_path else all_ckpts[0]
-    prewarm_queue.append({
-        "id": os.path.basename(sec_ckpt),
-        "source_path": sec_ckpt,
-        "role": "image_secondary",
-        "is_anchor": False,
-    })
+ram_mgr.set_anchors(anchor_ids)
 
-lora_dir = f"{comfy_dir}/models/loras"
-if os.path.exists(lora_dir):
-    all_loras = []
-    for root, _, files in os.walk(lora_dir):
-        for f in files:
-            if f.endswith((".safetensors", ".ckpt")):
-                all_loras.append(os.path.join(root, f))
-    all_loras.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-    for l in all_loras[:2]:
-        prewarm_queue.append({
-            "id": os.path.basename(l),
-            "source_path": l,
-            "role": "lora",
-            "is_anchor": False,
-        })
+# Evict any non-anchor models from prior runs to keep RAM dedicated and lean
+for mid in list(ram_mgr.entries.keys()):
+    if mid not in anchor_ids:
+        try:
+            ram_mgr.evict_model(mid, force=True)
+        except Exception:
+            pass
 
-print("⚡ Pre-warming Models into High-Speed System RAM (/dev/shm)...")
-prewarmed_ids = ram_mgr.prewarm_models(prewarm_queue)
-ram_status = ram_mgr.get_status()
-print(f"✅ RAM Cache Ready: {ram_status['used_gb']} GB / {ram_status['budget_gb']} GB used ({ram_status['percent_used']}%)")
-print(f"   • Anchors in RAM: {[a['model_id'] for a in ram_status['anchor_models']]}")
-if ram_status['spare_cached_models']:
-    print(f"   • Spare Pre-warmed Models: {[s['model_id'] for s in ram_status['spare_cached_models']]}")
-
-# 6. Launch Background Processes
+# 6. Prepare Engine Paths & CUDA Runtimes
 if mode_key in ("hybrid", "model"):
     extra_paths_file = f"{comfy_dir}/extra_model_paths.yaml"
     extra_paths_content = \"\"\"tnh_ram_cache:
@@ -652,17 +637,129 @@ tnh_ram_flat:
     except Exception:
         pass
 
-if mode_key == "hybrid":
-    print("🚀 [Hybrid] Starting ComfyUI server on :8188...")
-    with open(log_comfy, "w") as out:
-        env_comfy = dict(os.environ, PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True", PYTHONUNBUFFERED="1")
-        subprocess.Popen([sys.executable, f"{comfy_dir}/main.py", "--listen", "127.0.0.1", "--port", str(comfy_port)], env=env_comfy, stdout=out, stderr=out)
+if mode_key in ("hybrid", "llm"):
+    llama_dir = "/usr/local/llama.cpp"
+    target_llama = "/usr/local/bin/llama-server"
+    gdrive_bin = os.path.join(gdrive_root, "bin")
+    cached_bundle = os.path.join(gdrive_bin, "llama-cuda12-bundle.tar.gz")
 
-    print(f"🚀 [Hybrid] Starting Remote Storage Agent on :{agent_port} (DATA_DIR={comfy_dir})...")
+    # 1. Discover all candidate CUDA runtime library directories
+    cuda_dirs = [
+        llama_dir,
+        "/usr/local/lib",
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda-12/lib64",
+        "/usr/local/cuda-12.8/lib64",
+        "/usr/local/cuda-12.6/lib64",
+        "/usr/local/cuda-12.5/lib64",
+        "/usr/local/cuda-12.4/lib64",
+        "/usr/local/cuda-12.2/lib64",
+        "/usr/lib64-nvidia",
+        "/usr/lib/x86_64-linux-gnu",
+    ]
+    import glob
+    for pat in [
+        "/usr/local/lib/python*/dist-packages/nvidia/*/lib",
+        "/usr/lib/python*/dist-packages/nvidia/*/lib",
+        f"{sys.prefix}/lib/python*/dist-packages/nvidia/*/lib",
+    ]:
+        cuda_dirs.extend(glob.glob(pat))
+    cuda_dirs = [p for p in list(dict.fromkeys(cuda_dirs)) if os.path.isdir(p)]
+
+    # 2. Check if libcudart and libcublas exist; if not, auto-install pip wheels
+    has_cudart = any(os.path.exists(os.path.join(d, "libcudart.so.12")) for d in cuda_dirs)
+    has_cublas = any(os.path.exists(os.path.join(d, "libcublas.so.12")) for d in cuda_dirs)
+    if not (has_cudart and has_cublas):
+        print("⚡ Installing CUDA runtime wheels for llama.cpp acceleration...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12"], check=False)
+        for pat in [
+            "/usr/local/lib/python*/dist-packages/nvidia/*/lib",
+            f"{sys.prefix}/lib/python*/dist-packages/nvidia/*/lib",
+        ]:
+            cuda_dirs.extend(glob.glob(pat))
+        cuda_dirs = [p for p in list(dict.fromkeys(cuda_dirs)) if os.path.isdir(p)]
+
+    # 3. Restore or fetch llama-server if missing
+    if not (os.path.exists(target_llama) or shutil.which("llama-server")):
+        os.makedirs(llama_dir, exist_ok=True)
+        if os.path.exists(cached_bundle) and os.path.getsize(cached_bundle) > 50_000_000:
+            print("⚡ Restoring CUDA-accelerated llama.cpp bundle from Google Drive cache...")
+            subprocess.run(f"tar -xzf '{cached_bundle}' -C '{llama_dir}' --strip-components=1", shell=True, check=False)
+        else:
+            print("📥 Fetching CUDA-accelerated llama.cpp binary & runtime libraries...")
+            llama_tar = "/tmp/llama_server.tar.gz"
+            llama_url = "https://github.com/ggml-org/llama.cpp/releases/download/b11647/llama-b11647-bin-ubuntu-cuda-12.8-x64.tar.gz"
+            subprocess.run(["curl", "-fsSL", "--retry", "3", llama_url, "-o", llama_tar], check=False)
+            if os.path.exists(llama_tar):
+                subprocess.run(f"tar -xzf '{llama_tar}' -C '{llama_dir}' --strip-components=1", shell=True, check=False)
+                try:
+                    os.makedirs(gdrive_bin, exist_ok=True)
+                    shutil.copy(llama_tar, cached_bundle)
+                except Exception:
+                    pass
+
+    # Clean up any stray symlinks in /usr/local/lib to prevent PyTorch cuDNN conflicts
+    for f_pat in ("libcudart.so*", "libcublas.so*", "libcublasLt.so*", "libcuda.so*", "libggml*.so*", "libllama*.so*"):
+        for p in glob.glob(f"/usr/local/lib/{f_pat}"):
+            if os.path.islink(p):
+                try: os.remove(p)
+                except Exception: pass
+    subprocess.run(["ldconfig"], check=False)
+
+    # 4. Link llama-server binary into /usr/local/bin
+    for root, dirs, files in os.walk(llama_dir):
+        for f in files:
+            src_path = os.path.join(root, f)
+            if f == "llama-server":
+                try:
+                    if os.path.exists(target_llama) or os.path.islink(target_llama):
+                        os.remove(target_llama)
+                    os.symlink(src_path, target_llama)
+                except Exception:
+                    shutil.copy(src_path, target_llama)
+                os.chmod(target_llama, 0o755)
+
+    # 5. Symlink CUDA runtime libs into /usr/local/llama.cpp ONLY (dedicated, never pollutes /usr/local/lib)
+    for c_dir in cuda_dirs:
+        for root, dirs, files in os.walk(c_dir):
+            for f in files:
+                if f.startswith(("libcudart.so", "libcublas.so", "libcublasLt.so", "libcuda.so")):
+                    dst = os.path.join(llama_dir, f)
+                    if not os.path.exists(dst):
+                        try:
+                            os.symlink(os.path.join(root, f), dst)
+                        except Exception:
+                            pass
+
+    ld_path = ":".join(cuda_dirs) + ":/usr/local/llama.cpp:" + os.environ.get("LD_LIBRARY_PATH", "")
+
+    # 6. Verify CUDA device detection
+    llama_exec = target_llama if os.path.exists(target_llama) else "llama-server"
+    try:
+        ver_check = subprocess.run([llama_exec, "--list-devices"], env=dict(os.environ, LD_LIBRARY_PATH=ld_path), capture_output=True, text=True, timeout=5)
+        dev_info = (ver_check.stdout or ver_check.stderr or "").strip()
+        if "CUDA" in dev_info:
+            c_lines = [l.strip() for l in dev_info.split("\\n") if "CUDA" in l]
+            print(f"  ✅ CUDA GPU acceleration active: {', '.join(c_lines)}")
+        else:
+            print(f"  ⚠️ llama-server device notice: {dev_info.replace(chr(10), ' ') or 'no devices reported'}")
+    except Exception as e:
+        print(f"  Notice during CUDA device check: {e}")
+
+# 7. Asynchronous & Pipelined Service Launches
+import threading
+
+worker_procs = {}
+
+def start_remote_agent():
+    print(f"🚀 Starting Remote Storage Agent on :{agent_port} (DATA_DIR={comfy_dir})...")
+    agent_work_mode = "hybrid" if mode_key == "hybrid" else mode_key
+    data_path = comfy_dir if mode_key in ("hybrid", "model") else ("/content/agent-data/llm/models" if mode_key == "llm" else "/content/agent-data/tts")
+    os.makedirs(data_path, exist_ok=True)
     env_agent = dict(
         os.environ,
-        DATA_DIR=comfy_dir,
-        WORKER_MODE="hybrid",
+        DATA_DIR=data_path,
+        WORKER_MODE=agent_work_mode,
         PORT=str(agent_port),
         HOST="127.0.0.1",
         LLM_UPSTREAM_BASE=f"http://127.0.0.1:{llm_port}/v1",
@@ -671,25 +768,47 @@ if mode_key == "hybrid":
         PYTHONUNBUFFERED="1",
         PROVIDER_DOWNLOAD_SCRATCH_DIR=scratch_downloads,
         REMOTE_AGENT_DOWNLOAD_MAX_CONCURRENT="1",
-        LD_LIBRARY_PATH="/usr/local/llama.cpp:/usr/local/lib:" + os.environ.get("LD_LIBRARY_PATH", ""),
-        PATH="/usr/local/llama.cpp:/usr/local/bin:" + os.environ.get("PATH", ""),
     )
+    if mode_key in ("hybrid", "llm"):
+        env_agent["LD_LIBRARY_PATH"] = ld_path
+        env_agent["PATH"] = "/usr/local/llama.cpp:/usr/local/bin:" + os.environ.get("PATH", "")
     with open(log_agent, "w") as out:
-        subprocess.Popen([sys.executable, f"{agent_dir}/server.py"], cwd=agent_dir, env=env_agent, stdout=out, stderr=out)
+        worker_procs["agent"] = subprocess.Popen([sys.executable, f"{agent_dir}/server.py"], cwd=agent_dir, env=env_agent, stdout=out, stderr=out)
 
-    print(f"🚀 [Hybrid] Starting CUDA llama-server on :{llm_port}...")
-    rp_ram_file = ""
+def launch_comfyui_track():
+    if active_ckpt_path:
+        print(f"⚡ [ComfyUI Track] Pre-warming {os.path.basename(active_ckpt_path)} into RAM cache (/dev/shm)...")
+        try:
+            ram_mgr.ensure_in_ram(active_ckpt_path, model_id=img_id, role="image", is_anchor=True)
+            print(f"✅ [ComfyUI Track] Checkpoint cached in RAM!")
+        except Exception as exc:
+            print(f"⚠️ [ComfyUI Track] Pre-warming failed ({exc}); will stream from storage directly.")
+    print(f"🚀 [ComfyUI Track] Starting ComfyUI server on :{comfy_port}...")
+    with open(log_comfy, "w") as out:
+        env_comfy = dict(os.environ, PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True", PYTHONUNBUFFERED="1")
+        cudnn_paths = glob.glob("/usr/local/lib/python*/dist-packages/nvidia/cudnn/lib") + glob.glob(f"{sys.prefix}/lib/python*/dist-packages/nvidia/cudnn/lib")
+        if cudnn_paths:
+            env_comfy["LD_LIBRARY_PATH"] = ":".join(cudnn_paths) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+        worker_procs["comfy"] = subprocess.Popen([sys.executable, f"{comfy_dir}/main.py", "--listen", "127.0.0.1", "--port", str(comfy_port)], env=env_comfy, stdout=out, stderr=out)
+
+def launch_llm_track():
     src_expected = resolved_weights.get(active_rp, "")
-    src_size = os.path.getsize(src_expected) if (src_expected and os.path.exists(src_expected)) else 0
+    if src_expected:
+        print(f"⚡ [LLM Track] Pre-warming {os.path.basename(src_expected)} into RAM cache (/dev/shm)...")
+        try:
+            ram_mgr.ensure_in_ram(src_expected, model_id=active_rp, role="rp", is_anchor=True)
+            print(f"✅ [LLM Track] GGUF weights cached in RAM!")
+        except Exception as exc:
+            print(f"⚠️ [LLM Track] Pre-warming failed ({exc}); will load directly from storage.")
 
+    # Resolve resident RAM file
+    rp_ram_file = ""
+    src_size = os.path.getsize(src_expected) if (src_expected and os.path.exists(src_expected)) else 0
     if active_rp in ram_mgr.entries and os.path.exists(ram_mgr.entries[active_rp].ram_path):
         cand = ram_mgr.entries[active_rp].ram_path
         if src_size > 0 and os.path.getsize(cand) != src_size:
-            print(f"  ⚠️ Stale/truncated RAM file detected for {active_rp}. Evicting...")
-            try:
-                ram_mgr.evict_model(active_rp, force=True)
-            except Exception:
-                pass
+            try: ram_mgr.evict_model(active_rp, force=True)
+            except Exception: pass
         else:
             rp_ram_file = cand
 
@@ -697,11 +816,8 @@ if mode_key == "hybrid":
         for mid, entry in list(ram_mgr.entries.items()):
             if (active_rp in mid or mid in active_rp) and os.path.exists(entry.ram_path):
                 if src_size > 0 and os.path.getsize(entry.ram_path) != src_size:
-                    print(f"  ⚠️ Stale/truncated RAM file detected for {mid}. Evicting...")
-                    try:
-                        ram_mgr.evict_model(mid, force=True)
-                    except Exception:
-                        pass
+                    try: ram_mgr.evict_model(mid, force=True)
+                    except Exception: pass
                 else:
                     rp_ram_file = entry.ram_path
                     break
@@ -716,22 +832,22 @@ if mode_key == "hybrid":
         if torch.cuda.is_available():
             total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             weight_gb = os.path.getsize(rp_ram_file) / (1024**3) if (rp_ram_file and os.path.exists(rp_ram_file)) else 0.0
-            safe_budget_gb = max(0.0, total_vram_gb - 5.0)
+            safe_budget_gb = max(0.0, total_vram_gb - 2.5)
             if weight_gb > safe_budget_gb > 0:
                 fraction = safe_budget_gb / weight_gb
-                ngl = max(20, min(55, int(64 * fraction)))
+                ngl = max(20, min(60, int(64 * fraction)))
                 print(f"  ⚡ GPU VRAM: {total_vram_gb:.1f} GB | Model: {weight_gb:.1f} GB")
                 print(f"  🎯 Calculated safe layer offload: -ngl {ngl} (GPU: ~{safe_budget_gb:.1f} GB, CPU RAM: ~{weight_gb - safe_budget_gb:.1f} GB) to prevent CUDA OOM")
             else:
                 ngl = 99
                 if weight_gb > 0:
-                    print(f"  ⚡ Model ({weight_gb:.1f} GB) fits entirely in GPU VRAM ({total_vram_gb:.1f} GB): -ngl 99")
+                    print(f"  ⚡ Model ({weight_gb:.1f} GB) fits entirely in GPU VRAM ({total_vram_gb:.1f} GB): -ngl 99 (100% GPU offload, zero CPU latency)")
     except Exception as exc:
         ngl = 99
         print(f"  Notice: VRAM layer budgeting bypassed ({exc}); using -ngl 99")
 
     llama_args = [
-        "llama-server",
+        llama_exec,
         "--port", str(llm_port),
         "--host", "127.0.0.1",
         "-ngl", str(ngl),
@@ -756,112 +872,69 @@ if mode_key == "hybrid":
 
     stdbuf_bin = shutil.which("stdbuf")
     spawn_cmd = [stdbuf_bin, "-oL", "-eL"] + llama_args if stdbuf_bin else llama_args
-
     env_llm = dict(
         os.environ,
-        LD_LIBRARY_PATH="/usr/local/llama.cpp:/usr/local/lib:" + os.environ.get("LD_LIBRARY_PATH", ""),
+        LD_LIBRARY_PATH=ld_path,
         PATH="/usr/local/llama.cpp:/usr/local/bin:" + os.environ.get("PATH", ""),
         PYTHONUNBUFFERED="1",
     )
+    print(f"🚀 [LLM Track] Starting CUDA llama-server on :{llm_port}...")
     with open(log_llm, "a", buffering=1) as out:
-        proc_llm = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
+        worker_procs["llm"] = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
 
-elif mode_key == "model":
-    print("🚀 Starting ComfyUI server on :8188...")
-    with open(log_comfy, "w") as out:
-        env_comfy = dict(os.environ, PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True", PYTHONUNBUFFERED="1")
-        subprocess.Popen([sys.executable, f"{comfy_dir}/main.py", "--listen", "127.0.0.1", "--port", str(comfy_port)], env=env_comfy, stdout=out, stderr=out)
+# 1. Start Storage Agent immediately
+start_remote_agent()
 
-    print(f"🚀 Starting Remote Agent on :{agent_port} (DATA_DIR={comfy_dir})...")
-    env = dict(
-        os.environ,
-        DATA_DIR=comfy_dir,
-        WORKER_MODE="model",
-        PORT=str(agent_port),
-        HOST="127.0.0.1",
-        RAM_CACHE_DIR="/dev/shm/tnh_ram_cache",
-        RAM_CACHE_BUDGET_GB="40",
-        PYTHONUNBUFFERED="1",
-        PROVIDER_DOWNLOAD_SCRATCH_DIR=scratch_downloads,
-        REMOTE_AGENT_DOWNLOAD_MAX_CONCURRENT="1",
-    )
-    with open(log_agent, "w") as out:
-        subprocess.Popen([sys.executable, f"{agent_dir}/server.py"], cwd=agent_dir, env=env, stdout=out, stderr=out)
-
-elif mode_key == "llm":
-    llm_dir = "/content/agent-data/llm/models"
-    print(f"🚀 Starting Remote LLM Agent on :{agent_port}...")
-    env = dict(
-        os.environ,
-        DATA_DIR=llm_dir,
-        LLM_DATA_DIR=llm_dir,
-        WORKER_MODE="llm",
-        PORT=str(agent_port),
-        HOST="127.0.0.1",
-        RAM_CACHE_DIR="/dev/shm/tnh_ram_cache",
-        RAM_CACHE_BUDGET_GB="40",
-        PYTHONUNBUFFERED="1",
-        PROVIDER_DOWNLOAD_SCRATCH_DIR=scratch_downloads,
-        REMOTE_AGENT_DOWNLOAD_MAX_CONCURRENT="1",
-    )
-    with open(log_agent, "w") as out:
-        subprocess.Popen([sys.executable, f"{agent_dir}/server.py"], cwd=agent_dir, env=env, stdout=out, stderr=out)
-
-elif mode_key == "tts":
-    tts_dir = "/content/agent-data/tts"
-    os.makedirs(tts_dir, exist_ok=True)
-    print(f"🚀 Starting Remote TTS Agent on :{agent_port}...")
-    env = dict(
-        os.environ,
-        TTS_DATA_DIR=tts_dir,
-        WORKER_MODE="tts",
-        PORT=str(agent_port),
-        HOST="127.0.0.1",
-        PYTHONUNBUFFERED="1",
-        PROVIDER_DOWNLOAD_SCRATCH_DIR=scratch_downloads,
-        REMOTE_AGENT_DOWNLOAD_MAX_CONCURRENT="1",
-    )
-    with open(log_agent, "w") as out:
-        subprocess.Popen([sys.executable, f"{agent_dir}/server.py"], cwd=agent_dir, env=env, stdout=out, stderr=out)
-
-# Wait for agent & llama-server healthchecks
-print("⏳ Waiting for agent healthcheck...")
-for _ in range(40):
-    try:
-        import urllib.request
-        with urllib.request.urlopen(f"http://127.0.0.1:{agent_port}/health", timeout=1) as res:
-            if res.status == 200:
-                print("✅ Agent is online and healthy!")
-                break
-    except Exception:
-        time.sleep(1)
+# 2. Start Service Pipelines concurrently
+active_threads = []
+if mode_key in ("hybrid", "model"):
+    t_comfy = threading.Thread(target=launch_comfyui_track, daemon=True)
+    t_comfy.start()
+    active_threads.append(t_comfy)
 
 if mode_key in ("hybrid", "llm"):
-    print("⏳ Waiting for llama-server healthcheck (loading weights into VRAM/RAM)...")
-    llm_ready = False
-    for i in range(120):
-        if "proc_llm" in locals() and proc_llm.poll() is not None:
-            print(f"\\n❌ llama-server process exited unexpectedly (code {proc_llm.returncode})!")
-            if os.path.exists(log_llm):
-                with open(log_llm, "r", errors="replace") as f:
-                    print("--- Last 25 lines of llama-server.log ---")
-                    print("".join(f.readlines()[-25:]))
-            break
+    t_llm = threading.Thread(target=launch_llm_track, daemon=True)
+    t_llm.start()
+    active_threads.append(t_llm)
+
+# 3. Unified Health Check Loop
+print("⏳ Waiting for services to become healthy...")
+services_to_check = [("agent", agent_port, "/health", "Remote Agent")]
+if mode_key in ("hybrid", "model"):
+    services_to_check.append(("comfy", comfy_port, "/system_stats", "ComfyUI"))
+if mode_key in ("hybrid", "llm"):
+    services_to_check.append(("llm", llm_port, "/health", "llama-server"))
+
+healthy_services = set()
+for attempt in range(120):
+    for s_name, s_port, s_path, s_label in services_to_check:
+        if s_name in healthy_services:
+            continue
+        proc = worker_procs.get(s_name)
+        if proc and proc.poll() is not None:
+            print(f"\\n❌ {s_label} process exited unexpectedly (code {proc.returncode})!")
+            log_file = log_llm if s_name == "llm" else (log_comfy if s_name == "comfy" else log_agent)
+            if os.path.exists(log_file):
+                with open(log_file, "r", errors="replace") as f:
+                    print(f"--- Last 20 lines of {os.path.basename(log_file)} ---")
+                    print("".join(f.readlines()[-20:]))
+            healthy_services.add(s_name)
+            continue
         try:
-            import urllib.request
-            with urllib.request.urlopen(f"http://127.0.0.1:{llm_port}/health", timeout=1) as res:
-                if res.status == 200:
-                    print(f"\\n✅ llama-server is online and healthy on :{llm_port}!")
-                    llm_ready = True
-                    break
+            req = urllib.request.Request(f"http://127.0.0.1:{s_port}{s_path}")
+            with urllib.request.urlopen(req, timeout=1) as res:
+                if res.status in (200, 307):
+                    print(f"✅ {s_label} is online and healthy on :{s_port}!")
+                    healthy_services.add(s_name)
         except Exception:
             pass
-        if (i + 1) % 15 == 0:
-            print(f"  ... still loading ({i + 1}s / 120s)")
-        time.sleep(1)
+    if len(healthy_services) == len(services_to_check):
+        break
+    time.sleep(1)
 
-    if not llm_ready and ("proc_llm" not in locals() or proc_llm.poll() is None):
-        print("\\n⚠️ llama-server has not responded yet after 120s. Check /content/agent-data/llm/llama-server.log if it does not come online.")
+ram_status = ram_mgr.get_status()
+print(f"✅ RAM Cache Ready: {ram_status['used_gb']} GB / {ram_status['budget_gb']} GB used ({ram_status['percent_used']}%)")
+print(f"   • Anchors in RAM: {[a['model_id'] for a in ram_status['anchor_models']]}")
 
 # 7. Cloudflare Tunnel (if selected)
 if tunnel_key == "cloudflared":

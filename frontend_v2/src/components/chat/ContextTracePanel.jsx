@@ -30,6 +30,12 @@ const ROLE_LABEL = {
     system: 'System',
 };
 
+const ROLE_ICON = {
+    user: '👤',
+    assistant: '🤖',
+    system: '⚙️',
+};
+
 const ROLE_COLOR = {
     user: 'text-sky-300 border-sky-500/25 bg-sky-500/10',
     assistant: 'text-violet-300 border-violet-500/25 bg-violet-500/10',
@@ -40,7 +46,7 @@ const ROLE_COLOR = {
 function preview(turn) {
     const text = turn.label;
     if (!text) return null;
-    const trimmed = text.length >= 48 ? `${text.slice(0, 47)}…` : text;
+    const trimmed = text.length >= 60 ? `${text.slice(0, 59)}…` : text;
     return trimmed;
 }
 
@@ -69,8 +75,9 @@ export default function ContextTracePanel({ trace }) {
             >
                 <ChevronRight size={12} className={open ? 'rotate-90 transition-transform' : 'transition-transform'} />
                 <Eye size={11} />
-                <span>What this reply was told</span>
-                <span className="ml-auto text-gray-600 font-mono">
+                <span className="font-medium text-gray-400">What this reply was told</span>
+                <span className="text-gray-500 text-3xs font-mono hidden sm:inline">(Context Inspector)</span>
+                <span className="ml-auto text-gray-600 font-mono text-3xs">
                     {turns.length} turn{turns.length === 1 ? '' : 's'} · {sections.length} sections
                     {trace.truncated ? ' · truncated' : ''}
                 </span>
@@ -78,11 +85,12 @@ export default function ContextTracePanel({ trace }) {
 
             {open && (
                 <div className="border-t border-white/10 px-3 py-2.5 flex flex-col gap-3 text-xs">
+                    <p className="text-gray-400 text-3xs leading-relaxed bg-black/20 p-2 rounded-lg border border-white/5">
+                        💡 <strong>Prompt Context Inspector:</strong> The snapshot of dialogue history and system lore that was assembled and sent to the AI model to generate this reply.
+                    </p>
 
-                    {/* The mapping, because it is the part nobody can verify
-                        without it: was a narration labelled, were speakers
-                        named. */}
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-500">
+                    {/* The mapping: was a narration labelled, were speakers named */}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-500 text-3xs">
                         <span>
                             speakers:{' '}
                             <span className="text-gray-300 font-mono">
@@ -105,41 +113,44 @@ export default function ContextTracePanel({ trace }) {
                     </div>
 
                     {Object.keys(budgets).length > 0 && (
-                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-500">
+                        <div className="flex flex-wrap gap-2 text-gray-400 items-center">
+                            <span className="text-3xs uppercase tracking-wider font-semibold text-gray-500">Autonomous Tools:</span>
                             {Object.entries(budgets).map(([name, budget]) => (
-                                <span key={name}>
-                                    {name}:{' '}
-                                    <span className="text-gray-300 font-mono">
-                                        {budget.spent ?? 0}/{budget.max}
-                                    </span>
+                                <span key={name} className="px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300 font-mono text-3xs">
+                                    <span className="opacity-80">{name === 'generate_image' ? '🎨 ' : name === 'narrate_scene' ? '📖 ' : ''}</span>
+                                    <span>{name}:</span> <span>{budget.spent ?? 0}/{budget.max}</span>
                                 </span>
                             ))}
                         </div>
                     )}
 
                     <div>
-                        <p className="text-2xs font-semibold uppercase tracking-wider text-gray-600 mb-1">
-                            Turns sent
+                        <p className="text-2xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5 flex items-center justify-between">
+                            <span>Turns sent ({turns.length})</span>
+                            <span className="text-3xs text-gray-600 normal-case">showing newest {visible.length}</span>
                         </p>
-                        <div className="flex flex-col gap-0.5">
+                        <div className="flex flex-col gap-1">
                             {visible.map((turn, idx) => {
                                 const role = turn.role || '?';
                                 const previewText = preview(turn);
                                 return (
                                     <div
                                         key={turn.role + idx}
-                                        className="flex items-baseline gap-2 px-1.5 py-1 rounded bg-gray-800/30"
+                                        className="flex items-baseline gap-2 px-2 py-1 rounded bg-gray-800/40 hover:bg-gray-800/70 transition-colors"
                                     >
-                                        <span className={`shrink-0 px-1.5 py-px rounded border font-mono ${ROLE_COLOR[role] || 'text-gray-400 border-gray-600 bg-gray-700/20'}`}>
-                                            {ROLE_LABEL[role] || role}
+                                        <span className={`shrink-0 px-1.5 py-px rounded border font-mono text-3xs ${ROLE_COLOR[role] || 'text-gray-400 border-gray-600 bg-gray-700/20'}`}>
+                                            <span aria-hidden="true" className="mr-1">{ROLE_ICON[role] || '•'}</span>
+                                            <span>{ROLE_LABEL[role] || role}</span>
                                         </span>
                                         {turn.kind && (
-                                            <span className="shrink-0 text-pink-400/70 font-mono">{turn.kind}</span>
+                                            <span className="shrink-0 text-pink-400/80 font-mono text-3xs px-1 rounded bg-pink-500/10 border border-pink-500/20">{turn.kind}</span>
                                         )}
-                                        {previewText && (
-                                            <span className="truncate text-gray-400 font-mono">{previewText}</span>
+                                        {previewText ? (
+                                            <span className="truncate text-gray-300 font-mono text-xs" title={previewText}>"{previewText}"</span>
+                                        ) : (
+                                            <span className="text-gray-600 italic text-3xs">(empty turn)</span>
                                         )}
-                                        <span className="ml-auto shrink-0 text-gray-600 font-mono tabular-nums">
+                                        <span className="ml-auto shrink-0 text-gray-500 font-mono tabular-nums text-3xs">
                                             {turn.chars ?? 0}c
                                         </span>
                                         {turn.pinned ? (
