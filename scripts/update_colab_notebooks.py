@@ -101,12 +101,18 @@ def update_cell_4_source(existing_lines: list[str]) -> list[str]:
             """import os\nimport sys\n\ntry:\n    from google.colab import drive\n    if not os.path.exists("/content/drive/MyDrive"):\n        print("📁 Mounting Google Drive at /content/drive...")\n        drive.mount("/content/drive")\nexcept Exception:\n    pass""",
         )
 
-    # 1. Ensure huggingface_hub and psutil are in extra_packages
-    if '"huggingface_hub"' not in content:
-        content = content.replace(
-            '"hydra-core", "iopath"',
-            '"hydra-core", "iopath", "huggingface_hub", "psutil"',
-        )
+    # 1. Ensure huggingface_hub, psutil, and pysocks are in extra_packages
+    if '"pysocks"' not in content:
+        if '"hydra-core", "iopath", "huggingface_hub", "psutil"' in content:
+            content = content.replace(
+                '"hydra-core", "iopath", "huggingface_hub", "psutil"',
+                '"hydra-core", "iopath", "huggingface_hub", "psutil", "pysocks"',
+            )
+        elif '"hydra-core", "iopath"' in content:
+            content = content.replace(
+                '"hydra-core", "iopath"',
+                '"hydra-core", "iopath", "huggingface_hub", "psutil", "pysocks"',
+            )
 
     # 2. Add RAM cache directory setup and ComfyUI extra_model_paths.yaml before "Environment setup complete!"
     ram_cache_setup = """
@@ -199,6 +205,7 @@ import json
 import urllib.request
 import urllib.parse
 import ssl
+import socket
 from IPython.display import display, HTML
 
 mode_key = "hybrid" if "hybrid" in WORKER_MODE else ("model" if "image" in WORKER_MODE else ("llm" if "llm" in WORKER_MODE else "tts"))
@@ -333,6 +340,8 @@ if tunnel_key == "netbird":
         NB_NETSTACK_MODE="true",
         NB_USE_NETSTACK_MODE="true",
         NB_ENABLE_NETSTACK_LOCAL_FORWARDING="true",
+        NB_SOCKS5_LISTENER_PORT="1080",
+        NB_SOCKS5_LISTENER_ADDRESS="127.0.0.1",
     )
     daemon_cmd = ["netbird", "service", "run", "--log-file", "/var/log/netbird/client.log"]
     if mgmt_url:
@@ -369,6 +378,8 @@ if tunnel_key == "netbird":
         NB_WG_KERNEL_DISABLED="true",
         NB_USE_NETSTACK_MODE="true",
         NB_ENABLE_NETSTACK_LOCAL_FORWARDING="true",
+        NB_SOCKS5_LISTENER_PORT="1080",
+        NB_SOCKS5_LISTENER_ADDRESS="127.0.0.1",
     )
 
     if config_backed_up:
@@ -452,28 +463,101 @@ if backend_url_clean:
     except Exception:
         pass
 
-    ctx = ssl._create_unverified_context()
+    target_host = ""
+    try:
+        parsed_target = urllib.parse.urlparse(backend_url_clean)
+        target_host = parsed_target.hostname or ""
+    except Exception:
+        pass
+
+    # In NetBird Userspace Netstack mode, outbound traffic to mesh peers routes via NetBird's SOCKS5 proxy (127.0.0.1:1080).
+    # Wait for the WireGuard P2P handshake with the backend peer before beginning HTTP queries.
+    if target_host and (target_host.startswith("100.") or ".netbird." in target_host):
+        print(f"⏳ Waiting for NetBird WireGuard handshake with backend peer ({target_host})...")
+        peer_connected = False
+        for _ in range(25):
+            try:
+                res_st = subprocess.run(["netbird", "status", "--detail"], capture_output=True, text=True, timeout=5)
+                out_st = res_st.stdout or ""
+                if target_host in out_st:
+                    idx = out_st.find(target_host)
+                    block = out_st[max(0, idx - 100):idx + 350]
+                    if "Status: Connected" in block:
+                        peer_connected = True
+                        break
+                elif "Peers count:" in out_st:
+                    m_peers = re.search(r"Peers count:\\s*([1-9][0-9]*)/", out_st)
+                    if m_peers:
+                        peer_connected = True
+                        break
+            except Exception:
+                pass
+            time.sleep(1)
+        if peer_connected:
+            print(f"✅ NetBird peer ({target_host}) is Connected!")
+        else:
+            print("⏳ Peer handshake taking longer than usual; proceeding with catalog retry loop...")
+
+    def fetch_backend_json(url, timeout=4):
+        # 1. SOCKS5 proxy via curl (essential for userspace Netstack mode where wt0 is not in kernel routing table)
+        for socks_port in ("1080", None):
+            try:
+                cmd = ["curl", "-fsSL", "--connect-timeout", "3", "-m", str(timeout), "-H", "Accept: application/json", "-k"]
+                if socks_port:
+                    cmd.extend(["--socks5-hostname", f"127.0.0.1:{socks_port}"])
+                cmd.append(url)
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 2)
+                if res.returncode == 0:
+                    text = res.stdout.strip()
+                    if text.startswith("{"):
+                        return json.loads(text)
+            except Exception:
+                pass
+
+        # 2. Python requests with SOCKS5 proxy (if requests & pysocks available)
+        try:
+            import requests
+            proxies = {"http": "socks5h://127.0.0.1:1080", "https": "socks5h://127.0.0.1:1080"}
+            r = requests.get(url, proxies=proxies, timeout=timeout, verify=False)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+
+        # 3. Direct Python urllib fallback
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            ctx = ssl._create_unverified_context()
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                if resp.status == 200:
+                    text = resp.read().decode("utf-8", errors="replace").strip()
+                    if text.startswith("{"):
+                        return json.loads(text)
+        except Exception:
+            pass
+
+        return None
+
     print(f"⏳ Syncing Model Catalog from backend ({backend_url_clean})...")
-    # NetBird mesh route and P2P WireGuard handshake can take 5-15s to establish
-    for attempt in range(12):
+    for attempt in range(1, 16):
         for cand in candidates:
             for path in ("/api/v2/models/catalog", "/api/v2/world-vault/llm-config/catalog"):
-                try:
-                    cat_endpoint = f"{cand}{path}"
-                    req = urllib.request.Request(cat_endpoint, headers={"Accept": "application/json"})
-                    with urllib.request.urlopen(req, timeout=3, context=ctx) as resp:
-                        if resp.status == 200:
-                            catalog = json.loads(resp.read().decode())
-                            backend_sync_ok = True
-                            catalog_source = f"backend ({cand})"
-                            break
-                except Exception:
-                    pass
+                cat_endpoint = f"{cand}{path}"
+                cat_data = fetch_backend_json(cat_endpoint, timeout=3)
+                if cat_data and isinstance(cat_data, dict) and ("models" in cat_data or "catalog" in cat_data):
+                    catalog = cat_data
+                    backend_sync_ok = True
+                    catalog_source = f"backend ({cand})"
+                    break
             if backend_sync_ok:
                 break
         if backend_sync_ok:
             break
-        time.sleep(1.5)
+        if attempt % 5 == 0:
+            print(f"  ... still attempting catalog sync ({attempt}/15)...")
+        time.sleep(2)
 
     if not backend_sync_ok:
         print(f"⚠️ Notice: Could not contact backend catalog at {backend_url_clean} after retries. Using local catalog.")
