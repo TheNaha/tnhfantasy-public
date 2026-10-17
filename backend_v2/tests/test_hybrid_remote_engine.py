@@ -125,40 +125,52 @@ async def test_image_workflow_detection_and_free_vram_in_exclusive_mode():
 
     engine.llm_engine.inference = mock_llm_inference
 
-    # Mock free comfy vram
+    # Mock free comfy vram and prepare agent vram
     free_call_count = 0
+    prepare_calls = []
+
     async def mock_free():
         nonlocal free_call_count
         free_call_count += 1
 
+    async def mock_prepare(workload, model=None):
+        prepare_calls.append((workload, model))
+
     engine._free_comfy_vram = mock_free
+    engine._prepare_agent_vram = mock_prepare
 
     image_workflow = {
         "3": {"class_type": "KSampler", "inputs": {}},
         "4": {"class_type": "SaveImage", "inputs": {}},
     }
 
-    # 1. Image generation runs: models remain warm (free Comfy VRAM is NOT called)
+    # 1. Image generation runs: models remain warm (free Comfy VRAM is NOT called, image workload prepared)
     events = [e async for e in engine.inference(image_workflow, job_id="job-1")]
     assert len(events) == 2
     assert events[-1]["event"] == "completed"
     assert free_call_count == 0
+    assert ("image", None) in prepare_calls
 
     # 2. Second image generation runs: models still remain warm
+    prepare_calls.clear()
     events2 = [e async for e in engine.inference(image_workflow, job_id="job-2")]
     assert len(events2) == 2
     assert free_call_count == 0
+    assert len(prepare_calls) == 0
 
-    # 3. Workload switch to LLM: ComfyUI VRAM is freed to yield GPU to LLM
+    # 3. Workload switch to LLM: ComfyUI VRAM is freed to yield GPU to LLM, agent vram arbiter notified
     llm_workflow = {"messages": [{"role": "user", "content": "hi"}]}
     llm_events = [e async for e in engine.inference(llm_workflow, job_id="job-3")]
     assert len(llm_events) == 2
     assert free_call_count == 1
+    assert ("llm", None) in prepare_calls
 
     # 4. Another LLM job runs: ComfyUI VRAM is already freed, no redundant /free call
+    prepare_calls.clear()
     llm_events2 = [e async for e in engine.inference(llm_workflow, job_id="job-4")]
     assert len(llm_events2) == 2
     assert free_call_count == 1
+    assert len(prepare_calls) == 0
 
 
 @pytest.mark.asyncio

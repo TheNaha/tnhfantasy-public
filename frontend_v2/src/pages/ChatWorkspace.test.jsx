@@ -52,10 +52,13 @@ const mockLorebooks = vi.hoisted(() => vi.fn());
 const mockUpdateChat = vi.hoisted(() => vi.fn());
 const mockExportChatToStory = vi.hoisted(() => vi.fn());
 
-vi.mock('../hooks/useWorldVault', () => ({
-    useChats: (...a) => mockChats(...a),
-    useMessages: (...a) => mockMessages(...a),
-    useSendMessage: (...a) => mockSendMessage(...a),
+vi.mock('../hooks/useWorldVault', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        useChats: (...a) => mockChats(...a),
+        useMessages: (...a) => mockMessages(...a),
+        useSendMessage: (...a) => mockSendMessage(...a),
     useCreateChat: (...a) => mockCreateChat(...a),
     useDeleteChat: (...a) => mockDeleteChat(...a),
     useRenameChat: (...a) => mockRenameChat(...a),
@@ -90,8 +93,17 @@ vi.mock('../hooks/useWorldVault', () => ({
     useExportChatJsonl: () => ({ mutateAsync: vi.fn(async () => ({ blob: new Blob(), filename: 'chat.jsonl' })), isPending: false }),
     useExportChatToStory: (...a) => mockExportChatToStory(...a),
     useImportChat: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useEvaluateChatDirector: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+    useUpdateChatStateSnapshot: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+    useCommitChatToCanon: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+    useCompileChatToStory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+    useRunWorldTick: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+    useReverseVisionSync: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+    useChatDirectorStream: () => ({ directorState: null, isEvaluating: false }),
+    useActiveLorebooks: () => ({ data: [] }),
     getAvatarUrl: () => '',
-}));
+    };
+});
 
 // The new-chat wizard picks the chat's Location from the library, so the
 // create payload can finally carry `location_id` — the column the Locations

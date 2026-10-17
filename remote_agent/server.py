@@ -1,5 +1,4 @@
 import os
-import sys
 import asyncio
 import base64
 import json
@@ -496,11 +495,18 @@ def _topology() -> dict:
     """
     from urllib.parse import urlparse
 
+    try:
+        from vram_manager import get_vram_manager
+        vram_info = get_vram_manager().get_vram_info()
+    except Exception:
+        vram_info = {}
+
     info: dict = {
         "worker_mode": WORKER_MODE,
         "storage_root": os.path.abspath(DATA_ROOT),
         "storage_root_env": DATA_ROOT_ENV,
         "gpu": _detect_gpu(),
+        "vram": vram_info,
     }
     if WORKER_MODE in ("llm", "hybrid"):
         info["llm_serving"] = "upstream" if UPSTREAM_OVERRIDE else "local"
@@ -1363,16 +1369,24 @@ if WORKER_MODE in ("llm", "hybrid"):
         is_streaming = bool(payload.get("stream", True))
 
         from fastapi.responses import StreamingResponse, Response
-        # In hybrid mode, ensure ComfyUI yields its VRAM back to the system before LLM token generation
-        if WORKER_MODE == "hybrid":
-            try:
-                async with httpx.AsyncClient(timeout=2.0) as free_client:
-                    await free_client.post(
-                        "http://127.0.0.1:8188/free",
-                        json={"unload_models": True, "free_memory": True},
-                    )
-            except Exception:
-                pass
+        # In hybrid or LLM mode, coordinate VRAM via VRAMManager:
+        # 1) yield ComfyUI models from VRAM (<500ms)
+        # 2) preserve Laya System 1 on CUDA
+        # 3) start llama-server Just-In-Time from /dev/shm if not already running
+        try:
+            from vram_manager import get_vram_manager
+            target_model = payload.get("model")
+            await _bounded_to_thread(get_vram_manager().prepare_for_workload, "llm", target_model)
+        except Exception:
+            if WORKER_MODE == "hybrid":
+                try:
+                    async with httpx.AsyncClient(timeout=2.0) as free_client:
+                        await free_client.post(
+                            "http://127.0.0.1:8188/free",
+                            json={"unload_models": True, "free_memory": True},
+                        )
+                except Exception:
+                    pass
 
         client = httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT)
 
@@ -1480,7 +1494,7 @@ class DecisionsRequest(BaseModel):
     questions: Any = Field(default_factory=list)
 
 
-def _evaluate_laya_cpu_sync(model_id: str, context_text: str, questions: Any) -> Dict[str, Any]:
+def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dict[str, Any]:
     import laya  # type: ignore
 
     repo_or_path = _LAYA_REPO_MAP.get(model_id, model_id)
@@ -1501,10 +1515,16 @@ def _evaluate_laya_cpu_sync(model_id: str, context_text: str, questions: Any) ->
     except Exception:
         pass
 
-    laya_model = _LAYA_LOADED_MODELS.get(repo_or_path)
-    if laya_model is None:
-        laya_model = laya.load(repo_or_path, device="cpu")
-        _LAYA_LOADED_MODELS[repo_or_path] = laya_model
+    device = "cpu"
+    try:
+        from vram_manager import get_vram_manager
+        vram_mgr = get_vram_manager()
+        laya_model, device = vram_mgr.get_or_load_laya(model_id, repo_or_path)
+    except Exception:
+        laya_model = _LAYA_LOADED_MODELS.get(repo_or_path)
+        if laya_model is None:
+            laya_model = laya.load(repo_or_path, device="cpu")
+            _LAYA_LOADED_MODELS[repo_or_path] = laya_model
 
     if isinstance(questions, dict):
         q_list = [{"key": k, **v} for k, v in questions.items() if isinstance(v, dict)]
@@ -1586,20 +1606,25 @@ def _evaluate_laya_cpu_sync(model_id: str, context_text: str, questions: Any) ->
     return {
         "status": "success",
         "model_id": model_id,
-        "engine_used": "remote_laya_cpu",
+        "engine_used": f"remote_laya_{device}",
         "provider_tier": "remote_laya",
+        "device": device,
         "latency_ms": latency_ms,
         "answers": answers,
         "results": answers,
     }
 
 
+def _evaluate_laya_cpu_sync(model_id: str, context_text: str, questions: Any) -> Dict[str, Any]:
+    return _evaluate_laya_sync(model_id, context_text, questions)
+
+
 @app.post("/v1/decisions", dependencies=[Depends(verify_token)])
 async def evaluate_decisions(req: DecisionsRequest):
-    """Evaluate parallel typed System 1 questions using Laya on CPU/RAM (0 MB GPU VRAM)."""
+    """Evaluate parallel typed System 1 questions using Laya (GPU-accelerated when VRAM available, CPU fallback)."""
     try:
         res = await _bounded_to_thread(
-            _evaluate_laya_cpu_sync,
+            _evaluate_laya_sync,
             req.model,
             req.context or req.state,
             req.questions,
@@ -1622,10 +1647,50 @@ async def evaluate_decisions(req: DecisionsRequest):
             status_code=502,
             content={
                 "status": "error",
-                "message": f"Laya CPU evaluation failed: {exc}",
+                "message": f"Laya evaluation failed: {exc}",
                 "retryable": False,
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# Dynamic VRAM Arbiter Routes
+# ---------------------------------------------------------------------------
+class VramPrepareRequest(BaseModel):
+    workload: str = "image"
+    model: Optional[str] = None
+    min_free_vram_mb: Optional[int] = None
+
+
+@app.post("/vram/prepare", dependencies=[Depends(verify_token)])
+async def vram_prepare(req: VramPrepareRequest):
+    """Coordinate VRAM allocation before dispatching a workload."""
+    from vram_manager import get_vram_manager
+    mgr = get_vram_manager()
+    res = await _bounded_to_thread(
+        mgr.prepare_for_workload,
+        req.workload,
+        model_id=req.model,
+        min_free_vram_mb=req.min_free_vram_mb or 0,
+    )
+    return res
+
+
+@app.get("/vram/status", dependencies=[Depends(verify_token)])
+async def vram_status():
+    """Report live GPU VRAM usage, device details, and component states."""
+    from vram_manager import get_vram_manager
+    mgr = get_vram_manager()
+    return mgr.get_vram_info()
+
+
+@app.post("/vram/stop-llm", dependencies=[Depends(verify_token)])
+async def vram_stop_llm():
+    """Explicitly stop llama-server to immediately recover 10-18GB VRAM."""
+    from vram_manager import get_vram_manager
+    mgr = get_vram_manager()
+    stopped = await _bounded_to_thread(mgr.stop_llama)
+    return {"status": "success" if stopped else "noop", "vram": mgr.get_vram_info()}
 
 
 # ---------------------------------------------------------------------------

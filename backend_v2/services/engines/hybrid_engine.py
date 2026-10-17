@@ -172,6 +172,19 @@ class HybridRemoteEngine(InProcessEngine):
         except Exception as exc:
             logger.debug("hybrid_comfy_vram_free_ignored", provider_id=self.provider_id, error=str(exc))
 
+    async def _prepare_agent_vram(self, workload: str, model: Optional[str] = None) -> None:
+        """Notify remote agent's VRAM Arbiter to prepare GPU memory for workload."""
+        try:
+            client = self.image_engine.get_agent_client()
+            await client.post(
+                "/vram/prepare",
+                json={"workload": workload, "model": model},
+                timeout=5.0,
+            )
+            logger.debug("hybrid_vram_prepare_notified", provider_id=self.provider_id, workload=workload)
+        except Exception as exc:
+            logger.debug("hybrid_vram_prepare_ignored", provider_id=self.provider_id, error=str(exc))
+
     # ----------------------------------------------------------------------
     # Execution & Routing
     # ----------------------------------------------------------------------
@@ -206,6 +219,8 @@ class HybridRemoteEngine(InProcessEngine):
             # Strict mutual exclusion for single-GPU budget nodes (e.g. L4, T4)
             async with self._gpu_lock:
                 if is_image:
+                    if self._last_workload != "image":
+                        await self._prepare_agent_vram("image")
                     self._last_workload = "image"
                     async for event in self.image_engine.inference(
                         workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
@@ -215,6 +230,9 @@ class HybridRemoteEngine(InProcessEngine):
                     if self._last_workload != "llm":
                         # Yield VRAM from ComfyUI to system/LLM before running LLM on budget GPU
                         await self._free_comfy_vram()
+                        await self._prepare_agent_vram(
+                            "llm", model=workflow.get("model") if isinstance(workflow, dict) else None
+                        )
                         self._last_workload = "llm"
                     async for event in self.llm_engine.inference(
                         workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
