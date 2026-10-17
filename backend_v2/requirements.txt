@@ -34,6 +34,8 @@ python-multipart>=0.0.6
 
 # Character cards (optional CBOR decoding for non-standard V3 cards)
 cbor2>=5.6.0
+# PDF text extraction for Story / Document -> World onboarding
+pypdf>=4.0.0
 
 # WebSocket (Socket.IO for bidirectional realtime communication)
 python-socketio[asyncio_client]>=5.10.0

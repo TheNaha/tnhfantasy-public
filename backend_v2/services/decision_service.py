@@ -30,6 +30,7 @@ from services.decision_schema import (
     heuristic_director_decision,
     parse_director_result,
     parse_generative_fallback_json,
+    resolve_fate_check,
 )
 from services.laya_runner import get_laya_runner
 from services.llm_config import get_active_models, resolve_default_provider
@@ -361,6 +362,7 @@ class DecisionService:
                 allow_image_generation=allow_image_generation,
                 allow_narration=allow_narration,
                 latency_ms=(time.perf_counter() - started) * 1000,
+                state_snapshot=state_snapshot,
             )
             res.engine_used = "disabled"
             res.model_id = "disabled"
@@ -381,7 +383,7 @@ class DecisionService:
                 allow_image_generation=allow_image_generation,
             )
             if remote_res is not None:
-                return remote_res
+                return resolve_fate_check(remote_res, state_snapshot=state_snapshot, context_text=context_text)
 
             modal_res = await self._try_modal_laya(
                 context_text=context_text,
@@ -390,7 +392,7 @@ class DecisionService:
                 allow_image_generation=allow_image_generation,
             )
             if modal_res is not None:
-                return modal_res
+                return resolve_fate_check(modal_res, state_snapshot=state_snapshot, context_text=context_text)
 
             beam_res = await self._try_beam_laya(
                 context_text=context_text,
@@ -399,7 +401,7 @@ class DecisionService:
                 allow_image_generation=allow_image_generation,
             )
             if beam_res is not None:
-                return beam_res
+                return resolve_fate_check(beam_res, state_snapshot=state_snapshot, context_text=context_text)
 
             # Tier 2: Local Backend CPU LayaRunner
             local_res = await self._try_local_laya(
@@ -409,7 +411,7 @@ class DecisionService:
                 allow_image_generation=allow_image_generation,
             )
             if local_res is not None:
-                return local_res
+                return resolve_fate_check(local_res, state_snapshot=state_snapshot, context_text=context_text)
 
         # Tier 3: Generative JSON fallback on active `util` LLM provider
         # Attempted when explicitly requested ("same_as_util") OR as fallback when Tier 1 & Tier 2 both failed
@@ -420,7 +422,7 @@ class DecisionService:
             allow_narration=allow_narration,
         )
         if gen_res is not None:
-            return gen_res
+            return resolve_fate_check(gen_res, state_snapshot=state_snapshot, context_text=context_text)
 
         # Tier 4: Deterministic Heuristic Fallback
         return heuristic_director_decision(
@@ -430,4 +432,5 @@ class DecisionService:
             allow_image_generation=allow_image_generation,
             allow_narration=allow_narration,
             latency_ms=(time.perf_counter() - started) * 1000,
+            state_snapshot=state_snapshot,
         )

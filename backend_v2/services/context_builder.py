@@ -838,6 +838,20 @@ def build_system_prompt_sections(
 
     if state_snapshot and isinstance(state_snapshot, dict):
         snap_lines: list[str] = []
+        clock = state_snapshot.get("world_clock")
+        if isinstance(clock, dict):
+            day_num = clock.get("day", 1)
+            tod = clock.get("time_of_day") or story_time or "Unspecified"
+            snap_lines.append(f"World Clock: Day {day_num} · {tod}")
+            chrono = clock.get("chronology_log")
+            if isinstance(chrono, list) and chrono:
+                recent_events = [
+                    f"Day {c.get('day', 1)} ({c.get('time', '')}): {c.get('event', '')}"
+                    for c in chrono[-3:]
+                    if isinstance(c, dict) and c.get("event")
+                ]
+                if recent_events:
+                    snap_lines.append("Recent Canon Timeline: " + " -> ".join(recent_events))
         if state_snapshot.get("character_mood"):
             snap_lines.append(f"Character Mood: {state_snapshot['character_mood']}")
         if state_snapshot.get("current_activity"):
@@ -846,6 +860,21 @@ def build_system_prompt_sections(
             snap_lines.append(f"Current Attire/Outfit: {state_snapshot['character_outfit']}")
         if state_snapshot.get("relationship_status"):
             snap_lines.append(f"Relationship Dynamic: {state_snapshot['relationship_status']}")
+        rels = state_snapshot.get("relationships")
+        if isinstance(rels, list) and rels:
+            rel_formatted = []
+            for r in rels:
+                if isinstance(r, dict) and r.get("target_name") and r.get("status"):
+                    aff = f" (affinity {r['affinity']}%)" if isinstance(r.get("affinity"), (int, float)) else ""
+                    rel_formatted.append(f"{r['target_name']}: {r['status']}{aff}")
+            if rel_formatted:
+                snap_lines.append("Relationship Network: " + " | ".join(rel_formatted))
+        char_skills = state_snapshot.get("character_skills")
+        if isinstance(char_skills, list) and char_skills:
+            snap_lines.append(f"Character Skillset: {', '.join(str(s) for s in char_skills)}")
+        user_skills = state_snapshot.get("user_skills")
+        if isinstance(user_skills, list) and user_skills:
+            snap_lines.append(f"Player/User Skillset: {', '.join(str(s) for s in user_skills)}")
         inv = state_snapshot.get("inventory")
         if isinstance(inv, list) and inv:
             snap_lines.append(f"Held Items / Inventory: {', '.join(str(x) for x in inv)}")
@@ -860,6 +889,30 @@ def build_system_prompt_sections(
                 "key": "state_snapshot",
                 "label": "Live State Snapshot (Statekeeper)",
                 "content": "[Live Scene & Character State]\n" + "\n".join(snap_lines),
+                "source": "world_state",
+            })
+
+        crossover_ctx = state_snapshot.get("crossover_context")
+        if isinstance(crossover_ctx, str) and crossover_ctx.strip():
+            sections.append({
+                "key": "crossover_context",
+                "label": "World Crossover Context",
+                "content": f"[World Crossover & Transmigration Rules]\n{crossover_ctx.strip()}",
+                "source": "world_state",
+            })
+
+        fate_enabled = bool(state_snapshot.get("fate_check_enabled", False))
+        fate_override = str(state_snapshot.get("fate_outcome_override") or "auto").strip().lower()
+        fate_directive = state_snapshot.get("last_fate_directive")
+        if (fate_enabled or fate_override != "auto") and isinstance(fate_directive, str) and fate_directive.strip():
+            sections.append({
+                "key": "fate_check",
+                "label": "Director Fate / Skill Check",
+                "content": (
+                    "[Director Fate / Skill Check Outcome]\n"
+                    f"{fate_directive.strip()}\n"
+                    "Weave this outcome naturally into the narrative without mentioning dice rolls or game mechanics."
+                ),
                 "source": "world_state",
             })
 

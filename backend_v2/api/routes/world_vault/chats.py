@@ -653,6 +653,9 @@ def _import_chat_sync(
 
 @router.post("", response_model=Chat)
 def create_chat(req: CreateChatRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = None
+    persona = None
+    scenario = None
     if req.character_id:
         character = character_repo.get(req.character_id)
         if not character:
@@ -671,21 +674,55 @@ def create_chat(req: CreateChatRequest, session: Session = Depends(get_session),
     # chat with that character, so link it alongside any requested lorebooks.
     active_lorebook_ids = link_embedded_lorebook(req.active_lorebook_ids, character if req.character_id else None)
 
+    story_location = req.story_location or (character.default_location if character and character.default_location else None)
+    story_time = req.story_time or (character.default_time if character and character.default_time else None)
+    location_id = req.location_id
+    if story_location and not location_id:
+        from core.entities import Location
+        loc_stmt = select(Location).where(func.lower(Location.name) == story_location.strip().lower())
+        effective_world_id = req.world_id or (character.world_id if character else None)
+        if effective_world_id:
+            loc_stmt = loc_stmt.where(Location.world_id == effective_world_id)
+        matched_loc = session.exec(loc_stmt).first()
+        if matched_loc:
+            location_id = matched_loc.id
+
+    additional_chars = _load_characters_ordered(session, None, req.additional_character_ids or [])
+
+    from services.updater_service import seed_initial_state_snapshot
+    initial_snapshot = dict(req.state_snapshot or {})
+    if character or scenario or req.override_greeting or req.state_snapshot:
+        initial_snapshot = seed_initial_state_snapshot(
+            character=character,
+            scenario=scenario,
+            persona=persona,
+            persona_name=req.persona_name or (persona.name if persona else None),
+            story_location=story_location,
+            story_time=story_time,
+            override_greeting=req.override_greeting,
+            additional_characters=additional_chars,
+            existing_snapshot=initial_snapshot,
+        )
+
     chat = Chat(
         name=req.name,
         character_id=req.character_id,
+        additional_character_ids=list(req.additional_character_ids or []),
         scenario_id=req.scenario_id,
         chat_type=req.chat_type,
-        persona_name=req.persona_name,
-        story_time=req.story_time,
-        story_location=req.story_location,
-        location_id=req.location_id,
+        persona_name=req.persona_name or (persona.name if persona else None),
+        persona_description=persona.description if persona and persona.description else None,
+        story_time=story_time,
+        story_location=story_location,
+        location_id=location_id,
         active_lorebook_ids=active_lorebook_ids,
         max_agentic_depth=req.max_agentic_depth,
+        max_agentic_images=req.max_agentic_images,
+        max_agentic_narrations=req.max_agentic_narrations,
         idle_sim_enabled=req.idle_sim_enabled,
         persona_id=req.persona_id,
         director_enabled=req.director_enabled,
-        state_snapshot=req.state_snapshot or {},
+        state_snapshot=initial_snapshot,
     )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
@@ -2653,11 +2690,22 @@ class PatchStateSnapshotRequest(BaseModel):
     current_activity: str | None = None
     character_outfit: str | None = None
     relationship_status: str | None = None
+    relationships: list[dict[str, Any]] | None = None
+    character_skills: list[str] | None = None
+    user_skills: list[str] | None = None
+    wardrobe: list[dict[str, Any]] | None = None
+    fate_check_enabled: bool | None = None
+    fate_difficulty: str | None = None
+    fate_outcome_override: str | None = None
+    world_clock: dict[str, Any] | None = None
+    crossover_context: str | None = None
     scene_summary: str | None = None
     inventory: list[str] | None = None
     scene_tension: float | None = None
     emotional_tone: str | None = None
     character_expression: str | None = None
+    story_location: str | None = None
+    story_time: str | None = None
 
 
 @router.post("/{chat_id}/director/evaluate")
@@ -2750,11 +2798,23 @@ def patch_chat_state_snapshot(
     snapshot = dict(chat.state_snapshot or {})
     updates = request.model_dump(exclude_unset=True)
     nested = updates.pop("state_snapshot", None)
+    new_loc = updates.pop("story_location", None)
+    new_time = updates.pop("story_time", None)
     if isinstance(nested, dict):
         for k, v in nested.items():
             snapshot[k] = v
     for k, v in updates.items():
         snapshot[k] = v
+    if new_loc is not None:
+        chat.story_location = new_loc
+        wc = dict(snapshot.get("world_clock") or {})
+        wc["location"] = new_loc
+        snapshot["world_clock"] = wc
+    if new_time is not None:
+        chat.story_time = new_time
+        wc = dict(snapshot.get("world_clock") or {})
+        wc["time_of_day"] = new_time
+        snapshot["world_clock"] = wc
     snapshot["statekeeper_updated_at"] = datetime.now(timezone.utc).isoformat()
 
     chat.state_snapshot = snapshot
@@ -2762,6 +2822,12 @@ def patch_chat_state_snapshot(
     session.add(chat)
     session.commit()
     session.refresh(chat)
-    return {"chat_id": chat_id, "state_snapshot": chat.state_snapshot}
+    return {
+        "chat_id": chat_id,
+        "story_location": chat.story_location,
+        "story_time": chat.story_time,
+        "state_snapshot": chat.state_snapshot,
+    }
+
 
 

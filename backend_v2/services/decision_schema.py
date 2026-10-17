@@ -49,6 +49,13 @@ class DirectorDecisionResult:
     triggered_gates: List[str] = field(default_factory=list)
     should_run_updater: bool = False
 
+    # Category E: Toggleable Fate / Skill Check (Anti-Godmoding & Narrative Control)
+    is_risky_action_probability: float = 0.15
+    action_difficulty: float = 2.0
+    fate_outcome: Optional[str] = None
+    fate_directive: Optional[str] = None
+    matched_skills: List[str] = field(default_factory=list)
+
     # Telemetry
     engine_used: str = "heuristic"
     model_id: str = "heuristic"
@@ -60,16 +67,23 @@ class DirectorDecisionResult:
         tension_labels = {1: "calm", 2: "warm", 3: "rising", 4: "high", 5: "climactic"}
         s_int = max(1, min(3, round(self.pacing_speed)))
         speed_labels = {1: "slow-motion", 2: "real-time", 3: "fast-forward"}
+        d_int = max(1, min(5, round(self.action_difficulty)))
+        diff_labels = {1: "trivial", 2: "easy", 3: "moderate", 4: "hard", 5: "extreme"}
         data["provider_tier"] = self.engine_used
         data["scene_tension_label"] = tension_labels.get(t_int, "normal")
         data["pacing_speed_label"] = speed_labels.get(s_int, "real-time")
+        data["action_difficulty_label"] = diff_labels.get(d_int, "moderate")
         data["continue_chain_prob"] = self.continue_chain_probability
         data["trigger_image_prob"] = self.trigger_image_probability
-        data["director_instruction"] = (
+        data["is_risky_action_prob"] = self.is_risky_action_probability
+        base_instruction = (
             f"Pacing: {self.pacing_directive} ({speed_labels.get(s_int, 'real-time')}) | "
             f"Tension: {self.scene_tension}/5 ({tension_labels.get(t_int, 'normal')}) | "
             f"Tone: {self.emotional_tone} | Expression: {self.character_expression}"
         )
+        if self.fate_directive:
+            base_instruction += f" | Fate Check: {self.fate_outcome} ({self.fate_directive})"
+        data["director_instruction"] = base_instruction
         return data
 
 
@@ -226,7 +240,130 @@ def build_director_questions(
                 "that belongs in the World Vault lorebook."
             ),
         },
+        # --- Category E: Fate / Skill Check Gate (Toggleable Anti-Godmoding) ---
+        {
+            "key": "is_risky_action",
+            "type": "noul",
+            "statement": (
+                "The player or character is attempting a risky, contested, dangerous, or difficult "
+                "physical, social, or magical feat where success is not automatically guaranteed."
+            ),
+        },
+        {
+            "key": "action_difficulty",
+            "type": "score",
+            "question": "If an action or feat is being attempted, how difficult is it to pull off?",
+            "rubric": {
+                1: "Trivial: everyday action that almost anyone can do effortlessly.",
+                2: "Easy: requires basic competence or mild effort.",
+                3: "Moderate: requires training, focus, or favorable circumstances.",
+                4: "Hard: high risk of failure without specialized skill or equipment.",
+                5: "Extreme: near-impossible feat against overwhelming odds.",
+            },
+        },
     ]
+
+
+FATE_OUTCOME_DESCRIPTIONS: Dict[str, str] = {
+    "critical_success": "Critical Success — the action succeeds brilliantly with an unexpected advantage or flair.",
+    "success": "Clean Success — the attempted action succeeds as intended.",
+    "success_with_cost": "Success with Cost — the action succeeds, but introduces a complication, toll, or partial setback.",
+    "complication": "Complication / Partial Failure — the action falls short or goes sideways, creating new tension.",
+    "failure": "Failure — the attempted feat fails and the character/player must deal with the consequences.",
+}
+
+DIFFICULTY_PRESET_MAP: Dict[str, float] = {
+    "trivial": 1.0,
+    "easy": 2.0,
+    "moderate": 3.0,
+    "hard": 4.0,
+    "extreme": 5.0,
+    "1": 1.0,
+    "2": 2.0,
+    "3": 3.0,
+    "4": 4.0,
+    "5": 5.0,
+}
+
+
+def resolve_fate_check(
+    decision: DirectorDecisionResult,
+    *,
+    state_snapshot: Optional[Dict[str, Any]] = None,
+    context_text: str = "",
+) -> DirectorDecisionResult:
+    """Apply toggleable Fate / Skill Check resolution onto `decision`.
+
+    Honours user-editable settings stored in `state_snapshot`:
+      - `fate_check_enabled`: bool (default False — opt-in so users who want pure freeform aren't restricted,
+        unless `outcome_override` is explicitly set to a forced outcome)
+      - `fate_difficulty`: "auto" | "trivial" | "easy" | "moderate" | "hard" | "extreme" (or 1..5)
+      - `fate_outcome_override`: "auto" | "critical_success" | "success" | "success_with_cost" | "complication" | "failure"
+      - `character_skills`: list[str]
+      - `user_skills`: list[str]
+    """
+    snap = state_snapshot or {}
+    fate_enabled = bool(snap.get("fate_check_enabled", False))
+    diff_setting = str(snap.get("fate_difficulty") or "auto").strip().lower()
+    outcome_override = str(snap.get("fate_outcome_override") or "auto").strip().lower()
+
+    # Apply manual difficulty override if the user pinned one
+    if diff_setting in DIFFICULTY_PRESET_MAP:
+        decision.action_difficulty = DIFFICULTY_PRESET_MAP[diff_setting]
+
+    # Match skills from character_skills and user_skills against recent text
+    char_skills = [str(s).strip() for s in (snap.get("character_skills") or []) if str(s).strip()]
+    user_skills = [str(s).strip() for s in (snap.get("user_skills") or []) if str(s).strip()]
+    all_skills = char_skills + user_skills
+    recent_lower = (context_text or "")[-600:].lower()
+    matched: List[str] = []
+    for skill in all_skills:
+        # Match either the whole skill phrase or any significant word >= 4 chars
+        s_low = skill.lower()
+        words = [w for w in re.split(r"[^a-z0-9]+", s_low) if len(w) >= 4]
+        if s_low in recent_lower or any(w in recent_lower for w in words):
+            if skill not in matched:
+                matched.append(skill)
+    decision.matched_skills = matched
+
+    # If the user forced a specific outcome, apply it even if fate_check_enabled was off
+    if outcome_override in FATE_OUTCOME_DESCRIPTIONS:
+        decision.fate_outcome = outcome_override
+        skill_note = f" (Relevant skills: {', '.join(matched)})" if matched else ""
+        decision.fate_directive = f"{FATE_OUTCOME_DESCRIPTIONS[outcome_override]}{skill_note}"
+        return decision
+
+    if not fate_enabled:
+        decision.fate_outcome = None
+        decision.fate_directive = None
+        return decision
+
+    # When enabled in auto mode, trigger when risky action >= 0.50 or user pinned a non-auto difficulty
+    if decision.is_risky_action_probability < 0.50 and diff_setting == "auto":
+        decision.fate_outcome = None
+        decision.fate_directive = None
+        return decision
+
+    # Effective difficulty is reduced by matched skills (-0.75 per relevant skill, min 1.0)
+    effective_diff = max(1.0, decision.action_difficulty - (0.75 * len(matched)))
+
+    if effective_diff <= 1.6:
+        outcome = "critical_success"
+    elif effective_diff <= 2.6:
+        outcome = "success"
+    elif effective_diff <= 3.5:
+        outcome = "success_with_cost"
+    elif effective_diff <= 4.3:
+        outcome = "complication"
+    else:
+        outcome = "failure"
+
+    decision.fate_outcome = outcome
+    skill_note = f" [Skills applied: {', '.join(matched)}]" if matched else ""
+    decision.fate_directive = (
+        f"Difficulty {decision.action_difficulty:.1f}/5 -> {FATE_OUTCOME_DESCRIPTIONS[outcome]}{skill_note}"
+    )
+    return decision
 
 
 def format_director_context(
@@ -262,6 +399,21 @@ def format_director_context(
             val = snap.get(key)
             if val:
                 lines.append(f"{label}: {val}")
+        rels = snap.get("relationships")
+        if isinstance(rels, list) and rels:
+            rel_parts = [
+                f"{r.get('target_name', 'Unknown')}: {r.get('status', '')}"
+                for r in rels
+                if isinstance(r, dict) and r.get("status")
+            ]
+            if rel_parts:
+                lines.append(f"Relationships: {' | '.join(rel_parts)}")
+        char_skills = snap.get("character_skills")
+        if isinstance(char_skills, list) and char_skills:
+            lines.append(f"{character_name} Skillset: {', '.join(str(x) for x in char_skills)}")
+        user_skills = snap.get("user_skills")
+        if isinstance(user_skills, list) and user_skills:
+            lines.append(f"{user_name} Skillset: {', '.join(str(x) for x in user_skills)}")
         inv = snap.get("inventory")
         if isinstance(inv, list) and inv:
             lines.append(f"Notable Inventory/Items: {', '.join(str(x) for x in inv)}")
@@ -288,6 +440,8 @@ def parse_director_result(
     model_id: str = "laya_multilingual",
     latency_ms: float = 0.0,
     allow_image_generation: bool = True,
+    state_snapshot: Optional[Dict[str, Any]] = None,
+    context_text: str = "",
 ) -> DirectorDecisionResult:
     """Normalize raw output from Laya / `/v1/decisions` into `DirectorDecisionResult`."""
 
@@ -349,7 +503,10 @@ def parse_director_result(
         if prob >= UPDATER_GATE_THRESHOLD:
             triggered_gates.append(gate_key)
 
-    return DirectorDecisionResult(
+    is_risky_prob = _noul("is_risky_action", 0.15)
+    action_diff = _score("action_difficulty", 2.0, 1.0, 5.0)
+
+    result = DirectorDecisionResult(
         next_speaker=next_speaker,
         next_speaker_probabilities=next_speaker_probs,
         continue_chain_probability=continue_chain_prob,
@@ -365,10 +522,13 @@ def parse_director_result(
         updater_gates=updater_gates,
         triggered_gates=triggered_gates,
         should_run_updater=len(triggered_gates) > 0,
+        is_risky_action_probability=is_risky_prob,
+        action_difficulty=action_diff,
         engine_used=engine_used,
         model_id=model_id,
         latency_ms=round(latency_ms, 1),
     )
+    return resolve_fate_check(result, state_snapshot=state_snapshot, context_text=context_text)
 
 
 def build_generative_fallback_prompt(
@@ -401,7 +561,9 @@ def build_generative_fallback_prompt(
         '  "gate_character_state": float 0.0 to 1.0,\n'
         '  "gate_inventory_or_items": float 0.0 to 1.0,\n'
         '  "gate_durable_memory": float 0.0 to 1.0,\n'
-        '  "gate_lore_discovery": float 0.0 to 1.0\n'
+        '  "gate_lore_discovery": float 0.0 to 1.0,\n'
+        '  "is_risky_action": float 0.0 to 1.0,\n'
+        '  "action_difficulty": float 1.0 to 5.0\n'
         "}\n\n"
         f"{context_text}"
     )
@@ -432,6 +594,7 @@ def heuristic_director_decision(
     allow_image_generation: bool = True,
     allow_narration: bool = True,
     latency_ms: float = 0.5,
+    state_snapshot: Optional[Dict[str, Any]] = None,
 ) -> DirectorDecisionResult:
     """Tier 4 deterministic heuristic fallback when Laya and remote workers are offline."""
     lower = (context_text or "").lower()
@@ -513,6 +676,12 @@ def heuristic_director_decision(
         for w in ("kingdom", "ancient", "guild", "order of", "artifact", "legend", "empire", "magic", "district")
     ) else 0.18
 
+    is_risky = 0.72 if any(
+        w in recent_tail
+        for w in ("try to", "attempt", "hack", "dodge", "strike", "sneak", "pick the lock", "convince", "cast", "leap", "disarm")
+    ) else 0.18
+    action_diff = 3.5 if is_risky >= 0.5 else 2.0
+
     raw_answers = {
         "next_speaker": {"choice": next_speaker, "probabilities": speaker_probs},
         "continue_chain": {"probability": continue_prob},
@@ -528,6 +697,8 @@ def heuristic_director_decision(
         "gate_inventory_or_items": {"probability": gate_items},
         "gate_durable_memory": {"probability": gate_memory},
         "gate_lore_discovery": {"probability": gate_lore},
+        "is_risky_action": {"probability": is_risky},
+        "action_difficulty": {"score": action_diff},
     }
     return parse_director_result(
         raw_answers,
@@ -535,4 +706,6 @@ def heuristic_director_decision(
         model_id="heuristic_rules",
         latency_ms=latency_ms,
         allow_image_generation=allow_image_generation,
+        state_snapshot=state_snapshot,
+        context_text=context_text,
     )

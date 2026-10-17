@@ -1027,6 +1027,14 @@ export default function Characters() {
                         onChange={handleImportCard}
                     />
                     <button
+                        onClick={() => navigate('/world-architect')}
+                        className="btn-secondary flex items-center gap-2 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/15"
+                        title="Open World Architect to onboard cards with Vision + full World Blueprint"
+                    >
+                        <Sparkles size={18} />
+                        World Architect
+                    </button>
+                    <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={importCharacterCard.isPending}
                         className="btn-secondary flex items-center gap-2 disabled:opacity-50"

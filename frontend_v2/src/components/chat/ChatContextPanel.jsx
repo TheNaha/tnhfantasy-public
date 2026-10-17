@@ -3,9 +3,19 @@ import { memo, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
     User, Clock, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown, NotebookPen,
-    MapPin, Plus, Edit2, Calendar, Layers,
+    MapPin, Plus, Edit2, Calendar, Layers, Shield, Users, Compass, Shirt, Eye,
 } from 'lucide-react';
-import { getAvatarUrl, useEvaluateChatDirector, useUpdateChatStateSnapshot } from '../../hooks/useWorldVault';
+import {
+    getAvatarUrl,
+    useEvaluateChatDirector,
+    useUpdateChatStateSnapshot,
+    useCommitChatToCanon,
+    useCompileChatToStory,
+    useRunWorldTick,
+    useReverseVisionSync,
+    useFastTravelChat,
+    useVisualizeInventoryItem,
+} from '../../hooks/useWorldVault';
 import { useLocations } from '../../hooks/useLocations';
 import { isJobComplete, isJobFailed, isJobRunning } from '../../utils/jobStatus';
 import ContextField from './ContextField';
@@ -1034,9 +1044,27 @@ function SceneOverridesSection({ chat, onSave }) {
 }
 
 function DirectorStatekeeperSection({ chat, onSave }) {
+    const navigate = useNavigate();
     const evaluateDirector = useEvaluateChatDirector();
     const updateSnapshot = useUpdateChatStateSnapshot();
+    const commitCanon = useCommitChatToCanon();
+    const compileStory = useCompileChatToStory();
+    const runWorldTick = useRunWorldTick();
+    const reverseVision = useReverseVisionSync();
+    const fastTravel = useFastTravelChat();
+    const visualizeItem = useVisualizeInventoryItem();
+    const { data: allLocations = [] } = useLocations();
+
     const [inventoryInput, setInventoryInput] = useState('');
+    const [charSkillInput, setCharSkillInput] = useState('');
+    const [userSkillInput, setUserSkillInput] = useState('');
+    const [newRelTarget, setNewRelTarget] = useState('');
+    const [newRelType, setNewRelType] = useState('character');
+    const [newRelStatus, setNewRelStatus] = useState('');
+    const [newRelAffinity] = useState('neutral');
+    const [wardrobeNameInput, setWardrobeNameInput] = useState('');
+    const [fastTravelLocInput, setFastTravelLocInput] = useState('');
+    const [actionFeedback, setActionFeedback] = useState('');
 
     if (!chat?.id) return null;
 
@@ -1046,11 +1074,35 @@ function DirectorStatekeeperSection({ chat, onSave }) {
     const tension = Number(snap.scene_tension || lastDecision?.scene_tension || 2);
     const tensionLabel = snap.scene_tension_label || lastDecision?.scene_tension_label || 'normal';
     const inventoryList = Array.isArray(snap.inventory) ? snap.inventory : [];
+    const charSkills = Array.isArray(snap.character_skills) ? snap.character_skills : [];
+    const userSkills = Array.isArray(snap.user_skills) ? snap.user_skills : [];
+    const wardrobeList = Array.isArray(snap.wardrobe) ? snap.wardrobe : [];
+    const relationshipsList = Array.isArray(snap.relationships) ? snap.relationships : [];
+    const worldClock = snap.world_clock && typeof snap.world_clock === 'object' ? snap.world_clock : null;
+    const chronologyLog = Array.isArray(worldClock?.chronology_log) ? worldClock.chronology_log : [];
+
+    const fateEnabled = Boolean(snap.fate_check_enabled);
+    const fateDifficulty = snap.fate_difficulty || 'auto';
+    const fateOutcomeOverride = snap.fate_outcome_override || 'auto';
+    const lastFateOutcome = snap.last_fate_outcome || lastDecision?.fate_outcome || null;
+    const lastFateDirective = snap.last_fate_directive || lastDecision?.fate_directive || null;
+    const matchedSkills = Array.isArray(snap.matched_skills)
+        ? snap.matched_skills
+        : (Array.isArray(lastDecision?.matched_skills) ? lastDecision.matched_skills : []);
+
+    const worldLocations = chat.world_id
+        ? allLocations.filter((l) => l.world_id === chat.world_id)
+        : allLocations.slice(0, 12);
+
+    const flashFeedback = (msg) => {
+        setActionFeedback(msg);
+        setTimeout(() => setActionFeedback(''), 3500);
+    };
 
     const handleFieldSave = (key, val) => {
         updateSnapshot.mutate({
             chatId: chat.id,
-            state_snapshot: { [key]: val || '' },
+            state_snapshot: { [key]: val },
         });
     };
 
@@ -1060,18 +1112,103 @@ function DirectorStatekeeperSection({ chat, onSave }) {
         if (!item) return;
         const next = Array.from(new Set([...inventoryList, item]));
         setInventoryInput('');
-        updateSnapshot.mutate({
-            chatId: chat.id,
-            state_snapshot: { inventory: next },
-        });
+        handleFieldSave('inventory', next);
     };
 
     const handleRemoveInventory = (item) => {
-        const next = inventoryList.filter((x) => x !== item);
+        handleFieldSave('inventory', inventoryList.filter((x) => x !== item));
+    };
+
+    const handleAddSkill = (e, field, list, inputVal, setInputVal) => {
+        e.preventDefault();
+        const s = inputVal.trim();
+        if (!s) return;
+        const next = Array.from(new Set([...list, s]));
+        setInputVal('');
+        handleFieldSave(field, next);
+    };
+
+    const handleRemoveSkill = (field, list, skill) => {
+        handleFieldSave(field, list.filter((x) => x !== skill));
+    };
+
+    const handleSaveWardrobePreset = (e) => {
+        e.preventDefault();
+        const currentOutfit = (snap.character_outfit || '').trim();
+        if (!currentOutfit) return;
+        const presetName = wardrobeNameInput.trim() || `Look #${wardrobeList.length + 1}`;
+        const next = [
+            ...wardrobeList.filter((w) => (w.name || '').toLowerCase() !== presetName.toLowerCase()),
+            { name: presetName, outfit: currentOutfit, visual_tags: currentOutfit },
+        ];
+        setWardrobeNameInput('');
+        handleFieldSave('wardrobe', next);
+        flashFeedback(`Saved outfit preset "${presetName}"`);
+    };
+
+    const handleSelectWardrobePreset = (preset) => {
+        const outfitText = preset.outfit || preset.description || preset.name;
+        handleFieldSave('character_outfit', outfitText);
+        flashFeedback(`Switched outfit to "${preset.name}"`);
+    };
+
+    const handleAddRelationship = (e) => {
+        e.preventDefault();
+        const target = newRelTarget.trim();
+        const status = newRelStatus.trim();
+        if (!target || !status) return;
+        const filtered = relationshipsList.filter(
+            (r) => (r.target_name || '').toLowerCase() !== target.toLowerCase()
+        );
+        const next = [
+            ...filtered,
+            {
+                target_name: target,
+                target_type: newRelType,
+                status,
+                affinity: newRelAffinity,
+            },
+        ];
+        setNewRelTarget('');
+        setNewRelStatus('');
         updateSnapshot.mutate({
             chatId: chat.id,
-            state_snapshot: { inventory: next },
+            state_snapshot: {
+                relationships: next,
+                ...(newRelType === 'user' ? { relationship_status: status } : {}),
+            },
         });
+    };
+
+    const handleUpdateRelationship = (index, patch) => {
+        const next = relationshipsList.map((r, i) => (i === index ? { ...r, ...patch } : r));
+        const updatedRow = next[index];
+        updateSnapshot.mutate({
+            chatId: chat.id,
+            state_snapshot: {
+                relationships: next,
+                ...(updatedRow?.target_type === 'user' && patch.status
+                    ? { relationship_status: patch.status }
+                    : {}),
+            },
+        });
+    };
+
+    const handleRemoveRelationship = (index) => {
+        const next = relationshipsList.filter((_, i) => i !== index);
+        handleFieldSave('relationships', next);
+    };
+
+    const handleFastTravel = (locId, locName) => {
+        fastTravel.mutate(
+            { chatId: chat.id, locationId: locId || null, locationName: locName || null },
+            {
+                onSuccess: (res) => {
+                    setFastTravelLocInput('');
+                    flashFeedback(`Traveled to ${res.story_location}`);
+                },
+            }
+        );
     };
 
     return (
@@ -1098,6 +1235,12 @@ function DirectorStatekeeperSection({ chat, onSave }) {
             </summary>
 
             <div className="px-4 pb-4 -mt-1 space-y-3 text-xs">
+                {actionFeedback && (
+                    <div className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-2xs font-medium">
+                        {actionFeedback}
+                    </div>
+                )}
+
                 {/* Toggle & Quick Actions */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/5">
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -1158,6 +1301,146 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                     </div>
                 </div>
 
+                {/* Toggleable Fate / Skill Check Gate (Anti-Godmoding + Narrative Control) */}
+                <div className="bg-black/30 rounded-lg p-2.5 border border-amber-500/20 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={fateEnabled}
+                                onChange={(e) => handleFieldSave('fate_check_enabled', e.target.checked)}
+                                className="accent-amber-500"
+                            />
+                            <span className="text-2xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1">
+                                <Shield size={11} /> Fate / Skill Check Gate
+                            </span>
+                        </label>
+                        <span className="text-2xs text-gray-500">
+                            {fateEnabled ? 'Active' : 'Off (Freeform)'}
+                        </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                        <div>
+                            <label className="block text-2xs text-gray-400 mb-0.5">Difficulty</label>
+                            <select
+                                aria-label="Fate Check Difficulty"
+                                value={fateDifficulty}
+                                onChange={(e) => handleFieldSave('fate_difficulty', e.target.value)}
+                                className="w-full bg-gray-900/80 border border-white/10 rounded px-1.5 py-1 text-2xs text-gray-200 focus:outline-none focus:border-amber-500/50"
+                            >
+                                <option value="auto">Auto (Director)</option>
+                                <option value="trivial">Trivial (1/5)</option>
+                                <option value="easy">Easy (2/5)</option>
+                                <option value="moderate">Moderate (3/5)</option>
+                                <option value="hard">Hard (4/5)</option>
+                                <option value="extreme">Extreme (5/5)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-2xs text-gray-400 mb-0.5">Desired Outcome</label>
+                            <select
+                                aria-label="Fate Check Desired Outcome"
+                                value={fateOutcomeOverride}
+                                onChange={(e) => handleFieldSave('fate_outcome_override', e.target.value)}
+                                className="w-full bg-gray-900/80 border border-white/10 rounded px-1.5 py-1 text-2xs text-gray-200 focus:outline-none focus:border-amber-500/50"
+                            >
+                                <option value="auto">Auto (Skill + Roll)</option>
+                                <option value="critical_success">Pin: Critical Success</option>
+                                <option value="success">Pin: Clean Success</option>
+                                <option value="success_with_cost">Pin: Success w/ Cost</option>
+                                <option value="complication">Pin: Complication</option>
+                                <option value="failure">Pin: Hard Failure</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {(fateEnabled || fateOutcomeOverride !== 'auto') && lastFateOutcome && (
+                        <div className="text-2xs bg-amber-500/10 border border-amber-500/25 rounded px-2 py-1 text-amber-200 space-y-0.5">
+                            <div className="font-semibold uppercase">
+                                Outcome: {String(lastFateOutcome).replace(/_/g, ' ')}
+                            </div>
+                            {matchedSkills.length > 0 && (
+                                <div className="text-emerald-300">
+                                    Skill Bonus: {matchedSkills.join(', ')}
+                                </div>
+                            )}
+                            {lastFateDirective && (
+                                <div className="text-gray-300 italic line-clamp-2">{lastFateDirective}</div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* Cohesive World Clock & Fast-Travel */}
+                <div className="bg-black/30 rounded-lg p-2.5 border border-cyan-500/20 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-2xs font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1">
+                            <Clock size={11} /> World Clock &amp; Fast-Travel
+                        </span>
+                        <span className="text-2xs font-mono text-cyan-200">
+                            Day {worldClock?.day || 1} · {chat.story_time || worldClock?.time_of_day || 'Evening'}
+                        </span>
+                    </div>
+
+                    {chronologyLog.length > 0 && (
+                        <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
+                            {chronologyLog.slice(-3).map((ev, idx) => (
+                                <div key={idx} className="text-2xs text-gray-300 bg-white/5 rounded px-2 py-1 flex items-start gap-1.5">
+                                    <span className="text-cyan-400 font-mono shrink-0">D{ev.day || 1}</span>
+                                    <span className="truncate" title={ev.event}>{ev.event}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {worldLocations.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                            {worldLocations.slice(0, 5).map((loc) => (
+                                <button
+                                    key={loc.id}
+                                    type="button"
+                                    onClick={() => handleFastTravel(loc.id, loc.name)}
+                                    disabled={fastTravel.isPending}
+                                    className={clsx(
+                                        "px-2 py-0.5 rounded text-2xs border transition-colors flex items-center gap-1",
+                                        chat.location_id === loc.id || chat.story_location === loc.name
+                                            ? "bg-cyan-500/25 border-cyan-400/50 text-cyan-200 font-semibold"
+                                            : "bg-gray-800/70 border-white/10 text-gray-300 hover:border-cyan-500/40"
+                                    )}
+                                    title={`Fast-travel to ${loc.name}`}
+                                >
+                                    <MapPin size={9} />
+                                    <span className="truncate max-w-[110px]">{loc.name}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            if (fastTravelLocInput.trim()) handleFastTravel(null, fastTravelLocInput.trim());
+                        }}
+                        className="flex gap-1"
+                    >
+                        <input
+                            type="text"
+                            value={fastTravelLocInput}
+                            onChange={(e) => setFastTravelLocInput(e.target.value)}
+                            placeholder="Fast-travel to location..."
+                            className="flex-1 bg-gray-800/60 border border-white/5 rounded px-2 py-1 text-2xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500/40"
+                        />
+                        <button
+                            type="submit"
+                            disabled={fastTravel.isPending}
+                            className="px-2 py-1 rounded bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-2xs text-cyan-200 flex items-center gap-1"
+                        >
+                            <Compass size={10} /> Go
+                        </button>
+                    </form>
+                </div>
+
                 {/* Live Statekeeper World State Snapshot */}
                 <div className="space-y-2">
                     <div className="text-2xs font-bold uppercase tracking-wider text-gray-400 flex items-center justify-between">
@@ -1173,7 +1456,7 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         label="Mood"
                         value={snap.character_mood}
                         placeholder="e.g. Curious, Guarded"
-                        onSave={(val) => handleFieldSave('character_mood', val)}
+                        onSave={(val) => handleFieldSave('character_mood', val || '')}
                     />
                     <ContextField
                         inline
@@ -1181,7 +1464,7 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         label="Activity"
                         value={snap.current_activity}
                         placeholder="e.g. Examining the artifact"
-                        onSave={(val) => handleFieldSave('current_activity', val)}
+                        onSave={(val) => handleFieldSave('current_activity', val || '')}
                     />
                     <ContextField
                         inline
@@ -1189,18 +1472,243 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         label="Outfit"
                         value={snap.character_outfit}
                         placeholder="e.g. Traveling cloak"
-                        onSave={(val) => handleFieldSave('character_outfit', val)}
+                        onSave={(val) => handleFieldSave('character_outfit', val || '')}
                     />
+
+                    {/* Wardrobe Presets & Reverse Vision Image-to-State */}
+                    <div className="bg-black/20 rounded-lg p-2 border border-white/5 space-y-1.5">
+                        <div className="flex items-center justify-between gap-1">
+                            <span className="text-2xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                                <Shirt size={10} className="text-pink-400" /> Wardrobe Presets
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    reverseVision.mutate(
+                                        { chatId: chat.id },
+                                        { onSuccess: () => flashFeedback('Synced outfit & mood from latest image') }
+                                    )
+                                }
+                                disabled={reverseVision.isPending}
+                                className="px-1.5 py-0.5 rounded bg-pink-500/15 hover:bg-pink-500/25 border border-pink-500/30 text-pink-300 text-2xs flex items-center gap-1"
+                                title="Reverse Vision: inspect the latest image/avatar to update Outfit, Mood, and Location"
+                            >
+                                {reverseVision.isPending ? <Loader2 size={9} className="animate-spin" /> : <Eye size={9} />}
+                                Sync from Image
+                            </button>
+                        </div>
+                        {wardrobeList.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                                {wardrobeList.map((preset, idx) => (
+                                    <button
+                                        key={`${preset.name || idx}`}
+                                        type="button"
+                                        onClick={() => handleSelectWardrobePreset(preset)}
+                                        className={clsx(
+                                            "px-2 py-0.5 rounded text-2xs border transition-colors",
+                                            snap.character_outfit === (preset.outfit || preset.description)
+                                                ? "bg-pink-500/25 border-pink-400/50 text-pink-200 font-semibold"
+                                                : "bg-gray-800/60 border-white/10 text-gray-300 hover:border-pink-500/40"
+                                        )}
+                                        title={preset.outfit || preset.description}
+                                    >
+                                        {preset.name || `Outfit ${idx + 1}`}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        <form onSubmit={handleSaveWardrobePreset} className="flex gap-1">
+                            <input
+                                type="text"
+                                value={wardrobeNameInput}
+                                onChange={(e) => setWardrobeNameInput(e.target.value)}
+                                placeholder="Save current outfit as preset..."
+                                className="flex-1 bg-gray-800/60 border border-white/5 rounded px-2 py-1 text-2xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-pink-500/40"
+                            />
+                            <button
+                                type="submit"
+                                className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-2xs text-gray-300"
+                            >
+                                Save
+                            </button>
+                        </form>
+                    </div>
+
                     <ContextField
                         inline
                         showLabel
                         label="Relationship"
                         value={snap.relationship_status}
                         placeholder="e.g. Cautious allies (+1 trust)"
-                        onSave={(val) => handleFieldSave('relationship_status', val)}
+                        onSave={(val) => handleFieldSave('relationship_status', val || '')}
                     />
 
-                    {/* Inventory Pills */}
+                    {/* Multi-Target Relationship Network */}
+                    <div className="bg-black/20 rounded-lg p-2 border border-white/5 space-y-1.5">
+                        <div className="text-2xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                            <Users size={10} className="text-rose-400" /> Multi-Target Relationships ({relationshipsList.length})
+                        </div>
+                        <div className="space-y-1">
+                            {relationshipsList.map((rel, idx) => (
+                                <div key={`${rel.target_name}-${idx}`} className="flex items-center gap-1 bg-gray-900/60 rounded px-2 py-1 border border-white/5">
+                                    <span className={clsx(
+                                        "px-1 py-0.5 rounded text-[10px] font-bold uppercase shrink-0",
+                                        rel.target_type === 'user' ? "bg-sky-500/20 text-sky-300" : "bg-purple-500/20 text-purple-300"
+                                    )}>
+                                        {rel.target_name}
+                                    </span>
+                                    <input
+                                        type="text"
+                                        value={rel.status || ''}
+                                        onChange={(e) => handleUpdateRelationship(idx, { status: e.target.value })}
+                                        className="flex-1 min-w-0 bg-transparent text-2xs text-gray-200 focus:outline-none border-b border-transparent focus:border-rose-500/40 px-1"
+                                        placeholder="Bond / stance..."
+                                    />
+                                    <select
+                                        value={rel.affinity || 'neutral'}
+                                        onChange={(e) => handleUpdateRelationship(idx, { affinity: e.target.value })}
+                                        className="bg-gray-800 border border-white/10 rounded px-1 py-0.5 text-[10px] text-gray-300"
+                                    >
+                                        <option value="devoted">Devoted</option>
+                                        <option value="trusted">Trusted</option>
+                                        <option value="friendly">Friendly</option>
+                                        <option value="curious">Curious</option>
+                                        <option value="neutral">Neutral</option>
+                                        <option value="wary">Wary</option>
+                                        <option value="tense">Tense</option>
+                                        <option value="hostile">Hostile</option>
+                                    </select>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleRemoveRelationship(idx)}
+                                        className="text-gray-500 hover:text-red-400 px-0.5"
+                                        title="Remove relationship target"
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                        <form onSubmit={handleAddRelationship} className="grid grid-cols-12 gap-1 pt-0.5">
+                            <select
+                                value={newRelType}
+                                onChange={(e) => setNewRelType(e.target.value)}
+                                className="col-span-3 bg-gray-800/70 border border-white/10 rounded px-1 py-1 text-2xs text-gray-300"
+                            >
+                                <option value="character">NPC</option>
+                                <option value="user">User</option>
+                            </select>
+                            <input
+                                type="text"
+                                value={newRelTarget}
+                                onChange={(e) => setNewRelTarget(e.target.value)}
+                                placeholder="Target name"
+                                className="col-span-4 bg-gray-800/60 border border-white/5 rounded px-1.5 py-1 text-2xs text-gray-200 placeholder-gray-600"
+                            />
+                            <input
+                                type="text"
+                                value={newRelStatus}
+                                onChange={(e) => setNewRelStatus(e.target.value)}
+                                placeholder="Stance..."
+                                className="col-span-3 bg-gray-800/60 border border-white/5 rounded px-1.5 py-1 text-2xs text-gray-200 placeholder-gray-600"
+                            />
+                            <button
+                                type="submit"
+                                className="col-span-2 rounded bg-white/5 hover:bg-white/10 text-2xs text-gray-300"
+                            >
+                                +
+                            </button>
+                        </form>
+                    </div>
+
+                    {/* Character & User Skillsets */}
+                    <div className="grid grid-cols-1 gap-2 pt-1">
+                        <div>
+                            <div className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                Character Skillset (Fate Check Advantage)
+                            </div>
+                            <div className="flex flex-wrap gap-1 mb-1">
+                                {charSkills.length === 0 ? (
+                                    <span className="text-2xs text-gray-600 italic">No character skills listed</span>
+                                ) : (
+                                    charSkills.map((skill) => (
+                                        <span
+                                            key={skill}
+                                            className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-2xs flex items-center gap-1"
+                                        >
+                                            <span>{skill}</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveSkill('character_skills', charSkills, skill)}
+                                                className="text-emerald-400 hover:text-white ml-0.5"
+                                            >
+                                                ×
+                                            </button>
+                                        </span>
+                                    ))
+                                )}
+                            </div>
+                            <form
+                                onSubmit={(e) => handleAddSkill(e, 'character_skills', charSkills, charSkillInput, setCharSkillInput)}
+                                className="flex gap-1"
+                            >
+                                <input
+                                    type="text"
+                                    value={charSkillInput}
+                                    onChange={(e) => setCharSkillInput(e.target.value)}
+                                    placeholder="Add character skill (e.g. Swordplay, Netrunning)..."
+                                    className="flex-1 bg-gray-800/60 border border-white/5 rounded px-2 py-1 text-2xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-emerald-500/40"
+                                />
+                                <button type="submit" className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-2xs text-gray-300">
+                                    Add
+                                </button>
+                            </form>
+                        </div>
+
+                        <div>
+                            <div className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                User / Persona Skillset
+                            </div>
+                            <div className="flex flex-wrap gap-1 mb-1">
+                                {userSkills.length === 0 ? (
+                                    <span className="text-2xs text-gray-600 italic">No user skills listed</span>
+                                ) : (
+                                    userSkills.map((skill) => (
+                                        <span
+                                            key={skill}
+                                            className="px-2 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-300 text-2xs flex items-center gap-1"
+                                        >
+                                            <span>{skill}</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveSkill('user_skills', userSkills, skill)}
+                                                className="text-sky-400 hover:text-white ml-0.5"
+                                            >
+                                                ×
+                                            </button>
+                                        </span>
+                                    ))
+                                )}
+                            </div>
+                            <form
+                                onSubmit={(e) => handleAddSkill(e, 'user_skills', userSkills, userSkillInput, setUserSkillInput)}
+                                className="flex gap-1"
+                            >
+                                <input
+                                    type="text"
+                                    value={userSkillInput}
+                                    onChange={(e) => setUserSkillInput(e.target.value)}
+                                    placeholder="Add user skill (e.g. Persuasion, Tactics)..."
+                                    className="flex-1 bg-gray-800/60 border border-white/5 rounded px-2 py-1 text-2xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-sky-500/40"
+                                />
+                                <button type="submit" className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-2xs text-gray-300">
+                                    Add
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    {/* Inventory Pills with 1-Click Item Visualizer */}
                     <div className="pt-1">
                         <div className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
                             Active Inventory / Key Items
@@ -1215,6 +1723,22 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                                         className="px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-2xs flex items-center gap-1"
                                     >
                                         <span>{item}</span>
+                                        {chat.allow_image_generation !== false && (
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    visualizeItem.mutate(
+                                                        { chatId: chat.id, itemName: item },
+                                                        { onSuccess: () => flashFeedback(`Generating illustration for "${item}"...`) }
+                                                    )
+                                                }
+                                                disabled={visualizeItem.isPending}
+                                                className="text-indigo-300 hover:text-amber-300 ml-0.5"
+                                                title={`1-Click Visualize "${item}" in ComfyUI`}
+                                            >
+                                                <ImageIcon size={10} />
+                                            </button>
+                                        )}
                                         <button
                                             type="button"
                                             onClick={() => handleRemoveInventory(item)}
@@ -1243,6 +1767,58 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                             </button>
                         </form>
                     </div>
+                </div>
+
+                {/* World Vault Canon & Living World Actions */}
+                <div className="pt-2 border-t border-white/5 flex flex-wrap gap-1.5">
+                    <button
+                        type="button"
+                        onClick={() =>
+                            commitCanon.mutate(chat.id, {
+                                onSuccess: (res) => flashFeedback(`Committed to "${res.world_name}" Canon`),
+                            })
+                        }
+                        disabled={commitCanon.isPending}
+                        className="px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-2xs font-semibold flex items-center gap-1"
+                        title="Promote this chat's timeline, locations, and relationships to the World Vault Canon Lorebook & Graph"
+                    >
+                        <BookOpen size={10} /> Commit to Canon
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() =>
+                            compileStory.mutate(
+                                { chatId: chat.id, title: chat.name },
+                                {
+                                    onSuccess: (res) => {
+                                        flashFeedback(`Compiled Story "${res.title}"`);
+                                        if (res.story_id) navigate(`/stories?storyId=${res.story_id}`);
+                                    },
+                                }
+                            )
+                        }
+                        disabled={compileStory.isPending}
+                        className="px-2 py-1 rounded bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-indigo-300 text-2xs font-semibold flex items-center gap-1"
+                        title="Novelize and compile this chat session into an interactive Story Sandbox chapter"
+                    >
+                        <NotebookPen size={10} /> Compile Chapter
+                    </button>
+                    {chat.world_id && (
+                        <button
+                            type="button"
+                            onClick={() =>
+                                runWorldTick.mutate(
+                                    { worldId: chat.world_id, timeAdvanceLabel: '+1 Day', activeChatId: chat.id },
+                                    { onSuccess: () => flashFeedback('Advanced Living World Clock (+1 Day)') }
+                                )
+                            }
+                            disabled={runWorldTick.isPending}
+                            className="px-2 py-1 rounded bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 text-2xs font-semibold flex items-center gap-1"
+                            title="Advance the World Clock by +1 Day and simulate off-screen NPC activities"
+                        >
+                            <Calendar size={10} /> +1 Day Tick
+                        </button>
+                    )}
                 </div>
 
                 {/* Last System 1 Decision Breakdown */}

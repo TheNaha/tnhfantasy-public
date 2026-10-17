@@ -55,6 +55,7 @@ ROLE_BY_KIND: Dict[str, str] = {
     # is prose even though it is short.
     "suggest_reply": "rp",
     "impersonation": "rp",
+    "story_compile": "rp",
 
     # --- util: the things a program evaluates as structured output ---------
     # Writing chapters back into the DB is parsing, not prose.
@@ -76,6 +77,11 @@ ROLE_BY_KIND: Dict[str, str] = {
     # Statekeeper (Updater): extracts structured JSON state deltas (mood, outfit,
     # inventory, location, memories, lore) after turns where Director gates fire.
     "state_updater": "util",
+    # World Architect & Onboarding Studio structured extraction jobs
+    "world_onboarding": "util",
+    "story_ingest": "util",
+    "world_crossover": "util",
+    "world_tick": "util",
 
     # --- decisions: System 1 Director (typed choice/score/probability) -----
     "director": "decisions",

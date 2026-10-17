@@ -19,6 +19,7 @@ from .timeline import router as timeline_router
 from .graph_layout import router as graph_layout_router
 from .graph_edges import router as graph_edges_router
 from .util import router as util_router
+from .onboarding import router as onboarding_router
 
 router = APIRouter(prefix="/api/v2")
 
@@ -44,3 +45,5 @@ router.include_router(llm_config_router, prefix="/world-vault/llm", tags=["LLM C
 router.include_router(graph_layout_router, prefix="/world-vault/graph-layout", tags=["Graph Layout"])
 router.include_router(graph_edges_router, prefix="/world-vault/graph-edges", tags=["Graph Edges"])
 router.include_router(util_router, prefix="/world-vault", tags=["World Vault"])
+router.include_router(onboarding_router, prefix="/world-vault/onboarding", tags=["World Architect & Onboarding"])
+

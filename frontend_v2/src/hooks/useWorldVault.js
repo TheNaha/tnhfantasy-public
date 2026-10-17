@@ -15,4 +15,6 @@ export * from './useWorlds';
 export * from './useWorldVaultSearch';
 
 export * from './useMemories';
+export * from './useWorldOnboarding';
 export { useLLMDefaultProvider, useLLMAvailableModels } from './useLLMProviderStatus';
+

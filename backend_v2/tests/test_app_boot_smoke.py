@@ -473,10 +473,12 @@ async def test_app_serves_requests_after_boot(client, boot):
     # accept one, and now that the UI manages them it has to.
     # 247 -> 252 for model catalog endpoints and active role selection:
     # `GET /models/catalog`, `GET /llm/catalog`, and `PUT /llm/catalog/active`.
-    assert len(spec["paths"]) == 265, (
+    # 265 -> 278 for the 13 World Architect & Onboarding Studio routes under
+    # `/api/v2/world-vault/onboarding/*`.
+    assert len(spec["paths"]) == 278, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 348
+    assert sum(len(ops) for ops in spec["paths"].values()) == 361
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 

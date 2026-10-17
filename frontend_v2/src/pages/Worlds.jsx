@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit3, Trash2, Search, Globe2, X, MessageSquare, BookOpen, MapPin, Users, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Plus, Edit3, Trash2, Search, Globe2, X, MessageSquare, BookOpen, MapPin, Users, ChevronRight, AlertTriangle, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -114,12 +114,20 @@ export default function Worlds() {
             description="Organize your characters, chats, stories, and locations into worlds."
             icon={Globe2}
             actions={
-                <button
-                    onClick={() => { resetForm(); setShowForm(true); }}
-                    className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-cyan-400"
-                >
-                    <Plus size={16} /> New World
-                </button>
+                <>
+                    <button
+                        onClick={() => navigate('/world-architect')}
+                        className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3.5 py-2 font-medium text-emerald-300 transition hover:bg-emerald-500/25"
+                    >
+                        <Wand2 size={16} /> World Architect
+                    </button>
+                    <button
+                        onClick={() => { resetForm(); setShowForm(true); }}
+                        className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-cyan-400"
+                    >
+                        <Plus size={16} /> New World
+                    </button>
+                </>
             }
         >
 

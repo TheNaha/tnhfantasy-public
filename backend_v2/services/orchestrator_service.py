@@ -952,6 +952,33 @@ async def _tool_generate_image(
                     tags = ", ".join(char.visual_tags)
                     prompt = f"{prompt}, {tags}" if prompt else tags
 
+        # 3b. Enrich prompt with live Statekeeper outfit, expression, and location tags
+        if chat_id:
+            from core.entities import Chat, Location
+            chat_row = session.get(Chat, chat_id)
+            if chat_row:
+                snap = chat_row.state_snapshot if isinstance(chat_row.state_snapshot, dict) else {}
+                extra_visual_parts: list[str] = []
+                outfit = str(snap.get("character_outfit") or "").strip()
+                if outfit and outfit.lower() not in (prompt or "").lower():
+                    extra_visual_parts.append(f"wearing {outfit}")
+                expr = str(snap.get("character_expression") or "").strip()
+                if expr and expr not in ("neutral", "none") and expr.lower() not in (prompt or "").lower():
+                    extra_visual_parts.append(f"{expr} expression")
+                if chat_row.location_id:
+                    loc_row = session.get(Location, chat_row.location_id)
+                    if loc_row and loc_row.tags:
+                        loc_tags = ", ".join(loc_row.tags[:4])
+                        if loc_tags and loc_tags.lower() not in (prompt or "").lower():
+                            extra_visual_parts.append(loc_tags)
+                elif chat_row.story_location:
+                    loc_str = str(chat_row.story_location).strip()
+                    if loc_str and loc_str.lower() not in (prompt or "").lower():
+                        extra_visual_parts.append(f"in {loc_str}")
+                if extra_visual_parts:
+                    suffix = ", ".join(extra_visual_parts)
+                    prompt = f"{prompt}, {suffix}" if prompt else suffix
+
         # 4. Ensure the chosen models are actually installed on an enabled provider
         availability = ModelAvailabilityService(session)
         resolved_ckpt = availability.get_available_checkpoint(ckpt_name)

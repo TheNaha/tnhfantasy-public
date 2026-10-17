@@ -56,6 +56,7 @@ const Locations = lazy(() => import('./pages/Locations'));
 const BatchGenerate = lazy(() => import('./pages/BatchGenerate'));
 const Activity = lazy(() => import('./pages/Activity'));
 const Worlds = lazy(() => import('./pages/Worlds'));
+const WorldArchitect = lazy(() => import('./pages/WorldArchitect'));
 const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
 const Prompts = lazy(() => import('./pages/Prompts'));
 const NotFound = lazy(() => import('./pages/NotFound'));
@@ -142,6 +143,7 @@ function AnimatedRoutes() {
                     rendered as a plausible empty vault. */}
                 <Route path="/campaigns" element={<Navigate to="/worlds" replace />} />
                 <Route path="/worlds" element={<Boundary routeKey={routeKey}><Worlds /></Boundary>} />
+                <Route path="/world-architect" element={<Boundary routeKey={routeKey}><WorldArchitect /></Boundary>} />
                 <Route path="/world-graph" element={<Boundary routeKey={routeKey}><RelationshipGraph /></Boundary>} />
                 <Route path="/prompts" element={<Boundary routeKey={routeKey}><Prompts /></Boundary>} />
                 <Route path="/read/story/:token" element={<Boundary routeKey={routeKey}><StoryReader /></Boundary>} />
