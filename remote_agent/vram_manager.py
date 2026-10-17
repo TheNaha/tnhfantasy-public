@@ -272,16 +272,23 @@ class VRAMManager:
         with self._lock:
             # Check existing cache
             if cache_key in self.laya_cache:
-                self.current_laya_device = device
-                return self.laya_cache[cache_key], device
+                model = self.laya_cache[cache_key]
+                model_dev = getattr(model, "device", None)
+                actual_dev = str(model_dev) if model_dev is not None else device
+                resolved_dev = "cuda" if "cuda" in actual_dev.lower() else "cpu"
+                self.current_laya_device = resolved_dev
+                return model, resolved_dev
 
             # Attempt to load on chosen device
             try:
                 logger.info("loading_laya_model", extra={"model_id": model_id, "device": device, "source": repo_or_path})
                 model = laya.load(repo_or_path, device=device)
+                model_dev = getattr(model, "device", None)
+                actual_dev = str(model_dev) if model_dev is not None else device
+                resolved_dev = "cuda" if "cuda" in actual_dev.lower() else "cpu"
                 self.laya_cache[cache_key] = model
-                self.current_laya_device = device
-                return model, device
+                self.current_laya_device = resolved_dev
+                return model, resolved_dev
             except Exception as exc:
                 if "cuda" in device.lower():
                     logger.warning(

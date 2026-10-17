@@ -1519,11 +1519,24 @@ def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dic
     try:
         from vram_manager import get_vram_manager
         vram_mgr = get_vram_manager()
-        laya_model, device = vram_mgr.get_or_load_laya(model_id, repo_or_path)
+        laya_model, device = vram_mgr.get_or_load_laya(model_id, repo_or_path, preferred_device="cuda:0")
     except Exception:
         laya_model = _LAYA_LOADED_MODELS.get(repo_or_path)
         if laya_model is None:
-            laya_model = laya.load(repo_or_path, device="cpu")
+            target_dev = "cuda:0"
+            try:
+                import torch
+                if not torch.cuda.is_available():
+                    target_dev = "cpu"
+            except Exception:
+                target_dev = "cpu"
+            try:
+                laya_model = laya.load(repo_or_path, device=target_dev)
+                m_dev = getattr(laya_model, "device", None)
+                device = "cuda" if "cuda" in str(m_dev or target_dev).lower() else "cpu"
+            except Exception:
+                laya_model = laya.load(repo_or_path, device="cpu")
+                device = "cpu"
             _LAYA_LOADED_MODELS[repo_or_path] = laya_model
 
     if isinstance(questions, dict):
@@ -1603,12 +1616,16 @@ def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dic
             prob_val = ans.get("noul") if "noul" in ans else ans.get("probability", 0.0)
             answers[key] = {"probability": float(prob_val) if prob_val is not None else 0.0}
 
+    m_dev = getattr(laya_model, "device", None)
+    actual_dev = str(m_dev) if m_dev is not None else device
+    report_dev = "cuda" if "cuda" in actual_dev.lower() else "cpu"
+
     return {
         "status": "success",
         "model_id": model_id,
-        "engine_used": f"remote_laya_{device}",
+        "engine_used": f"remote_laya_{report_dev}",
         "provider_tier": "remote_laya",
-        "device": device,
+        "device": report_dev,
         "latency_ms": latency_ms,
         "answers": answers,
         "results": answers,
@@ -1628,7 +1645,7 @@ async def evaluate_decisions(req: DecisionsRequest):
             req.model,
             req.context or req.state,
             req.questions,
-            timeout_seconds=15.0,
+            timeout_seconds=60.0,
         )
         return res
     except ImportError as exc:
@@ -1651,6 +1668,23 @@ async def evaluate_decisions(req: DecisionsRequest):
                 "retryable": False,
             },
         )
+
+
+@app.on_event("startup")
+async def _on_startup_prewarm():
+    """Background startup tasks: pre-warm Laya System 1 on CUDA so first requests are <100ms."""
+    import threading
+
+    def _prewarm_laya():
+        try:
+            import laya  # noqa: F401
+            logger.info("prewarming_laya_background")
+            _evaluate_laya_sync("laya_multilingual", "Hello", [])
+            logger.info("prewarming_laya_complete")
+        except Exception as exc:
+            logger.debug(f"laya_prewarm_skipped: {exc}")
+
+    threading.Thread(target=_prewarm_laya, daemon=True, name="laya-prewarm").start()
 
 
 # ---------------------------------------------------------------------------
