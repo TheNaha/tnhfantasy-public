@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { QUERY_KEYS, buildQueryKey, invalidateVaultAggregates } from './queryKeys';
+import { QUERY_KEYS, buildQueryKey } from '../constants/queryKeys';
+import { invalidateVaultAggregates } from './useWorldVaultResource';
 
 const CHAT_DETAIL_KEY = (id) => buildQueryKey(QUERY_KEYS.CHATS, 'detail', id);
 const CHAT_LIST_KEY = buildQueryKey(QUERY_KEYS.CHATS, 'list');
