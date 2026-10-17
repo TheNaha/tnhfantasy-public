@@ -30,23 +30,49 @@
     "rp": {
       "_comment": "Roleplay prose: in-character long-form writing, scene narration, continuations. Chosen for willingness and prose quality.",
       "fallback": [
+        "artemis_31b_q4",
         "artemis_31b",
-        "writers_31b_v2",
-        "gemma4_31b_heretic",
         "sompoa_26b_a4b",
         "weirdcompound_24b",
+        "gemma3_12b_heretic",
+        "writers_31b_v2",
+        "gemma4_31b_heretic",
         "magnum_diamond_24b"
       ]
     },
     "util": {
       "_comment": "Everything structured: image captioning, tool calls, memory extraction, summaries, image prompts. SAME MODEL as rp by deliberate choice \u2014 the container dedupes by model, so both roles share one llama-server and one cold start. The cost is extraction and tool-call quality on a roleplay finetune; the gain is ~12 GB of VRAM (enough for --swa-full on Artemis), a ~10 s faster cold start, and no model switching. Reorder this fallback to the 12B to go back, and vice versa.",
       "fallback": [
+        "artemis_31b_q4",
         "artemis_31b",
+        "qwen2.5_14b",
         "gemma3_12b_heretic_util"
       ]
     }
   },
   "models": {
+    "artemis_31b_q4": {
+      "role": "rp",
+      "dir": "artemis_31b",
+      "repo": "bartowski/TheDrummer_Artemis-31B-v1.2-GGUF",
+      "gguf": "TheDrummer_Artemis-31B-v1.2-Q4_K_M.gguf",
+      "mmproj": "mmproj-TheDrummer_Artemis-31B-v1.2-f16.gguf",
+      "mmproj_repo": null,
+      "ctx": 32768,
+      "parallel": 1,
+      "kv": "q8_0",
+      "gpu": "L4",
+      "idle": 60,
+      "startup": 600,
+      "sampler": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
+      "enabled": true,
+      "_note": "Artemis 31B v1.2 at Q4_K_M (18.18 GB). Sized specifically to fit 100% into 24GB/22.5GB VRAM (e.g. L4, RTX 3090/4090) with full pure-GPU offload speed (~35-45 t/s)."
+    },
     "artemis_31b": {
       "role": "rp",
       "repo": "bartowski/TheDrummer_Artemis-31B-v1.2-GGUF",
@@ -334,12 +360,55 @@
       },
       "enabled": true,
       "_note": "util primary. Chosen for SIZE as much as score: 9.3 GB with vision (filenames and byte sizes verified against the HuggingFace API), which fits beside Artemis's 24.7 GB on one L40S. UGI 38.0 / W10 9.5 / NatInt 20.7 per the leaderboard rows. Most willing of the 12B class, and its vision projector ships in the SAME repo."
+    },
+    "qwen2.5_14b": {
+      "role": "util",
+      "repo": "bartowski/Qwen2.5-14B-Instruct-GGUF",
+      "gguf": "Qwen2.5-14B-Instruct-Q5_K_M.gguf",
+      "mmproj": null,
+      "mmproj_repo": null,
+      "ctx": 16384,
+      "parallel": 2,
+      "kv": "q8_0",
+      "gpu": "L4",
+      "idle": 60,
+      "startup": 600,
+      "sampler": {
+        "temperature": 0.3,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
+      "enabled": true,
+      "_note": "Qwen 2.5 14B Instruct at Q5_K_M (9.79 GB). Blazing 70+ t/s intelligence for tool-calling, memory extraction, summaries, and fast reasoning. Leaves 12+ GB VRAM free for ComfyUI."
+    },
+    "gemma3_12b_heretic": {
+      "role": "rp",
+      "dir": "gemma3_12b_heretic_util",
+      "repo": "llmfan46/gemma-3-12b-it-ultra-uncensored-heretic-GGUF",
+      "gguf": "gemma-3-12b-it-heretic-Q5_K_M.gguf",
+      "mmproj": "gemma-3-12b-it-mmproj-BF16.gguf",
+      "mmproj_repo": null,
+      "ctx": 16384,
+      "parallel": 1,
+      "kv": "q8_0",
+      "gpu": "L4",
+      "idle": 60,
+      "startup": 600,
+      "sampler": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
+        "max_tokens": 2048
+      },
+      "enabled": true,
+      "_note": "Lightweight 9.3 GB uncensored RP finetune with vision. Extremely fast on 24G GPUs (~40 t/s) and shares weights with util primary."
     }
   },
   "shared_model_experiment": {
     "_comment": "rp and util resolve to the same weights. The container launches ONE llama-server per distinct model, so both roles share it on the same port rather than loading 24.7 GB twice. Per-request samplers still differ: rp uses temperature 1.0 for prose, util uses 0.3 for extraction, sent per call and not baked into the server.",
-    "rp": "artemis_31b",
-    "util": "artemis_31b"
+    "rp": "artemis_31b_q4",
+    "util": "artemis_31b_q4"
   },
   "role_samplers": {
     "rp": {

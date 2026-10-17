@@ -29,7 +29,7 @@ class TestModelCatalogAndRegistry:
 
         # Defaults initially
         active = get_active_models()
-        assert active["rp"] == "artemis_31b"
+        assert active["rp"] in ("artemis_31b_q4", "artemis_31b")
 
         # Update active models
         updated = set_active_models(active_rp="writers_31b_v2", active_util="artemis_31b")

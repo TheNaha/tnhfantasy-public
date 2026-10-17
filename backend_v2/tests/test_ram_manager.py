@@ -197,3 +197,45 @@ def test_server_ram_cache_api(monkeypatch, tmp_path):
     res_ev = client.post("/ram-cache/evict", json={"model_id": "test_anchor", "force": True}, headers=headers)
     assert res_ev.status_code == 200
     assert res_ev.json()["ok"] is True
+
+
+def test_ram_manager_truncated_file_cleanup(temp_env):
+    ram_dir, source_dir = temp_env
+    mgr = RamModelManager(ram_dir=str(ram_dir), budget_gb=0.05, min_system_reserve_gb=0.0)
+
+    # Full source model (2MB)
+    m_src = source_dir / "artemis.gguf"
+    m_src.write_bytes(b"A" * (2 * 1024 * 1024))
+
+    # Simulate an incomplete/truncated file in RAM cache (1MB instead of 2MB)
+    trunc = ram_dir / "artemis_artemis.gguf"
+    trunc.write_bytes(b"A" * (1024 * 1024))
+
+    assert trunc.exists()
+    assert trunc.stat().st_size == 1024 * 1024
+
+    # ensure_in_ram should detect size mismatch, remove the truncated file, and copy the full file
+    res_path = mgr.ensure_in_ram(str(m_src), model_id="artemis", role="rp", is_anchor=True)
+    assert res_path.exists()
+    assert res_path.stat().st_size == 2 * 1024 * 1024
+    assert mgr.is_cached("artemis")
+    assert mgr.entries["artemis"].size_bytes == 2 * 1024 * 1024
+
+
+def test_ram_manager_insufficient_space(temp_env, monkeypatch):
+    import shutil
+    ram_dir, source_dir = temp_env
+    mgr = RamModelManager(ram_dir=str(ram_dir), budget_gb=0.1, min_system_reserve_gb=0.0)
+
+    m_src = source_dir / "huge_model.gguf"
+    m_src.write_bytes(b"H" * (5 * 1024 * 1024))
+
+    # Monkeypatch shutil.disk_usage to simulate a full /dev/shm (only 1MB free)
+    from collections import namedtuple
+    Usage = namedtuple("Usage", ["total", "used", "free"])
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: Usage(total=10 * 1024 * 1024, used=9 * 1024 * 1024, free=1024 * 1024))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        mgr.ensure_in_ram(str(m_src), model_id="huge_model", role="rp", is_anchor=True)
+    assert "Insufficient RAM cache space" in str(exc_info.value)
+

@@ -40,8 +40,13 @@ def ensure_shm_capacity(needed_bytes: int = 0) -> None:
             max_shm_gb = min(45, int((total_ram * 0.82) / (1024**3)))
             current_total_gb = int(usage.total / (1024**3))
             if max_shm_gb > current_total_gb:
-                subprocess.run(["mount", "-o", f"remount,size={max_shm_gb}G", "/dev/shm"], check=False)
-                logger.info("shm_capacity_expanded", extra={"new_size_gb": max_shm_gb})
+                res = subprocess.run(["mount", "-o", f"remount,size={max_shm_gb}G", "/dev/shm"], capture_output=True, text=True, check=False)
+                if res.returncode == 0:
+                    logger.info("shm_capacity_expanded", extra={"new_size_gb": max_shm_gb})
+                else:
+                    res_sudo = subprocess.run(["sudo", "-n", "mount", "-o", f"remount,size={max_shm_gb}G", "/dev/shm"], capture_output=True, text=True, check=False)
+                    if res_sudo.returncode == 0:
+                        logger.info("shm_capacity_expanded_sudo", extra={"new_size_gb": max_shm_gb})
     except Exception as exc:
         logger.debug(f"Could not expand /dev/shm: {exc}")
 
@@ -205,9 +210,11 @@ class RamModelManager:
         if not entry:
             for e in self.entries.values():
                 if model_id in e.model_id or Path(e.ram_path).name == model_id:
-                    return Path(e.ram_path).exists()
+                    p = Path(e.ram_path)
+                    return p.exists() and p.is_file() and (e.size_bytes <= 0 or p.stat().st_size == e.size_bytes)
             return False
-        return Path(entry.ram_path).exists()
+        p = Path(entry.ram_path)
+        return p.exists() and p.is_file() and (entry.size_bytes <= 0 or p.stat().st_size == entry.size_bytes)
 
     def touch(self, model_id: str) -> None:
         """Mark model as recently used."""
@@ -312,29 +319,42 @@ class RamModelManager:
         # 2. Check if file already exists on disk in subfolder or flat ram_dir
         candidates_to_check = [dest_path, flat_dest_path, subfolder_dir / src.name, self.ram_dir / src.name]
         for existing in candidates_to_check:
-            if existing.exists() and existing.is_file() and existing.stat().st_size == size_bytes:
-                existing_entry = CacheEntry(
-                    model_id=mid,
-                    role=role,
-                    source_path=str(src),
-                    ram_path=str(existing),
-                    size_bytes=size_bytes,
-                    is_anchor=is_anchor,
-                    last_used=time.time(),
-                )
-                self.entries[mid] = existing_entry
-                self.aliases[src.name] = mid
-                self.aliases[existing.name] = mid
-                if "_" in existing.name:
-                    self.aliases[existing.name.split("_", 1)[0]] = mid
-                try:
-                    if subfolder and existing.parent == subfolder_dir and not flat_dest_path.exists():
-                        flat_dest_path.symlink_to(existing)
-                    elif subfolder and existing.parent == self.ram_dir and not dest_path.exists():
-                        dest_path.symlink_to(existing)
-                except Exception:
-                    pass
-                return existing
+            if existing.exists() and existing.is_file():
+                if existing.stat().st_size == size_bytes:
+                    existing_entry = CacheEntry(
+                        model_id=mid,
+                        role=role,
+                        source_path=str(src),
+                        ram_path=str(existing),
+                        size_bytes=size_bytes,
+                        is_anchor=is_anchor,
+                        last_used=time.time(),
+                    )
+                    self.entries[mid] = existing_entry
+                    self.aliases[src.name] = mid
+                    self.aliases[existing.name] = mid
+                    if "_" in existing.name:
+                        self.aliases[existing.name.split("_", 1)[0]] = mid
+                    try:
+                        if subfolder and existing.parent == subfolder_dir and not flat_dest_path.exists():
+                            flat_dest_path.symlink_to(existing)
+                        elif subfolder and existing.parent == self.ram_dir and not dest_path.exists():
+                            dest_path.symlink_to(existing)
+                    except Exception:
+                        pass
+                    return existing
+                else:
+                    # Stale or truncated file from an interrupted copy. Delete to free space.
+                    logger.warning(
+                        "ram_cache_removing_truncated",
+                        extra={"path": str(existing), "actual_bytes": existing.stat().st_size, "expected_bytes": size_bytes},
+                    )
+                    try:
+                        existing.unlink()
+                    except Exception:
+                        pass
+                    if mid in self.entries and self.entries[mid].ram_path == str(existing):
+                        del self.entries[mid]
 
         # 3. Determine headroom and free up space if needed
         needed = size_bytes
@@ -356,6 +376,14 @@ class RamModelManager:
                     break
         except Exception:
             pass
+
+        # Abort if physical filesystem space is strictly less than needed to prevent Errno 28
+        free_shm = shutil.disk_usage(self.ram_dir).free
+        if free_shm < needed:
+            raise RuntimeError(
+                f"Insufficient RAM cache space on {self.ram_dir}: needed {needed / (1024**3):.2f} GB, "
+                f"available {free_shm / (1024**3):.2f} GB after evictions."
+            )
 
         # 4. Stream / Copy into RAM cache atomically
         tmp_path = subfolder_dir / f".{dest_filename}.tmp"

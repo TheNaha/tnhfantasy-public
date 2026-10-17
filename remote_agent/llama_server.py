@@ -117,11 +117,23 @@ class Model:
         the sidecar cannot import from backend_v2.
         """
         model_path = ram_path or f"{models_dir}/{self.volume_dir}/{self.gguf}"
+        ngl = 99
+        try:
+            import torch
+            if torch.cuda.is_available() and os.path.exists(model_path):
+                total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                weight_gb = os.path.getsize(model_path) / (1024**3)
+                safe_budget_gb = max(0.0, total_vram_gb - 5.0)
+                if weight_gb > safe_budget_gb > 0:
+                    ngl = max(20, min(55, int(64 * (safe_budget_gb / weight_gb))))
+        except Exception:
+            ngl = 99
+
         args = [
             "-m", model_path,
             "--alias", self.id,
-            "-ngl", "99",
-            "-c", str(self.ctx * self.parallel),
+            "-ngl", str(ngl),
+            "-c", str(min(self.ctx * self.parallel, 8192)),
             "--parallel", str(self.parallel),
             "--jinja",
         ]

@@ -45,6 +45,7 @@ services:
     # (never published to 0.0.0.0 public internet).
     ports:
       - "${COMFY_BACKEND_BIND:-100.150.0.4}:8002:8002"
+      - "127.0.0.1:8002:8002"
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy

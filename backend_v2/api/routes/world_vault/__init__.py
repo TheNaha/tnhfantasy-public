@@ -40,6 +40,7 @@ router.include_router(world_hub_router, prefix="/world-vault", tags=["World Vaul
 router.include_router(locations_router, prefix="/locations", tags=["Locations"])
 router.include_router(timeline_router, tags=["Timeline"])
 router.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
+router.include_router(llm_config_router, prefix="/world-vault/llm", tags=["LLM Configuration"])
 router.include_router(graph_layout_router, prefix="/world-vault/graph-layout", tags=["Graph Layout"])
 router.include_router(graph_edges_router, prefix="/world-vault/graph-edges", tags=["Graph Edges"])
 router.include_router(util_router, prefix="/world-vault", tags=["World Vault"])

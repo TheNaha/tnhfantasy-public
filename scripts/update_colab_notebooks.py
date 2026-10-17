@@ -56,8 +56,8 @@ GDRIVE_COMFY_PATH = "/content/drive/MyDrive/comfyui" #@param {type:"string"}
 
 #@markdown ---
 #@markdown #### 💬 LLM / Hybrid Mode — Curated Models from models.json:
-LLM_RP_MODEL = "artemis_31b" #@param ["artemis_31b", "writers_31b_v2", "gemma4_31b_heretic", "sompoa_26b_a4b", "weirdcompound_24b", "magnum_diamond_24b"]
-LLM_UTIL_MODEL = "same_as_rp" #@param ["same_as_rp", "gemma3_12b_heretic_util", "mistral_small_32_it"]
+LLM_RP_MODEL = "artemis_31b_q4" #@param ["artemis_31b_q4", "artemis_31b", "sompoa_26b_a4b", "weirdcompound_24b", "gemma3_12b_heretic", "writers_31b_v2", "gemma4_31b_heretic", "magnum_diamond_24b"]
+LLM_UTIL_MODEL = "same_as_rp" #@param ["same_as_rp", "qwen2.5_14b", "gemma3_12b_heretic_util", "mistral_small_32_it"]
 GDRIVE_LLM_PATH = "/content/drive/MyDrive/tnhcomfy/llm_models" #@param {type:"string"}
 
 # Try resolving tokens from Google Colab Secrets (the Key icon on left sidebar)
@@ -426,21 +426,30 @@ if backend_url_clean:
         pass
 
     ctx = ssl._create_unverified_context()
-    for cand in candidates:
-        try:
-            cat_endpoint = f"{cand}/api/v2/models/catalog"
-            req = urllib.request.Request(cat_endpoint, headers={"Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
-                if resp.status == 200:
-                    catalog = json.loads(resp.read().decode())
-                    backend_sync_ok = True
-                    catalog_source = f"backend ({cand})"
-                    break
-        except Exception:
-            pass
+    print(f"⏳ Syncing Model Catalog from backend ({backend_url_clean})...")
+    # NetBird mesh route and P2P WireGuard handshake can take 5-15s to establish
+    for attempt in range(12):
+        for cand in candidates:
+            for path in ("/api/v2/models/catalog", "/api/v2/world-vault/llm-config/catalog"):
+                try:
+                    cat_endpoint = f"{cand}{path}"
+                    req = urllib.request.Request(cat_endpoint, headers={"Accept": "application/json"})
+                    with urllib.request.urlopen(req, timeout=3, context=ctx) as resp:
+                        if resp.status == 200:
+                            catalog = json.loads(resp.read().decode())
+                            backend_sync_ok = True
+                            catalog_source = f"backend ({cand})"
+                            break
+                except Exception:
+                    pass
+            if backend_sync_ok:
+                break
+        if backend_sync_ok:
+            break
+        time.sleep(1.5)
 
     if not backend_sync_ok:
-        print(f"⚠️ Notice: Could not contact backend catalog at {backend_url_clean}. Using local catalog.")
+        print(f"⚠️ Notice: Could not contact backend catalog at {backend_url_clean} after retries. Using local catalog.")
 
 if not catalog:
     local_cat = "/content/tnhcomfy/backend_v2/modal_llm/models.json"
@@ -670,17 +679,67 @@ if mode_key == "hybrid":
 
     print(f"🚀 [Hybrid] Starting CUDA llama-server on :{llm_port}...")
     rp_ram_file = ""
-    if active_rp in ram_mgr.entries and os.path.exists(ram_mgr.entries[active_rp].ram_path):
-        rp_ram_file = ram_mgr.entries[active_rp].ram_path
-    else:
-        for mid, entry in ram_mgr.entries.items():
-            if (active_rp in mid or mid in active_rp) and os.path.exists(entry.ram_path):
-                rp_ram_file = entry.ram_path
-                break
-    if not rp_ram_file and active_rp in resolved_weights:
-        rp_ram_file = resolved_weights[active_rp]
+    src_expected = resolved_weights.get(active_rp, "")
+    src_size = os.path.getsize(src_expected) if (src_expected and os.path.exists(src_expected)) else 0
 
-    llama_args = ["llama-server", "--port", str(llm_port), "--host", "127.0.0.1", "-ngl", "99", "--jinja"]
+    if active_rp in ram_mgr.entries and os.path.exists(ram_mgr.entries[active_rp].ram_path):
+        cand = ram_mgr.entries[active_rp].ram_path
+        if src_size > 0 and os.path.getsize(cand) != src_size:
+            print(f"  ⚠️ Stale/truncated RAM file detected for {active_rp}. Evicting...")
+            try:
+                ram_mgr.evict_model(active_rp, force=True)
+            except Exception:
+                pass
+        else:
+            rp_ram_file = cand
+
+    if not rp_ram_file:
+        for mid, entry in list(ram_mgr.entries.items()):
+            if (active_rp in mid or mid in active_rp) and os.path.exists(entry.ram_path):
+                if src_size > 0 and os.path.getsize(entry.ram_path) != src_size:
+                    print(f"  ⚠️ Stale/truncated RAM file detected for {mid}. Evicting...")
+                    try:
+                        ram_mgr.evict_model(mid, force=True)
+                    except Exception:
+                        pass
+                else:
+                    rp_ram_file = entry.ram_path
+                    break
+
+    if not rp_ram_file and src_expected and os.path.exists(src_expected):
+        rp_ram_file = src_expected
+
+    # Dynamic VRAM budgeting & safe layer offload calculation
+    ngl = 99
+    try:
+        import torch
+        if torch.cuda.is_available():
+            total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            weight_gb = os.path.getsize(rp_ram_file) / (1024**3) if (rp_ram_file and os.path.exists(rp_ram_file)) else 0.0
+            safe_budget_gb = max(0.0, total_vram_gb - 5.0)
+            if weight_gb > safe_budget_gb > 0:
+                fraction = safe_budget_gb / weight_gb
+                ngl = max(20, min(55, int(64 * fraction)))
+                print(f"  ⚡ GPU VRAM: {total_vram_gb:.1f} GB | Model: {weight_gb:.1f} GB")
+                print(f"  🎯 Calculated safe layer offload: -ngl {ngl} (GPU: ~{safe_budget_gb:.1f} GB, CPU RAM: ~{weight_gb - safe_budget_gb:.1f} GB) to prevent CUDA OOM")
+            else:
+                ngl = 99
+                if weight_gb > 0:
+                    print(f"  ⚡ Model ({weight_gb:.1f} GB) fits entirely in GPU VRAM ({total_vram_gb:.1f} GB): -ngl 99")
+    except Exception as exc:
+        ngl = 99
+        print(f"  Notice: VRAM layer budgeting bypassed ({exc}); using -ngl 99")
+
+    llama_args = [
+        "llama-server",
+        "--port", str(llm_port),
+        "--host", "127.0.0.1",
+        "-ngl", str(ngl),
+        "-c", "8192",
+        "--cache-type-k", "q8_0",
+        "--cache-type-v", "q8_0",
+        "--jinja",
+    ]
     if rp_ram_file and os.path.exists(rp_ram_file):
         aliases = [active_rp, "default"]
         if shared_weights and active_util != active_rp:
@@ -690,10 +749,13 @@ if mode_key == "hybrid":
         if rp_ram_file.startswith("/dev/shm") or "ram_cache" in rp_ram_file:
             print(f"  🧠 Loading RAM-cached GGUF: {os.path.basename(rp_ram_file)} (sub-second VRAM transfer)")
         else:
-            print(f"  📦 Loading GGUF from Drive storage: {os.path.basename(rp_ram_file)}")
+            print(f"  📦 Loading GGUF from storage: {os.path.basename(rp_ram_file)}")
     else:
         print("  🧠 Auto-loading Qwen2.5-1.5B via Hugging Face...")
         llama_args.extend(["--hf-repo", "Qwen/Qwen2.5-1.5B-Instruct-GGUF", "--hf-file", "qwen2.5-1.5b-instruct-q4_k_m.gguf", "--alias", "default"])
+
+    stdbuf_bin = shutil.which("stdbuf")
+    spawn_cmd = [stdbuf_bin, "-oL", "-eL"] + llama_args if stdbuf_bin else llama_args
 
     env_llm = dict(
         os.environ,
@@ -701,8 +763,8 @@ if mode_key == "hybrid":
         PATH="/usr/local/llama.cpp:/usr/local/bin:" + os.environ.get("PATH", ""),
         PYTHONUNBUFFERED="1",
     )
-    with open(log_llm, "w") as out:
-        proc_llm = subprocess.Popen(llama_args, env=env_llm, stdout=out, stderr=out)
+    with open(log_llm, "a", buffering=1) as out:
+        proc_llm = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
 
 elif mode_key == "model":
     print("🚀 Starting ComfyUI server on :8188...")
@@ -775,24 +837,31 @@ for _ in range(40):
         time.sleep(1)
 
 if mode_key in ("hybrid", "llm"):
-    print("⏳ Waiting for llama-server healthcheck...")
+    print("⏳ Waiting for llama-server healthcheck (loading weights into VRAM/RAM)...")
     llm_ready = False
-    for _ in range(45):
+    for i in range(120):
         if "proc_llm" in locals() and proc_llm.poll() is not None:
-            print(f"❌ llama-server process exited unexpectedly (code {proc_llm.returncode})!")
+            print(f"\\n❌ llama-server process exited unexpectedly (code {proc_llm.returncode})!")
             if os.path.exists(log_llm):
                 with open(log_llm, "r", errors="replace") as f:
-                    print("".join(f.readlines()[-20:]))
+                    print("--- Last 25 lines of llama-server.log ---")
+                    print("".join(f.readlines()[-25:]))
             break
         try:
             import urllib.request
             with urllib.request.urlopen(f"http://127.0.0.1:{llm_port}/health", timeout=1) as res:
                 if res.status == 200:
-                    print("✅ llama-server is online and healthy!")
+                    print(f"\\n✅ llama-server is online and healthy on :{llm_port}!")
                     llm_ready = True
                     break
         except Exception:
-            time.sleep(1)
+            pass
+        if (i + 1) % 15 == 0:
+            print(f"  ... still loading ({i + 1}s / 120s)")
+        time.sleep(1)
+
+    if not llm_ready and ("proc_llm" not in locals() or proc_llm.poll() is None):
+        print("\\n⚠️ llama-server has not responded yet after 120s. Check /content/agent-data/llm/llama-server.log if it does not come online.")
 
 # 7. Cloudflare Tunnel (if selected)
 if tunnel_key == "cloudflared":
@@ -991,6 +1060,7 @@ TAG_COLORS = {
 }
 
 total_lines = 0
+last_watchdog = 0.0
 
 try:
     while True:
@@ -1024,6 +1094,16 @@ try:
             else:
                 for l, t in batch:
                     print(f"[{l}] {t}", flush=True)
+
+        # Periodic watchdog to auto-restart llama-server if it exited during the session
+        now = time.time()
+        if now - last_watchdog > 10.0:
+            last_watchdog = now
+            if mode_key in ("hybrid", "llm") and "proc_llm" in locals() and "spawn_cmd" in locals() and proc_llm.poll() is not None:
+                tag = TAG_COLORS.get("LLM", "[LLM]")
+                print(f"{tag} ⚠️ llama-server process exited (code {proc_llm.returncode}). Auto-restarting...", flush=True)
+                with open(log_llm, "a", buffering=1) as out:
+                    proc_llm = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
 
         if not activity:
             time.sleep(0.3)
