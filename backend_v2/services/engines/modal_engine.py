@@ -443,15 +443,9 @@ class ModalEngine(InProcessEngine):
                 )
 
     def download_token_for_url(self, url: str) -> Optional[str]:
-        """Which registry token authenticates this download URL.
+        from .base import determine_download_token
 
-        Same predicate as `provider_core.utils.determine_download_token`."""
-        lowered = (url or "").lower()
-        if "huggingface.co" in lowered:
-            return self.hf_token or None
-        if "civitai.com" in lowered or "civitai.red" in lowered:
-            return self.civitai_token or None
-        return None
+        return determine_download_token(url, self.hf_token, self.civitai_token)
 
     async def download_file(
         self,

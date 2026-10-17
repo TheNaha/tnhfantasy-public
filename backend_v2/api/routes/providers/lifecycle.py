@@ -217,7 +217,14 @@ async def remove_model_from_provider(
             logger.warning("provider_model_delete_no_engine", provider_id=provider_id, path=storage_path)
         else:
             try:
-                await engine.delete_file(storage_path)
+                deleted = await engine.delete_file(storage_path)
+                if not deleted:
+                    logger.warning("provider_model_delete_not_confirmed", provider_id=provider_id, path=storage_path)
+                for suffix in (".json", ".preview.png", ".sha256"):
+                    try:
+                        await engine.delete_file(storage_path + suffix)
+                    except Exception:
+                        pass
             except Exception as exc:
                 logger.warning("provider_model_delete_failed", provider_id=provider_id, path=storage_path, error=str(exc))
     else:
@@ -237,6 +244,13 @@ async def remove_model_from_provider(
         size_bytes=None,
         error_message=None,
     )
+
+    try:
+        from services.load_balancer import LoadBalancer
+
+        LoadBalancer.invalidate_model_availability_cache(provider_id=provider_id)
+    except Exception as exc:
+        logger.debug("availability_cache_invalidate_failed", error=str(exc))
 
     return {
         "status": "success",

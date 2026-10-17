@@ -113,9 +113,16 @@ export const useRegenerateReply = () => {
 };
 
 export const useImpersonateMessage = () => {
+    const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ chatId, hint }) =>
             api.post(`/api/v2/chats/${chatId}/impersonate`, { hint: hint || '' }),
+        onSuccess: (_, variables) => {
+            if (variables?.chatId) {
+                queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
+                invalidateVaultAggregates(queryClient);
+            }
+        },
     });
 };
 

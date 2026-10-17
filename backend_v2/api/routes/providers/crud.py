@@ -657,6 +657,12 @@ async def update_provider(
     # cleared through the one invalidation entry point.
     if "enabled" in updates or "capabilities" in updates:
         LoadBalancer.invalidate_model_availability_cache(provider_id=provider_id)
+    try:
+        from services.nodes import invalidate_object_info_cache
+
+        invalidate_object_info_cache()
+    except Exception:
+        pass
     status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider.id, provider=provider)
 

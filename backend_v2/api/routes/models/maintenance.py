@@ -516,7 +516,6 @@ async def backfill_provider_statuses(
     Backfill provider_statuses for all models by querying each provider.
     Useful for migrating existing models or after worker issues.
     """
-    from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
     from services.provider_runtime import resolve_provider_runtime_async
 
     service = get_model_service_v2(session)

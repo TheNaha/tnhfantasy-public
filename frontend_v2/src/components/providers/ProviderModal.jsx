@@ -88,6 +88,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
     useEscapeKey(onClose);
     const initialType = provider?.type || 'modal';
     const [schemasPayload, setSchemasPayload] = useState(null);
+    const [schemaError, setSchemaError] = useState(null);
     const engineSchemas = schemasPayload?.engines || null;
     const [formData, setFormData] = useState({
         id: provider?.id || '',
@@ -115,7 +116,9 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                 // flat per-category list the matrix was added to replace.
                 if (mounted && data?.engines) setSchemasPayload(data);
             })
-            .catch(() => {});
+            .catch((err) => {
+                if (mounted) setSchemaError(err?.message || 'Failed to load provider schemas');
+            });
         return () => { mounted = false; };
     }, []);
 
@@ -328,6 +331,11 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                 <h2 className="mb-2 text-2xl font-semibold text-white">
                     {provider ? 'Edit Provider' : 'Add Provider'}
                 </h2>
+                {schemaError && (
+                    <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                        {schemaError}
+                    </div>
+                )}
                 <p className="mb-6 text-sm text-gray-400">
                     Providers now use a unified runtime, deploy, and credential model.
                 </p>

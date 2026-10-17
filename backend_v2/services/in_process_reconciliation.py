@@ -593,7 +593,8 @@ async def _run_reconciliation(
                 async with semaphore:
                     async with active_lock:
                         active_downloads.append(download_info)
-                    current_download = download_info
+                    async with active_lock:
+                        current_download = download_info
                     await push_state("reconciling", phase="downloading", message=f"Downloading {display_name}...")
                     logger.info("in_process_reconcile_download_start", provider_id=provider_id, path=storage_path)
 
@@ -713,7 +714,8 @@ async def _run_reconciliation(
                             active_downloads[:] = [
                                 d for d in active_downloads if d.get("file_id") != file_id
                             ]
-                        current_download = None
+                        async with active_lock:
+                            current_download = None
                         await push_state("reconciling", phase="downloading")
 
             if downloads_needed:

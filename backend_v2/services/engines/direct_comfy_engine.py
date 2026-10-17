@@ -161,9 +161,9 @@ async def _ws_connect_with_retry(ws_url: str, extra_headers: Dict[str, str]):
     """
     def _connect(url: str):
         try:
-            return websockets.connect(url, additional_headers=extra_headers)
+            return websockets.connect(url, additional_headers=extra_headers, max_size=20 * 1024 * 1024)
         except TypeError:
-            return websockets.connect(url, extra_headers=extra_headers)
+            return websockets.connect(url, extra_headers=extra_headers, max_size=20 * 1024 * 1024)
 
     last_error: Optional[Exception] = None
     for attempt in range(1, _WS_CONNECT_RETRIES + 1):
@@ -265,19 +265,9 @@ class DirectComfyEngine(InProcessEngine):
         return headers
 
     def download_token_for_url(self, url: str) -> Optional[str]:
-        """Which registry token authenticates this download URL.
+        from .base import determine_download_token
 
-        Same predicate as `provider_core.utils.determine_download_token`,
-
-        The old remote_comfy client resolved HF/Civitai tokens for agent
-        downloads; without this, authenticated downloads 401.
-        """
-        lowered = (url or "").lower()
-        if "huggingface.co" in lowered:
-            return self.hf_token or None
-        if "civitai.com" in lowered or "civitai.red" in lowered:
-            return self.civitai_token or None
-        return None
+        return determine_download_token(url, getattr(self, "hf_token", None), getattr(self, "civitai_token", None))
 
     def get_agent_client(self) -> httpx.AsyncClient:
         """Lazily initialize the sidecar agent HTTP client."""
@@ -1223,6 +1213,11 @@ class DirectComfyEngine(InProcessEngine):
                     }
 
                 fetched = await asyncio.gather(*[_fetch_view(r) for r in refs]) if refs else []
+                if any(item is None for item in fetched):
+                    failed_count = sum(1 for item in fetched if item is None)
+                    raise RuntimeError(
+                        f"Failed to fetch {failed_count} image(s) from provider (transient /view error)"
+                    )
                 outputs = [a for a in fetched if a is not None]
 
                 t_fetch_all_done = time.monotonic()

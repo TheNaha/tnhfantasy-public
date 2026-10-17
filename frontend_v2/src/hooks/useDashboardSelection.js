@@ -42,6 +42,8 @@ export function useDashboardSelection({
                 // download in Firefox and older Safari, so the batch silently
                 // saved nothing there.
                 triggerFile(blob, `comfyui_batch_${Date.now()}.zip`);
+                setSelectionMode(false);
+                setSelectedFiles(new Set());
                 return missingCount;
             })(),
             {
@@ -52,8 +54,6 @@ export function useDashboardSelection({
                 error: (err) => `Download failed: ${err?.message || 'unknown error'}`
             }
         );
-        setSelectionMode(false);
-        setSelectedFiles(new Set());
     }, [selectedFiles, confirm]);
 
     // One `addFavorites` call, not a loop of `toggleFavorite`. The favorites

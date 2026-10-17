@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator
 import base64
 import inspect
 import logging
+import os
 
 import httpx
 
@@ -282,6 +283,23 @@ def encoded_upload_over_cap(encoded_len: int) -> bool:
 #: provider_core.models.MODEL_DIRECTORIES. Kept here (not imported from
 #: provider_containers) so the backend never depends on the containers it
 #: is deprecating.
+def determine_download_token(
+    url: str, hf_token: str | None = None, civitai_token: str | None = None
+) -> str | None:
+    """Single source of truth for which registry token authenticates a download URL.
+
+    Replaces the four drifted copies that lived on the engines. Instance tokens
+    (passed in) take precedence; env tokens are the fallback so hosted/LLM
+    engines that carry no instance credentials still resolve.
+    """
+    lowered = (url or "").lower()
+    if "huggingface.co" in lowered:
+        return hf_token or os.getenv("HF_TOKEN", "") or None
+    if "civitai.com" in lowered or "civitai.red" in lowered:
+        return civitai_token or os.getenv("CIVITAI_TOKEN", "") or None
+    return None
+
+
 MODEL_DIRECTORIES = [
     "models/checkpoints",
     "models/loras",

@@ -122,7 +122,12 @@ class UpdateProviderRequest(BaseModel):
     model_id: str
 
 @router.put("/default-provider")
-def set_default_provider_endpoint(request: UpdateProviderRequest):
+def set_default_provider_endpoint(request: UpdateProviderRequest, session: Session = Depends(get_session)):
+    provider = session.get(Provider, request.provider_id)
+    if provider is None or not provider.enabled:
+        raise ValidationError("LLM provider", request.provider_id)
+    if not (provider.worker_type in ("llm", "hybrid") or (hasattr(provider, "serves") and provider.serves("llm"))):
+        raise ValidationError("LLM provider", request.provider_id)
     set_default_provider(request.provider_id, request.model_id)
     return {"status": "success"}
 

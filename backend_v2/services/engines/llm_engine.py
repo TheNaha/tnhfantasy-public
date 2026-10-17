@@ -745,9 +745,17 @@ class ModalLlamaCPPEngine(InProcessEngine):
             while offset < total_size:
                 chunk = await storage.read_file_range.remote.aio(path, offset, self._RANGE_CHUNK_BYTES)
                 if not chunk:
-                    break
+                    raise RuntimeError(
+                        f"Modal LLM read_file_range returned a short read for {path}: "
+                        f"{offset} of {total_size} bytes"
+                    )
                 offset += len(chunk)
                 yield chunk
+
+            if offset < total_size:
+                raise RuntimeError(
+                    f"Modal LLM streamed only {offset} of {total_size} bytes for {path}"
+                )
 
     async def delete_file(self, path: str) -> bool:
         if not HAS_MODAL or modal is None:
@@ -762,12 +770,9 @@ class ModalLlamaCPPEngine(InProcessEngine):
             return False
 
     def download_token_for_url(self, url: str) -> Optional[str]:
-        lowered = (url or "").lower()
-        if "huggingface.co" in lowered:
-            return os.getenv("HF_TOKEN", "") or None
-        if "civitai.com" in lowered or "civitai.red" in lowered:
-            return os.getenv("CIVITAI_TOKEN", "") or None
-        return None
+        from .base import determine_download_token
+
+        return determine_download_token(url)
 
     async def download_file(
         self,
@@ -1428,6 +1433,7 @@ class GoogleLLMEngine(InProcessEngine):
                 "latency_ms": round((time.monotonic() - t0) * 1000, 2),
                 "engine": "google",
                 "error": "no API key configured (GOOGLE_API_KEY)",
+                "retryable": False,
             }
         try:
             resp = await self.get_http_client().get(
@@ -1455,15 +1461,15 @@ class GoogleLLMEngine(InProcessEngine):
                 "latency_ms": latency_ms,
                 "engine": "google",
             }
-        except Exception:
+        except Exception as exc:
             return {
                 "status": "unhealthy",
                 "provider_id": self.provider_id,
                 "ready": False,
                 "latency_ms": round((time.monotonic() - t0) * 1000, 2),
                 "engine": "google",
-                "error": "GET /models failed: connection error",
-                "retryable": True,
+                "error": f"GET /models failed: {exc}",
+                "retryable": retryable_for_exception(exc),
             }
 
     async def list_models(self, directory: str = "") -> List[Dict[str, Any]]:

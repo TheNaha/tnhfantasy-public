@@ -439,48 +439,56 @@ class JobService:
         explain which providers were tried, in what order, and how long each
         took. Diagnostics are best-effort: a failure to record must never break
         job execution, so errors are swallowed after logging.
+
+        The whole read/write runs on the offload pool (`run_db`), because this
+        is called on every provider attempt and a sync `Session.get` +
+        `commit` on the event loop stalls the API rather than the job.
         """
-        job = self.repo.get(job_id)
-        if not job:
-            return None
 
-        try:
-            metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
-            diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
-            attempts = [
-                entry for entry in (diagnostics.get("attempts") or []) if isinstance(entry, dict)
-            ]
-            attempts.append(
-                {
-                    "provider_id": provider_id,
-                    "attempt": attempt,
-                    "outcome": outcome,
-                    "error": (error[:MAX_ERROR_DETAIL_LENGTH] if error else None),
-                    "duration_seconds": duration_seconds,
-                    "at": datetime.now(timezone.utc).isoformat(),
-                }
-            )
-            diagnostics["attempts"] = attempts[-MAX_TRACKED_ATTEMPTS:]
-            diagnostics["attempt_count"] = int(diagnostics.get("attempt_count") or 0) + 1
-            diagnostics["last_provider_id"] = provider_id
-            diagnostics["last_outcome"] = outcome
-            if error:
-                diagnostics["failure_kind"] = FAILURE_PROVIDER_ERROR
-                diagnostics["failed_at"] = datetime.now(timezone.utc).isoformat()
+        def _work() -> Job | None:
+            job = self.repo.get(job_id)
+            if not job:
+                return None
 
-            metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
-            job.metadata_ = metadata
-            self.session.add(job)
-            self.session.commit()
-            self.session.refresh(job)
-            return job
-        except Exception as exc:  # diagnostics must never break execution
             try:
-                self.session.rollback()
-            except Exception:
-                pass
-            logger.warning("job_attempt_record_failed", job_id=job_id, error=str(exc))
-            return None
+                metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
+                diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
+                attempts = [
+                    entry for entry in (diagnostics.get("attempts") or []) if isinstance(entry, dict)
+                ]
+                attempts.append(
+                    {
+                        "provider_id": provider_id,
+                        "attempt": attempt,
+                        "outcome": outcome,
+                        "error": (error[:MAX_ERROR_DETAIL_LENGTH] if error else None),
+                        "duration_seconds": duration_seconds,
+                        "at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                diagnostics["attempts"] = attempts[-MAX_TRACKED_ATTEMPTS:]
+                diagnostics["attempt_count"] = int(diagnostics.get("attempt_count") or 0) + 1
+                diagnostics["last_provider_id"] = provider_id
+                diagnostics["last_outcome"] = outcome
+                if error:
+                    diagnostics["failure_kind"] = FAILURE_PROVIDER_ERROR
+                    diagnostics["failed_at"] = datetime.now(timezone.utc).isoformat()
+
+                metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
+                job.metadata_ = metadata
+                self.session.add(job)
+                self.session.commit()
+                self.session.refresh(job)
+                return job
+            except Exception as exc:  # diagnostics must never break execution
+                try:
+                    self.session.rollback()
+                except Exception:
+                    pass
+                logger.warning("job_attempt_record_failed", job_id=job_id, error=str(exc))
+                return None
+
+        return await run_db(_work)
 
     async def mark_failed(
         self,

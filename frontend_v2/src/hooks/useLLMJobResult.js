@@ -14,8 +14,8 @@
  * Resolves with { jobId, text: null, cancelled: true } if isCancelled() returns true.
  * Rejects on job failure, timeout (maxPolls exhausted), or submission error.
  */
-import { useCallback, useRef } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useCallback, useContext, useRef } from 'react';
+import { QueryClientContext } from '@tanstack/react-query';
 import { api } from '../api';
 import { on, EventTypes, getConnectionStatus } from '../api/websocket';
 
@@ -144,13 +144,7 @@ export function useLLMJobResult({ pollInterval = 1000, defaultMaxPolls = 300 } =
     // (always true in the app) polls read/write ['jobs', jobId] so useJobStatus
     // consumers share the result. Outside a provider (tests) we fall back to a
     // plain fetch.
-    let queryClient = null;
-    try {
-        // eslint-disable-next-line react-hooks/rules-of-hooks
-        queryClient = useQueryClient();
-    } catch {
-        queryClient = null;
-    }
+    const queryClient = useContext(QueryClientContext) ?? null;
 
     return useCallback(async ({ workflow, taskType = 'llm', maxPolls, isCancelled = () => false }) => {
         const res = await api.post('/api/jobs', { task_type: taskType, workflow });

@@ -96,26 +96,26 @@ class _AdvisoryRunLock:
             return True
 
     def __exit__(self, *_exc) -> None:
-        if self._session is None or not self._held:
+        if self._session is None:
             return
         try:
-            from sqlalchemy import text
+            if self._held:
+                from sqlalchemy import text
 
-            self._session.exec(
-                text("SELECT pg_advisory_unlock(:key)"),
-                params={"key": self._key},
-            )
-            self._session.commit()
+                self._session.exec(
+                    text("SELECT pg_advisory_unlock(:key)"),
+                    params={"key": self._key},
+                )
+                self._session.commit()
         except Exception as exc:
-            # A connection returned to the pool with a lock still held would
-            # block the next process indefinitely, so this is worth logging
-            # loudly even though nothing can be done about it here.
-            logger.error("scheduler_lock_release_failed", job_id=self._job_id, error=str(exc))
+            if self._held:
+                logger.error("scheduler_lock_release_failed", job_id=self._job_id, error=str(exc))
         finally:
             try:
                 self._session.close()
             except Exception as exc:
                 logger.warning("scheduler_session_close_failed", job_id=self._job_id, error=str(exc))
+            self._session = None
 
 
 # In-memory execution history for scheduled jobs
