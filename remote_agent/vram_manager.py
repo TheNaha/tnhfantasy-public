@@ -282,7 +282,8 @@ class VRAMManager:
             # Attempt to load on chosen device
             try:
                 logger.info("loading_laya_model", extra={"model_id": model_id, "device": device, "source": repo_or_path})
-                model = laya.load(repo_or_path, device=device)
+                hf_token = os.getenv("HF_TOKEN") or None
+                model = laya.load(repo_or_path, device=device, token=hf_token)
                 model_dev = getattr(model, "device", None)
                 actual_dev = str(model_dev) if model_dev is not None else device
                 resolved_dev = "cuda" if "cuda" in actual_dev.lower() else "cpu"
@@ -300,7 +301,8 @@ class VRAMManager:
                     if cpu_key in self.laya_cache:
                         self.current_laya_device = "cpu"
                         return self.laya_cache[cpu_key], "cpu"
-                    model = laya.load(repo_or_path, device="cpu")
+                    hf_token = os.getenv("HF_TOKEN") or None
+                    model = laya.load(repo_or_path, device="cpu", token=hf_token)
                     self.laya_cache[cpu_key] = model
                     self.current_laya_device = "cpu"
                     return model, "cpu"
@@ -438,9 +440,16 @@ class VRAMManager:
     def ensure_llama_running(self, model_id: Optional[str] = None, timeout: float = 60.0) -> bool:
         """Start llama-server Just-In-Time from RAM cache if not already running."""
         with self._lock:
-            # If already running with matching model, return immediately
+            # Resolve model weights path (prefer RAM cache /dev/shm)
+            model_path, resolved_mid = self._resolve_model_path(model_id)
+            if not model_path or not os.path.exists(model_path):
+                logger.warning(f"model_path_not_found: {model_path} (mid={model_id})")
+                return False
+
+            # If already running with matching model or generic request, return immediately
+            is_generic = (not model_id) or (str(model_id).strip().lower() in {"default", "auto", "rp", "llm", "primary", "base"})
             if self.is_llama_running():
-                if not model_id or not self.llama_model_id or self.llama_model_id == model_id:
+                if is_generic or (self.llama_model_id and (self.llama_model_id == model_id or self.llama_model_id == resolved_mid)):
                     self.last_llm_activity = time.time()
                     return True
                 # Different model requested -> stop current and hot-switch
@@ -450,12 +459,6 @@ class VRAMManager:
             binary = self._find_llama_binary()
             if not binary:
                 logger.warning("llama_binary_not_found")
-                return False
-
-            # Resolve model weights path (prefer RAM cache /dev/shm)
-            model_path, resolved_mid = self._resolve_model_path(model_id)
-            if not model_path or not os.path.exists(model_path):
-                logger.warning(f"model_path_not_found: {model_path} (mid={model_id})")
                 return False
 
             # Calculate safe layer offload (-ngl) reserving VRAM for Laya (~1.2GB) & KV cache (~2GB)
@@ -486,8 +489,12 @@ class VRAMManager:
                 "--cache-type-v", "q8_0",
                 "--jinja",
             ]
-            if resolved_mid:
-                cmd.extend(["--alias", resolved_mid])
+            aliases = ["default", "rp"]
+            if resolved_mid and resolved_mid not in aliases:
+                aliases.append(resolved_mid)
+            if model_id and str(model_id).strip().lower() not in {"default", "auto", "rp", "llm"}:
+                aliases.append(str(model_id).strip())
+            cmd.extend(["--alias", ",".join(list(dict.fromkeys(aliases)))])
 
             # Prepare CUDA library environment
             env = self._build_cuda_env()
@@ -546,39 +553,91 @@ class VRAMManager:
         return None
 
     def _resolve_model_path(self, model_id: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
-        """Resolve weight file path from RAM cache or disk storage."""
+        """Resolve weight file path from RAM cache or disk storage with robust multi-tier fallback."""
+        generic_aliases = {"", "default", "auto", "rp", "llm", "primary", "base", "util", "model"}
+        is_generic = (not model_id) or (str(model_id).strip().lower() in generic_aliases)
+        clean_mid = None if is_generic else str(model_id).strip()
+
         # 1. Check RAM Manager entries
         try:
             from ram_manager import get_ram_manager
 
             mgr = get_ram_manager()
-            if model_id and mgr.is_cached(model_id):
-                return mgr.entries[mgr.aliases.get(model_id, model_id)].ram_path, model_id
+            # If empty or specific mid not cached, attempt a rescan of ram_dir
+            if not mgr.entries or (clean_mid and not mgr.is_cached(clean_mid)):
+                mgr._rescan_ram_dir()
 
-            # If no model_id specified, pick first cached LLM model
-            for mid, entry in mgr.entries.items():
-                if entry.role in ("rp", "util", "llm") or mid.endswith(".gguf"):
-                    return entry.ram_path, mid
-        except Exception:
-            pass
+            if clean_mid and mgr.is_cached(clean_mid):
+                target_id = mgr.aliases.get(clean_mid, clean_mid)
+                if target_id in mgr.entries:
+                    return mgr.entries[target_id].ram_path, clean_mid
 
-        # 2. Check /dev/shm/tnh_ram_cache directly
-        ram_dir = os.getenv("RAM_CACHE_DIR", "/dev/shm/tnh_ram_cache")
-        if os.path.exists(ram_dir):
-            for root, _, files in os.walk(ram_dir):
-                for f in files:
-                    if f.endswith(".gguf") and not f.startswith("."):
-                        if not model_id or model_id.lower() in f.lower():
-                            return os.path.join(root, f), model_id or f
+            # If generic request, pick first cached LLM model
+            if is_generic:
+                for mid, entry in mgr.entries.items():
+                    if entry.role in ("rp", "util", "llm") or mid.endswith(".gguf") or entry.ram_path.endswith(".gguf"):
+                        return entry.ram_path, mid
+        except Exception as exc:
+            logger.debug(f"ram_manager_resolve_skipped: {exc}")
 
-        # 3. Check DATA_ROOT storage
-        data_root = os.getenv("DATA_DIR", "/content/models/llm")
-        if os.path.exists(data_root):
-            for root, _, files in os.walk(data_root):
-                for f in files:
-                    if f.endswith(".gguf") and not f.startswith("."):
-                        if not model_id or model_id.lower() in f.lower():
-                            return os.path.join(root, f), model_id or f
+        # 2. Check RAM directories (/dev/shm/tnh_ram_cache, /dev/shm)
+        ram_dirs = [
+            os.getenv("RAM_CACHE_DIR", "/dev/shm/tnh_ram_cache"),
+            "/dev/shm/tnh_ram_cache",
+            "/dev/shm",
+        ]
+        ram_ggufs: List[str] = []
+        for r_dir in ram_dirs:
+            if os.path.exists(r_dir):
+                for root, _, files in os.walk(r_dir):
+                    for f in sorted(files):
+                        if f.endswith(".gguf") and not f.startswith("."):
+                            full_path = os.path.join(root, f)
+                            if full_path not in ram_ggufs:
+                                ram_ggufs.append(full_path)
+                            if clean_mid and clean_mid.lower() in f.lower():
+                                return full_path, clean_mid or f
+
+        if is_generic and ram_ggufs:
+            first_p = ram_ggufs[0]
+            stem = os.path.splitext(os.path.basename(first_p))[0]
+            return first_p, stem or "default"
+
+        # 3. Check disk storage locations
+        disk_dirs = [
+            os.getenv("DATA_DIR", "/content/models/llm"),
+            "/content/models/llm",
+            os.getenv("GDRIVE_LLM_PATH", "/content/drive/MyDrive/tnhcomfy/llm_models"),
+            "/content/drive/MyDrive/tnhcomfy/llm_models",
+            "/content/agent-data/llm/models",
+            "/content/ComfyUI/models/llm",
+        ]
+        disk_ggufs: List[str] = []
+        for d_dir in disk_dirs:
+            if os.path.exists(d_dir):
+                for root, _, files in os.walk(d_dir):
+                    for f in sorted(files):
+                        if f.endswith(".gguf") and not f.startswith("."):
+                            full_path = os.path.join(root, f)
+                            if full_path not in disk_ggufs:
+                                disk_ggufs.append(full_path)
+                            if clean_mid and clean_mid.lower() in f.lower():
+                                return full_path, clean_mid or f
+
+        if is_generic and disk_ggufs:
+            first_p = disk_ggufs[0]
+            stem = os.path.splitext(os.path.basename(first_p))[0]
+            return first_p, stem or "default"
+
+        # 4. Ultimate graceful fallback: if any GGUF exists anywhere, use it!
+        all_candidates = ram_ggufs + disk_ggufs
+        if all_candidates:
+            fallback_p = all_candidates[0]
+            stem = os.path.splitext(os.path.basename(fallback_p))[0]
+            logger.warning(
+                f"Requested model '{model_id}' not found; gracefully falling back to available weights: {fallback_p}"
+            )
+            return fallback_p, stem or "default"
 
         return None, model_id
 

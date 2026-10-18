@@ -95,7 +95,7 @@ class DecisionService:
 
         started = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(
                     f"{agent_url}/v1/decisions",
                     headers=headers,
@@ -115,9 +115,11 @@ class DecisionService:
             payload = resp.json()
             answers = payload.get("answers") or payload
             latency_ms = float(payload.get("latency_ms") or ((time.perf_counter() - started) * 1000))
+            agent_engine = str(payload.get("engine_used") or f"remote_laya_{payload.get('device', 'cpu')}")
+            engine_used_str = agent_engine if ":" in agent_engine else f"{agent_engine}:{provider_id}"
             return parse_director_result(
                 answers,
-                engine_used=f"remote_laya_cpu:{provider_id}",
+                engine_used=engine_used_str,
                 model_id=str(payload.get("model_id") or model_id),
                 latency_ms=latency_ms,
                 allow_image_generation=allow_image_generation,

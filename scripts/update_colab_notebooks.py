@@ -909,6 +909,8 @@ def launch_llm_track():
         print(f"⚡ [LLM Track] Pre-warming {os.path.basename(src_expected)} into RAM cache (/dev/shm)...")
         try:
             ram_mgr.ensure_in_ram(src_expected, model_id=active_rp, role="rp", is_anchor=True)
+            ram_mgr.aliases["default"] = active_rp
+            ram_mgr.aliases["rp"] = active_rp
             print(f"✅ [LLM Track] GGUF weights cached in RAM!")
         except Exception as exc:
             print(f"⚠️ [LLM Track] Pre-warming failed ({exc}); will load directly from storage.")
@@ -939,20 +941,6 @@ def launch_llm_track():
 
     global spawn_cmd, env_llm
 
-    # Ensure ComfyUI yields any held VRAM before llama-server loads weights into GPU
-    if mode_key in ("hybrid", "model"):
-        try:
-            req_free = urllib.request.Request(
-                f"http://127.0.0.1:{comfy_port}/free",
-                data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req_free, timeout=2) as _:
-                pass
-            time.sleep(0.5)
-        except Exception:
-            pass
-
     # Dynamic VRAM budgeting & safe layer offload calculation
     ngl = 99
     try:
@@ -960,7 +948,6 @@ def launch_llm_track():
         if torch.cuda.is_available():
             total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             weight_gb = os.path.getsize(rp_ram_file) / (1024**3) if (rp_ram_file and os.path.exists(rp_ram_file)) else 0.0
-            # Reserve 5.0 GB for KV cache (1.5GB), CUDA runtime/overhead (1.5GB), and scratch/activations (2.0GB)
             safe_budget_gb = max(0.0, total_vram_gb - 5.0)
             if weight_gb > safe_budget_gb > 0:
                 fraction = safe_budget_gb / weight_gb
@@ -986,7 +973,7 @@ def launch_llm_track():
         "--jinja",
     ]
     if rp_ram_file and os.path.exists(rp_ram_file):
-        aliases = [active_rp, "default"]
+        aliases = [active_rp, "default", "rp"]
         if shared_weights and active_util != active_rp:
             aliases.append(active_util)
         alias_str = ",".join(list(dict.fromkeys(aliases)))
@@ -1007,9 +994,29 @@ def launch_llm_track():
         PATH="/usr/local/llama.cpp:/usr/local/bin:" + os.environ.get("PATH", ""),
         PYTHONUNBUFFERED="1",
     )
-    print(f"🚀 [LLM Track] Starting CUDA llama-server on :{llm_port}...")
-    with open(log_llm, "a", buffering=1) as out:
-        worker_procs["llm"] = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
+    if mode_key == "llm":
+        print(f"🚀 [LLM Track] Starting CUDA llama-server on :{llm_port}...")
+        with open(log_llm, "a", buffering=1) as out:
+            worker_procs["llm"] = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
+    else:
+        print(f"⚡ [LLM Track] GGUF weights pre-warmed in RAM cache (/dev/shm). llama-server will start Just-In-Time on first LLM request (0 MB idle GPU VRAM reserved)!")
+
+def launch_laya_track():
+    print("⚡ [Laya Track] Pre-warming Laya System 1 on GPU (CUDA)...")
+    try:
+        import laya
+        laya_dir = "/content/agent-data/decisions/laya_multilingual"
+        src = laya_dir if (os.path.exists(laya_dir) and os.listdir(laya_dir)) else "convaiinnovations/laya-multilingual"
+        try:
+            ram_mgr.ensure_dir_in_ram(src, model_id="laya_multilingual", role="decisions", is_anchor=True)
+        except Exception:
+            pass
+        hf_tok = os.environ.get("HF_TOKEN") or None
+        test_agent = laya.load(src, device="cuda", token=hf_tok)
+        actual_dev = getattr(test_agent, "device", "cuda")
+        print(f"✅ [Laya Track] Laya pre-warmed on {str(actual_dev).upper()} (<100ms inference ready)!")
+    except Exception as exc:
+        print(f"⚠️ [Laya Track] Pre-warming notice: {exc}")
 
 # 1. Start Storage Agent immediately
 start_remote_agent()
@@ -1026,12 +1033,16 @@ if mode_key in ("hybrid", "llm"):
     t_llm.start()
     active_threads.append(t_llm)
 
+t_laya = threading.Thread(target=launch_laya_track, daemon=True)
+t_laya.start()
+active_threads.append(t_laya)
+
 # 3. Unified Health Check Loop
 print("⏳ Waiting for services to become healthy...")
 services_to_check = [("agent", agent_port, "/health", "Remote Agent")]
 if mode_key in ("hybrid", "model"):
     services_to_check.append(("comfy", comfy_port, "/system_stats", "ComfyUI"))
-if mode_key in ("hybrid", "llm"):
+if mode_key == "llm":
     services_to_check.append(("llm", llm_port, "/health", "llama-server"))
 
 healthy_services = set()
@@ -1060,6 +1071,10 @@ for attempt in range(120):
     if len(healthy_services) == len(services_to_check):
         break
     time.sleep(1)
+
+# Wait for pre-warming threads to complete so RAM status reports accurately
+for t in active_threads:
+    t.join(timeout=300)
 
 ram_status = ram_mgr.get_status()
 print(f"✅ RAM Cache Ready: {ram_status['used_gb']} GB / {ram_status['budget_gb']} GB used ({ram_status['percent_used']}%)")

@@ -148,6 +148,7 @@ class TestRemoteAgentVRAMEndpoints:
         monkeypatch.setenv("REMOTE_AGENT_TOKEN", "test-secret-token")
         monkeypatch.setenv("WORKER_MODE", "hybrid")
         import server
+        monkeypatch.setattr(server, "TOKEN", "test-secret-token")
         return TestClient(server.app)
 
     def test_vram_status_endpoint(self, client):
@@ -182,3 +183,34 @@ class TestRemoteAgentVRAMEndpoints:
     def test_vram_endpoints_require_token(self, client):
         resp = client.get("/vram/status")
         assert resp.status_code == 401
+
+    def test_list_upstream_models_returns_ready_when_idle(self, client):
+        resp = client.get("/v1/models", headers={"Authorization": "Bearer test-secret-token"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data.get("object") == "list"
+        assert isinstance(data.get("data"), list)
+        assert any(m.get("id") == "default" for m in data.get("data", []))
+
+    def test_resolve_model_path_generic_and_fallback(self, tmp_path, monkeypatch):
+        ram_dir = tmp_path / "ram_cache"
+        ram_dir.mkdir()
+        fake_gguf = ram_dir / "sompoa_26b_q5.gguf"
+        fake_gguf.write_bytes(b"dummy gguf content")
+
+        monkeypatch.setenv("RAM_CACHE_DIR", str(ram_dir))
+        mgr = VRAMManager()
+
+        # 1. Generic alias "default" should find the gguf
+        path, mid = mgr._resolve_model_path("default")
+        assert path == str(fake_gguf)
+        assert "sompoa" in mid or mid == "default"
+
+        # 2. None or empty should find the gguf
+        path, mid = mgr._resolve_model_path(None)
+        assert path == str(fake_gguf)
+
+        # 3. Non-matching model ID should gracefully fallback to the available GGUF
+        path, mid = mgr._resolve_model_path("unknown_requested_model")
+        assert path == str(fake_gguf)
+

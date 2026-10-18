@@ -1468,8 +1468,18 @@ if WORKER_MODE in ("llm", "hybrid"):
                 with urllib.request.urlopen(req, timeout=10.0) as resp:
                     return resp.status, resp.read(), resp.headers.get("Content-Type", "")
             except Exception:
-                # Return empty list payload if upstream model server has no models or is starting
-                return 200, json.dumps({"object": "list", "data": []}).encode(), "application/json"
+                # Upstream llama-server is in idle/standby JIT mode.
+                # Discover available GGUF models so health checks and model listings see the worker as ready!
+                models_data = [{"id": "default", "object": "model", "owned_by": "remote_agent"}]
+                try:
+                    from vram_manager import get_vram_manager
+                    vmgr = get_vram_manager()
+                    _, resolved_mid = vmgr._resolve_model_path(None)
+                    if resolved_mid and resolved_mid != "default":
+                        models_data.append({"id": resolved_mid, "object": "model", "owned_by": "remote_agent"})
+                except Exception:
+                    pass
+                return 200, json.dumps({"object": "list", "data": models_data}).encode(), "application/json"
 
         status, payload, content_type = await _bounded_to_thread(_forward)
         return Response(content=payload, status_code=status, media_type=content_type or "application/json")
@@ -1504,14 +1514,20 @@ def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dic
         ram_candidate = mgr.ram_dir / "decisions" / model_id
         if ram_candidate.exists() and any(ram_candidate.iterdir()):
             repo_or_path = str(ram_candidate)
-        else:
-            disk_candidate = os.path.join(DATA_ROOT, "decisions", model_id)
+        disk_candidates = [
+            os.path.join(DATA_ROOT, "decisions", model_id),
+            f"/content/agent-data/decisions/{model_id}",
+            f"/content/models/decisions/{model_id}",
+        ]
+        for disk_candidate in disk_candidates:
             if os.path.isdir(disk_candidate) and os.listdir(disk_candidate):
                 try:
                     ram_synced = mgr.ensure_dir_in_ram(disk_candidate, model_id=model_id, role="decisions", is_anchor=True)
                     repo_or_path = str(ram_synced)
+                    break
                 except Exception:
                     repo_or_path = disk_candidate
+                    break
     except Exception:
         pass
 
@@ -1530,12 +1546,13 @@ def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dic
                     target_dev = "cpu"
             except Exception:
                 target_dev = "cpu"
+            hf_token = HF_TOKEN or os.getenv("HF_TOKEN") or None
             try:
-                laya_model = laya.load(repo_or_path, device=target_dev)
+                laya_model = laya.load(repo_or_path, device=target_dev, token=hf_token)
                 m_dev = getattr(laya_model, "device", None)
                 device = "cuda" if "cuda" in str(m_dev or target_dev).lower() else "cpu"
             except Exception:
-                laya_model = laya.load(repo_or_path, device="cpu")
+                laya_model = laya.load(repo_or_path, device="cpu", token=hf_token)
                 device = "cpu"
             _LAYA_LOADED_MODELS[repo_or_path] = laya_model
 
@@ -1678,11 +1695,12 @@ async def _on_startup_prewarm():
     def _prewarm_laya():
         try:
             import laya  # noqa: F401
-            logger.info("prewarming_laya_background")
-            _evaluate_laya_sync("laya_multilingual", "Hello", [])
-            logger.info("prewarming_laya_complete")
+            target_model = os.getenv("LAYA_MODEL_ID", "laya_multilingual")
+            logger.info(f"prewarming_laya_background: {target_model}")
+            _evaluate_laya_sync(target_model, "Hello world", [])
+            logger.info(f"prewarming_laya_complete: {target_model}")
         except Exception as exc:
-            logger.debug(f"laya_prewarm_skipped: {exc}")
+            logger.warning(f"laya_prewarm_failed: {exc}")
 
     threading.Thread(target=_prewarm_laya, daemon=True, name="laya-prewarm").start()
 
