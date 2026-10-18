@@ -1,5 +1,6 @@
 
 import asyncio
+import os
 
 from fastapi import APIRouter, Depends, Query
 
@@ -11,8 +12,11 @@ from core.exceptions import NotFoundError, ValidationError
 from infrastructure.logging import model_logger
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from services.model_service import ModelServiceV2
-
-from .schemas import *  # noqa: F401, F403, F405
+from .schemas import (
+    AddModelRequest,
+    CheckInstalledBatchRequest,
+    SetDefaultVersionRequest,
+)
 
 logger = model_logger()
 
@@ -62,6 +66,33 @@ def get_catalog():
         registry.primary("decisions").id if "decisions" in registry.roles else "laya_multilingual"
     )
 
+    tokens = {
+        "hf_token": os.getenv("HF_TOKEN", ""),
+        "civitai_token": os.getenv("CIVITAI_TOKEN", ""),
+    }
+    checkpoint_recommendations = {}
+    try:
+        from infrastructure.deps import get_session_sync
+        from infrastructure.repositories import ProviderRepository
+        from services.checkpoint_recommendations import get_checkpoint_recommendations
+
+        session = get_session_sync()
+        try:
+            repo = ProviderRepository(session)
+            for p in repo.get_all():
+                creds = p.credentials or {}
+                if not tokens["hf_token"] and creds.get("hf_token"):
+                    tokens["hf_token"] = str(creds.get("hf_token"))
+                if not tokens["civitai_token"] and creds.get("civitai_token"):
+                    tokens["civitai_token"] = str(creds.get("civitai_token"))
+                if tokens["hf_token"] and tokens["civitai_token"]:
+                    break
+            checkpoint_recommendations = get_checkpoint_recommendations(session)
+        finally:
+            session.close()
+    except Exception:
+        pass
+
     return {
         "catalog": registry.catalog(),
         "roles": {
@@ -79,6 +110,8 @@ def get_catalog():
             "image": active.get("image", ""),
         },
         "shared_weights": shared_weights,
+        "tokens": tokens,
+        "checkpoint_recommendations": checkpoint_recommendations,
     }
 
 

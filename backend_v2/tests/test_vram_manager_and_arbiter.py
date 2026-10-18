@@ -147,7 +147,9 @@ class TestRemoteAgentVRAMEndpoints:
     def client(self, monkeypatch):
         monkeypatch.setenv("REMOTE_AGENT_TOKEN", "test-secret-token")
         monkeypatch.setenv("WORKER_MODE", "hybrid")
+        import importlib
         import server
+        importlib.reload(server)
         monkeypatch.setattr(server, "TOKEN", "test-secret-token")
         return TestClient(server.app)
 

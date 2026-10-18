@@ -493,9 +493,26 @@ def install_python_packages(req_files=None, packages=None):
 # 1. Install Networking Tool (NetBird or Cloudflared)
 
 if tunnel_key == "netbird":
-    if not shutil.which("netbird"):
-        print("📥 Installing NetBird client...")
-        subprocess.run("curl -fsSL https://pkgs.netbird.io/install.sh | sh", shell=True, check=True)
+    nb_local = "/usr/bin/netbird"
+    nb_cache = f"{gdrive_bin}/netbird"
+    if not shutil.which("netbird") and not os.path.exists(nb_local):
+        if os.path.exists(nb_cache) and os.path.getsize(nb_cache) > 10_000_000:
+            print("⚡ Restoring cached NetBird client from Google Drive...")
+            shutil.copy(nb_cache, nb_local)
+            os.chmod(nb_local, 0o755)
+        else:
+            print("📥 Installing NetBird client...")
+            subprocess.run("curl -fsSL https://pkgs.netbird.io/install.sh | sh", shell=True, check=True)
+            if os.path.exists(nb_local):
+                try:
+                    shutil.copy(nb_local, nb_cache)
+                except Exception:
+                    pass
+            elif shutil.which("netbird"):
+                try:
+                    shutil.copy(shutil.which("netbird"), nb_cache)
+                except Exception:
+                    pass
     if not os.path.exists("/dev/net/tun"):
         os.makedirs("/dev/net", exist_ok=True)
         subprocess.run("mknod /dev/net/tun c 10 200 2>/dev/null || true", shell=True)
@@ -648,25 +665,43 @@ if mode_key in ("model", "hybrid", "tts"):
     ]
 
     print("📥 Checking auxiliary models (Upscalers & ADetailer)...")
+    gdrive_aux = f"{gdrive_root}/models/auxiliary"
+    os.makedirs(gdrive_aux, exist_ok=True)
+
     def fetch_aux_model(rel_path, url):
         target_path = os.path.join(comfy_dir, rel_path)
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
-        # Check primary target or alternate casing if already cached in Drive
+        model_name = os.path.basename(target_path)
+        gdrive_target = os.path.join(gdrive_aux, model_name)
+
+        # Check primary target or alternate casing if already cached in ComfyUI
         alt_path = target_path.replace("4x-UltraSharp.pth", "4x-Ultrasharp.pth") if "4x-UltraSharp.pth" in target_path else None
         if os.path.exists(target_path) and os.path.getsize(target_path) > 100_000:
-            return f"  ⏭️ {os.path.basename(target_path)} cached."
+            return f"  ⏭️ {model_name} cached."
         if alt_path and os.path.exists(alt_path) and os.path.getsize(alt_path) > 100_000:
             try:
                 safe_symlink(alt_path, target_path)
             except Exception:
                 pass
-            return f"  ⏭️ {os.path.basename(target_path)} cached (from {os.path.basename(alt_path)})."
-        model_name = os.path.basename(target_path)
+            return f"  ⏭️ {model_name} cached (from {os.path.basename(alt_path)})."
+
+        # Check Google Drive auxiliary cache
+        if os.path.exists(gdrive_target) and os.path.getsize(gdrive_target) > 100_000:
+            try:
+                shutil.copy(gdrive_target, target_path)
+                return f"  ⚡ {model_name} restored from Google Drive cache."
+            except Exception:
+                pass
+
         tmp_target = f"{target_path}.downloading"
         try:
             subprocess.run(["curl", "-fsSL", "--retry", "2", url, "-o", tmp_target], check=True)
             if os.path.exists(tmp_target) and os.path.getsize(tmp_target) > 100_000:
                 os.replace(tmp_target, target_path)
+                try:
+                    shutil.copy(target_path, gdrive_target)
+                except Exception:
+                    pass
                 return f"  ✅ {model_name} installed."
             else:
                 if os.path.exists(tmp_target): os.remove(tmp_target)
@@ -904,6 +939,14 @@ else:
     enable_ram_cache = tot_ram_gb >= 20.0
 
 print(f"🧠 Host RAM: {tot_ram_gb:.1f} GB | Models-in-RAM Cache: {'ENABLED (/dev/shm)' if enable_ram_cache else 'DISABLED (Direct Volume Streaming)'}")
+
+# 0d. Expand /dev/shm capacity early for Direct-to-RAM streaming on High-RAM hosts
+if enable_ram_cache and os.path.exists("/dev/shm"):
+    try:
+        target_shm_gb = min(64, int(tot_ram_gb * 0.82))
+        subprocess.run(["mount", "-o", f"remount,size={target_shm_gb}G", "/dev/shm"], check=False)
+    except Exception:
+        pass
 
 # 1. Persistent Agent Service Token
 token_file = os.path.join(gdrive_root, ".agent-token")
@@ -1266,13 +1309,41 @@ print(f"   • Active Decisions:  {active_decisions}")
 if active_image:
     print(f"   • Active Image Model: {active_image}")
 
-# 4. Check & Auto-Download Active LLM GGUF Weights (Direct NVMe or Google Drive)
+checkpoint_recs = catalog.get("checkpoint_recommendations") or {}
+top_rec_7d = checkpoint_recs.get("top_checkpoint_7d")
+recent_recs_30d = checkpoint_recs.get("recent_checkpoints_30d") or []
+if top_rec_7d and top_rec_7d.get("filename"):
+    c_ver_str = f" (CivitAI Ver: {top_rec_7d.get('civitai_version_id')})" if top_rec_7d.get("civitai_version_id") else ""
+    print(f"   • Recommended Tier 1 Checkpoint: {top_rec_7d['filename']}{c_ver_str} [{top_rec_7d.get('count', 0)} uses in 7d]")
+if recent_recs_30d:
+    non_flux_count = sum(1 for r in recent_recs_30d if not r.get("is_flux"))
+    print(f"   • Warm Tier 2 Candidate Models: {len(recent_recs_30d)} models ({non_flux_count} non-Flux ready for NVMe caching)")
+
+# Sync API tokens from backend if returned by catalog endpoint
+backend_tokens = catalog.get("tokens") or {}
+if isinstance(backend_tokens, dict):
+    synced_hf = backend_tokens.get("hf_token") or ""
+    synced_civitai = backend_tokens.get("civitai_token") or ""
+    if synced_hf and not os.environ.get("HF_TOKEN"):
+        os.environ["HF_TOKEN"] = synced_hf
+        print("🔑 Hugging Face token synced from backend!")
+    if synced_civitai and not os.environ.get("CIVITAI_TOKEN"):
+        os.environ["CIVITAI_TOKEN"] = synced_civitai
+        print("🔑 CivitAI token synced from backend!")
+
+# 4. Check & Auto-Download Active LLM GGUF Weights (Direct RAM Cache, NVMe, or Google Drive)
 storage_strat_key = "direct" if ("STORAGE_STRATEGY" in locals() and "direct" in str(STORAGE_STRATEGY).lower()) else "gdrive"
 llm_gdrive_dir = "/mnt/data/tnhcomfy/llm_models" if is_modal else (GDRIVE_LLM_PATH.strip() or "/content/drive/MyDrive/tnhcomfy/llm_models")
 llm_local_dir = "/content/models/llm"
 os.makedirs(llm_local_dir, exist_ok=True)
 if storage_strat_key == "gdrive":
     os.makedirs(llm_gdrive_dir, exist_ok=True)
+
+# Direct-to-RAM Gating: Uses System RAM Caching Policy & Host RAM threshold
+can_direct_download_to_ram = enable_ram_cache and (tot_ram_gb >= 45.0)
+ram_llm_dir = "/dev/shm/tnh_ram_cache/llm"
+if can_direct_download_to_ram:
+    os.makedirs(ram_llm_dir, exist_ok=True)
 
 resolved_weights = {}
 for mid in distinct_active_llm:
@@ -1283,27 +1354,40 @@ for mid in distinct_active_llm:
     mmproj_name = spec.get("mmproj")
     mmproj_repo = spec.get("mmproj_repo") or repo
 
-    # Determine primary target folder based on strategy
+    # Determine primary target folder based on strategy and RAM capacity
     if storage_strat_key == "direct":
-        target_folder = os.path.join(llm_local_dir, vol_dir)
-        download_target_desc = f"local NVMe SSD ({target_folder})"
+        if can_direct_download_to_ram:
+            target_folder = os.path.join(ram_llm_dir, vol_dir)
+            download_target_desc = f"RAM cache (/dev/shm) [⚡ Zero-NVMe direct stream]"
+        else:
+            target_folder = os.path.join(llm_local_dir, vol_dir)
+            download_target_desc = f"local NVMe SSD ({target_folder}) [RAM constrained ({tot_ram_gb:.1f} GB)]"
     else:
         target_folder = os.path.join(llm_gdrive_dir, vol_dir)
         download_target_desc = f"Google Drive ({target_folder})"
     os.makedirs(target_folder, exist_ok=True)
 
     local_gguf = os.path.join(target_folder, gguf_name) if gguf_name else ""
-
-    # Check if file exists in either target folder or existing Google Drive cache
+    nvme_candidate = os.path.join(llm_local_dir, vol_dir, gguf_name) if gguf_name else ""
     gdrive_candidate = os.path.join(llm_gdrive_dir, vol_dir, gguf_name) if (gguf_name and os.path.exists(llm_gdrive_dir)) else ""
-    if not (local_gguf and os.path.exists(local_gguf)) and gdrive_candidate and os.path.exists(gdrive_candidate):
-        print(f"📁 Found [{mid}] in Google Drive cache: {gdrive_candidate}")
-        local_gguf = gdrive_candidate
 
+    # In persistent_volume mode, check if weights already exist in Google Drive cache
+    if storage_strat_key != "direct":
+        if not (local_gguf and os.path.exists(local_gguf)) and gdrive_candidate and os.path.exists(gdrive_candidate):
+            print(f"📁 Found [{mid}] in Google Drive cache: {gdrive_candidate}")
+            local_gguf = gdrive_candidate
+
+    # In direct mode: if already present on NVMe SSD from a previous run, reuse it without re-downloading
+    if storage_strat_key == "direct" and not (local_gguf and os.path.exists(local_gguf)):
+        if nvme_candidate and os.path.exists(nvme_candidate):
+            print(f"⚡ Found [{mid}] already present on local NVMe SSD: {nvme_candidate}")
+            local_gguf = nvme_candidate
+
+    # When direct_download_fast is selected, download directly from Hugging Face into target folder (RAM cache or NVMe)
     if not (local_gguf and os.path.exists(local_gguf)):
         if repo and gguf_name:
             speed_note = "⚡ High-speed direct CDN transfer" if storage_strat_key == "direct" else "📁 Google Drive transfer"
-            print(f"📥 Active LLM weights for [{mid}] not found locally or in Drive.")
+            print(f"📥 Active LLM weights for [{mid}] not found in {download_target_desc}.")
             print(f"   Downloading {repo} :: {gguf_name} directly to {download_target_desc} ({speed_note})...")
             try:
                 from huggingface_hub import snapshot_download
@@ -1332,20 +1416,35 @@ for mid in distinct_active_llm:
                     pass
             except Exception as exc:
                 print(f"⚠️ HF download error for {mid}: {exc}")
+                # Fallback to local NVMe candidate if available
+                if nvme_candidate and os.path.exists(nvme_candidate):
+                    print(f"📁 HF download failed; falling back to local NVMe SSD: {nvme_candidate}")
+                    local_gguf = nvme_candidate
+                # Direct mode fallback: If HF download failed, fall back to Google Drive cache if available
+                elif storage_strat_key == "direct" and gdrive_candidate and os.path.exists(gdrive_candidate):
+                    print(f"📁 HF direct download failed; falling back to existing Google Drive cache: {gdrive_candidate}")
+                    local_gguf = gdrive_candidate
         else:
             print(f"⚠️ Model [{mid}] has no repository metadata in catalog.")
+            if nvme_candidate and os.path.exists(nvme_candidate):
+                print(f"📁 Falling back to local NVMe SSD: {nvme_candidate}")
+                local_gguf = nvme_candidate
+            elif gdrive_candidate and os.path.exists(gdrive_candidate):
+                print(f"📁 Falling back to existing Google Drive cache: {gdrive_candidate}")
+                local_gguf = gdrive_candidate
 
     if local_gguf and os.path.exists(local_gguf):
         resolved_weights[mid] = local_gguf
     else:
-        # Fallback candidate scan
+        # Fallback candidate scan: only match files corresponding to this model
         for cdir in [llm_local_dir, llm_gdrive_dir, "/mnt/data/tnhcomfy/llm_models", "/mnt/data/models/llm", "/content/agent-data/llm/models", "/content/ComfyUI/models/llm", "/dev/shm/tnh_ram_cache/llm"]:
             if os.path.exists(cdir):
                 for root, _, files in os.walk(cdir):
-                    for f in files:
+                    for f in sorted(files):
                         if f.endswith(".gguf") and not f.startswith("."):
-                            resolved_weights[mid] = os.path.join(root, f)
-                            break
+                            if (gguf_name and f == gguf_name) or (vol_dir and vol_dir.lower() in root.lower()) or (mid and mid.lower() in f.lower()):
+                                resolved_weights[mid] = os.path.join(root, f)
+                                break
                     if mid in resolved_weights:
                         break
             if mid in resolved_weights:
@@ -1355,7 +1454,7 @@ for mid in distinct_active_llm:
 try:
     import psutil
     tot_ram = psutil.virtual_memory().total / (1024**3)
-    target_shm_gb = min(44, int(tot_ram * 0.82))
+    target_shm_gb = min(64, int(tot_ram * 0.82))
     subprocess.run(["mount", "-o", f"remount,size={target_shm_gb}G", "/dev/shm"], check=False)
 except Exception:
     pass
@@ -1363,34 +1462,159 @@ except Exception:
 if agent_dir not in sys.path:
     sys.path.insert(0, agent_dir)
 from ram_manager import RamModelManager
-ram_mgr = RamModelManager(ram_dir="/dev/shm/tnh_ram_cache", budget_gb=40.0 if enable_ram_cache else 0.0)
+shm_budget = min(56.0, float(int(tot_ram_gb * 0.70))) if enable_ram_cache else 0.0
+ram_mgr = RamModelManager(ram_dir="/dev/shm/tnh_ram_cache", budget_gb=shm_budget)
 
 anchor_ids = [active_rp]
 if not shared_weights:
     anchor_ids.append(active_util)
-if active_image:
-    anchor_ids.append(active_image)
 if active_decisions and active_decisions not in ("same_as_util", "disabled"):
     anchor_ids.append(active_decisions)
 
 comfy_dir = "/content/ComfyUI"
-ckpt_dir = f"{comfy_dir}/models/checkpoints"
-all_ckpts = []
-if os.path.exists(ckpt_dir):
-    for root, _, files in os.walk(ckpt_dir):
-        for f in files:
-            if f.endswith((".safetensors", ".ckpt")):
-                all_ckpts.append(os.path.join(root, f))
-    all_ckpts.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+nvme_cache_base = "/content/models/nvme_cache"
+nvme_ckpt_dir = f"{nvme_cache_base}/checkpoints"
+os.makedirs(nvme_ckpt_dir, exist_ok=True)
+os.makedirs(f"{nvme_cache_base}/loras", exist_ok=True)
+os.makedirs(f"{nvme_cache_base}/vae", exist_ok=True)
 
+# Determine Google Drive master checkpoint location
+gdrive_path = GDRIVE_COMFY_PATH.strip() if "GDRIVE_COMFY_PATH" in locals() and GDRIVE_COMFY_PATH.strip() else "/content/drive/MyDrive/comfyui"
+gdrive_base = gdrive_path
+gdrive_ckpt_rel = "checkpoints"
+gdrive_lora_rel = "loras"
+gdrive_vae_rel = "vae"
+if os.path.exists(os.path.join(gdrive_path, "models", "checkpoints")):
+    gdrive_base = os.path.join(gdrive_path, "models")
+elif os.path.exists(os.path.join(gdrive_path, "checkpoints")):
+    gdrive_base = gdrive_path
+
+gdrive_ckpt_dir = os.path.join(gdrive_base, gdrive_ckpt_rel)
+
+# ----------------------------------------------------------------------------
+# 3-Tier ComfyUI Storage Model:
+# Tier 1: Ultra-Hot RAM Cache (/dev/shm) — #1 most used in 7 days (or active_image)
+# Tier 2: Warm Local NVMe SSD Cache (/content/models/nvme_cache) — Non-Flux 30-day set
+# Tier 3: Master Permanent Library (Google Drive / Modal Volume)
+# ----------------------------------------------------------------------------
+
+tier1_candidate_name = active_image if active_image else (top_rec_7d.get("filename", "") if top_rec_7d else "")
+tier1_civitai_ver = None
+tier1_dl_url = None
+
+if top_rec_7d:
+    if not active_image or (top_rec_7d.get("filename") == active_image):
+        tier1_civitai_ver = top_rec_7d.get("civitai_version_id")
+        tier1_dl_url = top_rec_7d.get("download_url")
+
+if not tier1_civitai_ver and tier1_candidate_name:
+    m_ver = re.search(r"_(\\d+)\\.(?:safetensors|ckpt)$", tier1_candidate_name)
+    if m_ver:
+        try:
+            tier1_civitai_ver = int(m_ver.group(1))
+            tier1_dl_url = f"https://civitai.com/api/download/models/{tier1_civitai_ver}"
+        except Exception:
+            pass
+
+# Check candidates for Tier 1: RAM cache, local NVMe, or Google Drive
 active_ckpt_path = None
-if active_image:
-    for c in all_ckpts:
-        if active_image.lower() in os.path.basename(c).lower():
-            active_ckpt_path = c
-            break
-if not active_ckpt_path and all_ckpts:
-    active_ckpt_path = all_ckpts[0]
+ram_ckpt_dir = "/dev/shm/tnh_ram_cache/checkpoints"
+os.makedirs(ram_ckpt_dir, exist_ok=True)
+
+ram_candidate = os.path.join(ram_ckpt_dir, tier1_candidate_name) if tier1_candidate_name else ""
+nvme_candidate = os.path.join(nvme_ckpt_dir, tier1_candidate_name) if tier1_candidate_name else ""
+comfy_candidate = os.path.join(comfy_dir, "models", "checkpoints", tier1_candidate_name) if tier1_candidate_name else ""
+
+gdrive_candidate = ""
+if tier1_candidate_name and os.path.exists(gdrive_ckpt_dir):
+    cand = os.path.join(gdrive_ckpt_dir, tier1_candidate_name)
+    if os.path.exists(cand):
+        gdrive_candidate = cand
+    else:
+        for root, _, files in os.walk(gdrive_ckpt_dir):
+            if tier1_candidate_name in files:
+                gdrive_candidate = os.path.join(root, tier1_candidate_name)
+                break
+
+# Check if already present in RAM or NVMe
+if ram_candidate and os.path.exists(ram_candidate) and os.path.getsize(ram_candidate) > 100_000_000:
+    print(f"⚡ [Tier 1] Checkpoint already resident in RAM cache: {tier1_candidate_name}")
+    active_ckpt_path = ram_candidate
+elif nvme_candidate and os.path.exists(nvme_candidate) and os.path.getsize(nvme_candidate) > 100_000_000:
+    print(f"⚡ [Tier 1] Found checkpoint already present on local NVMe SSD: {tier1_candidate_name}")
+    active_ckpt_path = nvme_candidate
+elif comfy_candidate and os.path.exists(comfy_candidate) and os.path.getsize(comfy_candidate) > 100_000_000 and not os.path.islink(comfy_candidate):
+    active_ckpt_path = comfy_candidate
+
+# In persistent_volume mode: check Google Drive first
+if storage_strat_key != "direct" and not active_ckpt_path:
+    if gdrive_candidate and os.path.exists(gdrive_candidate):
+        print(f"📁 [Tier 3 -> Tier 1] Found checkpoint in Google Drive: {gdrive_candidate}")
+        active_ckpt_path = gdrive_candidate
+
+# In direct_download_fast mode: download directly from CivitAI CDN!
+if not active_ckpt_path and (tier1_dl_url or tier1_civitai_ver):
+    civ_token = os.environ.get("CIVITAI_TOKEN", "")
+    target_dl_path = ram_candidate if can_direct_download_to_ram else nvme_candidate
+    target_dl_desc = "RAM cache (/dev/shm) [⚡ Zero-NVMe direct stream]" if can_direct_download_to_ram else f"local NVMe SSD ({nvme_cache_base})"
+    c_url = tier1_dl_url or f"https://civitai.com/api/download/models/{tier1_civitai_ver}"
+    if civ_token:
+        sep = "&" if "?" in c_url else "?"
+        c_url += f"{sep}token={civ_token}"
+    
+    print(f"📥 Active Tier 1 Checkpoint [{tier1_candidate_name or f'model_version_{tier1_civitai_ver}'}] downloading directly from CivitAI CDN to {target_dl_desc} (⚡ High-speed direct CDN transfer)...")
+    try:
+        import requests
+        from tqdm import tqdm
+        headers = {"User-Agent": "TNHComfy-Colab-Worker/1.0"}
+        if civ_token:
+            headers["Authorization"] = f"Bearer {civ_token}"
+        os.makedirs(os.path.dirname(target_dl_path), exist_ok=True)
+        tmp_target = target_dl_path + ".downloading"
+        with requests.get(c_url, headers=headers, stream=True, timeout=60, allow_redirects=True) as resp:
+            if resp.status_code != 200:
+                raise RuntimeError(f"CivitAI CDN HTTP {resp.status_code}: {resp.text[:180]}")
+            tot_bytes = int(resp.headers.get("content-length", 0))
+            with open(tmp_target, "wb") as f_dl, tqdm(
+                desc=f"⚡ [CivitAI CDN] {tier1_candidate_name[:25] if tier1_candidate_name else 'Tier 1'}",
+                total=tot_bytes,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as bar:
+                for chunk in resp.iter_content(chunk_size=16 * 1024 * 1024):
+                    if chunk:
+                        f_dl.write(chunk)
+                        bar.update(len(chunk))
+        if os.path.exists(tmp_target) and os.path.getsize(tmp_target) > 100_000_000:
+            os.replace(tmp_target, target_dl_path)
+            active_ckpt_path = target_dl_path
+            print(f"✅ Successfully downloaded Tier 1 Checkpoint ({os.path.getsize(target_dl_path) / (1024**3):.2f} GB) to {target_dl_desc}!")
+        else:
+            if os.path.exists(tmp_target):
+                os.remove(tmp_target)
+            raise RuntimeError("Downloaded file too small or incomplete")
+    except Exception as exc:
+        print(f"⚠️ CivitAI direct download error: {exc}")
+        if gdrive_candidate and os.path.exists(gdrive_candidate):
+            print(f"📁 CivitAI direct download failed; falling back to Google Drive cache: {gdrive_candidate}")
+            active_ckpt_path = gdrive_candidate
+        elif nvme_candidate and os.path.exists(nvme_candidate):
+            print(f"📁 Falling back to existing local NVMe copy: {nvme_candidate}")
+            active_ckpt_path = nvme_candidate
+
+# Final fallback: scan available checkpoint directories for any valid model
+if not active_ckpt_path:
+    fallback_candidates = []
+    for d in [ram_ckpt_dir, nvme_ckpt_dir, f"{comfy_dir}/models/checkpoints", gdrive_ckpt_dir]:
+        if os.path.exists(d):
+            for root, _, files in os.walk(d):
+                for f in files:
+                    if f.endswith((".safetensors", ".ckpt")):
+                        fallback_candidates.append(os.path.join(root, f))
+    if fallback_candidates:
+        fallback_candidates.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        active_ckpt_path = fallback_candidates[0]
 
 img_id = os.path.basename(active_ckpt_path) if active_ckpt_path else ""
 if img_id:
@@ -1409,7 +1633,7 @@ for mid in list(ram_mgr.entries.keys()):
 # 6. Prepare Engine Paths & CUDA Runtimes
 if mode_key in ("hybrid", "model"):
     extra_paths_file = f"{comfy_dir}/extra_model_paths.yaml"
-    extra_paths_content = \"\"\"tnh_ram_cache:
+    extra_paths_content = f\"\"\"tnh_ram_cache:
     base_path: /dev/shm/tnh_ram_cache
     is_default: true
     checkpoints: checkpoints
@@ -1421,12 +1645,84 @@ tnh_ram_flat:
     checkpoints: .
     loras: .
     vae: .
+tnh_nvme_cache:
+    base_path: {nvme_cache_base}
+    is_default: true
+    checkpoints: checkpoints
+    loras: loras
+    vae: vae
+gdrive_storage:
+    base_path: {gdrive_base}
+    is_default: false
+    checkpoints: {gdrive_ckpt_rel}
+    loras: {gdrive_lora_rel}
+    vae: {gdrive_vae_rel}
 \"\"\"
     try:
         with open(extra_paths_file, "w") as f:
             f.write(extra_paths_content.strip() + "\\n")
     except Exception:
         pass
+
+def sync_tier2_warm_cache():
+    if not (is_colab and os.path.exists(gdrive_base)):
+        return
+    time.sleep(6)
+    tier1_base = os.path.basename(active_ckpt_path) if active_ckpt_path else ""
+    synced_count = 0
+    print("\\n🔄 [Tier 2 Background Sync] Checking recent models for local NVMe caching...")
+    for item in recent_recs_30d:
+        fn = item.get("filename") or ""
+        if not fn or fn == tier1_base:
+            continue
+        if item.get("is_flux") or ("flux" in fn.lower()):
+            print(f"   • [Tier 2] Skipping Flux model {fn} (Flux excluded from NVMe scratch)")
+            continue
+
+        try:
+            free_gb = shutil.disk_usage("/content").free / (1024**3)
+            if free_gb < 20.0:
+                print(f"   ⚠️ [Tier 2] Local NVMe free space is {free_gb:.1f} GB (<20 GB limit); stopping warm cache sync.")
+                break
+        except Exception:
+            pass
+
+        dest_file = os.path.join(nvme_ckpt_dir, fn)
+        src_file = os.path.join(gdrive_ckpt_dir, fn)
+        if not os.path.exists(src_file):
+            for root, _, files in os.walk(gdrive_ckpt_dir):
+                if fn in files:
+                    src_file = os.path.join(root, fn)
+                    break
+
+        if not os.path.exists(src_file):
+            continue
+
+        src_sz = os.path.getsize(src_file)
+        if src_sz > 11.5 * 1024 * 1024 * 1024:
+            print(f"   • [Tier 2] Skipping {fn} ({src_sz / (1024**3):.1f} GB > 11.5 GB limit)")
+            continue
+
+        if os.path.exists(dest_file) and os.path.getsize(dest_file) == src_sz:
+            continue
+
+        try:
+            sz_gb = src_sz / (1024**3)
+            print(f"📦 [Tier 2 Background Sync] Caching {fn} ({sz_gb:.2f} GB) from Drive to local NVMe SSD...")
+            tmp_file = dest_file + ".syncing"
+            with open(src_file, "rb") as fsrc, open(tmp_file, "wb") as fdst:
+                shutil.copyfileobj(fsrc, fdst, length=16 * 1024 * 1024)
+            os.replace(tmp_file, dest_file)
+            synced_count += 1
+            print(f"✅ [Tier 2 Background Sync] Cached {fn} to local NVMe SSD!")
+        except Exception as exc:
+            print(f"⚠️ [Tier 2 Background Sync] Notice while caching {fn}: {exc}")
+            if os.path.exists(dest_file + ".syncing"):
+                try: os.remove(dest_file + ".syncing")
+                except Exception: pass
+
+    if synced_count > 0:
+        print(f"✨ [Tier 2 Background Sync] Warm cache synchronization finished ({synced_count} models cached on NVMe).")
 
 if mode_key in ("hybrid", "llm"):
     llama_dir = "/usr/local/llama.cpp"
@@ -1600,6 +1896,17 @@ def launch_llm_track():
         except Exception as exc:
             print(f"⚠️ [LLM Track] Pre-warming failed ({exc}); will load directly from storage.")
 
+    if not shared_weights:
+        src_util = resolved_weights.get(active_util, "")
+        if src_util and enable_ram_cache:
+            print(f"⚡ [LLM Track] Pre-warming Util model {os.path.basename(src_util)} into RAM cache (/dev/shm)...")
+            try:
+                ram_mgr.ensure_in_ram(src_util, model_id=active_util, role="util", is_anchor=True)
+                ram_mgr.aliases["util"] = active_util
+                print("✅ [LLM Track] Util GGUF weights cached in RAM!")
+            except Exception as exc:
+                print(f"⚠️ [LLM Track] Util pre-warming failed ({exc}); will stream from storage.")
+
     # Resolve resident RAM file
     rp_ram_file = ""
     src_size = os.path.getsize(src_expected) if (src_expected and os.path.exists(src_expected)) else 0
@@ -1765,6 +2072,10 @@ if mode_key in ("hybrid", "llm"):
 t_laya = threading.Thread(target=launch_laya_track, daemon=True)
 t_laya.start()
 active_threads.append(t_laya)
+
+# Asynchronous Tier 2 Background Sync (populates local NVMe cache while ComfyUI is live)
+if mode_key in ("hybrid", "model"):
+    threading.Thread(target=sync_tier2_warm_cache, name="Tier2WarmSync", daemon=True).start()
 
 # 3. Unified Health Check Loop
 print("⏳ Waiting for services to become healthy...")

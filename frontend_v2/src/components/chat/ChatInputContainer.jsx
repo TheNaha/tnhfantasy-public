@@ -1,8 +1,8 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
-    X, ImageIcon, Loader2, Paperclip, MoreHorizontal, Palette, Wand2,
+    X, ImageIcon, Loader2, Paperclip, Palette, Wand2,
     BookOpen, Ghost, Sparkles, Send, Square, Dices, MapPin, Clock,
-    Shirt, Smile, Heart, Shield, Activity, ChevronRight, Target
+    Shirt, Smile, Heart, Shield, Activity, ChevronRight, Target, Check
 } from 'lucide-react';
 import clsx from 'clsx';
 import CommandPalette from './CommandPalette';
@@ -80,6 +80,20 @@ export default function ChatInputContainer({
         setShowFateMenu(false);
         setTimeout(() => textareaRef.current?.focus(), 10);
     }, [fateDifficulty, fateSkill, setMessage, textareaRef]);
+
+    useEffect(() => {
+        const handleKeyDownEsc = (e) => {
+            if (e.key === 'Escape') {
+                if (showMoreTools) setShowMoreTools(false);
+                if (showFateMenu) setShowFateMenu(false);
+                if (showSteerBar) setShowSteerBar(false);
+                if (showStateDetails) setShowStateDetails(false);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDownEsc);
+        return () => window.removeEventListener('keydown', handleKeyDownEsc);
+    }, [showMoreTools, showFateMenu, showSteerBar, showStateDetails, setShowMoreTools]);
+
     return (
         <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 pb-4 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
             <div className="max-w-4xl mx-auto">
@@ -336,273 +350,337 @@ export default function ChatInputContainer({
                         {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Paperclip size={18} />}
                     </button>
 
-                    {/* Right Buttons Group */}
+                    {/* Right Buttons Group: Streamlined Quick Suggest + Story Tools Menu + TokenMeter + Send */}
                     <div className="absolute right-2 sm:right-3 bottom-2.5 sm:bottom-3 flex items-center gap-1">
+                        {/* Quick Action: Auto-Suggest Reply */}
                         <button
-                            onClick={() => setShowMoreTools(v => !v)}
-                            className="sm:hidden p-1.5 text-gray-400 hover:text-white transition-colors rounded-xl hover:bg-white/10"
-                            title="More tools"
-                            aria-label="More tools"
+                            type="button"
+                            onClick={handleSuggestClick}
+                            disabled={!activeChatId || suggestReplyMutation.isPending || suggestJobId}
+                            className={clsx(
+                                "p-1.5 sm:p-2 transition-all rounded-xl",
+                                (suggestReplyMutation.isPending || suggestJobId)
+                                    ? "text-blue-400 bg-blue-500/10 cursor-not-allowed"
+                                    : (activeChatId ? "text-blue-400 hover:text-white hover:bg-blue-600/50" : "text-gray-600 cursor-not-allowed")
+                            )}
+                            title="Auto-suggest reply"
+                            aria-label="Auto-suggest reply"
                         >
-                            <MoreHorizontal size={18} />
+                            {(suggestReplyMutation.isPending || suggestJobId) 
+                                ? <Loader2 size={16} className="animate-spin" />
+                                : <Sparkles size={16} />}
                         </button>
 
+                        {/* Unified Story & Roleplay Tools Menu Trigger */}
+                        <button
+                            type="button"
+                            onClick={() => setShowMoreTools(v => !v)}
+                            className={clsx(
+                                "relative p-1.5 sm:p-2 transition-all rounded-xl",
+                                (showMoreTools || turnDirective || showSteerBar || showFateMenu)
+                                    ? "text-purple-300 bg-purple-500/20 shadow-[0_0_10px_rgba(168,85,247,0.25)] border border-purple-500/30"
+                                    : (agenticMode || narrateMode)
+                                        ? "text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
+                                        : "text-gray-400 hover:text-white hover:bg-white/10"
+                            )}
+                            title="Story & Roleplay Tools"
+                            aria-label="Story & Roleplay Tools"
+                        >
+                            <Wand2 size={16} />
+                            {(turnDirective || agenticMode || narrateMode) && (
+                                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                            )}
+                        </button>
+
+                        {/* Unified Categorized Action Menu Popover */}
                         {showMoreTools && (
-                            <div className="absolute bottom-full right-0 mb-2 w-48 bg-gray-900/95 backdrop-blur-xl border border-gray-700/60 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2">
-                                <div className="px-3 py-2 text-xs font-semibold text-gray-400 bg-gray-800/40 uppercase tracking-wider border-b border-gray-700/50">Tools</div>
-                                <div className="flex flex-col p-1">
-                                    <button
-                                        onClick={() => { setShowMoreTools(false); handleGenerateScene(); }}
-                                        disabled={isGeneratingScene || !activeChatId}
-                                        className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-gray-200 disabled:opacity-50"
-                                    >
-                                        <ImageIcon size={16} className="text-green-400" />
-                                        {isGeneratingScene ? 'Generating...' : 'Generate scene'}
-                                    </button>
-                                    <button
-                                        onClick={() => { setShowMoreTools(false); handleIllustrate(); }}
-                                        disabled={illustrateMutation.isPending || !activeChatId}
-                                        className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-gray-200 disabled:opacity-50"
-                                    >
-                                        <Palette size={16} className="text-pink-400" />
-                                        {illustrateMutation.isPending ? 'Illustrating...' : 'Illustrate moment'}
-                                    </button>
-                                    <button
-                                        onClick={() => { setShowMoreTools(false); setAgenticMode(!agenticMode); }}
-                                        className={clsx("flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm", agenticMode ? "text-purple-400" : "text-gray-200")}
-                                    >
-                                        <Wand2 size={16} className="text-purple-400" />
-                                        Agentic {agenticMode ? 'ON' : 'OFF'}
-                                    </button>
-                                    <button
-                                        onClick={() => { setShowMoreTools(false); setNarrateMode(!narrateMode); }}
-                                        className={clsx("flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm", narrateMode ? "text-purple-400" : "text-gray-200")}
-                                    >
-                                        <BookOpen size={16} className="text-purple-400" />
-                                        Narrate {narrateMode ? 'ON' : 'OFF'}
-                                    </button>
-                                    <button
-                                        onClick={() => { setShowMoreTools(false); handleImpersonate(); }}
-                                        disabled={!activeChatId || impersonateMutation.isPending}
-                                        className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-gray-200 disabled:opacity-50"
-                                    >
-                                        <Ghost size={16} className="text-purple-400" />
-                                        {impersonateMutation.isPending ? 'Impersonating...' : 'Impersonate'}
-                                    </button>
-                                    <button
-                                        onClick={() => { setShowMoreTools(false); handleSuggestClick(); }}
-                                        disabled={!activeChatId || suggestReplyMutation.isPending || suggestJobId}
-                                        className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-gray-200 disabled:opacity-50"
-                                    >
-                                        <Sparkles size={16} className="text-blue-400" />
-                                        {(suggestReplyMutation.isPending || suggestJobId) ? 'Suggesting...' : 'Suggest reply'}
-                                    </button>
-                                    <button
-                                        onClick={() => { setShowMoreTools(false); setShowSteerBar(true); }}
-                                        className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-purple-300"
-                                    >
-                                        <Target size={16} className="text-purple-400" />
-                                        Steer Next Turn
-                                    </button>
-                                    <button
-                                        onClick={() => { setShowMoreTools(false); setShowFateMenu(true); }}
-                                        className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-amber-300"
-                                    >
-                                        <Dices size={16} className="text-amber-400" />
-                                        Fate / Skill Check
-                                    </button>
+                            <>
+                                <div
+                                    className="fixed inset-0 z-40"
+                                    onClick={() => setShowMoreTools(false)}
+                                    aria-hidden="true"
+                                />
+                                <div className="absolute bottom-full right-0 mb-2.5 w-72 sm:w-80 bg-gray-900/95 backdrop-blur-xl border border-gray-700/60 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2 text-xs">
+                                    <div className="flex items-center justify-between px-3.5 py-2.5 bg-gray-800/40 border-b border-gray-700/50">
+                                        <span className="font-semibold text-gray-300 text-3xs uppercase tracking-wider flex items-center gap-1.5">
+                                            <Wand2 size={12} className="text-purple-400" />
+                                            Story & Roleplay Tools
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowMoreTools(false)}
+                                            className="text-gray-500 hover:text-white p-0.5 rounded transition-colors"
+                                            aria-label="Close tools menu"
+                                        >
+                                            <X size={13} />
+                                        </button>
+                                    </div>
+
+                                    <div className="p-2 space-y-2.5 max-h-[75vh] overflow-y-auto custom-scrollbar">
+                                        {/* Section 1: Visuals & Media */}
+                                        <div>
+                                            <div className="px-2 py-0.5 text-3xs font-bold text-gray-500 uppercase tracking-wider">
+                                                Visuals & Media
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-1.5 mt-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setShowMoreTools(false); handleGenerateScene(); }}
+                                                    disabled={isGeneratingScene || !activeChatId}
+                                                    className="flex items-center gap-2 p-2 rounded-xl bg-white/5 hover:bg-green-500/10 border border-transparent hover:border-green-500/20 text-gray-200 hover:text-green-300 transition-colors disabled:opacity-50 text-left"
+                                                >
+                                                    {isGeneratingScene ? <Loader2 size={15} className="text-green-400 animate-spin shrink-0" /> : <ImageIcon size={15} className="text-green-400 shrink-0" />}
+                                                    <div className="min-w-0">
+                                                        <div className="text-xs font-medium truncate">Scene</div>
+                                                        <div className="text-3xs text-gray-500 truncate">Backdrop image</div>
+                                                    </div>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setShowMoreTools(false); handleIllustrate(); }}
+                                                    disabled={illustrateMutation.isPending || !activeChatId}
+                                                    className="flex items-center gap-2 p-2 rounded-xl bg-white/5 hover:bg-pink-500/10 border border-transparent hover:border-pink-500/20 text-gray-200 hover:text-pink-300 transition-colors disabled:opacity-50 text-left"
+                                                >
+                                                    {illustrateMutation.isPending ? <Loader2 size={15} className="text-pink-400 animate-spin shrink-0" /> : <Palette size={15} className="text-pink-400 shrink-0" />}
+                                                    <div className="min-w-0">
+                                                        <div className="text-xs font-medium truncate">Illustrate</div>
+                                                        <div className="text-3xs text-gray-500 truncate">Draw moment</div>
+                                                    </div>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Section 2: Director & Roleplay Mechanics */}
+                                        <div>
+                                            <div className="px-2 py-0.5 text-3xs font-bold text-gray-500 uppercase tracking-wider">
+                                                Director & Mechanics
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-1.5 mt-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setShowMoreTools(false); setShowSteerBar(true); }}
+                                                    className={clsx(
+                                                        "flex items-center gap-2 p-2 rounded-xl border text-left transition-colors",
+                                                        turnDirective || showSteerBar
+                                                            ? "bg-purple-500/15 border-purple-500/30 text-purple-200"
+                                                            : "bg-white/5 border-transparent hover:bg-purple-500/10 hover:border-purple-500/20 text-gray-200 hover:text-purple-300"
+                                                    )}
+                                                >
+                                                    <Target size={15} className="text-purple-400 shrink-0" />
+                                                    <div className="min-w-0">
+                                                        <div className="text-xs font-medium truncate flex items-center justify-between">
+                                                            <span>Steer Turn</span>
+                                                            {turnDirective && <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />}
+                                                        </div>
+                                                        <div className="text-3xs text-gray-500 truncate">Inject directive</div>
+                                                    </div>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setShowMoreTools(false); setShowFateMenu(true); }}
+                                                    className={clsx(
+                                                        "flex items-center gap-2 p-2 rounded-xl border text-left transition-colors",
+                                                        showFateMenu
+                                                            ? "bg-amber-500/15 border-amber-500/30 text-amber-200"
+                                                            : "bg-white/5 border-transparent hover:bg-amber-500/10 hover:border-amber-500/20 text-gray-200 hover:text-amber-300"
+                                                    )}
+                                                >
+                                                    <Dices size={15} className="text-amber-400 shrink-0" />
+                                                    <div className="min-w-0">
+                                                        <div className="text-xs font-medium truncate">Fate / D20</div>
+                                                        <div className="text-3xs text-gray-500 truncate">Skill & DC check</div>
+                                                    </div>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Section 3: Player Co-Pilot */}
+                                        <div>
+                                            <div className="px-2 py-0.5 text-3xs font-bold text-gray-500 uppercase tracking-wider">
+                                                Player Co-Pilot
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-1.5 mt-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setShowMoreTools(false); handleSuggestClick(); }}
+                                                    disabled={!activeChatId || suggestReplyMutation.isPending || suggestJobId}
+                                                    className="flex items-center gap-2 p-2 rounded-xl bg-white/5 hover:bg-blue-500/10 border border-transparent hover:border-blue-500/20 text-gray-200 hover:text-blue-300 transition-colors disabled:opacity-50 text-left"
+                                                >
+                                                    {(suggestReplyMutation.isPending || suggestJobId)
+                                                        ? <Loader2 size={15} className="text-blue-400 animate-spin shrink-0" />
+                                                        : <Sparkles size={15} className="text-blue-400 shrink-0" />}
+                                                    <div className="min-w-0">
+                                                        <div className="text-xs font-medium truncate">Suggest</div>
+                                                        <div className="text-3xs text-gray-500 truncate">AI reply draft</div>
+                                                    </div>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setShowMoreTools(false); handleImpersonate(); }}
+                                                    disabled={!activeChatId || impersonateMutation.isPending}
+                                                    className="flex items-center gap-2 p-2 rounded-xl bg-white/5 hover:bg-purple-500/10 border border-transparent hover:border-purple-500/20 text-gray-200 hover:text-purple-300 transition-colors disabled:opacity-50 text-left"
+                                                >
+                                                    {impersonateMutation.isPending
+                                                        ? <Loader2 size={15} className="text-purple-400 animate-spin shrink-0" />
+                                                        : <Ghost size={15} className="text-purple-400 shrink-0" />}
+                                                    <div className="min-w-0">
+                                                        <div className="text-xs font-medium truncate">Impersonate</div>
+                                                        <div className="text-3xs text-gray-500 truncate">Speak as you</div>
+                                                    </div>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Section 4: Engine Modes */}
+                                        <div className="pt-1.5 border-t border-white/5">
+                                            <div className="px-2 py-0.5 text-3xs font-bold text-gray-500 uppercase tracking-wider">
+                                                Engine Modes
+                                            </div>
+                                            <div className="space-y-1.5 mt-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAgenticMode(!agenticMode)}
+                                                    className={clsx(
+                                                        "w-full flex items-center justify-between p-2 rounded-xl border text-left transition-colors",
+                                                        agenticMode
+                                                            ? "bg-purple-500/15 border-purple-500/30 text-purple-200"
+                                                            : "bg-white/5 border-transparent hover:bg-white/10 text-gray-300"
+                                                    )}
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <Wand2 size={14} className={agenticMode ? "text-purple-400" : "text-gray-500"} />
+                                                        <div>
+                                                            <div className="text-xs font-medium">Autonomous Agentic</div>
+                                                            <div className="text-3xs text-gray-500">Autonomous tool chaining & visual generation</div>
+                                                        </div>
+                                                    </div>
+                                                    <span className={clsx(
+                                                        "px-1.5 py-0.5 rounded text-3xs font-bold uppercase tracking-wider",
+                                                        agenticMode ? "bg-purple-500/30 text-purple-300" : "bg-white/5 text-gray-500"
+                                                    )}>
+                                                        {agenticMode ? 'ON' : 'OFF'}
+                                                    </span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setNarrateMode(!narrateMode)}
+                                                    className={clsx(
+                                                        "w-full flex items-center justify-between p-2 rounded-xl border text-left transition-colors",
+                                                        narrateMode
+                                                            ? "bg-purple-500/15 border-purple-500/30 text-purple-200"
+                                                            : "bg-white/5 border-transparent hover:bg-white/10 text-gray-300"
+                                                    )}
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <BookOpen size={14} className={narrateMode ? "text-purple-400" : "text-gray-500"} />
+                                                        <div>
+                                                            <div className="text-xs font-medium">Scene Narrator</div>
+                                                            <div className="text-3xs text-gray-500">Enforce 3rd-person story narration</div>
+                                                        </div>
+                                                    </div>
+                                                    <span className={clsx(
+                                                        "px-1.5 py-0.5 rounded text-3xs font-bold uppercase tracking-wider",
+                                                        narrateMode ? "bg-purple-500/30 text-purple-300" : "bg-white/5 text-gray-500"
+                                                    )}>
+                                                        {narrateMode ? 'ON' : 'OFF'}
+                                                    </span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
+                            </>
                         )}
 
                         {/* Fate / Skill Check Gate Popover */}
                         {showFateMenu && (
-                            <div className="absolute bottom-full right-0 mb-3 w-80 bg-gray-900/95 backdrop-blur-xl border border-amber-500/30 rounded-2xl shadow-2xl p-3 z-50 animate-in fade-in slide-in-from-bottom-2 text-xs">
-                                <div className="flex items-center justify-between pb-2 border-b border-white/10 mb-2">
-                                    <span className="font-bold text-amber-300 flex items-center gap-1.5 uppercase tracking-wider text-3xs">
-                                        <Dices size={14} className="text-amber-400" />
-                                        Fate / Skill Check Gate
-                                    </span>
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowFateMenu(false)}
-                                        className="text-gray-500 hover:text-white p-0.5 rounded"
-                                    >
-                                        ✕
-                                    </button>
-                                </div>
-                                <div className="space-y-2.5">
-                                    <div>
-                                        <label className="text-3xs font-semibold text-gray-400 uppercase tracking-wider block mb-1">
-                                            Tested Skill / Attribute
-                                        </label>
-                                        <select
-                                            value={fateSkill}
-                                            onChange={(e) => setFateSkill(e.target.value)}
-                                            className="w-full bg-gray-800 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-amber-500"
+                            <>
+                                <div
+                                    className="fixed inset-0 z-40"
+                                    onClick={() => setShowFateMenu(false)}
+                                    aria-hidden="true"
+                                />
+                                <div className="absolute bottom-full right-0 mb-3 w-80 bg-gray-900/95 backdrop-blur-xl border border-amber-500/30 rounded-2xl shadow-2xl p-3 z-50 animate-in fade-in slide-in-from-bottom-2 text-xs">
+                                    <div className="flex items-center justify-between pb-2 border-b border-white/10 mb-2">
+                                        <span className="font-bold text-amber-300 flex items-center gap-1.5 uppercase tracking-wider text-3xs">
+                                            <Dices size={14} className="text-amber-400" />
+                                            Fate / Skill Check Gate
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowFateMenu(false)}
+                                            className="text-gray-500 hover:text-white p-0.5 rounded"
                                         >
-                                            {['Persuasion', 'Athletics', 'Stealth', 'Arcana', 'Perception', 'Deception', 'Insight', 'Survival', 'Luck / Fate'].map(s => (
-                                                <option key={s} value={s}>{s}</option>
-                                            ))}
-                                        </select>
+                                            ✕
+                                        </button>
                                     </div>
-                                    <div>
-                                        <label className="text-3xs font-semibold text-gray-400 uppercase tracking-wider block mb-1">
-                                            Difficulty Class (DC): <span className="text-amber-300 font-bold">{fateDifficulty}</span>
-                                        </label>
-                                        <div className="grid grid-cols-5 gap-1">
-                                            {[
-                                                { dc: 10, label: '10 Easy' },
-                                                { dc: 13, label: '13 Med' },
-                                                { dc: 15, label: '15 Hard' },
-                                                { dc: 18, label: '18 V.Hard' },
-                                                { dc: 20, label: '20 Ext' },
-                                            ].map(({ dc, label }) => (
-                                                <button
-                                                    key={dc}
-                                                    type="button"
-                                                    onClick={() => setFateDifficulty(dc)}
-                                                    className={clsx(
-                                                        "py-1 px-0.5 rounded text-3xs font-semibold border transition-colors text-center",
-                                                        fateDifficulty === dc
-                                                            ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
-                                                            : "bg-gray-800/60 border-white/5 text-gray-400 hover:text-white"
-                                                    )}
-                                                >
-                                                    {label}
-                                                </button>
-                                            ))}
+                                    <div className="space-y-2.5">
+                                        <div>
+                                            <label className="text-3xs font-semibold text-gray-400 uppercase tracking-wider block mb-1">
+                                                Tested Skill / Attribute
+                                            </label>
+                                            <select
+                                                value={fateSkill}
+                                                onChange={(e) => setFateSkill(e.target.value)}
+                                                className="w-full bg-gray-800 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-amber-500"
+                                            >
+                                                {['Persuasion', 'Athletics', 'Stealth', 'Arcana', 'Perception', 'Deception', 'Insight', 'Survival', 'Luck / Fate'].map(s => (
+                                                    <option key={s} value={s}>{s}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-3xs font-semibold text-gray-400 uppercase tracking-wider block mb-1">
+                                                Difficulty Class (DC): <span className="text-amber-300 font-bold">{fateDifficulty}</span>
+                                            </label>
+                                            <div className="grid grid-cols-5 gap-1">
+                                                {[
+                                                    { dc: 10, label: '10 Easy' },
+                                                    { dc: 13, label: '13 Med' },
+                                                    { dc: 15, label: '15 Hard' },
+                                                    { dc: 18, label: '18 V.Hard' },
+                                                    { dc: 20, label: '20 Ext' },
+                                                ].map(({ dc, label }) => (
+                                                    <button
+                                                        key={dc}
+                                                        type="button"
+                                                        onClick={() => setFateDifficulty(dc)}
+                                                        className={clsx(
+                                                            "py-1 px-0.5 rounded text-3xs font-semibold border transition-colors text-center",
+                                                            fateDifficulty === dc
+                                                                ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                                                                : "bg-gray-800/60 border-white/5 text-gray-400 hover:text-white"
+                                                        )}
+                                                    >
+                                                        {label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={handleRollFate}
+                                                className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 font-semibold text-xs transition-colors"
+                                                title="Roll d20 now and insert outcome into your message"
+                                            >
+                                                <Dices size={14} />
+                                                <span>Roll d20 Now</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleInsertFateGate}
+                                                className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-200 font-semibold text-xs transition-colors"
+                                                title="Enforce a Fate Check for AI on next response"
+                                            >
+                                                <Shield size={14} />
+                                                <span>Set Gate</span>
+                                            </button>
                                         </div>
                                     </div>
-                                    <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={handleRollFate}
-                                            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 font-semibold text-xs transition-colors"
-                                            title="Roll d20 now and insert outcome into your message"
-                                        >
-                                            <Dices size={14} />
-                                            <span>Roll d20 Now</span>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={handleInsertFateGate}
-                                            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-200 font-semibold text-xs transition-colors"
-                                            title="Enforce a Fate Check for AI on next response"
-                                        >
-                                            <Shield size={14} />
-                                            <span>Set Gate</span>
-                                        </button>
-                                    </div>
                                 </div>
-                            </div>
+                            </>
                         )}
-
-                        <div className="hidden sm:flex items-center gap-1">
-                            <button
-                                onClick={handleGenerateScene}
-                                disabled={isGeneratingScene || !activeChatId}
-                                className="p-1.5 sm:p-2 text-gray-400 hover:text-green-400 transition-colors rounded-xl hover:bg-green-500/10 disabled:opacity-50"
-                                title="Generate Scene"
-                            >
-                                {isGeneratingScene ? <Loader2 size={18} className="animate-spin" /> : <ImageIcon size={18} />}
-                            </button>
-                            <button
-                                onClick={handleIllustrate}
-                                disabled={illustrateMutation.isPending || !activeChatId}
-                                className={clsx(
-                                    "p-1.5 sm:p-2 transition-colors rounded-xl",
-                                    illustrateMutation.isPending
-                                        ? "text-pink-400 bg-pink-500/10 cursor-not-allowed"
-                                        : (activeChatId ? "text-gray-400 hover:text-pink-400 hover:bg-pink-500/10" : "text-gray-600 cursor-not-allowed")
-                                )}
-                                title="Illustrate moment"
-                            >
-                                {illustrateMutation.isPending ? <Loader2 size={18} className="animate-spin" /> : <Palette size={18} />}
-                            </button>
-                            <button
-                                onClick={() => setAgenticMode(!agenticMode)}
-                                className={clsx(
-                                    "p-1.5 sm:p-2 transition-colors rounded-xl",
-                                    agenticMode
-                                        ? "text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
-                                        : "text-gray-500 hover:text-gray-400 hover:bg-white/5"
-                                )}
-                                title={agenticMode ? "Agentic ON" : "Agentic OFF"}
-                            >
-                                <Wand2 size={18} />
-                            </button>
-                            <button
-                                onClick={() => setNarrateMode(!narrateMode)}
-                                className={clsx(
-                                    "p-1.5 sm:p-2 transition-colors rounded-xl",
-                                    narrateMode
-                                        ? "text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
-                                        : "text-gray-500 hover:text-gray-400 hover:bg-white/5"
-                                )}
-                                title={narrateMode ? "Narrate ON" : "Narrate OFF"}
-                            >
-                                <BookOpen size={18} />
-                            </button>
-                            <button
-                                onClick={() => handleImpersonate()}
-                                disabled={!activeChatId || impersonateMutation.isPending}
-                                className={clsx(
-                                    "p-1.5 sm:p-2 transition-all rounded-xl",
-                                    impersonateMutation.isPending
-                                        ? "text-purple-400 bg-purple-500/10 cursor-not-allowed"
-                                        : (activeChatId ? "text-gray-400 hover:text-purple-400 hover:bg-purple-500/10" : "text-gray-600 cursor-not-allowed")
-                                )}
-                                title="Impersonate"
-                            >
-                                {impersonateMutation.isPending
-                                    ? <Loader2 size={16} className="animate-spin" />
-                                    : <Ghost size={16} />}
-                            </button>
-                            <button
-                                onClick={handleSuggestClick}
-                                disabled={!activeChatId || suggestReplyMutation.isPending || suggestJobId}
-                                className={clsx(
-                                    "p-1.5 sm:p-2 transition-all rounded-xl",
-                                    (suggestReplyMutation.isPending || suggestJobId)
-                                        ? "text-blue-400 bg-blue-500/10 cursor-not-allowed"
-                                        : (activeChatId ? "text-blue-400 hover:text-white hover:bg-blue-600/50" : "text-gray-600 cursor-not-allowed")
-                                )}
-                                title="Auto-suggest reply"
-                            >
-                                {(suggestReplyMutation.isPending || suggestJobId) 
-                                    ? <Loader2 size={16} className="animate-spin" />
-                                    : <Sparkles size={16} />}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setShowSteerBar(v => !v)}
-                                className={clsx(
-                                    "p-1.5 sm:p-2 transition-all rounded-xl",
-                                    turnDirective || showSteerBar
-                                        ? "text-purple-300 bg-purple-500/20 shadow-[0_0_10px_rgba(168,85,247,0.25)] border border-purple-500/30"
-                                        : "text-gray-400 hover:text-purple-400 hover:bg-purple-500/10"
-                                )}
-                                title={turnDirective ? `Directive: "${turnDirective}"` : "Steer next turn (Directive)"}
-                                aria-label="Steer next turn"
-                            >
-                                <Target size={18} />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setShowFateMenu(v => !v)}
-                                className={clsx(
-                                    "p-1.5 sm:p-2 transition-all rounded-xl",
-                                    showFateMenu
-                                        ? "text-amber-300 bg-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.2)]"
-                                        : "text-gray-400 hover:text-amber-400 hover:bg-amber-500/10"
-                                )}
-                                title="Fate / Skill Check Gate"
-                                aria-label="Fate / Skill Check Gate"
-                            >
-                                <Dices size={18} />
-                            </button>
-                        </div>
                         
                         <div className="flex items-center">
                             <TokenMeter text={message} />

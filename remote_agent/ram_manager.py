@@ -38,7 +38,7 @@ def ensure_shm_capacity(needed_bytes: int = 0) -> None:
         usage = shutil.disk_usage("/dev/shm")
         if usage.free < needed_bytes or usage.free < (10 * 1024 * 1024 * 1024):
             total_ram, _ = _get_system_ram_info()
-            max_shm_gb = min(45, int((total_ram * 0.82) / (1024**3)))
+            max_shm_gb = min(64, int((total_ram * 0.82) / (1024**3)))
             current_total_gb = int(usage.total / (1024**3))
             if max_shm_gb > current_total_gb:
                 res = subprocess.run(["mount", "-o", f"remount,size={max_shm_gb}G", "/dev/shm"], capture_output=True, text=True, check=False)
@@ -341,10 +341,21 @@ class RamModelManager:
             dest_path = subfolder_dir / dest_filename
             flat_dest_path = self.ram_dir / dest_filename
 
-            # 2. Check if file already exists on disk in subfolder or flat ram_dir
+            # 2. Check if file already exists on disk in subfolder, flat ram_dir, or if src itself is already in RAM cache
+            is_src_in_ram = False
+            try:
+                src.relative_to(self.ram_dir)
+                is_src_in_ram = True
+            except ValueError:
+                if str(src).startswith("/dev/shm"):
+                    is_src_in_ram = True
+
             candidates_to_check = [dest_path, flat_dest_path, subfolder_dir / src.name, self.ram_dir / src.name]
+            if is_src_in_ram:
+                candidates_to_check.insert(0, src)
+
             for existing in candidates_to_check:
-                if existing.exists() and existing.is_file():
+                if existing and existing.exists() and existing.is_file():
                     if existing.stat().st_size == size_bytes:
                         existing_entry = CacheEntry(
                             model_id=mid,
