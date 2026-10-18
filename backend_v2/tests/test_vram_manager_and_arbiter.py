@@ -340,3 +340,65 @@ class TestVRAMManagerDynamicNGL:
         assert ("convaiinnovations/laya-multilingual", "cuda:0") not in mgr.laya_cache
 
 
+class TestMultiGPUAndStorageStrategies:
+    """Verify multi-GPU device routing, cross-workload eviction bypass, and low-RAM volume streaming."""
+
+    def test_multi_gpu_image_workload_bypasses_llama_eviction(self, monkeypatch):
+        monkeypatch.setenv("COMFY_GPU_DEVICE", "0")
+        monkeypatch.setenv("LLM_GPU_DEVICE", "1")
+        mgr = VRAMManager()
+        assert mgr.is_multi_gpu is True
+        assert mgr.comfy_gpu_device == 0
+        assert mgr.llm_gpu_device == 1
+
+        mgr.is_llama_running = MagicMock(return_value=True)
+        mgr.stop_llama = MagicMock()
+
+        res = mgr.prepare_for_workload("image")
+        assert res["policy"] == "multi_gpu_concurrent"
+        assert "bypassed_llama_eviction_multi_gpu" in res["actions_taken"]
+        mgr.stop_llama.assert_not_called()
+
+    def test_multi_gpu_llm_workload_bypasses_comfy_eviction(self, monkeypatch):
+        monkeypatch.setenv("COMFY_GPU_DEVICE", "0")
+        monkeypatch.setenv("LLM_GPU_DEVICE", "1")
+        mgr = VRAMManager()
+        assert mgr.is_multi_gpu is True
+
+        mgr.free_comfy_vram = MagicMock()
+        mgr.is_llama_running = MagicMock(return_value=True)
+
+        res = mgr.prepare_for_workload("llm", model_id="default")
+        assert "bypassed_comfy_eviction_multi_gpu" in res["actions_taken"]
+        mgr.free_comfy_vram.assert_not_called()
+
+    def test_multi_gpu_telemetry_reports_devices(self, monkeypatch):
+        monkeypatch.setenv("COMFY_GPU_DEVICE", "0")
+        monkeypatch.setenv("LLM_GPU_DEVICE", "1")
+        mgr = VRAMManager()
+        info = mgr.get_vram_info()
+        assert "is_multi_gpu" in info
+        assert info["is_multi_gpu"] is True
+        assert info["comfy_gpu_device"] == 0
+        assert info["llm_gpu_device"] == 1
+        assert "devices" in info
+
+    def test_low_ram_mode_resolves_disk_candidate_directly(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CACHE_IN_RAM", "0")
+        mgr = VRAMManager()
+        assert mgr.cache_in_ram is False
+
+        # Create a mock modal volume path
+        modal_dir = tmp_path / "mnt_data" / "tnhcomfy" / "llm_models" / "artemis"
+        modal_dir.mkdir(parents=True)
+        gguf_file = modal_dir / "artemis_31b_q4.gguf"
+        gguf_file.write_bytes(b"dummy_weights")
+
+        monkeypatch.setenv("PERSISTENT_STORAGE_PATH", str(tmp_path / "mnt_data" / "tnhcomfy" / "llm_models"))
+
+        p, mid = mgr._resolve_model_path("artemis_31b_q4")
+        assert p == str(gguf_file)
+        assert "artemis" in mid.lower()
+
+
+

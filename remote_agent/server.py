@@ -440,13 +440,23 @@ def _detect_gpu() -> dict:
     try:
         import torch
         if torch.cuda.is_available():
+            count = torch.cuda.device_count()
             name = torch.cuda.get_device_name(0)
             total_bytes = torch.cuda.get_device_properties(0).total_memory
+            devices = [
+                {
+                    "index": i,
+                    "name": torch.cuda.get_device_name(i),
+                    "vram_total_mb": int(torch.cuda.get_device_properties(i).total_memory / (1024 * 1024)),
+                }
+                for i in range(count)
+            ]
             return {
                 "available": True,
                 "name": name,
                 "vram_total_mb": int(total_bytes / (1024 * 1024)),
-                "count": torch.cuda.device_count(),
+                "count": count,
+                "devices": devices,
             }
     except Exception:
         pass
@@ -454,25 +464,31 @@ def _detect_gpu() -> dict:
     try:
         import subprocess
         out = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            ["nvidia-smi", "--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"],
             stderr=subprocess.DEVNULL,
             timeout=2.0,
         ).decode().strip()
         if out:
-            line = out.splitlines()[0]
-            parts = [p.strip() for p in line.split(",")]
-            name = parts[0]
-            vram_mb = int(parts[1]) if len(parts) > 1 else 0
+            lines = [l.strip() for l in out.splitlines() if l.strip()]
+            devices = []
+            for l in lines:
+                parts = [p.strip() for p in l.split(",")]
+                idx = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else len(devices)
+                d_name = parts[1] if len(parts) > 1 else "GPU"
+                v_mb = int(parts[2]) if len(parts) > 2 else 0
+                devices.append({"index": idx, "name": d_name, "vram_total_mb": v_mb})
+            primary = devices[0] if devices else {"name": "GPU", "vram_total_mb": 0}
             return {
                 "available": True,
-                "name": name,
-                "vram_total_mb": vram_mb,
-                "count": len(out.splitlines()),
+                "name": primary["name"],
+                "vram_total_mb": primary["vram_total_mb"],
+                "count": len(devices),
+                "devices": devices,
             }
     except Exception:
         pass
 
-    return {"available": False, "name": "None", "vram_total_mb": 0, "count": 0}
+    return {"available": False, "name": "None", "vram_total_mb": 0, "count": 0, "devices": []}
 
 
 def _topology() -> dict:
@@ -1535,11 +1551,17 @@ def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dic
     try:
         from vram_manager import get_vram_manager
         vram_mgr = get_vram_manager()
-        laya_model, device = vram_mgr.get_or_load_laya(model_id, repo_or_path, preferred_device="cuda:0")
+        preferred_cuda = f"cuda:{vram_mgr.laya_gpu_device}"
+        laya_model, device = vram_mgr.get_or_load_laya(model_id, repo_or_path, preferred_device=preferred_cuda)
     except Exception:
         laya_model = _LAYA_LOADED_MODELS.get(repo_or_path)
         if laya_model is None:
             target_dev = "cuda:0"
+            try:
+                from vram_manager import get_vram_manager
+                target_dev = f"cuda:{get_vram_manager().laya_gpu_device}"
+            except Exception:
+                pass
             try:
                 import torch
                 if not torch.cuda.is_available():

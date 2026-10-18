@@ -52,6 +52,23 @@ class VRAMManager:
         self.last_llm_activity: float = time.time()
         self.last_image_activity: float = 0.0
 
+        # Multi-GPU Device Allocation
+        self.comfy_gpu_device = int(os.getenv("COMFY_GPU_DEVICE", "0"))
+        default_llm_gpu = 1 if (self._get_cuda_device_count() >= 2) else 0
+        self.llm_gpu_device = int(os.getenv("LLM_GPU_DEVICE", str(default_llm_gpu)))
+        self.laya_gpu_device = int(os.getenv("LAYA_GPU_DEVICE", str(self.llm_gpu_device)))
+        self.is_multi_gpu = (self.comfy_gpu_device != self.llm_gpu_device)
+
+        # RAM Caching Policy: "1" (default) or "0" (low-RAM direct volume streaming)
+        cache_ram_env = os.getenv("CACHE_IN_RAM", "auto").strip().lower()
+        if cache_ram_env in ("0", "false", "no", "off", "disable", "disabled"):
+            self.cache_in_ram = False
+        elif cache_ram_env in ("1", "true", "yes", "on", "enable", "enabled"):
+            self.cache_in_ram = True
+        else:
+            # Auto: disable RAM caching if host has < 20 GB RAM to prevent container OOM
+            self.cache_in_ram = self._detect_ram_capacity_gb() >= 20.0
+
         # Managed llama-server process handle
         self.llama_proc: Optional[subprocess.Popen] = None
         self.llama_model_id: Optional[str] = None
@@ -63,17 +80,42 @@ class VRAMManager:
 
         self._lock = threading.RLock()
 
+    @staticmethod
+    def _get_cuda_device_count() -> int:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                return torch.cuda.device_count()
+        except Exception:
+            pass
+        return 1
+
+    @staticmethod
+    def _detect_ram_capacity_gb() -> float:
+        try:
+            import psutil
+
+            return psutil.virtual_memory().total / (1024**3)
+        except Exception:
+            pass
+        return 32.0
+
     # ----------------------------------------------------------------------
     # GPU VRAM Telemetry & Inspection
     # ----------------------------------------------------------------------
 
-    def get_vram_info(self) -> Dict[str, Any]:
+    def get_vram_info(self, device_idx: Optional[int] = None) -> Dict[str, Any]:
         """Query precise live GPU device memory, current usage, and component status."""
         total_mb = 0
         free_mb = 0
         used_mb = 0
         name = "Unknown"
         cuda_available = False
+        device_count = 0
+        devices: List[Dict[str, Any]] = []
+
+        target_device = device_idx if device_idx is not None else (self.llm_gpu_device if self.is_multi_gpu else 0)
 
         # 1. Primary: PyTorch CUDA Driver
         try:
@@ -81,12 +123,25 @@ class VRAMManager:
 
             if torch.cuda.is_available():
                 cuda_available = True
-                name = torch.cuda.get_device_name(0)
-                # mem_get_info returns (free_bytes, total_bytes) on device 0
-                free_bytes, total_bytes = torch.cuda.mem_get_info(0)
+                device_count = torch.cuda.device_count()
+                target_device = min(target_device, max(0, device_count - 1))
+                name = torch.cuda.get_device_name(target_device)
+                free_bytes, total_bytes = torch.cuda.mem_get_info(target_device)
                 total_mb = int(total_bytes / (1024 * 1024))
                 free_mb = int(free_bytes / (1024 * 1024))
                 used_mb = max(0, total_mb - free_mb)
+
+                for idx in range(device_count):
+                    f_b, t_b = torch.cuda.mem_get_info(idx)
+                    t_m = int(t_b / (1024 * 1024))
+                    f_m = int(f_b / (1024 * 1024))
+                    devices.append({
+                        "index": idx,
+                        "name": torch.cuda.get_device_name(idx),
+                        "vram_total_mb": t_m,
+                        "vram_used_mb": max(0, t_m - f_m),
+                        "vram_free_mb": f_m,
+                    })
         except Exception:
             pass
 
@@ -94,19 +149,36 @@ class VRAMManager:
         if not cuda_available:
             try:
                 res = subprocess.run(
-                    ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,memory.free", "--format=csv,noheader,nounits"],
+                    ["nvidia-smi", "--query-gpu=index,name,memory.total,memory.used,memory.free", "--format=csv,noheader,nounits"],
                     capture_output=True,
                     text=True,
                     timeout=2.0,
                     check=False,
                 )
                 if res.returncode == 0 and res.stdout.strip():
-                    parts = [p.strip() for p in res.stdout.strip().splitlines()[0].split(",")]
-                    name = parts[0]
-                    total_mb = int(parts[1]) if len(parts) > 1 else 0
-                    used_mb = int(parts[2]) if len(parts) > 2 else 0
-                    free_mb = int(parts[3]) if len(parts) > 3 else max(0, total_mb - used_mb)
-                    cuda_available = True
+                    lines = [line.strip() for line in res.stdout.strip().splitlines() if line.strip()]
+                    device_count = len(lines)
+                    for l in lines:
+                        parts = [p.strip() for p in l.split(",")]
+                        idx = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else len(devices)
+                        d_name = parts[1] if len(parts) > 1 else "GPU"
+                        t_m = int(parts[2]) if len(parts) > 2 else 0
+                        u_m = int(parts[3]) if len(parts) > 3 else 0
+                        f_m = int(parts[4]) if len(parts) > 4 else max(0, t_m - u_m)
+                        devices.append({
+                            "index": idx,
+                            "name": d_name,
+                            "vram_total_mb": t_m,
+                            "vram_used_mb": u_m,
+                            "vram_free_mb": f_m,
+                        })
+                    if devices:
+                        sel = devices[min(target_device, len(devices) - 1)]
+                        name = sel["name"]
+                        total_mb = sel["vram_total_mb"]
+                        used_mb = sel["vram_used_mb"]
+                        free_mb = sel["vram_free_mb"]
+                        cuda_available = True
             except Exception:
                 pass
 
@@ -115,6 +187,14 @@ class VRAMManager:
         return {
             "available": cuda_available,
             "device_name": name,
+            "target_device": target_device,
+            "device_count": device_count,
+            "devices": devices,
+            "is_multi_gpu": self.is_multi_gpu,
+            "comfy_gpu_device": self.comfy_gpu_device,
+            "llm_gpu_device": self.llm_gpu_device,
+            "laya_gpu_device": self.laya_gpu_device,
+            "cache_in_ram": self.cache_in_ram,
             "vram_total_mb": total_mb,
             "vram_used_mb": used_mb,
             "vram_free_mb": free_mb,
@@ -238,20 +318,24 @@ class VRAMManager:
 
     def get_laya_device(self, required_headroom_mb: int = 1200) -> str:
         """Determine optimal device for Laya: CUDA if VRAM permits, else CPU."""
-        info = self.get_vram_info()
+        target_dev_idx = self.laya_gpu_device
+        cuda_target_str = f"cuda:{target_dev_idx}"
+
+        info = self.get_vram_info(device_idx=target_dev_idx)
         if not info["available"]:
             return "cpu"
 
         # If already plenty of free VRAM (>= 1.2 GB), run on CUDA for <100ms latency
         if info["vram_free_mb"] >= required_headroom_mb:
-            return "cuda:0"
+            return cuda_target_str
 
-        # Try freeing ComfyUI VRAM first
-        if self.free_comfy_vram():
-            time.sleep(0.1)
-            refreshed = self.get_vram_info()
-            if refreshed["vram_free_mb"] >= required_headroom_mb:
-                return "cuda:0"
+        # If single-GPU and ComfyUI is on same GPU, try freeing ComfyUI VRAM first
+        if not self.is_multi_gpu or (self.comfy_gpu_device == target_dev_idx):
+            if self.free_comfy_vram():
+                time.sleep(0.1)
+                refreshed = self.get_vram_info(device_idx=target_dev_idx)
+                if refreshed["vram_free_mb"] >= required_headroom_mb:
+                    return cuda_target_str
 
         # If VRAM is still below required headroom (e.g. llama-server active),
         # fallback to CPU gracefully so we never crash or interrupt ongoing generation
@@ -333,6 +417,16 @@ class VRAMManager:
                 self.active_workload = "image"
                 self.last_image_activity = time.time()
 
+                # Multi-GPU optimization: ComfyUI (GPU 0) and LLM (GPU 1) run concurrently without eviction!
+                if self.is_multi_gpu:
+                    return {
+                        "status": "ready",
+                        "workload": "image",
+                        "policy": "multi_gpu_concurrent",
+                        "actions_taken": ["bypassed_llama_eviction_multi_gpu"],
+                        "vram": self.get_vram_info(device_idx=self.comfy_gpu_device),
+                    }
+
                 # On huge GPUs (e.g. A100 80GB), both image & LLM fit concurrently
                 if total_mb >= 70000:
                     return {
@@ -383,12 +477,16 @@ class VRAMManager:
 
                 actions_taken = []
 
-                # EVICTION STEP 1: Flush ComfyUI models from VRAM
-                if self.free_comfy_vram():
-                    actions_taken.append("freed_comfy_vram")
-                    time.sleep(0.1)
+                if self.is_multi_gpu:
+                    # Multi-GPU: Skip ComfyUI eviction completely! ComfyUI models stay resident on GPU 0.
+                    actions_taken.append("bypassed_comfy_eviction_multi_gpu")
+                else:
+                    # EVICTION STEP 1: Flush ComfyUI models from VRAM
+                    if self.free_comfy_vram():
+                        actions_taken.append("freed_comfy_vram")
+                        time.sleep(0.1)
 
-                info = self.get_vram_info()
+                info = self.get_vram_info(device_idx=self.llm_gpu_device)
                 free_mb = info["vram_free_mb"]
 
                 # EVICTION STEP 2: Priority check for Laya
@@ -435,7 +533,7 @@ class VRAMManager:
                     "status": "ready",
                     "workload": "llm",
                     "actions_taken": actions_taken,
-                    "vram": self.get_vram_info(),
+                    "vram": self.get_vram_info(device_idx=self.llm_gpu_device),
                 }
 
             # ==============================================================
@@ -454,7 +552,7 @@ class VRAMManager:
                     "workload": "decisions",
                     "actions_taken": actions_taken,
                     "target_device": dev,
-                    "vram": self.get_vram_info(),
+                    "vram": self.get_vram_info(device_idx=self.laya_gpu_device),
                 }
 
             # ==============================================================
@@ -507,6 +605,7 @@ class VRAMManager:
                 "-m", model_path,
                 "--host", "127.0.0.1",
                 "--port", str(self.llm_port),
+                "--main-gpu", str(self.llm_gpu_device),
                 "-ngl", str(ngl),
                 "-c", "8192",
                 "--cache-type-k", "q8_0",
@@ -523,7 +622,7 @@ class VRAMManager:
             # Prepare CUDA library environment
             env = self._build_cuda_env()
 
-            logger.info("launching_jit_llama_server", extra={"cmd": " ".join(cmd[:6]), "model": resolved_mid})
+            logger.info("launching_jit_llama_server", extra={"cmd": " ".join(cmd[:8]), "model": resolved_mid, "gpu": self.llm_gpu_device})
             try:
                 proc = subprocess.Popen(cmd, env=env)
                 self.llama_proc = proc
@@ -582,6 +681,40 @@ class VRAMManager:
         is_generic = (not model_id) or (str(model_id).strip().lower() in generic_aliases)
         clean_mid = None if is_generic else str(model_id).strip()
 
+        disk_dirs = [
+            os.getenv("PERSISTENT_STORAGE_PATH", ""),
+            "/mnt/data/tnhcomfy/llm_models",
+            "/mnt/data/models/llm",
+            "/mnt/data/llm_models",
+            "/mnt/data/models",
+            "/vol/llm_models",
+            "/vol/models/llm",
+            os.getenv("DATA_DIR", "/content/models/llm"),
+            "/content/models/llm",
+            os.getenv("GDRIVE_LLM_PATH", "/content/drive/MyDrive/tnhcomfy/llm_models"),
+            "/content/drive/MyDrive/tnhcomfy/llm_models",
+            "/content/agent-data/llm/models",
+            "/content/ComfyUI/models/llm",
+        ]
+
+        # Low-RAM / Modal direct volume streaming mode: bypass /dev/shm copy when cache_in_ram is disabled
+        if not self.cache_in_ram:
+            direct_candidates: List[str] = []
+            for d_dir in disk_dirs:
+                if d_dir and os.path.exists(d_dir):
+                    for root, _, files in os.walk(d_dir):
+                        for f in sorted(files):
+                            if f.endswith(".gguf") and not f.startswith("."):
+                                full_p = os.path.join(root, f)
+                                if clean_mid and clean_mid.lower() in f.lower():
+                                    return full_p, clean_mid or f
+                                if full_p not in direct_candidates:
+                                    direct_candidates.append(full_p)
+            if is_generic and direct_candidates:
+                first_p = direct_candidates[0]
+                stem = os.path.splitext(os.path.basename(first_p))[0]
+                return first_p, stem or "default"
+
         # 1. Check RAM Manager entries
         try:
             from ram_manager import get_ram_manager
@@ -628,17 +761,9 @@ class VRAMManager:
             return first_p, stem or "default"
 
         # 3. Check disk storage locations
-        disk_dirs = [
-            os.getenv("DATA_DIR", "/content/models/llm"),
-            "/content/models/llm",
-            os.getenv("GDRIVE_LLM_PATH", "/content/drive/MyDrive/tnhcomfy/llm_models"),
-            "/content/drive/MyDrive/tnhcomfy/llm_models",
-            "/content/agent-data/llm/models",
-            "/content/ComfyUI/models/llm",
-        ]
         disk_ggufs: List[str] = []
         for d_dir in disk_dirs:
-            if os.path.exists(d_dir):
+            if d_dir and os.path.exists(d_dir):
                 for root, _, files in os.walk(d_dir):
                     for f in sorted(files):
                         if f.endswith(".gguf") and not f.startswith("."):
@@ -750,7 +875,7 @@ class VRAMManager:
             return 0, {"error": "model_not_found"}
 
         weight_mb = int(os.path.getsize(model_path) / (1024 * 1024))
-        info = self.get_vram_info()
+        info = self.get_vram_info(device_idx=self.llm_gpu_device)
         if not info["available"]:
             return 0, {"ngl": 0, "reason": "cuda_unavailable", "weight_mb": weight_mb}
 
