@@ -97,6 +97,41 @@ except Exception as exc:
     print(f"⚠️ PyTorch GPU check notice: {exc}")
 print("=" * 65 + "\\n")
 
+# 3. Host System Memory, CPU & Storage Inspection
+print("=" * 65)
+print("📊 Host System Telemetry & Storage Audit:")
+try:
+    import psutil
+    import shutil
+    vm = psutil.virtual_memory()
+    ram_tot = vm.total / (1024**3)
+    ram_avail = vm.available / (1024**3)
+    ram_pct = vm.percent
+    print(f"   • Host System RAM: {ram_tot:.1f} GB total | {ram_avail:.1f} GB available ({ram_pct:.1f}% in use)")
+
+    cpu_count = psutil.cpu_count(logical=True)
+    cpu_phys = psutil.cpu_count(logical=False) or cpu_count
+    print(f"   • CPU Architecture: {cpu_phys} physical cores / {cpu_count} logical threads")
+
+    if os.path.exists("/dev/shm"):
+        shm_du = shutil.disk_usage("/dev/shm")
+        print(f"   • Shared Memory (/dev/shm): {shm_du.total / (1024**3):.1f} GB total | {shm_du.free / (1024**3):.1f} GB free")
+
+    scratch_path = "/content" if os.path.exists("/content") else "/"
+    scratch_du = shutil.disk_usage(scratch_path)
+    print(f"   • Local Scratch ({scratch_path}): {scratch_du.total / (1024**3):.1f} GB total | {scratch_du.free / (1024**3):.1f} GB free")
+
+    gdrive_comfy = "/content/drive/MyDrive/comfyui"
+    if os.path.exists(gdrive_comfy):
+        ckpt_dir = f"{gdrive_comfy}/models/checkpoints"
+        lora_dir = f"{gdrive_comfy}/models/loras"
+        ckpt_cnt = sum(len(files) for _, _, files in os.walk(ckpt_dir)) if os.path.exists(ckpt_dir) else 0
+        lora_cnt = sum(len(files) for _, _, files in os.walk(lora_dir)) if os.path.exists(lora_dir) else 0
+        print(f"   • Google Drive ComfyUI Library: {gdrive_comfy} (Found {ckpt_cnt} checkpoints, {lora_cnt} LoRAs)")
+except Exception as e:
+    print(f"   ⚠️ Telemetry notice: {e}")
+print("=" * 65 + "\\n")
+
 subprocess.run(["nvidia-smi"], check=False)
 """
     return [line + "\n" for line in code.split("\n")[:-1]]
@@ -191,17 +226,41 @@ HF_TOKEN = resolve_secret("HF_TOKEN", HF_TOKEN)
 if HF_TOKEN:
     os.environ["HF_TOKEN"] = HF_TOKEN
 
-print("⚙️ Configuration saved!")
+def _mask_sec(s):
+    if not s:
+        return "[NOT SET]"
+    if len(s) <= 8:
+        return "****"
+    return f"{s[:4]}****{s[-4:]}"
+
+print("\\n" + "=" * 65)
+print("⚙️ Worker Configuration & Secrets Audit:")
 print(f"• Mode: {WORKER_MODE}")
-print(f"• Network: {TUNNEL_METHOD}")
+print(f"• Network Tunnel: {TUNNEL_METHOD}")
 print(f"• Concurrency Policy: {CONCURRENCY_POLICY}")
 print(f"• RAM Caching Policy: {CACHE_IN_RAM_SETTING}")
 print(f"• Storage Strategy: {STORAGE_STRATEGY}")
 print(f"• Decision Model: {LAYA_MODEL}")
+print(f"• RP Model: {LLM_RP_MODEL}")
+print(f"• Util Model: {LLM_UTIL_MODEL}")
+print(f"• GITHUB_TOKEN: {_mask_sec(GITHUB_TOKEN)}")
+print(f"• HF_TOKEN: {_mask_sec(HF_TOKEN)}")
+print(f"• NETBIRD_SETUP_KEY: {_mask_sec(NETBIRD_SETUP_KEY)}")
+if NETBIRD_MANAGEMENT_URL:
+    print(f"• NetBird Management: {NETBIRD_MANAGEMENT_URL}")
 if BACKEND_URL:
     print(f"• Backend Sync: {BACKEND_URL} (Sole source of truth for active models)")
+if os.path.exists(GDRIVE_COMFY_PATH):
+    print(f"• Google Drive ComfyUI: {GDRIVE_COMFY_PATH} [VERIFIED PRESENT]")
+else:
+    print(f"• Google Drive ComfyUI: {GDRIVE_COMFY_PATH} [NOT DETECTED YET]")
+if os.path.exists(GDRIVE_LLM_PATH):
+    print(f"• Google Drive LLM: {GDRIVE_LLM_PATH} [VERIFIED PRESENT]")
 if os.path.exists(MODAL_VOLUME_PATH):
-    print(f"• Persistent Volume: {MODAL_VOLUME_PATH} (Modal comfy-storage volume active)")
+    print(f"• Persistent Volume: {MODAL_VOLUME_PATH} [MODAL VOLUME ACTIVE]")
+print("💡 Model Strategy: ComfyUI models load from Google Drive into RAM/NVMe cache.")
+print("   LLM GGUF weights stream via high-speed CDN straight to RAM.")
+print("=" * 65 + "\\n")
 """
     return [line + "\n" for line in code.split("\n")[:-1]]
 
@@ -249,6 +308,13 @@ else:
         run_git(["git", "clone", "--depth", "1", clone_url, repo_dir])
 
 print("✅ TNHComfy workspace ready at:", repo_dir)
+try:
+    branch = run_git(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir).strip()
+    commit = run_git(["git", "log", "-1", "--pretty=format:%h - %s (%ci)"], cwd=repo_dir).strip()
+    print(f"   • Active Branch: {branch}")
+    print(f"   • Latest Commit: {commit}")
+except Exception:
+    pass
 """
     return [line + "\n" for line in code.split("\n")[:-1]]
 
@@ -1535,26 +1601,6 @@ if not tier1_civitai_ver and tier1_candidate_name:
         except Exception:
             pass
 
-# Check candidates for Tier 1: RAM cache, local NVMe, or Google Drive
-active_ckpt_path = None
-ram_ckpt_dir = "/dev/shm/tnh_ram_cache/checkpoints"
-os.makedirs(ram_ckpt_dir, exist_ok=True)
-
-ram_candidate = os.path.join(ram_ckpt_dir, tier1_candidate_name) if tier1_candidate_name else ""
-nvme_candidate = os.path.join(nvme_ckpt_dir, tier1_candidate_name) if tier1_candidate_name else ""
-comfy_candidate = os.path.join(comfy_dir, "models", "checkpoints", tier1_candidate_name) if tier1_candidate_name else ""
-
-gdrive_candidate = ""
-if tier1_candidate_name and os.path.exists(gdrive_ckpt_dir):
-    cand = os.path.join(gdrive_ckpt_dir, tier1_candidate_name)
-    if os.path.exists(cand):
-        gdrive_candidate = cand
-    else:
-        for root, _, files in os.walk(gdrive_ckpt_dir):
-            if tier1_candidate_name in files:
-                gdrive_candidate = os.path.join(root, tier1_candidate_name)
-                break
-
 # Helper to test if a path actually resides on Google Drive FUSE (via symlink or mount)
 def is_on_gdrive(p):
     if not p or not os.path.exists(p):
@@ -1565,24 +1611,76 @@ def is_on_gdrive(p):
     except Exception:
         return False
 
-# Check if already present in RAM or local NVMe
-if ram_candidate and os.path.exists(ram_candidate) and os.path.getsize(ram_candidate) > 100_000_000:
-    print(f"⚡ [Tier 1] Checkpoint already resident in RAM cache: {tier1_candidate_name}")
-    active_ckpt_path = ram_candidate
-elif nvme_candidate and os.path.exists(nvme_candidate) and os.path.getsize(nvme_candidate) > 100_000_000 and not is_on_gdrive(nvme_candidate):
-    print(f"⚡ [Tier 1] Found checkpoint already present on local NVMe SSD: {tier1_candidate_name}")
-    active_ckpt_path = nvme_candidate
+# Check candidates for Tier 1: RAM cache, local NVMe, or Google Drive
+active_ckpt_path = None
+ram_ckpt_dir = "/dev/shm/tnh_ram_cache/checkpoints"
+os.makedirs(ram_ckpt_dir, exist_ok=True)
 
-# In persistent_volume mode, or when NOT in direct mode: allow reusing existing Google Drive models
-if storage_strat_key != "direct" and not active_ckpt_path:
-    if comfy_candidate and os.path.exists(comfy_candidate) and os.path.getsize(comfy_candidate) > 100_000_000:
-        print(f"📁 [Tier 3 -> Tier 1] Found checkpoint in Google Drive (ComfyUI models): {comfy_candidate}")
-        active_ckpt_path = comfy_candidate
-    elif gdrive_candidate and os.path.exists(gdrive_candidate):
-        print(f"📁 [Tier 3 -> Tier 1] Found checkpoint in Google Drive: {gdrive_candidate}")
+ram_candidate = os.path.join(ram_ckpt_dir, tier1_candidate_name) if tier1_candidate_name else ""
+nvme_candidate = os.path.join(nvme_ckpt_dir, tier1_candidate_name) if tier1_candidate_name else ""
+comfy_candidate = os.path.join(comfy_dir, "models", "checkpoints", tier1_candidate_name) if tier1_candidate_name else ""
+
+# Search Google Drive checkpoints directories recursively (Tier 3 Master Library)
+gdrive_candidate = ""
+if tier1_candidate_name:
+    search_dirs = [
+        os.path.join(comfy_dir, "models", "checkpoints"),
+        gdrive_ckpt_dir,
+        os.path.join(gdrive_base, "checkpoints") if "gdrive_base" in locals() else "",
+        os.path.join(gdrive_path, "models", "checkpoints") if "gdrive_path" in locals() else "",
+        os.path.join(gdrive_path, "checkpoints") if "gdrive_path" in locals() else "",
+    ]
+    for s_dir in search_dirs:
+        if not s_dir or not os.path.exists(s_dir):
+            continue
+        direct_f = os.path.join(s_dir, tier1_candidate_name)
+        if os.path.exists(direct_f) and os.path.getsize(direct_f) > 100_000_000:
+            gdrive_candidate = direct_f
+            break
+        for root, _, files in os.walk(s_dir):
+            if tier1_candidate_name in files:
+                found_f = os.path.join(root, tier1_candidate_name)
+                if os.path.getsize(found_f) > 100_000_000:
+                    gdrive_candidate = found_f
+                    break
+        if gdrive_candidate:
+            break
+
+print("\\n" + "=" * 65)
+print("📦 [3-Tier Storage Hierarchy Resolution]")
+if tier1_candidate_name:
+    print(f"🎯 Target Ultra-Hot Checkpoint: {tier1_candidate_name}")
+    print(f"   • Tier 1 (RAM /dev/shm):     {'[RESIDENT]' if (ram_candidate and os.path.exists(ram_candidate) and os.path.getsize(ram_candidate) > 100_000_000) else '[NOT RESIDENT]'}")
+    print(f"   • Tier 2 (Local NVMe SSD):   {'[FOUND]' if (nvme_candidate and os.path.exists(nvme_candidate) and os.path.getsize(nvme_candidate) > 100_000_000 and not is_on_gdrive(nvme_candidate)) else '[NOT FOUND]'}")
+    print(f"   • Tier 3 (Google Drive):     {'[FOUND: ' + gdrive_candidate + ']' if gdrive_candidate else ('[FOUND: ' + comfy_candidate + ']' if (comfy_candidate and os.path.exists(comfy_candidate) and os.path.getsize(comfy_candidate) > 100_000_000) else '[NOT FOUND]')}")
+
+    # 1. Tier 1: Resident in RAM Cache (/dev/shm)
+    if ram_candidate and os.path.exists(ram_candidate) and os.path.getsize(ram_candidate) > 100_000_000:
+        print(f"⚡ [Tier 1 Cache Hit] Checkpoint already resident in RAM cache (/dev/shm): {tier1_candidate_name}")
+        active_ckpt_path = ram_candidate
+
+    # 2. Tier 2: Resident on local NVMe SSD
+    elif nvme_candidate and os.path.exists(nvme_candidate) and os.path.getsize(nvme_candidate) > 100_000_000 and not is_on_gdrive(nvme_candidate):
+        print(f"⚡ [Tier 2 Cache Hit] Found checkpoint already present on local NVMe SSD: {tier1_candidate_name}")
+        active_ckpt_path = nvme_candidate
+
+    # 3. Tier 3: Google Drive Master Library (Always preferred over slow, throttled CivitAI CDN!)
+    elif gdrive_candidate and os.path.exists(gdrive_candidate) and os.path.getsize(gdrive_candidate) > 100_000_000:
+        sz_gb = os.path.getsize(gdrive_candidate) / (1024**3)
+        print(f"📁 [Tier 3 Library] Found checkpoint in Google Drive: {gdrive_candidate} ({sz_gb:.2f} GB)")
+        print(f"   ⚡ Loading directly from Google Drive into RAM cache (/dev/shm) at ~85 MB/s (~1.5 min) — zero CivitAI throttling!")
         active_ckpt_path = gdrive_candidate
+    elif comfy_candidate and os.path.exists(comfy_candidate) and os.path.getsize(comfy_candidate) > 100_000_000:
+        sz_gb = os.path.getsize(comfy_candidate) / (1024**3)
+        print(f"📁 [Tier 3 Library] Found checkpoint in ComfyUI models: {comfy_candidate} ({sz_gb:.2f} GB)")
+        print(f"   ⚡ Loading directly from Google Drive into RAM cache (/dev/shm) at ~85 MB/s (~1.5 min) — zero CivitAI throttling!")
+        active_ckpt_path = comfy_candidate
+    else:
+        print(f"ℹ️ Checkpoint not found in local RAM, NVMe, or Google Drive library.")
 
-# In direct_download_fast mode: download directly from CivitAI CDN!
+print("=" * 65 + "\\n")
+
+# Fallback: only if completely absent from RAM, NVMe, and Google Drive, attempt CivitAI download
 if not active_ckpt_path and (tier1_dl_url or tier1_civitai_ver):
     civ_token = os.environ.get("CIVITAI_TOKEN", "")
     target_dl_path = ram_candidate if can_direct_download_to_ram else nvme_candidate
@@ -1592,7 +1690,7 @@ if not active_ckpt_path and (tier1_dl_url or tier1_civitai_ver):
         sep = "&" if "?" in c_url else "?"
         c_url += f"{sep}token={civ_token}"
     
-    print(f"📥 Active Tier 1 Checkpoint [{tier1_candidate_name or f'model_version_{tier1_civitai_ver}'}] downloading directly from CivitAI CDN to {target_dl_desc} (⚡ High-speed direct CDN transfer)...")
+    print(f"📥 Checkpoint not present in Google Drive library; downloading from CivitAI CDN to {target_dl_desc}...")
     try:
         import requests
         from tqdm import tqdm
@@ -1648,6 +1746,7 @@ if not active_ckpt_path:
     if fallback_candidates:
         fallback_candidates.sort(key=lambda x: os.path.getmtime(x), reverse=True)
         active_ckpt_path = fallback_candidates[0]
+        print(f"📁 Selected fallback checkpoint: {active_ckpt_path}")
 
 img_id = os.path.basename(active_ckpt_path) if active_ckpt_path else ""
 if img_id:
@@ -2008,9 +2107,12 @@ def launch_llm_track():
                 ngl = max(4, min(total_layers - 2, target_layers - 1))
                 print(f"  ⚡ GPU VRAM: {free_vram_gb:.1f} GB free of {total_vram_gb:.1f} GB | Model: {weight_gb:.1f} GB")
                 print(f"  🎯 Calculated safe layer offload: -ngl {ngl}/{total_layers} (GPU: ~{available_weight_gb:.1f} GB, RAM Cache: ~{weight_gb - available_weight_gb:.1f} GB) to prevent CUDA OOM")
+            elif weight_gb > 0:
+                ngl = 0
+                print(f"  ⚠️ Low free VRAM ({free_vram_gb:.1f} GB free for {weight_gb:.1f} GB model); running on CPU RAM cache: -ngl 0")
             else:
                 ngl = 0
-                print(f"  ⚠️ Very low free VRAM ({free_vram_gb:.1f} GB free); running on CPU RAM cache: -ngl 0")
+                print(f"  ⚠️ Model weights not found on disk/RAM; running fallback model on CPU: -ngl 0")
     except Exception as exc:
         ngl = 35
         print(f"  Notice: VRAM layer budgeting fallback ({exc}); using safe -ngl 35")

@@ -326,13 +326,13 @@ class RamModelManager:
             # Determine subfolder according to role (ComfyUI extra paths & LLM layout)
             subfolder = (
                 "checkpoints"
-                if role in ("image", "image_secondary")
+                if role in ("image", "image_secondary", "checkpoint", "checkpoints")
                 else (
                     "loras"
-                    if role == "lora"
+                    if role in ("lora", "loras")
                     else (
                         "vae"
-                        if role == "vae"
+                        if role in ("vae", "vaes")
                         else (
                             "llm"
                             if role in ("rp", "util", "llm")
