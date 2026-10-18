@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import {
     Heart, Sparkles, Shield, Eye, Smile, Flame, CloudRain,
-    Package, Shirt, Activity, ChevronDown, ChevronUp, User,
-    TrendingUp, TrendingDown, Wand2, Compass
+    Package, Shirt, ChevronDown, ChevronUp, User,
+    Lock, Unlock, Edit3, Check, X
 } from 'lucide-react';
 import { useChatWorkspace } from '../../contexts/ChatWorkspaceContext';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
@@ -55,10 +55,10 @@ const MOOD_CONFIG = {
 };
 
 export default function CharacterAffinityHUD() {
-    const { activeChat, linkedCharacter, activeStreams = [] } = useChatWorkspace();
+    const { activeChat, linkedCharacter, activeStreams = [], handleChatUpdate } = useChatWorkspace();
     const [expanded, setExpanded] = useState(false);
-    const prevDeltaRef = React.useRef(0);
-    const [showFloatingDelta, setShowFloatingDelta] = useState(false);
+    const [isEditingRelationship, setIsEditingRelationship] = useState(false);
+    const [relationshipDraft, setRelationshipDraft] = useState('');
 
     const snapshot = activeChat?.state_snapshot || {};
 
@@ -68,10 +68,6 @@ export default function CharacterAffinityHUD() {
         return stream?.jobData?.directorDecision || null;
     }, [activeStreams]);
 
-    const affinity = streamingDecision?.affinity_delta != null
-        ? Math.max(0, Math.min(100, (snapshot.character_affinity ?? 50) + Number(streamingDecision.affinity_delta)))
-        : Number(snapshot.character_affinity ?? 50);
-
     const rawMoodKey = streamingDecision?.character_mood || snapshot.character_mood || 'curious_attentive';
     const moodConfig = MOOD_CONFIG[rawMoodKey] || {
         label: rawMoodKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
@@ -79,23 +75,6 @@ export default function CharacterAffinityHUD() {
         color: 'text-blue-300 bg-blue-500/15 border-blue-500/30',
         barColor: 'from-blue-500 to-emerald-400',
     };
-
-    const delta = streamingDecision?.affinity_delta != null
-        ? Number(streamingDecision.affinity_delta)
-        : Number(snapshot.last_affinity_delta ?? 0);
-
-    // Trigger floating delta animation whenever delta changes and is non-zero
-    useEffect(() => {
-        if (delta !== 0 && delta !== prevDeltaRef.current) {
-            prevDeltaRef.current = delta;
-            const animTimer = setTimeout(() => setShowFloatingDelta(true), 0);
-            const hideTimer = setTimeout(() => setShowFloatingDelta(false), 3500);
-            return () => {
-                clearTimeout(animTimer);
-                clearTimeout(hideTimer);
-            };
-        }
-    }, [delta]);
 
     const rawInventory = snapshot.inventory;
     const inventoryItems = Array.isArray(rawInventory)
@@ -106,6 +85,30 @@ export default function CharacterAffinityHUD() {
     const characterOutfit = snapshot.character_outfit || snapshot.outfit || null;
     const currentActivity = snapshot.current_activity || snapshot.activity || null;
     const expression = snapshot.character_expression || streamingDecision?.character_expression || null;
+    const isNeutralExpression = !expression || expression.toLowerCase() === 'neutral' || expression.toLowerCase() === 'normal';
+
+    const lockedFields = snapshot.locked_fields || [];
+    const isRelationshipLocked = lockedFields.includes('relationship_status') || lockedFields.includes('relationship');
+
+    const toggleLockRelationship = () => {
+        if (!handleChatUpdate) return;
+        const nextLocked = isRelationshipLocked
+            ? lockedFields.filter(f => f !== 'relationship_status' && f !== 'relationship')
+            : [...lockedFields, 'relationship_status', 'relationship'];
+        const nextSnapshot = { ...snapshot, locked_fields: nextLocked };
+        handleChatUpdate({ state_snapshot: nextSnapshot });
+    };
+
+    const saveRelationship = () => {
+        if (!relationshipDraft.trim() || !handleChatUpdate) return;
+        const nextSnapshot = {
+            ...snapshot,
+            relationship_status: relationshipDraft.trim(),
+            relationship: relationshipDraft.trim()
+        };
+        handleChatUpdate({ state_snapshot: nextSnapshot });
+        setIsEditingRelationship(false);
+    };
 
     if (!activeChat) return null;
 
@@ -128,73 +131,71 @@ export default function CharacterAffinityHUD() {
                             )}
                         </div>
                         {/* Status dot */}
-                        <span className={clsx(
-                            "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-gray-900",
-                            affinity >= 70 ? "bg-pink-400" : affinity >= 35 ? "bg-emerald-400" : "bg-amber-400"
-                        )} />
+                        <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-gray-900 bg-pink-400" />
                     </div>
 
-                    {/* Affinity Meter */}
-                    <div className="flex flex-col min-w-[130px] sm:min-w-[160px] max-w-[200px]">
-                        <div className="flex items-center justify-between gap-1 mb-1">
-                            <div className="flex items-center gap-1">
-                                <Heart
-                                    size={12}
-                                    className={clsx(
-                                        "shrink-0 transition-transform",
-                                        affinity >= 75 ? "text-pink-400 fill-pink-400 animate-pulse" :
-                                        affinity >= 40 ? "text-rose-400 fill-rose-400/40" : "text-gray-400"
-                                    )}
-                                />
-                                <span className="text-3xs font-bold text-gray-300 uppercase tracking-wider">
-                                    Affinity
-                                </span>
-                            </div>
-                            <span className="font-mono text-3xs font-semibold text-gray-200">
-                                {affinity} <span className="text-gray-500 font-normal">/ 100</span>
-                            </span>
-                        </div>
-
-                        {/* Progress Bar Container */}
-                        <div className="relative w-full h-1.5 bg-gray-800/80 rounded-full overflow-hidden border border-white/5">
-                            <motion.div
-                                className={clsx("h-full rounded-full bg-gradient-to-r", moodConfig.barColor)}
-                                initial={{ width: 0 }}
-                                animate={{ width: `${affinity}%` }}
-                                transition={{ duration: 0.6, ease: 'easeOut' }}
+                    {/* Dynamic Relationship Badge */}
+                    {isEditingRelationship ? (
+                        <div className="flex items-center gap-1 bg-gray-800/90 border border-pink-500/40 rounded-full px-2 py-0.5">
+                            <input
+                                type="text"
+                                value={relationshipDraft}
+                                onChange={(e) => setRelationshipDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') saveRelationship();
+                                    if (e.key === 'Escape') setIsEditingRelationship(false);
+                                }}
+                                autoFocus
+                                placeholder="Relationship dynamic..."
+                                className="bg-transparent text-xs text-pink-200 placeholder-gray-500 focus:outline-none w-36 sm:w-44"
                             />
+                            <button onClick={saveRelationship} className="text-emerald-400 hover:text-emerald-300 p-0.5" title="Save dynamic">
+                                <Check size={11} />
+                            </button>
+                            <button onClick={() => setIsEditingRelationship(false)} className="text-gray-400 hover:text-white p-0.5" title="Cancel">
+                                <X size={11} />
+                            </button>
                         </div>
-                    </div>
-
-                    {/* Floating Delta Badge */}
-                    <AnimatePresence>
-                        {showFloatingDelta && delta !== 0 && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 8, scale: 0.85 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: -10, scale: 0.9 }}
-                                transition={{ duration: 0.3 }}
-                                className={clsx(
-                                    "flex items-center gap-1 px-2 py-0.5 rounded-full text-3xs font-bold shadow-md border shrink-0",
-                                    delta > 0
-                                        ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
-                                        : "bg-rose-500/20 border-rose-500/40 text-rose-300"
-                                )}
+                    ) : (
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-pink-500/10 border border-pink-500/25 text-pink-200 text-3xs font-medium max-w-[240px] shadow-sm">
+                            <Heart size={11} className="text-pink-400 shrink-0 fill-pink-500/30" />
+                            <span className="font-bold text-pink-300 uppercase tracking-wider shrink-0 hidden xs:inline">Dynamic:</span>
+                            <span
+                                className="truncate cursor-pointer hover:underline"
+                                title={`Relationship: ${relationshipStatus} (Click to edit)`}
+                                onClick={() => {
+                                    setRelationshipDraft(relationshipStatus);
+                                    setIsEditingRelationship(true);
+                                }}
                             >
-                                {delta > 0 ? (
-                                    <>
-                                        <TrendingUp size={11} className="text-emerald-400" />
-                                        <span>+{delta} Affection</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <TrendingDown size={11} className="text-rose-400" />
-                                        <span>{delta} Disapproval</span>
-                                    </>
+                                {relationshipStatus}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setRelationshipDraft(relationshipStatus);
+                                    setIsEditingRelationship(true);
+                                }}
+                                className="text-pink-400/60 hover:text-pink-200 p-0.5 rounded transition-colors shrink-0"
+                                title="Edit relationship dynamic"
+                                aria-label="Edit relationship dynamic"
+                            >
+                                <Edit3 size={10} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={toggleLockRelationship}
+                                className={clsx(
+                                    "p-0.5 rounded transition-colors shrink-0",
+                                    isRelationshipLocked ? "text-amber-400 hover:text-amber-300" : "text-gray-500 hover:text-gray-300"
                                 )}
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
+                                title={isRelationshipLocked ? "Locked: Protected against AI drift" : "Unlocked: Statekeeper can evolve dynamic"}
+                                aria-label={isRelationshipLocked ? "Unlock dynamic" : "Lock dynamic"}
+                            >
+                                {isRelationshipLocked ? <Lock size={10} /> : <Unlock size={10} />}
+                            </button>
+                        </div>
+                    )}
 
                     {/* Mood Badge */}
                     <div className={clsx(
@@ -205,8 +206,8 @@ export default function CharacterAffinityHUD() {
                         <span className="truncate max-w-[130px]">{moodConfig.label}</span>
                     </div>
 
-                    {/* Expression Badge */}
-                    {expression && (
+                    {/* Expression Badge (Neutral/normal suppressed) */}
+                    {!isNeutralExpression && expression && (
                         <div className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-3xs shrink-0">
                             <Sparkles size={10} className="text-amber-400" />
                             <span className="capitalize truncate max-w-[100px]">{expression}</span>

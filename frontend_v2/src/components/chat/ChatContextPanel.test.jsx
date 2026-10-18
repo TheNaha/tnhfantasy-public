@@ -20,6 +20,7 @@ vi.mock('../../hooks/useWorldVault', () => ({
     useReverseVisionSync: () => ({ mutate: vi.fn(), isPending: false }),
     useFastTravelChat: () => ({ mutate: vi.fn(), isPending: false }),
     useVisualizeInventoryItem: () => ({ mutate: vi.fn(), isPending: false }),
+    useLLMRuntimeDefaults: () => ({ data: { context_tokens: 4096, max_output_tokens: 2048 } }),
 }));
 vi.mock('../../hooks/useStreamingJobs', () => ({ useActiveChatStreams: () => [] }));
 
@@ -364,3 +365,20 @@ describe('ChatContextPanel with failed context queries', () => {
         expect(screen.getByTestId('chat-persona-select')).toBeInTheDocument();
     });
 });
+
+describe('ChatContextPanel — tab navigation', () => {
+    it('renders all 4 tabs and allows switching between them', () => {
+        renderPanel();
+        expect(screen.getByTestId('context-tab-scene')).toBeInTheDocument();
+        expect(screen.getByTestId('context-tab-cast')).toBeInTheDocument();
+        expect(screen.getByTestId('context-tab-lore')).toBeInTheDocument();
+        expect(screen.getByTestId('context-tab-generation')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByTestId('context-tab-generation'));
+        expect(screen.getByTestId('context-tab-generation')).toHaveClass('bg-purple-600/30');
+
+        fireEvent.click(screen.getByTestId('context-tab-cast'));
+        expect(screen.getByTestId('context-tab-cast')).toHaveClass('bg-purple-600/30');
+    });
+});
+

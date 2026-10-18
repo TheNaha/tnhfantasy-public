@@ -97,8 +97,11 @@ export const useRollbackChat = () => {
 export const useRegenerateReply = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ chatId, messageId }) =>
-            api.post(`/api/v2/chats/${chatId}/regenerate`, messageId ? { message_id: messageId } : {}),
+        mutationFn: ({ chatId, messageId, directive }) =>
+            api.post(`/api/v2/chats/${chatId}/regenerate`, {
+                ...(messageId ? { message_id: messageId } : {}),
+                ...(directive ? { directive } : {}),
+            }),
         onSuccess: (_, variables) => {
             // See useDeleteMessage: a regenerate only changes this chat, and
             // the bare root key would refetch the system-prompt assembly (and
@@ -153,8 +156,10 @@ export const useSwipeMessage = () => {
 export const useGenerateSwipe = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ chatId, msgId }) =>
-            api.post(`/api/v2/chats/${chatId}/messages/${msgId}/generate-swipe`),
+        mutationFn: ({ chatId, msgId, directive }) =>
+            api.post(`/api/v2/chats/${chatId}/messages/${msgId}/generate-swipe`, {
+                ...(directive ? { directive } : {}),
+            }),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
             invalidateVaultAggregates(queryClient);

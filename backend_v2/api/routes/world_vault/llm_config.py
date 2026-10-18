@@ -405,3 +405,26 @@ def _llm_provider_row(session: Session, provider_id: str) -> Provider:
     if not provider or (provider.worker_type not in ("llm", "hybrid") and not (hasattr(provider, "serves") and provider.serves("llm"))):
         raise NotFoundError("LLM provider", provider_id)
     return provider
+
+
+@router.get("/runtime-defaults")
+def get_runtime_defaults():
+    """Return effective global LLM sampling, token budget, and Director defaults."""
+    from config import get_config
+    from services.context_builder import DEFAULT_MAX_TOKENS
+    from services.llm_router import get_router
+
+    router_inst = get_router()
+    role_sampler = router_inst.registry.role_sampler("rp")
+    ai_cfg = get_config().get("ai") or {}
+    return {
+        "max_context_tokens": ai_cfg.get("maxContextTokens") or DEFAULT_MAX_TOKENS,
+        "max_output_tokens": role_sampler.get("max_tokens") or role_sampler.get("max_output_tokens") or 2048,
+        "temperature": role_sampler.get("temperature") or ai_cfg.get("temperature") or 1.0,
+        "top_p": role_sampler.get("top_p") or 0.95,
+        "frequency_penalty": role_sampler.get("frequency_penalty") or 0.0,
+        "presence_penalty": role_sampler.get("presence_penalty") or 0.0,
+        "director_mode": "steered",
+        "gate_threshold": 0.55,
+    }
+

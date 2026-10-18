@@ -8,7 +8,7 @@ import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings, GALLERY_VIEW_MODES } from '../store/settingsStore';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
-import { useLLMProviderStatus, useLLMRouting, useSetLLMDefault, useLLMCatalog, useSetActiveModels, useEvaluateDirectorDecisions } from '../hooks/useLLMProviderStatus';
+import { useLLMProviderStatus, useLLMRouting, useSetLLMDefault, useLLMCatalog, useSetActiveModels, useEvaluateDirectorDecisions, useLLMRuntimeDefaults } from '../hooks/useLLMProviderStatus';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import React, { useCallback, useEffect, useRef } from 'react';
 
@@ -1609,6 +1609,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
     const routing = useLLMRouting();
     const catalog = useLLMCatalog();
     const setActiveModelsMutation = useSetActiveModels();
+    const { data: runtimeDefaults } = useLLMRuntimeDefaults();
     
     const llmProviders = providers.filter(p => p.worker_type === 'llm' || p.worker_type === 'hybrid' || (Array.isArray(p.capabilities) && p.capabilities.includes('llm')) || p.id.startsWith('llm'));
 
@@ -1988,7 +1989,9 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                             onChange={(e) => onUpdate('maxContextTokens', parseInt(e.target.value))}
                             className="w-full md:w-64 accent-blue-500"
                         />
-                        <span className="text-white font-bold text-sm w-20 text-center bg-white/5 py-1.5 rounded-lg border border-white/5">{settings.maxContextTokens}</span>
+                        <span className="text-white font-bold text-sm min-w-24 text-center bg-white/5 py-1.5 px-2 rounded-lg border border-white/5">
+                            {settings.maxContextTokens ? `${settings.maxContextTokens.toLocaleString()} tok` : `Default (${(runtimeDefaults?.context_tokens ?? 4096).toLocaleString()})`}
+                        </span>
                     </div>
                 </SettingGroup>
 
@@ -2014,11 +2017,11 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                 >
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         {[
-                            { key: 'topP', label: 'Top P', min: 0, max: 1, step: 0.01 },
-                            { key: 'maxOutputTokens', label: 'Max Output Tokens', min: 16, max: 32768, step: 16 },
-                            { key: 'frequencyPenalty', label: 'Frequency Penalty', min: -2, max: 2, step: 0.1 },
-                            { key: 'presencePenalty', label: 'Presence Penalty', min: -2, max: 2, step: 0.1 },
-                        ].map(({ key, label, min, max, step }) => (
+                            { key: 'topP', label: 'Top P', min: 0, max: 1, step: 0.01, fallback: runtimeDefaults?.top_p ?? 1.0 },
+                            { key: 'maxOutputTokens', label: 'Max Output Tokens', min: 16, max: 32768, step: 16, fallback: runtimeDefaults?.max_output_tokens ?? 2048 },
+                            { key: 'frequencyPenalty', label: 'Frequency Penalty', min: -2, max: 2, step: 0.1, fallback: runtimeDefaults?.frequency_penalty ?? 0.0 },
+                            { key: 'presencePenalty', label: 'Presence Penalty', min: -2, max: 2, step: 0.1, fallback: runtimeDefaults?.presence_penalty ?? 0.0 },
+                        ].map(({ key, label, min, max, step, fallback }) => (
                             <label key={key} className="flex flex-col gap-1.5">
                                 <span className="text-xs uppercase tracking-wider text-gray-500 font-bold">{label}</span>
                                 <div className="flex items-center gap-1">
@@ -2027,16 +2030,16 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                                         min={min}
                                         max={max}
                                         step={step}
-                                        placeholder="default"
+                                        placeholder={`Default (${fallback})`}
                                         value={settings[key] ?? ''}
                                         onChange={(e) => onUpdate(key, e.target.value === '' ? null : Number(e.target.value))}
-                                        className="w-full bg-white/5 py-1.5 px-2 rounded-lg border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500/50 placeholder-gray-600"
+                                        className="w-full bg-white/5 py-1.5 px-2 rounded-lg border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500/50 placeholder-gray-500"
                                     />
                                     {settings[key] != null && (
                                         <button
                                             onClick={() => onUpdate(key, null)}
                                             className="p-1 text-gray-500 hover:text-red-400 transition-colors"
-                                            title="Reset to engine default"
+                                            title={`Reset to default (${fallback})`}
                                         >
                                             <RotateCcw size={12} />
                                         </button>

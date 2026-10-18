@@ -605,6 +605,7 @@ def build_system_prompt_sections(
     world_description: str | None = None,
     state_snapshot: dict[str, Any] | None = None,
     director_directive: str | None = None,
+    user_directive: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build the ordered list of system-prompt sections that make up a chat context.
@@ -924,6 +925,18 @@ def build_system_prompt_sections(
             "source": "world_state",
         })
 
+    if user_directive and user_directive.strip():
+        sections.append({
+            "key": "user_directive",
+            "label": "Player Turn Directive",
+            "content": (
+                "[Player Turn Directive]\n"
+                f"{user_directive.strip()}\n"
+                "Incorporate this guidance into the upcoming response, dialogue, or actions naturally in-character."
+            ),
+            "source": "world_state",
+        })
+
     # Inject the linked Location entity's description into the system prompt
     # so the LLM has rich sensory details about the setting.
     if location_id:
@@ -1177,6 +1190,42 @@ def context_trace_digest(
     capped_turns = turns[-TRACE_TURN_LIMIT:]
     capped_sections = sections[:TRACE_SECTION_LIMIT]
 
+    section_digests = []
+    for sec in capped_sections:
+        c = sec.get("content") or ""
+        section_digests.append({
+            "key": sec.get("key"),
+            "label": sec.get("label"),
+            "source": sec.get("source"),
+            "chars": len(c),
+            "tokens": _estimate_cached(c) if c else 0,
+        })
+
+    turn_digests = []
+    for t in capped_turns:
+        c = t.get("content") or ""
+        turn_digests.append({
+            "role": t.get("role"),
+            "label": (
+                ((c).strip())[:TRACE_CONTENT_PREVIEW]
+                if c.strip()
+                else None
+            ),
+            "kind": t.get("_kind"),
+            "pinned": bool(t.get("_pinned")),
+            "chars": len(c),
+            "tokens": _estimate_cached(c) if c else 0,
+        })
+
+    sys_tok = _estimate_cached(system_prompt or "") if system_prompt else 0
+    turns_tok = sum(t["tokens"] for t in turn_digests)
+
+    # Compute breakdown sums by functional category
+    tok_char = sum(s["tokens"] for s in section_digests if s.get("source") in ("character", "char_append", "chat_append", "persona") or s.get("key") in ("character", "persona", "scenario"))
+    tok_lore = sum(s["tokens"] for s in section_digests if "lorebook" in str(s.get("source", "")).lower() or "lorebook" in str(s.get("key", "")).lower() or "location" in str(s.get("key", "")).lower())
+    tok_state = sum(s["tokens"] for s in section_digests if s.get("source") == "world_state" or s.get("key") in ("state_snapshot", "director_directive", "user_directive", "world_state", "location_state", "fate_check"))
+    tok_system_base = max(0, sys_tok - (tok_char + tok_lore + tok_state))
+
     trace: dict[str, Any] = {
         "v": 1,
         "config": {
@@ -1188,34 +1237,20 @@ def context_trace_digest(
             "count": max(speaker_total, 1),
             "named": sorted({n for n in (speaker_names or {}).values() if n}),
         },
-        "sections": [
-            {
-                "label": sec.get("label"),
-                "source": sec.get("source"),
-                "chars": len(sec.get("content") or ""),
-            }
-            for sec in capped_sections
-        ],
-        "turns": [
-            {
-                "role": t.get("role"),
-                # The LABEL the payload carries, which is the field the mapping
-                # decides and the thing a user cannot otherwise verify: whether a
-                # narration was labelled, and whether a speaker was named.
-                "label": (
-                    ((t.get("content") or "").strip())[:TRACE_CONTENT_PREVIEW]
-                    if (t.get("content") or "").strip()
-                    else None
-                ),
-                "kind": t.get("_kind"),
-                "pinned": bool(t.get("_pinned")),
-                "chars": len(t.get("content") or ""),
-            }
-            for t in capped_turns
-        ],
+        "sections": section_digests,
+        "turns": turn_digests,
+        "tokens_breakdown": {
+            "system": tok_system_base,
+            "character": tok_char,
+            "lorebooks": tok_lore,
+            "state": tok_state,
+            "turns": turns_tok,
+        },
+        "total_input_tokens": sys_tok + turns_tok,
         "dropped": dropped,
         "budget_tokens": max_context_tokens,
         "system_prompt_chars": len(system_prompt or ""),
+        "system_prompt_tokens": sys_tok,
         "truncated": len(turns) > TRACE_TURN_LIMIT or len(sections) > TRACE_SECTION_LIMIT,
     }
     return trace
@@ -1396,6 +1431,7 @@ def build_chat_context_with_sections(
     trace_out: dict[str, Any] | None = None,
     state_snapshot: dict[str, Any] | None = None,
     director_directive: str | None = None,
+    user_directive: str | None = None,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Build the complete chat context AND the sections it was assembled from.
@@ -1477,6 +1513,7 @@ def build_chat_context_with_sections(
         include_roleplay_default=include_roleplay_default,
         state_snapshot=state_snapshot,
         director_directive=director_directive,
+        user_directive=user_directive,
     )
     system_prompt = "\n\n".join(s["content"] for s in sections)
 
@@ -1858,6 +1895,8 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
             kwargs["state_snapshot"] = snap
     if overrides.get("director_directive"):
         kwargs["director_directive"] = overrides["director_directive"]
+    if overrides.get("user_directive"):
+        kwargs["user_directive"] = overrides["user_directive"]
     return kwargs
 
 

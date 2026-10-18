@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import {
     X, ImageIcon, Loader2, Paperclip, MoreHorizontal, Palette, Wand2,
     BookOpen, Ghost, Sparkles, Send, Square, Dices, MapPin, Clock,
-    Shirt, Smile, Heart, Shield, Activity, ChevronRight
+    Shirt, Smile, Heart, Shield, Activity, ChevronRight, Target
 } from 'lucide-react';
 import clsx from 'clsx';
 import CommandPalette from './CommandPalette';
@@ -20,7 +20,8 @@ export default function ChatInputContainer({
     agenticMode, setAgenticMode, narrateMode, setNarrateMode,
     handleImpersonate, impersonateMutation, suggestReplyMutation, suggestJobId,
     handleSendMessage, canSend,
-    isGeneratingReply, handleCancelStreaming
+    isGeneratingReply, handleCancelStreaming,
+    turnDirective, setTurnDirective
 }) {
     const handleSelectMention = useCallback((item, startIndex, endIndex) => {
         const textBefore = message.slice(0, startIndex);
@@ -44,6 +45,16 @@ export default function ChatInputContainer({
     const [fateDifficulty, setFateDifficulty] = useState(13);
     const [fateSkill, setFateSkill] = useState('Persuasion');
     const [showStateDetails, setShowStateDetails] = useState(false);
+    const [showSteerBar, setShowSteerBar] = useState(false);
+    const [steerDraft, setSteerDraft] = useState('');
+
+    const STEERING_PRESETS = [
+        { label: '⚡ Escalate Drama', directive: 'Escalate emotional drama and heighten the stakes' },
+        { label: '💖 Flustered & Shy', directive: 'Act noticeably flustered, shy, and stammering' },
+        { label: '🚪 Sudden Twist', directive: 'Introduce an unexpected plot twist or interruption' },
+        { label: '🔍 Sensory Detail', directive: 'Describe vivid sensory details, whispers, and ambiance' },
+        { label: '⚔️ Tense Stand-off', directive: 'Shift into a tense, cautious stand-off with sharp dialogue' },
+    ];
 
     const snapshot = activeChat?.state_snapshot || {};
     const actionChips = snapshot.last_director_decision?.suggested_action_chips || [];
@@ -174,6 +185,93 @@ export default function ChatInputContainer({
                     </div>
                 )}
 
+                {/* Staged Turn Directive Banner */}
+                {turnDirective && (
+                    <div className="mb-2 flex items-center justify-between gap-2 px-3 py-1.5 bg-purple-500/15 border border-purple-500/30 rounded-xl text-xs text-purple-200 animate-in fade-in">
+                        <div className="flex items-center gap-1.5 truncate">
+                            <Target size={13} className="text-purple-400 shrink-0" />
+                            <span className="font-semibold text-3xs uppercase tracking-wider text-purple-300 shrink-0">Turn Directive:</span>
+                            <span className="truncate italic text-purple-100">&ldquo;{turnDirective}&rdquo;</span>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setTurnDirective('')}
+                            className="p-1 text-purple-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors shrink-0"
+                            title="Clear turn directive"
+                            aria-label="Clear turn directive"
+                        >
+                            <X size={13} />
+                        </button>
+                    </div>
+                )}
+
+                {/* Steer Next Turn Bar */}
+                {showSteerBar && (
+                    <div className="mb-2 p-2.5 rounded-xl border border-purple-500/30 bg-gray-900/95 backdrop-blur-md space-y-2 text-xs shadow-xl animate-in fade-in slide-in-from-bottom-2">
+                        <div className="flex items-center justify-between text-3xs font-semibold uppercase tracking-wider text-purple-300">
+                            <span className="flex items-center gap-1.5">
+                                <Target size={12} className="text-purple-400" />
+                                Steer Next Turn (One-Shot Directive)
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setShowSteerBar(false)}
+                                className="text-gray-500 hover:text-white p-0.5"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1">
+                            {STEERING_PRESETS.map((preset, idx) => (
+                                <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => {
+                                        setTurnDirective(preset.directive);
+                                        setShowSteerBar(false);
+                                    }}
+                                    className="shrink-0 px-2.5 py-1 rounded-full text-3xs font-medium bg-purple-500/15 hover:bg-purple-500/30 border border-purple-500/30 text-purple-200 transition-colors"
+                                >
+                                    {preset.label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="text"
+                                value={steerDraft}
+                                onChange={(e) => setSteerDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        if (steerDraft.trim()) {
+                                            setTurnDirective(steerDraft.trim());
+                                            setSteerDraft('');
+                                            setShowSteerBar(false);
+                                        }
+                                    }
+                                }}
+                                placeholder="Custom directive: e.g. speak with quiet fury, sudden knock on door..."
+                                className="flex-1 bg-gray-800/90 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (steerDraft.trim()) {
+                                        setTurnDirective(steerDraft.trim());
+                                        setSteerDraft('');
+                                        setShowSteerBar(false);
+                                    }
+                                }}
+                                disabled={!steerDraft.trim()}
+                                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white rounded-lg text-xs font-semibold transition-colors shrink-0"
+                            >
+                                Set Directive
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 <div className="relative">
                     {activeChat?.additional_character_ids?.length > 0 && (
                         <div className="absolute -top-10 right-0 flex items-center gap-2 bg-gray-900/80 backdrop-blur border border-gray-700 rounded-lg px-2 py-1 shadow-xl">
@@ -298,6 +396,13 @@ export default function ChatInputContainer({
                                     >
                                         <Sparkles size={16} className="text-blue-400" />
                                         {(suggestReplyMutation.isPending || suggestJobId) ? 'Suggesting...' : 'Suggest reply'}
+                                    </button>
+                                    <button
+                                        onClick={() => { setShowMoreTools(false); setShowSteerBar(true); }}
+                                        className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-purple-300"
+                                    >
+                                        <Target size={16} className="text-purple-400" />
+                                        Steer Next Turn
                                     </button>
                                     <button
                                         onClick={() => { setShowMoreTools(false); setShowFateMenu(true); }}
@@ -468,6 +573,20 @@ export default function ChatInputContainer({
                                 {(suggestReplyMutation.isPending || suggestJobId) 
                                     ? <Loader2 size={16} className="animate-spin" />
                                     : <Sparkles size={16} />}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setShowSteerBar(v => !v)}
+                                className={clsx(
+                                    "p-1.5 sm:p-2 transition-all rounded-xl",
+                                    turnDirective || showSteerBar
+                                        ? "text-purple-300 bg-purple-500/20 shadow-[0_0_10px_rgba(168,85,247,0.25)] border border-purple-500/30"
+                                        : "text-gray-400 hover:text-purple-400 hover:bg-purple-500/10"
+                                )}
+                                title={turnDirective ? `Directive: "${turnDirective}"` : "Steer next turn (Directive)"}
+                                aria-label="Steer next turn"
+                            >
+                                <Target size={18} />
                             </button>
                             <button
                                 type="button"

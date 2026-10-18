@@ -171,26 +171,45 @@ export default function ChatWorkspaceHeader({
                 {activeChat?.id && (
                     <div
                         className={clsx(
-                            "px-2.5 py-1 rounded text-2xs font-medium flex items-center gap-1.5 shadow-sm border",
-                            activeChat.director_enabled !== false
-                                ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-300"
-                                : "bg-gray-800/50 border-white/5 text-gray-400"
+                            "px-2 py-0.5 rounded text-2xs font-medium flex items-center gap-1 shadow-sm border transition-colors",
+                            activeChat.director_enabled === false
+                                ? "bg-gray-800/50 border-white/5 text-gray-400"
+                                : (activeChat.director_mode || 'steered') === 'wild'
+                                    ? "bg-amber-500/10 border-amber-500/25 text-amber-300"
+                                : (activeChat.director_mode || 'steered') === 'manual'
+                                    ? "bg-indigo-500/10 border-indigo-500/25 text-indigo-300"
+                                : "bg-emerald-500/10 border-emerald-500/25 text-emerald-300"
                         )}
                         title={
-                            activeChat.director_enabled !== false
-                                ? `System 1 Director Active${activeChat.state_snapshot?.scene_tension_label ? ` • Tension: ${activeChat.state_snapshot.scene_tension}/5 (${activeChat.state_snapshot.scene_tension_label})` : ''}${activeChat.state_snapshot?.character_mood ? ` • Mood: ${activeChat.state_snapshot.character_mood}` : ''}`
-                                : 'System 1 Director Paused'
+                            activeChat.director_enabled === false
+                                ? "Director Off — Narrative unguided"
+                                : `Narrative Mode: ${activeChat.director_mode || 'steered'}${activeChat.state_snapshot?.scene_tension ? ` • Tension: ${activeChat.state_snapshot.scene_tension}/5` : ''}`
                         }
                     >
-                        <Sparkles size={11} className={activeChat.director_enabled !== false ? "text-emerald-400" : "text-gray-500"} />
-                        <span>
-                            {activeChat.director_enabled !== false
-                                ? `Director${activeChat.state_snapshot?.scene_tension ? ` • T${activeChat.state_snapshot.scene_tension}/5` : ''}`
-                                : 'Director Off'}
+                        <span className="text-3xs" aria-hidden="true">
+                            {activeChat.director_enabled === false ? '⏸️' : (activeChat.director_mode === 'wild' ? '⚡' : activeChat.director_mode === 'manual' ? '🔒' : '🧭')}
                         </span>
-                        {activeChat.state_snapshot?.character_mood && (
-                            <span className="text-emerald-200/80 max-w-[90px] truncate">
-                                · {activeChat.state_snapshot.character_mood}
+                        <select
+                            value={activeChat.director_enabled === false ? 'off' : (activeChat.director_mode || 'steered')}
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === 'off') {
+                                    handleChatUpdate?.({ director_enabled: false });
+                                } else {
+                                    handleChatUpdate?.({ director_enabled: true, director_mode: val });
+                                }
+                            }}
+                            className="bg-transparent text-2xs font-semibold focus:outline-none appearance-none cursor-pointer pr-1"
+                            aria-label="Narrative mode"
+                        >
+                            <option value="steered" className="bg-gray-900 text-emerald-300">Steered</option>
+                            <option value="wild" className="bg-gray-900 text-amber-300">Wild</option>
+                            <option value="manual" className="bg-gray-900 text-indigo-300">Manual</option>
+                            <option value="off" className="bg-gray-900 text-gray-400">Off</option>
+                        </select>
+                        {activeChat.director_enabled !== false && activeChat.state_snapshot?.scene_tension != null && (
+                            <span className="opacity-75 font-mono text-3xs border-l border-white/10 pl-1">
+                                T{activeChat.state_snapshot.scene_tension}/5
                             </span>
                         )}
                     </div>

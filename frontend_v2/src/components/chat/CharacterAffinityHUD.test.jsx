@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import CharacterAffinityHUD from './CharacterAffinityHUD';
 import * as ChatWorkspaceContext from '../../contexts/ChatWorkspaceContext';
@@ -26,21 +26,40 @@ describe('CharacterAffinityHUD', () => {
         avatar_path: '/avatars/aria.png',
     };
 
-    it('renders affinity score, mood badge, and inventory pills', async () => {
+    it('renders relationship dynamic, mood badge, and inventory pills', async () => {
         vi.spyOn(ChatWorkspaceContext, 'useChatWorkspace').mockReturnValue({
             activeChat: mockChat,
             linkedCharacter: mockCharacter,
             activeStreams: [],
+            handleChatUpdate: vi.fn(),
         });
 
         render(<CharacterAffinityHUD />);
 
-        expect(screen.getByText('Affinity')).toBeInTheDocument();
-        expect(screen.getByText('65')).toBeInTheDocument();
+        expect(screen.getByText('Dynamic:')).toBeInTheDocument();
+        expect(screen.getByText('Warming companions')).toBeInTheDocument();
         expect(screen.getByText('Warm & Affectionate')).toBeInTheDocument();
         expect(screen.getByText('smiling warmly')).toBeInTheDocument();
-        await waitFor(() => expect(screen.getByText('+2 Affection')).toBeInTheDocument());
         expect(screen.getByText('Travel Journal')).toBeInTheDocument();
+    });
+
+    it('suppresses neutral or normal expression badges', () => {
+        const chatWithNeutral = {
+            ...mockChat,
+            state_snapshot: {
+                ...mockChat.state_snapshot,
+                character_expression: 'neutral',
+            },
+        };
+        vi.spyOn(ChatWorkspaceContext, 'useChatWorkspace').mockReturnValue({
+            activeChat: chatWithNeutral,
+            linkedCharacter: mockCharacter,
+            activeStreams: [],
+            handleChatUpdate: vi.fn(),
+        });
+
+        render(<CharacterAffinityHUD />);
+        expect(screen.queryByText('neutral')).not.toBeInTheDocument();
     });
 
     it('expands status drawer on click to reveal attire, activity, and relationship details', () => {
@@ -55,7 +74,7 @@ describe('CharacterAffinityHUD', () => {
         const expandBtn = screen.getByRole('button', { name: /status/i });
         fireEvent.click(expandBtn);
 
-        expect(screen.getByText('Warming companions')).toBeInTheDocument();
+        expect(screen.getAllByText('Warming companions').length).toBeGreaterThanOrEqual(1);
         expect(screen.getByText('Silk traveler cloak')).toBeInTheDocument();
         expect(screen.getByText('Sharing tea by the campfire')).toBeInTheDocument();
         expect(screen.getAllByText('Iron Dagger').length).toBeGreaterThanOrEqual(1);

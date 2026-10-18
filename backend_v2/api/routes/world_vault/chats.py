@@ -267,6 +267,8 @@ class SendMessageRequest(BaseModel):
     # the moment it was cut. The frontend already sends the branch on reads
     # (`useMessages`), so only the write side was missing.
     branch_id: str | None = None
+    # One-shot player steering directive to guide the character or scene for this turn
+    directive: str | None = None
 
 
 @router.get("", response_model=list[Chat])
@@ -1156,6 +1158,9 @@ async def _send_message(
             except Exception as dir_exc:
                 logger.debug("send_message_director_eval_skipped", chat_id=chat_id, error=str(dir_exc))
 
+        if request.directive and request.directive.strip():
+            ctx_overrides["user_directive"] = request.directive.strip()
+
         # One assembly through the unified context builder, run off the event
         # loop like the previous async builder. The trace is the only record of
         # what THIS reply was actually told.
@@ -1164,6 +1169,8 @@ async def _send_message(
             build_context, session, "chat", chat, past_messages,
             trace_out=context_trace, **ctx_overrides,
         )
+        if request.directive and request.directive.strip():
+            context_trace["user_directive"] = request.directive.strip()
         if director_decision_dict is not None:
             context_trace["director_decision"] = director_decision_dict
 
@@ -1338,6 +1345,10 @@ class EditMessageRequest(BaseModel):
 class SwipeRequest(BaseModel):
     direction: str  # "left" | "right" | "select"
     index: int | None = None  # used when direction == "select"
+
+
+class GenerateSwipeRequest(BaseModel):
+    directive: str | None = None
 
 
 @router.post("/{chat_id}/messages/{message_id}/narrate", response_model=dict)
@@ -1540,6 +1551,7 @@ def swipe_message(
 async def generate_swipe(
     chat_id: str,
     message_id: str,
+    req: GenerateSwipeRequest | None = None,
     session: Session = Depends(get_session),
     chat_repo: ChatRepository = Depends(get_chat_repo)
 ) -> dict:
@@ -1549,11 +1561,16 @@ async def generate_swipe(
         _swipe_prep_sync, session, chat_repo, chat_id, message_id
     )
 
+    if req and req.directive and req.directive.strip():
+        ctx_overrides["user_directive"] = req.directive.strip()
+
     context_trace: dict[str, Any] = {}
     system_prompt, context, _sections = await asyncio.to_thread(
         build_context, session, "chat", chat, remaining,
         trace_out=context_trace, **ctx_overrides,
     )
+    if req and req.directive and req.directive.strip():
+        context_trace["user_directive"] = req.directive.strip()
 
 
     workflow, metadata = build_chat_llm_workflow(
@@ -1689,6 +1706,7 @@ class RollbackRequest(BaseModel):
 
 class RegenerateRequest(BaseModel):
     message_id: str | None = None
+    directive: str | None = None
 
 @router.patch("/{chat_id}/messages/{message_id}", response_model=Message)
 def edit_message(
@@ -1890,11 +1908,16 @@ async def regenerate_reply(
     # exists and appends a duplicate of the reply we are about to regenerate.
     await _cancel_inflight_chat_jobs(session, chat_id, reason="chat regenerate")
 
+    if req.directive and req.directive.strip():
+        ctx_overrides["user_directive"] = req.directive.strip()
+
     context_trace: dict[str, Any] = {}
     system_prompt, context, _sections = await asyncio.to_thread(
         build_context, session, "chat", chat, remaining,
         trace_out=context_trace, **ctx_overrides,
     )
+    if req.directive and req.directive.strip():
+        context_trace["user_directive"] = req.directive.strip()
 
 
     workflow, metadata = build_chat_llm_workflow(

@@ -114,6 +114,24 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                             )}
                         </span>
                     )}
+                    {(meta.context_trace?.user_directive || meta.directive) && (
+                        <span
+                            className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300/90 text-3xs font-mono"
+                            title={`Turn Directive: "${meta.context_trace?.user_directive || meta.directive}"`}
+                        >
+                            <span>🎯</span>
+                            <span className="truncate max-w-[110px]">{meta.context_trace?.user_directive || meta.directive}</span>
+                        </span>
+                    )}
+                    {(meta.token_usage?.completion_tokens ?? meta.completion_tokens ?? meta.tokens_out) != null && (
+                        <span
+                            className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300/90 text-3xs font-mono"
+                            title={`Output: ${meta.token_usage?.completion_tokens ?? meta.completion_tokens ?? meta.tokens_out} generation tokens`}
+                        >
+                            <span>⚡</span>
+                            <span>{meta.token_usage?.completion_tokens ?? meta.completion_tokens ?? meta.tokens_out} tok</span>
+                        </span>
+                    )}
                 </div>
                 {editing ? (
                     <div className="flex flex-col gap-2">

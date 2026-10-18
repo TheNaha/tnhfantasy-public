@@ -212,11 +212,13 @@ export function ChatWorkspaceProvider({ children }) {
     // TDZ ReferenceError the day anyone reorders this block.
     const [activeCommand, setActiveCommand] = useState(null);
     const [targetCharacterId, setTargetCharacterId] = useState('');
+    const [turnDirective, setTurnDirective] = useState('');
 
     const previousChatIdRef = useRef(activeChatId);
     useEffect(() => {
         if (previousChatIdRef.current && previousChatIdRef.current !== activeChatId) {
             setMessage('');
+            setTurnDirective('');
             setPendingAttachment(null);
             setActiveCommand(null);
             setTargetCharacterId('');
@@ -531,6 +533,13 @@ export function ChatWorkspaceProvider({ children }) {
                     setActiveCommand(null);
                 } catch { toast.error("Failed to update location"); }
                 return;
+            } else if (cmd === '/steer' || cmd === '/directive') {
+                if (!arg) { toast.error("Provide steering directive"); return; }
+                setTurnDirective(arg);
+                setMessage('');
+                setActiveCommand(null);
+                toast.success(`Turn directive staged: "${arg}"`);
+                return;
             } else if (cmd === '/me' || cmd === '/action') {
                 msgContent = `*${arg}*`;
                 if (!arg && !attachmentFilename) { toast.error("Provide action text"); return; }
@@ -568,10 +577,12 @@ export function ChatWorkspaceProvider({ children }) {
                     agentic: agenticMode,
                     narrate: narrateMode,
                     generator_checkpoint: generatorCheckpoint || null,
-                    no_reply: noReply
+                    no_reply: noReply,
+                    directive: turnDirective || undefined,
                 }
                 });
             setMessage('');
+            setTurnDirective('');
             setPendingAttachment(null);
             setActiveCommand(null);
             if (res.job_id) {
@@ -587,7 +598,7 @@ export function ChatWorkspaceProvider({ children }) {
         } catch {
             toast.error('Failed to send message');
         }
-    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, generatorCheckpoint, updateChatMutation, suggestReplyMutation, activeCommand, targetCharacterId, selectChat, isGeneratingReply]);
+    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, generatorCheckpoint, updateChatMutation, suggestReplyMutation, activeCommand, targetCharacterId, selectChat, isGeneratingReply, turnDirective]);
 
     const handleSuggestClick = useCallback(async () => {
         if (!activeChatId) return;
@@ -938,10 +949,11 @@ export function ChatWorkspaceProvider({ children }) {
         });
         if (!ok) return;
         try {
-            const res = await regenerateMutation.mutateAsync({ chatId: activeChatId, messageId: msgId });
+            const res = await regenerateMutation.mutateAsync({ chatId: activeChatId, messageId: msgId, directive: turnDirective || undefined });
+            if (turnDirective) setTurnDirective('');
             if (res?.job_id) setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'llm' });
         } catch { toast.error('Failed to regenerate'); }
-    }, [activeChatId, confirm, regenerateMutation, queryClient]);
+    }, [activeChatId, confirm, regenerateMutation, queryClient, turnDirective]);
 
     const handleImpersonate = useCallback(async (hint = '') => {
         if (!activeChatId) return;
@@ -969,13 +981,14 @@ export function ChatWorkspaceProvider({ children }) {
 
     const handleGenerateSwipe = useCallback(async (msgId) => {
         try {
-            const res = await generateSwipeMutation.mutateAsync({ chatId: activeChatId, msgId });
+            const res = await generateSwipeMutation.mutateAsync({ chatId: activeChatId, msgId, directive: turnDirective || undefined });
+            if (turnDirective) setTurnDirective('');
             if (res?.job_id) {
                 setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'llm' });
                 toast('Generating alternate reply...', { icon: '✨' });
             }
         } catch { toast.error('Failed to generate swipe'); }
-    }, [activeChatId, generateSwipeMutation, queryClient]);
+    }, [activeChatId, generateSwipeMutation, queryClient, turnDirective]);
 
     const handleGenerateTTS = useCallback(async (msgId, voiceId) => {
         const voiceName = voiceId ? voices.find(v => v.id === voiceId)?.name : null;
@@ -1330,6 +1343,8 @@ export function ChatWorkspaceProvider({ children }) {
         timelineVisible,
         titlePollCancelledRef,
         triggerAutoTitle,
+        turnDirective,
+        setTurnDirective,
         updateChatMutation,
         urlChatId,
         voices,
@@ -1392,7 +1407,7 @@ export function ChatWorkspaceProvider({ children }) {
         suggestJobIdRef, suggestReplyMutation, suggestSafetyTimerRef,
         selectChat, swipeMessageMutation, systemPromptData, targetCharacterId,
         textareaRef, timelineVisible, titlePollCancelledRef,
-        triggerAutoTitle, updateChatMutation, urlChatId, voices, worlds
+        triggerAutoTitle, turnDirective, setTurnDirective, updateChatMutation, urlChatId, voices, worlds
     ]);
 
     return (

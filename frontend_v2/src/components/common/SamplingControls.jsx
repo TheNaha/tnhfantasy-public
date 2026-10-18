@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useLLMRuntimeDefaults } from '../../hooks/useWorldVault';
 
 const FIELDS = [
     { key: 'temperature', label: 'Temp', min: 0, max: 2, step: 0.05 },
@@ -29,7 +30,7 @@ function parseFieldText(text, int) {
  * keystroke — the same commit-on-release shape as ContextSlider, which keys off
  * `onMouseUp`/`onKeyUp`.
  */
-function SamplingField({ field, serverValue, onCommit }) {
+function SamplingField({ field, serverValue, defaultValue, onCommit }) {
     const { key, label, min, max, step, int } = field;
     const serverText = fieldText(serverValue);
 
@@ -127,20 +128,20 @@ function SamplingField({ field, serverValue, onCommit }) {
                     min={min}
                     max={max}
                     step={step}
-                    placeholder="global"
+                    placeholder={defaultValue != null ? String(defaultValue) : "global"}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     onBlur={commitDraft}
                     onKeyDown={handleKeyDown}
                     onMouseUp={commitDraft}
                     onTouchEnd={commitDraft}
-                    title="Press Enter or click away to save"
-                    className="w-full bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1 text-gray-300 focus:outline-none placeholder-gray-600"
+                    title={inherited ? (defaultValue != null ? `Inherits default (${defaultValue})` : 'Inherits global default') : 'Press Enter or click away to save'}
+                    className="w-full bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1 text-gray-300 focus:outline-none placeholder-gray-500"
                 />
                 {!inherited && (
                     <button
                         onClick={handleReset}
-                        title="Inherit global default"
+                        title={`Reset to default (${defaultValue != null ? defaultValue : 'global'})`}
                         className="p-0.5 text-gray-500 hover:text-red-400 transition-colors"
                     >
                         ×
@@ -161,14 +162,23 @@ function SamplingField({ field, serverValue, onCommit }) {
  * prefix that matches the chat's system-prompt, jobs and images sub-queries.
  */
 export default function SamplingControls({ values = {}, onChange }) {
+    const { data: runtimeDefaults } = useLLMRuntimeDefaults();
     const anySet = FIELDS.some(f => values[f.key] != null);
+
+    const defaultValues = {
+        temperature: runtimeDefaults?.temperature ?? 1.0,
+        top_p: runtimeDefaults?.top_p ?? 1.0,
+        max_output_tokens: runtimeDefaults?.max_output_tokens ?? 2048,
+        frequency_penalty: runtimeDefaults?.frequency_penalty ?? 0.0,
+        presence_penalty: runtimeDefaults?.presence_penalty ?? 0.0,
+    };
 
     return (
         <div>
             <div className="flex items-center justify-between mb-1.5">
                 <p className="text-xs text-gray-300 font-medium">Sampling</p>
                 <span className="text-xs text-gray-500 font-mono">
-                    {anySet ? 'custom overrides' : 'Global defaults'}
+                    {anySet ? 'custom overrides' : `Default (Max: ${defaultValues.max_output_tokens} tok · Temp: ${defaultValues.temperature})`}
                 </span>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -177,6 +187,7 @@ export default function SamplingControls({ values = {}, onChange }) {
                         key={field.key}
                         field={field}
                         serverValue={values[field.key]}
+                        defaultValue={defaultValues[field.key]}
                         onCommit={onChange}
                     />
                 ))}

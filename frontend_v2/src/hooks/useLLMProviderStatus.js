@@ -202,3 +202,30 @@ export function useEvaluateDirectorDecisions() {
         mutationFn: (payload) => api.post(`${API_V2_BASE}/llm/decisions/evaluate`, payload),
     });
 }
+
+export const LLM_RUNTIME_DEFAULTS_KEY = ['llm', 'runtime-defaults'];
+
+/** Fetch resolved runtime defaults (context budget, max output tokens, temp, top_p, director_mode, gate_threshold). */
+export function useLLMRuntimeDefaults(options = {}) {
+    return useQuery({
+        queryKey: LLM_RUNTIME_DEFAULTS_KEY,
+        queryFn: async ({ signal } = {}) => {
+            try {
+                return await api.get(`${API_V2_BASE}/llm/runtime-defaults`, { signal });
+            } catch {
+                return {
+                    context_tokens: 4096,
+                    max_output_tokens: 2048,
+                    temperature: 1.0,
+                    top_p: 1.0,
+                    frequency_penalty: 0.0,
+                    presence_penalty: 0.0,
+                    director_mode: 'steered',
+                    gate_threshold: 0.6,
+                };
+            }
+        },
+        staleTime: 60_000,
+        ...options,
+    });
+}

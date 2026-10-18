@@ -56,9 +56,16 @@ class DirectorDecisionResult:
     fate_directive: Optional[str] = None
     matched_skills: List[str] = field(default_factory=list)
 
-    # Category F: Character Affinity & Interpersonal Dynamic
+    # Category F: Character Dynamic & Inertia Gates
+    gate_character_mood: float = 0.2
+    gate_relationship_dynamic: float = 0.2
+    mood_shift_detected: bool = False
+    relationship_shift_detected: bool = False
     affinity_delta: int = 0
     character_mood: str = "curious_attentive"
+    relationship_status: Optional[str] = None
+    director_mode: str = "steered"
+    user_directive: Optional[str] = None
 
     # Telemetry
     engine_used: str = "heuristic"
@@ -82,11 +89,17 @@ class DirectorDecisionResult:
         data["is_risky_action_prob"] = self.is_risky_action_probability
         data["affinity_delta"] = self.affinity_delta
         data["character_mood"] = self.character_mood
+        data["mood_shift_detected"] = self.mood_shift_detected
+        data["relationship_shift_detected"] = self.relationship_shift_detected
+        data["director_mode"] = self.director_mode
+        data["user_directive"] = self.user_directive
         base_instruction = (
             f"Pacing: {self.pacing_directive} ({speed_labels.get(s_int, 'real-time')}) | "
             f"Tension: {self.scene_tension}/5 ({tension_labels.get(t_int, 'normal')}) | "
             f"Tone: {self.emotional_tone} | Expression: {self.character_expression}"
         )
+        if self.user_directive:
+            base_instruction = f"[Player Directive: {self.user_directive}] | " + base_instruction
         if self.fate_directive:
             base_instruction += f" | Fate Check: {self.fate_outcome} ({self.fate_directive})"
         data["director_instruction"] = base_instruction
@@ -268,6 +281,22 @@ def build_director_questions(
             },
         },
         # --- Category F: Interpersonal Dynamic & Character Affinity ---
+        {
+            "key": "gate_character_mood",
+            "type": "noul",
+            "statement": (
+                "The primary character's internal mood, emotional stance, or feelings shifted "
+                "or evolved noticeably in this exchange."
+            ),
+        },
+        {
+            "key": "gate_relationship_dynamic",
+            "type": "noul",
+            "statement": (
+                "The interpersonal dynamic, trust, boundary, or bond between the character and the player "
+                "shifted noticeably in this exchange."
+            ),
+        },
         {
             "key": "affinity_delta",
             "type": "score",
@@ -528,12 +557,16 @@ def parse_director_result(
     image_focus, _ = _choice("image_focus", "character_portrait")
     char_expr, _ = _choice("character_expression", "neutral")
 
+    snap = state_snapshot or {}
+    effective_threshold = float(snap.get("gate_threshold") or UPDATER_GATE_THRESHOLD)
+    director_mode = str(snap.get("director_mode") or "steered").lower()
+
     updater_gates: Dict[str, float] = {}
     triggered_gates: List[str] = []
     for gate_key in UPDATER_GATE_KEYS:
         prob = _noul(gate_key, 0.2)
         updater_gates[gate_key] = prob
-        if prob >= UPDATER_GATE_THRESHOLD:
+        if prob >= effective_threshold or director_mode == "wild":
             triggered_gates.append(gate_key)
 
     is_risky_prob = _noul("is_risky_action", 0.15)
@@ -542,6 +575,15 @@ def parse_director_result(
     aff_score = _score("affinity_delta", 3.0, 1.0, 5.0)
     affinity_delta = int(round(aff_score)) - 3
     char_mood, _ = _choice("character_mood", "curious_attentive")
+
+    gate_mood = _noul("gate_character_mood", 0.2)
+    gate_rel = _noul("gate_relationship_dynamic", 0.2)
+    mood_shift = gate_mood >= effective_threshold or ("gate_character_state" in triggered_gates) or (director_mode == "wild")
+    rel_shift = gate_rel >= effective_threshold or ("gate_character_state" in triggered_gates) or (director_mode == "wild")
+    updater_gates["gate_character_mood"] = gate_mood
+    updater_gates["gate_relationship_dynamic"] = gate_rel
+
+    user_directive = snap.get("user_directive") or snap.get("last_user_directive")
 
     result = DirectorDecisionResult(
         next_speaker=next_speaker,
@@ -558,11 +600,18 @@ def parse_director_result(
         character_expression=char_expr,
         updater_gates=updater_gates,
         triggered_gates=triggered_gates,
-        should_run_updater=len(triggered_gates) > 0,
+        should_run_updater=bool(len(triggered_gates) > 0 or mood_shift or rel_shift or director_mode == "wild"),
         is_risky_action_probability=is_risky_prob,
         action_difficulty=action_diff,
+        gate_character_mood=gate_mood,
+        gate_relationship_dynamic=gate_rel,
+        mood_shift_detected=mood_shift,
+        relationship_shift_detected=rel_shift,
         affinity_delta=affinity_delta,
         character_mood=char_mood,
+        relationship_status=snap.get("relationship_status"),
+        director_mode=director_mode,
+        user_directive=user_directive,
         engine_used=engine_used,
         model_id=model_id,
         latency_ms=round(latency_ms, 1),

@@ -67,6 +67,11 @@ export default function ContextTracePanel({ trace }) {
     const visible = showAll ? turns : turns.slice(-12);
     const hidden = turns.length - visible.length;
 
+    const totalInputTokens = trace.total_input_tokens ?? trace.total_tokens ?? 0;
+    const budgetTokens = trace.budget_tokens || 4096;
+    const breakdown = trace.tokens_breakdown || {};
+    const pctUsed = Math.min(100, Math.round((totalInputTokens / budgetTokens) * 100));
+
     return (
         <div className="mt-1 rounded-xl border border-white/10 bg-gray-900/40 overflow-hidden">
             <button
@@ -80,6 +85,7 @@ export default function ContextTracePanel({ trace }) {
                 <span className="font-medium text-gray-400">What this reply was told</span>
                 <span className="text-gray-500 text-3xs font-mono hidden sm:inline">(Context Inspector)</span>
                 <span className="ml-auto text-gray-600 font-mono text-3xs">
+                    {totalInputTokens > 0 ? `${totalInputTokens.toLocaleString()} / ${budgetTokens.toLocaleString()} tok · ` : ''}
                     {turns.length} turn{turns.length === 1 ? '' : 's'} · {sections.length} sections
                     {trace.truncated ? ' · truncated' : ''}
                 </span>
@@ -90,6 +96,81 @@ export default function ContextTracePanel({ trace }) {
                     <p className="text-gray-400 text-3xs leading-relaxed bg-black/20 p-2 rounded-lg border border-white/5">
                         💡 <strong>Prompt Context Inspector:</strong> The snapshot of dialogue history and system lore that was assembled and sent to the AI model to generate this reply.
                     </p>
+
+                    {/* Token Budget Meter */}
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-2.5 space-y-1.5">
+                        <div className="flex items-center justify-between text-3xs font-mono">
+                            <span className="text-gray-400 font-semibold uppercase tracking-wider">
+                                Input Token Budget
+                            </span>
+                            <span className="text-gray-200 font-bold">
+                                {totalInputTokens.toLocaleString()} <span className="text-gray-500 font-normal">/ {budgetTokens.toLocaleString()} tokens ({pctUsed}%)</span>
+                            </span>
+                        </div>
+                        {/* Segmented Bar */}
+                        <div className="w-full h-2 rounded-full bg-gray-800/80 overflow-hidden flex border border-white/5">
+                            {breakdown.system > 0 && (
+                                <div
+                                    style={{ width: `${(breakdown.system / budgetTokens) * 100}%` }}
+                                    className="bg-amber-400 h-full"
+                                    title={`System: ${breakdown.system} tokens`}
+                                />
+                            )}
+                            {breakdown.character > 0 && (
+                                <div
+                                    style={{ width: `${(breakdown.character / budgetTokens) * 100}%` }}
+                                    className="bg-pink-400 h-full"
+                                    title={`Character: ${breakdown.character} tokens`}
+                                />
+                            )}
+                            {breakdown.lorebooks > 0 && (
+                                <div
+                                    style={{ width: `${(breakdown.lorebooks / budgetTokens) * 100}%` }}
+                                    className="bg-emerald-400 h-full"
+                                    title={`Lorebooks: ${breakdown.lorebooks} tokens`}
+                                />
+                            )}
+                            {breakdown.state > 0 && (
+                                <div
+                                    style={{ width: `${(breakdown.state / budgetTokens) * 100}%` }}
+                                    className="bg-purple-400 h-full"
+                                    title={`State: ${breakdown.state} tokens`}
+                                />
+                            )}
+                            {breakdown.turns > 0 && (
+                                <div
+                                    style={{ width: `${(breakdown.turns / budgetTokens) * 100}%` }}
+                                    className="bg-sky-400 h-full"
+                                    title={`Dialogue turns: ${breakdown.turns} tokens`}
+                                />
+                            )}
+                        </div>
+                        {/* Breakdown Legend */}
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-3xs text-gray-400 pt-0.5">
+                            <span className="flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> System: <strong className="text-gray-300 font-mono">{breakdown.system ?? 0}</strong>
+                            </span>
+                            <span className="flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-pink-400" /> Character: <strong className="text-gray-300 font-mono">{breakdown.character ?? 0}</strong>
+                            </span>
+                            <span className="flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Lore: <strong className="text-gray-300 font-mono">{breakdown.lorebooks ?? 0}</strong>
+                            </span>
+                            <span className="flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-purple-400" /> State: <strong className="text-gray-300 font-mono">{breakdown.state ?? 0}</strong>
+                            </span>
+                            <span className="flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-sky-400" /> Dialogue: <strong className="text-gray-300 font-mono">{breakdown.turns ?? 0}</strong>
+                            </span>
+                        </div>
+                    </div>
+
+                    {trace.user_directive && (
+                        <div className="rounded-lg border border-purple-500/30 bg-purple-950/30 px-2.5 py-1.5 flex items-center gap-2 text-xs text-purple-200">
+                            <span className="font-bold text-3xs uppercase tracking-wider text-purple-400 shrink-0">🎯 Turn Directive:</span>
+                            <span className="italic truncate">&ldquo;{trace.user_directive}&rdquo;</span>
+                        </div>
+                    )}
 
                     {decision && (
                         <div className="rounded-lg border border-purple-500/25 bg-purple-950/20 p-2.5 space-y-2">

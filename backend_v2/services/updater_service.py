@@ -347,12 +347,22 @@ def record_director_decision(
     snapshot["last_fate_directive"] = decision.fate_directive
     snapshot["matched_skills"] = decision.matched_skills
     # Calculate real-time affinity delta from System 1 Director
+    locked = set(snapshot.get("locked_fields") or [])
     aff_delta = int(getattr(decision, "affinity_delta", 0))
     curr_aff = int(snapshot.get("character_affinity", 50))
     new_aff = max(0, min(100, curr_aff + aff_delta))
     snapshot["character_affinity"] = new_aff
     snapshot["last_affinity_delta"] = aff_delta
-    snapshot["character_mood"] = getattr(decision, "character_mood", None) or snapshot.get("character_mood", "curious_attentive")
+
+    # Dynamic mood with inertia anchor: only update if shift detected or mood unset
+    new_mood = getattr(decision, "character_mood", None)
+    if "character_mood" not in locked:
+        if getattr(decision, "mood_shift_detected", False) or not snapshot.get("character_mood"):
+            if new_mood:
+                snapshot["character_mood"] = new_mood
+        elif not snapshot.get("character_mood") and new_mood:
+            snapshot["character_mood"] = new_mood
+
     snapshot["last_director_decision"] = decision.to_dict()
     snapshot["director_updated_at"] = now_iso
 
@@ -658,6 +668,7 @@ def apply_updater_result(
     snapshot["world_clock"] = clock
 
     # 2. Character & Scene State Snapshot + Wardrobe Presets
+    locked = set(snapshot.get("locked_fields") or [])
     for field_key in (
         "character_mood",
         "current_activity",
@@ -665,6 +676,8 @@ def apply_updater_result(
         "relationship_status",
         "scene_summary",
     ):
+        if field_key in locked:
+            continue
         val = deltas.get(field_key)
         if isinstance(val, str) and val.strip() and val.strip().lower() != "null":
             snapshot[field_key] = val.strip()

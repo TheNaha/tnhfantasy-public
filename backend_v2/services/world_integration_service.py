@@ -510,6 +510,22 @@ async def _write_chat_reply(job_data: dict[str, Any], session, content: str) -> 
         if isinstance(trace, dict) and trace.get("v") == 1:
             msg_metadata["context_trace"] = trace
 
+        # Capture output token usage telemetry
+        output_tokens = None
+        for out in job_data.get("outputs") or []:
+            if isinstance(out, dict) and out.get("usage"):
+                output_tokens = out["usage"].get("completion_tokens")
+        if output_tokens is None and content:
+            from services.context_builder import estimate_tokens
+            output_tokens = estimate_tokens(content)
+
+        prompt_tokens = trace.get("total_input_tokens") if isinstance(trace, dict) else None
+        msg_metadata["token_usage"] = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": (prompt_tokens or 0) + (output_tokens or 0) if prompt_tokens is not None else output_tokens,
+        }
+
         if metadata.get("is_swipe") and metadata.get("target_message_id"):
             await _append_swipe_alternative(job_data, session, content, msg_metadata, metadata)
             return
