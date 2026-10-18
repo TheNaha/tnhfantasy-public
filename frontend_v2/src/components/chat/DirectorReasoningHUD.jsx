@@ -92,6 +92,19 @@ export default function DirectorReasoningHUD({ jobData, pendingSpeaker }) {
                         Expression: <strong className="text-amber-300">{decision.character_expression}</strong>
                     </span>
                 )}
+                {decision?.character_mood && (
+                    <span>
+                        Mood: <strong className="text-pink-300">{decision.character_mood.replace(/_/g, ' ')}</strong>
+                    </span>
+                )}
+                {decision?.affinity_delta != null && decision.affinity_delta !== 0 && (
+                    <span>
+                        Affinity:{' '}
+                        <strong className={decision.affinity_delta > 0 ? "text-emerald-400" : "text-rose-400"}>
+                            {decision.affinity_delta > 0 ? `+${decision.affinity_delta}` : decision.affinity_delta}
+                        </strong>
+                    </span>
+                )}
                 {jobData?.providerId && (
                     <span>
                         Worker: <strong className="font-mono text-sky-300">{jobData.providerId}</strong>

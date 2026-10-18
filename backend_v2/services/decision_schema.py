@@ -56,6 +56,10 @@ class DirectorDecisionResult:
     fate_directive: Optional[str] = None
     matched_skills: List[str] = field(default_factory=list)
 
+    # Category F: Character Affinity & Interpersonal Dynamic
+    affinity_delta: int = 0
+    character_mood: str = "curious_attentive"
+
     # Telemetry
     engine_used: str = "heuristic"
     model_id: str = "heuristic"
@@ -76,6 +80,8 @@ class DirectorDecisionResult:
         data["continue_chain_prob"] = self.continue_chain_probability
         data["trigger_image_prob"] = self.trigger_image_probability
         data["is_risky_action_prob"] = self.is_risky_action_probability
+        data["affinity_delta"] = self.affinity_delta
+        data["character_mood"] = self.character_mood
         base_instruction = (
             f"Pacing: {self.pacing_directive} ({speed_labels.get(s_int, 'real-time')}) | "
             f"Tension: {self.scene_tension}/5 ({tension_labels.get(t_int, 'normal')}) | "
@@ -259,6 +265,33 @@ def build_director_questions(
                 3: "Moderate: requires training, focus, or favorable circumstances.",
                 4: "Hard: high risk of failure without specialized skill or equipment.",
                 5: "Extreme: near-impossible feat against overwhelming odds.",
+            },
+        },
+        # --- Category F: Interpersonal Dynamic & Character Affinity ---
+        {
+            "key": "affinity_delta",
+            "type": "score",
+            "question": "How did the player's last statement or action affect the character's affinity, affection, or trust?",
+            "rubric": {
+                1: "Deeply negative: alienated, deeply hurt, betrayed, or hostile (-2 affinity).",
+                2: "Slightly negative: disapproved, annoyed, skeptical, or defensive (-1 affinity).",
+                3: "Neutral: standard conversational beat with no notable bond change (0 affinity).",
+                4: "Mildly positive: appreciated, amused, respected, or intrigued (+1 affinity).",
+                5: "Deeply positive: deeply bonded, charmed, touched, or inspired (+2 affinity).",
+            },
+        },
+        {
+            "key": "character_mood",
+            "type": "choice",
+            "question": "What is the primary character's current emotional state and mood towards the player?",
+            "options": {
+                "warm_affectionate": "Warm, affectionate, trusting, and friendly.",
+                "playful_teasing": "Playful, humorous, teasing, and energetic.",
+                "curious_attentive": "Attentive, engaged, intrigued, and curious.",
+                "flustered_shy": "Flustered, blushing, shy, or emotionally overwhelmed.",
+                "guarded_watchful": "Guarded, cautious, calculating, or suspicious.",
+                "irritated_annoyed": "Annoyed, sharp, impatient, or conflicted.",
+                "melancholic_vulnerable": "Sad, reflective, vulnerable, or weary.",
             },
         },
     ]
@@ -506,6 +539,10 @@ def parse_director_result(
     is_risky_prob = _noul("is_risky_action", 0.15)
     action_diff = _score("action_difficulty", 2.0, 1.0, 5.0)
 
+    aff_score = _score("affinity_delta", 3.0, 1.0, 5.0)
+    affinity_delta = int(round(aff_score)) - 3
+    char_mood, _ = _choice("character_mood", "curious_attentive")
+
     result = DirectorDecisionResult(
         next_speaker=next_speaker,
         next_speaker_probabilities=next_speaker_probs,
@@ -524,6 +561,8 @@ def parse_director_result(
         should_run_updater=len(triggered_gates) > 0,
         is_risky_action_probability=is_risky_prob,
         action_difficulty=action_diff,
+        affinity_delta=affinity_delta,
+        character_mood=char_mood,
         engine_used=engine_used,
         model_id=model_id,
         latency_ms=round(latency_ms, 1),
@@ -563,7 +602,9 @@ def build_generative_fallback_prompt(
         '  "gate_durable_memory": float 0.0 to 1.0,\n'
         '  "gate_lore_discovery": float 0.0 to 1.0,\n'
         '  "is_risky_action": float 0.0 to 1.0,\n'
-        '  "action_difficulty": float 1.0 to 5.0\n'
+        '  "action_difficulty": float 1.0 to 5.0,\n'
+        '  "affinity_delta": integer 1 to 5,\n'
+        '  "character_mood": one of ["warm_affectionate", "playful_teasing", "curious_attentive", "flustered_shy", "guarded_watchful", "irritated_annoyed", "melancholic_vulnerable"]\n'
         "}\n\n"
         f"{context_text}"
     )
@@ -682,6 +723,26 @@ def heuristic_director_decision(
     ) else 0.18
     action_diff = 3.5 if is_risky >= 0.5 else 2.0
 
+    aff_delta = 0
+    if any(w in recent_tail for w in ("thank", "love", "smile", "hug", "help", "care", "beautiful", "clever", "protect", "gentle", "sweet")):
+        aff_delta = 1
+        if any(w in recent_tail for w in ("deeply", "adore", "marry", "devoted", "my whole heart")):
+            aff_delta = 2
+    elif any(w in recent_tail for w in ("hate", "idiot", "kill you", "shut up", "ugly", "fool", "useless", "scum", "threat", "disgust")):
+        aff_delta = -1
+        if any(w in recent_tail for w in ("despise", "betray", "die", "bastard")):
+            aff_delta = -2
+
+    mood_map = {
+        "happy": "playful_teasing" if tone == "playful_humorous" else "warm_affectionate",
+        "blushing": "flustered_shy",
+        "angry": "irritated_annoyed",
+        "sad": "melancholic_vulnerable",
+        "surprised": "curious_attentive",
+        "neutral": "guarded_watchful" if tension > 3.0 else "curious_attentive",
+    }
+    char_mood = mood_map.get(expression, "curious_attentive")
+
     raw_answers = {
         "next_speaker": {"choice": next_speaker, "probabilities": speaker_probs},
         "continue_chain": {"probability": continue_prob},
@@ -699,6 +760,8 @@ def heuristic_director_decision(
         "gate_lore_discovery": {"probability": gate_lore},
         "is_risky_action": {"probability": is_risky},
         "action_difficulty": {"score": action_diff},
+        "affinity_delta": {"score": float(3.0 + aff_delta)},
+        "character_mood": {"choice": char_mood},
     }
     return parse_director_result(
         raw_answers,

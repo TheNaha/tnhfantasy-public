@@ -20,6 +20,8 @@ import ChatInputContainer from '../components/chat/ChatInputContainer';
 import ChatContextPanel from '../components/chat/ChatContextPanel';
 import ChatTimeline from '../components/chat/ChatTimeline';
 import MessageTimeline from '../components/chat/MessageTimeline';
+import CharacterAffinityHUD from '../components/chat/CharacterAffinityHUD';
+import StageModeView from '../components/chat/StageModeView';
 import { ChatWorkspaceProvider, useChatWorkspace } from '../contexts/ChatWorkspaceContext';
 import { useLocations } from '../hooks/useLocations';
 import ModalOverlay from '../components/common/ModalOverlay';
@@ -42,6 +44,7 @@ function ChatWorkspaceLayout() {
     const { updateSetting } = useUpdateSettings();
     const ttsEnabled = useSettingsStore((s) => s.settings?.ai?.ttsEnabled);
     const [ttsBannerDismissed, setTtsBannerDismissed] = useState(false);
+    const [isStageMode, setIsStageMode] = useState(false);
 
     const enableTtsMutation = useMutation({
         mutationFn: () => settingsApi.update(TTS_ENABLE_PAYLOAD),
@@ -117,7 +120,11 @@ function ChatWorkspaceLayout() {
                     <ChatWorkspaceHeader
                         {...context}
                         onSearchChange={(q) => setMessageSearch(q)}
+                        isStageMode={isStageMode}
+                        onToggleStageMode={() => setIsStageMode(v => !v)}
                     />
+
+                    {activeChatId && <CharacterAffinityHUD />}
 
                     <AnimatePresence>
                         {!ttsEnabled && !ttsBannerDismissed && (
@@ -400,6 +407,21 @@ function ChatWorkspaceLayout() {
                     </div>
                 </ModalOverlay>
             )}
+
+            <StageModeView
+                isOpen={isStageMode}
+                onClose={() => setIsStageMode(false)}
+                messages={messages}
+                activeChat={context.activeChat}
+                linkedCharacter={linkedCharacter}
+                characters={characters}
+                chatImages={chatImages}
+                activeStreams={context.activeStreams}
+                onSendMessage={context.handleSendMessage}
+                onGenerateTTS={context.handleGenerateTTS}
+                ttsEnabled={ttsEnabled}
+            />
+
             <BottomTabBar
                 inline
                 tabs={[

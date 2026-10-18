@@ -595,7 +595,7 @@ export default function WorldArchitect() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-[10px] uppercase text-gray-400 mb-0.5">
+                                        <label className="block text-2xs uppercase text-gray-400 mb-0.5">
                                             ComfyUI Visual Tags (comma-separated)
                                         </label>
                                         <input
@@ -612,7 +612,7 @@ export default function WorldArchitect() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-[10px] uppercase text-gray-400 mb-0.5">
+                                        <label className="block text-2xs uppercase text-gray-400 mb-0.5">
                                             Character Skillset (comma-separated)
                                         </label>
                                         <input

@@ -20,6 +20,7 @@ import StorySidebar from '../components/story/StorySidebar';
 import ChapterSidebar from '../components/story/ChapterSidebar';
 import StoryHeader from '../components/story/StoryHeader';
 import StoryEditor from '../components/story/StoryEditor';
+import StoryDirectorDeck from '../components/story/StoryDirectorDeck';
 import StoryBeatsPanel from '../components/story/StoryBeatsPanel';
 import StoryActionBar from '../components/story/StoryActionBar';
 import ExportModal from '../components/story/ExportModal';
@@ -491,7 +492,7 @@ export default function StorySandbox() {
     // must react to local edits only; re-running it because the server changed
     // the chapter is what turned every server-side prose rewrite into a
     // destructive write-back.
-    }, [editorContent, activeChapterId, isStreaming, activeStoryId, flushPendingSave]);
+    }, [editorContent, activeChapterId, isStreaming, activeStoryId, flushPendingSave, isStreamingRef]);
 
     const handleContinue = useCallback(async () => {
         if (!activeStoryId || !activeChapterId || isStreaming) return;
@@ -513,6 +514,24 @@ export default function StorySandbox() {
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeStoryId, activeChapterId, isStreaming, continueChapter, editorContent, aiDirective]);
+
+    const handleDirectorChoice = useCallback(async (choiceText) => {
+        if (!activeStoryId || !activeChapterId || isStreaming) return;
+        setIsStreaming(true);
+        streamingBaseRef.current = editorContent;
+        try {
+            await continueChapter.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                prompt: '',
+                directive: choiceText,
+            });
+            toast(`Directing: "${choiceText}"`, { icon: '🎬' });
+        } catch {
+            toast.error('Failed to execute story action');
+            setIsStreaming(false);
+        }
+    }, [activeStoryId, activeChapterId, isStreaming, continueChapter, editorContent, setIsStreaming, streamingBaseRef]);
 
     const handleScanWorldbuilding = useCallback(async () => {
         if (!activeStoryId || !activeChapterId || discoverWorldbuilding.isPending) return;
@@ -1260,6 +1279,17 @@ export default function StorySandbox() {
                                     readingTimeMinutes={readingTimeMinutes}
                                     wordCountGoal={activeStory?.word_count_goal || null}
                                 />
+                                {activeChapterId && (
+                                    <StoryDirectorDeck
+                                        activeStory={activeStory}
+                                        activeChapter={activeChapter}
+                                        editorContent={editorContent}
+                                        onSelectChoice={handleDirectorChoice}
+                                        onStartChat={handleStartChat}
+                                        isStartingChat={startChat.isPending}
+                                        isStreaming={isStreaming}
+                                    />
+                                )}
                                 {activeChapterId && (
                                     <div className="px-2 sm:px-4 lg:px-6 pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">
                                         {showBeatsPanel && (

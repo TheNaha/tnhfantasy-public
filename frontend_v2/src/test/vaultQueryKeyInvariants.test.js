@@ -126,7 +126,7 @@ function sitesInFile(rel) {
  * byte-equivalence half of that work is pinned by the `CASES` table below.
  */
 const REPORTED_OUTSTANDING = {
-    'hooks/useChatStreaming.js': [231, 242, 243, 245],
+    'hooks/useChatStreaming.js': [233, 244, 245, 247],
 };
 
 const OWNED_DIRECTORIES = ['api', 'constants', 'hooks', 'store', 'utils'];

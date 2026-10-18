@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
-import { PanelLeftOpen, PanelLeftClose, PanelRightOpen, MessageSquare, Sparkles, Loader2, Clock, MapPin, Download, FileJson, BookOpen, GitBranch, Search, X } from 'lucide-react';
+import {
+    PanelLeftOpen, PanelLeftClose, PanelRightOpen, MessageSquare, Sparkles,
+    Loader2, Clock, MapPin, Download, FileJson, BookOpen, GitBranch, Search,
+    X, UserPlus, Users, Tv
+} from 'lucide-react';
 import clsx from 'clsx';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
+import CompanionPickerModal from './CompanionPickerModal';
 
 export default function ChatWorkspaceHeader({
     chatsCollapsed,
@@ -21,7 +26,14 @@ export default function ChatWorkspaceHeader({
     contextCollapsed,
     setContextCollapsed,
     onSearchChange,
+    characters = [],
+    targetCharacterId = '',
+    setTargetCharacterId,
+    handleChatUpdate,
+    onToggleStageMode,
+    isStageMode = false,
 }) {
+    const [showCompanionModal, setShowCompanionModal] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchOpen, setSearchOpen] = useState(false);
 
@@ -49,22 +61,69 @@ export default function ChatWorkspaceHeader({
                 >
                     {chatsCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
                 </button>
-                <button
-                    type="button"
-                    aria-label={linkedCharacter?.name
-                        ? `View ${linkedCharacter.name}'s avatar`
-                        : 'View avatar'}
-                    onClick={() => linkedCharacter?.avatar_path && handleAvatarClick(getAvatarUrl(linkedCharacter.id))}
-                    className={clsx(
-                        "w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden",
-                        linkedCharacter?.avatar_path && "cursor-pointer hover:border-blue-500/50 transition-colors"
+                {/* Companion & Character Roster Tray */}
+                <div className="flex items-center -space-x-1.5 sm:space-x-1 shrink-0">
+                    {/* Primary Character Avatar */}
+                    <button
+                        type="button"
+                        aria-label={linkedCharacter?.name ? `View ${linkedCharacter.name}'s avatar` : 'View avatar'}
+                        onClick={() => {
+                            if (setTargetCharacterId) setTargetCharacterId('');
+                            if (linkedCharacter?.avatar_path) handleAvatarClick(getAvatarUrl(linkedCharacter.id));
+                        }}
+                        className={clsx(
+                            "w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border flex items-center justify-center shrink-0 overflow-hidden transition-all",
+                            (!targetCharacterId || targetCharacterId === linkedCharacter?.id)
+                                ? "ring-2 ring-blue-500/80 border-blue-400 scale-105 z-10"
+                                : "border-white/10 opacity-75 hover:opacity-100"
+                        )}
+                        title={linkedCharacter ? `${linkedCharacter.name} (Primary Character — Click to target)` : 'Primary Character'}
+                    >
+                        {linkedCharacter?.avatar_path
+                            ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
+                            : <MessageSquare className="text-blue-400" size={15} />
+                        }
+                    </button>
+
+                    {/* Additional Companion Avatars */}
+                    {activeChat?.additional_character_ids?.map((companionId) => {
+                        const companion = characters.find(c => c.id === companionId);
+                        if (!companion) return null;
+                        const isTargeted = targetCharacterId === companion.id;
+                        return (
+                            <button
+                                key={companion.id}
+                                type="button"
+                                onClick={() => setTargetCharacterId?.(isTargeted ? '' : companion.id)}
+                                className={clsx(
+                                    "w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gray-800 border flex items-center justify-center shrink-0 overflow-hidden transition-all",
+                                    isTargeted
+                                        ? "ring-2 ring-purple-500 border-purple-400 scale-105 z-10"
+                                        : "border-white/10 opacity-75 hover:opacity-100"
+                                )}
+                                title={`${companion.name} (Companion — Click to target)`}
+                            >
+                                {companion.avatar_path ? (
+                                    <img src={getAvatarUrl(companion.id)} alt={companion.name} className="w-full h-full object-cover" />
+                                ) : (
+                                    <span className="text-3xs font-bold text-gray-300">{companion.name.charAt(0)}</span>
+                                )}
+                            </button>
+                        );
+                    })}
+
+                    {/* Add Companion Button */}
+                    {activeChatId && (
+                        <button
+                            type="button"
+                            onClick={() => setShowCompanionModal(true)}
+                            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full border border-dashed border-white/20 hover:border-blue-400/60 bg-white/5 hover:bg-blue-500/10 text-gray-400 hover:text-blue-300 flex items-center justify-center transition-all ml-1 shrink-0"
+                            title="Manage companions in party"
+                        >
+                            <UserPlus size={13} />
+                        </button>
                     )}
-                >
-                    {linkedCharacter?.avatar_path
-                        ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
-                        : <MessageSquare className="text-blue-400" size={16} />
-                    }
-                </button>
+                </div>
                 <div className="min-w-0 flex-1">
                     <h2 className="font-semibold text-gray-100 flex items-center gap-2 text-sm sm:text-base">
                         <span className="truncate">{activeChat?.name || 'Roleplay Session'}</span>
@@ -173,6 +232,18 @@ export default function ChatWorkspaceHeader({
             >
                 {exportToStoryMutation?.isPending ? <Loader2 size={18} className="animate-spin" /> : <BookOpen size={18} />}
             </button>
+            {onToggleStageMode && (
+                <button
+                    onClick={onToggleStageMode}
+                    className={clsx(
+                        "p-2 rounded-xl transition-colors shrink-0 hidden sm:flex",
+                        isStageMode ? "text-purple-300 bg-purple-500/20 border border-purple-500/30" : "text-gray-400 hover:text-white hover:bg-white/5"
+                    )}
+                    title={isStageMode ? "Exit Stage Mode" : "Enter Visual Novel Stage Mode"}
+                >
+                    <Tv size={18} />
+                </button>
+            )}
             <button
                 onClick={() => setTimelineVisible(true)}
                 className="hidden lg:flex p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors shrink-0"
@@ -189,6 +260,15 @@ export default function ChatWorkspaceHeader({
                     <PanelRightOpen size={18} />
                 </button>
             )}
+
+            <CompanionPickerModal
+                isOpen={showCompanionModal}
+                onClose={() => setShowCompanionModal(false)}
+                characters={characters}
+                primaryCharacterId={linkedCharacter?.id}
+                additionalCharacterIds={activeChat?.additional_character_ids || []}
+                onSave={(ids) => handleChatUpdate?.({ additional_character_ids: ids })}
+            />
         </div>
     );
 }

@@ -8,6 +8,7 @@ from core.entities import Character, Chat, Lorebook, LorebookEntry
 from services.context_builder import build_system_prompt_sections
 from services.decision_schema import (
     UPDATER_GATE_KEYS,
+    DirectorDecisionResult,
     build_director_questions,
     format_director_context,
     heuristic_director_decision,
@@ -89,6 +90,8 @@ class TestDecisionSchema:
         assert res.updater_gates["gate_inventory_or_items"] == pytest.approx(0.71)
         assert "gate_world_state" in res.triggered_gates
         assert "gate_inventory_or_items" in res.triggered_gates
+        assert hasattr(res, "affinity_delta")
+        assert hasattr(res, "character_mood")
 
     def test_parses_generative_json_fallback(self):
         raw_text = """```json
@@ -294,3 +297,22 @@ class TestDirectorCascadeAndUpdater:
             state_snapshot={"character_mood": "Focused"},
         )
         assert "Lyra" in formatted
+
+    def test_record_director_decision_updates_affinity_and_mood(self, session: Session):
+        char = Character(name="Kael", description="A knight")
+        session.add(char)
+        session.commit()
+        chat = Chat(character_id=char.id, state_snapshot={"character_affinity": 50})
+        session.add(chat)
+        session.commit()
+
+        decision = DirectorDecisionResult(
+            affinity_delta=2,
+            character_mood="warm_affectionate",
+            scene_tension=2.0,
+            emotional_tone="warm_intimate",
+        )
+        snap = record_director_decision(session, chat.id, decision)
+        assert snap["character_affinity"] == 52
+        assert snap["last_affinity_delta"] == 2
+        assert snap["character_mood"] == "warm_affectionate"

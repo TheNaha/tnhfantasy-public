@@ -119,6 +119,8 @@ describe('useChatStreaming', () => {
             elapsedSeconds: null,
             model: null,
             providerId: null,
+            contextTrace: null,
+            directorDecision: null,
         });
     });
 

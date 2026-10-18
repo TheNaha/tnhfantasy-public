@@ -346,6 +346,13 @@ def record_director_decision(
     snapshot["last_fate_outcome"] = decision.fate_outcome
     snapshot["last_fate_directive"] = decision.fate_directive
     snapshot["matched_skills"] = decision.matched_skills
+    # Calculate real-time affinity delta from System 1 Director
+    aff_delta = int(getattr(decision, "affinity_delta", 0))
+    curr_aff = int(snapshot.get("character_affinity", 50))
+    new_aff = max(0, min(100, curr_aff + aff_delta))
+    snapshot["character_affinity"] = new_aff
+    snapshot["last_affinity_delta"] = aff_delta
+    snapshot["character_mood"] = getattr(decision, "character_mood", None) or snapshot.get("character_mood", "curious_attentive")
     snapshot["last_director_decision"] = decision.to_dict()
     snapshot["director_updated_at"] = now_iso
 

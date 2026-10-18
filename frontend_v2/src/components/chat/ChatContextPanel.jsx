@@ -1552,7 +1552,7 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                             {relationshipsList.map((rel, idx) => (
                                 <div key={`${rel.target_name}-${idx}`} className="flex items-center gap-1 bg-gray-900/60 rounded px-2 py-1 border border-white/5">
                                     <span className={clsx(
-                                        "px-1 py-0.5 rounded text-[10px] font-bold uppercase shrink-0",
+                                        "px-1 py-0.5 rounded text-2xs font-bold uppercase shrink-0",
                                         rel.target_type === 'user' ? "bg-sky-500/20 text-sky-300" : "bg-purple-500/20 text-purple-300"
                                     )}>
                                         {rel.target_name}
@@ -1567,7 +1567,7 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                                     <select
                                         value={rel.affinity || 'neutral'}
                                         onChange={(e) => handleUpdateRelationship(idx, { affinity: e.target.value })}
-                                        className="bg-gray-800 border border-white/10 rounded px-1 py-0.5 text-[10px] text-gray-300"
+                                        className="bg-gray-800 border border-white/10 rounded px-1 py-0.5 text-2xs text-gray-300"
                                     >
                                         <option value="devoted">Devoted</option>
                                         <option value="trusted">Trusted</option>
