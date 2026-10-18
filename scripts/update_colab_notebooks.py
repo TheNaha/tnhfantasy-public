@@ -212,7 +212,6 @@ import json
 import urllib.request
 import urllib.parse
 import ssl
-import socket
 from IPython.display import display, HTML
 
 mode_key = "hybrid" if "hybrid" in WORKER_MODE else ("model" if "image" in WORKER_MODE else ("llm" if "llm" in WORKER_MODE else "tts"))
@@ -892,7 +891,7 @@ def launch_comfyui_track():
         print(f"⚡ [ComfyUI Track] Pre-warming {os.path.basename(active_ckpt_path)} into RAM cache (/dev/shm)...")
         try:
             ram_mgr.ensure_in_ram(active_ckpt_path, model_id=img_id, role="image", is_anchor=True)
-            print(f"✅ [ComfyUI Track] Checkpoint cached in RAM!")
+            print("✅ [ComfyUI Track] Checkpoint cached in RAM!")
         except Exception as exc:
             print(f"⚠️ [ComfyUI Track] Pre-warming failed ({exc}); will stream from storage directly.")
     print(f"🚀 [ComfyUI Track] Starting ComfyUI server on :{comfy_port}...")
@@ -911,7 +910,7 @@ def launch_llm_track():
             ram_mgr.ensure_in_ram(src_expected, model_id=active_rp, role="rp", is_anchor=True)
             ram_mgr.aliases["default"] = active_rp
             ram_mgr.aliases["rp"] = active_rp
-            print(f"✅ [LLM Track] GGUF weights cached in RAM!")
+            print("✅ [LLM Track] GGUF weights cached in RAM!")
         except Exception as exc:
             print(f"⚠️ [LLM Track] Pre-warming failed ({exc}); will load directly from storage.")
 
@@ -941,26 +940,46 @@ def launch_llm_track():
 
     global spawn_cmd, env_llm
 
-    # Dynamic VRAM budgeting & safe layer offload calculation
+    # Dynamic VRAM budgeting & safe layer offload calculation based on LIVE FREE VRAM
     ngl = 99
     try:
         import torch
         if torch.cuda.is_available():
-            total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            free_bytes, total_bytes = torch.cuda.mem_get_info(0)
+            free_vram_gb = free_bytes / (1024**3)
+            total_vram_gb = total_bytes / (1024**3)
             weight_gb = os.path.getsize(rp_ram_file) / (1024**3) if (rp_ram_file and os.path.exists(rp_ram_file)) else 0.0
-            safe_budget_gb = max(0.0, total_vram_gb - 5.0)
-            if weight_gb > safe_budget_gb > 0:
-                fraction = safe_budget_gb / weight_gb
-                ngl = max(20, min(56, int(64 * fraction)))
-                print(f"  ⚡ GPU VRAM: {total_vram_gb:.1f} GB | Model: {weight_gb:.1f} GB")
-                print(f"  🎯 Calculated safe layer offload: -ngl {ngl} (GPU: ~{safe_budget_gb:.1f} GB, RAM Cache: ~{weight_gb - safe_budget_gb:.1f} GB) to prevent CUDA OOM")
+
+            # Reserve 2.5 GB for KV cache (8192 context q8_0) and compute scratch
+            reserve_gb = 2.5
+            available_weight_gb = max(0.0, free_vram_gb - reserve_gb)
+
+            # Estimate total model layers (e.g. 46 for 26B/27B Gemma, 64 for 31B, 40 for 12B/14B)
+            model_name_lower = os.path.basename(rp_ram_file).lower()
+            if "26b" in model_name_lower or "27b" in model_name_lower or "sompoa" in model_name_lower:
+                total_layers = 46
+            elif "31b" in model_name_lower or "32b" in model_name_lower or "artemis" in model_name_lower:
+                total_layers = 64
+            elif "12b" in model_name_lower or "14b" in model_name_lower:
+                total_layers = 40
             else:
+                total_layers = 42
+
+            if weight_gb > 0 and (weight_gb + reserve_gb) <= free_vram_gb:
                 ngl = 99
-                if weight_gb > 0:
-                    print(f"  ⚡ Model ({weight_gb:.1f} GB) fits entirely in GPU VRAM ({total_vram_gb:.1f} GB): -ngl 99 (100% GPU offload, zero CPU latency)")
+                print(f"  ⚡ Model ({weight_gb:.1f} GB) fits entirely in free GPU VRAM ({free_vram_gb:.1f} GB free of {total_vram_gb:.1f} GB): -ngl 99 (100% GPU offload, zero CPU latency)")
+            elif weight_gb > 0 and available_weight_gb > 0:
+                fraction = min(0.95, available_weight_gb / weight_gb)
+                target_layers = int(total_layers * fraction)
+                ngl = max(4, min(total_layers - 2, target_layers - 1))
+                print(f"  ⚡ GPU VRAM: {free_vram_gb:.1f} GB free of {total_vram_gb:.1f} GB | Model: {weight_gb:.1f} GB")
+                print(f"  🎯 Calculated safe layer offload: -ngl {ngl}/{total_layers} (GPU: ~{available_weight_gb:.1f} GB, RAM Cache: ~{weight_gb - available_weight_gb:.1f} GB) to prevent CUDA OOM")
+            else:
+                ngl = 0
+                print(f"  ⚠️ Very low free VRAM ({free_vram_gb:.1f} GB free); running on CPU RAM cache: -ngl 0")
     except Exception as exc:
-        ngl = 50
-        print(f"  Notice: VRAM layer budgeting fallback ({exc}); using -ngl 50")
+        ngl = 35
+        print(f"  Notice: VRAM layer budgeting fallback ({exc}); using safe -ngl 35")
 
     llama_args = [
         llama_exec,
@@ -999,7 +1018,7 @@ def launch_llm_track():
         with open(log_llm, "a", buffering=1) as out:
             worker_procs["llm"] = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
     else:
-        print(f"⚡ [LLM Track] GGUF weights pre-warmed in RAM cache (/dev/shm). llama-server will start Just-In-Time on first LLM request (0 MB idle GPU VRAM reserved)!")
+        print("⚡ [LLM Track] GGUF weights pre-warmed in RAM cache (/dev/shm). llama-server will start Just-In-Time on first LLM request (0 MB idle GPU VRAM reserved)!")
 
 def launch_laya_track():
     print("⚡ [Laya Track] Pre-warming Laya System 1 on GPU (CUDA)...")

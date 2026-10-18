@@ -214,3 +214,129 @@ class TestRemoteAgentVRAMEndpoints:
         path, mid = mgr._resolve_model_path("unknown_requested_model")
         assert path == str(fake_gguf)
 
+
+class TestVRAMManagerDynamicNGL:
+    """Test dynamic layer offload calculation and GGUF header parsing."""
+
+    def test_gguf_layer_count_parser(self, tmp_path):
+        import struct
+
+        mgr = VRAMManager()
+
+        # Simulate GGUF binary header with gemma2.block_count = 46
+        arch_key = b"gemma2.block_count"
+        fake_header = (
+            b"GGUF\x03\x00\x00\x00"  # Magic + Version 3
+            + b"\x00" * 16  # Tensor count + KV count placeholders
+            + struct.pack("<Q", len(arch_key))
+            + arch_key
+            + struct.pack("<I", 4)  # Type 4: UINT32
+            + struct.pack("<I", 46)  # 46 layers
+        )
+        fake_gguf = tmp_path / "model.gguf"
+        fake_gguf.write_bytes(fake_header)
+
+        layers = mgr._get_gguf_layer_count(str(fake_gguf))
+        assert layers == 46
+
+    def test_calculate_safe_ngl_full_fit(self, tmp_path):
+        mgr = VRAMManager()
+        fake_gguf = tmp_path / "small_model.gguf"
+        # 4 GB model file
+        fake_gguf.write_bytes(b"\x00" * (4 * 1024 * 1024))
+
+        # Mock GPU: 24GB total, 17GB free
+        mgr.get_vram_info = MagicMock(return_value={
+            "available": True,
+            "device_name": "NVIDIA L4",
+            "vram_total_mb": 22563,
+            "vram_free_mb": 17000,
+            "vram_used_mb": 5563,
+        })
+
+        # 4 MB model easily fits in 17000 MB free (weight + 2500 reserve <= 17000)
+        ngl, meta = mgr.calculate_safe_ngl(str(fake_gguf))
+        assert ngl == 99
+        assert meta["mode"] == "full_gpu"
+
+    def test_calculate_safe_ngl_partial_offload_prevents_oom(self, tmp_path, monkeypatch):
+        mgr = VRAMManager()
+        fake_gguf = tmp_path / "sompoa_26b.gguf"
+        fake_gguf.write_bytes(b"dummy")
+
+        # Mock model file size as 18,231 MB (~17.8 GB)
+        monkeypatch.setattr("os.path.getsize", lambda p: 18231 * 1024 * 1024)
+
+        # Mock GPU: NVIDIA L4 (22.5GB total, 17,000 MB free due to ComfyUI & Laya baseline)
+        mgr.get_vram_info = MagicMock(return_value={
+            "available": True,
+            "device_name": "NVIDIA L4",
+            "vram_total_mb": 22563,
+            "vram_free_mb": 17000,
+            "vram_used_mb": 5563,
+        })
+        mgr._get_gguf_layer_count = MagicMock(return_value=46)
+
+        ngl, meta = mgr.calculate_safe_ngl(str(fake_gguf))
+
+        # Model is 18.2 GB, free is 17.0 GB. Reserve is 2.5 GB.
+        # Available weight budget = 17,000 - 2,500 = 14,500 MB
+        # Fraction = 14,500 / 18,231 = 0.795
+        # Target layers = int(46 * 0.795) = 36
+        # Safe ngl = 35 (clamped to prevent full offload and leave headroom for KV cache)
+        assert meta["mode"] == "partial_offload"
+        assert ngl < 46  # Must NEVER be 99 or total_layers
+        assert 30 <= ngl <= 38
+        assert ngl <= 46 - 2  # At least 2 layers on CPU
+
+    def test_calculate_safe_ngl_low_vram_falls_back_to_cpu(self, tmp_path, monkeypatch):
+        mgr = VRAMManager()
+        fake_gguf = tmp_path / "model.gguf"
+        fake_gguf.write_bytes(b"dummy")
+        monkeypatch.setattr("os.path.getsize", lambda p: 10000 * 1024 * 1024)
+
+        # Critical low free VRAM (< 3000 MB)
+        mgr.get_vram_info = MagicMock(return_value={
+            "available": True,
+            "device_name": "NVIDIA L4",
+            "vram_total_mb": 22563,
+            "vram_free_mb": 2000,
+            "vram_used_mb": 20563,
+        })
+
+        ngl, meta = mgr.calculate_safe_ngl(str(fake_gguf))
+        assert ngl == 0
+        assert meta["mode"] == "cpu_only"
+
+    def test_llm_workload_unloads_laya_if_it_enables_full_gpu_fit(self, tmp_path, monkeypatch):
+        mgr = VRAMManager()
+        mgr.current_laya_device = "cuda:0"
+        mgr.laya_cache[("convaiinnovations/laya-multilingual", "cuda:0")] = MagicMock()
+        mgr.free_comfy_vram = MagicMock(return_value=True)
+        mgr.is_llama_running = MagicMock(return_value=False)
+        mgr.ensure_llama_running = MagicMock(return_value=True)
+
+        fake_gguf = tmp_path / "model_15gb.gguf"
+        fake_gguf.write_bytes(b"dummy")
+        mgr._resolve_model_path = MagicMock(return_value=(str(fake_gguf), "model_15gb"))
+
+        # Model is 15,000 MB, reserve 2,500 MB -> needs 17,500 MB for 100% GPU fit
+        monkeypatch.setattr("os.path.getsize", lambda p: 15000 * 1024 * 1024)
+
+        # Free VRAM is currently 16,500 MB (< 17,500 MB needed).
+        # But unloading Laya gives +1,500 MB = 18,000 MB >= 17,500 MB!
+        mgr.get_vram_info = MagicMock(return_value={
+            "available": True,
+            "device_name": "NVIDIA L4",
+            "vram_total_mb": 22563,
+            "vram_free_mb": 16500,
+            "vram_used_mb": 6063,
+        })
+
+        res = mgr.prepare_for_workload("llm", model_id="model_15gb")
+
+        # Laya is demoted to CPU to enable 100% GPU fit!
+        assert "unloaded_laya_to_allow_full_llm_gpu_fit" in res["actions_taken"]
+        assert ("convaiinnovations/laya-multilingual", "cuda:0") not in mgr.laya_cache
+
+

@@ -386,9 +386,45 @@ class VRAMManager:
                 # EVICTION STEP 1: Flush ComfyUI models from VRAM
                 if self.free_comfy_vram():
                     actions_taken.append("freed_comfy_vram")
+                    time.sleep(0.1)
 
-                # Note: Laya is PRESERVED on CUDA! We do not touch Laya here.
-                actions_taken.append("preserved_laya_cuda")
+                info = self.get_vram_info()
+                free_mb = info["vram_free_mb"]
+
+                # EVICTION STEP 2: Priority check for Laya
+                # The rule: "keep laya models running. ComfyUI is cleared first; if comfyui vram clear
+                # isn't enough, then it touches the laya one."
+                # Check if unloading Laya would allow the LLM model to fit 100% on GPU, OR if free VRAM is critically low (< 4 GB)
+                laya_loaded_cuda = any(k[1].startswith("cuda") for k in self.laya_cache)
+                if laya_loaded_cuda and info.get("available", False):
+                    model_path, _ = self._resolve_model_path(model_id)
+                    weight_mb = (
+                        int(os.path.getsize(model_path) / (1024 * 1024))
+                        if (model_path and os.path.exists(model_path))
+                        else 0
+                    )
+                    reserve_mb = 2500
+                    needed_for_full_mb = weight_mb + reserve_mb
+
+                    # Laya on CUDA typically frees ~1200 - 1800 MB
+                    estimated_laya_vram = 1500
+                    potential_free_mb = free_mb + estimated_laya_vram
+
+                    if weight_mb > 0 and free_mb < needed_for_full_mb <= potential_free_mb:
+                        # Demoting Laya to CPU will allow the LLM to fit 100% on GPU!
+                        self.unload_laya_cuda()
+                        actions_taken.append("unloaded_laya_to_allow_full_llm_gpu_fit")
+                        time.sleep(0.1)
+                    elif 0 < free_mb < 2000:
+                        # Free VRAM is critically constrained (< 2 GB), demote Laya as safety measure
+                        self.unload_laya_cuda()
+                        actions_taken.append("unloaded_laya_low_vram_safety")
+                        time.sleep(0.1)
+                    else:
+                        # Laya is PRESERVED on CUDA! (Instant <100ms director decisions)
+                        actions_taken.append("preserved_laya_cuda")
+                else:
+                    actions_taken.append("preserved_laya_cuda")
 
                 # Ensure llama-server is alive and serving the target model
                 if not self.is_llama_running() or (model_id and self.llama_model_id and self.llama_model_id != model_id):
@@ -461,21 +497,9 @@ class VRAMManager:
                 logger.warning("llama_binary_not_found")
                 return False
 
-            # Calculate safe layer offload (-ngl) reserving VRAM for Laya (~1.2GB) & KV cache (~2GB)
-            ngl = 99
-            info = self.get_vram_info()
-            total_vram_gb = info["vram_total_mb"] / 1024.0
-            weight_gb = os.path.getsize(model_path) / (1024**3)
-
-            # Reserve 4.0 GB for Laya (1.2GB) + KV cache (1.5GB) + CUDA driver overhead (1.3GB)
-            safe_budget_gb = max(0.0, total_vram_gb - 4.0)
-            if weight_gb > safe_budget_gb > 0:
-                fraction = safe_budget_gb / weight_gb
-                ngl = max(20, min(56, int(64 * fraction)))
-                logger.info(
-                    "calculated_safe_ngl_offload",
-                    extra={"ngl": ngl, "safe_budget_gb": safe_budget_gb, "weight_gb": weight_gb},
-                )
+            # Calculate safe dynamic layer offload (-ngl) based on LIVE free VRAM
+            ngl, ngl_meta = self.calculate_safe_ngl(model_path)
+            logger.info("llama_safe_ngl_determined", extra=ngl_meta)
 
             # Build command
             cmd = [
@@ -664,6 +688,119 @@ class VRAMManager:
         env = dict(os.environ, LD_LIBRARY_PATH=ld_path, PYTHONUNBUFFERED="1")
         env["PATH"] = "/usr/local/llama.cpp:/usr/local/bin:" + os.environ.get("PATH", "")
         return env
+
+    def _get_gguf_layer_count(self, model_path: str) -> Optional[int]:
+        """Extract exact layer count (<arch>.block_count) from GGUF binary header."""
+        try:
+            import struct
+
+            with open(model_path, "rb") as f:
+                header = f.read(262144)  # Read first 256 KB
+                if len(header) < 24 or header[:4] != b"GGUF":
+                    return None
+                version = struct.unpack("<I", header[4:8])[0]
+                if version not in (2, 3):
+                    return None
+
+                idx = 0
+                while True:
+                    idx = header.find(b".block_count", idx)
+                    if idx == -1:
+                        break
+                    key_end = idx + len(b".block_count")
+                    if key_end + 8 <= len(header):
+                        val_type = struct.unpack("<I", header[key_end : key_end + 4])[0]
+                        count = None
+                        if val_type == 4:  # UINT32
+                            count = struct.unpack("<I", header[key_end + 4 : key_end + 8])[0]
+                        elif val_type == 5:  # INT32
+                            count = struct.unpack("<i", header[key_end + 4 : key_end + 8])[0]
+                        elif val_type in (10, 11) and key_end + 12 <= len(header):  # UINT64 / INT64
+                            count = struct.unpack("<Q", header[key_end + 4 : key_end + 12])[0]
+
+                        if count is not None and 8 <= count <= 256:
+                            return int(count)
+                    idx += 1
+        except Exception as exc:
+            logger.debug(f"gguf_layer_count_read_failed: {exc}")
+        return None
+
+    def _estimate_layer_count(self, model_path: str, weight_mb: int) -> int:
+        """Estimate layer count from model file name or weight size if header read is unavailable."""
+        name = os.path.basename(model_path).lower()
+        if "26b" in name or "27b" in name or "sompoa" in name or "goetia" in name or "styletune" in name:
+            return 46
+        if "31b" in name or "32b" in name or "artemis" in name or "qwen" in name:
+            return 64
+        if "70b" in name or "72b" in name:
+            return 80
+        if "12b" in name or "14b" in name or "13b" in name:
+            return 40
+        if "7b" in name or "8b" in name or "9b" in name:
+            return 32
+        if weight_mb > 15000:
+            return 46
+        if weight_mb > 8000:
+            return 40
+        return 32
+
+    def calculate_safe_ngl(self, model_path: str, free_mb: Optional[int] = None) -> Tuple[int, Dict[str, Any]]:
+        """Calculate safe GPU layer offload count (-ngl) based on LIVE free VRAM to prevent CUDA OOM."""
+        if not os.path.exists(model_path):
+            return 0, {"error": "model_not_found"}
+
+        weight_mb = int(os.path.getsize(model_path) / (1024 * 1024))
+        info = self.get_vram_info()
+        if not info["available"]:
+            return 0, {"ngl": 0, "reason": "cuda_unavailable", "weight_mb": weight_mb}
+
+        actual_free_mb = free_mb if free_mb is not None else info["vram_free_mb"]
+
+        # Reserve for KV cache (8192 context q8_0) + compute scratch / context activation buffers
+        reserve_mb = 2500
+
+        total_layers = self._get_gguf_layer_count(model_path) or self._estimate_layer_count(model_path, weight_mb)
+
+        # If GPU free VRAM is critically low (< 3000 MB), cannot safely offload layers
+        if actual_free_mb < 3000:
+            return 0, {
+                "ngl": 0,
+                "mode": "cpu_only",
+                "reason": "insufficient_free_vram",
+                "free_mb": actual_free_mb,
+                "weight_mb": weight_mb,
+                "total_layers": total_layers,
+            }
+
+        # Case 1: Entire model + KV cache fits within free VRAM
+        if weight_mb + reserve_mb <= actual_free_mb:
+            return 99, {
+                "ngl": 99,
+                "mode": "full_gpu",
+                "free_mb": actual_free_mb,
+                "weight_mb": weight_mb,
+                "reserve_mb": reserve_mb,
+                "total_layers": total_layers,
+            }
+
+        # Case 2: Partial offload needed
+        available_weight_mb = max(0, actual_free_mb - reserve_mb)
+        fraction = max(0.0, min(0.95, available_weight_mb / weight_mb))
+        target_layers = int(total_layers * fraction)
+
+        # Leave at least 2 layers on CPU to guarantee we never overflow free VRAM
+        safe_ngl = max(4, min(total_layers - 2, target_layers - 1))
+
+        return safe_ngl, {
+            "ngl": safe_ngl,
+            "mode": "partial_offload",
+            "free_mb": actual_free_mb,
+            "weight_mb": weight_mb,
+            "reserve_mb": reserve_mb,
+            "available_weight_mb": available_weight_mb,
+            "fraction": round(fraction, 3),
+            "total_layers": total_layers,
+        }
 
 
 # ---------------------------------------------------------------------------
