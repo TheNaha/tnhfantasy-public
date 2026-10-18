@@ -174,6 +174,8 @@ class RamModelManager:
                     last_used=mtime,
                 )
                 self.entries[mid] = entry
+                if item.parent != self.ram_dir and item.parent.name not in ("checkpoints", "loras", "vae", "llm", "decisions"):
+                    self.aliases[item.parent.name] = mid
                 if "_" in mid:
                     prefix = mid.split("_", 1)[0]
                     orig = mid.split("_", 1)[1]
@@ -205,7 +207,12 @@ class RamModelManager:
         with self._lock:
             self.anchors = {str(a).strip() for a in anchor_ids if a and str(a).strip()}
             for mid, entry in self.entries.items():
-                entry.is_anchor = mid in self.anchors or any(a in mid for a in self.anchors)
+                entry.is_anchor = (
+                    mid in self.anchors
+                    or any(a in mid for a in self.anchors)
+                    or any(mid in a for a in self.anchors)
+                    or any(self.aliases.get(a) == mid for a in self.anchors)
+                )
 
     def is_cached(self, model_id: str) -> bool:
         with self._lock:

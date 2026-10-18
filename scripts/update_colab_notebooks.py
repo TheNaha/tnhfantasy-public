@@ -1471,6 +1471,25 @@ if not shared_weights:
 if active_decisions and active_decisions not in ("same_as_util", "disabled"):
     anchor_ids.append(active_decisions)
 
+# Pre-register all active LLM weights into RAM manager and anchors to prevent accidental eviction
+for m_id, w_path in resolved_weights.items():
+    if w_path and os.path.exists(w_path):
+        w_fn = os.path.basename(w_path)
+        anchor_ids.extend([m_id, w_fn])
+        if enable_ram_cache:
+            role_m = "rp" if m_id == active_rp else "util"
+            try:
+                ram_mgr.ensure_in_ram(w_path, model_id=m_id, role=role_m, is_anchor=True)
+                ram_mgr.aliases[w_fn] = m_id
+                ram_mgr.aliases["default"] = active_rp
+                ram_mgr.aliases["rp"] = active_rp
+                if shared_weights:
+                    ram_mgr.aliases["util"] = active_rp
+                elif m_id == active_util:
+                    ram_mgr.aliases["util"] = active_util
+            except Exception as exc:
+                print(f"⚠️ Notice during early RAM registration for {m_id}: {exc}")
+
 comfy_dir = "/content/ComfyUI"
 nvme_cache_base = "/content/models/nvme_cache"
 nvme_ckpt_dir = f"{nvme_cache_base}/checkpoints"
@@ -1536,19 +1555,30 @@ if tier1_candidate_name and os.path.exists(gdrive_ckpt_dir):
                 gdrive_candidate = os.path.join(root, tier1_candidate_name)
                 break
 
-# Check if already present in RAM or NVMe
+# Helper to test if a path actually resides on Google Drive FUSE (via symlink or mount)
+def is_on_gdrive(p):
+    if not p or not os.path.exists(p):
+        return False
+    try:
+        r = os.path.realpath(p)
+        return r.startswith("/content/drive") or "/drive/MyDrive" in r
+    except Exception:
+        return False
+
+# Check if already present in RAM or local NVMe
 if ram_candidate and os.path.exists(ram_candidate) and os.path.getsize(ram_candidate) > 100_000_000:
     print(f"⚡ [Tier 1] Checkpoint already resident in RAM cache: {tier1_candidate_name}")
     active_ckpt_path = ram_candidate
-elif nvme_candidate and os.path.exists(nvme_candidate) and os.path.getsize(nvme_candidate) > 100_000_000:
+elif nvme_candidate and os.path.exists(nvme_candidate) and os.path.getsize(nvme_candidate) > 100_000_000 and not is_on_gdrive(nvme_candidate):
     print(f"⚡ [Tier 1] Found checkpoint already present on local NVMe SSD: {tier1_candidate_name}")
     active_ckpt_path = nvme_candidate
-elif comfy_candidate and os.path.exists(comfy_candidate) and os.path.getsize(comfy_candidate) > 100_000_000 and not os.path.islink(comfy_candidate):
-    active_ckpt_path = comfy_candidate
 
-# In persistent_volume mode: check Google Drive first
+# In persistent_volume mode, or when NOT in direct mode: allow reusing existing Google Drive models
 if storage_strat_key != "direct" and not active_ckpt_path:
-    if gdrive_candidate and os.path.exists(gdrive_candidate):
+    if comfy_candidate and os.path.exists(comfy_candidate) and os.path.getsize(comfy_candidate) > 100_000_000:
+        print(f"📁 [Tier 3 -> Tier 1] Found checkpoint in Google Drive (ComfyUI models): {comfy_candidate}")
+        active_ckpt_path = comfy_candidate
+    elif gdrive_candidate and os.path.exists(gdrive_candidate):
         print(f"📁 [Tier 3 -> Tier 1] Found checkpoint in Google Drive: {gdrive_candidate}")
         active_ckpt_path = gdrive_candidate
 
@@ -1599,6 +1629,9 @@ if not active_ckpt_path and (tier1_dl_url or tier1_civitai_ver):
         if gdrive_candidate and os.path.exists(gdrive_candidate):
             print(f"📁 CivitAI direct download failed; falling back to Google Drive cache: {gdrive_candidate}")
             active_ckpt_path = gdrive_candidate
+        elif comfy_candidate and os.path.exists(comfy_candidate):
+            print(f"📁 CivitAI direct download failed; falling back to Google Drive ComfyUI: {comfy_candidate}")
+            active_ckpt_path = comfy_candidate
         elif nvme_candidate and os.path.exists(nvme_candidate):
             print(f"📁 Falling back to existing local NVMe copy: {nvme_candidate}")
             active_ckpt_path = nvme_candidate
@@ -1623,10 +1656,18 @@ if img_id:
 ram_mgr.set_anchors(anchor_ids)
 
 # Evict any non-anchor models from prior runs to keep RAM dedicated and lean
-for mid in list(ram_mgr.entries.keys()):
-    if mid not in anchor_ids:
+for mid_k, entry_k in list(ram_mgr.entries.items()):
+    if entry_k.is_anchor:
+        continue
+    is_protected = (
+        mid_k in anchor_ids
+        or any(a in mid_k or mid_k in a for a in anchor_ids)
+        or any(self_alias == mid_k for self_alias in [ram_mgr.aliases.get(a) for a in anchor_ids])
+        or any(mid_k == os.path.basename(p) for p in resolved_weights.values() if p)
+    )
+    if not is_protected:
         try:
-            ram_mgr.evict_model(mid, force=True)
+            ram_mgr.evict_model(mid_k, force=True)
         except Exception:
             pass
 
