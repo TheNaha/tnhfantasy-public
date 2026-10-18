@@ -1,7 +1,8 @@
 """Update TNHComfy_Colab_Worker.ipynb and remote_agent/TNHComfy_Colab_Worker.ipynb
 
 Synchronizes both notebooks with multi-environment support (Google Colab and Modal Sandboxes/Notebooks),
-Modal volume comfy-storage integration, low-RAM volume streaming toggle, and multi-GPU device allocation.
+Modal volume comfy-storage integration, low-RAM volume streaming toggle, multi-GPU device allocation,
+and dynamic Laya System 1 Decision Maker model synchronization.
 """
 
 import json
@@ -159,6 +160,11 @@ LLM_RP_MODEL = "artemis_31b_q4" #@param ["artemis_31b_q4", "artemis_31b", "sompo
 LLM_UTIL_MODEL = "same_as_rp" #@param ["same_as_rp", "artemis_31b_q4", "artemis_31b", "sompoa_26b_a4b", "gemma3_12b_heretic_util", "gemma4_26b_a4b_heretic_util", "gemma4_31b_heretic_util", "mistral_small_32_it", "qwen2.5_14b"]
 GDRIVE_LLM_PATH = "/content/drive/MyDrive/tnhcomfy/llm_models" #@param {type:"string"}
 
+#@markdown ---
+#@markdown #### 🧠 System 1 Decision Maker (Laya Engine):
+#@markdown Select which Laya decision model to run on GPU/RAM for fast Director routing (<100ms). Overridden dynamically if synced with backend:
+LAYA_MODEL = "laya_multilingual" #@param ["laya_multilingual", "laya_typed_decisions", "laya_english"]
+
 # Unified secret resolution across environment variables and Colab Secrets
 def resolve_secret(key_name, current_val=""):
     val = (current_val or "").strip()
@@ -191,6 +197,7 @@ print(f"• Network: {TUNNEL_METHOD}")
 print(f"• Concurrency Policy: {CONCURRENCY_POLICY}")
 print(f"• RAM Caching Policy: {CACHE_IN_RAM_SETTING}")
 print(f"• Storage Strategy: {STORAGE_STRATEGY}")
+print(f"• Decision Model: {LAYA_MODEL}")
 if BACKEND_URL:
     print(f"• Backend Sync: {BACKEND_URL} (Sole source of truth for active models)")
 if os.path.exists(MODAL_VOLUME_PATH):
@@ -788,14 +795,21 @@ if mode_key in ("llm", "hybrid"):
 
 # 6. System 1 Decision Maker (Laya System 1 GPU/RAM Engine)
 print("🧠 Installing & pre-downloading Laya System 1 Engine...")
-subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "laya"], check=False)
+subprocess.run([sys.executable, "-m", "pip", "install", "--break-system-packages", "--quiet", "laya"], check=False)
 try:
     from huggingface_hub import snapshot_download
-    laya_target = "/content/agent-data/decisions/laya_multilingual"
+    laya_choice = LAYA_MODEL.strip() if "LAYA_MODEL" in locals() and LAYA_MODEL.strip() else "laya_multilingual"
+    laya_repo_map = {
+        "laya_multilingual": "convaiinnovations/laya-multilingual",
+        "laya_typed_decisions": "convaiinnovations/laya-typed-decisions",
+        "laya_english": "convaiinnovations/laya",
+    }
+    repo_to_fetch = laya_repo_map.get(laya_choice, "convaiinnovations/laya-multilingual")
+    laya_target = f"/content/agent-data/decisions/{laya_choice}"
     os.makedirs(laya_target, exist_ok=True)
-    print("⚡ Pre-downloading Laya multilingual weights from Hugging Face...")
-    snapshot_download("convaiinnovations/laya-multilingual", local_dir=laya_target, token=os.environ.get("HF_TOKEN") or None)
-    print("✅ Laya multilingual model pre-downloaded to local storage!")
+    print(f"⚡ Pre-downloading Laya weights for [{laya_choice}] ({repo_to_fetch}) from Hugging Face...")
+    snapshot_download(repo_to_fetch, local_dir=laya_target, token=os.environ.get("HF_TOKEN") or None)
+    print(f"✅ Laya model [{laya_choice}] pre-downloaded to local storage!")
 except Exception as e:
     print(f"⚠️ Laya pre-download notice: {e}")
 print("✅ Laya System 1 Engine ready (GPU-accelerated, <100ms).")
@@ -1240,6 +1254,7 @@ models_dict = catalog.get("models") or catalog.get("catalog", {})
 active_spec = catalog.get("active", {})
 active_rp = active_spec.get("rp") or LLM_RP_MODEL
 active_util = active_spec.get("util") or LLM_UTIL_MODEL
+active_decisions = active_spec.get("decisions") or (LAYA_MODEL if "LAYA_MODEL" in locals() and LAYA_MODEL.strip() else "laya_multilingual")
 active_image = active_spec.get("image") or ""
 shared_weights = (active_util in ("same_as_rp", active_rp))
 distinct_active_llm = [active_rp] if shared_weights else [active_rp, active_util]
@@ -1247,6 +1262,7 @@ distinct_active_llm = [active_rp] if shared_weights else [active_rp, active_util
 print(f"🌐 Model Catalog synced from {catalog_source}:")
 print(f"   • Active RP Model:   {active_rp}")
 print(f"   • Active Util Model: {active_util} (Shared Weights: {shared_weights})")
+print(f"   • Active Decisions:  {active_decisions}")
 if active_image:
     print(f"   • Active Image Model: {active_image}")
 
@@ -1354,6 +1370,8 @@ if not shared_weights:
     anchor_ids.append(active_util)
 if active_image:
     anchor_ids.append(active_image)
+if active_decisions and active_decisions not in ("same_as_util", "disabled"):
+    anchor_ids.append(active_decisions)
 
 comfy_dir = "/content/ComfyUI"
 ckpt_dir = f"{comfy_dir}/models/checkpoints"
@@ -1542,6 +1560,7 @@ def start_remote_agent():
         COMFY_GPU_DEVICE=str(comfy_gpu_device),
         LLM_GPU_DEVICE=str(llm_gpu_device),
         LAYA_GPU_DEVICE=str(laya_gpu_device),
+        LAYA_MODEL_ID=active_decisions,
         PERSISTENT_STORAGE_PATH=gdrive_root,
         PYTHONUNBUFFERED="1",
         PROVIDER_DOWNLOAD_SCRATCH_DIR=scratch_downloads,
@@ -1688,23 +1707,49 @@ def launch_llm_track():
     else:
         print("⚡ [LLM Track] GGUF weights pre-warmed in RAM cache (/dev/shm). llama-server will start Just-In-Time on first LLM request (0 MB idle GPU VRAM reserved)!")
 
+laya_repo_map = {
+    "laya_multilingual": "convaiinnovations/laya-multilingual",
+    "laya_typed_decisions": "convaiinnovations/laya-typed-decisions",
+    "laya_english": "convaiinnovations/laya",
+}
+
+# Auto-download active Laya weights if needed
+if active_decisions and active_decisions not in ("same_as_util", "disabled"):
+    laya_target_folder = f"/content/agent-data/decisions/{active_decisions}"
+    os.makedirs(laya_target_folder, exist_ok=True)
+    if not (os.path.exists(laya_target_folder) and any(os.listdir(laya_target_folder))):
+        repo_to_dl = laya_repo_map.get(active_decisions) or models_dict.get(active_decisions, {}).get("repo")
+        if repo_to_dl:
+            print(f"📥 Downloading active Laya weights for [{active_decisions}] ({repo_to_dl})...")
+            try:
+                from huggingface_hub import snapshot_download
+                snapshot_download(repo_to_dl, local_dir=laya_target_folder, token=os.environ.get("HF_TOKEN") or None)
+                print(f"✅ Downloaded Laya model [{active_decisions}]!")
+            except Exception as exc:
+                print(f"⚠️ Laya download notice for {active_decisions}: {exc}")
+
 def launch_laya_track():
-    print("⚡ [Laya Track] Pre-warming Laya System 1 on GPU (CUDA)...")
+    if active_decisions in ("same_as_util", "disabled"):
+        print(f"ℹ️ [Laya Track] Decisions mode is '{active_decisions}'; skipping Laya pre-warm.")
+        return
+    print(f"⚡ [Laya Track] Pre-warming Laya [{active_decisions}] on GPU (CUDA)...")
     try:
         import laya
-        laya_dir = "/content/agent-data/decisions/laya_multilingual"
-        src = laya_dir if (os.path.exists(laya_dir) and os.listdir(laya_dir)) else "convaiinnovations/laya-multilingual"
-        try:
-            ram_mgr.ensure_dir_in_ram(src, model_id="laya_multilingual", role="decisions", is_anchor=True)
-        except Exception:
-            pass
+        laya_dir = f"/content/agent-data/decisions/{active_decisions}"
+        repo_fallback = laya_repo_map.get(active_decisions) or models_dict.get(active_decisions, {}).get("repo") or "convaiinnovations/laya-multilingual"
+        src = laya_dir if (os.path.exists(laya_dir) and any(os.listdir(laya_dir))) else repo_fallback
+        if enable_ram_cache:
+            try:
+                ram_mgr.ensure_dir_in_ram(src, model_id=active_decisions, role="decisions", is_anchor=True)
+            except Exception:
+                pass
         hf_tok = os.environ.get("HF_TOKEN") or None
         target_dev = f"cuda:{laya_gpu_device}"
         test_agent = laya.load(src, device=target_dev, token=hf_tok)
         actual_dev = getattr(test_agent, "device", "cuda")
-        print(f"✅ [Laya Track] Laya pre-warmed on {str(actual_dev).upper()} (<100ms inference ready)!")
+        print(f"✅ [Laya Track] Laya [{active_decisions}] pre-warmed on {str(actual_dev).upper()} (<100ms inference ready)!")
     except Exception as exc:
-        print(f"⚠️ [Laya Track] Pre-warming notice: {exc}")
+        print(f"⚠️ [Laya Track] Pre-warming notice for {active_decisions}: {exc}")
 
 # 1. Start Storage Agent immediately
 start_remote_agent()
