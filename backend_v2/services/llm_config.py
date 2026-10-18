@@ -168,10 +168,23 @@ def _served_models(session: Session) -> set[str]:
         return served
     for provider in providers:
         config = getattr(provider, "config", None) or {}
-        for key in ("default_model", "model"):
+        for key in (
+            "default_model",
+            "model",
+            "default_rp_model",
+            "default_util_model",
+            "active_rp",
+            "active_util",
+        ):
             value = config.get(key)
             if value:
                 served.add(str(value))
+        for key in ("served_models", "models"):
+            value = config.get(key)
+            if isinstance(value, (list, tuple, set)):
+                for item in value:
+                    if item:
+                        served.add(str(item))
     return served
 
 

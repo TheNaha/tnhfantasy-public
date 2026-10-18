@@ -216,6 +216,38 @@ class TestRemoteAgentVRAMEndpoints:
         path, mid = mgr._resolve_model_path("unknown_requested_model")
         assert path == str(fake_gguf)
 
+    def test_resolve_model_path_dual_rp_and_util(self, tmp_path, monkeypatch):
+        ram_dir = tmp_path / "shm_dual"
+        ram_dir.mkdir(parents=True)
+        artemis = ram_dir / "TheDrummer_Artemis-31B-v1.2-Q4_K_M.gguf"
+        artemis.write_bytes(b"artemis content")
+        gemma = ram_dir / "gemma-3-12b-it-heretic-Q5_K_M.gguf"
+        gemma.write_bytes(b"gemma content")
+
+        monkeypatch.setenv("RAM_CACHE_DIR", str(ram_dir))
+        monkeypatch.setenv("ACTIVE_RP_MODEL", "artemis_31b_q4")
+        monkeypatch.setenv("ACTIVE_UTIL_MODEL", "gemma3_12b_heretic_util")
+
+        mgr = VRAMManager()
+
+        # "default" or "rp" must resolve to Artemis
+        path_rp, _ = mgr._resolve_model_path("default")
+        assert path_rp == str(artemis)
+
+        path_rp2, _ = mgr._resolve_model_path("rp")
+        assert path_rp2 == str(artemis)
+
+        # "util" must resolve to Gemma
+        path_u, _ = mgr._resolve_model_path("util")
+        assert path_u == str(gemma)
+
+        # Explicit model IDs
+        path_art, _ = mgr._resolve_model_path("artemis_31b_q4")
+        assert path_art == str(artemis)
+
+        path_gem, _ = mgr._resolve_model_path("gemma3_12b_heretic_util")
+        assert path_gem == str(gemma)
+
 
 class TestVRAMManagerDynamicNGL:
     """Test dynamic layer offload calculation and GGUF header parsing."""

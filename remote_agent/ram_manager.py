@@ -144,6 +144,15 @@ class RamModelManager:
         self.anchors: Set[str] = set()
         self._lock = threading.RLock()
 
+        # Seed aliases from environment defaults
+        active_rp = os.getenv("ACTIVE_RP_MODEL") or os.getenv("DEFAULT_RP_MODEL", "")
+        active_util = os.getenv("ACTIVE_UTIL_MODEL") or os.getenv("DEFAULT_UTIL_MODEL", "")
+        if active_rp:
+            self.aliases["rp"] = active_rp
+            self.aliases["default"] = active_rp
+        if active_util:
+            self.aliases["util"] = active_util
+
         # Rescan ram_dir if files already exist
         self._rescan_ram_dir()
 
@@ -152,8 +161,11 @@ class RamModelManager:
         if not self.ram_dir.exists():
             return
         seen_inodes = set()
+        active_rp = os.getenv("ACTIVE_RP_MODEL") or os.getenv("DEFAULT_RP_MODEL", "")
+        active_util = os.getenv("ACTIVE_UTIL_MODEL") or os.getenv("DEFAULT_UTIL_MODEL", "")
+
         for item in self.ram_dir.rglob("*"):
-            if item.is_file() and not item.name.startswith(".") and not item.name.endswith(".tmp"):
+            if item.is_file() and not item.name.startswith(".") and not item.name.endswith(".tmp") and not item.name.endswith(".lock") and not item.name.endswith(".metadata"):
                 try:
                     stat = item.stat()
                     if stat.st_ino in seen_inodes:
@@ -164,9 +176,30 @@ class RamModelManager:
                 mid = item.name
                 sz = item.stat().st_size
                 mtime = item.stat().st_mtime
+
+                # Infer model role from subfolder layout and filename
+                parent_names = [p.name.lower() for p in item.parents]
+                name_lower = item.name.lower()
+                role = "cached"
+                if "checkpoints" in parent_names or name_lower.endswith((".safetensors", ".ckpt")):
+                    role = "image"
+                elif "loras" in parent_names:
+                    role = "lora"
+                elif "vae" in parent_names:
+                    role = "vae"
+                elif "decisions" in parent_names or "laya" in name_lower:
+                    role = "decisions"
+                elif "llm" in parent_names or name_lower.endswith(".gguf"):
+                    if "util" in name_lower or any("util" in p for p in parent_names) or (active_util and (active_util in name_lower or any(active_util in p for p in parent_names))):
+                        role = "util"
+                    elif "artemis" in name_lower or "rp" in name_lower or any("rp" in p for p in parent_names) or (active_rp and (active_rp in name_lower or any(active_rp in p for p in parent_names))):
+                        role = "rp"
+                    else:
+                        role = "llm"
+
                 entry = CacheEntry(
                     model_id=mid,
-                    role="cached",
+                    role=role,
                     source_path=str(item),
                     ram_path=str(item),
                     size_bytes=sz,
@@ -181,6 +214,15 @@ class RamModelManager:
                     orig = mid.split("_", 1)[1]
                     self.aliases[prefix] = mid
                     self.aliases[orig] = mid
+
+                # Explicitly wire active role aliases if matching
+                if active_rp and (active_rp in mid or (item.parent and active_rp in item.parent.name)):
+                    self.aliases["rp"] = mid
+                    self.aliases["default"] = mid
+                    entry.role = "rp"
+                if active_util and (active_util in mid or (item.parent and active_util in item.parent.name)):
+                    self.aliases["util"] = mid
+                    entry.role = "util"
 
     @property
     def current_usage_bytes(self) -> int:

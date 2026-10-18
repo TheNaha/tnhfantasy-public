@@ -161,6 +161,7 @@ def test_server_ram_cache_api(monkeypatch, tmp_path):
     # Import server
     import server
 
+    monkeypatch.setattr(server, "TOKEN", "test-token")
     client = TestClient(server.app)
     headers = {"Authorization": "Bearer test-token"}
 

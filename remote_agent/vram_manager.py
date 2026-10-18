@@ -733,9 +733,8 @@ class VRAMManager:
         """Start llama-server Just-In-Time from RAM cache if not already running."""
         with self._lock:
             # Resolve target KV cache precision and context window
-            target_kv = (kv_cache_type or os.getenv("CACHE_KV_TYPE") or "q8_0").strip().lower()
-            if target_kv not in ("q8_0", "q4_0", "f16"):
-                target_kv = "q8_0"
+            env_kv = (os.getenv("CACHE_KV_TYPE") or "").strip().lower()
+            target_kv = (kv_cache_type or env_kv).strip().lower()
             target_ctx = int(context_tokens or os.getenv("LLAMA_CTX_SIZE") or 8192)
 
             # Resolve model weights path (prefer RAM cache /dev/shm)
@@ -743,6 +742,17 @@ class VRAMManager:
             if not model_path or not os.path.exists(model_path):
                 logger.warning(f"model_path_not_found: {model_path} (mid={model_id})")
                 return False
+
+            if not target_kv:
+                info = self.get_vram_info(device_idx=self.llm_gpu_device)
+                free_mb = info.get("vram_free_mb", 0)
+                is_gemma = "gemma" in model_path.lower() or (model_id and "gemma" in str(model_id).lower())
+                # Gemma 3 experiences severe prefill stalls with quantized KV in llama.cpp; use f16.
+                # High-VRAM GPUs (>= 20GB free) should use f16 for peak prompt eval speed and 0 dequant latency.
+                if is_gemma or free_mb >= 20000:
+                    target_kv = "f16"
+                else:
+                    target_kv = "q8_0"
 
             # If already running with matching model and configuration, return immediately
             is_generic = (not model_id) or (str(model_id).strip().lower() in {"default", "auto", "rp", "llm", "primary", "base"})
@@ -775,16 +785,27 @@ class VRAMManager:
                 "-ngl", str(ngl),
                 "-np", "1",
                 "-c", str(target_ctx),
+                "-b", "2048",
+                "-ub", "512",
                 "--cache-type-k", target_kv,
                 "--cache-type-v", target_kv,
                 "--jinja",
             ]
+            if ngl > 0:
+                cmd.append("-fa")
             if target_ctx > 32768:
                 cmd.extend(["--rope-scaling", "yarn", "--rope-scale", "2.0", "--yarn-orig-ctx", "32768"])
-            aliases = ["default", "rp"]
+
+            # Setup aliases
+            aliases = []
+            is_util_model = ("util" in (resolved_mid or "").lower()) or (model_id and "util" in str(model_id).lower())
+            if is_util_model:
+                aliases.extend(["util", "utility"])
+            else:
+                aliases.extend(["default", "rp"])
             if resolved_mid and resolved_mid not in aliases:
                 aliases.append(resolved_mid)
-            if model_id and str(model_id).strip().lower() not in {"default", "auto", "rp", "llm"}:
+            if model_id and str(model_id).strip().lower() not in {"default", "auto", "rp", "llm", "util"}:
                 aliases.append(str(model_id).strip())
             cmd.extend(["--alias", ",".join(list(dict.fromkeys(aliases)))])
 
@@ -846,9 +867,23 @@ class VRAMManager:
 
     def _resolve_model_path(self, model_id: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
         """Resolve weight file path from RAM cache or disk storage with robust multi-tier fallback."""
-        generic_aliases = {"", "default", "auto", "rp", "llm", "primary", "base", "util", "model"}
-        is_generic = (not model_id) or (str(model_id).strip().lower() in generic_aliases)
-        clean_mid = None if is_generic else str(model_id).strip()
+        raw_mid = str(model_id).strip() if model_id else ""
+        mid_lower = raw_mid.lower()
+
+        is_util = mid_lower in ("util", "utility", "tool", "agentic", "caption") or "util" in mid_lower
+        is_rp = mid_lower in ("rp", "roleplay", "chat", "chat_reply", "story")
+        is_generic = (not raw_mid) or mid_lower in ("default", "auto", "rp", "llm", "primary", "base", "model")
+
+        env_rp = os.getenv("ACTIVE_RP_MODEL") or os.getenv("DEFAULT_RP_MODEL") or "artemis_31b_q4"
+        env_util = os.getenv("ACTIVE_UTIL_MODEL") or os.getenv("DEFAULT_UTIL_MODEL") or "gemma3_12b_heretic_util"
+
+        clean_mid = None
+        if not is_generic and not is_util:
+            clean_mid = raw_mid
+        elif is_util:
+            clean_mid = env_util
+        else:
+            clean_mid = env_rp
 
         disk_dirs = [
             os.getenv("PERSISTENT_STORAGE_PATH", ""),
@@ -880,6 +915,11 @@ class VRAMManager:
                                 if full_p not in direct_candidates:
                                     direct_candidates.append(full_p)
             if is_generic and direct_candidates:
+                target_hint = env_util if is_util else env_rp
+                for cand in direct_candidates:
+                    if target_hint.lower() in cand.lower():
+                        stem = os.path.splitext(os.path.basename(cand))[0]
+                        return cand, stem or target_hint
                 first_p = direct_candidates[0]
                 stem = os.path.splitext(os.path.basename(first_p))[0]
                 return first_p, stem or "default"
@@ -893,16 +933,39 @@ class VRAMManager:
             if not mgr.entries or (clean_mid and not mgr.is_cached(clean_mid)):
                 mgr._rescan_ram_dir()
 
-            if clean_mid and mgr.is_cached(clean_mid):
-                target_id = mgr.aliases.get(clean_mid, clean_mid)
-                if target_id in mgr.entries:
-                    return mgr.entries[target_id].ram_path, clean_mid
+            # 1a. Direct hit or alias hit
+            target_id = mgr.aliases.get(clean_mid, clean_mid)
+            if target_id in mgr.entries:
+                return mgr.entries[target_id].ram_path, clean_mid or target_id
 
-            # If generic request, pick first cached LLM model
-            if is_generic:
+            # Also check alias if raw_mid was requested directly (e.g. "util", "rp", "default")
+            if raw_mid and raw_mid in mgr.aliases:
+                alias_id = mgr.aliases[raw_mid]
+                if alias_id in mgr.entries:
+                    return mgr.entries[alias_id].ram_path, alias_id
+
+            # 1b. Substring match for requested clean_mid
+            if clean_mid:
                 for mid, entry in mgr.entries.items():
-                    if entry.role in ("rp", "util", "llm") or mid.endswith(".gguf") or entry.ram_path.endswith(".gguf"):
+                    if clean_mid.lower() in mid.lower() or clean_mid.lower() in entry.ram_path.lower():
                         return entry.ram_path, mid
+
+            # 1c. Target role match (rp vs util)
+            target_role = "util" if is_util else "rp"
+            for mid, entry in mgr.entries.items():
+                if entry.role == target_role:
+                    return entry.ram_path, mid
+
+            # 1d. Fallback for generic / default / rp: prefer non-util GGUFs first!
+            if is_generic or is_rp:
+                for mid, entry in mgr.entries.items():
+                    if (entry.role in ("rp", "llm") or mid.endswith(".gguf") or entry.ram_path.endswith(".gguf")) and entry.role != "util" and "util" not in mid.lower():
+                        return entry.ram_path, mid
+
+            # 1e. Fallback to any LLM model
+            for mid, entry in mgr.entries.items():
+                if entry.role in ("rp", "util", "llm") or mid.endswith(".gguf") or entry.ram_path.endswith(".gguf"):
+                    return entry.ram_path, mid
         except Exception as exc:
             logger.debug(f"ram_manager_resolve_skipped: {exc}")
 
@@ -924,7 +987,17 @@ class VRAMManager:
                             if clean_mid and clean_mid.lower() in f.lower():
                                 return full_path, clean_mid or f
 
-        if is_generic and ram_ggufs:
+        if ram_ggufs:
+            if is_util:
+                for p in ram_ggufs:
+                    if "util" in p.lower() or "gemma" in p.lower():
+                        stem = os.path.splitext(os.path.basename(p))[0]
+                        return p, stem or env_util
+            else:
+                for p in ram_ggufs:
+                    if "artemis" in p.lower() or ("util" not in p.lower() and "gemma" not in p.lower()):
+                        stem = os.path.splitext(os.path.basename(p))[0]
+                        return p, stem or env_rp
             first_p = ram_ggufs[0]
             stem = os.path.splitext(os.path.basename(first_p))[0]
             return first_p, stem or "default"
@@ -942,7 +1015,17 @@ class VRAMManager:
                             if clean_mid and clean_mid.lower() in f.lower():
                                 return full_path, clean_mid or f
 
-        if is_generic and disk_ggufs:
+        if disk_ggufs:
+            if is_util:
+                for p in disk_ggufs:
+                    if "util" in p.lower() or "gemma" in p.lower():
+                        stem = os.path.splitext(os.path.basename(p))[0]
+                        return p, stem or env_util
+            else:
+                for p in disk_ggufs:
+                    if "artemis" in p.lower() or ("util" not in p.lower() and "gemma" not in p.lower()):
+                        stem = os.path.splitext(os.path.basename(p))[0]
+                        return p, stem or env_rp
             first_p = disk_ggufs[0]
             stem = os.path.splitext(os.path.basename(first_p))[0]
             return first_p, stem or "default"

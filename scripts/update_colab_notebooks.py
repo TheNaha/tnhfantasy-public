@@ -1997,6 +1997,10 @@ def start_remote_agent():
         LLM_GPU_DEVICE=str(llm_gpu_device),
         LAYA_GPU_DEVICE=str(laya_gpu_device),
         LAYA_MODEL_ID=active_decisions,
+        ACTIVE_RP_MODEL=active_rp,
+        ACTIVE_UTIL_MODEL=active_util,
+        DEFAULT_RP_MODEL=active_rp,
+        DEFAULT_UTIL_MODEL=active_util,
         PERSISTENT_STORAGE_PATH=gdrive_root,
         PYTHONUNBUFFERED="1",
         PROVIDER_DOWNLOAD_SCRATCH_DIR=scratch_downloads,
@@ -2117,6 +2121,8 @@ def launch_llm_track():
         ngl = 35
         print(f"  Notice: VRAM layer budgeting fallback ({exc}); using safe -ngl 35")
 
+    free_vram_gb_val = free_vram_gb if "free_vram_gb" in locals() else 0.0
+    target_kv = "f16" if (free_vram_gb_val >= 20.0 or "gemma" in (rp_ram_file or "").lower()) else "q8_0"
     llama_args = [
         llama_exec,
         "--port", str(llm_port),
@@ -2125,10 +2131,14 @@ def launch_llm_track():
         "-ngl", str(ngl),
         "-np", "1",
         "-c", "8192",
-        "--cache-type-k", "q8_0",
-        "--cache-type-v", "q8_0",
+        "-b", "2048",
+        "-ub", "512",
+        "--cache-type-k", target_kv,
+        "--cache-type-v", target_kv,
         "--jinja",
     ]
+    if ngl > 0:
+        llama_args.append("-fa")
     if rp_ram_file and os.path.exists(rp_ram_file):
         aliases = [active_rp, "default", "rp"]
         if shared_weights and active_util != active_rp:
