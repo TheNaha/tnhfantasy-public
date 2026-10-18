@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
-function ContextSlider({ activeChat, onChange }) {
-    const serverVal = activeChat?.max_context_tokens || 4096;
+function ContextSlider({ activeChat, defaultTokens = 4096, onChange }) {
+    const serverVal = activeChat?.max_context_tokens || defaultTokens;
     const [localVal, setLocalVal] = useState(serverVal);
     const [prevServerVal, setPrevServerVal] = useState(serverVal);
 
@@ -14,9 +14,9 @@ function ContextSlider({ activeChat, onChange }) {
     return (
         <input
             type="range"
-            min="2048"
-            max="131072"
-            step="2048"
+            min="1024"
+            max="32768"
+            step="1024"
             value={localVal}
             onChange={(e) => setLocalVal(parseInt(e.target.value))}
             onMouseUp={() => onChange(localVal)}

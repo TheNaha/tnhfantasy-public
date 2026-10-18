@@ -316,3 +316,58 @@ class TestDirectorCascadeAndUpdater:
         assert snap["character_affinity"] == 52
         assert snap["last_affinity_delta"] == 2
         assert snap["character_mood"] == "warm_affectionate"
+
+    def test_laya_gater_does_not_overwrite_existing_mood(self, session: Session):
+        char = Character(name="Kael", description="A knight")
+        session.add(char)
+        session.commit()
+        chat = Chat(character_id=char.id, state_snapshot={"character_mood": "Cautious and vigilant"})
+        session.add(chat)
+        session.commit()
+
+        # Decision with generic label and mood shift
+        decision = DirectorDecisionResult(
+            affinity_delta=0,
+            character_mood="playful_humorous",
+            mood_shift_detected=True,
+            scene_tension=2.0,
+            emotional_tone="warm_intimate",
+        )
+        snap = record_director_decision(session, chat.id, decision)
+        # Should preserve the narrative mood "Cautious and vigilant", not overwrite with "playful_humorous"
+        assert snap["character_mood"] == "Cautious and vigilant"
+        # Decision is recorded in last_director_decision for the Statekeeper to act upon
+        assert snap["last_director_decision"]["character_mood"] == "playful_humorous"
+        assert snap["last_director_decision"]["mood_shift_detected"] is True
+
+    def test_expression_locking_preserves_locked_expression(self, session: Session):
+        char = Character(name="Kael", description="A knight")
+        session.add(char)
+        session.commit()
+        chat = Chat(
+            character_id=char.id,
+            state_snapshot={
+                "character_expression": "blushing",
+                "locked_fields": ["character_expression"],
+            },
+        )
+        session.add(chat)
+        session.commit()
+
+        decision = DirectorDecisionResult(
+            character_expression="angry",
+            scene_tension=4.0,
+        )
+        snap = record_director_decision(session, chat.id, decision)
+        assert snap["character_expression"] == "blushing"  # Locked, so not updated to angry
+
+    def test_chat_entity_defaults_max_autonomous_turns_to_4(self, session: Session):
+        chat = Chat(title="Autonomous Conductor Chat")
+        session.add(chat)
+        session.commit()
+        session.refresh(chat)
+
+        assert chat.max_autonomous_turns == 4
+        assert chat.director_autonomy_level == "balanced"
+        assert chat.director_enabled is True
+

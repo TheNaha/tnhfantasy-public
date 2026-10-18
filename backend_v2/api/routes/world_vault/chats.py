@@ -1210,6 +1210,10 @@ async def _send_message(
                     samplers=sampler_overrides(chat),
                 )
 
+            metadata["autonomous_turn_count"] = 1
+            metadata["max_autonomous_turns"] = getattr(chat, "max_autonomous_turns", 4) or 4
+            metadata["director_autonomy_level"] = getattr(chat, "director_autonomy_level", "balanced") or "balanced"
+
             if request.agentic:
                 from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
                 workflow["tools"] = filter_agentic_tools(

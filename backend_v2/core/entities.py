@@ -1405,6 +1405,8 @@ class Chat(SQLModel, table=True):
     authors_note_depth: int | None = Field(default=None)  # None → default depth 4
     # System 1 Director (Decision Maker) & Statekeeper (Updater) live state snapshot
     director_enabled: bool = Field(default=True)
+    director_autonomy_level: str = Field(default="balanced")  # "strict", "balanced", "cinematic"
+    max_autonomous_turns: int = Field(default=4)  # Default 4 turns
     state_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSONColumn))
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

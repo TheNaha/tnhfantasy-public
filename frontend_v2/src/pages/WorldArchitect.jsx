@@ -1,9 +1,10 @@
 import clsx from 'clsx';
 import { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
     Sparkles, Upload, FileText, Globe2, Users, MapPin, BookOpen, Shield, Clock,
     Check, Plus, ArrowRight, Loader2, Eye, Wand2, Layers, Compass, Shirt, User,
+    Lock, Unlock, Tag, Heart, Trash2, RotateCcw, MessageSquare
 } from 'lucide-react';
 import {
     useCharacters,
@@ -15,7 +16,17 @@ import {
     useCrossoverPreview,
     useCommitWorldBlueprint,
     useRunWorldTick,
+    useExtractScenarios,
+    useExtractVisualTags,
+    useExtractStatekeeper,
+    useExtractWorldLore,
+    useEnrichField,
+    useIngestStoryChained,
 } from '../hooks/useWorldVault';
+
+import CardSourceInspector from '../components/world_architect/CardSourceInspector';
+import ScenariosMappingTab from '../components/world_architect/ScenariosMappingTab';
+import StatekeeperTurn0Tab from '../components/world_architect/StatekeeperTurn0Tab';
 
 const ARCHETYPE_CARDS = [
     {
@@ -58,6 +69,13 @@ export default function WorldArchitect() {
     const commitBlueprintMut = useCommitWorldBlueprint();
     const runWorldTickMut = useRunWorldTick();
 
+    const extractScenariosMut = useExtractScenarios();
+    const extractVisualTagsMut = useExtractVisualTags();
+    const extractStatekeeperMut = useExtractStatekeeper();
+    const extractWorldLoreMut = useExtractWorldLore();
+    const enrichFieldMut = useEnrichField();
+    const ingestStoryChainedMut = useIngestStoryChained();
+
     // Card Onboarding State
     const [cardFile, setCardFile] = useState(null);
     const [selectedExistingCharId, setSelectedExistingCharId] = useState(preselectedCharId);
@@ -67,12 +85,28 @@ export default function WorldArchitect() {
     const [docFile, setDocFile] = useState(null);
     const [storyTitle, setStoryTitle] = useState('');
     const [storyRawText, setStoryRawText] = useState('');
+    const [isChainedIngest, setIsChainedIngest] = useState(false);
 
     // Shared Editable Blueprint State
     const [blueprint, setBlueprint] = useState(null);
     const [launchChat, setLaunchChat] = useState(true);
     const [launchStory, setLaunchStory] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
+
+    // Right Pane Tab Navigation
+    const [activeIntegrationTab, setActiveIntegrationTab] = useState('cast');
+
+    // Director & Statekeeper Locked Fields
+    const [lockedFields, setLockedFields] = useState(['character_mood', 'scene_tension']);
+
+    // Multi-tier Generator States
+    const [isAutoArchitecting, setIsAutoArchitecting] = useState(false);
+    const [autoArchitectStep, setAutoArchitectStep] = useState('');
+    const [isRefiningScenarios, setIsRefiningScenarios] = useState(false);
+    const [isGeneratingVisuals, setIsGeneratingVisuals] = useState(false);
+    const [isSynthesizingTurn0, setIsSynthesizingTurn0] = useState(false);
+    const [isGeneratingWorldLore, setIsGeneratingWorldLore] = useState(false);
+    const [enrichingFieldKey, setEnrichingFieldKey] = useState(null);
 
     // Crossover Studio State
     const [travelerIds, setTravelerIds] = useState([]);
@@ -83,6 +117,22 @@ export default function WorldArchitect() {
     const [customPremise, setCustomPremise] = useState('');
     const [crossoverPreview, setCrossoverPreview] = useState(null);
     const [worldTickResult, setWorldTickResult] = useState(null);
+
+    const handleToggleLock = (field) => {
+        setLockedFields((prev) => {
+            const next = prev.includes(field) ? prev.filter((f) => f !== field) : [...prev, field];
+            if (blueprint?.initial_state_snapshot) {
+                setBlueprint((bp) => ({
+                    ...bp,
+                    initial_state_snapshot: {
+                        ...bp.initial_state_snapshot,
+                        locked_fields: next,
+                    },
+                }));
+            }
+            return next;
+        });
+    };
 
     const handleAnalyzeCard = async (e) => {
         e.preventDefault();
@@ -116,17 +166,277 @@ export default function WorldArchitect() {
             setErrorMsg('Upload a .pdf, .txt, or .md file, or paste story prose below.');
             return;
         }
+
+        const isLongText = (storyRawText.trim().split(/\s+/).length > 2500);
+
         try {
-            const res = await analyzeDocument.mutateAsync({
-                file: docFile,
-                rawText: storyRawText,
-                title: storyTitle,
-            });
-            setBlueprint(res);
-            setLaunchChat(true);
-            setLaunchStory(true);
+            if (isLongText || isChainedIngest) {
+                const res = await ingestStoryChainedMut.mutateAsync({
+                    raw_text: storyRawText.trim(),
+                    title: storyTitle || null,
+                    chunk_size_words: 3500,
+                    overlap_words: 200,
+                });
+                setBlueprint(res);
+                setLaunchChat(true);
+                setLaunchStory(true);
+            } else {
+                const res = await analyzeDocument.mutateAsync({
+                    file: docFile,
+                    rawText: storyRawText,
+                    title: storyTitle,
+                });
+                setBlueprint(res);
+                setLaunchChat(true);
+                setLaunchStory(true);
+            }
         } catch (err) {
             setErrorMsg(err?.message || 'Failed to extract world blueprint from story.');
+        }
+    };
+
+    const handleAutoArchitectAll = async () => {
+        if (!blueprint) return;
+        setIsAutoArchitecting(true);
+        setErrorMsg('');
+        try {
+            const char = blueprint.characters?.[0] || {};
+
+            // Step 1: Visual Tags & Wardrobe
+            setAutoArchitectStep('Step 1/4: Synthesizing visual tags & wardrobe presets...');
+            const visRes = await extractVisualTagsMut.mutateAsync({
+                char_name: char.name || 'Character',
+                description: char.description || '',
+                personality: char.personality || '',
+                avatar_base64: char.avatar_base64 || blueprint.source_card?.avatar_base64 || null,
+                existing_tags: char.visual_tags || [],
+                use_vision: useVision,
+            });
+
+            // Step 2: Director Turn-0 Statekeeper (strictly respecting lockedFields)
+            setAutoArchitectStep('Step 2/4: Synthesizing Turn-0 Statekeeper (preserving locked fields)...');
+            const stateRes = await extractStatekeeperMut.mutateAsync({
+                char_name: char.name || 'Character',
+                description: char.description || '',
+                personality: char.personality || '',
+                scenario_text: char.scenario || '',
+                first_mes: char.first_mes || '',
+                default_location: char.default_location || blueprint.locations?.[0]?.name,
+                default_time: char.default_time,
+                locked_fields: lockedFields,
+                current_state: blueprint.initial_state_snapshot || {},
+            });
+
+            // Step 3: World & Locations Lore
+            setAutoArchitectStep('Step 3/4: Generating World Setting, Locations & Codex...');
+            const worldRes = await extractWorldLoreMut.mutateAsync({
+                char_name: char.name || 'Character',
+                description: char.description || '',
+                scenario_text: char.scenario || '',
+                first_mes: char.first_mes || '',
+                character_book: blueprint.source_card?.character_book || null,
+                existing_locations: blueprint.locations || [],
+                locked_fields: lockedFields,
+            });
+
+            // Step 4: Scenarios & Alternate Greetings
+            setAutoArchitectStep('Step 4/4: Refining Scenarios & Alternate Greetings...');
+            const scenRes = await extractScenariosMut.mutateAsync({
+                char_name: char.name || 'Character',
+                scenario_text: char.scenario || '',
+                first_mes: char.first_mes || '',
+                alternate_greetings: blueprint.source_card?.alternate_greetings || [],
+                default_location: worldRes.locations?.[0]?.name || char.default_location || 'Starting Area',
+                default_time: char.default_time || 'Evening',
+                use_llm: true,
+            });
+
+            // Apply all synthesized updates to blueprint
+            setBlueprint((prev) => {
+                const nextChars = [...(prev.characters || [])];
+                if (nextChars.length > 0) {
+                    nextChars[0] = {
+                        ...nextChars[0],
+                        visual_tags: visRes.visual_tags || nextChars[0].visual_tags,
+                        wardrobe: visRes.wardrobe_presets || nextChars[0].wardrobe,
+                    };
+                }
+                return {
+                    ...prev,
+                    characters: nextChars,
+                    world: {
+                        ...prev.world,
+                        name: worldRes.world_name || prev.world?.name,
+                        description: worldRes.world_description || prev.world?.description,
+                    },
+                    locations: worldRes.locations || prev.locations,
+                    lorebook: worldRes.lorebook || prev.lorebook,
+                    scenarios: scenRes.scenarios || prev.scenarios,
+                    initial_state_snapshot: {
+                        ...prev.initial_state_snapshot,
+                        ...(stateRes.initial_state_snapshot || {}),
+                    },
+                };
+            });
+
+            setAutoArchitectStep('✨ Auto-Architect complete! All sections updated.');
+            setTimeout(() => setAutoArchitectStep(''), 3000);
+        } catch (err) {
+            setErrorMsg(err?.message || 'Auto-Architect pipeline failed.');
+            setAutoArchitectStep('');
+        } finally {
+            setIsAutoArchitecting(false);
+        }
+    };
+
+    const handleRefineScenarios = async () => {
+        if (!blueprint) return;
+        setIsRefiningScenarios(true);
+        try {
+            const char = blueprint.characters?.[0] || {};
+            const res = await extractScenariosMut.mutateAsync({
+                char_name: char.name || 'Character',
+                scenario_text: char.scenario || '',
+                first_mes: char.first_mes || '',
+                alternate_greetings: blueprint.source_card?.alternate_greetings || [],
+                default_location: char.default_location || 'Starting Area',
+                default_time: char.default_time || 'Evening',
+                use_llm: true,
+            });
+            if (res.scenarios) {
+                setBlueprint((prev) => ({
+                    ...prev,
+                    scenarios: res.scenarios,
+                }));
+            }
+        } catch (err) {
+            setErrorMsg(err?.message || 'Failed to refine scenarios.');
+        } finally {
+            setIsRefiningScenarios(false);
+        }
+    };
+
+    const handleGenerateVisualTags = async () => {
+        if (!blueprint) return;
+        setIsGeneratingVisuals(true);
+        try {
+            const char = blueprint.characters?.[0] || {};
+            const res = await extractVisualTagsMut.mutateAsync({
+                char_name: char.name || 'Character',
+                description: char.description || '',
+                personality: char.personality || '',
+                avatar_base64: char.avatar_base64 || blueprint.source_card?.avatar_base64 || null,
+                existing_tags: char.visual_tags || [],
+                use_vision: useVision,
+            });
+            if (res.visual_tags) {
+                setBlueprint((prev) => {
+                    const nextChars = [...prev.characters];
+                    nextChars[0] = {
+                        ...nextChars[0],
+                        visual_tags: res.visual_tags,
+                        wardrobe: res.wardrobe_presets || nextChars[0].wardrobe,
+                    };
+                    return { ...prev, characters: nextChars };
+                });
+            }
+        } catch (err) {
+            setErrorMsg(err?.message || 'Failed to generate visual tags.');
+        } finally {
+            setIsGeneratingVisuals(false);
+        }
+    };
+
+    const handleSynthesizeTurn0 = async () => {
+        if (!blueprint) return;
+        setIsSynthesizingTurn0(true);
+        try {
+            const char = blueprint.characters?.[0] || {};
+            const res = await extractStatekeeperMut.mutateAsync({
+                char_name: char.name || 'Character',
+                description: char.description || '',
+                personality: char.personality || '',
+                scenario_text: char.scenario || '',
+                first_mes: char.first_mes || '',
+                default_location: char.default_location,
+                default_time: char.default_time,
+                locked_fields: lockedFields,
+                current_state: blueprint.initial_state_snapshot || {},
+            });
+            if (res.initial_state_snapshot) {
+                setBlueprint((prev) => ({
+                    ...prev,
+                    initial_state_snapshot: res.initial_state_snapshot,
+                }));
+            }
+        } catch (err) {
+            setErrorMsg(err?.message || 'Failed to synthesize Turn-0 state.');
+        } finally {
+            setIsSynthesizingTurn0(false);
+        }
+    };
+
+    const handleGenerateWorldLore = async () => {
+        if (!blueprint) return;
+        setIsGeneratingWorldLore(true);
+        try {
+            const char = blueprint.characters?.[0] || {};
+            const res = await extractWorldLoreMut.mutateAsync({
+                char_name: char.name || 'Character',
+                description: char.description || '',
+                scenario_text: char.scenario || '',
+                first_mes: char.first_mes || '',
+                character_book: blueprint.source_card?.character_book || null,
+                existing_locations: blueprint.locations || [],
+                locked_fields: lockedFields,
+            });
+            setBlueprint((prev) => ({
+                ...prev,
+                world: {
+                    ...prev.world,
+                    name: res.world_name || prev.world?.name,
+                    description: res.world_description || prev.world?.description,
+                },
+                locations: res.locations || prev.locations,
+                lorebook: res.lorebook || prev.lorebook,
+            }));
+        } catch (err) {
+            setErrorMsg(err?.message || 'Failed to generate world lore.');
+        } finally {
+            setIsGeneratingWorldLore(false);
+        }
+    };
+
+    const handleEnrichField = async (fieldKey, currentValue, instruction) => {
+        if (!currentValue) return;
+        setEnrichingFieldKey(fieldKey);
+        try {
+            const char = blueprint.characters?.[0] || {};
+            const res = await enrichFieldMut.mutateAsync({
+                field_name: fieldKey,
+                current_value: currentValue,
+                char_name: char.name || '',
+                context: char.scenario || blueprint.world?.description || '',
+                instruction: instruction || 'Enrich with vivid sensory details and atmospheric prose.',
+            });
+            if (res.enriched_value) {
+                if (fieldKey === 'description' || fieldKey === 'personality' || fieldKey === 'scenario') {
+                    setBlueprint((prev) => {
+                        const nextChars = [...prev.characters];
+                        nextChars[0] = { ...nextChars[0], [fieldKey]: res.enriched_value };
+                        return { ...prev, characters: nextChars };
+                    });
+                } else if (fieldKey === 'world_description') {
+                    setBlueprint((prev) => ({
+                        ...prev,
+                        world: { ...prev.world, description: res.enriched_value },
+                    }));
+                }
+            }
+        } catch (err) {
+            setErrorMsg(err?.message || `Failed to enrich ${fieldKey}.`);
+        } finally {
+            setEnrichingFieldKey(null);
         }
     };
 
@@ -140,9 +450,9 @@ export default function WorldArchitect() {
                 launch_story: launchStory,
             });
             if (res.chat_id) {
-                navigate(`/chats?chatId=${res.chat_id}`);
+                navigate(`/chat/${res.chat_id}`);
             } else if (res.story_id) {
-                navigate(`/stories?storyId=${res.story_id}`);
+                navigate(`/story/${res.story_id}`);
             } else if (res.world_id) {
                 navigate(`/worlds/${res.world_id}`);
             }
@@ -151,12 +461,24 @@ export default function WorldArchitect() {
         }
     };
 
+    const handleToggleTraveler = (id) => {
+        setTravelerIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    };
+
+    const handleToggleResident = (id) => {
+        setResidentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    };
+
     const handlePreviewCrossover = async (commitImmediately = false) => {
-        setErrorMsg('');
-        if (travelerIds.length === 0 || !targetWorldId) {
-            setErrorMsg('Select at least one Traveler Character and a Destination World.');
+        if (travelerIds.length === 0) {
+            setErrorMsg('Select at least one Traveler Character.');
             return;
         }
+        if (!targetWorldId) {
+            setErrorMsg('Select a Destination World.');
+            return;
+        }
+        setErrorMsg('');
         try {
             const res = await crossoverPreviewMut.mutateAsync({
                 traveler_character_ids: travelerIds,
@@ -172,81 +494,61 @@ export default function WorldArchitect() {
                 navigate(`/chats?chatId=${res.launched_chat_id}`);
             }
         } catch (err) {
-            setErrorMsg(err?.message || 'Failed to synthesize World Crossover.');
+            setErrorMsg(err?.message || 'Failed to generate crossover scenario.');
         }
     };
 
-    const handleToggleTraveler = (cid) => {
-        setTravelerIds((prev) =>
-            prev.includes(cid) ? prev.filter((x) => x !== cid) : [...prev, cid]
-        );
-    };
-
-    const handleToggleResident = (cid) => {
-        setResidentIds((prev) =>
-            prev.includes(cid) ? prev.filter((x) => x !== cid) : [...prev, cid]
-        );
-    };
-
-    const targetWorldLocations = targetWorldId
-        ? locations.filter((l) => l.world_id === targetWorldId)
-        : [];
-
-    const isAnalyzing =
-        analyzeCard.isPending ||
-        analyzeExistingChar.isPending ||
-        analyzeDocument.isPending;
+    const targetWorldLocations = locations.filter((l) => l.world_id === targetWorldId);
+    const isAnalyzing = analyzeCard.isPending || analyzeExistingChar.isPending || analyzeDocument.isPending || ingestStoryChainedMut.isPending;
 
     return (
-        <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+        <div className="space-y-6 pb-20">
             {/* Header */}
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                    <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-widest mb-1">
-                        <Wand2 size={14} /> World Vault Onboarding &amp; Multiverse Studio
-                    </div>
-                    <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                        World Architect Studio
+                    <h1 className="text-xl font-extrabold text-white flex items-center gap-2">
+                        <Compass className="text-emerald-400" size={24} />
+                        World Architect &amp; SillyTavern Ingestion Studio
                     </h1>
-                    <p className="text-sm text-gray-400 mt-1">
-                        Transform a SillyTavern card or PDF/story into a living World with Vision-extracted outfits, Locations, Scenarios, Personas, Skillsets, and Turn-0 Statekeeper state — or launch a World Crossover.
+                    <p className="text-xs text-gray-400 mt-1">
+                        Dual-pane ingestion manager: inspect raw cards on the left, auto-architect and map scenarios, locations, lorebooks, and Turn-0 state on the right.
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <Link
-                        to="/worlds"
-                        className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-gray-300"
+
+                {blueprint && (
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setBlueprint(null);
+                            setCardFile(null);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-gray-800 hover:bg-gray-700 border border-white/10 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition-all"
                     >
-                        View Worlds
-                    </Link>
-                    <Link
-                        to="/characters"
-                        className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-gray-300"
-                    >
-                        View Characters
-                    </Link>
-                </div>
+                        <RotateCcw size={13} />
+                        <span>Load Another Card</span>
+                    </button>
+                )}
             </div>
 
-            {/* Mode Tabs */}
+            {/* Ingestion Mode Navigation */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {[
                     {
                         id: 'card',
-                        label: '1. Card → Rich World',
-                        sub: 'SillyTavern PNG/JSON/CharX + Vision LLM',
-                        icon: Upload,
+                        label: 'SillyTavern Card -> World',
+                        sub: 'Character Card (.png / .json / .charx)',
+                        icon: Sparkles,
                     },
                     {
                         id: 'document',
-                        label: '2. Story / PDF → World',
-                        sub: 'Extract Cast, Places, Lore & Chapters',
-                        icon: FileText,
+                        label: 'Story Document -> World',
+                        sub: 'Long Fiction / PDF / Chained Ingest',
+                        icon: BookOpen,
                     },
                     {
                         id: 'crossover',
-                        label: '3. World Crossover Studio',
-                        sub: 'Transmigrate Characters Across Worlds',
+                        label: 'Multiverse Crossover Studio',
+                        sub: 'Isekai / Dimensional Rift / Portal',
                         icon: Globe2,
                     },
                 ].map((tab) => {
@@ -278,13 +580,13 @@ export default function WorldArchitect() {
             </div>
 
             {errorMsg && (
-                <div className="p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-200 text-xs font-medium">
-                    {errorMsg}
+                <div className="p-3.5 rounded-xl bg-red-500/15 border border-red-500/30 text-red-200 text-xs font-medium flex items-center gap-2">
+                    <span>{errorMsg}</span>
                 </div>
             )}
 
-            {/* TAB 1: CARD -> WORLD */}
-            {activeTab === 'card' && (
+            {/* TAB 1: CARD UPLOAD FORM (SHOWN WHEN NO BLUEPRINT LOADED) */}
+            {activeTab === 'card' && !blueprint && (
                 <form onSubmit={handleAnalyzeCard} className="glass-panel rounded-2xl p-5 border border-white/10 space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
@@ -334,24 +636,24 @@ export default function WorldArchitect() {
                             />
                             <Eye size={14} className="text-pink-400" />
                             <span>
-                                Use <b>Vision LLM</b> on embedded card portrait to extract visual tags, outfit, wardrobe presets &amp; backdrop setting
+                                Use <b>Vision LLM</b> on embedded portrait to extract visual tags, wardrobe presets &amp; backdrop
                             </span>
                         </label>
 
                         <button
                             type="submit"
                             disabled={isAnalyzing}
-                            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg disabled:opacity-50"
+                            className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg disabled:opacity-50"
                         >
                             {isAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                            Analyze &amp; Generate World Blueprint
+                            Analyze &amp; Launch Dual-Pane Ingestion Manager
                         </button>
                     </div>
                 </form>
             )}
 
-            {/* TAB 2: DOCUMENT / PDF / STORY -> WORLD */}
-            {activeTab === 'document' && (
+            {/* TAB 2: DOCUMENT / STORY FORM (SHOWN WHEN NO BLUEPRINT LOADED) */}
+            {activeTab === 'document' && !blueprint && (
                 <form onSubmit={handleAnalyzeDocument} className="glass-panel rounded-2xl p-5 border border-white/10 space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
@@ -380,14 +682,25 @@ export default function WorldArchitect() {
                     </div>
 
                     <div className="space-y-2">
-                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-300">
-                            Or Paste Story Prose / Lore Chapter Directly
-                        </label>
+                        <div className="flex items-center justify-between">
+                            <label className="block text-xs font-bold uppercase tracking-wider text-gray-300">
+                                Or Paste Story Prose / Lore Chapter Directly
+                            </label>
+                            <label className="flex items-center gap-1.5 text-2xs text-purple-300 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={isChainedIngest}
+                                    onChange={(e) => setIsChainedIngest(e.target.checked)}
+                                    className="accent-purple-500"
+                                />
+                                <span>Chained Long Ingestion (for 50k+ words)</span>
+                            </label>
+                        </div>
                         <textarea
-                            rows={5}
+                            rows={6}
                             value={storyRawText}
                             onChange={(e) => setStoryRawText(e.target.value)}
-                            placeholder="Paste a chapter, short story, or worldbuilding document here to extract playable characters, locations, lorebook entries, and scenarios..."
+                            placeholder="Paste a chapter, novel manuscript, or massive story text here. The sliding-window chained engine will accumulate entities across chunks without context blowout..."
                             className="w-full bg-gray-900/80 border border-white/10 rounded-xl p-3 text-xs text-gray-200 focus:outline-none focus:border-purple-500/50"
                         />
                     </div>
@@ -396,7 +709,7 @@ export default function WorldArchitect() {
                         <button
                             type="submit"
                             disabled={isAnalyzing}
-                            className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg disabled:opacity-50"
+                            className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg disabled:opacity-50"
                         >
                             {isAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <BookOpen size={14} />}
                             Extract Playable World &amp; Cast
@@ -405,147 +718,149 @@ export default function WorldArchitect() {
                 </form>
             )}
 
-            {/* SHARED BLUEPRINT REVIEW & EDITOR (FOR TABS 1 & 2) */}
+            {/* DUAL-PANE SILLYTAVERN INGESTION MANAGER & WORLD INTEGRATOR */}
             {(activeTab === 'card' || activeTab === 'document') && blueprint && (
-                <div className="space-y-5">
-                    {/* Telemetry Banner */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs">
-                        <div className="flex items-center gap-2 text-emerald-200 font-medium">
-                            <Check size={14} className="text-emerald-400" />
-                            <span>
-                                World Blueprint Ready — <b>{blueprint.characters?.length || 0}</b> Character(s),{' '}
-                                <b>{blueprint.locations?.length || 0}</b> Location(s),{' '}
-                                <b>{blueprint.scenarios?.length || 0}</b> Scenario(s),{' '}
-                                <b>{blueprint.lorebook?.entries?.length || 0}</b> Lore Entries
-                            </span>
-                        </div>
-                        <div className="text-2xs font-mono text-emerald-300">
-                            Engine: {blueprint.analysis_meta?.engine_used || 'heuristic'}
-                            {blueprint.analysis_meta?.vision_used ? ' + Vision LLM' : ''}
-                        </div>
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                    {/* LEFT PANE: SOURCE CARD INSPECTOR */}
+                    <div className="lg:col-span-5 sticky top-4 max-h-[calc(100vh-2.5rem)]">
+                        <CardSourceInspector
+                            sourceCard={blueprint.source_card || {
+                                name: blueprint.characters?.[0]?.name,
+                                description: blueprint.characters?.[0]?.description,
+                                personality: blueprint.characters?.[0]?.personality,
+                                scenario: blueprint.characters?.[0]?.scenario,
+                                first_mes: blueprint.characters?.[0]?.first_mes,
+                                alternate_greetings: blueprint.characters?.[0]?.alternate_greetings || [],
+                                avatar_base64: blueprint.characters?.[0]?.avatar_base64,
+                            }}
+                            onCopyField={(_key) => {
+                                // optional notification or clipboard sync
+                            }}
+                        />
                     </div>
 
-                    {/* 1. World Target (Create vs Merge) */}
-                    <div className="glass-panel rounded-2xl p-5 border border-white/10 space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                <Globe2 size={15} className="text-emerald-400" /> 1. World Container
-                            </h3>
-                            <div className="flex items-center gap-2 text-xs">
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        setBlueprint((prev) => ({
-                                            ...prev,
-                                            world: { ...prev.world, mode: 'create' },
-                                        }))
-                                    }
-                                    className={clsx(
-                                        'px-2.5 py-1 rounded-lg border text-xs',
-                                        blueprint.world?.mode !== 'merge'
-                                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200 font-semibold'
-                                            : 'bg-gray-900 border-white/10 text-gray-400'
-                                    )}
-                                >
-                                    Create New World
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        setBlueprint((prev) => ({
-                                            ...prev,
-                                            world: {
-                                                ...prev.world,
-                                                mode: 'merge',
-                                                existing_world_id: prev.world?.existing_world_id || worlds[0]?.id || '',
-                                            },
-                                        }))
-                                    }
-                                    disabled={worlds.length === 0}
-                                    className={clsx(
-                                        'px-2.5 py-1 rounded-lg border text-xs disabled:opacity-40',
-                                        blueprint.world?.mode === 'merge'
-                                            ? 'bg-purple-500/20 border-purple-500/40 text-purple-200 font-semibold'
-                                            : 'bg-gray-900 border-white/10 text-gray-400'
-                                    )}
-                                >
-                                    Merge Into Existing World
-                                </button>
-                            </div>
-                        </div>
-
-                        {blueprint.world?.mode === 'merge' ? (
-                            <div>
-                                <label className="block text-2xs uppercase text-gray-400 mb-1">Select Target World</label>
-                                <select
-                                    value={blueprint.world?.existing_world_id || ''}
-                                    onChange={(e) =>
-                                        setBlueprint((prev) => ({
-                                            ...prev,
-                                            world: { ...prev.world, existing_world_id: e.target.value },
-                                        }))
-                                    }
-                                    className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-3 py-2 text-xs text-gray-200"
-                                >
-                                    {worlds.map((w) => (
-                                        <option key={w.id} value={w.id}>
-                                            {w.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* RIGHT PANE: TARGET WORLD VAULT INTEGRATION STUDIO */}
+                    <div className="lg:col-span-7 space-y-4">
+                        {/* Top Master Toolbar: [⚡ Auto-Architect All] One-Button Pipeline */}
+                        <div className="glass-panel rounded-2xl p-4 border border-emerald-500/30 bg-gradient-to-r from-emerald-950/30 to-purple-950/20 shadow-xl space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
-                                    <label className="block text-2xs uppercase text-gray-400 mb-1">World Name</label>
-                                    <input
-                                        type="text"
-                                        value={blueprint.world?.name || ''}
-                                        onChange={(e) =>
-                                            setBlueprint((prev) => ({
-                                                ...prev,
-                                                world: { ...prev.world, name: e.target.value },
-                                            }))
-                                        }
-                                        className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
-                                    />
+                                    <div className="flex items-center gap-2">
+                                        <h2 className="text-sm font-extrabold text-white">Target World Vault Integration</h2>
+                                        <span className="px-2 py-0.5 rounded-full text-3xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                            Live Ingestion
+                                        </span>
+                                    </div>
+                                    <p className="text-2xs text-gray-400 mt-0.5">
+                                        Deterministic auto-mapping loaded. Refine sections individually or run Master Auto-Architect.
+                                    </p>
                                 </div>
-                                <div className="md:col-span-2">
-                                    <label className="block text-2xs uppercase text-gray-400 mb-1">World Description &amp; Premise</label>
-                                    <input
-                                        type="text"
-                                        value={blueprint.world?.description || ''}
-                                        onChange={(e) =>
-                                            setBlueprint((prev) => ({
-                                                ...prev,
-                                                world: { ...prev.world, description: e.target.value },
-                                            }))
-                                        }
-                                        className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-3 py-2 text-xs text-gray-200"
-                                    />
+
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleAutoArchitectAll}
+                                        disabled={isAutoArchitecting}
+                                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-gray-950 text-xs font-extrabold flex items-center gap-2 shadow-lg transition-all transform hover:scale-[1.02] disabled:opacity-50"
+                                        title="Execute sequential 4-stage LLM generation for Visuals, Turn-0 State, World Lore, and Scenarios while respecting locked fields"
+                                    >
+                                        {isAutoArchitecting ? <Loader2 size={14} className="animate-spin text-gray-950" /> : <Sparkles size={14} />}
+                                        <span>{isAutoArchitecting ? 'Auto-Architecting...' : '⚡ Auto-Architect All'}</span>
+                                    </button>
                                 </div>
                             </div>
-                        )}
-                    </div>
 
-                    {/* 2. Characters & Visual Tags / Skillsets */}
-                    <div className="glass-panel rounded-2xl p-5 border border-white/10 space-y-3">
-                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                            <Users size={15} className="text-purple-400" /> 2. Extracted Cast &amp; Visual / Skill Profiles
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {(blueprint.characters || []).map((char, idx) => (
-                                <div key={idx} className="bg-black/30 rounded-xl p-3.5 border border-white/10 space-y-2">
-                                    <div className="flex items-start gap-3">
-                                        {char.avatar_base64 && (
-                                            <img
-                                                src={`data:image/png;base64,${char.avatar_base64}`}
-                                                alt={char.name}
-                                                className="w-14 h-14 rounded-xl object-cover border border-white/15 shrink-0"
-                                            />
+                            {/* Auto-Architect Step Live Progress Indicator */}
+                            {autoArchitectStep && (
+                                <div className="px-3 py-1.5 rounded-xl bg-black/40 border border-emerald-500/30 text-2xs font-mono text-emerald-300 flex items-center gap-2">
+                                    {isAutoArchitecting && <Loader2 size={12} className="animate-spin text-emerald-400" />}
+                                    <span>{autoArchitectStep}</span>
+                                </div>
+                            )}
+
+                            {/* Telemetry Chips */}
+                            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-white/5 text-2xs text-gray-400">
+                                <span>Cast: <b className="text-white">{blueprint.characters?.length || 0}</b></span>
+                                <span>•</span>
+                                <span>Scenarios: <b className="text-white">{blueprint.scenarios?.length || 0}</b></span>
+                                <span>•</span>
+                                <span>Locations: <b className="text-white">{blueprint.locations?.length || 0}</b></span>
+                                <span>•</span>
+                                <span>Lore: <b className="text-white">{blueprint.lorebook?.entries?.length || 0}</b></span>
+                                {lockedFields.length > 0 && (
+                                    <>
+                                        <span>•</span>
+                                        <span className="text-amber-400 font-semibold flex items-center gap-1">
+                                            <Lock size={10} /> {lockedFields.length} fields locked
+                                        </span>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Right Pane Tab Navigation */}
+                        <div className="flex flex-wrap gap-1 p-1 rounded-xl bg-gray-900/80 border border-white/10 text-xs">
+                            {[
+                                { id: 'cast', label: 'Cast & Persona', icon: Users },
+                                { id: 'scenarios', label: `Scenarios (${blueprint.scenarios?.length || 0})`, icon: MessageSquare },
+                                { id: 'statekeeper', label: 'Director Turn-0', icon: Shield, badge: lockedFields.length > 0 ? `${lockedFields.length} 🔒` : null },
+                                { id: 'world', label: 'World & Locations', icon: Globe2 },
+                                { id: 'lorebook', label: `Codex (${blueprint.lorebook?.entries?.length || 0})`, icon: BookOpen },
+                                ...(blueprint.story_chapters?.length ? [{ id: 'story', label: `Story Sandbox (${blueprint.story_chapters.length} Ch.)`, icon: BookOpen }] : []),
+                            ].map((tab) => {
+                                const Icon = tab.icon;
+                                const active = activeIntegrationTab === tab.id;
+                                return (
+                                    <button
+                                        key={tab.id}
+                                        type="button"
+                                        onClick={() => setActiveIntegrationTab(tab.id)}
+                                        className={clsx(
+                                            'px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all text-2xs sm:text-xs',
+                                            active
+                                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm'
+                                                : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
                                         )}
-                                        <div className="flex-1 min-w-0 space-y-1">
-                                            <div className="flex items-center justify-between gap-2">
+                                    >
+                                        <Icon size={13} />
+                                        <span>{tab.label}</span>
+                                        {tab.badge && (
+                                            <span className="px-1 py-0.2 rounded text-3xs font-mono font-bold bg-amber-500/20 text-amber-300">
+                                                {tab.badge}
+                                            </span>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {/* TAB 1: CAST & PERSONA */}
+                        {activeIntegrationTab === 'cast' && (
+                            <div className="space-y-4">
+                                {(blueprint.characters || []).map((char, idx) => (
+                                    <div key={idx} className="glass-panel rounded-2xl p-5 border border-white/10 space-y-4 text-xs">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                <User size={16} className="text-purple-400" />
+                                                Character #{idx + 1}: {char.name}
+                                            </h3>
+
+                                            <button
+                                                type="button"
+                                                onClick={handleGenerateVisualTags}
+                                                disabled={isGeneratingVisuals}
+                                                className="px-3 py-1 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 text-purple-200 text-2xs font-semibold flex items-center gap-1.5"
+                                            >
+                                                <Sparkles size={12} className={isGeneratingVisuals ? 'animate-spin' : ''} />
+                                                <span>{isGeneratingVisuals ? 'Generating Tags...' : '✨ Generate Tags & Wardrobe'}</span>
+                                            </button>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-3xs font-bold uppercase tracking-wider text-gray-400">
+                                                    Character Name
+                                                </label>
                                                 <input
                                                     type="text"
                                                     value={char.name || ''}
@@ -554,352 +869,416 @@ export default function WorldArchitect() {
                                                         next[idx] = { ...char, name: e.target.value };
                                                         setBlueprint((prev) => ({ ...prev, characters: next }));
                                                     }}
-                                                    className="bg-gray-900/80 border border-white/10 rounded px-2 py-1 text-xs font-bold text-white w-full"
-                                                />
-                                                <input
-                                                    type="checkbox"
-                                                    checked={char.selected !== false}
-                                                    onChange={(e) => {
-                                                        const next = [...blueprint.characters];
-                                                        next[idx] = { ...char, selected: e.target.checked };
-                                                        setBlueprint((prev) => ({ ...prev, characters: next }));
-                                                    }}
-                                                    className="accent-purple-500"
+                                                    className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white"
                                                 />
                                             </div>
-                                            <div className="grid grid-cols-2 gap-1.5 text-2xs">
-                                                <input
-                                                    type="text"
-                                                    value={char.default_location || ''}
-                                                    onChange={(e) => {
-                                                        const next = [...blueprint.characters];
-                                                        next[idx] = { ...char, default_location: e.target.value };
-                                                        setBlueprint((prev) => ({ ...prev, characters: next }));
-                                                    }}
-                                                    placeholder="Default Location"
-                                                    className="bg-gray-900/60 border border-white/5 rounded px-2 py-1 text-gray-300"
-                                                />
-                                                <input
-                                                    type="text"
-                                                    value={char.default_time || ''}
-                                                    onChange={(e) => {
-                                                        const next = [...blueprint.characters];
-                                                        next[idx] = { ...char, default_time: e.target.value };
-                                                        setBlueprint((prev) => ({ ...prev, characters: next }));
-                                                    }}
-                                                    placeholder="Default Time"
-                                                    className="bg-gray-900/60 border border-white/5 rounded px-2 py-1 text-gray-300"
-                                                />
+
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div className="space-y-1">
+                                                    <label className="text-3xs font-bold uppercase tracking-wider text-gray-400">
+                                                        Default Location
+                                                    </label>
+                                                    <input
+                                                        type="text"
+                                                        value={char.default_location || ''}
+                                                        onChange={(e) => {
+                                                            const next = [...blueprint.characters];
+                                                            next[idx] = { ...char, default_location: e.target.value };
+                                                            setBlueprint((prev) => ({ ...prev, characters: next }));
+                                                        }}
+                                                        className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-gray-200"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <label className="text-3xs font-bold uppercase tracking-wider text-gray-400">
+                                                        Default Time
+                                                    </label>
+                                                    <input
+                                                        type="text"
+                                                        value={char.default_time || ''}
+                                                        onChange={(e) => {
+                                                            const next = [...blueprint.characters];
+                                                            next[idx] = { ...char, default_time: e.target.value };
+                                                            setBlueprint((prev) => ({ ...prev, characters: next }));
+                                                        }}
+                                                        className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-gray-200"
+                                                    />
+                                                </div>
                                             </div>
                                         </div>
+
+                                        {/* Description + Enrich Button */}
+                                        <div className="space-y-1">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-3xs font-bold uppercase tracking-wider text-gray-400">
+                                                    Description ({char.description?.length || 0} chars)
+                                                </label>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleEnrichField('description', char.description)}
+                                                    disabled={enrichingFieldKey === 'description'}
+                                                    className="text-3xs text-purple-300 hover:text-purple-200 flex items-center gap-1 font-semibold"
+                                                >
+                                                    <Wand2 size={11} className={enrichingFieldKey === 'description' ? 'animate-spin' : ''} />
+                                                    <span>{enrichingFieldKey === 'description' ? 'Enriching...' : '✨ Enrich Description'}</span>
+                                                </button>
+                                            </div>
+                                            <textarea
+                                                rows={3}
+                                                value={char.description || ''}
+                                                onChange={(e) => {
+                                                    const next = [...blueprint.characters];
+                                                    next[idx] = { ...char, description: e.target.value };
+                                                    setBlueprint((prev) => ({ ...prev, characters: next }));
+                                                }}
+                                                className="w-full bg-gray-900/80 border border-white/10 rounded-xl p-2.5 text-xs text-gray-200"
+                                            />
+                                        </div>
+
+                                        {/* Personality + Enrich Button */}
+                                        <div className="space-y-1">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-3xs font-bold uppercase tracking-wider text-gray-400">
+                                                    Personality ({char.personality?.length || 0} chars)
+                                                </label>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleEnrichField('personality', char.personality)}
+                                                    disabled={enrichingFieldKey === 'personality'}
+                                                    className="text-3xs text-purple-300 hover:text-purple-200 flex items-center gap-1 font-semibold"
+                                                >
+                                                    <Wand2 size={11} className={enrichingFieldKey === 'personality' ? 'animate-spin' : ''} />
+                                                    <span>{enrichingFieldKey === 'personality' ? 'Enriching...' : '✨ Enrich Personality'}</span>
+                                                </button>
+                                            </div>
+                                            <textarea
+                                                rows={2}
+                                                value={char.personality || ''}
+                                                onChange={(e) => {
+                                                    const next = [...blueprint.characters];
+                                                    next[idx] = { ...char, personality: e.target.value };
+                                                    setBlueprint((prev) => ({ ...prev, characters: next }));
+                                                }}
+                                                className="w-full bg-gray-900/80 border border-white/10 rounded-xl p-2.5 text-xs text-gray-200"
+                                            />
+                                        </div>
+
+                                        {/* ComfyUI Visual Tags */}
+                                        <div className="space-y-1.5 p-3 rounded-xl bg-purple-950/20 border border-purple-500/20">
+                                            <label className="text-3xs font-bold uppercase tracking-wider text-purple-300 flex items-center gap-1">
+                                                <Tag size={11} /> ComfyUI Visual Tags (comma-separated prompt tokens)
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={(char.visual_tags || []).join(', ')}
+                                                onChange={(e) => {
+                                                    const tags = e.target.value.split(',').map((t) => t.trim()).filter(Boolean);
+                                                    const next = [...blueprint.characters];
+                                                    next[idx] = { ...char, visual_tags: tags };
+                                                    setBlueprint((prev) => ({ ...prev, characters: next }));
+                                                }}
+                                                className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-purple-200"
+                                            />
+                                        </div>
+
+                                        {/* Wardrobe Presets */}
+                                        {char.wardrobe && char.wardrobe.length > 0 && (
+                                            <div className="space-y-1.5">
+                                                <label className="text-3xs font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1">
+                                                    <Shirt size={11} /> Wardrobe Presets ({char.wardrobe.length})
+                                                </label>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                    {char.wardrobe.map((w, widx) => (
+                                                        <div key={widx} className="p-2 rounded-xl bg-gray-900/70 border border-white/5 space-y-0.5">
+                                                            <div className="font-bold text-2xs text-gray-200">{w.name}</div>
+                                                            <div className="text-3xs text-gray-400">{w.outfit}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+
+                                {/* Suggested Persona */}
+                                <div className="glass-panel rounded-2xl p-4 border border-white/10 space-y-3 text-xs">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="text-xs font-bold text-sky-300 flex items-center gap-1.5">
+                                            <User size={14} /> Suggested {`{{user}}`} Persona: {blueprint.persona?.name || 'Companion'}
+                                        </h4>
+                                        <label className="flex items-center gap-1.5 text-2xs text-sky-200 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={Boolean(blueprint.persona?.create)}
+                                                onChange={(e) =>
+                                                    setBlueprint((prev) => ({
+                                                        ...prev,
+                                                        persona: { ...prev.persona, create: e.target.checked },
+                                                    }))
+                                                }
+                                                className="accent-sky-500"
+                                            />
+                                            <span>Save to Persona Vault</span>
+                                        </label>
+                                    </div>
+                                    <p className="text-2xs text-gray-300">{blueprint.persona?.description}</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* TAB 2: SCENARIOS & GREETINGS */}
+                        {activeIntegrationTab === 'scenarios' && (
+                            <ScenariosMappingTab
+                                scenarios={blueprint.scenarios || []}
+                                onChangeScenarios={(next) => setBlueprint((prev) => ({ ...prev, scenarios: next }))}
+                                onRefineWithLLM={handleRefineScenarios}
+                                onEnrichGreeting={(scenarioId, text) => handleEnrichField(`scenario_${scenarioId}`, text)}
+                                isRefining={isRefiningScenarios}
+                            />
+                        )}
+
+                        {/* TAB 3: DIRECTOR & STATEKEEPER TURN-0 */}
+                        {activeIntegrationTab === 'statekeeper' && (
+                            <StatekeeperTurn0Tab
+                                snapshot={blueprint.initial_state_snapshot || {}}
+                                lockedFields={lockedFields}
+                                onChangeSnapshot={(snap) =>
+                                    setBlueprint((prev) => ({
+                                        ...prev,
+                                        initial_state_snapshot: snap,
+                                    }))
+                                }
+                                onToggleLock={handleToggleLock}
+                                onSynthesizeTurn0={handleSynthesizeTurn0}
+                                isSynthesizing={isSynthesizingTurn0}
+                            />
+                        )}
+
+                        {/* TAB 4: WORLD & LOCATIONS */}
+                        {activeIntegrationTab === 'world' && (
+                            <div className="space-y-4 text-xs">
+                                <div className="glass-panel rounded-2xl p-4 border border-white/10 space-y-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                            <Globe2 size={16} className="text-emerald-400" />
+                                            World Container
+                                        </h3>
+                                        <button
+                                            type="button"
+                                            onClick={handleGenerateWorldLore}
+                                            disabled={isGeneratingWorldLore}
+                                            className="px-3 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-200 text-2xs font-semibold flex items-center gap-1.5"
+                                        >
+                                            <Sparkles size={12} className={isGeneratingWorldLore ? 'animate-spin' : ''} />
+                                            <span>{isGeneratingWorldLore ? 'Generating...' : '✨ Generate World & Locations'}</span>
+                                        </button>
                                     </div>
 
-                                    <div>
-                                        <label className="block text-2xs uppercase text-gray-400 mb-0.5">
-                                            ComfyUI Visual Tags (comma-separated)
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={(char.visual_tags || []).join(', ')}
-                                            onChange={(e) => {
-                                                const tags = e.target.value.split(',').map((t) => t.trim()).filter(Boolean);
-                                                const next = [...blueprint.characters];
-                                                next[idx] = { ...char, visual_tags: tags };
-                                                setBlueprint((prev) => ({ ...prev, characters: next }));
-                                            }}
-                                            className="w-full bg-gray-900/70 border border-white/10 rounded px-2 py-1 text-2xs text-purple-200"
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-2xs uppercase text-gray-400 mb-0.5">
-                                            Character Skillset (comma-separated)
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={(char.character_skills || []).join(', ')}
-                                            onChange={(e) => {
-                                                const skills = e.target.value.split(',').map((s) => s.trim()).filter(Boolean);
-                                                const next = [...blueprint.characters];
-                                                next[idx] = { ...char, character_skills: skills };
-                                                setBlueprint((prev) => ({
-                                                    ...prev,
-                                                    characters: next,
-                                                    ...(idx === 0
-                                                        ? {
-                                                              initial_state_snapshot: {
-                                                                  ...prev.initial_state_snapshot,
-                                                                  character_skills: skills,
-                                                              },
-                                                          }
-                                                        : {}),
-                                                }));
-                                            }}
-                                            className="w-full bg-gray-900/70 border border-white/10 rounded px-2 py-1 text-2xs text-emerald-200"
-                                        />
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                        <div>
+                                            <label className="text-3xs font-bold uppercase tracking-wider text-gray-400">
+                                                World Name
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={blueprint.world?.name || ''}
+                                                onChange={(e) =>
+                                                    setBlueprint((prev) => ({
+                                                        ...prev,
+                                                        world: { ...prev.world, name: e.target.value },
+                                                    }))
+                                                }
+                                                className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white"
+                                            />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-3xs font-bold uppercase tracking-wider text-gray-400">
+                                                    World Premise &amp; Overview
+                                                </label>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleEnrichField('world_description', blueprint.world?.description)}
+                                                    disabled={enrichingFieldKey === 'world_description'}
+                                                    className="text-3xs text-purple-300 hover:text-purple-200 font-semibold"
+                                                >
+                                                    ✨ Enrich
+                                                </button>
+                                            </div>
+                                            <input
+                                                type="text"
+                                                value={blueprint.world?.description || ''}
+                                                onChange={(e) =>
+                                                    setBlueprint((prev) => ({
+                                                        ...prev,
+                                                        world: { ...prev.world, description: e.target.value },
+                                                    }))
+                                                }
+                                                className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-gray-200"
+                                            />
+                                        </div>
                                     </div>
                                 </div>
-                            ))}
-                        </div>
-                    </div>
 
-                    {/* 3. Locations & Scenarios Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* Locations */}
-                        <div className="glass-panel rounded-2xl p-5 border border-white/10 space-y-3">
-                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                <MapPin size={15} className="text-amber-400" /> 3. World Locations ({blueprint.locations?.length || 0})
-                            </h3>
-                            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                                {(blueprint.locations || []).map((loc, idx) => (
-                                    <div key={idx} className="bg-black/30 rounded-xl p-2.5 border border-white/10 space-y-1">
-                                        <div className="flex items-center justify-between gap-2">
-                                            <input
-                                                type="text"
-                                                value={loc.name || ''}
-                                                onChange={(e) => {
-                                                    const next = [...blueprint.locations];
-                                                    next[idx] = { ...loc, name: e.target.value };
-                                                    setBlueprint((prev) => ({ ...prev, locations: next }));
-                                                }}
-                                                className="bg-gray-900/80 border border-white/10 rounded px-2 py-1 text-xs font-semibold text-amber-200 flex-1"
-                                            />
-                                            <input
-                                                type="checkbox"
-                                                checked={loc.selected !== false}
-                                                onChange={(e) => {
-                                                    const next = [...blueprint.locations];
-                                                    next[idx] = { ...loc, selected: e.target.checked };
-                                                    setBlueprint((prev) => ({ ...prev, locations: next }));
-                                                }}
-                                                className="accent-amber-500"
-                                            />
-                                        </div>
+                                {/* Locations List */}
+                                <div className="glass-panel rounded-2xl p-4 border border-white/10 space-y-3">
+                                    <h4 className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                                        <MapPin size={14} /> World Locations ({blueprint.locations?.length || 0})
+                                    </h4>
+                                    <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                                        {(blueprint.locations || []).map((loc, idx) => (
+                                            <div key={idx} className="p-2.5 rounded-xl bg-gray-900/70 border border-white/5 space-y-1">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <input
+                                                        type="text"
+                                                        value={loc.name || ''}
+                                                        onChange={(e) => {
+                                                            const next = [...blueprint.locations];
+                                                            next[idx] = { ...loc, name: e.target.value };
+                                                            setBlueprint((prev) => ({ ...prev, locations: next }));
+                                                        }}
+                                                        className="bg-gray-900/80 border border-white/10 rounded-lg px-2 py-0.5 text-xs font-bold text-amber-200 flex-1"
+                                                    />
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={loc.selected !== false}
+                                                        onChange={(e) => {
+                                                            const next = [...blueprint.locations];
+                                                            next[idx] = { ...loc, selected: e.target.checked };
+                                                            setBlueprint((prev) => ({ ...prev, locations: next }));
+                                                        }}
+                                                        className="accent-amber-500 rounded cursor-pointer"
+                                                    />
+                                                </div>
+                                                <input
+                                                    type="text"
+                                                    value={loc.description || ''}
+                                                    onChange={(e) => {
+                                                        const next = [...blueprint.locations];
+                                                        next[idx] = { ...loc, description: e.target.value };
+                                                        setBlueprint((prev) => ({ ...prev, locations: next }));
+                                                    }}
+                                                    className="w-full bg-gray-900/50 border border-white/5 rounded-lg px-2 py-0.5 text-2xs text-gray-300"
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* TAB 5: LOREBOOK & CODEX */}
+                        {activeIntegrationTab === 'lorebook' && (
+                            <div className="glass-panel rounded-2xl p-4 border border-white/10 space-y-3 text-xs">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-sm font-bold text-purple-300 flex items-center gap-2">
+                                        <BookOpen size={16} /> World Lorebook &amp; Codex ({blueprint.lorebook?.entries?.length || 0})
+                                    </h3>
+                                    <label className="flex items-center gap-1.5 text-2xs text-purple-200 cursor-pointer">
                                         <input
-                                            type="text"
-                                            value={loc.description || ''}
-                                            onChange={(e) => {
-                                                const next = [...blueprint.locations];
-                                                next[idx] = { ...loc, description: e.target.value };
-                                                setBlueprint((prev) => ({ ...prev, locations: next }));
-                                            }}
-                                            className="w-full bg-gray-900/60 border border-white/5 rounded px-2 py-1 text-2xs text-gray-300"
+                                            type="checkbox"
+                                            checked={Boolean(blueprint.lorebook?.create)}
+                                            onChange={(e) =>
+                                                setBlueprint((prev) => ({
+                                                    ...prev,
+                                                    lorebook: { ...prev.lorebook, create: e.target.checked },
+                                                }))
+                                            }
+                                            className="accent-purple-500"
                                         />
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
+                                        <span>Create Lorebook in World Vault</span>
+                                    </label>
+                                </div>
 
-                        {/* Scenarios from Greetings */}
-                        <div className="glass-panel rounded-2xl p-5 border border-white/10 space-y-3">
-                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                <Sparkles size={15} className="text-cyan-400" /> 4. Playable Scenarios ({blueprint.scenarios?.length || 0})
-                            </h3>
-                            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                                {(blueprint.scenarios || []).map((scen, idx) => (
-                                    <div key={idx} className="bg-black/30 rounded-xl p-2.5 border border-white/10 space-y-1">
-                                        <div className="flex items-center justify-between gap-2">
-                                            <input
-                                                type="text"
-                                                value={scen.title || ''}
-                                                onChange={(e) => {
-                                                    const next = [...blueprint.scenarios];
-                                                    next[idx] = { ...scen, title: e.target.value };
-                                                    setBlueprint((prev) => ({ ...prev, scenarios: next }));
-                                                }}
-                                                className="bg-gray-900/80 border border-white/10 rounded px-2 py-1 text-xs font-semibold text-cyan-200 flex-1"
-                                            />
-                                            <input
-                                                type="checkbox"
-                                                checked={scen.selected !== false}
-                                                onChange={(e) => {
-                                                    const next = [...blueprint.scenarios];
-                                                    next[idx] = { ...scen, selected: e.target.checked };
-                                                    setBlueprint((prev) => ({ ...prev, scenarios: next }));
-                                                }}
-                                                className="accent-cyan-500"
-                                            />
+                                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                                    {(blueprint.lorebook?.entries || []).map((entry, idx) => (
+                                        <div key={idx} className="p-2.5 rounded-xl bg-gray-900/70 border border-white/5 space-y-1">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                {(entry.keys || []).map((k, kidx) => (
+                                                    <span key={kidx} className="px-1.5 py-0.2 rounded text-3xs font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                                        {k}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                            <p className="text-2xs text-gray-300 font-mono leading-relaxed line-clamp-3">
+                                                {entry.content}
+                                            </p>
                                         </div>
-                                        <p className="text-2xs text-gray-400 line-clamp-2">{scen.first_mes || scen.description}</p>
-                                    </div>
-                                ))}
+                                    ))}
+                                    {(!blueprint.lorebook?.entries || blueprint.lorebook.entries.length === 0) && (
+                                        <div className="text-center text-gray-500 py-6 italic text-2xs">
+                                            No embedded lorebook entries detected. Run Auto-Architect to synthesize codex entries.
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                        </div>
-                    </div>
+                        )}
 
-                    {/* 5. Turn-0 Statekeeper Snapshot & Suggested Persona */}
-                    <div className="glass-panel rounded-2xl p-5 border border-emerald-500/25 space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                            <h3 className="text-sm font-bold text-emerald-300 flex items-center gap-2">
-                                <Shield size={15} /> 5. Turn-0 Statekeeper Snapshot &amp; User Persona
-                            </h3>
-                            <label className="flex items-center gap-2 text-xs text-sky-300 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={Boolean(blueprint.persona?.create)}
-                                    onChange={(e) =>
-                                        setBlueprint((prev) => ({
-                                            ...prev,
-                                            persona: { ...prev.persona, create: e.target.checked },
-                                        }))
-                                    }
-                                    className="accent-sky-500"
-                                />
-                                <span>Save Suggested <b>{'{{user}}'} Persona</b> ({blueprint.persona?.name || 'Protagonist'}) to Library</span>
-                            </label>
-                        </div>
+                        {/* TAB 6: STORY SANDBOX (FOR LONG INGESTED STORIES) */}
+                        {activeIntegrationTab === 'story' && blueprint.story_chapters && (
+                            <div className="glass-panel rounded-2xl p-4 border border-white/10 space-y-3 text-xs">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-sm font-bold text-sky-300 flex items-center gap-2">
+                                        <BookOpen size={16} /> Chained Story Chapters ({blueprint.story_chapters.length})
+                                    </h3>
+                                    <span className="text-2xs font-mono text-gray-400">
+                                        Total Words: {blueprint.total_words?.toLocaleString()} ({blueprint.chunk_count} chunks)
+                                    </span>
+                                </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
-                            <div>
-                                <label className="block text-2xs uppercase text-gray-400 mb-1">Opening Mood</label>
-                                <input
-                                    type="text"
-                                    value={blueprint.initial_state_snapshot?.character_mood || ''}
-                                    onChange={(e) =>
-                                        setBlueprint((prev) => ({
-                                            ...prev,
-                                            initial_state_snapshot: {
-                                                ...prev.initial_state_snapshot,
-                                                character_mood: e.target.value,
-                                            },
-                                        }))
-                                    }
-                                    className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-gray-200"
-                                />
+                                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                                    {blueprint.story_chapters.map((ch, idx) => (
+                                        <div key={idx} className="p-3 rounded-xl bg-gray-900/70 border border-white/5 space-y-1">
+                                            <div className="flex items-center justify-between font-bold text-gray-200 text-xs">
+                                                <span>{ch.title}</span>
+                                                <span className="text-3xs font-mono text-gray-400">{ch.word_count} words</span>
+                                            </div>
+                                            <p className="text-2xs text-gray-300 line-clamp-3 leading-relaxed">
+                                                {ch.synopsis}
+                                            </p>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-2xs uppercase text-gray-400 mb-1">Opening Activity</label>
-                                <input
-                                    type="text"
-                                    value={blueprint.initial_state_snapshot?.current_activity || ''}
-                                    onChange={(e) =>
-                                        setBlueprint((prev) => ({
-                                            ...prev,
-                                            initial_state_snapshot: {
-                                                ...prev.initial_state_snapshot,
-                                                current_activity: e.target.value,
-                                            },
-                                        }))
-                                    }
-                                    className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-gray-200"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-2xs uppercase text-gray-400 mb-1">Opening Outfit</label>
-                                <input
-                                    type="text"
-                                    value={blueprint.initial_state_snapshot?.character_outfit || ''}
-                                    onChange={(e) =>
-                                        setBlueprint((prev) => ({
-                                            ...prev,
-                                            initial_state_snapshot: {
-                                                ...prev.initial_state_snapshot,
-                                                character_outfit: e.target.value,
-                                            },
-                                        }))
-                                    }
-                                    className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-gray-200"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-2xs uppercase text-gray-400 mb-1">Relationship w/ User</label>
-                                <input
-                                    type="text"
-                                    value={blueprint.initial_state_snapshot?.relationship_status || ''}
-                                    onChange={(e) =>
-                                        setBlueprint((prev) => ({
-                                            ...prev,
-                                            initial_state_snapshot: {
-                                                ...prev.initial_state_snapshot,
-                                                relationship_status: e.target.value,
-                                            },
-                                        }))
-                                    }
-                                    className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-gray-200"
-                                />
-                            </div>
-                        </div>
+                        )}
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs pt-1">
-                            <div>
-                                <label className="block text-2xs uppercase text-gray-400 mb-1">
-                                    User / Persona Skillset (comma-separated)
-                                </label>
-                                <input
-                                    type="text"
-                                    value={(blueprint.initial_state_snapshot?.user_skills || []).join(', ')}
-                                    onChange={(e) => {
-                                        const skills = e.target.value.split(',').map((s) => s.trim()).filter(Boolean);
-                                        setBlueprint((prev) => ({
-                                            ...prev,
-                                            persona: { ...prev.persona, skills },
-                                            initial_state_snapshot: {
-                                                ...prev.initial_state_snapshot,
-                                                user_skills: skills,
-                                            },
-                                        }));
-                                    }}
-                                    className="w-full bg-gray-900/80 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-sky-200"
-                                />
-                            </div>
-                            <div className="flex items-center gap-3 pt-4">
-                                <label className="flex items-center gap-2 cursor-pointer text-xs text-amber-300">
+                        {/* BOTTOM COMMIT & LAUNCH BAR */}
+                        <div className="glass-panel rounded-2xl p-4 border border-emerald-500/40 bg-emerald-950/20 flex flex-wrap items-center justify-between gap-4 shadow-xl">
+                            <div className="flex flex-wrap items-center gap-4 text-xs text-gray-200">
+                                <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={Boolean(blueprint.initial_state_snapshot?.fate_check_enabled)}
-                                        onChange={(e) =>
-                                            setBlueprint((prev) => ({
-                                                ...prev,
-                                                initial_state_snapshot: {
-                                                    ...prev.initial_state_snapshot,
-                                                    fate_check_enabled: e.target.checked,
-                                                },
-                                            }))
-                                        }
-                                        className="accent-amber-500"
+                                        checked={launchChat}
+                                        onChange={(e) => setLaunchChat(e.target.checked)}
+                                        className="accent-emerald-500 rounded"
                                     />
-                                    <span>Enable Fate / Skill Check Gate at Turn 0</span>
+                                    <span>Launch Turn-0 Roleplay Chat Immediately</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={launchStory}
+                                        onChange={(e) => setLaunchStory(e.target.checked)}
+                                        className="accent-purple-500 rounded"
+                                    />
+                                    <span>Also Create Story Sandbox Chapter</span>
                                 </label>
                             </div>
-                        </div>
-                    </div>
 
-                    {/* Commit Bar */}
-                    <div className="glass-panel rounded-2xl p-4 border border-emerald-500/40 bg-emerald-950/15 flex flex-wrap items-center justify-between gap-4">
-                        <div className="flex flex-wrap items-center gap-4 text-xs text-gray-200">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={launchChat}
-                                    onChange={(e) => setLaunchChat(e.target.checked)}
-                                    className="accent-emerald-500"
-                                />
-                                <span>Launch Turn-0 Roleplay Chat</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={launchStory}
-                                    onChange={(e) => setLaunchStory(e.target.checked)}
-                                    className="accent-purple-500"
-                                />
-                                <span>Also Create Story Sandbox Chapter</span>
-                            </label>
+                            <button
+                                type="button"
+                                onClick={handleCommitBlueprint}
+                                disabled={commitBlueprintMut.isPending}
+                                className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-gray-950 font-extrabold text-xs flex items-center gap-2 shadow-lg disabled:opacity-50 transition-all transform hover:scale-[1.02]"
+                            >
+                                {commitBlueprintMut.isPending ? (
+                                    <Loader2 size={15} className="animate-spin" />
+                                ) : (
+                                    <ArrowRight size={15} />
+                                )}
+                                Commit Blueprint &amp; Launch into World Vault
+                            </button>
                         </div>
-
-                        <button
-                            type="button"
-                            onClick={handleCommitBlueprint}
-                            disabled={commitBlueprintMut.isPending}
-                            className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-gray-950 font-bold text-xs flex items-center gap-2 shadow-lg disabled:opacity-50"
-                        >
-                            {commitBlueprintMut.isPending ? (
-                                <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                                <ArrowRight size={14} />
-                            )}
-                            Commit World Blueprint &amp; Launch
-                        </button>
                     </div>
                 </div>
             )}

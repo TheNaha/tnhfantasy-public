@@ -3,7 +3,7 @@ import { memo, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
     User, Clock, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown, NotebookPen,
-    MapPin, Plus, Edit2, Calendar, Layers, Shield, Users, Compass, Shirt, Eye,
+    MapPin, Plus, Edit2, Calendar, Layers, Shield, Users, Compass, Shirt, Eye, Lock, Unlock, Zap,
 } from 'lucide-react';
 import {
     getAvatarUrl,
@@ -79,10 +79,10 @@ const ChatJobRow = memo(function ChatJobRow({ job }) {
 });
 
 const CONTEXT_TABS = [
-    { id: 'scene', label: 'Scene & State', icon: Compass },
-    { id: 'cast', label: 'Cast & Persona', icon: Users },
-    { id: 'lore', label: 'Lore & Canon', icon: BookOpen },
-    { id: 'generation', label: 'Model & Prompts', icon: Sparkles },
+    { id: 'scene', label: 'Scene', icon: Compass },
+    { id: 'cast', label: 'Cast', icon: Users },
+    { id: 'lore', label: 'Lore', icon: BookOpen },
+    { id: 'generation', label: 'AI Model', icon: Sparkles },
 ];
 
 function ChatContextPanel() {
@@ -713,7 +713,7 @@ function ChatContextPanel() {
                         <div className="bg-gray-800/40 border border-white/5 rounded-lg p-2">
                             <span className="block text-2xs text-gray-500 font-medium uppercase tracking-wider">Max Input</span>
                             <span className="font-mono text-gray-200 font-semibold">
-                                {(activeChat?.max_context_tokens ?? runtimeDefaults?.context_tokens ?? 4096).toLocaleString()} tok
+                                {(activeChat?.max_context_tokens ?? runtimeDefaults?.max_context_tokens ?? runtimeDefaults?.context_tokens ?? 4096).toLocaleString()} tok
                             </span>
                             <span className="block text-2xs text-gray-500 truncate">
                                 {activeChat?.max_context_tokens ? 'Per-chat override' : 'Engine default'}
@@ -775,24 +775,59 @@ function ChatContextPanel() {
                             <span className="text-xs text-gray-500 font-mono min-w-0 truncate text-right">
                                 {activeChat?.max_context_tokens
                                     ? `${(activeChat.max_context_tokens / 1024).toFixed(0)}k tokens (${activeChat.max_context_tokens.toLocaleString()})`
-                                    : `Default (${(runtimeDefaults?.context_tokens ?? 4096).toLocaleString()} tokens)`}
+                                    : `Default (${(runtimeDefaults?.max_context_tokens || runtimeDefaults?.context_tokens || 4096).toLocaleString()} tok · 32k max)`}
                             </span>
                         </div>
                         <ContextSlider
                             activeChat={activeChat}
+                            defaultTokens={runtimeDefaults?.max_context_tokens || runtimeDefaults?.context_tokens || 4096}
                             onChange={(val) => onChatUpdate({ max_context_tokens: val })}
                         />
                         <div className="flex justify-between text-xs text-gray-600 mt-0.5">
-                            <span>2k</span><span>32k</span><span>64k</span><span>128k</span>
+                            <span>1k</span><span>8k</span><span>16k</span><span>24k</span><span>32k</span>
                         </div>
                         {activeChat?.max_context_tokens && (
                             <button
                                 onClick={() => onChatUpdate({ max_context_tokens: null })}
                                 className="mt-1 inline-flex items-center min-h-[24px] text-xs text-gray-500 hover:text-red-400 transition-colors"
                             >
-                                Reset to default ({(runtimeDefaults?.context_tokens ?? 4096).toLocaleString()} tokens)
+                                Reset to default ({(runtimeDefaults?.max_context_tokens || runtimeDefaults?.context_tokens || 4096).toLocaleString()} tokens)
                             </button>
                         )}
+                    </div>
+
+                    {/* KV Cache Precision & Laya Continuation */}
+                    <div className="pt-2 border-t border-white/5 space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                            <div>
+                                <label className="text-xs text-gray-300 font-medium block">KV Cache Precision</label>
+                                <span className="text-2xs text-gray-500">4-bit saves ~4GB VRAM for large contexts</span>
+                            </div>
+                            <select
+                                value={activeChat?.kv_cache_type || 'q8_0'}
+                                onChange={(e) => onChatUpdate({ kv_cache_type: e.target.value })}
+                                className="bg-gray-800 border border-white/10 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-purple-500/50"
+                            >
+                                <option value="q8_0">8-bit (q8_0 - Default)</option>
+                                <option value="q4_0">4-bit (q4_0 - Memory Saver)</option>
+                            </select>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2">
+                            <div>
+                                <label className="text-xs text-gray-300 font-medium block flex items-center gap-1.5">
+                                    <Zap size={12} className="text-amber-400" />
+                                    Smart Chained Continuation
+                                </label>
+                                <span className="text-2xs text-gray-500">Laya System 1 auto-resumes cut-off text</span>
+                            </div>
+                            <input
+                                type="checkbox"
+                                checked={activeChat?.smart_continuation !== false}
+                                onChange={(e) => onChatUpdate({ smart_continuation: e.target.checked })}
+                                className="accent-purple-500 h-4 w-4 rounded"
+                            />
+                        </div>
                     </div>
                     <SamplingControls values={activeChat || {}} onChange={onChatUpdate} />
                     <div>
@@ -1162,10 +1197,43 @@ function DirectorStatekeeperSection({ chat, onSave }) {
     };
 
     const handleFieldSave = (key, val) => {
+        const payload = (key === 'relationship_status' || key === 'relationship')
+            ? { relationship_status: val, relationship: val }
+            : { [key]: val };
         updateSnapshot.mutate({
             chatId: chat.id,
-            state_snapshot: { [key]: val },
+            state_snapshot: payload,
         });
+    };
+
+    const lockedFields = Array.isArray(snap.locked_fields) ? snap.locked_fields : [];
+    const isLocked = (field) => {
+        if (field === 'relationship_status' || field === 'relationship') {
+            return lockedFields.includes('relationship_status') || lockedFields.includes('relationship');
+        }
+        if (field === 'character_expression' || field === 'expression') {
+            return lockedFields.includes('character_expression') || lockedFields.includes('expression');
+        }
+        return lockedFields.includes(field);
+    };
+    const toggleLock = (field) => {
+        const locked = isLocked(field);
+        let next;
+        if (field === 'relationship_status' || field === 'relationship') {
+            next = locked
+                ? lockedFields.filter((f) => f !== 'relationship_status' && f !== 'relationship')
+                : [...lockedFields, 'relationship_status', 'relationship'];
+        } else if (field === 'character_expression' || field === 'expression') {
+            next = locked
+                ? lockedFields.filter((f) => f !== 'character_expression' && f !== 'expression')
+                : [...lockedFields, 'character_expression', 'expression'];
+        } else {
+            next = locked
+                ? lockedFields.filter((f) => f !== field)
+                : [...lockedFields, field];
+        }
+        handleFieldSave('locked_fields', next);
+        flashFeedback(`${!locked ? 'Locked' : 'Unlocked'} ${field.replace(/_/g, ' ')}`);
     };
 
     const handleAddInventory = (e) => {
@@ -1338,28 +1406,123 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                     </div>
                 </div>
 
-                {/* Scene Tension & Pacing Meter */}
-                <div className="bg-black/30 rounded-lg p-2.5 border border-white/5 space-y-1.5">
-                    <div className="flex items-center justify-between text-2xs">
-                        <span className="text-gray-400 uppercase tracking-wider font-bold">Scene Tension</span>
-                        <span className="text-amber-300 font-bold uppercase">{tension}/5 · {tensionLabel}</span>
+                {/* Director Autonomy Mode & Turn Cap */}
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-white/5 text-2xs">
+                    <div>
+                        <label className="text-gray-300 font-medium block">Director Autonomy</label>
+                        <span className="text-gray-500">Autonomous scene conductor turns</span>
                     </div>
-                    <div className="grid grid-cols-5 gap-1">
-                        {[1, 2, 3, 4, 5].map((lvl) => (
-                            <div
-                                key={lvl}
+                    <select
+                        value={chat.director_autonomy_level || 'balanced'}
+                        onChange={(e) => onSave({ director_autonomy_level: e.target.value })}
+                        className="bg-gray-800 border border-white/10 rounded px-2 py-1 text-2xs text-gray-200 focus:outline-none focus:border-emerald-500/50"
+                    >
+                        <option value="strict">Strict (1 turn / User reply)</option>
+                        <option value="balanced">Balanced (Up to {chat.max_autonomous_turns || 4} turns, prob ≥ 0.65)</option>
+                        <option value="cinematic">Cinematic (Up to {chat.max_autonomous_turns || 4} turns, prob ≥ 0.50)</option>
+                    </select>
+                </div>
+
+                {/* Scene Tension, Tone & Pacing Controls */}
+                <div className="bg-black/30 rounded-lg p-2.5 border border-white/5 space-y-2">
+                    <div className="flex items-center justify-between text-2xs">
+                        <span className="text-gray-400 uppercase tracking-wider font-bold flex items-center gap-1.5">
+                            <Activity size={11} /> Scene Tension
+                        </span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-amber-300 font-bold uppercase">{tension}/5 · {tensionLabel}</span>
+                            <button
+                                type="button"
+                                onClick={() => toggleLock('scene_tension')}
                                 className={clsx(
-                                    "h-1.5 rounded-full transition-colors",
-                                    lvl <= tension
-                                        ? (tension >= 4 ? "bg-rose-400" : tension >= 3 ? "bg-amber-400" : "bg-emerald-400")
-                                        : "bg-gray-800"
+                                    "p-0.5 rounded transition-colors text-2xs flex items-center gap-1",
+                                    isLocked('scene_tension') ? "text-amber-400 bg-amber-500/15" : "text-gray-500 hover:text-gray-300"
                                 )}
-                            />
+                                title={isLocked('scene_tension') ? "Locked: Protected from AI & Laya overwrites" : "Unlocked: Can be updated by Director"}
+                            >
+                                {isLocked('scene_tension') ? <Lock size={11} className="text-amber-400" /> : <Unlock size={11} />}
+                                {isLocked('scene_tension') && <span className="text-2xs font-mono font-bold text-amber-400">LOCK</span>}
+                            </button>
+                        </div>
+                    </div>
+                    {/* Interactive 5-step Tension Selector */}
+                    <div className="grid grid-cols-5 gap-1.5">
+                        {[1, 2, 3, 4, 5].map((lvl) => (
+                            <button
+                                key={lvl}
+                                type="button"
+                                onClick={() => handleFieldSave('scene_tension', lvl)}
+                                className={clsx(
+                                    "h-5 rounded text-2xs font-bold transition-all border flex items-center justify-center",
+                                    lvl <= tension
+                                        ? (tension >= 4
+                                            ? "bg-rose-500/30 border-rose-500/50 text-rose-200"
+                                            : tension >= 3
+                                                ? "bg-amber-500/30 border-amber-500/50 text-amber-200"
+                                                : "bg-emerald-500/30 border-emerald-500/50 text-emerald-200")
+                                        : "bg-gray-800/60 border-white/5 text-gray-500 hover:bg-white/5"
+                                )}
+                                title={`Set Scene Tension to ${lvl}/5`}
+                            >
+                                {lvl}
+                            </button>
                         ))}
                     </div>
-                    <div className="flex flex-wrap items-center justify-between gap-1 pt-1 text-2xs text-gray-400">
-                        <span>Tone: <b className="text-purple-300">{snap.emotional_tone || lastDecision?.emotional_tone || 'neutral'}</b></span>
-                        <span>Pacing: <b className="text-blue-300">{snap.pacing_directive || lastDecision?.pacing_directive || 'continue_conversation'}</b></span>
+
+                    {/* Scene Tone / Atmosphere (Manual Text + Lock) */}
+                    <div className="pt-1.5 border-t border-white/5 space-y-1">
+                        <div className="flex items-center justify-between text-2xs">
+                            <span className="text-gray-400 font-semibold uppercase tracking-wider">Tone / Atmosphere</span>
+                            <button
+                                type="button"
+                                onClick={() => toggleLock('emotional_tone')}
+                                className={clsx(
+                                    "p-0.5 rounded transition-colors text-2xs flex items-center gap-1",
+                                    isLocked('emotional_tone') ? "text-amber-400 bg-amber-500/15" : "text-gray-500 hover:text-gray-300"
+                                )}
+                                title={isLocked('emotional_tone') ? "Locked: Protected from AI & Laya overwrites" : "Unlocked: Can be updated by Director/Statekeeper"}
+                            >
+                                {isLocked('emotional_tone') ? <Lock size={11} className="text-amber-400" /> : <Unlock size={11} />}
+                                {isLocked('emotional_tone') && <span className="text-2xs font-mono font-bold text-amber-400">LOCK</span>}
+                            </button>
+                        </div>
+                        <input
+                            type="text"
+                            value={snap.emotional_tone || lastDecision?.emotional_tone || ''}
+                            onChange={(e) => handleFieldSave('emotional_tone', e.target.value)}
+                            placeholder="e.g. Warm & intimate, tense suspense, rain-soaked noir..."
+                            className="w-full bg-gray-900/80 border border-white/10 rounded px-2 py-1 text-2xs text-purple-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50"
+                        />
+                    </div>
+
+                    {/* Narrative Pacing Directive */}
+                    <div className="pt-1 border-t border-white/5 space-y-1">
+                        <div className="flex items-center justify-between text-2xs">
+                            <span className="text-gray-400 font-semibold uppercase tracking-wider">Pacing Directive</span>
+                            <button
+                                type="button"
+                                onClick={() => toggleLock('pacing_directive')}
+                                className={clsx(
+                                    "p-0.5 rounded transition-colors text-2xs flex items-center gap-1",
+                                    isLocked('pacing_directive') ? "text-amber-400 bg-amber-500/15" : "text-gray-500 hover:text-gray-300"
+                                )}
+                                title={isLocked('pacing_directive') ? "Locked: Protected from AI & Laya overwrites" : "Unlocked: Can be updated by Director"}
+                            >
+                                {isLocked('pacing_directive') ? <Lock size={11} className="text-amber-400" /> : <Unlock size={11} />}
+                                {isLocked('pacing_directive') && <span className="text-2xs font-mono font-bold text-amber-400">LOCK</span>}
+                            </button>
+                        </div>
+                        <select
+                            value={snap.pacing_directive || lastDecision?.pacing_directive || 'continue_conversation'}
+                            onChange={(e) => handleFieldSave('pacing_directive', e.target.value)}
+                            className="w-full bg-gray-900/80 border border-white/10 rounded px-2 py-1 text-2xs text-blue-200 focus:outline-none focus:border-blue-500/50"
+                        >
+                            <option value="continue_conversation">Conversational interplay & standard flow</option>
+                            <option value="escalate_conflict">Escalate tension, provoke, or raise stakes</option>
+                            <option value="introduce_complication">Introduce unexpected obstacle or narrative twist</option>
+                            <option value="resolve_and_transition">Resolve scene beat and transition atmosphere</option>
+                            <option value="slow_intimate">Slow down: linger on micro-expressions & touch</option>
+                        </select>
                     </div>
                 </div>
 
@@ -1377,9 +1540,23 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                                 <Shield size={11} /> Fate / Skill Check Gate
                             </span>
                         </label>
-                        <span className="text-2xs text-gray-500">
-                            {fateEnabled ? 'Active' : 'Off (Freeform)'}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-2xs text-gray-500">
+                                {fateEnabled ? 'Active' : 'Off (Freeform)'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => toggleLock('fate')}
+                                className={clsx(
+                                    "p-0.5 rounded transition-colors text-2xs flex items-center gap-1",
+                                    isLocked('fate') ? "text-amber-400 bg-amber-500/15" : "text-gray-500 hover:text-gray-300"
+                                )}
+                                title={isLocked('fate') ? "Locked: Protected from AI & Laya overwrites" : "Unlocked: Can be updated by Director"}
+                            >
+                                {isLocked('fate') ? <Lock size={11} className="text-amber-400" /> : <Unlock size={11} />}
+                                {isLocked('fate') && <span className="text-2xs font-mono font-bold text-amber-400">LOCK</span>}
+                            </button>
+                        </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-1.5">
@@ -1507,10 +1684,18 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                 <div className="space-y-2">
                     <div className="text-2xs font-bold uppercase tracking-wider text-gray-400 flex items-center justify-between">
                         <span>Live State Snapshot (Statekeeper)</span>
-                        {snap.character_expression && (
-                            <span className="text-amber-300 font-mono text-2xs">Expr: {snap.character_expression}</span>
-                        )}
                     </div>
+
+                    <ContextField
+                        inline
+                        showLabel
+                        label="Expression"
+                        value={snap.character_expression}
+                        placeholder="e.g. neutral, happy, blushing, sad, angry, surprised, seductive"
+                        locked={isLocked('character_expression')}
+                        onToggleLock={() => toggleLock('character_expression')}
+                        onSave={(val) => handleFieldSave('character_expression', val || '')}
+                    />
 
                     <ContextField
                         inline
@@ -1518,6 +1703,8 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         label="Mood"
                         value={snap.character_mood}
                         placeholder="e.g. Curious, Guarded"
+                        locked={isLocked('character_mood')}
+                        onToggleLock={() => toggleLock('character_mood')}
                         onSave={(val) => handleFieldSave('character_mood', val || '')}
                     />
                     <ContextField
@@ -1526,6 +1713,8 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         label="Activity"
                         value={snap.current_activity}
                         placeholder="e.g. Examining the artifact"
+                        locked={isLocked('current_activity')}
+                        onToggleLock={() => toggleLock('current_activity')}
                         onSave={(val) => handleFieldSave('current_activity', val || '')}
                     />
                     <ContextField
@@ -1534,6 +1723,8 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         label="Outfit"
                         value={snap.character_outfit}
                         placeholder="e.g. Traveling cloak"
+                        locked={isLocked('character_outfit')}
+                        onToggleLock={() => toggleLock('character_outfit')}
                         onSave={(val) => handleFieldSave('character_outfit', val || '')}
                     />
 
@@ -1600,8 +1791,10 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         inline
                         showLabel
                         label="Relationship"
-                        value={snap.relationship_status}
+                        value={snap.relationship_status || snap.relationship}
                         placeholder="e.g. Cautious allies (+1 trust)"
+                        locked={isLocked('relationship_status')}
+                        onToggleLock={() => toggleLock('relationship_status')}
                         onSave={(val) => handleFieldSave('relationship_status', val || '')}
                     />
 
@@ -1772,8 +1965,20 @@ function DirectorStatekeeperSection({ chat, onSave }) {
 
                     {/* Inventory Pills with 1-Click Item Visualizer */}
                     <div className="pt-1">
-                        <div className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                            Active Inventory / Key Items
+                        <div className="text-2xs font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center justify-between">
+                            <span>Active Inventory / Key Items</span>
+                            <button
+                                type="button"
+                                onClick={() => toggleLock('inventory')}
+                                className={clsx(
+                                    "p-0.5 rounded transition-colors text-2xs flex items-center gap-1",
+                                    isLocked('inventory') ? "text-amber-400 bg-amber-500/15" : "text-gray-500 hover:text-gray-300"
+                                )}
+                                title={isLocked('inventory') ? "Locked: Protected from AI & Laya overwrites" : "Unlocked: Can be updated by Statekeeper"}
+                            >
+                                {isLocked('inventory') ? <Lock size={11} className="text-amber-400" /> : <Unlock size={11} />}
+                                {isLocked('inventory') && <span className="text-2xs font-mono font-bold text-amber-400">LOCK</span>}
+                            </button>
                         </div>
                         <div className="flex flex-wrap gap-1 mb-1.5">
                             {inventoryList.length === 0 ? (

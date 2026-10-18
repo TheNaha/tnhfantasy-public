@@ -157,6 +157,68 @@ async def _run_llm_json(
     return None, "heuristic"
 
 
+async def _run_llm_text(
+    session: Session,
+    *,
+    kind: str,
+    system_prompt: str,
+    user_content: Any,
+    max_output_tokens: int = 1200,
+    temperature: float = 0.4,
+    timeout: float = 25.0,
+) -> tuple[Optional[str], str]:
+    """Run an LLM request returning raw text against the active LLM provider for `kind`.
+
+    Returns `(text_or_None, engine_label)`. Never raises so callers fall back cleanly.
+    """
+    resolved = resolve_default_provider(session)
+    if not resolved:
+        return None, "heuristic"
+    provider_id, _ = resolved
+    provider = session.get(Provider, provider_id)
+    if not provider or not provider.enabled:
+        return None, "heuristic"
+
+    try:
+        from services.engines.engine_factory import get_engine
+
+        engine = get_engine(provider.id, provider)
+        if engine is None:
+            return None, "heuristic"
+
+        model_id = model_for_kind(kind, None, session)
+        workflow = {
+            "type": kind,
+            "model": model_id,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+        }
+        full_text = ""
+        async for event in engine.inference(workflow, timeout=timeout):
+            if not isinstance(event, dict):
+                continue
+            if event.get("event") == "token" and event.get("text"):
+                full_text += str(event["text"])
+            elif event.get("status") == "success":
+                output = event.get("output") or {}
+                if isinstance(output, dict) and output.get("text"):
+                    full_text = str(output["text"])
+                elif event.get("text"):
+                    full_text = str(event["text"])
+
+        cleaned = full_text.strip()
+        if cleaned:
+            return cleaned, f"llm:{provider_id}:{model_id}"
+    except Exception as exc:
+        logger.debug("world_onboarding_llm_text_fallback", kind=kind, error=str(exc))
+
+    return None, "heuristic"
+
+
 async def _analyze_avatar_with_vision(
     session: Session,
     avatar_bytes: Optional[bytes],
@@ -302,6 +364,33 @@ def _extract_locations_from_card(
     return locations[:8]
 
 
+def _derive_scenario_title(text: str, idx: int, loc: Optional[str] = None) -> str:
+    """Derive a punchy, evocative scenario title from greeting text and location."""
+    clean = re.sub(r"[*_#\"“”\[\]\(\)]", "", (text or "").strip())
+    clean = re.sub(r"!https?://\S+", "", clean).strip()
+    first_non_empty = [line.strip() for line in clean.splitlines() if line.strip()]
+    first_line = first_non_empty[0] if first_non_empty else ""
+
+    # Check for quotes naming a tavern, forge, institution, etc.
+    m_name = re.search(r"['\"‘“]([^'\"’”]{3,35})['\"’”]", text or "")
+    if m_name:
+        spot = m_name.group(1).strip()
+        if loc and spot.lower() in loc.lower():
+            return f"At {spot}"
+        return f"{spot} Encounter"
+
+    if loc and len(loc) <= 30 and loc.lower() not in ("starting area", "unknown", "domain"):
+        if idx == 0:
+            return f"Arrival at {loc}"
+        return f"Encounter at {loc}"
+
+    words = first_line.split()[:6]
+    derived = " ".join(words).rstrip(".,;:-!?—")
+    if derived and len(derived) >= 5:
+        return derived[:60]
+    return f"Scenario #{idx + 1}"
+
+
 def _build_scenarios_from_greetings(
     char_name: str,
     scenario_text: str,
@@ -315,9 +404,11 @@ def _build_scenarios_from_greetings(
     if first_mes and first_mes.strip():
         loc = _infer_location_from_text(first_mes, scenario_text) or default_location
         tim = _infer_time_from_text(first_mes, scenario_text) or default_time
+        title = _derive_scenario_title(first_mes, 0, loc)
         scenarios.append(
             {
-                "title": f"Opening Encounter: {loc[:45]}" if loc else f"{char_name} — Canonical Opening",
+                "id": "scenario_0",
+                "title": title[:80] or f"{char_name} — Canonical Opening",
                 "description": (scenario_text or first_mes[:240]).strip()[:500],
                 "first_mes": first_mes.strip(),
                 "location_name": loc,
@@ -333,10 +424,10 @@ def _build_scenarios_from_greetings(
             continue
         loc = _infer_location_from_text(alt_clean, scenario_text) or default_location
         tim = _infer_time_from_text(alt_clean) or default_time
-        first_line = re.sub(r"[*\"“”]", "", alt_clean.splitlines()[0]).strip()[:50]
-        title = f"Alt Scenario #{idx + 1}: {loc}" if loc != default_location else f"Alt Scenario #{idx + 1}: {first_line or 'Divergent Path'}"
+        title = _derive_scenario_title(alt_clean, idx + 1, loc)
         scenarios.append(
             {
+                "id": f"scenario_{idx + 1}",
                 "title": title[:80],
                 "description": f"Alternate opening scenario for {char_name}: {alt_clean[:220]}",
                 "first_mes": alt_clean,
@@ -346,7 +437,7 @@ def _build_scenarios_from_greetings(
                 "selected": True,
             }
         )
-    return scenarios[:10]
+    return scenarios[:30]
 
 
 def _infer_persona_from_card(
@@ -444,6 +535,54 @@ def _build_wardrobe_presets(
             }
         )
     return presets[:5]
+
+
+def _detect_and_extract_multi_characters(
+    primary_name: str,
+    description: str,
+    personality: str,
+    avatar_b64: Optional[str] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Detect cards defining multiple characters (e.g. duo cards like Fuwawa & Mococo)."""
+    if not description:
+        return None
+
+    char_blocks = list(
+        re.finditer(
+            r"([A-Za-z0-9\s\-]+)\s*=\s*\{Character\([\"']?([^\"')]+)[\"']?\)(.*?)(?=(?:[A-Za-z0-9\s\-]+\s*=\s*\{Character|\Z))",
+            description,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+    )
+    if len(char_blocks) >= 2:
+        extracted = []
+        for match in char_blocks:
+            c_name = match.group(2).strip() or match.group(1).strip()
+            c_body = match.group(3).strip()
+            app_match = re.search(r"Appearance\(([^)]+)\)", c_body, flags=re.IGNORECASE)
+            per_match = re.search(r"Personality\(([^)]+)\)", c_body, flags=re.IGNORECASE)
+            vis_tags = []
+            if app_match:
+                vis_tags = [
+                    re.sub(r"[\'\"+]", "", s).strip()
+                    for s in app_match.group(1).split("+")
+                    if s.strip()
+                ]
+            extracted.append(
+                {
+                    "name": c_name,
+                    "description": c_body[:1500],
+                    "personality": per_match.group(1).strip() if per_match else "",
+                    "visual_tags": vis_tags or ["character portrait", "detailed"],
+                    "avatar_base64": avatar_b64,
+                    "character_skills": ["Coordination", "Agility", "Companion Resolve"],
+                    "selected": True,
+                }
+            )
+        return extracted
+
+    return None
+
 
 
 async def analyze_card_for_onboarding(
@@ -789,8 +928,35 @@ async def _synthesize_card_blueprint(
 
     avatar_b64 = base64.b64encode(avatar_bytes).decode("ascii") if avatar_bytes else None
 
+    multi_chars = _detect_and_extract_multi_characters(
+        char_name, description, personality, avatar_b64=avatar_b64
+    )
+
+    source_card = {
+        "name": char_name,
+        "card_spec": char_data.get("card_spec") or "chara_card_v2",
+        "card_spec_version": char_data.get("card_spec_version") or "2.0",
+        "creator": char_data.get("creator") or "",
+        "character_version": char_data.get("character_version") or "",
+        "description": description,
+        "personality": personality,
+        "scenario": scenario_text,
+        "first_mes": first_mes,
+        "alternate_greetings": alternate_greetings,
+        "group_greetings": char_data.get("group_greetings") or [],
+        "system_prompt": char_data.get("system_prompt") or "",
+        "post_history_instructions": char_data.get("post_history_instructions") or "",
+        "creator_notes": char_data.get("creator_notes") or "",
+        "mes_example": char_data.get("mes_example") or "",
+        "tags": char_data.get("tags") or [],
+        "character_book": character_book,
+        "extensions": char_data.get("extensions") or {},
+        "avatar_base64": avatar_b64,
+    }
+
     return {
         "source_type": "character_card",
+        "source_card": source_card,
         "world": {
             "mode": "create",
             "existing_world_id": char_data.get("world_id"),
@@ -823,6 +989,8 @@ async def _synthesize_card_blueprint(
                 "selected": True,
             }
         ],
+        "multi_characters_detected": bool(multi_chars),
+        "available_multi_characters": multi_chars or [],
         "locations": locations,
         "scenarios": scenarios,
         "persona": persona_bp,
@@ -836,6 +1004,7 @@ async def _synthesize_card_blueprint(
             "greetings_count": 1 + len(alternate_greetings),
             "locations_count": len(locations),
             "lore_entries_count": len(lorebook_bp["entries"]),
+            "multi_characters_count": len(multi_chars) if multi_chars else 1,
         },
     }
 
@@ -1173,6 +1342,625 @@ async def analyze_document_for_world(
             "locations_count": len(locations),
             "lore_entries_count": len(lore_entries),
             "extracted_chars": len(extracted_text),
+        },
+    }
+
+
+async def extract_scenarios_from_card_data(
+    session: Session,
+    *,
+    char_name: str,
+    scenario_text: str = "",
+    first_mes: str = "",
+    alternate_greetings: Optional[List[str]] = None,
+    default_location: str = "Starting Area",
+    default_time: str = "Evening",
+    use_llm: bool = True,
+) -> Dict[str, Any]:
+    """Extract and refine Scenarios from first_mes and alternate_greetings."""
+    scenarios = _build_scenarios_from_greetings(
+        char_name=char_name,
+        scenario_text=scenario_text,
+        first_mes=first_mes,
+        alternate_greetings=alternate_greetings or [],
+        default_location=default_location,
+        default_time=default_time,
+    )
+    engine_used = "heuristic"
+
+    if use_llm and scenarios:
+        llm_system = (
+            "You are a Narrative Scenario Architect for an AI RPG. "
+            "Given character greetings, generate a punchy title (max 50 chars), inferred location name, "
+            "and 1-2 sentence scenario premise for each greeting. Return valid JSON:\n"
+            '{"scenarios": [{"id": "scenario_0", "title": "...", "location_name": "...", "story_time": "...", "description": "..."}]}'
+        )
+        sample_greetings = [
+            {"id": s["id"], "preview": s["first_mes"][:300], "default_loc": s["location_name"]}
+            for s in scenarios[:15]
+        ]
+        parsed, eng = await _run_llm_json(
+            session,
+            kind="scenario_refine",
+            system_prompt=llm_system,
+            user_content=f"Character: {char_name}\nContext: {scenario_text[:400]}\nGreetings:\n{json.dumps(sample_greetings)}",
+            max_output_tokens=800,
+        )
+        if parsed and isinstance(parsed.get("scenarios"), list):
+            engine_used = eng
+            refined_by_id = {str(item.get("id")): item for item in parsed["scenarios"] if isinstance(item, dict)}
+            for sc in scenarios:
+                ref = refined_by_id.get(sc["id"])
+                if ref:
+                    if ref.get("title"):
+                        sc["title"] = str(ref["title"]).strip()[:80]
+                    if ref.get("location_name"):
+                        sc["location_name"] = str(ref["location_name"]).strip()[:60]
+                    if ref.get("story_time"):
+                        sc["story_time"] = str(ref["story_time"]).strip()[:40]
+                    if ref.get("description"):
+                        sc["description"] = str(ref["description"]).strip()[:400]
+
+    return {
+        "scenarios": scenarios,
+        "engine_used": engine_used,
+        "total_count": len(scenarios),
+    }
+
+
+async def extract_visual_tags_section(
+    session: Session,
+    *,
+    char_name: str,
+    description: str = "",
+    personality: str = "",
+    avatar_base64: Optional[str] = None,
+    existing_tags: Optional[List[str]] = None,
+    use_vision: bool = True,
+) -> Dict[str, Any]:
+    """Generate image generation tags, wardrobe presets, and outfit description."""
+    avatar_bytes = None
+    if avatar_base64:
+        try:
+            b64_data = avatar_base64.split(",")[-1]
+            avatar_bytes = base64.b64decode(b64_data)
+        except Exception:
+            avatar_bytes = None
+
+    vision_data, vision_used = await _analyze_avatar_with_vision(
+        session,
+        avatar_bytes=avatar_bytes,
+        char_name=char_name,
+        char_description=description,
+        use_vision=use_vision,
+    )
+
+    visual_tags = (
+        vision_data.get("visual_tags")
+        if isinstance(vision_data.get("visual_tags"), list) and vision_data.get("visual_tags")
+        else _extract_visual_tags_heuristic(description, existing_tags)
+    )
+
+    outfit = (
+        str(vision_data.get("outfit_description") or "").strip()
+        or _infer_outfit_from_text(description)
+        or f"{char_name}'s signature attire"
+    )
+
+    presets = _build_wardrobe_presets(
+        char_name,
+        outfit,
+        visual_tags,
+        vision_data.get("wardrobe_presets") if isinstance(vision_data.get("wardrobe_presets"), list) else None,
+    )
+
+    return {
+        "visual_tags": visual_tags,
+        "character_outfit": outfit,
+        "wardrobe_presets": presets,
+        "vision_used": vision_used,
+        "engine_used": "vision" if vision_used else "heuristic",
+    }
+
+
+async def extract_statekeeper_turn0_section(
+    session: Session,
+    *,
+    char_name: str,
+    description: str = "",
+    personality: str = "",
+    scenario_text: str = "",
+    first_mes: str = "",
+    default_location: Optional[str] = None,
+    default_time: Optional[str] = None,
+    locked_fields: Optional[List[str]] = None,
+    current_state: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Synthesize or refresh Turn-0 Statekeeper fields, strictly preserving locked fields."""
+    locked_set = set(locked_fields or [])
+    curr = current_state or {}
+
+    loc = default_location or _infer_location_from_text(first_mes, scenario_text, description) or f"{char_name}'s Sanctum"
+    tim = default_time or _infer_time_from_text(first_mes, scenario_text, description) or "Evening"
+
+    llm_system = (
+        "You are the Statekeeper & Director for an interactive AI RPG. "
+        "Synthesize Turn-0 state snapshot for the starting scene as valid JSON:\n"
+        "{\n"
+        '  "character_mood": "Emotional state at start",\n'
+        '  "current_activity": "Immediate action at start",\n'
+        '  "character_outfit": "Detailed attire",\n'
+        '  "scene_tension": 2.0,\n'
+        '  "emotional_tone": "neutral",\n'
+        '  "relationship_status": "Status toward {{user}}",\n'
+        '  "character_skills": ["Skill 1", "Skill 2", "Skill 3"],\n'
+        '  "user_skills": ["Skill 1", "Skill 2"],\n'
+        '  "inventory": ["Item 1", "Item 2"]\n'
+        "}"
+    )
+    llm_user = (
+        f"Character: {char_name}\n"
+        f"Description: {description[:600]}\n"
+        f"Personality: {personality[:400]}\n"
+        f"Scenario: {scenario_text[:500]}\n"
+        f"Opening Greeting: {first_mes[:600]}\n"
+        f"Location: {loc} ({tim})"
+    )
+    parsed, engine_used = await _run_llm_json(
+        session,
+        kind="statekeeper_turn0",
+        system_prompt=llm_system,
+        user_content=llm_user,
+        max_output_tokens=700,
+    )
+    bp = parsed or {}
+
+    mood = str(bp.get("character_mood") or _infer_mood_from_text(first_mes, personality, description) or "Composed").strip()
+    activity = str(bp.get("current_activity") or _infer_activity_from_text(first_mes, scenario_text) or f"Meeting with {{{{user}}}} at {loc}").strip()
+    outfit = str(bp.get("character_outfit") or _infer_outfit_from_text(description, first_mes) or f"{char_name}'s attire").strip()
+    try:
+        tension = float(bp.get("scene_tension", 2.0))
+    except (ValueError, TypeError):
+        tension = 2.0
+    tone = str(bp.get("emotional_tone") or "neutral").strip()
+    rel_status = str(bp.get("relationship_status") or _infer_relationship_from_text(scenario_text, description, first_mes) or "Acquaintance").strip()
+    c_skills = (
+        [str(s).strip() for s in (bp.get("character_skills") or []) if str(s).strip()]
+        or _extract_skills_from_text(f"{description}\n{personality}")
+        or ["Composure", "Intuition"]
+    )
+    persona = _infer_persona_from_card(char_name, description, scenario_text, first_mes)
+    u_skills = (
+        [str(s).strip() for s in (bp.get("user_skills") or []) if str(s).strip()]
+        or persona.get("skills")
+        or ["Situational Awareness", "Resolve"]
+    )
+    inv = [str(i).strip() for i in (bp.get("inventory") or []) if str(i).strip()]
+
+    # Respect locked fields!
+    if "character_mood" in locked_set and "character_mood" in curr:
+        mood = curr["character_mood"]
+    if "current_activity" in locked_set and "current_activity" in curr:
+        activity = curr["current_activity"]
+    if "character_outfit" in locked_set and "character_outfit" in curr:
+        outfit = curr["character_outfit"]
+    if "scene_tension" in locked_set and "scene_tension" in curr:
+        try:
+            tension = float(curr["scene_tension"])
+        except (ValueError, TypeError):
+            pass
+    if "emotional_tone" in locked_set and "emotional_tone" in curr:
+        tone = curr["emotional_tone"]
+    if "relationship_status" in locked_set and "relationship_status" in curr:
+        rel_status = curr["relationship_status"]
+    if "character_skills" in locked_set and "character_skills" in curr:
+        c_skills = curr["character_skills"]
+    if "user_skills" in locked_set and "user_skills" in curr:
+        u_skills = curr["user_skills"]
+    if "inventory" in locked_set and "inventory" in curr:
+        inv = curr["inventory"]
+
+    snapshot = {
+        "character_mood": mood,
+        "current_activity": activity,
+        "character_outfit": outfit,
+        "wardrobe": curr.get("wardrobe") or _build_wardrobe_presets(char_name, outfit, []),
+        "relationship_status": rel_status,
+        "relationships": curr.get("relationships") or [
+            {
+                "target_name": "{{user}}",
+                "target_type": "user",
+                "status": rel_status,
+                "affinity": "neutral",
+                "notes": f"Opening dynamic at {loc}",
+            }
+        ],
+        "character_skills": c_skills,
+        "user_skills": u_skills,
+        "inventory": inv,
+        "scene_tension": tension,
+        "emotional_tone": tone,
+        "character_expression": curr.get("character_expression") or "neutral",
+        "fate_check_enabled": curr.get("fate_check_enabled", False),
+        "fate_difficulty": curr.get("fate_difficulty", "auto"),
+        "fate_outcome_override": curr.get("fate_outcome_override", "auto"),
+        "world_clock": curr.get("world_clock") or {
+            "day": 1,
+            "time_of_day": tim,
+            "location": loc,
+            "chronology_log": [
+                {
+                    "day": 1,
+                    "time": tim,
+                    "location": loc,
+                    "event": f"Opening scene with {char_name} at {loc}.",
+                }
+            ],
+        },
+        "locked_fields": list(locked_set),
+    }
+
+    return {
+        "initial_state_snapshot": snapshot,
+        "engine_used": engine_used,
+        "locked_fields_preserved": list(locked_set),
+    }
+
+
+async def extract_world_lore_section(
+    session: Session,
+    *,
+    char_name: str,
+    description: str = "",
+    scenario_text: str = "",
+    first_mes: str = "",
+    character_book: Optional[Dict[str, Any]] = None,
+    existing_locations: Optional[List[Dict[str, Any]]] = None,
+    locked_fields: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Generate World setting, locations, and lorebook codex entries."""
+    locked_set = set(locked_fields or [])
+
+    world_name = (
+        (str(character_book.get("name")).strip() if isinstance(character_book, dict) and character_book.get("name") else "")
+        or f"Chronicles of {char_name}"
+    )
+    world_desc = scenario_text or description[:400] or f"The world and setting of {char_name}."
+
+    locations = _extract_locations_from_card(
+        char_name=char_name,
+        description=description,
+        scenario_text=scenario_text,
+        first_mes=first_mes,
+        alternate_greetings=[],
+        character_book=character_book,
+    )
+
+    lorebook_bp = {
+        "create": False,
+        "name": f"{world_name} Lorebook",
+        "description": f"World lore and codex entries for {world_name}.",
+        "entries": [],
+    }
+    mapped_book = lorebook_from_character_book(character_book) if character_book else None
+    if mapped_book:
+        book_kwargs, entry_kwargs = mapped_book
+        lorebook_bp = {
+            "create": True,
+            "name": book_kwargs.get("name") or f"{char_name} Lorebook",
+            "description": book_kwargs.get("description") or f"Embedded lorebook from {char_name}'s card.",
+            "entries": [
+                {
+                    "keys": e.get("keys") or [],
+                    "content": e.get("content") or "",
+                    "enabled": e.get("enabled", True),
+                    "constant": e.get("constant", False),
+                }
+                for e in entry_kwargs[:50]
+            ],
+        }
+
+    llm_system = (
+        "You are the World Lore Architect. From the character info, generate a cohesive World setting "
+        "with evocative name, 2-3 sentence overview, 2-4 key locations, and 2-4 codex lore entries as valid JSON:\n"
+        "{\n"
+        '  "world_name": "...",\n'
+        '  "world_description": "...",\n'
+        '  "locations": [{"name": "...", "description": "...", "tags": ["tag1"], "default_time": "..."}],\n'
+        '  "lore_entries": [{"keys": ["keyword1"], "content": "..."}]\n'
+        "}"
+    )
+    llm_user = (
+        f"Character: {char_name}\n"
+        f"Description: {description[:700]}\n"
+        f"Scenario: {scenario_text[:500]}\n"
+        f"Existing Lorebook: {len(lorebook_bp['entries'])} entries"
+    )
+    parsed, engine_used = await _run_llm_json(
+        session,
+        kind="world_lore_enrich",
+        system_prompt=llm_system,
+        user_content=llm_user,
+        max_output_tokens=900,
+    )
+    if parsed:
+        if "world_name" not in locked_set and parsed.get("world_name"):
+            world_name = str(parsed["world_name"]).strip()
+        if "world_description" not in locked_set and parsed.get("world_description"):
+            world_desc = str(parsed["world_description"]).strip()
+
+        if isinstance(parsed.get("locations"), list):
+            loc_names = {l["name"].lower() for l in locations}
+            for loc in parsed["locations"]:
+                if isinstance(loc, dict) and loc.get("name"):
+                    lname = str(loc["name"]).strip()
+                    if lname.lower() not in loc_names:
+                        loc_names.add(lname.lower())
+                        locations.append(
+                            {
+                                "name": lname[:75],
+                                "description": str(loc.get("description") or f"Area in {world_name}")[:400],
+                                "tags": loc.get("tags") if isinstance(loc.get("tags"), list) else ["location"],
+                                "default_time": str(loc.get("default_time") or "Day"),
+                                "selected": True,
+                            }
+                        )
+
+        if not lorebook_bp["entries"] and isinstance(parsed.get("lore_entries"), list):
+            lorebook_bp["create"] = True
+            lorebook_bp["entries"] = [
+                {
+                    "keys": [str(k).strip() for k in (e.get("keys") or []) if str(k).strip()],
+                    "content": str(e.get("content") or "").strip(),
+                    "enabled": True,
+                    "constant": False,
+                }
+                for e in parsed["lore_entries"]
+                if isinstance(e, dict) and e.get("content")
+            ]
+
+    if existing_locations:
+        loc_names = {l["name"].lower() for l in locations}
+        for el in existing_locations:
+            if isinstance(el, dict) and el.get("name") and str(el["name"]).lower() not in loc_names:
+                loc_names.add(str(el["name"]).lower())
+                locations.append(el)
+
+    return {
+        "world_name": world_name,
+        "world_description": world_desc,
+        "locations": locations,
+        "lorebook": lorebook_bp,
+        "engine_used": engine_used,
+    }
+
+
+async def enrich_individual_field(
+    session: Session,
+    *,
+    field_name: str,
+    current_value: str,
+    char_name: str = "",
+    context: str = "",
+    instruction: str = "Enrich and expand while maintaining core tone and voice.",
+) -> Dict[str, Any]:
+    """Enrich or expand a specific text field using LLM, with graceful heuristic fallback."""
+    if not current_value.strip():
+        return {
+            "field_name": field_name,
+            "enriched_value": current_value,
+            "engine_used": "none",
+        }
+
+    llm_system = (
+        "You are an expert creative editor and fiction author for an AI RPG & Story engine. "
+        f"Your task is to rewrite and enrich the field '{field_name}'. "
+        "Strictly adhere to the following instruction: "
+        f"{instruction}\n"
+        "Maintain all existing character names, relationships, personality traits, and lore integrity. "
+        "Return ONLY the enriched field text. Do not include markdown code block quotes around the entire response, "
+        "and do not include any preface, greeting, or conversational remarks."
+    )
+    llm_user = (
+        f"Field: {field_name}\n"
+        f"Character: {char_name or 'N/A'}\n"
+        f"Context / Surrounding Lore: {context[:1000] if context else 'None provided'}\n\n"
+        f"Current Content to Enrich:\n{current_value}"
+    )
+
+    enriched_text, engine_used = await _run_llm_text(
+        session,
+        kind="field_enrich",
+        system_prompt=llm_system,
+        user_content=llm_user,
+        max_output_tokens=1500,
+        temperature=0.4,
+    )
+
+    if enriched_text and len(enriched_text.strip()) > 10:
+        return {
+            "field_name": field_name,
+            "enriched_value": enriched_text.strip(),
+            "engine_used": engine_used,
+        }
+
+    cleaned = re.sub(r"\n{3,}", "\n\n", current_value).strip()
+    return {
+        "field_name": field_name,
+        "enriched_value": cleaned,
+        "engine_used": "heuristic",
+    }
+
+
+async def ingest_long_document_chained(
+    session: Session,
+    *,
+    raw_text: str,
+    title: Optional[str] = None,
+    chunk_size_words: int = 3500,
+    overlap_words: int = 200,
+) -> Dict[str, Any]:
+    """Sliding-window Map-Reduce story ingestion for long texts (up to 50k+ words)."""
+    words = raw_text.split()
+    total_words = len(words)
+    if total_words < 20:
+        raise ValidationError("Story text is too short to ingest")
+
+    inferred_title = (title or "").strip() or "Epic Chronicle"
+
+    if total_words <= chunk_size_words:
+        bp = await analyze_document_for_world(
+            session,
+            raw_text=raw_text,
+            title=inferred_title,
+        )
+        bp["total_words"] = total_words
+        bp["chunk_count"] = 1
+        bp["story_chapters"] = [
+            {
+                "chapter_index": 1,
+                "title": f"{inferred_title} — Prologue",
+                "synopsis": str(bp.get("world", {}).get("description") or raw_text[:300]).strip(),
+                "word_count": total_words,
+            }
+        ]
+        return bp
+
+    step = max(100, chunk_size_words - overlap_words)
+    chunks: List[str] = []
+    for i in range(0, total_words, step):
+        chunk_slice = words[i : i + chunk_size_words]
+        if not chunk_slice:
+            break
+        chunks.append(" ".join(chunk_slice))
+        if i + chunk_size_words >= total_words:
+            break
+
+    chunk_count = len(chunks)
+    chapters: List[Dict[str, Any]] = []
+    character_map: Dict[str, Dict[str, Any]] = {}
+    location_map: Dict[str, Dict[str, Any]] = {}
+    lore_entries: List[Dict[str, Any]] = []
+
+    first_bp = await analyze_document_for_world(
+        session,
+        raw_text=chunks[0],
+        title=f"{inferred_title} (Part 1)",
+    )
+
+    world_name = first_bp.get("world", {}).get("name") or inferred_title
+    world_desc = first_bp.get("world", {}).get("description") or f"World of {inferred_title}."
+
+    for c in first_bp.get("characters") or []:
+        if c.get("name"):
+            character_map[c["name"].lower()] = c
+    for loc in first_bp.get("locations") or []:
+        if loc.get("name"):
+            location_map[loc["name"].lower()] = loc
+    for le in (first_bp.get("lorebook", {}).get("entries") or []):
+        lore_entries.append(le)
+
+    chapters.append(
+        {
+            "chapter_index": 1,
+            "title": "Chapter 1: The Beginning",
+            "synopsis": (first_bp.get("characters", [{}])[0].get("first_mes") or chunks[0][:350]).strip(),
+            "word_count": len(chunks[0].split()),
+        }
+    )
+
+    for idx, chunk_text in enumerate(chunks[1:], start=2):
+        chunk_words = len(chunk_text.split())
+        lines = [l.strip() for l in chunk_text.splitlines() if l.strip()]
+        first_few = " ".join(lines[:3])[:250] if lines else f"Chapter {idx} progression"
+
+        names_found = re.findall(r"\b([A-Z][a-z]{2,15})\s+(?:said|replied|shouted|whispered|looked|stepped|drew)\b", chunk_text)
+        for name in set(names_found):
+            if name.lower() not in character_map and len(character_map) < 12:
+                character_map[name.lower()] = {
+                    "name": name,
+                    "description": f"Encountered in Chapter {idx} of {world_name}.",
+                    "personality": "Determined and impactful in the unfolding tale.",
+                    "scenario": f"Active during Chapter {idx}.",
+                    "first_mes": f"*{name} approaches amidst the events of Chapter {idx}.*",
+                    "visual_tags": ["character", "story figure"],
+                    "character_skills": ["Adaptability", "Resolve"],
+                    "wardrobe": _build_wardrobe_presets(name, f"{name}'s attire", []),
+                    "selected": True,
+                }
+
+        locs_found = re.findall(r"\b(?:at|in|near|toward)\s+the\s+([A-Z][a-z]{3,20}(?:\s+[A-Z][a-z]{3,20})?)\b", chunk_text)
+        for loc in set(locs_found):
+            if loc.lower() not in location_map and len(location_map) < 10:
+                location_map[loc.lower()] = {
+                    "name": f"The {loc}",
+                    "description": f"Key location visited during Chapter {idx}.",
+                    "tags": ["story location"],
+                    "default_time": "Day",
+                    "selected": True,
+                }
+
+        chapters.append(
+            {
+                "chapter_index": idx,
+                "title": f"Chapter {idx}: The Journey Unfolds",
+                "synopsis": first_few,
+                "word_count": chunk_words,
+            }
+        )
+
+    scenarios: List[Dict[str, Any]] = []
+    for ch in chapters:
+        scenarios.append(
+            {
+                "id": f"scenario_ch_{ch['chapter_index']}",
+                "title": ch["title"],
+                "description": ch["synopsis"][:400],
+                "first_mes": ch["synopsis"],
+                "location_name": list(location_map.values())[0]["name"] if location_map else "Starting Realm",
+                "story_time": "Day",
+                "is_primary": ch["chapter_index"] == 1,
+                "selected": True,
+            }
+        )
+
+    characters = list(character_map.values())[:8]
+    locations = list(location_map.values())[:10]
+
+    return {
+        "source_type": "chained_long_document",
+        "world": {
+            "mode": "create",
+            "existing_world_id": None,
+            "name": world_name,
+            "description": world_desc,
+        },
+        "characters": characters,
+        "locations": locations,
+        "scenarios": scenarios,
+        "persona": first_bp.get("persona") or {
+            "name": "Chronicle Protagonist",
+            "description": f"The central figure traversing {world_name}.",
+            "skills": ["Survival", "Perception", "Leadership"],
+        },
+        "lorebook": {
+            "create": True,
+            "name": f"{world_name} Archive",
+            "description": f"Accumulated lore across {chunk_count} story chapters ({total_words:,} words).",
+            "entries": lore_entries,
+        },
+        "relationships": first_bp.get("relationships") or [],
+        "initial_state_snapshot": first_bp.get("initial_state_snapshot") or {},
+        "story_chapters": chapters,
+        "total_words": total_words,
+        "chunk_count": chunk_count,
+        "analysis_meta": {
+            "engine_used": first_bp.get("analysis_meta", {}).get("engine_used", "chained_map_reduce"),
+            "total_words": total_words,
+            "chunk_count": chunk_count,
+            "characters_count": len(characters),
+            "locations_count": len(locations),
+            "chapters_count": len(chapters),
         },
     }
 

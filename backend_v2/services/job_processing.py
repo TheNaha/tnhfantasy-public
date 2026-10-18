@@ -811,6 +811,47 @@ async def _finalize_llm_job(
                         allow_narration=bool(chat_obj.allow_narration),
                     )
                     await asyncio.to_thread(record_director_decision, session, chat_id, decision)
+
+                    # 1. Live avatar expression synchronization if character has expressions
+                    if char_obj and getattr(char_obj, "expressions", None) and decision.character_expression:
+                        snap = dict(chat_obj.state_snapshot or {})
+                        locked = set(snap.get("locked_fields") or [])
+                        if "character_expression" not in locked and "expression" not in locked:
+                            expr_lookup = {k.lower(): k for k in char_obj.expressions.keys()}
+                            matched_expr = expr_lookup.get(decision.character_expression.lower())
+                            if matched_expr:
+                                from services.chat_utils import insert_world_state_marker
+                                snap["character_expression"] = matched_expr
+                                snap["character_expression_avatar"] = char_obj.expressions[matched_expr]
+                                chat_obj.state_snapshot = snap
+                                session.add(chat_obj)
+                                session.commit()
+                                insert_world_state_marker(session, chat_id, {"expression": matched_expr, "expression_avatar": char_obj.expressions[matched_expr]})
+
+                    # 2. Autonomous scene illustration trigger via Laya decision
+                    job_meta = job.metadata_ or {}
+                    if (
+                        decision.should_trigger_image
+                        and getattr(chat_obj, "allow_image_generation", True)
+                        and job_meta.get("agentic_image_count", 0) < (getattr(chat_obj, "max_agentic_images", 2) or 2)
+                    ):
+                        try:
+                            from services.orchestrator_service import _tool_generate_image
+                            prompt_focus = f"{decision.image_focus.replace('_', ' ')}, {decision.character_expression}"
+                            char_visuals = getattr(char_obj, "visual_tags", None) or (getattr(char_obj, "name", "") if char_obj else "")
+                            full_prompt = f"{char_visuals}, {prompt_focus}" if char_visuals else prompt_focus
+                            await _tool_generate_image(
+                                {"prompt": full_prompt},
+                                chat_id=chat_id,
+                                character_id=character_id or chat_obj.character_id,
+                                source_job_id=job.id,
+                                branch_id=job_meta.get("branch_id"),
+                            )
+                            logger.info("laya_conductor_image_triggered", chat_id=chat_id, focus=decision.image_focus)
+                        except Exception as img_exc:
+                            logger.debug("laya_conductor_image_trigger_failed", job_id=job.id, error=str(img_exc))
+
+                    # 3. Gated state updater (Laya detects shifts in mood, world, items)
                     if decision.should_run_updater and (character_id or chat_obj.character_id):
                         await enqueue_state_updater_if_needed(
                             session,
@@ -819,6 +860,91 @@ async def _finalize_llm_job(
                             decision=decision,
                             job_service=job_service,
                         )
+
+                    # 4. Gated episodic memory extraction (Laya gates whether durable secrets/facts were revealed)
+                    if (
+                        decision.updater_gates.get("gate_durable_memory", 0.0) >= 0.55
+                        and (character_id or chat_obj.character_id)
+                    ):
+                        from services.memory_extraction import enqueue_memory_extraction
+                        await enqueue_memory_extraction(
+                            session=session,
+                            chat_id=chat_id,
+                            character_id=character_id or chat_obj.character_id,
+                            job_service=job_service,
+                        )
+
+                    # 5. Autonomous Multi-Turn Scene Chaining
+                    autonomy_level = getattr(chat_obj, "director_autonomy_level", "balanced") or "balanced"
+                    max_turns = getattr(chat_obj, "max_autonomous_turns", 4) or 4
+                    current_turns = int(job_meta.get("autonomous_turn_count", 1))
+
+                    threshold_by_level = {"strict": 1.0, "balanced": 0.65, "cinematic": 0.50}
+                    min_chain_prob = threshold_by_level.get(autonomy_level, 0.65)
+
+                    if (
+                        autonomy_level != "strict"
+                        and current_turns < max_turns
+                        and decision.continue_chain_probability >= min_chain_prob
+                        and decision.next_speaker in ("narrator", "secondary_character")
+                        and decision.next_speaker != "user"
+                    ):
+                        from config import get_system_prompt_blocks
+                        from services.context_builder import build_context
+                        from services.llm_config import model_for_kind
+                        from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
+                        from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
+
+                        if decision.next_speaker == "narrator" and getattr(chat_obj, "allow_narration", True):
+                            narrator_prompt = (get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT
+                            system_prompt, context, _sections = await asyncio.to_thread(
+                                build_context, session, "chat", chat_obj, recent_msgs_objs,
+                            )
+                            workflow, metadata = build_chat_llm_workflow(
+                                messages=[
+                                    {"role": "system", "content": narrator_prompt},
+                                    *context,
+                                    {"role": "user", "content": f"[Scene Direction] {decision.pacing_directive}: describe the scene consequences, environment, or passage of time."},
+                                ],
+                                chat_id=chat_id,
+                                character_id=char_obj.id if char_obj else None,
+                                system_prompt=system_prompt or None,
+                                model=model_for_kind("narrator", chat_obj.llm_model, session),
+                                samplers=sampler_overrides(chat_obj),
+                                type_="narrator",
+                                source="narrator",
+                                extra_metadata={
+                                    "autonomous_turn_count": current_turns + 1,
+                                    "max_autonomous_turns": max_turns,
+                                    "branch_id": job_meta.get("branch_id"),
+                                },
+                            )
+                            followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
+                            from services.job_queue import queue_manager
+                            await queue_manager.enqueue(followup_job.id, task_type="llm")
+                            logger.info("laya_conductor_narrator_chained", chat_id=chat_id, job_id=followup_job.id, turn=current_turns + 1)
+                        elif decision.next_speaker == "secondary_character" and getattr(chat_obj, "additional_character_ids", None):
+                            secondary_id = chat_obj.additional_character_ids[0]
+                            system_prompt, context, _sections = await asyncio.to_thread(
+                                build_context, session, "chat", chat_obj, recent_msgs_objs, active_character_id=secondary_id,
+                            )
+                            workflow, metadata = build_chat_llm_workflow(
+                                messages=context,
+                                chat_id=chat_id,
+                                character_id=secondary_id,
+                                system_prompt=system_prompt or None,
+                                model=model_for_kind("chat_reply", chat_obj.llm_model, session),
+                                samplers=sampler_overrides(chat_obj),
+                                extra_metadata={
+                                    "autonomous_turn_count": current_turns + 1,
+                                    "max_autonomous_turns": max_turns,
+                                    "branch_id": job_meta.get("branch_id"),
+                                },
+                            )
+                            followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
+                            from services.job_queue import queue_manager
+                            await queue_manager.enqueue(followup_job.id, task_type="llm")
+                            logger.info("laya_conductor_secondary_char_chained", chat_id=chat_id, secondary_id=secondary_id, job_id=followup_job.id, turn=current_turns + 1)
                 elif character_id:
                     from services.memory_extraction import enqueue_memory_extraction
                     await enqueue_memory_extraction(

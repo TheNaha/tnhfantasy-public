@@ -189,7 +189,7 @@ describe('ContextTracePanel execution line', () => {
         fireEvent.click(screen.getByRole('button', { name: /what this reply was told/i }));
 
         expect(screen.getByText('Director Decision Snapshot')).toBeInTheDocument();
-        expect(screen.getByText('escalate_conflict')).toBeInTheDocument();
+        expect(screen.getAllByText('escalate_conflict')[0]).toBeInTheDocument();
         expect(screen.getByText('Tension 3/5')).toBeInTheDocument();
         expect(screen.getByText('tense')).toBeInTheDocument();
         expect(screen.getByText('glaring intently')).toBeInTheDocument();

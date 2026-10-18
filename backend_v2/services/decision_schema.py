@@ -326,6 +326,17 @@ def build_director_questions(
     ]
 
 
+def build_continuation_questions() -> List[Dict[str, Any]]:
+    """Build a fast 1-question System 1 prompt to determine if generation completed naturally."""
+    return [
+        {
+            "key": "is_complete",
+            "type": "noul",
+            "statement": "The speaker finished their complete sentence, dialog, thought, or scene beat naturally without being cut off mid-sentence.",
+        }
+    ]
+
+
 FATE_OUTCOME_DESCRIPTIONS: Dict[str, str] = {
     "critical_success": "Critical Success — the action succeeds brilliantly with an unexpected advantage or flair.",
     "success": "Clean Success — the attempted action succeeds as intended.",

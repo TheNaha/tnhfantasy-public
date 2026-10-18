@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronRight, Eye, Pin, PinOff, Scissors, Brain } from 'lucide-react';
+import { ChevronRight, Eye, Pin, PinOff, Scissors, Brain, Activity, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 
 /**
@@ -51,7 +51,7 @@ function preview(turn) {
     return trimmed;
 }
 
-export default function ContextTracePanel({ trace }) {
+export default function ContextTracePanel({ trace, meta = {} }) {
     const [open, setOpen] = useState(false);
     const [showAll, setShowAll] = useState(false);
 
@@ -71,20 +71,41 @@ export default function ContextTracePanel({ trace }) {
     const budgetTokens = trace.budget_tokens || 4096;
     const breakdown = trace.tokens_breakdown || {};
     const pctUsed = Math.min(100, Math.round((totalInputTokens / budgetTokens) * 100));
+    const tokensOut = meta.token_usage?.completion_tokens ?? meta.completion_tokens ?? meta.tokens_out ?? null;
 
     return (
         <div className="mt-1 rounded-xl border border-white/10 bg-gray-900/40 overflow-hidden">
             <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors"
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors whitespace-nowrap overflow-hidden"
                 aria-expanded={open}
             >
-                <ChevronRight size={12} className={open ? 'rotate-90 transition-transform' : 'transition-transform'} />
-                <Eye size={11} />
-                <span className="font-medium text-gray-400">What this reply was told</span>
-                <span className="text-gray-500 text-3xs font-mono hidden sm:inline">(Context Inspector)</span>
-                <span className="ml-auto text-gray-600 font-mono text-3xs">
+                <ChevronRight size={12} className={clsx("shrink-0 transition-transform", open && "rotate-90")} />
+                <span className="font-medium text-gray-400 shrink-0">What this reply was told</span>
+                {decision?.pacing_directive && (
+                    <span
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 text-3xs font-mono shrink-0"
+                        title={`Director Pacing: ${decision.pacing_directive}`}
+                    >
+                        <span className="text-blue-400">⚡</span>
+                        <span>{decision.pacing_directive}</span>
+                        {(decision.scene_tension != null || decision.tension_level != null) && (
+                            <span className="opacity-70">· T{decision.scene_tension ?? decision.tension_level}/5</span>
+                        )}
+                    </span>
+                )}
+                {tokensOut != null && (
+                    <span
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-3xs font-mono shrink-0"
+                        title={`Generated ${tokensOut} output tokens`}
+                    >
+                        <span>⚡</span>
+                        <span>{tokensOut} tok</span>
+                    </span>
+                )}
+
+                <span className="ml-auto text-gray-600 font-mono text-3xs shrink-0 truncate">
                     {totalInputTokens > 0 ? `${totalInputTokens.toLocaleString()} / ${budgetTokens.toLocaleString()} tok · ` : ''}
                     {turns.length} turn{turns.length === 1 ? '' : 's'} · {sections.length} sections
                     {trace.truncated ? ' · truncated' : ''}
@@ -93,9 +114,77 @@ export default function ContextTracePanel({ trace }) {
 
             {open && (
                 <div className="border-t border-white/10 px-3 py-2.5 flex flex-col gap-3 text-xs">
-                    <p className="text-gray-400 text-3xs leading-relaxed bg-black/20 p-2 rounded-lg border border-white/5">
-                        💡 <strong>Prompt Context Inspector:</strong> The snapshot of dialogue history and system lore that was assembled and sent to the AI model to generate this reply.
-                    </p>
+                    {/* Visual Turn Lifecycle Rundown */}
+                    <div className="rounded-xl border border-white/10 bg-gradient-to-br from-gray-900/90 via-purple-950/20 to-gray-900/90 p-3 space-y-2.5">
+                        <div className="flex items-center justify-between pb-1.5 border-b border-white/5">
+                            <span className="text-3xs font-bold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+                                <Activity size={11} className="text-purple-400" /> Turn Lifecycle Rundown
+                            </span>
+                            <span className="text-3xs font-mono text-gray-500">
+                                {meta?.duration_seconds ? `${Number(meta.duration_seconds).toFixed(2)}s duration` : 'Full turn sequence'}
+                            </span>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 text-3xs">
+                            {/* Step 1: User Send */}
+                            <div className="bg-sky-500/10 border border-sky-500/25 rounded-lg p-2 flex flex-col justify-between">
+                                <div>
+                                    <span className="text-sky-400 font-bold uppercase tracking-wider block mb-0.5">1. User Send</span>
+                                    <span className="text-gray-200 font-medium">Player Input</span>
+                                </div>
+                                <span className="text-gray-400 font-mono text-3xs mt-1 truncate">
+                                    {trace.user_directive ? `Dir: "${trace.user_directive}"` : 'Prompt received'}
+                                </span>
+                            </div>
+
+                            {/* Step 2: System 1 Director */}
+                            <div className="bg-purple-500/10 border border-purple-500/25 rounded-lg p-2 flex flex-col justify-between">
+                                <div>
+                                    <span className="text-purple-400 font-bold uppercase tracking-wider block mb-0.5">2. Director</span>
+                                    <span className="text-gray-200 font-medium">Arbitration</span>
+                                </div>
+                                <span className="text-purple-300 font-mono text-3xs mt-1 truncate">
+                                    {decision?.pacing_directive || 'Pacing set'} · T{decision?.scene_tension ?? 2}/5
+                                </span>
+                            </div>
+
+                            {/* Step 3: Actor LLM */}
+                            <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-lg p-2 flex flex-col justify-between">
+                                <div>
+                                    <span className="text-emerald-400 font-bold uppercase tracking-wider block mb-0.5">3. Actor LLM</span>
+                                    <span className="text-gray-200 font-medium">{meta?.source === 'narrator' ? 'Narrator' : 'Character AI'}</span>
+                                </div>
+                                <span className="text-emerald-300 font-mono text-3xs mt-1 truncate">
+                                    {tokensOut != null ? `${tokensOut} tokens out` : 'Prose generated'}
+                                </span>
+                            </div>
+
+                            {/* Step 4: Post-Turn Conductor */}
+                            <div className="bg-amber-500/10 border border-amber-500/25 rounded-lg p-2 flex flex-col justify-between">
+                                <div>
+                                    <span className="text-amber-400 font-bold uppercase tracking-wider block mb-0.5">4. Conductor</span>
+                                    <span className="text-gray-200 font-medium">Post-Response</span>
+                                </div>
+                                <span className="text-amber-300 font-mono text-3xs mt-1 truncate">
+                                    {decision?.should_trigger_image ? 'Art triggered' : (decision?.gate_durable_memory ? 'Memory gated' : 'Evaluated')}
+                                </span>
+                            </div>
+
+                            {/* Step 5: Resolution */}
+                            <div className="bg-indigo-500/10 border border-indigo-500/25 rounded-lg p-2 flex flex-col justify-between">
+                                <div>
+                                    <span className="text-indigo-400 font-bold uppercase tracking-wider block mb-0.5">5. Resolution</span>
+                                    <span className="text-gray-200 font-medium">Next Turn</span>
+                                </div>
+                                <span className="text-indigo-300 font-mono text-3xs mt-1 truncate">
+                                    {decision?.next_speaker && decision.next_speaker !== 'user'
+                                        ? `Chained ${decision.next_speaker}`
+                                        : 'Yielded to User'}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
 
                     {/* Token Budget Meter */}
                     <div className="rounded-lg border border-white/10 bg-black/40 p-2.5 space-y-1.5">

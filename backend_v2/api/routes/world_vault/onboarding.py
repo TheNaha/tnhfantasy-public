@@ -29,8 +29,14 @@ from services.world_onboarding_service import (
     commit_chat_to_world_canon,
     commit_world_blueprint,
     compile_chat_to_story,
+    enrich_individual_field,
+    extract_scenarios_from_card_data,
+    extract_statekeeper_turn0_section,
+    extract_visual_tags_section,
+    extract_world_lore_section,
     fast_travel_chat,
     generate_world_crossover,
+    ingest_long_document_chained,
     run_world_tick,
 )
 from services.world_ownership import link_to_world
@@ -47,6 +53,62 @@ class AnalyzeExistingCharacterRequest(BaseModel):
 class AnalyzeTextStoryRequest(BaseModel):
     raw_text: str
     title: Optional[str] = None
+
+
+class ExtractScenariosRequest(BaseModel):
+    char_name: str
+    scenario_text: Optional[str] = ""
+    first_mes: Optional[str] = ""
+    alternate_greetings: List[str] = Field(default_factory=list)
+    default_location: Optional[str] = "Starting Area"
+    default_time: Optional[str] = "Evening"
+    use_llm: bool = True
+
+
+class ExtractVisualTagsRequest(BaseModel):
+    char_name: str
+    description: Optional[str] = ""
+    personality: Optional[str] = ""
+    avatar_base64: Optional[str] = None
+    existing_tags: List[str] = Field(default_factory=list)
+    use_vision: bool = True
+
+
+class ExtractStatekeeperRequest(BaseModel):
+    char_name: str
+    description: Optional[str] = ""
+    personality: Optional[str] = ""
+    scenario_text: Optional[str] = ""
+    first_mes: Optional[str] = ""
+    default_location: Optional[str] = None
+    default_time: Optional[str] = None
+    locked_fields: List[str] = Field(default_factory=list)
+    current_state: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ExtractWorldLoreRequest(BaseModel):
+    char_name: str
+    description: Optional[str] = ""
+    scenario_text: Optional[str] = ""
+    first_mes: Optional[str] = ""
+    character_book: Optional[Dict[str, Any]] = None
+    existing_locations: List[Dict[str, Any]] = Field(default_factory=list)
+    locked_fields: List[str] = Field(default_factory=list)
+
+
+class EnrichFieldRequest(BaseModel):
+    field_name: str
+    current_value: str
+    char_name: Optional[str] = ""
+    context: Optional[str] = ""
+    instruction: Optional[str] = "Enrich and expand while maintaining core tone and voice."
+
+
+class IngestStoryChainedRequest(BaseModel):
+    raw_text: str
+    title: Optional[str] = None
+    chunk_size_words: int = 3500
+    overlap_words: int = 200
 
 
 class CrossoverPreviewRequest(BaseModel):
@@ -187,6 +249,110 @@ async def analyze_story_text_json_endpoint(
         session,
         raw_text=request.raw_text,
         title=request.title,
+    )
+
+
+@router.post("/extract-scenarios")
+async def extract_scenarios_endpoint(
+    request: ExtractScenariosRequest,
+    session: Session = Depends(get_session),
+):
+    """Extract and refine Scenarios from card greetings."""
+    return await extract_scenarios_from_card_data(
+        session,
+        char_name=request.char_name,
+        scenario_text=request.scenario_text or "",
+        first_mes=request.first_mes or "",
+        alternate_greetings=request.alternate_greetings,
+        default_location=request.default_location or "Starting Area",
+        default_time=request.default_time or "Evening",
+        use_llm=request.use_llm,
+    )
+
+
+@router.post("/extract-visual-tags")
+async def extract_visual_tags_endpoint(
+    request: ExtractVisualTagsRequest,
+    session: Session = Depends(get_session),
+):
+    """Generate image generation tags and wardrobe presets from avatar/description."""
+    return await extract_visual_tags_section(
+        session,
+        char_name=request.char_name,
+        description=request.description or "",
+        personality=request.personality or "",
+        avatar_base64=request.avatar_base64,
+        existing_tags=request.existing_tags,
+        use_vision=request.use_vision,
+    )
+
+
+@router.post("/extract-statekeeper")
+async def extract_statekeeper_endpoint(
+    request: ExtractStatekeeperRequest,
+    session: Session = Depends(get_session),
+):
+    """Synthesize Turn-0 Statekeeper fields, preserving locked fields."""
+    return await extract_statekeeper_turn0_section(
+        session,
+        char_name=request.char_name,
+        description=request.description or "",
+        personality=request.personality or "",
+        scenario_text=request.scenario_text or "",
+        first_mes=request.first_mes or "",
+        default_location=request.default_location,
+        default_time=request.default_time,
+        locked_fields=request.locked_fields,
+        current_state=request.current_state,
+    )
+
+
+@router.post("/extract-world-lore")
+async def extract_world_lore_endpoint(
+    request: ExtractWorldLoreRequest,
+    session: Session = Depends(get_session),
+):
+    """Generate World setting, locations, and lorebook codex entries."""
+    return await extract_world_lore_section(
+        session,
+        char_name=request.char_name,
+        description=request.description or "",
+        scenario_text=request.scenario_text or "",
+        first_mes=request.first_mes or "",
+        character_book=request.character_book,
+        existing_locations=request.existing_locations,
+        locked_fields=request.locked_fields,
+    )
+
+
+@router.post("/enrich-field")
+async def enrich_field_endpoint(
+    request: EnrichFieldRequest,
+    session: Session = Depends(get_session),
+):
+    """Enrich an individual text field using LLM with heuristic fallback."""
+    return await enrich_individual_field(
+        session,
+        field_name=request.field_name,
+        current_value=request.current_value,
+        char_name=request.char_name or "",
+        context=request.context or "",
+        instruction=request.instruction or "Enrich and expand while maintaining core tone and voice.",
+    )
+
+
+@router.post("/ingest-story-chained")
+async def ingest_story_chained_endpoint(
+    request: IngestStoryChainedRequest,
+    session: Session = Depends(get_session),
+):
+    """Sliding-window Map-Reduce story ingestion for long texts (up to 50k+ words)."""
+    return await ingest_long_document_chained(
+        session,
+        raw_text=request.raw_text,
+        title=request.title,
+        chunk_size_words=request.chunk_size_words,
+        overlap_words=request.overlap_words,
     )
 
 

@@ -73,12 +73,19 @@ class VRAMManager:
         self.llama_proc: Optional[subprocess.Popen] = None
         self.llama_model_id: Optional[str] = None
         self.llama_managed: bool = False
+        self.current_kv_type: str = "q8_0"
+        self.current_ctx_size: int = 8192
 
         # Laya model cache: (repo_or_path, device) -> model instance
         self.laya_cache: Dict[Tuple[str, str], Any] = {}
         self.current_laya_device: str = "cpu"
 
+        # Concurrency & Workload Lease Queue
         self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
+        self.active_lease: Optional[str] = None
+        self.in_flight_count: int = 0
+        self.waiting_queue: List[str] = []
 
     @staticmethod
     def _get_cuda_device_count() -> int:
@@ -206,11 +213,30 @@ class VRAMManager:
             "laya_loaded_count": len(self.laya_cache),
             "idle_timeout_seconds": self.idle_timeout_seconds,
             "last_llm_activity_ago_s": round(time.time() - self.last_llm_activity, 1),
+            "active_lease": self.active_lease,
+            "in_flight_count": self.in_flight_count,
+            "queue_depth": len(self.waiting_queue),
+            "waiting_workloads": list(self.waiting_queue),
+            "comfy_generating": self.is_comfy_generating(),
         }
 
     # ----------------------------------------------------------------------
-    # Component Eviction Controls
+    # Component Eviction Controls & Execution Inspection
     # ----------------------------------------------------------------------
+
+    def is_comfy_generating(self, timeout: float = 1.0) -> bool:
+        """Check if ComfyUI has a prompt actively executing or pending in its queue."""
+        try:
+            req = urllib.request.Request(f"{self.comfy_url}/queue")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    running = data.get("queue_running") or []
+                    pending = data.get("queue_pending") or []
+                    return bool(running or pending)
+        except Exception:
+            pass
+        return False
 
     def free_comfy_vram(self, timeout: float = 2.5) -> bool:
         """Instruct ComfyUI to purge its cached diffusion models from GPU VRAM."""
@@ -325,14 +351,19 @@ class VRAMManager:
         if not info["available"]:
             return "cpu"
 
-        # If already plenty of free VRAM (>= 1.2 GB), run on CUDA for <100ms latency
+        # If llama-server is actively running on the same GPU, Laya runs on CPU
+        # to ensure the LLM has 100% unimpeded VRAM and prevent OOM
+        if not self.is_multi_gpu and self.is_llama_running():
+            return "cpu"
+
+        # If already plenty of free VRAM (>= required headroom), run on CUDA for <100ms latency
         if info["vram_free_mb"] >= required_headroom_mb:
             return cuda_target_str
 
         # If single-GPU and ComfyUI is on same GPU, try freeing ComfyUI VRAM first
         if not self.is_multi_gpu or (self.comfy_gpu_device == target_dev_idx):
             if self.free_comfy_vram():
-                time.sleep(0.1)
+                time.sleep(0.2)
                 refreshed = self.get_vram_info(device_idx=target_dev_idx)
                 if refreshed["vram_free_mb"] >= required_headroom_mb:
                     return cuda_target_str
@@ -393,6 +424,96 @@ class VRAMManager:
                 raise
 
     # ----------------------------------------------------------------------
+    # Workload Lease & Concurrency Queue
+    # ----------------------------------------------------------------------
+
+    def acquire_lease(self, workload: str, timeout: float = 60.0) -> bool:
+        """Acquire an active workload lease, waiting if another conflicting workload is in-flight.
+
+        Guarantees that:
+        1. An active LLM inference stream is NEVER terminated or evicted mid-stream.
+        2. An active ComfyUI diffusion generation is NEVER interrupted by an LLM launch.
+        3. Multi-GPU nodes bypass contention since ComfyUI and LLM reside on separate GPUs.
+        """
+        workload = (workload or "idle").strip().lower()
+        if workload not in ("image", "llm", "decisions"):
+            return True
+
+        if self.is_multi_gpu or workload == "decisions":
+            with self._lock:
+                if self.active_lease != workload and self.in_flight_count == 0:
+                    self.active_lease = workload
+                self.in_flight_count += 1
+                return True
+
+        start_time = time.time()
+        with self._lock:
+            def _has_conflict() -> bool:
+                if workload == "image":
+                    # Conflict if LLM inference is actively in-flight
+                    return (self.active_lease == "llm" and self.in_flight_count > 0)
+                elif workload == "llm":
+                    # Conflict if ComfyUI is actively sampling or an image lease is held
+                    if self.is_comfy_generating():
+                        return True
+                    if self.active_lease == "image" and self.in_flight_count > 0:
+                        # Auto-reconcile: if ComfyUI is completely idle, image lease is finished
+                        if not self.is_comfy_generating():
+                            self.active_lease = None
+                            self.in_flight_count = 0
+                            return False
+                        return True
+                    return False
+                return False
+
+            if _has_conflict():
+                self.waiting_queue.append(workload)
+                logger.info(
+                    "workload_queued_waiting_for_lease",
+                    extra={
+                        "requested": workload,
+                        "active_lease": self.active_lease,
+                        "in_flight": self.in_flight_count,
+                        "queue_depth": len(self.waiting_queue),
+                    },
+                )
+                try:
+                    while _has_conflict():
+                        elapsed = time.time() - start_time
+                        remaining = timeout - elapsed
+                        if remaining <= 0:
+                            logger.warning(
+                                "workload_lease_timeout",
+                                extra={"requested": workload, "timeout": timeout},
+                            )
+                            return False
+                        self._condition.wait(timeout=min(remaining, 1.0))
+                finally:
+                    if workload in self.waiting_queue:
+                        self.waiting_queue.remove(workload)
+
+            self.active_lease = workload
+            self.in_flight_count += 1
+            logger.debug(
+                "workload_lease_acquired",
+                extra={"workload": workload, "in_flight": self.in_flight_count},
+            )
+            return True
+
+    def release_lease(self, workload: str) -> None:
+        """Release an active workload lease and notify waiting queue."""
+        workload = (workload or "idle").strip().lower()
+        with self._lock:
+            self.in_flight_count = max(0, self.in_flight_count - 1)
+            if self.in_flight_count == 0:
+                self.active_lease = None
+                self._condition.notify_all()
+            logger.debug(
+                "workload_lease_released",
+                extra={"workload": workload, "in_flight": self.in_flight_count, "active_lease": self.active_lease},
+            )
+
+    # ----------------------------------------------------------------------
     # Workload Preparation & Priority Arbiter
     # ----------------------------------------------------------------------
 
@@ -401,6 +522,9 @@ class VRAMManager:
         workload: str,
         model_id: Optional[str] = None,
         min_free_vram_mb: int = 0,
+        kv_cache_type: Optional[str] = None,
+        context_tokens: Optional[int] = None,
+        timeout: float = 60.0,
     ) -> Dict[str, Any]:
         """Enforce strict VRAM retention/eviction hierarchy before execution."""
         workload = (workload or "idle").strip().lower()
@@ -442,6 +566,15 @@ class VRAMManager:
 
                 actions_taken: List[str] = []
 
+                # COOPERATIVE DRAIN: Wait for any active LLM inference stream to finish!
+                if self.active_lease == "llm" and self.in_flight_count > 0:
+                    actions_taken.append("waited_for_llm_drain")
+                    self.acquire_lease("image", timeout=timeout)
+                else:
+                    self.active_lease = "image"
+                    if self.in_flight_count == 0:
+                        self.in_flight_count = 1
+
                 # EVICTION STEP 1: Stop llama-server to reclaim 10-18GB VRAM
                 if free_mb < target_free and self.is_llama_running():
                     self.stop_llama()
@@ -481,10 +614,19 @@ class VRAMManager:
                     # Multi-GPU: Skip ComfyUI eviction completely! ComfyUI models stay resident on GPU 0.
                     actions_taken.append("bypassed_comfy_eviction_multi_gpu")
                 else:
+                    # COOPERATIVE DRAIN: Wait if ComfyUI is actively generating or image lease is held
+                    if self.is_comfy_generating() or (self.active_lease == "image" and self.in_flight_count > 0):
+                        actions_taken.append("waited_for_comfy_drain")
+                        self.acquire_lease("llm", timeout=timeout)
+                    else:
+                        self.active_lease = "llm"
+                        if self.in_flight_count == 0:
+                            self.in_flight_count = 1
+
                     # EVICTION STEP 1: Flush ComfyUI models from VRAM
                     if self.free_comfy_vram():
                         actions_taken.append("freed_comfy_vram")
-                        time.sleep(0.1)
+                        time.sleep(0.4)
 
                 info = self.get_vram_info(device_idx=self.llm_gpu_device)
                 free_mb = info["vram_free_mb"]
@@ -501,14 +643,14 @@ class VRAMManager:
                         if (model_path and os.path.exists(model_path))
                         else 0
                     )
-                    reserve_mb = 2500
+                    reserve_mb = 1800
                     needed_for_full_mb = weight_mb + reserve_mb
 
                     # Laya on CUDA typically frees ~1200 - 1800 MB
                     estimated_laya_vram = 1500
                     potential_free_mb = free_mb + estimated_laya_vram
 
-                    if weight_mb > 0 and free_mb < needed_for_full_mb <= potential_free_mb:
+                    if weight_mb > 0 and (free_mb < needed_for_full_mb <= potential_free_mb or (not self.is_multi_gpu and free_mb < needed_for_full_mb)):
                         # Demoting Laya to CPU will allow the LLM to fit 100% on GPU!
                         self.unload_laya_cuda()
                         actions_taken.append("unloaded_laya_to_allow_full_llm_gpu_fit")
@@ -524,9 +666,19 @@ class VRAMManager:
                 else:
                     actions_taken.append("preserved_laya_cuda")
 
-                # Ensure llama-server is alive and serving the target model
-                if not self.is_llama_running() or (model_id and self.llama_model_id and self.llama_model_id != model_id):
-                    started = self.ensure_llama_running(model_id=model_id)
+                # Ensure llama-server is alive and serving the target model & configuration
+                need_restart = (
+                    not self.is_llama_running()
+                    or (model_id and self.llama_model_id and self.llama_model_id != model_id)
+                    or (kv_cache_type and self.current_kv_type != kv_cache_type)
+                    or (context_tokens and self.current_ctx_size != context_tokens)
+                )
+                if need_restart:
+                    started = self.ensure_llama_running(
+                        model_id=model_id,
+                        kv_cache_type=kv_cache_type,
+                        context_tokens=context_tokens,
+                    )
                     actions_taken.append(f"started_llama_server:{model_id}" if started else "llama_launch_failed")
 
                 return {
@@ -571,22 +723,36 @@ class VRAMManager:
     # JIT llama-server Lifecycle Management
     # ----------------------------------------------------------------------
 
-    def ensure_llama_running(self, model_id: Optional[str] = None, timeout: float = 60.0) -> bool:
+    def ensure_llama_running(
+        self,
+        model_id: Optional[str] = None,
+        kv_cache_type: Optional[str] = None,
+        context_tokens: Optional[int] = None,
+        timeout: float = 60.0,
+    ) -> bool:
         """Start llama-server Just-In-Time from RAM cache if not already running."""
         with self._lock:
+            # Resolve target KV cache precision and context window
+            target_kv = (kv_cache_type or os.getenv("CACHE_KV_TYPE") or "q8_0").strip().lower()
+            if target_kv not in ("q8_0", "q4_0", "f16"):
+                target_kv = "q8_0"
+            target_ctx = int(context_tokens or os.getenv("LLAMA_CTX_SIZE") or 8192)
+
             # Resolve model weights path (prefer RAM cache /dev/shm)
             model_path, resolved_mid = self._resolve_model_path(model_id)
             if not model_path or not os.path.exists(model_path):
                 logger.warning(f"model_path_not_found: {model_path} (mid={model_id})")
                 return False
 
-            # If already running with matching model or generic request, return immediately
+            # If already running with matching model and configuration, return immediately
             is_generic = (not model_id) or (str(model_id).strip().lower() in {"default", "auto", "rp", "llm", "primary", "base"})
             if self.is_llama_running():
-                if is_generic or (self.llama_model_id and (self.llama_model_id == model_id or self.llama_model_id == resolved_mid)):
+                model_matches = is_generic or (self.llama_model_id and (self.llama_model_id == model_id or self.llama_model_id == resolved_mid))
+                config_matches = (self.current_kv_type == target_kv) and (self.current_ctx_size == target_ctx)
+                if model_matches and config_matches:
                     self.last_llm_activity = time.time()
                     return True
-                # Different model requested -> stop current and hot-switch
+                # Different model or config requested -> stop current and hot-switch
                 self.stop_llama()
 
             # Locate llama-server binary
@@ -607,11 +773,14 @@ class VRAMManager:
                 "--port", str(self.llm_port),
                 "--main-gpu", str(self.llm_gpu_device),
                 "-ngl", str(ngl),
-                "-c", "8192",
-                "--cache-type-k", "q8_0",
-                "--cache-type-v", "q8_0",
+                "-np", "1",
+                "-c", str(target_ctx),
+                "--cache-type-k", target_kv,
+                "--cache-type-v", target_kv,
                 "--jinja",
             ]
+            if target_ctx > 32768:
+                cmd.extend(["--rope-scaling", "yarn", "--rope-scale", "2.0", "--yarn-orig-ctx", "32768"])
             aliases = ["default", "rp"]
             if resolved_mid and resolved_mid not in aliases:
                 aliases.append(resolved_mid)
@@ -644,8 +813,8 @@ class VRAMManager:
                         req = urllib.request.Request(f"http://127.0.0.1:{self.llm_port}/health")
                         with urllib.request.urlopen(req, timeout=1.0) as resp:
                             if resp.status == 200:
-                                elapsed = round(time.time() - t0, 1)
-                                logger.info(f"llama-server ready in {elapsed}s on port {self.llm_port}!")
+                                self.current_kv_type = target_kv
+                                self.current_ctx_size = target_ctx
                                 return True
                     except Exception:
                         pass
@@ -881,8 +1050,8 @@ class VRAMManager:
 
         actual_free_mb = free_mb if free_mb is not None else info["vram_free_mb"]
 
-        # Reserve for KV cache (8192 context q8_0) + compute scratch / context activation buffers
-        reserve_mb = 2500
+        # Reserve for KV cache (8192 context q8_0 with -np 1) + compute scratch / context activation buffers
+        reserve_mb = 1800
 
         total_layers = self._get_gguf_layer_count(model_path) or self._estimate_layer_count(model_path, weight_mb)
 
@@ -910,10 +1079,10 @@ class VRAMManager:
 
         # Case 2: Partial offload needed
         available_weight_mb = max(0, actual_free_mb - reserve_mb)
-        fraction = max(0.0, min(0.95, available_weight_mb / weight_mb))
+        fraction = max(0.0, min(1.0, available_weight_mb / weight_mb))
         target_layers = int(total_layers * fraction)
 
-        # Leave at least 2 layers on CPU to guarantee we never overflow free VRAM
+        # Leave at least 2 layers on CPU to guarantee we never overflow free VRAM when partial offload is required
         safe_ngl = max(4, min(total_layers - 2, target_layers - 1))
 
         return safe_ngl, {

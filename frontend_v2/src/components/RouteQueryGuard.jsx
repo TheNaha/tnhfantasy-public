@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useChat } from '../hooks/useChats';
 import { useStory } from '../hooks/useStories';
+import { useWorldVaultStore } from '../store/worldVaultStore';
 
 /**
  * RouteQueryGuard - renders children while a detail query is healthy; once the
@@ -22,6 +23,9 @@ function RouteQueryGuard({ query, fallbackPath, message, resetKey, children = nu
         if (query.isError && !notifiedRef.current) {
             notifiedRef.current = true;
             toast.error(message);
+            if (fallbackPath === '/chat') {
+                useWorldVaultStore.getState().setActiveChat(null);
+            }
             navigate(fallbackPath, { replace: true });
         }
     }, [query.isError, navigate, fallbackPath, message]);

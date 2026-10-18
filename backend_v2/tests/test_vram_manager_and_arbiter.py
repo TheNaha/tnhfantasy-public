@@ -401,4 +401,104 @@ class TestMultiGPUAndStorageStrategies:
         assert "artemis" in mid.lower()
 
 
+class TestVRAMConcurrencyAndWorkloadQueue:
+    """Test cooperative workload leasing, non-destructive transitions, and queue arbiter."""
+
+    def test_telemetry_reports_queue_and_lease_state(self):
+        mgr = VRAMManager()
+        mgr.active_lease = "llm"
+        mgr.in_flight_count = 2
+        mgr.waiting_queue = ["image"]
+
+        info = mgr.get_vram_info()
+        assert info["active_lease"] == "llm"
+        assert info["in_flight_count"] == 2
+        assert info["queue_depth"] == 1
+        assert info["waiting_workloads"] == ["image"]
+        assert "comfy_generating" in info
+
+    def test_image_workload_cooperatively_waits_for_active_llm_lease(self):
+        """When an LLM stream is actively in-flight, an image request MUST NOT kill llama-server; it waits for drain."""
+        import threading
+        import time
+
+        mgr = VRAMManager()
+        mgr.active_lease = "llm"
+        mgr.in_flight_count = 1
+        mgr.is_llama_running = MagicMock(return_value=True)
+        mgr.stop_llama = MagicMock(return_value=True)
+
+        # Mock low free VRAM so image generation requires stopping llama
+        mock_info = {
+            "available": True,
+            "device_name": "NVIDIA L4",
+            "vram_total_mb": 24000,
+            "vram_used_mb": 22000,
+            "vram_free_mb": 2000,
+        }
+        mgr.get_vram_info = MagicMock(return_value=mock_info)
+
+        def _delayed_llm_finish():
+            time.sleep(0.15)
+            mgr.release_lease("llm")
+
+        thread = threading.Thread(target=_delayed_llm_finish, daemon=True)
+        thread.start()
+
+        # Prepare for image: should wait for LLM to finish, then safely stop llama
+        res = mgr.prepare_for_workload("image", min_free_vram_mb=10000, timeout=5.0)
+
+        thread.join(timeout=2.0)
+        assert "waited_for_llm_drain" in res["actions_taken"]
+        assert "stopped_llama_server" in res["actions_taken"]
+        mgr.stop_llama.assert_called_once()
+        assert mgr.active_lease == "image"
+
+    def test_llm_workload_cooperatively_waits_for_active_comfy_generation(self):
+        """When ComfyUI is generating, an LLM request MUST NOT free ComfyUI models; it waits for sampling to finish."""
+        import threading
+        import time
+
+        mgr = VRAMManager()
+        comfy_active = [True]
+        mgr.is_comfy_generating = MagicMock(side_effect=lambda: comfy_active[0])
+        mgr.free_comfy_vram = MagicMock(return_value=True)
+        mgr.is_llama_running = MagicMock(return_value=True)
+        mgr.get_vram_info = MagicMock(return_value={"available": True, "vram_total_mb": 24000, "vram_free_mb": 15000})
+
+        def _delayed_comfy_finish():
+            time.sleep(0.15)
+            comfy_active[0] = False
+
+        thread = threading.Thread(target=_delayed_comfy_finish, daemon=True)
+        thread.start()
+
+        res = mgr.prepare_for_workload("llm", timeout=5.0)
+
+        thread.join(timeout=2.0)
+        assert "waited_for_comfy_drain" in res["actions_taken"]
+        assert "freed_comfy_vram" in res["actions_taken"]
+        mgr.free_comfy_vram.assert_called_once()
+        assert mgr.active_lease == "llm"
+
+    def test_vram_release_endpoint(self, monkeypatch):
+        import server
+        from server import app
+        from vram_manager import get_vram_manager
+
+        monkeypatch.setattr(server, "TOKEN", "test-token")
+        client = TestClient(app)
+        mgr = get_vram_manager()
+        mgr.active_lease = "image"
+        mgr.in_flight_count = 1
+
+        resp = client.post("/vram/release", json={"workload": "image"}, headers={"Authorization": "Bearer test-token"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "released"
+        assert data["workload"] == "image"
+        assert data["in_flight"] == 0
+        assert data["active_lease"] is None
+
+
 

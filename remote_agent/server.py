@@ -1389,10 +1389,14 @@ if WORKER_MODE in ("llm", "hybrid"):
         # 1) yield ComfyUI models from VRAM (<500ms)
         # 2) preserve Laya System 1 on CUDA
         # 3) start llama-server Just-In-Time from /dev/shm if not already running
+        # 4) acquire active LLM lease so no concurrent image request terminates the inference
+        lease_acquired = False
         try:
             from vram_manager import get_vram_manager
             target_model = payload.get("model")
-            await _bounded_to_thread(get_vram_manager().prepare_for_workload, "llm", target_model)
+            vmgr = get_vram_manager()
+            await _bounded_to_thread(vmgr.prepare_for_workload, "llm", target_model)
+            lease_acquired = await _bounded_to_thread(vmgr.acquire_lease, "llm")
         except Exception:
             if WORKER_MODE == "hybrid":
                 try:
@@ -1418,6 +1422,13 @@ if WORKER_MODE in ("llm", "hybrid"):
             )
             upstream_resp = await client.send(upstream_req, stream=True)
         except httpx.ConnectError as exc:
+            if lease_acquired:
+                try:
+                    from vram_manager import get_vram_manager
+                    await _bounded_to_thread(get_vram_manager().release_lease, "llm")
+                    lease_acquired = False
+                except Exception:
+                    pass
             await client.aclose()
             err_payload = {
                 "status": "error",
@@ -1431,6 +1442,13 @@ if WORKER_MODE in ("llm", "hybrid"):
             }
             return Response(content=json.dumps(err_payload), status_code=503, media_type="application/json")
         except Exception as exc:
+            if lease_acquired:
+                try:
+                    from vram_manager import get_vram_manager
+                    await _bounded_to_thread(get_vram_manager().release_lease, "llm")
+                    lease_acquired = False
+                except Exception:
+                    pass
             await client.aclose()
             err_payload = {
                 "status": "error",
@@ -1448,6 +1466,13 @@ if WORKER_MODE in ("llm", "hybrid"):
             err_bytes = await upstream_resp.aread()
             await upstream_resp.aclose()
             await client.aclose()
+            if lease_acquired:
+                try:
+                    from vram_manager import get_vram_manager
+                    await _bounded_to_thread(get_vram_manager().release_lease, "llm")
+                    lease_acquired = False
+                except Exception:
+                    pass
             return Response(
                 content=err_bytes,
                 status_code=upstream_resp.status_code,
@@ -1459,6 +1484,12 @@ if WORKER_MODE in ("llm", "hybrid"):
                 async for chunk in upstream_resp.aiter_bytes():
                     yield chunk
             finally:
+                if lease_acquired:
+                    try:
+                        from vram_manager import get_vram_manager
+                        await _bounded_to_thread(get_vram_manager().release_lease, "llm")
+                    except Exception:
+                        pass
                 await upstream_resp.aclose()
                 await client.aclose()
 
@@ -1555,8 +1586,7 @@ def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dic
     try:
         from vram_manager import get_vram_manager
         vram_mgr = get_vram_manager()
-        preferred_cuda = f"cuda:{vram_mgr.laya_gpu_device}"
-        laya_model, device = vram_mgr.get_or_load_laya(model_id, repo_or_path, preferred_device=preferred_cuda)
+        laya_model, device = vram_mgr.get_or_load_laya(model_id, repo_or_path)
     except Exception:
         laya_model = _LAYA_LOADED_MODELS.get(repo_or_path)
         if laya_model is None:
@@ -1738,6 +1768,13 @@ class VramPrepareRequest(BaseModel):
     workload: str = "image"
     model: Optional[str] = None
     min_free_vram_mb: Optional[int] = None
+    kv_cache_type: Optional[str] = None
+    context_tokens: Optional[int] = None
+    timeout: Optional[float] = 60.0
+
+
+class VramReleaseRequest(BaseModel):
+    workload: str = "image"
 
 
 @app.post("/vram/prepare", dependencies=[Depends(verify_token)])
@@ -1750,8 +1787,26 @@ async def vram_prepare(req: VramPrepareRequest):
         req.workload,
         model_id=req.model,
         min_free_vram_mb=req.min_free_vram_mb or 0,
+        kv_cache_type=req.kv_cache_type,
+        context_tokens=req.context_tokens,
+        timeout=req.timeout or 60.0,
     )
     return res
+
+
+@app.post("/vram/release", dependencies=[Depends(verify_token)])
+async def vram_release(req: VramReleaseRequest):
+    """Explicitly release a workload lease and wake queued workloads."""
+    from vram_manager import get_vram_manager
+    mgr = get_vram_manager()
+    await _bounded_to_thread(mgr.release_lease, req.workload)
+    return {
+        "status": "released",
+        "workload": req.workload,
+        "active_lease": mgr.active_lease,
+        "in_flight": mgr.in_flight_count,
+        "queue_depth": len(mgr.waiting_queue),
+    }
 
 
 @app.get("/vram/status", dependencies=[Depends(verify_token)])

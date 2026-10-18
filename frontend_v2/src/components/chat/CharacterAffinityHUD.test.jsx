@@ -90,4 +90,15 @@ describe('CharacterAffinityHUD', () => {
         const { container } = render(<CharacterAffinityHUD />);
         expect(container.firstChild).toBeNull();
     });
+
+    it('returns null if chat has no linked character', () => {
+        vi.spyOn(ChatWorkspaceContext, 'useChatWorkspace').mockReturnValue({
+            activeChat: { id: 'chat-no-char', character_id: null, state_snapshot: {} },
+            linkedCharacter: null,
+            activeStreams: [],
+        });
+
+        const { container } = render(<CharacterAffinityHUD />);
+        expect(container.firstChild).toBeNull();
+    });
 });

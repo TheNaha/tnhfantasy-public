@@ -52,6 +52,12 @@ const MOOD_CONFIG = {
         color: 'text-indigo-300 bg-indigo-500/15 border-indigo-500/30',
         barColor: 'from-indigo-400 to-purple-500',
     },
+    neutral: {
+        label: 'Neutral',
+        icon: Smile,
+        color: 'text-gray-300 bg-gray-500/15 border-gray-500/30',
+        barColor: 'from-gray-500 to-slate-400',
+    },
 };
 
 export default function CharacterAffinityHUD() {
@@ -68,7 +74,7 @@ export default function CharacterAffinityHUD() {
         return stream?.jobData?.directorDecision || null;
     }, [activeStreams]);
 
-    const rawMoodKey = streamingDecision?.character_mood || snapshot.character_mood || 'curious_attentive';
+    const rawMoodKey = streamingDecision?.character_mood || snapshot.character_mood || 'neutral';
     const moodConfig = MOOD_CONFIG[rawMoodKey] || {
         label: rawMoodKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
         icon: Smile,
@@ -81,7 +87,7 @@ export default function CharacterAffinityHUD() {
         ? rawInventory.map(item => typeof item === 'string' ? item : item?.name || item?.label || '').filter(Boolean)
         : [];
 
-    const relationshipStatus = snapshot.relationship_status || snapshot.relationship || 'Developing bond';
+    const relationshipStatus = snapshot.relationship_status || snapshot.relationship || (linkedCharacter ? 'Acquaintances' : '');
     const characterOutfit = snapshot.character_outfit || snapshot.outfit || null;
     const currentActivity = snapshot.current_activity || snapshot.activity || null;
     const expression = snapshot.character_expression || streamingDecision?.character_expression || null;
@@ -110,7 +116,7 @@ export default function CharacterAffinityHUD() {
         setIsEditingRelationship(false);
     };
 
-    if (!activeChat) return null;
+    if (!activeChat || (!linkedCharacter && !activeChat?.character_id)) return null;
 
     return (
         <div className="relative border-b border-white/5 bg-gradient-to-r from-gray-900/90 via-gray-900/80 to-gray-950/90 backdrop-blur-md px-3 sm:px-4 py-2 text-xs select-none z-10 transition-all">

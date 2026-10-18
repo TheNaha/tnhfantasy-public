@@ -1870,6 +1870,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add chats.director_enabled and chats.state_snapshot for System 1 Director and Statekeeper (Updater) live state tracking",
             apply_fn=_migration_100_chat_director_state_snapshot,
         ),
+        MigrationStep(
+            version="101_chat_director_autonomy",
+            description="Add max_autonomous_turns and director_autonomy_level to chats",
+            apply_fn=_migration_101_chat_director_autonomy,
+        ),
     ]
 
 
@@ -4992,6 +4997,28 @@ def _migration_100_chat_director_state_snapshot(conn) -> bool:
             text(f"ALTER TABLE chats ADD COLUMN state_snapshot {json_type}")
         )
         logger.info("migration_column_added", table="chats", column="state_snapshot")
+
+    return True
+
+
+def _migration_101_chat_director_autonomy(conn) -> bool:
+    """Add `director_autonomy_level` and `max_autonomous_turns` to `chats`."""
+    inspector = inspect(conn)
+    if "chats" not in set(inspector.get_table_names()):
+        return False
+    cols = {c["name"] for c in inspector.get_columns("chats")}
+
+    if "director_autonomy_level" not in cols:
+        conn.execute(
+            text("ALTER TABLE chats ADD COLUMN director_autonomy_level TEXT NOT NULL DEFAULT 'balanced'")
+        )
+        logger.info("migration_column_added", table="chats", column="director_autonomy_level")
+
+    if "max_autonomous_turns" not in cols:
+        conn.execute(
+            text("ALTER TABLE chats ADD COLUMN max_autonomous_turns INTEGER NOT NULL DEFAULT 4")
+        )
+        logger.info("migration_column_added", table="chats", column="max_autonomous_turns")
 
     return True
 

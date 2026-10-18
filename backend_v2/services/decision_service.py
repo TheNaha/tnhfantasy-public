@@ -24,6 +24,7 @@ from core.entities import Provider
 from infrastructure.logging import get_logger
 from services.decision_schema import (
     DirectorDecisionResult,
+    build_continuation_questions,
     build_director_questions,
     build_generative_fallback_prompt,
     format_director_context,
@@ -436,3 +437,84 @@ class DecisionService:
             latency_ms=(time.perf_counter() - started) * 1000,
             state_snapshot=state_snapshot,
         )
+
+    async def evaluate_continuation(self, text: str) -> bool:
+        """Evaluate whether generated text has naturally completed or needs continuation.
+
+        Returns True if complete (natural ending), False if cut off (needs continuation).
+        """
+        cleaned = (text or "").rstrip()
+        if not cleaned:
+            return True
+
+        # Quick terminal check: if ends with terminal punctuation and balanced quotes/asterisks
+        terminal_chars = (".", "!", "?", "…")
+        last_char = cleaned[-1]
+
+        quote_count = cleaned.count('"') + cleaned.count("“") + cleaned.count("”")
+        asterisk_count = cleaned.count("*")
+        unbalanced = (quote_count % 2 != 0) or (asterisk_count % 2 != 0)
+
+        if last_char in terminal_chars and not unbalanced:
+            return True
+        if (
+            last_char in ('"', "”", "*")
+            and any(cleaned.rstrip('"”*').endswith(t) for t in terminal_chars)
+            and not unbalanced
+        ):
+            return True
+
+        questions = build_continuation_questions()
+        active_model = self._active_decisions_model()
+        snippet = cleaned[-400:] if len(cleaned) > 400 else cleaned
+
+        try:
+            target = self._find_remote_agent_target()
+            if target:
+                _, agent_url, agent_token = target
+                headers: Dict[str, str] = {"Content-Type": "application/json"}
+                if agent_token:
+                    headers["X-Worker-Token"] = agent_token
+                    headers["Authorization"] = f"Bearer {agent_token}"
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.post(
+                        f"{agent_url}/v1/decisions",
+                        json={
+                            "context": f"Review the tail end of this generated story text:\n\n{snippet}",
+                            "questions": questions,
+                            "model": active_model,
+                        },
+                        headers=headers,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        answers = data.get("answers") or {}
+                        is_complete = answers.get("is_complete", {})
+                        prob = float(is_complete.get("probability", 0.5)) if isinstance(is_complete, dict) else 0.5
+                        return prob >= 0.55
+        except Exception as exc:
+            logger.debug("continuation_laya_eval_fallback", error=str(exc))
+
+        # Local CPU LayaRunner
+        runner = get_laya_runner()
+        if runner.is_available() and active_model != "same_as_util":
+            try:
+                res = runner.evaluate_fast(
+                    f"Review the tail end of this generated story text:\n\n{snippet}",
+                    questions,
+                    model_id=active_model,
+                )
+                if res and "is_complete" in res:
+                    ans = res["is_complete"]
+                    prob = float(ans.get("probability", 0.5)) if isinstance(ans, dict) else 0.5
+                    return prob >= 0.55
+            except Exception as exc:
+                logger.debug("continuation_local_laya_fallback", error=str(exc))
+
+        # Heuristic fallback: if unbalanced quotes or asterisks, definitely not complete
+        if unbalanced:
+            return False
+        if last_char in (",", ":", ";", "-", "—", "–") or last_char.isalnum():
+            return False
+        return True
+

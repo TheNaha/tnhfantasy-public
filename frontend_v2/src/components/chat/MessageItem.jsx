@@ -102,18 +102,6 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                     {isIdleSim && (
                         <span className="ml-1.5 text-amber-400/80">· 💤 Idle sim</span>
                     )}
-                    {meta.context_trace?.director_decision && (
-                        <span
-                            className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300/90 text-3xs font-mono"
-                            title={`Director Pacing: ${meta.context_trace.director_decision.pacing_directive || 'standard'}`}
-                        >
-                            <span className="text-blue-400">⚡</span>
-                            <span>{meta.context_trace.director_decision.pacing_directive || 'pacing'}</span>
-                            {(meta.context_trace.director_decision.scene_tension != null || meta.context_trace.director_decision.tension_level != null) && (
-                                <span className="opacity-70">· T{meta.context_trace.director_decision.scene_tension ?? meta.context_trace.director_decision.tension_level}/5</span>
-                            )}
-                        </span>
-                    )}
                     {(meta.context_trace?.user_directive || meta.directive) && (
                         <span
                             className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300/90 text-3xs font-mono"
@@ -121,15 +109,6 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                         >
                             <span>🎯</span>
                             <span className="truncate max-w-[110px]">{meta.context_trace?.user_directive || meta.directive}</span>
-                        </span>
-                    )}
-                    {(meta.token_usage?.completion_tokens ?? meta.completion_tokens ?? meta.tokens_out) != null && (
-                        <span
-                            className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300/90 text-3xs font-mono"
-                            title={`Output: ${meta.token_usage?.completion_tokens ?? meta.completion_tokens ?? meta.tokens_out} generation tokens`}
-                        >
-                            <span>⚡</span>
-                            <span>{meta.token_usage?.completion_tokens ?? meta.completion_tokens ?? meta.tokens_out} tok</span>
                         </span>
                     )}
                 </div>
@@ -200,7 +179,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                         })}
                                     </div>
                                 )}
-                                <ContextTracePanel trace={meta.context_trace} />
+                                <ContextTracePanel trace={meta.context_trace} meta={meta} msg={msg} />
                                 {msg.image_path && (
                                     <div className="mt-1">
                                         <img src={thumbUrl(msg.image_path)} alt="Attachment" loading="lazy" decoding="async" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />

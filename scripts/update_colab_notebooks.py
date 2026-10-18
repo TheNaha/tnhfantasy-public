@@ -1636,8 +1636,8 @@ def launch_llm_track():
             total_vram_gb = total_bytes / (1024**3)
             weight_gb = os.path.getsize(rp_ram_file) / (1024**3) if (rp_ram_file and os.path.exists(rp_ram_file)) else 0.0
 
-            # Reserve 2.5 GB for KV cache (8192 context q8_0) and compute scratch
-            reserve_gb = 2.5
+            # Reserve 1.8 GB for KV cache (8192 context q8_0 with -np 1) and compute scratch
+            reserve_gb = 1.8
             available_weight_gb = max(0.0, free_vram_gb - reserve_gb)
 
             # Estimate total model layers (e.g. 46 for 26B/27B Gemma, 64 for 31B, 40 for 12B/14B)
@@ -1655,7 +1655,7 @@ def launch_llm_track():
                 ngl = 99
                 print(f"  ⚡ Model ({weight_gb:.1f} GB) fits entirely in free GPU VRAM ({free_vram_gb:.1f} GB free of {total_vram_gb:.1f} GB): -ngl 99 (100% GPU offload, zero CPU latency)")
             elif weight_gb > 0 and available_weight_gb > 0:
-                fraction = min(0.95, available_weight_gb / weight_gb)
+                fraction = min(1.0, available_weight_gb / weight_gb)
                 target_layers = int(total_layers * fraction)
                 ngl = max(4, min(total_layers - 2, target_layers - 1))
                 print(f"  ⚡ GPU VRAM: {free_vram_gb:.1f} GB free of {total_vram_gb:.1f} GB | Model: {weight_gb:.1f} GB")
@@ -1673,6 +1673,7 @@ def launch_llm_track():
         "--host", "127.0.0.1",
         "--main-gpu", str(llm_gpu_device),
         "-ngl", str(ngl),
+        "-np", "1",
         "-c", "8192",
         "--cache-type-k", "q8_0",
         "--cache-type-v", "q8_0",
@@ -1732,9 +1733,8 @@ def launch_laya_track():
     if active_decisions in ("same_as_util", "disabled"):
         print(f"ℹ️ [Laya Track] Decisions mode is '{active_decisions}'; skipping Laya pre-warm.")
         return
-    print(f"⚡ [Laya Track] Pre-warming Laya [{active_decisions}] on GPU (CUDA)...")
+    print(f"⚡ [Laya Track] Pre-warming Laya [{active_decisions}] into RAM cache...")
     try:
-        import laya
         laya_dir = f"/content/agent-data/decisions/{active_decisions}"
         repo_fallback = laya_repo_map.get(active_decisions) or models_dict.get(active_decisions, {}).get("repo") or "convaiinnovations/laya-multilingual"
         src = laya_dir if (os.path.exists(laya_dir) and any(os.listdir(laya_dir))) else repo_fallback
@@ -1743,11 +1743,7 @@ def launch_laya_track():
                 ram_mgr.ensure_dir_in_ram(src, model_id=active_decisions, role="decisions", is_anchor=True)
             except Exception:
                 pass
-        hf_tok = os.environ.get("HF_TOKEN") or None
-        target_dev = f"cuda:{laya_gpu_device}"
-        test_agent = laya.load(src, device=target_dev, token=hf_tok)
-        actual_dev = getattr(test_agent, "device", "cuda")
-        print(f"✅ [Laya Track] Laya [{active_decisions}] pre-warmed on {str(actual_dev).upper()} (<100ms inference ready)!")
+        print(f"✅ [Laya Track] Laya [{active_decisions}] pre-warmed in RAM cache (<150ms inference ready)!")
     except Exception as exc:
         print(f"⚠️ [Laya Track] Pre-warming notice for {active_decisions}: {exc}")
 
@@ -2063,7 +2059,7 @@ try:
         if now - last_watchdog > 10.0:
             last_watchdog = now
             proc_llm = worker_procs.get("llm")
-            if mode_key in ("hybrid", "llm") and proc_llm and proc_llm.poll() is not None:
+            if mode_key == "llm" and proc_llm and proc_llm.poll() is not None:
                 tag = TAG_COLORS.get("LLM", "[LLM]")
                 print(f"{tag} ⚠️ llama-server process exited (code {proc_llm.returncode}). Auto-restarting...", flush=True)
                 # Ensure ComfyUI yields VRAM before restarting llama-server

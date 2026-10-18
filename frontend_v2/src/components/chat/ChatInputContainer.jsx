@@ -58,7 +58,7 @@ export default function ChatInputContainer({
 
     const snapshot = activeChat?.state_snapshot || {};
     const actionChips = snapshot.last_director_decision?.suggested_action_chips || [];
-    const hasState = Boolean(snapshot.location || snapshot.time_of_day || snapshot.mood || snapshot.outfit || snapshot.relationship);
+    const hasState = Boolean(snapshot.location || snapshot.story_location || snapshot.time_of_day || snapshot.story_time || snapshot.mood || snapshot.character_mood || snapshot.outfit || snapshot.character_outfit || snapshot.relationship || snapshot.relationship_status);
 
     const handleRollFate = useCallback(() => {
         const roll = Math.floor(Math.random() * 20) + 1;
@@ -126,9 +126,9 @@ export default function ChatInputContainer({
                                 <Smile size={9} /> {snapshot.mood}
                             </span>
                         )}
-                        {snapshot.relationship && (
+                        {(snapshot.relationship_status || snapshot.relationship) && (
                             <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-300">
-                                <Heart size={9} /> {snapshot.relationship}
+                                <Heart size={9} /> {snapshot.relationship_status || snapshot.relationship}
                             </span>
                         )}
                     </div>
@@ -151,11 +151,11 @@ export default function ChatInputContainer({
                             </button>
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-3xs">
-                            <div><strong className="text-gray-500 block">Location</strong><span className="text-gray-200">{snapshot.location || '—'}</span></div>
-                            <div><strong className="text-gray-500 block">Time of Day</strong><span className="text-gray-200">{snapshot.time_of_day || '—'}</span></div>
-                            <div><strong className="text-gray-500 block">Outfit</strong><span className="text-gray-200">{snapshot.outfit || '—'}</span></div>
-                            <div><strong className="text-gray-500 block">Mood</strong><span className="text-gray-200">{snapshot.mood || '—'}</span></div>
-                            <div><strong className="text-gray-500 block">Relationship</strong><span className="text-gray-200">{snapshot.relationship || '—'}</span></div>
+                            <div><strong className="text-gray-500 block">Location</strong><span className="text-gray-200">{snapshot.story_location || snapshot.location || '—'}</span></div>
+                            <div><strong className="text-gray-500 block">Time of Day</strong><span className="text-gray-200">{snapshot.story_time || snapshot.time_of_day || '—'}</span></div>
+                            <div><strong className="text-gray-500 block">Outfit</strong><span className="text-gray-200">{snapshot.character_outfit || snapshot.outfit || '—'}</span></div>
+                            <div><strong className="text-gray-500 block">Mood</strong><span className="text-gray-200">{snapshot.character_mood || snapshot.mood || '—'}</span></div>
+                            <div><strong className="text-gray-500 block">Relationship</strong><span className="text-gray-200">{snapshot.relationship_status || snapshot.relationship || '—'}</span></div>
                             {snapshot.inventory?.length > 0 && (
                                 <div><strong className="text-gray-500 block">Key Items</strong><span className="text-gray-200">{snapshot.inventory.map(i => i.name).join(', ')}</span></div>
                             )}

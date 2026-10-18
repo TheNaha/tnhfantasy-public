@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
-import { Edit2 } from 'lucide-react';
+import { Edit2, Lock, Unlock } from 'lucide-react';
 
 /**
  * One labelled value with click-to-edit. `inline` drops the panel chrome and
@@ -9,7 +9,18 @@ import { Edit2 } from 'lucide-react';
  * longer the field's own accessible name. `showLabel` keeps a visible caption
  * for the inline case where the surrounding section does not name this field.
  */
-function ContextField({ label, icon: Icon, value, placeholder, onSave, inline = false, showLabel = false, fieldLabel }) {
+function ContextField({
+    label,
+    icon: Icon,
+    value,
+    placeholder,
+    onSave,
+    inline = false,
+    showLabel = false,
+    fieldLabel,
+    locked = false,
+    onToggleLock,
+}) {
     const [editing, setEditing] = useState(false);
     const [localValue, setLocalValue] = useState(value || '');
     const inputRef = useRef(null);
@@ -64,9 +75,25 @@ function ContextField({ label, icon: Icon, value, placeholder, onSave, inline = 
         return (
             <div role="group" aria-label={fieldLabel || label}>
                 {showLabel && (
-                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                        {Icon && <Icon size={12} />} {label}
-                    </p>
+                    <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
+                            {Icon && <Icon size={12} />} {label}
+                        </p>
+                        {onToggleLock && (
+                            <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
+                                className={clsx(
+                                    "p-0.5 rounded transition-colors text-2xs flex items-center gap-1",
+                                    locked ? "text-amber-400 bg-amber-500/15" : "text-gray-500 hover:text-gray-300"
+                                )}
+                                title={locked ? "Locked: Protected from AI & Laya overwrites" : "Unlocked: Can be updated by Director/Statekeeper"}
+                            >
+                                {locked ? <Lock size={11} className="text-amber-400" /> : <Unlock size={11} />}
+                                {locked && <span className="text-2xs font-mono font-bold text-amber-400">LOCK</span>}
+                            </button>
+                        )}
+                    </div>
                 )}
                 {body}
             </div>
@@ -75,9 +102,25 @@ function ContextField({ label, icon: Icon, value, placeholder, onSave, inline = 
 
     return (
         <div className="glass-panel p-4 rounded-xl border border-white/5">
-            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                <Icon size={12} /> {label}
-            </h4>
+            <div className="flex items-center justify-between mb-3">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                    {Icon && <Icon size={12} />} {label}
+                </h4>
+                {onToggleLock && (
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
+                        className={clsx(
+                            "p-1 rounded transition-colors text-2xs flex items-center gap-1",
+                            locked ? "text-amber-400 bg-amber-500/15" : "text-gray-500 hover:text-gray-300"
+                        )}
+                        title={locked ? "Locked: Protected from AI & Laya overwrites" : "Unlocked: Can be updated by Director/Statekeeper"}
+                    >
+                        {locked ? <Lock size={12} className="text-amber-400" /> : <Unlock size={12} />}
+                        {locked && <span className="text-2xs font-mono font-bold text-amber-400">LOCK</span>}
+                    </button>
+                )}
+            </div>
             {body}
         </div>
     );

@@ -336,31 +336,40 @@ def record_director_decision(
 
     now_iso = datetime.now(timezone.utc).isoformat()
     snapshot = dict(chat.state_snapshot or {})
-    snapshot["scene_tension"] = decision.scene_tension
-    snapshot["emotional_tone"] = decision.emotional_tone
-    snapshot["character_expression"] = decision.character_expression
-    snapshot["pacing_directive"] = decision.pacing_directive
-    snapshot["pacing_speed"] = decision.pacing_speed
-    snapshot["is_risky_action_probability"] = decision.is_risky_action_probability
-    snapshot["action_difficulty"] = decision.action_difficulty
-    snapshot["last_fate_outcome"] = decision.fate_outcome
-    snapshot["last_fate_directive"] = decision.fate_directive
-    snapshot["matched_skills"] = decision.matched_skills
-    # Calculate real-time affinity delta from System 1 Director
     locked = set(snapshot.get("locked_fields") or [])
-    aff_delta = int(getattr(decision, "affinity_delta", 0))
-    curr_aff = int(snapshot.get("character_affinity", 50))
-    new_aff = max(0, min(100, curr_aff + aff_delta))
-    snapshot["character_affinity"] = new_aff
-    snapshot["last_affinity_delta"] = aff_delta
 
-    # Dynamic mood with inertia anchor: only update if shift detected or mood unset
+    if "scene_tension" not in locked and "tension" not in locked:
+        snapshot["scene_tension"] = decision.scene_tension
+        snapshot["scene_tension_label"] = getattr(decision, "scene_tension_label", "normal")
+    if "emotional_tone" not in locked and "tone" not in locked:
+        snapshot["emotional_tone"] = decision.emotional_tone
+    if "character_expression" not in locked and "expression" not in locked:
+        snapshot["character_expression"] = decision.character_expression
+    if "pacing_directive" not in locked and "pacing" not in locked:
+        snapshot["pacing_directive"] = decision.pacing_directive
+    if "pacing_speed" not in locked:
+        snapshot["pacing_speed"] = decision.pacing_speed
+    if "fate" not in locked and "fate_check" not in locked:
+        snapshot["is_risky_action_probability"] = decision.is_risky_action_probability
+        snapshot["action_difficulty"] = decision.action_difficulty
+        snapshot["last_fate_outcome"] = decision.fate_outcome
+        snapshot["last_fate_directive"] = decision.fate_directive
+        snapshot["matched_skills"] = decision.matched_skills
+
+    # Calculate real-time affinity delta from System 1 Director
+    if "character_affinity" not in locked and "affinity" not in locked:
+        aff_delta = int(getattr(decision, "affinity_delta", 0))
+        curr_aff = int(snapshot.get("character_affinity", 50))
+        new_aff = max(0, min(100, curr_aff + aff_delta))
+        snapshot["character_affinity"] = new_aff
+        snapshot["last_affinity_delta"] = aff_delta
+
+    # Dynamic mood: Laya acts as gater and decider. It does not overwrite an existing
+    # character mood with generic classification labels; it only provides an initial default
+    # on turn 0 if completely unset, leaving narrative mood updates to the Statekeeper.
     new_mood = getattr(decision, "character_mood", None)
-    if "character_mood" not in locked:
-        if getattr(decision, "mood_shift_detected", False) or not snapshot.get("character_mood"):
-            if new_mood:
-                snapshot["character_mood"] = new_mood
-        elif not snapshot.get("character_mood") and new_mood:
+    if "character_mood" not in locked and "mood" not in locked:
+        if not snapshot.get("character_mood") and new_mood:
             snapshot["character_mood"] = new_mood
 
     snapshot["last_director_decision"] = decision.to_dict()
@@ -675,12 +684,26 @@ def apply_updater_result(
         "character_outfit",
         "relationship_status",
         "scene_summary",
+        "emotional_tone",
+        "scene_tension",
+        "pacing_directive",
     ):
         if field_key in locked:
+            continue
+        if field_key == "character_mood" and "mood" in locked:
+            continue
+        if field_key == "emotional_tone" and "tone" in locked:
+            continue
+        if field_key == "pacing_directive" and "pacing" in locked:
+            continue
+        if field_key == "scene_tension" and "tension" in locked:
             continue
         val = deltas.get(field_key)
         if isinstance(val, str) and val.strip() and val.strip().lower() != "null":
             snapshot[field_key] = val.strip()
+
+    if "inventory" not in locked and isinstance(deltas.get("inventory"), list):
+        snapshot["inventory"] = deltas["inventory"]
 
     # Auto-save newly detected outfit into character's wardrobe presets
     new_outfit = snapshot.get("character_outfit")

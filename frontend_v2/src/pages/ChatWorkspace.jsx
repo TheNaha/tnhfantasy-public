@@ -58,21 +58,21 @@ function ChatWorkspaceLayout() {
         enableTtsMutation.mutate();
     };
     const {
-        mobileTab, setMobileTab,
-        activeChatId, messages, setMessageSearch,
-        setTimelineVisible, listContainerRef,
-        showNewChatModal, characters, lorebooks, worlds, personas: personasCtx = [], confirmCreateChat, setShowNewChatModal,
-        showCharacterDetails, linkedCharacter, setShowCharacterDetails,
-        editingCharacter, setEditingCharacter, handleSaveCharacter,
-        editingLorebook, showLorebookModal, closeLorebookModal,
-        editingLocation, showLocationModal, closeLocationModal,
-        greetingModal, setGreetingModal, hasCreatedChatRef,
-        showScenesModal, setShowScenesModal, sceneTab, setSceneTab, chatImages,
-        chatCollection, handleSaveImageToCollection, collectionsList,
-        avatarModalSrc, setAvatarModalSrc, contextCollapsed,
-        timelineVisible, activeBranch, setActiveBranch,
-        queryErrors,
-    } = context;
+        mobileTab = 'chat', setMobileTab = () => {},
+        activeChatId = null, messages = [], setMessageSearch = () => {},
+        setTimelineVisible = () => {}, listContainerRef = { current: null },
+        showNewChatModal = false, characters = [], lorebooks = [], worlds = [], personas: personasCtx = [], confirmCreateChat = () => {}, setShowNewChatModal = () => {},
+        showCharacterDetails = false, linkedCharacter = null, setShowCharacterDetails = () => {},
+        editingCharacter = null, setEditingCharacter = () => {}, handleSaveCharacter = () => {},
+        editingLorebook = null, showLorebookModal = false, closeLorebookModal = () => {},
+        editingLocation = null, showLocationModal = false, closeLocationModal = () => {},
+        greetingModal = null, setGreetingModal = () => {}, hasCreatedChatRef = { current: false },
+        showScenesModal = false, setShowScenesModal = () => {}, sceneTab = 'chat', setSceneTab = () => {}, chatImages = [],
+        chatCollection = null, handleSaveImageToCollection = () => {}, collectionsList = [],
+        avatarModalSrc = null, setAvatarModalSrc = () => {}, contextCollapsed = false,
+        timelineVisible = false, activeBranch = null, setActiveBranch = () => {},
+        queryErrors = {},
+    } = context || {};
 
     const closeScenesModal = useCallback(() => setShowScenesModal(false), [setShowScenesModal]);
     const closeAvatarViewer = useCallback(() => setAvatarModalSrc(null), [setAvatarModalSrc]);
@@ -179,7 +179,7 @@ function ChatWorkspaceLayout() {
                 <div className={clsx(
                     "flex-col shrink-0 border-l border-white/5 bg-gray-900 lg:bg-gray-900/70 flex-1 lg:flex-none overflow-hidden min-w-0",
                     "w-full",
-                    contextCollapsed ? "lg:w-0 lg:border-l-0" : "lg:w-72",
+                    contextCollapsed ? "lg:w-0 lg:border-l-0" : "lg:w-88 xl:w-96",
                     mobileTab === 'context' ? "flex" : "hidden lg:flex"
                 )}>
                     <div className="h-12 lg:h-16 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">

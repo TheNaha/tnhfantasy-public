@@ -172,18 +172,42 @@ class HybridRemoteEngine(InProcessEngine):
         except Exception as exc:
             logger.debug("hybrid_comfy_vram_free_ignored", provider_id=self.provider_id, error=str(exc))
 
-    async def _prepare_agent_vram(self, workload: str, model: Optional[str] = None) -> None:
+    async def _prepare_agent_vram(
+        self,
+        workload: str,
+        model: Optional[str] = None,
+        kv_cache_type: Optional[str] = None,
+        context_tokens: Optional[int] = None,
+    ) -> None:
         """Notify remote agent's VRAM Arbiter to prepare GPU memory for workload."""
         try:
             client = self.image_engine.get_agent_client()
+            payload: Dict[str, Any] = {"workload": workload, "model": model}
+            if kv_cache_type:
+                payload["kv_cache_type"] = kv_cache_type
+            if context_tokens:
+                payload["context_tokens"] = context_tokens
             await client.post(
                 "/vram/prepare",
-                json={"workload": workload, "model": model},
-                timeout=5.0,
+                json=payload,
+                timeout=70.0,
             )
             logger.debug("hybrid_vram_prepare_notified", provider_id=self.provider_id, workload=workload)
         except Exception as exc:
             logger.debug("hybrid_vram_prepare_ignored", provider_id=self.provider_id, error=str(exc))
+
+    async def _release_agent_vram(self, workload: str) -> None:
+        """Notify remote agent's VRAM Arbiter that workload execution has completed."""
+        try:
+            client = self.image_engine.get_agent_client()
+            await client.post(
+                "/vram/release",
+                json={"workload": workload},
+                timeout=5.0,
+            )
+            logger.debug("hybrid_vram_release_notified", provider_id=self.provider_id, workload=workload)
+        except Exception as exc:
+            logger.debug("hybrid_vram_release_ignored", provider_id=self.provider_id, error=str(exc))
 
     # ----------------------------------------------------------------------
     # Execution & Routing
@@ -222,22 +246,29 @@ class HybridRemoteEngine(InProcessEngine):
                     if self._last_workload != "image":
                         await self._prepare_agent_vram("image")
                     self._last_workload = "image"
-                    async for event in self.image_engine.inference(
-                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
-                    ):
-                        yield event
+                    try:
+                        async for event in self.image_engine.inference(
+                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                        ):
+                            yield event
+                    finally:
+                        await self._release_agent_vram("image")
                 else:
                     if self._last_workload != "llm":
                         # Yield VRAM from ComfyUI to system/LLM before running LLM on budget GPU
                         await self._free_comfy_vram()
                         await self._prepare_agent_vram(
-                            "llm", model=workflow.get("model") if isinstance(workflow, dict) else None
+                            "llm",
+                            model=workflow.get("model") if isinstance(workflow, dict) else None,
                         )
                         self._last_workload = "llm"
-                    async for event in self.llm_engine.inference(
-                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
-                    ):
-                        yield event
+                    try:
+                        async for event in self.llm_engine.inference(
+                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                        ):
+                            yield event
+                    finally:
+                        await self._release_agent_vram("llm")
 
         elif policy == "semi_concurrent":
             # A100-40GB profile: RP and ComfyUI co-exist, but Util or heavy swaps lock

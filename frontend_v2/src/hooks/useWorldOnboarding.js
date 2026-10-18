@@ -168,3 +168,46 @@ export const useVisualizeInventoryItem = () => {
         },
     });
 };
+
+export const useExtractScenarios = () => {
+    return useMutation({
+        mutationFn: (payload) =>
+            api.post('/api/v2/world-vault/onboarding/extract-scenarios', payload),
+    });
+};
+
+export const useExtractVisualTags = () => {
+    return useMutation({
+        mutationFn: (payload) =>
+            api.post('/api/v2/world-vault/onboarding/extract-visual-tags', payload),
+    });
+};
+
+export const useExtractStatekeeper = () => {
+    return useMutation({
+        mutationFn: (payload) =>
+            api.post('/api/v2/world-vault/onboarding/extract-statekeeper', payload),
+    });
+};
+
+export const useExtractWorldLore = () => {
+    return useMutation({
+        mutationFn: (payload) =>
+            api.post('/api/v2/world-vault/onboarding/extract-world-lore', payload),
+    });
+};
+
+export const useEnrichField = () => {
+    return useMutation({
+        mutationFn: (payload) =>
+            api.post('/api/v2/world-vault/onboarding/enrich-field', payload),
+    });
+};
+
+export const useIngestStoryChained = () => {
+    return useMutation({
+        mutationFn: (payload) =>
+            api.post('/api/v2/world-vault/onboarding/ingest-story-chained', payload),
+    });
+};
+

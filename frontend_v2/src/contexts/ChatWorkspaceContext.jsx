@@ -169,10 +169,8 @@ export function ChatWorkspaceProvider({ children }) {
         // still works, because the URL drives the store.
         if (urlChatId && activeChatId !== urlChatId) {
             setActiveChatId(urlChatId);
-        } else if (!urlChatId && activeChatId) {
-            navigate(`/chat/${activeChatId}`, { replace: true });
         }
-    }, [activeChatId, urlChatId, navigate, setActiveChatId]);
+    }, [activeChatId, urlChatId, setActiveChatId]);
 
     /**
      * Select a chat: one navigation, which is the only thing that changes it.
@@ -415,10 +413,18 @@ export function ChatWorkspaceProvider({ children }) {
     // value into the URL. Navigating directly would work too, but keeping the
     // "URL is the writer" rule means exactly one place changes the URL.
     useEffect(() => {
-        if (chats?.length > 0 && !activeChatId) {
-            setActiveChatId(chats[0].id);
+        if (!urlChatId && Array.isArray(chats)) {
+            if (chats.length > 0) {
+                const targetId = activeChatId && chats.some(c => c.id === activeChatId)
+                    ? activeChatId
+                    : chats[0].id;
+                setActiveChatId(targetId);
+                navigate(`/chat/${targetId}`, { replace: true });
+            } else {
+                setActiveChatId(null);
+            }
         }
-    }, [chats, activeChatId, setActiveChatId]);
+    }, [urlChatId, chats, activeChatId, navigate, setActiveChatId]);
 
     useChatStreaming({
         activeChatId,
@@ -877,14 +883,10 @@ export function ChatWorkspaceProvider({ children }) {
         try {
             await deleteChatMutation.mutateAsync(chat.id);
             if (activeChatId === chat.id) {
-                const remaining = chats?.filter(c => c.id !== chat.id);
-                // Navigate, do not set the store. Setting the store left the URL
-                // pointing at the chat that had just been deleted, and the
-                // URL-authoritative effect above pulled the selection straight back
-                // to it — so the workspace loaded a chat that no longer existed and
-                // its queries 404'd on every refetch.
+                const remaining = chats?.filter(c => c.id !== chat.id) || [];
                 if (remaining?.[0]?.id) {
-                    selectChat(remaining[0].id);
+                    setActiveChatId(remaining[0].id);
+                    navigate(`/chat/${remaining[0].id}`, { replace: true });
                 } else {
                     setActiveChatId(null);
                     navigate('/chat', { replace: true });
@@ -894,7 +896,7 @@ export function ChatWorkspaceProvider({ children }) {
         } catch {
             toast.error('Failed to delete chat');
         }
-    }, [activeChatId, chats, confirm, deleteChatMutation, navigate, selectChat, setActiveChatId]);
+    }, [activeChatId, chats, confirm, deleteChatMutation, navigate, setActiveChatId]);
 
     const startRename = useCallback((chat) => { setRenamingChatId(chat.id); setRenameValue(chat.name || ''); }, []);
     const finishRename = useCallback(async () => {
@@ -1419,6 +1421,11 @@ export function ChatWorkspaceProvider({ children }) {
 
 export const useChatWorkspace = () => {
     const context = useContext(ChatWorkspaceContext);
-    if (!context) throw new Error("useChatWorkspace must be used within ChatWorkspaceProvider");
+    if (!context) {
+        if (import.meta.env?.DEV) {
+            console.warn("useChatWorkspace called outside ChatWorkspaceProvider; returning fallback context.");
+        }
+        return {};
+    }
     return context;
 };
