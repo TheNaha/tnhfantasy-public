@@ -113,6 +113,19 @@ def resolve_stage_questions(
                         "question": "Which storytelling tone or narrative variant best fits the scene?",
                         "options": narr_variants,
                     })
+            # Inject variant choice questions for any other enabled agent that has variants
+            for agent in available_agents or []:
+                agent_slug = agent.get("slug")
+                if not agent_slug or agent_slug in ("user", primary_character_slug, "narrator"):
+                    continue
+                agent_variants = get_agent_variant_options(session, agent_slug)
+                if agent_variants:
+                    base_questions.append({
+                        "key": f"{agent_slug}_variant",
+                        "type": "choice",
+                        "question": f"Which variant of {agent.get('name', agent_slug)} best fits this scene beat?",
+                        "options": agent_variants,
+                    })
     elif stage == "audit":
         base_questions = _default_audit_questions()
     elif stage == "chaining":
@@ -188,6 +201,29 @@ def list_all_pipeline_questions(session: Optional[Session]) -> List[Dict[str, An
                     "options": {"default": "Standard omniscient narrative description"},
                 },
             ])
+            # Inject variant placeholders for any other agent that has variants
+            if session:
+                all_agents = session.exec(select(AgentProfile)).all()
+                for agent in all_agents:
+                    if agent.slug in ("user", "character", "narrator"):
+                        continue
+                    variants = session.exec(
+                        select(AgentPromptVariant).where(AgentPromptVariant.agent_id == agent.id)
+                    ).all()
+                    if variants:
+                        options = {"default": f"Standard {agent.name} default persona"}
+                        for v in variants:
+                            hint = (v.selection_hint or v.description or "").strip()
+                            if hint:
+                                tags_str = f" [{', '.join(v.tags)}]" if v.tags else ""
+                                options[v.slug] = f"{v.name}{tags_str}: {hint}"
+                        if len(options) > 1:
+                            base_qs.append({
+                                "key": f"{agent.slug}_variant",
+                                "type": "choice",
+                                "question": f"Which variant of {agent.name} best fits this scene beat?",
+                                "options": options,
+                            })
         elif stg == "audit":
             base_qs = _default_audit_questions()
         else:

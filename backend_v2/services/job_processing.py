@@ -1079,7 +1079,7 @@ async def _finalize_llm_job(
                     )
                     is_incomplete = (finish_reason == "length") or (not audit_decision.is_complete)
                     if is_incomplete and continuation_count < 4:
-                        from config import get_system_prompt_blocks
+                        from services.agent_variants import resolve_agent, render_agent_template
                         from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
                         from services.llm_config import model_for_kind
                         from services.context_builder import build_context
@@ -1087,38 +1087,56 @@ async def _finalize_llm_job(
                         system_prompt, context, _sections = await asyncio.to_thread(
                             build_context, session, "chat", chat_obj, recent_msgs_objs,
                         )
-                        cont_prompt = (get_system_prompt_blocks() or {}).get("continuation") or (
+
+                        resolved_cont_agent = resolve_agent(session, "continuation", require_enabled=False)
+                        fallback_prompt = (
                             "[System Note: Your previous response was cut off mid-thought. Continue seamlessly from the exact word where you stopped, without repeating previous text.]"
                         )
+                        cont_instruction = None
+                        cont_agent_slug = None
+                        cont_variant_slug = None
+                        cont_samplers: dict = {}
+                        if resolved_cont_agent is not None:
+                            cont_agent_slug = resolved_cont_agent.slug
+                            cont_variant_slug = resolved_cont_agent.variant_slug
+                            cont_instruction = render_agent_template(
+                                resolved_cont_agent.prompt_template,
+                                character_name=char_obj.name if char_obj else "Character",
+                                user_name=chat_obj.persona_name or "User",
+                                story_location=chat_obj.story_location or "",
+                                story_time=chat_obj.story_time or "",
+                            )
+                            cont_samplers = resolved_cont_agent.sampler_overrides()
+                        if cont_instruction is None:
+                            cont_instruction = fallback_prompt
+
                         cont_workflow, cont_metadata = build_chat_llm_workflow(
                             messages=[
                                 *context,
                                 {"role": "assistant", "content": assistant_content or ""},
-                                {"role": "user", "content": cont_prompt},
+                                {"role": "user", "content": cont_instruction},
                             ],
                             chat_id=chat_id,
                             character_id=char_obj.id if char_obj else None,
                             system_prompt=system_prompt or None,
                             model=model_for_kind("chat_reply", chat_obj.llm_model, session),
-                            samplers=sampler_overrides(chat_obj),
+                            samplers={**sampler_overrides(chat_obj), **cont_samplers},
                             type_="chat_reply",
                             source="continuation",
                             extra_metadata={
                                 "continuation_count": continuation_count + 1,
-                                # The reply to append to. Resolved to a message id
-                                # at write time by the integration service: the
-                                # parent's row is persisted by the parallel
-                                # pre-completion path and may not exist yet.
                                 "continuation_of_job_id": job.id,
                                 "branch_id": job_meta.get("branch_id"),
                                 "autonomous_turn_count": job_meta.get("autonomous_turn_count", 1),
                                 "max_autonomous_turns": job_meta.get("max_autonomous_turns", 4),
+                                "agent_slug": cont_agent_slug or "continuation",
+                                "agent_variant_slug": cont_variant_slug,
                             },
                         )
                         cont_job = await job_service.create_job(task_type="llm", workflow=cont_workflow, metadata=cont_metadata)
                         from services.job_queue import queue_manager
                         await queue_manager.enqueue(cont_job.id, task_type="llm")
-                        logger.info("laya_continuation_triggered", chat_id=chat_id, continuation_count=continuation_count + 1, finish_reason=finish_reason)
+                        logger.info("laya_continuation_triggered", chat_id=chat_id, continuation_count=continuation_count + 1, finish_reason=finish_reason, agent_slug=cont_agent_slug or "continuation", variant_slug=cont_variant_slug)
                         return
 
                     # Record the final audited decision

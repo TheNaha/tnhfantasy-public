@@ -755,4 +755,95 @@ class TestDirectorCascadeAndUpdater:
         assert del_resp.json()["success"] is True
 
 
+def test_providers_health_aggregate(client):
+    """Aggregate provider health returns status per provider."""
+    resp = client.get("/api/v2/llm/providers/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "providers" in body
+    assert "healthy_count" in body
+    assert "total_count" in body
+    for p in body["providers"]:
+        assert "provider_id" in p
+        assert "healthy" in p
+        assert "models" in p
+        assert "latency_ms" in p
+
+
+def test_agents_with_variants(client):
+    """Agents endpoint returns profiles with variant lists."""
+    resp = client.get("/api/v2/llm/agents/with-variants")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list)
+    if body:
+        agent = body[0]
+        assert "slug" in agent
+        assert "variants" in agent
+        assert "active_variant_slug" in agent
+        assert "resolved_prompt_template" in agent
+
+
+def test_variant_questions_injected_for_custom_agents(session):
+    """Laya injects variant choice questions for any agent with variants."""
+    from services.laya_questions import resolve_stage_questions
+    from core.entities import AgentProfile, AgentPromptVariant
+
+    agent = AgentProfile(
+        id="agent-alchemist",
+        slug="alchemist",
+        name="Royal Alchemist",
+        agent_type="custom",
+        description="Master apothecary",
+        system_prompt_template="You are an alchemist.",
+        model_target="rp",
+        is_builtin=False,
+        enabled=True,
+    )
+    session.add(agent)
+    session.commit()
+
+    variant = AgentPromptVariant(
+        agent_id=agent.id,
+        slug="painterly",
+        name="Painterly",
+        description="Focus on colors and textures",
+        system_prompt_template="You are a painterly alchemist.",
+        is_active=True,
+    )
+    session.add(variant)
+    session.commit()
+
+    available = [{"slug": agent.slug, "name": agent.name, "description": agent.description}]
+    qs = resolve_stage_questions(
+        session,
+        "triage",
+        available_agents=available,
+    )
+    keys = {q["key"] for q in qs}
+    assert "alchemist_variant" in keys
+    variant_q = next(q for q in qs if q["key"] == "alchemist_variant")
+    assert variant_q["type"] == "choice"
+    assert "painterly" in variant_q["options"]
+
+
+def test_parse_director_result_resolves_custom_agent_variant():
+    """Variant resolution handles any agent slug, not just character/narrator."""
+    from services.decision_schema import parse_director_result
+
+    result = parse_director_result(
+        {
+            "next_speaker": "alchemist",
+            "alchemist_variant": {"choice": "painterly"},
+        },
+        engine_used="test",
+        model_id="test-model",
+        allow_image_generation=False,
+        state_snapshot={},
+        context_text="",
+    )
+    assert result.selected_variant == "painterly"
+    assert result.selected_agent == "alchemist"
+
+
 

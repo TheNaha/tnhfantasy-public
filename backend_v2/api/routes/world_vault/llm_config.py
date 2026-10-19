@@ -10,6 +10,8 @@ from core.entities import Provider
 from core.exceptions import NotFoundError, ValidationError
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
+from services.agent_variants import resolve_agent
+from core.entities import AgentProfile, AgentPromptVariant
 from services.llm_config import resolve_default_provider, set_default_provider
 from services.provider_runtime import resolve_provider_runtime_async
 
@@ -497,6 +499,213 @@ def _llm_provider_row(session: Session, provider_id: str) -> Provider:
     if not provider or (provider.worker_type not in ("llm", "hybrid") and not (hasattr(provider, "serves") and provider.serves("llm"))):
         raise NotFoundError("LLM provider", provider_id)
     return provider
+
+
+async def _check_single_provider_health(provider: Provider) -> dict:
+    """Check health for one LLM provider. Returns a status dict."""
+    try:
+        runtime = await resolve_provider_runtime_async(provider)
+        if runtime.mode == "in_process":
+            models: list[str] = []
+            healthy = False
+            error = None
+            try:
+                from services.engines.engine_factory import get_engine
+
+                engine = get_engine(provider.id, provider)
+                if engine is None:
+                    return {
+                        "provider_id": provider.id,
+                        "provider_type": provider.type,
+                        "enabled": bool(provider.enabled),
+                        "healthy": False,
+                        "models": [],
+                        "error": "No in-process engine available for this provider",
+                        "worker_url": None,
+                        "latency_ms": None,
+                    }
+                started = __import__("time").perf_counter()
+                health = await engine.check_health()
+                latency_ms = round((__import__("time").perf_counter() - started) * 1000, 1)
+                healthy = health.get("status") in ("healthy", "ok") or bool(health.get("ready", False))
+                try:
+                    files = await engine.list_models("")
+                    for m in files or []:
+                        if isinstance(m, dict):
+                            models.append(m.get("id") or m.get("path") or m.get("name", "?"))
+                        elif isinstance(m, str):
+                            models.append(m)
+                except Exception as exc:
+                    logger.debug("llm_list_models_fetch_failed", provider_id=provider.id, error=str(exc))
+                return {
+                    "provider_id": provider.id,
+                    "provider_type": provider.type,
+                    "enabled": bool(provider.enabled),
+                    "healthy": healthy,
+                    "models": models,
+                    "error": error,
+                    "worker_url": None,
+                    "latency_ms": latency_ms,
+                }
+            except Exception as e:
+                return {
+                    "provider_id": provider.id,
+                    "provider_type": provider.type,
+                    "enabled": bool(provider.enabled),
+                    "healthy": False,
+                    "models": [],
+                    "error": f"Health check failed: {e}",
+                    "worker_url": None,
+                    "latency_ms": None,
+                }
+
+        if not runtime.worker_url:
+            return {
+                "provider_id": provider.id,
+                "provider_type": provider.type,
+                "enabled": bool(provider.enabled),
+                "healthy": False,
+                "models": [],
+                "error": "No worker URL configured for this provider",
+                "worker_url": None,
+                "latency_ms": None,
+            }
+
+        base_url = runtime.worker_url.rstrip("/")
+        models: list[str] = []
+        error = None
+        healthy = False
+        latency_ms = None
+
+        client = get_http_client()
+        started = __import__("time").perf_counter()
+        try:
+            resp = await client.get(f"{base_url}/health", timeout=10.0)
+            latency_ms = round((__import__("time").perf_counter() - started) * 1000, 1)
+            healthy = resp.status_code == 200
+        except Exception as e:
+            error = f"Health check failed: {e}"
+            latency_ms = round((__import__("time").perf_counter() - started) * 1000, 1)
+
+        if healthy:
+            try:
+                resp = await client.get(f"{base_url}/list-models", timeout=10.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    files = data.get("files", []) if isinstance(data, dict) else []
+                    if isinstance(files, list):
+                        models = [
+                            m.get("id") or m.get("path") or m.get("name", "?")
+                            for m in files if isinstance(m, dict)
+                        ]
+                        if not models:
+                            models = [m for m in files if isinstance(m, str)]
+            except Exception as exc:
+                logger.debug("llm_list_models_fetch_failed", url=base_url, error=str(exc))
+
+        return {
+            "provider_id": provider.id,
+            "provider_type": provider.type,
+            "enabled": bool(provider.enabled),
+            "healthy": healthy,
+            "models": models,
+            "error": error,
+            "worker_url": base_url,
+            "latency_ms": latency_ms,
+        }
+    except Exception as e:
+        return {
+            "provider_id": provider.id,
+            "provider_type": provider.type,
+            "enabled": bool(provider.enabled),
+            "healthy": False,
+            "models": [],
+            "error": str(e),
+            "worker_url": None,
+            "latency_ms": None,
+        }
+
+
+@router.get("/providers/health")
+async def get_providers_health(session: Session = Depends(get_session)):
+    """Aggregate health check for all LLM providers.
+
+    Runs checks in parallel across every registered LLM/hybrid provider.
+    Returns per-provider status including health, available models, latency, and errors.
+    """
+    providers = session.exec(
+        select(Provider).where(Provider.worker_type.in_(["llm", "hybrid"]))  # noqa: E712
+    ).all()
+
+    results = await asyncio.gather(
+        *[_check_single_provider_health(p) for p in providers],
+        return_exceptions=False,
+    )
+    return {
+        "providers": results,
+        "healthy_count": sum(1 for r in results if r.get("healthy")),
+        "total_count": len(results),
+    }
+
+
+@router.get("/agents/with-variants")
+def list_agents_with_variants(session: Session = Depends(get_session)):
+    """Return all agent profiles together with their prompt variants.
+
+    Each profile includes its resolved active variant (if any) and the full
+    variant list. Useful for the LLM Studio dashboard's agent management view.
+    """
+    profiles = session.exec(
+        select(AgentProfile).order_by(AgentProfile.is_builtin.desc(), AgentProfile.created_at.asc())
+    ).all()
+
+    result: list[dict] = []
+    for profile in profiles:
+        variants = session.exec(
+            select(AgentPromptVariant)
+            .where(AgentPromptVariant.agent_id == profile.id)
+            .order_by(AgentPromptVariant.is_active.desc(), AgentPromptVariant.name.asc())
+        ).all()
+
+        resolved = resolve_agent(session, profile.slug, require_enabled=False)
+        active_variant_slug = resolved.variant_slug if resolved else None
+        resolved_template = resolved.prompt_template if resolved else profile.system_prompt_template
+
+        result.append({
+            "id": profile.id,
+            "slug": profile.slug,
+            "name": profile.name,
+            "agent_type": profile.agent_type,
+            "description": profile.description,
+            "system_prompt_template": profile.system_prompt_template,
+            "model_target": profile.model_target,
+            "model_override": profile.model_override,
+            "is_builtin": profile.is_builtin,
+            "enabled": bool(profile.enabled),
+            "temperature": profile.temperature,
+            "top_p": profile.top_p,
+            "max_tokens": profile.max_tokens,
+            "avatar_path": profile.avatar_path,
+            "active_variant_slug": active_variant_slug,
+            "resolved_prompt_template": resolved_template,
+            "variants": [
+                {
+                    "id": v.id,
+                    "slug": v.slug,
+                    "name": v.name,
+                    "description": v.description,
+                    "system_prompt_template": v.system_prompt_template,
+                    "temperature": v.temperature,
+                    "top_p": v.top_p,
+                    "max_tokens": v.max_tokens,
+                    "is_active": bool(v.is_active),
+                    "selection_hint": v.selection_hint,
+                    "tags": v.tags,
+                }
+                for v in variants
+            ],
+        })
+    return result
 
 
 @router.get("/runtime-defaults")
