@@ -438,14 +438,31 @@ def _reply_already_stamped(session, job_id: str) -> bool:
     One flat JSON lookup rather than a scan: `source_job_id` is a scalar in
     `message_metadata`, so it can be selected and compared in SQL.
 
+    Continuations do not carry their own `source_job_id` — they append to the
+    reply they continue, and stamping the scalar would overwrite the parent
+    job's link. Their ids live in a `continuation_job_ids` list instead, which
+    is matched as text because a JSON path into an array is not portable across
+    the JSONB/JSON1 dialects.
+
     Synchronous on purpose. It was `async` while being called without `await`,
     which made every call return a truthy coroutine object — and the guard then
     short-circuited every reply for a while.
     """
+    from sqlalchemy import Text, cast
+
     from sqlmodel import select
 
     flat = Message.message_metadata[SOURCE_JOB_ID_METADATA_KEY].as_string()
-    return session.exec(select(flat).where(flat == job_id)).first() is not None
+    if session.exec(select(flat).where(flat == job_id)).first() is not None:
+        return True
+
+    pattern = like_contains(f'"{job_id}"')
+    return session.exec(
+        select(Message.id).where(
+            Message.message_metadata["continuation_job_ids"].is_not(None),
+            cast(Message.message_metadata, Text).like(pattern, escape=LIKE_ESCAPE_CHAR),
+        )
+    ).first() is not None
 
 
 def _beat_already_stamped(session, job_id: str) -> bool:
@@ -480,6 +497,125 @@ def _beat_already_stamped(session, job_id: str) -> bool:
             cast(StoryChapter.beats, Text).like(pattern, escape=LIKE_ESCAPE_CHAR)
         )
     ).first() is not None
+
+
+def _join_continuation_text(existing: str, addition: str) -> str:
+    """Join the two halves of a seamless continuation without doubling spaces."""
+    existing = existing or ""
+    addition = addition or ""
+    if not existing:
+        return addition
+    if not addition:
+        return existing
+    if existing[-1].isspace() or addition[0].isspace():
+        return existing + addition
+    if addition[0] in ".,;:!?)]}…’\"":
+        return existing + addition
+    return f"{existing} {addition}"
+
+
+async def _append_chat_continuation(
+    job_data: dict[str, Any],
+    session,
+    content: str,
+    msg_metadata: dict[str, Any],
+    metadata: dict[str, Any],
+) -> None:
+    """Append a continuation's prose to the reply it continues, in place.
+
+    A continuation job is chained off a reply that the post-generation audit
+    judged incomplete. It must land in the SAME bubble: a separate CHAR message
+    reads as the character speaking twice and splits one beat across two rows.
+    The parent job id is carried on the continuation's metadata, so the target
+    is resolved here rather than at creation time (the parent's row may not be
+    written yet when the continuation is enqueued).
+    """
+    from sqlmodel import select
+
+    chat_id = metadata.get("chat_id")
+    parent_job_id = metadata.get("continuation_of_job_id")
+    job_id = job_data.get("id")
+
+    flat = Message.message_metadata[SOURCE_JOB_ID_METADATA_KEY].as_string()
+    target_msg = session.exec(
+        select(Message).where(
+            Message.chat_id == chat_id,
+            flat == parent_job_id,
+        )
+    ).first()
+
+    if target_msg is None:
+        # The parent reply was deleted or rolled back while this job was in
+        # flight. Inserting a fresh CHAR message would resurrect text the user
+        # discarded and detach it from its beat, so this is a no-op — the same
+        # policy as a swipe whose anchor is gone.
+        logger.warning(
+            "chat_continuation_target_missing",
+            job_id=job_id,
+            chat_id=chat_id,
+            continuation_of_job_id=parent_job_id,
+        )
+        return
+
+    try:
+        target_meta = dict(target_msg.message_metadata or {})
+        joined = _join_continuation_text(target_msg.content or "", content)
+        target_msg.content = joined
+
+        continuation_ids = [str(v) for v in (target_meta.get("continuation_job_ids") or [])]
+        if job_id and job_id not in continuation_ids:
+            continuation_ids.append(job_id)
+        target_meta["continuation_job_ids"] = continuation_ids
+
+        # A continuation of a swipe belongs to the alternate the user is on.
+        alternates = target_meta.get("alternates")
+        if isinstance(alternates, list) and alternates:
+            active_index = int(target_meta.get("active_index") or 0)
+            if 0 <= active_index < len(alternates):
+                entry = alternates[active_index]
+                if isinstance(entry, str):
+                    alternates[active_index] = _join_continuation_text(entry, content)
+                elif isinstance(entry, dict):
+                    entry["text"] = _join_continuation_text(str(entry.get("text") or ""), content)
+
+        new_calls = _first_output_tool_calls(job_data)
+        if new_calls:
+            existing_calls = list(target_msg.tool_calls or [])
+            target_msg.tool_calls = existing_calls + (
+                list(new_calls) if isinstance(new_calls, list) else [new_calls]
+            )
+
+        usage = msg_metadata.get("token_usage")
+        if isinstance(usage, dict):
+            added = int(usage.get("completion_tokens") or 0)
+            if added:
+                previous = target_meta.get("token_usage")
+                previous = previous if isinstance(previous, dict) else {}
+                prompt_tokens = previous.get("prompt_tokens", usage.get("prompt_tokens"))
+                completion_tokens = int(previous.get("completion_tokens") or 0) + added
+                target_meta["token_usage"] = {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": (
+                        (prompt_tokens or 0) + completion_tokens
+                        if prompt_tokens is not None
+                        else completion_tokens
+                    ),
+                }
+
+        target_msg.message_metadata = target_meta
+        session.add(target_msg)
+        session.commit()
+        logger.info(
+            "chat_continuation_merged",
+            job_id=job_id,
+            chat_id=chat_id,
+            target_message_id=target_msg.id,
+            continuation_of_job_id=parent_job_id,
+        )
+    except Exception as exc:
+        session.rollback()
+        logger.warning("chat_continuation_merge_failed", job_id=job_id, error=str(exc))
 
 
 async def _write_chat_reply(job_data: dict[str, Any], session, content: str) -> None:
@@ -525,6 +661,10 @@ async def _write_chat_reply(job_data: dict[str, Any], session, content: str) -> 
             "completion_tokens": output_tokens,
             "total_tokens": (prompt_tokens or 0) + (output_tokens or 0) if prompt_tokens is not None else output_tokens,
         }
+
+        if metadata.get("continuation_of_job_id"):
+            await _append_chat_continuation(job_data, session, content, msg_metadata, metadata)
+            return
 
         if metadata.get("is_swipe") and metadata.get("target_message_id"):
             await _append_swipe_alternative(job_data, session, content, msg_metadata, metadata)
@@ -1688,6 +1828,20 @@ def _stamped_source_job_ids(
         for value in _alternate_source_job_ids({"alternates": alternates}):
             if value in wanted:
                 stamped.add(value)
+
+    # Continuations: appended into an existing reply, their id lives in a JSON
+    # list rather than the flat scalar (see `_reply_already_stamped`).
+    for values in session.exec(
+        select(Message.message_metadata["continuation_job_ids"]).where(
+            Message.chat_id.in_(chat_ids),
+            Message.message_metadata["continuation_job_ids"].is_not(None),
+        )
+    ).all():
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if value in wanted:
+                stamped.add(str(value))
 
     return stamped
 

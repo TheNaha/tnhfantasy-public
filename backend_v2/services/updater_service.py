@@ -28,7 +28,13 @@ from core.entities import (
 )
 from infrastructure.logging import get_logger
 from services.chat_utils import insert_world_state_marker
-from services.decision_schema import UPDATER_GATE_KEYS, DirectorDecisionResult
+from services.decision_schema import (
+    ALWAYS_ALLOWED_UPDATER_FIELDS,
+    GATE_FIELD_MAP,
+    UPDATER_GATE_KEYS,
+    DirectorDecisionResult,
+    allowed_updater_fields,
+)
 from services.llm_config import model_for_kind
 from services.memory_extraction import create_memories_from_extraction
 
@@ -173,10 +179,10 @@ def seed_initial_state_snapshot(
     snap: Dict[str, Any] = dict(existing_snapshot or {})
     user_label = (persona_name or (getattr(persona, "name", None) if persona else None) or "User").strip() or "User"
     effective_persona_desc = persona_description or (getattr(persona, "description", None) if persona else None)
-    effective_greeting = override_greeting or first_mes or (character.first_mes if character else None)
+    effective_greeting = override_greeting or first_mes or (getattr(character, "first_mes", None) if character else None)
 
     # Check if card_metadata carries pre-extracted TNH onboarding blueprint data
-    card_meta = (character.card_metadata or {}) if character else {}
+    card_meta = (getattr(character, "card_metadata", None) or {}) if character else {}
     tnh_ext = (
         card_meta.get("data", {}).get("extensions", {}).get("tnh_onboarding")
         or card_meta.get("tnh_onboarding")
@@ -201,7 +207,7 @@ def seed_initial_state_snapshot(
     scenario_text = (
         (getattr(scenario, "description", None) or getattr(scenario, "prompt_template", None))
         if scenario
-        else (character.scenario if character else None)
+        else (getattr(character, "scenario", None) if character else None)
     )
     prose = "\n".join(
         filter(
@@ -209,8 +215,8 @@ def seed_initial_state_snapshot(
             [
                 effective_greeting,
                 scenario_text,
-                character.description if character else None,
-                character.personality if character else None,
+                getattr(character, "description", None) if character else None,
+                getattr(character, "personality", None) if character else None,
             ],
         )
     )
@@ -221,7 +227,7 @@ def seed_initial_state_snapshot(
             "armor", "cloak", "dress", "robe", "jacket", "coat", "uniform", "suit",
             "hoodie", "kimono", "tunic", "gown", "leather", "shirt", "skirt", "cape",
         )
-        visual_tags = list((character.visual_tags if character else None) or [])
+        visual_tags = list((getattr(character, "visual_tags", None) if character else None) or [])
         outfit_tags = [
             t for t in visual_tags
             if any(kw in t.lower() for kw in outfit_keywords)
@@ -233,27 +239,33 @@ def seed_initial_state_snapshot(
             if inferred_outfit:
                 snap["character_outfit"] = inferred_outfit
             elif character:
-                snap["character_outfit"] = f"{character.name}'s signature attire"
+                snap["character_outfit"] = f"{getattr(character, 'name', 'character')}'s signature attire"
 
     # 2. Wardrobe presets
     if not isinstance(snap.get("wardrobe"), list) or not snap.get("wardrobe"):
         default_outfit = snap.get("character_outfit") or "Signature attire"
+        char_tags = getattr(character, "visual_tags", None) or []
         snap["wardrobe"] = [
-            {"name": "Signature Attire", "outfit": default_outfit, "visual_tags": ", ".join((character.visual_tags or [])[:4]) if character else ""},
-            {"name": "Casual / Rest", "outfit": f"Relaxed off-duty attire for {character.name if character else 'character'}", "visual_tags": "casual clothes, relaxed"},
+            {"name": "Signature Attire", "outfit": default_outfit, "visual_tags": ", ".join(char_tags[:4])},
+            {"name": "Casual / Rest", "outfit": f"Relaxed off-duty attire for {getattr(character, 'name', 'character')}", "visual_tags": "casual clothes, relaxed"},
         ]
 
     # 3. Mood extraction
     if not snap.get("character_mood"):
-        snap["character_mood"] = _infer_mood_from_text(effective_greeting, character.personality if character else None, prose) or "Attentive & curious"
+        snap["character_mood"] = _infer_mood_from_text(effective_greeting, getattr(character, "personality", None) if character else None, prose) or "Attentive & curious"
+
+    # 3b. Emotional tone / atmosphere initialization (defaults to Conversational, updated by Statekeeper)
+    if not snap.get("emotional_tone"):
+        snap["emotional_tone"] = "Conversational"
 
     # 4. Current activity extraction from opening greeting
     if not snap.get("current_activity"):
         inferred_act = _infer_activity_from_text(effective_greeting, scenario_text)
+        default_loc = getattr(character, "default_location", None) if character else None
         if inferred_act:
             snap["current_activity"] = inferred_act
-        elif story_location or (character and character.default_location):
-            loc_str = story_location or character.default_location
+        elif story_location or default_loc:
+            loc_str = story_location or default_loc
             snap["current_activity"] = f"Present at {loc_str}"
         else:
             snap["current_activity"] = "Engaging in conversation"
@@ -303,9 +315,15 @@ def seed_initial_state_snapshot(
     snap.setdefault("fate_difficulty", "auto")
     snap.setdefault("fate_outcome_override", "auto")
 
+    # 8b. Extended Physical & Narrative State
+    snap.setdefault("physical_condition", "Healthy & unharmed")
+    snap.setdefault("weather", "Clear")
+    snap.setdefault("quests_and_goals", [])
+    snap.setdefault("social_status", "Neutral observer")
+
     # 9. Cohesive World Clock & Chronology Log
-    loc_label = story_location or (character.default_location if character else None) or "Starting Scene"
-    time_label = story_time or (character.default_time if character else None) or "Day 1 · Evening"
+    loc_label = story_location or (getattr(character, "default_location", None) if character else None) or "Starting Scene"
+    time_label = story_time or (getattr(character, "default_time", None) if character else None) or "Day 1 · Evening"
     if not isinstance(snap.get("world_clock"), dict):
         snap["world_clock"] = {
             "day": 1,
@@ -316,7 +334,7 @@ def seed_initial_state_snapshot(
                     "day": 1,
                     "time": time_label,
                     "location": loc_label,
-                    "event": f"Scene begins with {character.name if character else 'the cast'} at {loc_label}.",
+                    "event": f"Scene begins with {getattr(character, 'name', 'the cast')} at {loc_label}.",
                 }
             ],
         }
@@ -341,14 +359,10 @@ def record_director_decision(
     if "scene_tension" not in locked and "tension" not in locked:
         snapshot["scene_tension"] = decision.scene_tension
         snapshot["scene_tension_label"] = getattr(decision, "scene_tension_label", "normal")
-    if "emotional_tone" not in locked and "tone" not in locked:
-        snapshot["emotional_tone"] = decision.emotional_tone
-    if "character_expression" not in locked and "expression" not in locked:
-        snapshot["character_expression"] = decision.character_expression
-    if "pacing_directive" not in locked and "pacing" not in locked:
-        snapshot["pacing_directive"] = decision.pacing_directive
-    if "pacing_speed" not in locked:
-        snapshot["pacing_speed"] = decision.pacing_speed
+    # Laya only routes. Tone, mood, expression and pacing are NOT written here:
+    # `emotional_tone`, `character_mood` and `character_expression` belong to the
+    # Updater (mood / scene-tone gates) and pacing is per-turn routing telemetry
+    # carried in `last_director_decision` and the actor directive, never state.
     if "fate" not in locked and "fate_check" not in locked:
         snapshot["is_risky_action_probability"] = decision.is_risky_action_probability
         snapshot["action_difficulty"] = decision.action_difficulty
@@ -356,21 +370,8 @@ def record_director_decision(
         snapshot["last_fate_directive"] = decision.fate_directive
         snapshot["matched_skills"] = decision.matched_skills
 
-    # Calculate real-time affinity delta from System 1 Director
-    if "character_affinity" not in locked and "affinity" not in locked:
-        aff_delta = int(getattr(decision, "affinity_delta", 0))
-        curr_aff = int(snapshot.get("character_affinity", 50))
-        new_aff = max(0, min(100, curr_aff + aff_delta))
-        snapshot["character_affinity"] = new_aff
-        snapshot["last_affinity_delta"] = aff_delta
-
-    # Dynamic mood: Laya acts as gater and decider. It does not overwrite an existing
-    # character mood with generic classification labels; it only provides an initial default
-    # on turn 0 if completely unset, leaving narrative mood updates to the Statekeeper.
-    new_mood = getattr(decision, "character_mood", None)
-    if "character_mood" not in locked and "mood" not in locked:
-        if not snapshot.get("character_mood") and new_mood:
-            snapshot["character_mood"] = new_mood
+    # Affinity is Statekeeper-owned: the Updater applies it, and only when the
+    # relationship gate fires. Laya is never asked about it.
 
     snapshot["last_director_decision"] = decision.to_dict()
     snapshot["director_updated_at"] = now_iso
@@ -391,55 +392,115 @@ def build_state_updater_prompt(
     state_snapshot: Dict[str, Any],
     recent_lines: List[str],
     triggered_gates: List[str],
+    available_expressions: Optional[List[str]] = None,
 ) -> str:
     """Build a focused JSON-only delta extraction prompt for the `util` model."""
-    gates = set(triggered_gates or UPDATER_GATE_KEYS)
+    gates = list(triggered_gates or UPDATER_GATE_KEYS)
+    allowed = allowed_updater_fields(gates, state_snapshot.get("director_mode"))
+    if allowed is None:
+        allowed = set(ALWAYS_ALLOWED_UPDATER_FIELDS)
+        for fields in GATE_FIELD_MAP.values():
+            allowed.update(fields)
+
     schema_lines: List[str] = []
 
-    if "gate_world_state" in gates:
+    if "character_mood" in allowed:
         schema_lines.append(
-            '  "story_location": "updated location name if changed, else null",\n'
-            '  "story_time": "updated time/weather if changed, else null",\n'
-            '  "clock_day_delta": "integer days elapsed (0 if same day, 1 if next day, etc.)",\n'
-            '  "chronology_event": "1 concise sentence logging any canon timeline milestone or location/time transition, else null"'
+            f'  "character_mood": "nuanced current emotional state of {character_name} (e.g. \'Guarded but curious\', \'Playful and teasing\') if changed, else null"'
         )
-    if "gate_character_state" in gates:
+    if "character_expression" in allowed and available_expressions:
+        options = ", ".join(f"'{e}'" for e in available_expressions)
         schema_lines.append(
-            f'  "character_mood": "concise current mood of {character_name} (e.g. \'Playful and curious\')",\n'
-            f'  "current_activity": "what {character_name} is currently doing",\n'
-            f'  "character_outfit": "current clothing/attire of {character_name} if known or changed, else null",\n'
+            f'  "character_expression": "the avatar expression that best fits {character_name} right now, '
+            f'EXACTLY one of [{options}], or null if unchanged"'
+        )
+    if "emotional_tone" in allowed:
+        schema_lines.append(
+            '  "emotional_tone": "nuanced ambient atmosphere/vibe of the scene (e.g. \'Tense, rain-slicked alleyway\', \'Lively crowded tavern\') if changed, else null"'
+        )
+    if "relationship_status" in allowed:
+        schema_lines.append(
             f'  "relationship_status": "current dynamic with {user_name} (e.g. \'Warming up — playful banter\')",\n'
             '  "relationships_update": [{"target_name": "name of person/character", "target_type": "user|character", "status": "updated dynamic", "affinity": 50}],\n'
-            '  "character_skills_add": ["any newly demonstrated skill or ability of the character"],\n'
-            '  "user_skills_add": ["any newly demonstrated skill or ability of the player/user"],\n'
-            '  "scene_summary": "1-2 sentence factual summary of the current scene state"'
+            '  "affinity_delta": "integer from -2 to 2 for how much the latest beat changed the primary affinity (0 if unchanged)"'
         )
-    if "gate_inventory_or_items" in gates:
+    if "character_outfit" in allowed:
+        schema_lines.append(
+            f'  "character_outfit": "current clothing/attire of {character_name} if known or changed, else null"'
+        )
+    if "current_activity" in allowed:
+        schema_lines.append(
+            f'  "current_activity": "what {character_name} is currently doing"'
+        )
+    if "physical_condition" in allowed:
+        schema_lines.append(
+            f'  "physical_condition": "current physical status, injuries, or fatigue of {character_name} or player if changed, else null"'
+        )
+    if "inventory_add" in allowed:
         schema_lines.append(
             '  "inventory_add": ["newly acquired/held item names"],\n'
             '  "inventory_remove": ["consumed/dropped/given-away item names"]'
         )
-    if "gate_durable_memory" in gates:
+    if "story_time" in allowed:
+        schema_lines.append(
+            '  "story_time": "updated time-of-day or date if changed, else null",\n'
+            '  "clock_day_delta": "integer days elapsed (0 if same day, 1 if next day, etc.)",\n'
+            '  "chronology_event": "1 concise sentence logging any canon timeline milestone or time transition, else null"'
+        )
+    if "story_location" in allowed:
+        schema_lines.append(
+            '  "story_location": "updated location name if changed, else null"'
+        )
+    if "weather" in allowed:
+        schema_lines.append(
+            '  "weather": "updated weather or environmental conditions if changed, else null"'
+        )
+    if "character_skills_add" in allowed:
+        schema_lines.append(
+            f'  "character_skills_add": ["any newly demonstrated skill or ability of {character_name}"]'
+        )
+    if "user_skills_add" in allowed:
+        schema_lines.append(
+            f'  "user_skills_add": ["any newly demonstrated skill or ability of {user_name}"]'
+        )
+    if "new_memories" in allowed:
         schema_lines.append(
             '  "new_memories": ["1-3 concise single-sentence durable facts worth remembering long-term"]'
         )
-    if "gate_lore_discovery" in gates:
+    if "new_lore" in allowed:
         schema_lines.append(
             '  "new_lore": [{"keys": ["keyword1", "keyword2"], "category": "location|faction|item|lore", "content": "1-2 sentence factual world-building entry"}]'
         )
+    if "quests_and_goals" in allowed:
+        schema_lines.append(
+            '  "quests_and_goals": ["active narrative objectives, promises, or goals formed or progressed in this scene"]'
+        )
+    if "social_status" in allowed:
+        schema_lines.append(
+            '  "social_status": "reputation, faction standing, or public social status changes if changed, else null"'
+        )
+
+    # Always include scene summary for coherent narrative anchoring
+    schema_lines.append('  "scene_summary": "1-2 sentence factual summary of the current scene state"')
 
     schema_block = "{\n" + ",\n".join(schema_lines) + "\n}"
     current_state_summary = {
         "story_location": current_location,
         "story_time": current_time,
+        "weather": state_snapshot.get("weather"),
+        "emotional_tone": state_snapshot.get("emotional_tone"),
         "character_mood": state_snapshot.get("character_mood"),
         "current_activity": state_snapshot.get("current_activity"),
         "character_outfit": state_snapshot.get("character_outfit"),
+        "physical_condition": state_snapshot.get("physical_condition"),
         "relationship_status": state_snapshot.get("relationship_status"),
         "relationships": state_snapshot.get("relationships") or [],
+        "character_affinity": state_snapshot.get("character_affinity", 50),
         "character_skills": state_snapshot.get("character_skills") or [],
         "user_skills": state_snapshot.get("user_skills") or [],
         "inventory": state_snapshot.get("inventory") or [],
+        "quests_and_goals": state_snapshot.get("quests_and_goals") or [],
+        "social_status": state_snapshot.get("social_status"),
         "scene_summary": state_snapshot.get("scene_summary"),
     }
 
@@ -462,6 +523,7 @@ async def enqueue_state_updater_if_needed(
     decision: DirectorDecisionResult,
     job_service: Any,
     force: bool = False,
+    pending_chain: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Enqueue a background `state_updater` LLM job on the `util` role if gates fired."""
     if not force and not decision.should_run_updater:
@@ -507,6 +569,7 @@ async def enqueue_state_updater_if_needed(
         state_snapshot=dict(chat.state_snapshot or {}),
         recent_lines=recent_lines,
         triggered_gates=triggered,
+        available_expressions=list((getattr(character, "expressions", None) or {}).keys()) if character else None,
     )
 
     from services.llm_workflow import build_llm_workflow
@@ -528,7 +591,10 @@ async def enqueue_state_updater_if_needed(
         temperature=0.2,
         max_output_tokens=600,
         background=True,
-        extra_metadata={"triggered_gates": triggered},
+        extra_metadata={
+            "triggered_gates": triggered,
+            **({"pending_chain": pending_chain} if pending_chain else {}),
+        },
     )
 
     try:
@@ -589,6 +655,21 @@ def apply_updater_result(
     now = datetime.now(timezone.utc)
     snapshot = dict(chat.state_snapshot or {})
     world_updates: Dict[str, Any] = {}
+    applied_fields: List[str] = []
+
+    # Gate enforcement: a gate that did not fire may not mutate its fields.
+    allowed_fields = allowed_updater_fields(triggered_gates, snapshot.get("director_mode"))
+    dropped_keys: List[str] = []
+    if allowed_fields is not None:
+        dropped_keys = sorted(key for key in deltas if key not in allowed_fields)
+        if dropped_keys:
+            logger.info(
+                "state_updater_dropped_ungated_fields",
+                chat_id=chat_id,
+                dropped=dropped_keys,
+                triggered_gates=list(triggered_gates or []),
+            )
+            deltas = {key: value for key, value in deltas.items() if key in allowed_fields}
 
     # 1. World State (location & time) + Auto-Materialize Location in World Vault
     new_loc = deltas.get("story_location")
@@ -597,6 +678,7 @@ def apply_updater_result(
         if loc_clean != chat.story_location:
             chat.story_location = loc_clean
             world_updates["location"] = loc_clean
+            applied_fields.append("story_location")
             matched_loc = None
             if chat.world_id:
                 matched_loc = session.exec(
@@ -636,6 +718,7 @@ def apply_updater_result(
         if time_clean != chat.story_time:
             chat.story_time = time_clean
             world_updates["time"] = time_clean
+            applied_fields.append("story_time")
 
     # 1b. Cohesive World Clock & Canon Chronology Log
     clock = dict(snapshot.get("world_clock") or {})
@@ -687,6 +770,9 @@ def apply_updater_result(
         "emotional_tone",
         "scene_tension",
         "pacing_directive",
+        "physical_condition",
+        "weather",
+        "social_status",
     ):
         if field_key in locked:
             continue
@@ -701,9 +787,39 @@ def apply_updater_result(
         val = deltas.get(field_key)
         if isinstance(val, str) and val.strip() and val.strip().lower() != "null":
             snapshot[field_key] = val.strip()
+            applied_fields.append(field_key)
+
+    # Avatar expression: Updater-owned (mood gate). Validated against the
+    # character's registered expressions so a hallucinated label never lands.
+    new_expr = deltas.get("character_expression")
+    if (
+        isinstance(new_expr, str)
+        and new_expr.strip()
+        and new_expr.strip().lower() != "null"
+        and "character_expression" not in locked
+        and "expression" not in locked
+        and character_id
+    ):
+        expr_char = session.get(Character, character_id)
+        expr_map = getattr(expr_char, "expressions", None) or {}
+        matched_expr = next((k for k in expr_map if k.lower() == new_expr.strip().lower()), None)
+        if matched_expr and matched_expr != snapshot.get("character_expression"):
+            snapshot["character_expression"] = matched_expr
+            snapshot["character_expression_avatar"] = expr_map[matched_expr]
+            applied_fields.append("character_expression")
+            try:
+                insert_world_state_marker(
+                    session, chat_id, {"expression": matched_expr, "expression_avatar": expr_map[matched_expr]}
+                )
+            except Exception as exc:
+                logger.warning("state_updater_expression_marker_failed", chat_id=chat_id, error=str(exc))
 
     if "inventory" not in locked and isinstance(deltas.get("inventory"), list):
         snapshot["inventory"] = deltas["inventory"]
+
+    if "quests_and_goals" not in locked and isinstance(deltas.get("quests_and_goals"), list):
+        snapshot["quests_and_goals"] = [str(q).strip() for q in deltas["quests_and_goals"] if str(q).strip()]
+        applied_fields.append("quests_and_goals")
 
     # Auto-save newly detected outfit into character's wardrobe presets
     new_outfit = snapshot.get("character_outfit")
@@ -796,6 +912,19 @@ def apply_updater_result(
 
     snapshot["relationships"] = list(rel_by_target.values())
 
+    # 2b-ii. Scalar affinity delta (Statekeeper-owned; the Director only suggests it)
+    if "affinity_delta" in deltas and "character_affinity" not in locked and "affinity" not in locked:
+        try:
+            aff_delta = int(deltas.get("affinity_delta") or 0)
+        except (TypeError, ValueError):
+            aff_delta = 0
+        aff_delta = max(-2, min(2, aff_delta))
+        if aff_delta:
+            curr_aff = int(snapshot.get("character_affinity", 50))
+            snapshot["character_affinity"] = max(0, min(100, curr_aff + aff_delta))
+            snapshot["last_affinity_delta"] = aff_delta
+            applied_fields.append("character_affinity")
+
     # 2c. Character & User Skillsets
     for delta_key, snap_key in (
         ("character_skills_add", "character_skills"),
@@ -828,14 +957,10 @@ def apply_updater_result(
                 clean_item = add.strip()
                 inv_lower_map[clean_item.lower()] = clean_item
 
-    snapshot["inventory"] = list(inv_lower_map.values())
-    snapshot["statekeeper_updated_at"] = now.isoformat()
-    snapshot["last_triggered_gates"] = list(triggered_gates or [])
+    if (isinstance(inv_add, list) and inv_add) or (isinstance(inv_remove, list) and inv_remove):
+        applied_fields.append("inventory")
 
-    chat.state_snapshot = snapshot
-    chat.updated_at = now
-    session.add(chat)
-    session.commit()
+    snapshot["inventory"] = list(inv_lower_map.values())
 
     if world_updates:
         try:
@@ -853,6 +978,8 @@ def apply_updater_result(
                 memories_created = create_memories_from_extraction(
                     session, character_id, clean_memories
                 )
+                if memories_created > 0:
+                    applied_fields.append("new_memories")
             except Exception as exc:
                 logger.warning("state_updater_memory_creation_failed", chat_id=chat_id, error=str(exc))
 
@@ -890,6 +1017,62 @@ def apply_updater_result(
                 lore_created += 1
             if lore_created:
                 session.commit()
+                applied_fields.append("new_lore")
+
+    summary_parts: List[str] = []
+    if "emotional_tone" in applied_fields:
+        summary_parts.append(f"Scene tone → '{snapshot.get('emotional_tone')}'")
+    if "character_mood" in applied_fields:
+        summary_parts.append(f"Character mood → '{snapshot.get('character_mood')}'")
+    if "character_expression" in applied_fields:
+        summary_parts.append(f"Expression → '{snapshot.get('character_expression')}'")
+    if "story_location" in applied_fields:
+        summary_parts.append(f"Location → '{chat.story_location}'")
+    if "story_time" in applied_fields:
+        summary_parts.append(f"Time → '{chat.story_time}'")
+    if "current_activity" in applied_fields:
+        summary_parts.append(f"Activity → '{snapshot.get('current_activity')}'")
+    if "character_outfit" in applied_fields:
+        summary_parts.append(f"Outfit → '{snapshot.get('character_outfit')}'")
+    if "relationship_status" in applied_fields:
+        summary_parts.append(f"Relationship → '{snapshot.get('relationship_status')}'")
+    if "physical_condition" in applied_fields:
+        summary_parts.append(f"Condition → '{snapshot.get('physical_condition')}'")
+    if "weather" in applied_fields:
+        summary_parts.append(f"Weather → '{snapshot.get('weather')}'")
+    if "quests_and_goals" in applied_fields:
+        summary_parts.append(f"Quests updated ({len(snapshot.get('quests_and_goals') or [])} active)")
+    if "social_status" in applied_fields:
+        summary_parts.append(f"Social status → '{snapshot.get('social_status')}'")
+    if "inventory" in applied_fields:
+        summary_parts.append(f"Inventory updated ({len(snapshot.get('inventory') or [])} items)")
+    if memories_created > 0:
+        summary_parts.append(f"{memories_created} durable memor{'y' if memories_created == 1 else 'ies'} saved")
+    if lore_created > 0:
+        summary_parts.append(f"{lore_created} lorebook entr{'y' if lore_created == 1 else 'ies'} added")
+
+    action_summary = "; ".join(summary_parts) if summary_parts else "State confirmed consistent (no changes needed)"
+
+    last_updater_result = {
+        "applied": True,
+        "timestamp": now.isoformat(),
+        "triggered_gates": list(triggered_gates or []),
+        "applied_fields": applied_fields,
+        "dropped_keys": dropped_keys,
+        "world_updates": world_updates,
+        "memories_created": memories_created,
+        "lore_created": lore_created,
+        "summary": action_summary,
+        "deltas": deltas,
+    }
+    snapshot["last_updater_result"] = last_updater_result
+    snapshot["statekeeper_updated_at"] = now.isoformat()
+    snapshot["last_triggered_gates"] = list(triggered_gates or [])
+
+    chat.state_snapshot = snapshot
+    chat.updated_at = now
+    session.add(chat)
+    session.commit()
 
     return {
         "applied": True,
@@ -897,5 +1080,6 @@ def apply_updater_result(
         "world_updates": world_updates,
         "memories_created": memories_created,
         "lore_created": lore_created,
+        "last_updater_result": last_updater_result,
         "state_snapshot": snapshot,
     }

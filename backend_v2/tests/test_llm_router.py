@@ -50,7 +50,7 @@ class TestRoleByKind:
 
     def test_structured_kinds_route_to_util(self):
         """These are the kinds a finetune is worst at, and where vision lives."""
-        for kind in ("story_parse", "story_illustrate_prompt",
+        for kind in ("story_parse", "story_illustrate_prompt", "illustrator",
                      "memory_extraction", "state_updater", "tool_call", "agentic",
                      "vision", "caption", "summarize"):
             assert ROLE_BY_KIND[kind] == "util", kind

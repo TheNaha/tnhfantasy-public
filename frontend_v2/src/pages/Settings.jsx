@@ -1,6 +1,7 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain, Loader2, CheckCircle, XCircle, Volume2, Clock, RefreshCw, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
+import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain, Loader2, CheckCircle, XCircle, Volume2, Clock, RefreshCw, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp, Sparkles, ArrowRight, Bot, Shield, Cpu, Sliders, Play, GitBranch, HelpCircle, Activity } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { settingsApi } from '../api/settingsApi';
@@ -8,7 +9,7 @@ import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings, GALLERY_VIEW_MODES } from '../store/settingsStore';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
-import { useLLMProviderStatus, useLLMRouting, useSetLLMDefault, useLLMCatalog, useSetActiveModels, useEvaluateDirectorDecisions, useLLMRuntimeDefaults } from '../hooks/useLLMProviderStatus';
+import { useLLMProviderStatus, useLLMRouting, useLLMCatalog, useLLMRuntimeDefaults, useSetLLMDefault } from '../hooks/useLLMProviderStatus';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import React, { useCallback, useEffect, useRef } from 'react';
 
@@ -1415,202 +1416,16 @@ function SettingGroup({ title, description, children, action }) {
     );
 }
 
-function DirectorPlaygroundCard() {
-    const evalMutation = useEvaluateDirectorDecisions();
-    const [sampleDialogue, setSampleDialogue] = useState(
-        "User: *I step into the neon-lit alley and hand Lyra the encrypted data shard.*\nCharacter: *Lyra's eyes widen as the holographic seal flickers.* \"Wait—this is the Arasaka vault key. We need to move before the drones lock onto our signal!\""
-    );
-    const [lastSpeaker, setLastSpeaker] = useState('character');
-    const [hasSecondary, setHasSecondary] = useState(false);
-
-    const handleRunTest = () => {
-        const lines = sampleDialogue.split('\n').filter(Boolean);
-        const recent_messages = lines.map((line) => {
-            if (line.toLowerCase().startsWith('user:')) {
-                return { role: 'user', content: line.slice(5).trim() };
-            }
-            if (line.toLowerCase().startsWith('narrator:')) {
-                return { role: 'system', content: line.slice(9).trim() };
-            }
-            const cleaned = line.toLowerCase().startsWith('character:') ? line.slice(10).trim() : line.trim();
-            return { role: 'assistant', content: cleaned };
-        });
-
-        evalMutation.mutate({
-            recent_messages,
-            character_name: 'Lyra',
-            scenario: 'Cyberpunk infiltration in Neo-Veridia.',
-            has_secondary_character: hasSecondary,
-            last_speaker: lastSpeaker,
-            chain_depth: 0,
-            state_snapshot: {
-                story_location: 'Sector 7 Neon Alley',
-                story_time: 'Midnight, Heavy Rain',
-                character_mood: 'Alert',
-            },
-        });
-    };
-
-    const result = evalMutation.data;
-
-    return (
-        <details className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-950/10 p-4 group">
-            <summary className="cursor-pointer flex items-center justify-between text-xs font-bold uppercase tracking-widest text-emerald-300 hover:text-emerald-200 list-none">
-                <span className="flex items-center gap-2">
-                    <Sparkles size={14} className="text-emerald-400" />
-                    System 1 Director &amp; Statekeeper Gate Tester (13 Parallel Typed Decisions)
-                </span>
-                <ChevronDown size={14} className="text-emerald-400 transition-transform group-open:rotate-180" />
-            </summary>
-
-            <div className="mt-3 space-y-3">
-                <p className="text-xs text-gray-400">
-                    Test how the System 1 Decision Maker (Laya CPU/RAM or active fallback) evaluates a turn in parallel: choosing the next speaker, scene tension, pacing directive, visual expression, and which Statekeeper world-update gates fire.
-                </p>
-
-                <textarea
-                    rows={3}
-                    value={sampleDialogue}
-                    onChange={(e) => setSampleDialogue(e.target.value)}
-                    aria-label="Sample dialogue for Director evaluation"
-                    className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-200 font-mono focus:outline-none focus:border-emerald-500/50"
-                />
-
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex flex-wrap items-center gap-4 text-xs text-gray-300">
-                        <label className="flex items-center gap-1.5">
-                            <span className="text-gray-400">Last Speaker:</span>
-                            <select
-                                value={lastSpeaker}
-                                onChange={(e) => setLastSpeaker(e.target.value)}
-                                className="bg-gray-900 border border-white/10 rounded px-2 py-1 text-xs text-white"
-                            >
-                                <option value="user">User</option>
-                                <option value="character">Character</option>
-                                <option value="narrator">Narrator</option>
-                            </select>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={hasSecondary}
-                                onChange={(e) => setHasSecondary(e.target.checked)}
-                                className="accent-emerald-500"
-                            />
-                            <span>Multi-character scene</span>
-                        </label>
-                    </div>
-
-                    <button
-                        type="button"
-                        onClick={handleRunTest}
-                        disabled={evalMutation.isPending}
-                        className="px-3.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
-                    >
-                        {evalMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                        Evaluate 13 Typed Questions
-                    </button>
-                </div>
-
-                {result && (
-                    <div className="mt-3 pt-3 border-t border-white/10 space-y-3 text-xs">
-                        <div className="flex flex-wrap items-center justify-between gap-2 bg-black/30 px-3 py-2 rounded-lg border border-white/5">
-                            <div className="flex flex-wrap items-center gap-2">
-                                <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-bold uppercase text-2xs">
-                                    Tier: {result.provider_tier}
-                                </span>
-                                <span className="text-gray-400 font-mono text-2xs">
-                                    Model: {result.model_id}
-                                </span>
-                                <span className="text-emerald-400 font-mono text-2xs">
-                                    ⚡ {result.latency_ms} ms
-                                </span>
-                            </div>
-                            <div className="text-2xs font-semibold text-gray-300">
-                                Next Turn: <span className="text-emerald-300 uppercase font-bold">{result.next_speaker}</span>
-                                {' • '}
-                                Tension: <span className="text-amber-300 font-bold">{result.scene_tension}/5 ({result.scene_tension_label})</span>
-                            </div>
-                        </div>
-
-                        <div className="grid gap-3 md:grid-cols-3">
-                            <div className="bg-black/30 p-3 rounded-lg border border-white/5 space-y-1.5">
-                                <div className="text-2xs uppercase tracking-wider text-gray-400 font-bold">Turn &amp; Pacing</div>
-                                <div className="text-gray-300"><b>Speaker:</b> <span className="text-emerald-300">{result.next_speaker}</span></div>
-                                <div className="text-gray-300"><b>Directive:</b> <span className="text-blue-300">{result.pacing_directive}</span></div>
-                                <div className="text-gray-300"><b>Speed:</b> {result.pacing_speed_label} ({result.pacing_speed}/4)</div>
-                                <div className="text-gray-300"><b>Tone:</b> <span className="text-purple-300">{result.emotional_tone}</span></div>
-                                <div className="text-gray-300"><b>Continue Chain:</b> {Math.round((result.continue_chain_prob || 0) * 100)}%</div>
-                            </div>
-
-                            <div className="bg-black/30 p-3 rounded-lg border border-white/5 space-y-1.5">
-                                <div className="text-2xs uppercase tracking-wider text-gray-400 font-bold">Visuals &amp; Fate Check</div>
-                                <div className="text-gray-300"><b>Expression:</b> <span className="text-amber-300">{result.character_expression}</span></div>
-                                <div className="text-gray-300"><b>Image Focus:</b> {result.image_focus}</div>
-                                <div className="text-gray-300"><b>Trigger Image:</b> {Math.round((result.trigger_image_prob || 0) * 100)}%</div>
-                                <div className="text-gray-300">
-                                    <b>Action Risk:</b>{' '}
-                                    <span className="text-amber-300">
-                                        {Math.round((result.is_risky_action_probability || 0) * 100)}% ({result.action_difficulty_label || 'normal'})
-                                    </span>
-                                </div>
-                                {result.director_instruction && (
-                                    <div className="mt-1 pt-1 border-t border-white/5 text-2xs text-gray-400 italic">
-                                        &ldquo;{result.director_instruction}&rdquo;
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="bg-black/30 p-3 rounded-lg border border-white/5 space-y-1.5">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-2xs uppercase tracking-wider text-gray-400 font-bold">Statekeeper Gates</span>
-                                    <span className={`px-1.5 py-0.5 rounded text-2xs font-bold ${result.should_run_updater ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-gray-800 text-gray-500'}`}>
-                                        {result.should_run_updater ? 'UPDATER FIRES' : 'IDLE'}
-                                    </span>
-                                </div>
-                                {[
-                                    ['Location / Time', result.updater_gates?.gate_world_state],
-                                    ['Char / Outfit / Rel', result.updater_gates?.gate_character_state],
-                                    ['Inventory / Items', result.updater_gates?.gate_inventory_or_items],
-                                    ['Durable Memory', result.updater_gates?.gate_durable_memory],
-                                    ['Lore Discovery', result.updater_gates?.gate_lore_discovery],
-                                ].map(([label, prob]) => {
-                                    const pct = Math.round((prob || 0) * 100);
-                                    const active = (prob || 0) >= 0.55;
-                                    return (
-                                        <div key={label} className="space-y-0.5">
-                                            <div className="flex justify-between text-2xs">
-                                                <span className={active ? 'text-purple-300 font-semibold' : 'text-gray-400'}>{label}</span>
-                                                <span className="font-mono text-gray-400">{pct}%</span>
-                                            </div>
-                                            <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                                                <div
-                                                    className={`h-full rounded-full ${active ? 'bg-purple-400' : 'bg-gray-600'}`}
-                                                    style={{ width: `${Math.min(100, Math.max(4, pct))}%` }}
-                                                />
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
-        </details>
-    );
-}
-
 // AI Settings Component
 function AISettings({ settings, onUpdate, onSync, onReset }) {
     const { providers = [] } = useProvidersPageData();
-    const llmStatus = useLLMProviderStatus();
     const setDefaultMutation = useSetLLMDefault();
+    const llmStatus = useLLMProviderStatus();
     const routing = useLLMRouting();
     const catalog = useLLMCatalog();
-    const setActiveModelsMutation = useSetActiveModels();
     const { data: runtimeDefaults } = useLLMRuntimeDefaults();
-    
+    const [aiSyncState, setAiSyncState] = useState('idle');
+
     const llmProviders = providers.filter(p => p.worker_type === 'llm' || p.worker_type === 'hybrid' || (Array.isArray(p.capabilities) && p.capabilities.includes('llm')) || p.id.startsWith('llm'));
 
     const [providerId, setProviderId] = useState('');
@@ -1618,7 +1433,6 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
 
     useEffect(() => {
         if (llmStatus.defaultProvider) {
-            // syncing form state from fetched provider config (external system)
             setProviderId(llmStatus.defaultProvider.provider_id || '');
             setModelId(llmStatus.defaultProvider.model_id || '');
         }
@@ -1633,9 +1447,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
         }
     };
 
-    const [aiSyncState, setAiSyncState] = useState('idle');
-
-    // Seed local sliders from backend config (config.json `ai` block) so the
+    // Seed local sliders from backend config (config.json ai block) so the
     // UI reflects the values actually used by chat/story generation.
     useEffect(() => {
         let cancelled = false;
@@ -1644,9 +1456,6 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                 const res = await settingsApi.get();
                 const ai = res?.settings?.ai;
                 if (ai && !cancelled) {
-                    // One set() for the whole patch: eight updateSetting calls
-                    // re-rendered every useSettings() consumer eight times and
-                    // fired eight "Setting updated!" toasts on mount.
                     const patch = {};
                     if (ai.maxContextTokens) patch.maxContextTokens = Number(ai.maxContextTokens);
                     if (ai.temperature != null) patch.temperature = Number(ai.temperature);
@@ -1694,10 +1503,17 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
         }
     };
 
+    const activeRp = catalog.data?.active?.rp || routing.data?.roles?.rp?.primary || 'Auto-detect';
+    const activeUtil = catalog.data?.active?.util || routing.data?.roles?.util?.primary || 'Auto-detect';
+    const activeDecisions = catalog.data?.active?.decisions || routing.data?.roles?.decisions?.primary || 'laya_multilingual';
+
     return (
         <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-end pb-6 border-b border-white/5">
-                <h2 className="text-2xl font-bold tracking-wide text-white">AI / LLM Settings</h2>
+                <div>
+                    <h2 className="text-2xl font-bold tracking-wide text-white">AI / LLM Settings</h2>
+                    <p className="text-sm text-gray-400 mt-1">Quick inference defaults and links to the comprehensive LLM Studio.</p>
+                </div>
                 <div className="flex items-center gap-3">
                     <button onClick={handleSaveAiBackend} disabled={aiSyncState === 'saving'} className="px-4 py-2.5 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-xl text-blue-300 hover:text-blue-200 font-bold tracking-wide flex items-center gap-2 transition-all duration-300 disabled:opacity-50">
                         {aiSyncState === 'saving' ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
@@ -1709,16 +1525,173 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                 </div>
             </div>
 
+            {/* Consolidated LLM Studio Banner */}
+            <div className="relative overflow-hidden rounded-2xl border border-blue-500/30 bg-gradient-to-r from-blue-950/40 via-purple-950/30 to-indigo-950/40 p-6 shadow-xl">
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                    <div className="max-w-2xl">
+                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-500/30 text-blue-300 text-xs font-bold uppercase tracking-wider mb-3">
+                            <Sparkles size={12} className="text-blue-400" />
+                            Dedicated Workspace Available
+                        </div>
+                        <h3 className="text-xl font-bold text-white tracking-wide">Unified LLM & Agent Studio</h3>
+                        <p className="text-sm text-gray-300 mt-1.5 leading-relaxed">
+                            Model cluster routing, 16 System 1 Director decision gates, multi-agent pipelines (Character, Narrator, Updater, Illustrator), custom agent authoring, and the live pipeline simulator have been consolidated into the dedicated LLM Studio.
+                        </p>
+                    </div>
+                    <div className="flex shrink-0">
+                        <Link
+                            to="/llm-studio"
+                            className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm tracking-wide flex items-center gap-2 shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02]"
+                        >
+                            <Brain size={18} />
+                            Open LLM Studio
+                            <ArrowRight size={16} />
+                        </Link>
+                    </div>
+                </div>
+
+                {/* Quick Studio Navigation Tiles */}
+                <div className="relative z-10 mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6 border-t border-white/10">
+                    <Link
+                        to="/llm-studio?tab=workflow"
+                        className="group p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-blue-500/40 transition-all text-left flex flex-col justify-between"
+                    >
+                        <div>
+                            <div className="flex items-center gap-2 text-blue-400 mb-1">
+                                <GitBranch size={16} />
+                                <span className="text-xs font-bold text-white group-hover:text-blue-300">Pipeline Workflow</span>
+                            </div>
+                            <p className="text-2xs text-gray-400">Canonical 6-stage architecture & limits</p>
+                        </div>
+                        <div className="mt-2 text-2xs text-blue-400 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                            View Flow <ArrowRight size={10} />
+                        </div>
+                    </Link>
+
+                    <Link
+                        to="/llm-studio?tab=agents"
+                        className="group p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-indigo-500/40 transition-all text-left flex flex-col justify-between"
+                    >
+                        <div>
+                            <div className="flex items-center gap-2 text-indigo-400 mb-1">
+                                <Bot size={16} />
+                                <span className="text-xs font-bold text-white group-hover:text-indigo-300">Agent Studio</span>
+                            </div>
+                            <p className="text-2xs text-gray-400">Prompts, sub-variants & selection tags</p>
+                        </div>
+                        <div className="mt-2 text-2xs text-indigo-400 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                            Configure <ArrowRight size={10} />
+                        </div>
+                    </Link>
+
+                    <Link
+                        to="/llm-studio?tab=questions"
+                        className="group p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-purple-500/40 transition-all text-left flex flex-col justify-between"
+                    >
+                        <div>
+                            <div className="flex items-center gap-2 text-purple-400 mb-1">
+                                <HelpCircle size={16} />
+                                <span className="text-xs font-bold text-white group-hover:text-purple-300">Laya Questions</span>
+                            </div>
+                            <p className="text-2xs text-gray-400">Stage rubrics, toggles & custom questions</p>
+                        </div>
+                        <div className="mt-2 text-2xs text-purple-400 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                            Edit Rubrics <ArrowRight size={10} />
+                        </div>
+                    </Link>
+
+                    <Link
+                        to="/llm-studio?tab=gates"
+                        className="group p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-emerald-500/40 transition-all text-left flex flex-col justify-between"
+                    >
+                        <div>
+                            <div className="flex items-center gap-2 text-emerald-400 mb-1">
+                                <Shield size={16} />
+                                <span className="text-xs font-bold text-white group-hover:text-emerald-300">16-Gate Studio</span>
+                            </div>
+                            <p className="text-2xs text-gray-400">Director questions, weights & decision gates</p>
+                        </div>
+                        <div className="mt-2 text-2xs text-emerald-400 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                            Tune Gates <ArrowRight size={10} />
+                        </div>
+                    </Link>
+
+                    <Link
+                        to="/llm-studio?tab=traces"
+                        className="group p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-cyan-500/40 transition-all text-left flex flex-col justify-between"
+                    >
+                        <div>
+                            <div className="flex items-center gap-2 text-cyan-400 mb-1">
+                                <Activity size={16} />
+                                <span className="text-xs font-bold text-white group-hover:text-cyan-300">Decision Traces</span>
+                            </div>
+                            <p className="text-2xs text-gray-400">Turn telemetry, Fate checks & gate logs</p>
+                        </div>
+                        <div className="mt-2 text-2xs text-cyan-400 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                            Inspect <ArrowRight size={10} />
+                        </div>
+                    </Link>
+
+                    <Link
+                        to="/llm-studio?tab=cluster"
+                        className="group p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-pink-500/40 transition-all text-left flex flex-col justify-between"
+                    >
+                        <div>
+                            <div className="flex items-center gap-2 text-pink-400 mb-1">
+                                <Cpu size={16} />
+                                <span className="text-xs font-bold text-white group-hover:text-pink-300">Model Cluster</span>
+                            </div>
+                            <p className="text-2xs text-gray-400">RP, Util & Decisions models & fallbacks</p>
+                        </div>
+                        <div className="mt-2 text-2xs text-pink-400 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                            Manage Models <ArrowRight size={10} />
+                        </div>
+                    </Link>
+
+                    <Link
+                        to="/llm-studio?tab=runtime"
+                        className="group p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-amber-500/40 transition-all text-left flex flex-col justify-between"
+                    >
+                        <div>
+                            <div className="flex items-center gap-2 text-amber-400 mb-1">
+                                <Sliders size={16} />
+                                <span className="text-xs font-bold text-white group-hover:text-amber-300">Inference & Runtime</span>
+                            </div>
+                            <p className="text-2xs text-gray-400">Tokens, penalties, RAG, memory extraction</p>
+                        </div>
+                        <div className="mt-2 text-2xs text-amber-400 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                            Edit Runtime <ArrowRight size={10} />
+                        </div>
+                    </Link>
+
+                    <Link
+                        to="/llm-studio?tab=simulator"
+                        className="group p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-violet-500/40 transition-all text-left flex flex-col justify-between"
+                    >
+                        <div>
+                            <div className="flex items-center gap-2 text-violet-400 mb-1">
+                                <Play size={16} />
+                                <span className="text-xs font-bold text-white group-hover:text-violet-300">Simulator</span>
+                            </div>
+                            <p className="text-2xs text-gray-400">Pipeline testbench & Director evaluation</p>
+                        </div>
+                        <div className="mt-2 text-2xs text-violet-400 font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                            Simulate <ArrowRight size={10} />
+                        </div>
+                    </Link>
+                </div>
+            </div>
+
             <div className="grid gap-6">
-                {/* LLM Worker Status Indicator */}
+                {/* Live Worker & Active Cluster Summary */}
                 <div className="p-6 border border-white/5 rounded-2xl bg-white/5 shadow-inner">
                     <div className="flex items-center justify-between mb-4">
                         <div>
                             <h3 className="font-bold text-white tracking-wide flex items-center gap-2">
                                 <Brain size={16} className="text-purple-400" />
-                                LLM Worker Status
+                                Live LLM Cluster Status
                             </h3>
-                            <p className="text-sm font-medium text-gray-400 mt-1">Live connection status and available models from LLM providers.</p>
+                            <p className="text-sm font-medium text-gray-400 mt-1">Overview of connected workers and active model dispatch roles.</p>
                         </div>
                         {llmStatus.isLoading ? (
                             <Loader2 size={18} className="animate-spin text-blue-400" />
@@ -1735,26 +1708,39 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                         )}
                     </div>
 
-                    {llmStatus.enabledProviders.length === 0 ? (
-                        <div className="text-sm text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3">
-                            No LLM providers configured. Add one in the <strong>Providers</strong> page to enable chat and story generation.
+                    <div className="grid gap-3 sm:grid-cols-3 pt-2">
+                        <div className="p-3.5 rounded-xl bg-gray-900/60 border border-white/5">
+                            <span className="text-2xs font-bold uppercase tracking-widest text-blue-400 block mb-1">Roleplay (rp)</span>
+                            <span className="text-xs font-semibold text-white font-mono block truncate" title={activeRp}>{activeRp}</span>
+                            <span className="text-2xs text-gray-500 mt-1 block">Character dialogues & story prose</span>
                         </div>
-                    ) : (
-                        <div className="grid gap-2">
-                            <div className="text-xs font-bold uppercase tracking-widest text-gray-500">
-                                Enabled Providers ({llmStatus.enabledProviders.length})
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                                {llmStatus.enabledProviders.map(p => (
-                                    <span key={p.provider_id} className="px-2.5 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs font-bold flex items-center gap-1.5">
-                                        <Server size={10} />
-                                        {p.provider_id}
-                                        {p.is_default && <span className="text-2xs bg-purple-400/20 px-1 py-0.5 rounded">DEFAULT</span>}
-                                    </span>
-                                ))}
-                            </div>
+                        <div className="p-3.5 rounded-xl bg-gray-900/60 border border-white/5">
+                            <span className="text-2xs font-bold uppercase tracking-widest text-purple-400 block mb-1">Structured / Updater (util)</span>
+                            <span className="text-xs font-semibold text-white font-mono block truncate" title={activeUtil}>{activeUtil}</span>
+                            <span className="text-2xs text-gray-500 mt-1 block">Statekeeper updates & extraction</span>
                         </div>
-                    )}
+                        <div className="p-3.5 rounded-xl bg-gray-900/60 border border-white/5">
+                            <span className="text-2xs font-bold uppercase tracking-widest text-emerald-400 block mb-1">Decision Maker (decisions)</span>
+                            <span className="text-xs font-semibold text-white font-mono block truncate" title={activeDecisions}>{activeDecisions}</span>
+                            <span className="text-2xs text-emerald-400/80 mt-1 block">🧠 System 1 CPU/RAM (0 MB VRAM)</span>
+                        </div>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-white/5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2 text-gray-400">
+                            <span>Default Provider:</span>
+                            <span className="font-semibold text-purple-300 font-mono">{llmStatus.defaultProvider?.provider_id || 'Auto-detect'}</span>
+                            {llmStatus.enabledProviders.length > 0 && (
+                                <span className="text-gray-500">({llmStatus.enabledProviders.length} enabled)</span>
+                            )}
+                        </div>
+                        <Link
+                            to="/llm-studio?tab=cluster"
+                            className="text-blue-400 hover:text-blue-300 font-bold flex items-center gap-1"
+                        >
+                            Configure Model Routing & Fallbacks in LLM Studio <ArrowRight size={12} />
+                        </Link>
+                    </div>
                 </div>
 
                 <div className="p-6 border border-white/5 rounded-2xl bg-white/5 shadow-inner">
@@ -1763,7 +1749,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                             <h3 className="font-bold text-white tracking-wide">Default LLM Provider</h3>
                             <p className="text-sm font-medium text-gray-400 mt-1">Configure the default backend provider for chat and generation.</p>
                         </div>
-                        <button onClick={handleSaveProvider} disabled={setDefaultMutation.isPending} className="btn-primary px-4 py-2 flex items-center gap-2">
+                        <button onClick={handleSaveProvider} disabled={setDefaultMutation.isPending} className="px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-xl text-blue-300 hover:text-blue-200 font-bold tracking-wide flex items-center gap-2 transition-all duration-300 disabled:opacity-50">
                             {setDefaultMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                             Save
                         </button>
@@ -1804,179 +1790,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                     </div>
                 </div>
 
-                <div className="p-6 border border-white/5 rounded-2xl bg-white/5 shadow-inner">
-                    <div className="mb-4">
-                        <h3 className="font-bold text-white tracking-wide">Model Routing</h3>
-                        <p className="text-sm font-medium text-gray-400 mt-1">
-                            Which model handles which kind of work. Roleplay prose (<b>rp</b>),
-                            structured extraction/Statekeeper updates (<b>util</b>), and instant turn/pacing/gate routing (<b>decisions</b> via System 1 CPU/RAM) are separated so each engine does what it is best at.
-                        </p>
-                    </div>
-
-                    {routing.isLoading ? (
-                        <p className="text-sm text-gray-400">Loading routing…</p>
-                    ) : routing.isError ? (
-                        <p className="text-sm text-gray-400">
-                            Routing is unavailable — chat still works, using the default model above.
-                        </p>
-                    ) : (
-                        <div>
-                            <div className="grid gap-4 md:grid-cols-3">
-                                {['rp', 'util', 'decisions'].filter(r => routing.data?.roles?.[r]).map((role) => {
-                                    const info = routing.data.roles[role];
-                                    const currentActive = role === 'rp'
-                                        ? (catalog.data?.active?.rp || info.primary)
-                                        : role === 'util'
-                                            ? (catalog.data?.active?.util || info.primary)
-                                            : (catalog.data?.active?.decisions || info.active || info.primary);
-
-                                    const roleLabel = role === 'rp'
-                                        ? 'Roleplay (rp)'
-                                        : role === 'util'
-                                            ? 'Structured / Updater (util)'
-                                            : 'Decision Maker (decisions)';
-
-                                    return (
-                                        <div key={role} className="rounded-xl border border-white/10 bg-gray-900/50 p-4 flex flex-col justify-between">
-                                            <div>
-                                                <div className="flex items-center justify-between mb-1 gap-2">
-                                                    <span className={`text-xs font-bold uppercase tracking-widest ${role === 'decisions' ? 'text-emerald-300' : role === 'util' ? 'text-purple-300' : 'text-blue-300'}`}>
-                                                        {roleLabel}
-                                                    </span>
-                                                    <span className="text-2xs text-gray-500 shrink-0">
-                                                        {info.chain?.length || 0} in catalog
-                                                    </span>
-                                                </div>
-
-                                                {role === 'decisions' && (
-                                                    <div className="mb-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/25 text-2xs font-semibold text-emerald-300">
-                                                        <span>🧠 System 1 CPU / RAM</span>
-                                                        <span>•</span>
-                                                        <span>0 MB GPU VRAM</span>
-                                                    </div>
-                                                )}
-
-                                                <div className="mt-2">
-                                                    <label htmlFor={`active-model-${role}`} className="text-2xs uppercase tracking-widest text-gray-400 block mb-1">Active Model</label>
-                                                    <select
-                                                        id={`active-model-${role}`}
-                                                        aria-label={`Active ${role} model`}
-                                                        value={currentActive || ''}
-                                                        onChange={(e) => {
-                                                            const val = e.target.value;
-                                                            const activeRp = role === 'rp' ? val : (catalog.data?.active?.rp || routing.data?.roles?.rp?.primary);
-                                                            const activeUtil = role === 'util' ? val : (catalog.data?.active?.util || routing.data?.roles?.util?.primary);
-                                                            const activeDecisions = role === 'decisions' ? val : (catalog.data?.active?.decisions || routing.data?.roles?.decisions?.primary || 'laya_multilingual');
-                                                            setActiveModelsMutation.mutate({
-                                                                active_rp: activeRp,
-                                                                active_util: activeUtil,
-                                                                active_decisions: activeDecisions,
-                                                            });
-                                                        }}
-                                                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
-                                                        disabled={setActiveModelsMutation.isPending}
-                                                    >
-                                                        {role === 'util' && (
-                                                            <option value="same_as_rp">⚡ Same as RP Model (Unified VRAM / Faster)</option>
-                                                        )}
-                                                        {role === 'decisions' && (
-                                                            <>
-                                                                <option value="same_as_util">🔄 Fallback: Use Util LLM (JSON Schema)</option>
-                                                                <option value="disabled">⏸️ Disabled (Direct Turn / No Director)</option>
-                                                            </>
-                                                        )}
-                                                        {info.chain?.map((mid) => {
-                                                            const modelMeta = catalog.data?.catalog?.[mid];
-                                                            const badges = [];
-                                                            if (modelMeta?.engine_type === 'system1_laya') badges.push('🧠 CPU/RAM 0MB VRAM');
-                                                            if (modelMeta?.has_vision) badges.push('👁️ Vision');
-                                                            if (mid.includes('a4b')) badges.push('⚡ Fast MoE');
-                                                            if (mid.includes('q4')) badges.push('Q4');
-                                                            const badgeStr = badges.length > 0 ? ` (${badges.join(', ')})` : '';
-                                                            return (
-                                                                <option key={mid} value={mid}>{mid}{badgeStr}</option>
-                                                            );
-                                                        })}
-                                                    </select>
-                                                    {role === 'util' && currentActive === 'same_as_rp' ? (
-                                                        <div className="mt-1.5 text-2xs text-blue-400/90 italic">
-                                                            ⚡ Using active RP weights ({catalog.data?.active?.rp || routing.data?.roles?.rp?.primary || 'RP'}) with low temperature (0.3) for Statekeeper updates and tools.
-                                                        </div>
-                                                    ) : role === 'decisions' && currentActive === 'same_as_util' ? (
-                                                        <div className="mt-1.5 text-2xs text-purple-300/90 italic">
-                                                            🔄 Evaluating Director decisions via structured JSON on the active Util model ({catalog.data?.active?.util || 'util'}).
-                                                        </div>
-                                                    ) : role === 'decisions' && currentActive === 'disabled' ? (
-                                                        <div className="mt-1.5 text-2xs text-gray-500 italic">
-                                                            ⏸️ Director evaluation bypassed globally; turns go directly to the selected character.
-                                                        </div>
-                                                    ) : catalog.data?.catalog?.[currentActive]?.note ? (
-                                                        <div className="mt-1.5 text-2xs text-gray-400/90 italic">
-                                                            {catalog.data.catalog[currentActive].note}
-                                                        </div>
-                                                    ) : null}
-                                                </div>
-                                            </div>
-
-                                            {(info.chain?.length || 0) > 1 && (
-                                                <div className="mt-3 pt-3 border-t border-white/5">
-                                                    <div className="text-2xs uppercase tracking-widest text-gray-500 mb-1.5">Fallback Chain</div>
-                                                    <div className="flex flex-wrap gap-1">
-                                                        {role === 'util' && currentActive === 'same_as_rp' && (
-                                                            <span className="px-2 py-0.5 rounded text-2xs bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold">
-                                                                ⚡ same_as_rp
-                                                            </span>
-                                                        )}
-                                                        {role === 'decisions' && (currentActive === 'same_as_util' || currentActive === 'disabled') && (
-                                                            <span className="px-2 py-0.5 rounded text-2xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
-                                                                {currentActive}
-                                                            </span>
-                                                        )}
-                                                        {info.chain.map((id) => (
-                                                            <span key={id} className={`px-2 py-0.5 rounded text-2xs ${id === currentActive ? (role === 'decisions' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold' : 'bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold') : 'bg-white/5 border border-white/10 text-gray-400'}`}>
-                                                                {id}
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-
-                            {routing.data?.shared_weights && (
-                                <div className="mt-3 px-3.5 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300 flex items-center gap-2">
-                                    <span>⚡</span>
-                                    <span><b>Unified VRAM Mode:</b> RP and Utility tasks share identical GPU weights, while the System 1 Decision Maker runs on CPU/RAM (0 MB GPU VRAM).</span>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    <DirectorPlaygroundCard />
-
-                    <details className="mt-4 group">
-                        <summary className="cursor-pointer text-xs font-bold uppercase tracking-widest text-gray-500 hover:text-gray-300">
-                            Which job kinds use which role
-                        </summary>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                            {Object.entries(routing.data?.kinds || {}).map(([kind, role]) => (
-                                <div key={kind} className="flex items-center justify-between text-xs">
-                                    <span className="font-mono text-gray-300">{kind}</span>
-                                    <span className={role === 'rp' ? 'text-blue-300' : role === 'decisions' ? 'text-emerald-300' : 'text-purple-300'}>
-                                        {role}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
-                    </details>
-
-                    <p className="mt-4 text-xs text-gray-500">
-                        Active model selections are stored in the backend and automatically pinned in high-speed RAM by connected remote workers. A per-chat or per-story model pin overrides these defaults.
-                    </p>
-                </div>
-
+                {/* Quick Controls: Context Tokens, Temperature, TTS, RAG */}
                 <SettingGroup title="Max Context Tokens" description="Maximum tokens to keep in chat history">
                     <div className="flex items-center gap-5">
                         <input
@@ -2008,45 +1822,6 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                             className="w-full md:w-64 accent-purple-500"
                         />
                         <span className="text-white font-bold text-sm w-16 text-center bg-white/5 py-1.5 rounded-lg border border-white/5">{settings.temperature.toFixed(1)}</span>
-                    </div>
-                </SettingGroup>
-
-                <SettingGroup
-                    title="Sampling Defaults"
-                    description="Global LLM sampling defaults. Per-chat and per-story overrides take precedence; blank = provider default. Penalties are ignored by engines that don't support them."
-                >
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        {[
-                            { key: 'topP', label: 'Top P', min: 0, max: 1, step: 0.01, fallback: runtimeDefaults?.top_p ?? 1.0 },
-                            { key: 'maxOutputTokens', label: 'Max Output Tokens', min: 16, max: 32768, step: 16, fallback: runtimeDefaults?.max_output_tokens ?? 2048 },
-                            { key: 'frequencyPenalty', label: 'Frequency Penalty', min: -2, max: 2, step: 0.1, fallback: runtimeDefaults?.frequency_penalty ?? 0.0 },
-                            { key: 'presencePenalty', label: 'Presence Penalty', min: -2, max: 2, step: 0.1, fallback: runtimeDefaults?.presence_penalty ?? 0.0 },
-                        ].map(({ key, label, min, max, step, fallback }) => (
-                            <label key={key} className="flex flex-col gap-1.5">
-                                <span className="text-xs uppercase tracking-wider text-gray-500 font-bold">{label}</span>
-                                <div className="flex items-center gap-1">
-                                    <input
-                                        type="number"
-                                        min={min}
-                                        max={max}
-                                        step={step}
-                                        placeholder={`Default (${fallback})`}
-                                        value={settings[key] ?? ''}
-                                        onChange={(e) => onUpdate(key, e.target.value === '' ? null : Number(e.target.value))}
-                                        className="w-full bg-white/5 py-1.5 px-2 rounded-lg border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500/50 placeholder-gray-500"
-                                    />
-                                    {settings[key] != null && (
-                                        <button
-                                            onClick={() => onUpdate(key, null)}
-                                            className="p-1 text-gray-500 hover:text-red-400 transition-colors"
-                                            title={`Reset to default (${fallback})`}
-                                        >
-                                            <RotateCcw size={12} />
-                                        </button>
-                                    )}
-                                </div>
-                            </label>
-                        ))}
                     </div>
                 </SettingGroup>
 
@@ -2122,69 +1897,28 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
                     )}
                 </SettingGroup>
 
-                <SettingGroup
-                    title="Memory Extraction"
-                    description="Background LLM calls that turn finished conversations into durable character memories"
-                    action={
-                        <button
-                            onClick={() => onUpdate('memoryExtractionEnabled', settings.memoryExtractionEnabled === false)}
-                            className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
-                                settings.memoryExtractionEnabled !== false
-                                    ? 'bg-green-500/20 border border-green-500/30 text-green-400'
-                                    : 'bg-gray-500/20 border border-gray-600/30 text-gray-500'
-                            }`}
-                        >
-                            {settings.memoryExtractionEnabled !== false ? 'On' : 'Off'}
-                        </button>
-                    }
-                >
-                    <p className="text-xs text-gray-500">
-                        {settings.memoryExtractionEnabled !== false
-                            ? 'Extraction is enabled. Every few user turns a background LLM call reads the recent conversation and writes durable memories. This is a real billable call, and it also runs for swipes, regenerations and idle-simulation replies. Memories are de-duplicated before writing, so repeats do not accumulate.'
-                            : 'Extraction is off. No background LLM calls are made, so memory extraction costs nothing — but the character stops learning new durable facts from conversations. Existing memories are kept and still retrieved.'}
-                    </p>
-                </SettingGroup>
-
-                <SettingGroup
-                    title="Idle Simulation"
-                    description="Characters keep the scene alive with proactive in-character messages while you're away"
-                    action={
-                        <button
-                            onClick={() => onUpdate('idleSimEnabled', !settings.idleSimEnabled)}
-                            className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
-                                settings.idleSimEnabled
-                                    ? 'bg-green-500/20 border border-green-500/30 text-green-400'
-                                    : 'bg-gray-500/20 border border-gray-600/30 text-gray-500'
-                            }`}
-                        >
-                            {settings.idleSimEnabled ? 'On' : 'Off'}
-                        </button>
-                    }
-                >
-                    <p className="text-xs text-gray-500">
-                        {settings.idleSimEnabled
-                            ? `Idle simulation is enabled. Dormant chats will receive periodic updates every ${Math.round((settings.idleSimIntervalSeconds || 600) / 60)} minutes.`
-                            : 'Idle simulation is disabled. Enable to let characters act autonomously in dormant chats.'}
-                    </p>
-                    {settings.idleSimEnabled && (
-                        <div className="mt-3 flex items-center gap-2">
-                            <span className="text-xs text-gray-500 uppercase tracking-wider">Interval (min)</span>
-                            <input
-                                type="number"
-                                min="5"
-                                max="1440"
-                                step="5"
-                                value={Math.round((settings.idleSimIntervalSeconds || 600) / 60)}
-                                onChange={(e) => onUpdate('idleSimIntervalSeconds', (parseInt(e.target.value) || 10) * 60)}
-                                className="w-20 px-2 py-1 bg-gray-900 border border-gray-700 rounded text-white text-xs focus:outline-none focus:border-blue-500"
-                            />
+                {/* Collapsible System Prompts Section */}
+                <details className="p-6 border border-white/5 rounded-2xl bg-white/5 shadow-inner group">
+                    <summary className="cursor-pointer flex items-center justify-between list-none">
+                        <div>
+                            <h3 className="font-bold text-white tracking-wide flex items-center gap-2">
+                                <Sparkles size={16} className="text-blue-400" />
+                                System Prompt Blocks
+                            </h3>
+                            <p className="text-sm font-medium text-gray-400 mt-1">
+                                Core system prompt blocks and generator templates. Also fully configurable with multi-agent tools in <Link to="/llm-studio?tab=runtime" className="text-blue-400 hover:underline">LLM Studio</Link>.
+                            </p>
                         </div>
-                    )}
-                </SettingGroup>
-
-                {/* System & Character Generator Prompt Blocks (server-persisted config) */}
-                <SystemPromptsEditor />
+                        <div className="text-xs font-bold uppercase tracking-wider text-blue-400 px-3 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 group-open:bg-white/10 group-open:text-gray-300">
+                            Toggle Editor
+                        </div>
+                    </summary>
+                    <div className="mt-6 pt-4 border-t border-white/5">
+                        <SystemPromptsEditor />
+                    </div>
+                </details>
             </div>
         </div>
     );
 }
+

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import clsx from 'clsx';
 import {
     Brain, Sparkles, ChevronDown, ChevronUp, Clock, MapPin, Shield, Zap,
-    Gauge, Activity, Compass, Dices, Layers
+    Gauge, Activity, Compass, Dices, Layers, Bot, ArrowRight
 } from 'lucide-react';
 
 const TENSION_COLOR = {
@@ -21,8 +21,28 @@ const FATE_OUTCOME_STYLE = {
     failure: 'text-rose-400 bg-rose-500/20 border-rose-500/30',
 };
 
+const SIXTEEN_GATES = [
+    { key: 'gate_character_mood', fallbackKey: 'gate_character_mood', label: 'Character Mood' },
+    { key: 'gate_scene_tone', fallbackKey: 'gate_scene_tone', label: 'Tone & Atmosphere' },
+    { key: 'gate_relationship_dynamic', fallbackKey: 'gate_relationship_dynamic', label: 'Relationship Dynamic' },
+    { key: 'gate_character_outfit', fallbackKey: 'gate_character_state', label: 'Outfit & Appearance' },
+    { key: 'gate_character_activity', fallbackKey: 'gate_character_state', label: 'Current Activity' },
+    { key: 'gate_physical_condition', fallbackKey: 'gate_character_state', label: 'Physical Condition' },
+    { key: 'gate_inventory_or_items', fallbackKey: 'gate_inventory_or_items', label: 'Inventory & Items' },
+    { key: 'gate_world_clock', fallbackKey: 'gate_world_state', label: 'World Clock & Time' },
+    { key: 'gate_location', fallbackKey: 'gate_world_state', label: 'Location & Setting' },
+    { key: 'gate_weather', fallbackKey: 'gate_world_state', label: 'Weather & Environment' },
+    { key: 'gate_character_skills', fallbackKey: 'gate_character_skills', label: 'Character Skills' },
+    { key: 'gate_user_skills', fallbackKey: 'gate_user_skills', label: 'User Persona Skills' },
+    { key: 'gate_quests_and_goals', fallbackKey: 'gate_quests_and_goals', label: 'Quests & Goals' },
+    { key: 'gate_social_status', fallbackKey: 'gate_social_status', label: 'Social Status & Rank' },
+    { key: 'gate_durable_memory', fallbackKey: 'gate_durable_memory', label: 'Durable Memory' },
+    { key: 'gate_lore_discovery', fallbackKey: 'gate_lore_discovery', label: 'Lore Discovery' },
+];
+
 export default function DirectorReasoningHUD({ jobData, pendingSpeaker }) {
     const [expanded, setExpanded] = useState(false);
+    const [showInspector, setShowInspector] = useState(false);
     const decision = jobData?.directorDecision;
 
     return (
@@ -82,10 +102,45 @@ export default function DirectorReasoningHUD({ jobData, pendingSpeaker }) {
                 </div>
             </div>
 
+            {/* 5-Step Pipeline Progress Bar */}
+            <div className="px-3 py-1.5 flex items-center justify-between gap-1.5 border-b border-white/5 bg-black/20 text-3xs font-medium overflow-x-auto custom-scrollbar">
+                <div className="flex items-center gap-1 shrink-0 text-blue-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <span>1. Triage: <strong className="font-bold">{decision?.next_speaker || 'Character'}</strong></span>
+                </div>
+                <ArrowRight size={10} className="text-gray-600 shrink-0" />
+                <div className="flex items-center gap-1 shrink-0 text-indigo-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                    <span>2. Agent Gen</span>
+                </div>
+                <ArrowRight size={10} className="text-gray-600 shrink-0" />
+                <div className="flex items-center gap-1 shrink-0 text-amber-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                    <span>3. Completion</span>
+                </div>
+                <ArrowRight size={10} className="text-gray-600 shrink-0" />
+                <div className="flex items-center gap-1 shrink-0">
+                    <span className={clsx("w-1.5 h-1.5 rounded-full", decision?.should_run_updater ? "bg-purple-400 animate-pulse" : "bg-gray-600")} />
+                    <span className={decision?.should_run_updater ? "text-purple-300 font-semibold" : "text-gray-500"}>
+                        4. 16-Gate Statekeeper
+                    </span>
+                </div>
+                <ArrowRight size={10} className="text-gray-600 shrink-0" />
+                <div className="flex items-center gap-1 shrink-0">
+                    <span className={clsx("w-1.5 h-1.5 rounded-full", decision?.should_trigger_image ? "bg-pink-400 animate-pulse" : "bg-gray-600")} />
+                    <span className={decision?.should_trigger_image ? "text-pink-300 font-semibold" : "text-gray-500"}>
+                        5. Illustrate
+                    </span>
+                </div>
+            </div>
+
             {/* Quick Context Summary Row */}
             <div className="px-3 py-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-3xs text-gray-400 bg-white/[0.02]">
-                <span>
-                    Speaker: <strong className="text-gray-200">{decision?.next_speaker || pendingSpeaker?.name || 'Character'}</strong>
+                <span className="flex items-center gap-1">
+                    <span>Agent:</span>
+                    <strong className="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 uppercase font-bold">
+                        {decision?.next_speaker || pendingSpeaker?.name || 'Character'}
+                    </strong>
                 </span>
                 {decision?.character_expression && (
                     <span>
@@ -146,7 +201,7 @@ export default function DirectorReasoningHUD({ jobData, pendingSpeaker }) {
                             </div>
                             <div className="text-gray-300"><b>Expression:</b> <span className="text-amber-300">{decision.character_expression}</span></div>
                             <div className="text-gray-300"><b>Image Focus:</b> {decision.image_focus}</div>
-                            <div className="text-gray-300"><b>Trigger Image:</b> {Math.round((decision.trigger_image_prob || 0) * 100)}%</div>
+                            <div className="text-gray-300"><b>Trigger Image:</b> {Math.round((decision.trigger_image_prob || 0) * 100)}% (≥{Math.round((decision.image_threshold ?? 0.65) * 100)}%)</div>
                             <div className="text-gray-300">
                                 <b>Action Risk:</b>{' '}
                                 <span className={decision.is_risky_action_probability >= 0.5 ? 'text-amber-400 font-semibold' : 'text-gray-400'}>
@@ -167,36 +222,108 @@ export default function DirectorReasoningHUD({ jobData, pendingSpeaker }) {
                                     <Shield size={11} className="text-purple-400" />
                                     Statekeeper Gates
                                 </span>
-                                <span className={clsx("px-1.5 py-0.5 rounded text-3xs font-bold", decision.should_run_updater ? "bg-purple-500/20 text-purple-300" : "bg-gray-800 text-gray-500")}>
-                                    {decision.should_run_updater ? "FIRES" : "IDLE"}
+                                <span className={clsx(
+                                    "px-1.5 py-0.5 rounded text-3xs font-bold",
+                                    decision.should_run_updater ? "bg-purple-500/25 text-purple-300 border border-purple-500/40" : "bg-gray-800 text-gray-400"
+                                )}>
+                                    {decision.should_run_updater ? "⚡ ACTIVE / RUNS" : "⏸️ IDLE"}
                                 </span>
                             </div>
-                            {[
-                                ['Location / Time', decision.updater_gates?.gate_world_state],
-                                ['Char / Outfit / Rel', decision.updater_gates?.gate_character_state],
-                                ['Inventory / Items', decision.updater_gates?.gate_inventory_or_items],
-                                ['Durable Memory', decision.updater_gates?.gate_durable_memory],
-                                ['Lore Discovery', decision.updater_gates?.gate_lore_discovery],
-                            ].map(([label, prob]) => {
-                                const pct = Math.round((prob || 0) * 100);
-                                const active = (prob || 0) >= 0.55;
-                                return (
-                                    <div key={label} className="space-y-0.5">
-                                        <div className="flex justify-between">
-                                            <span className={active ? 'text-purple-300 font-semibold' : 'text-gray-400'}>{label}</span>
-                                            <span className="font-mono text-gray-500">{pct}%</span>
+
+                            {decision.updater_evaluation?.diagnostic_summary && (
+                                <div className="text-3xs text-purple-200/90 bg-purple-950/40 border border-purple-500/20 rounded p-1.5 leading-snug">
+                                    {decision.updater_evaluation.diagnostic_summary}
+                                </div>
+                            )}
+
+                            <div className="space-y-1 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                                {SIXTEEN_GATES.map(({ key, fallbackKey, label }) => {
+                                    const prob = decision.updater_gates?.[key] ?? decision.updater_gates?.[fallbackKey];
+                                    const pct = Math.round((prob || 0) * 100);
+                                    const thresholdPct = Math.round((decision.updater_evaluation?.activation_threshold || 0.55) * 100);
+                                    const active = pct >= thresholdPct;
+                                    return (
+                                        <div key={key} className="space-y-0.5">
+                                            <div className="flex justify-between">
+                                                <span className={active ? 'text-purple-300 font-semibold' : 'text-gray-400'}>{label}</span>
+                                                <span className={clsx("font-mono", active ? "text-purple-300 font-bold" : "text-gray-500")}>
+                                                    {pct}% {active && '✓'}
+                                                </span>
+                                            </div>
+                                            <div className="w-full h-1 bg-gray-800 rounded-full overflow-hidden">
+                                                <div
+                                                    className={clsx("h-full rounded-full transition-all duration-300", active ? "bg-gradient-to-r from-purple-500 to-indigo-400" : "bg-gray-700")}
+                                                    style={{ width: `${pct}%` }}
+                                                />
+                                            </div>
                                         </div>
-                                        <div className="w-full h-1 bg-gray-800 rounded-full overflow-hidden">
-                                            <div
-                                                className={clsx("h-full rounded-full transition-all duration-300", active ? "bg-gradient-to-r from-purple-500 to-indigo-400" : "bg-gray-700")}
-                                                style={{ width: `${pct}%` }}
-                                            />
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })}
+                            </div>
                         </div>
                     </div>
+
+                    {/* Question & Rubric Inspector Toggle */}
+                    {decision.questions_evaluated?.length > 0 && (
+                        <div className="pt-2 border-t border-white/5 space-y-2">
+                            <button
+                                type="button"
+                                onClick={() => setShowInspector(v => !v)}
+                                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 border border-white/5 text-gray-300 transition-colors text-3xs font-medium"
+                            >
+                                <span className="flex items-center gap-1.5">
+                                    <Layers size={11} className="text-emerald-400" />
+                                    <span>Question &amp; Decision Inspector ({decision.questions_evaluated.length} questions evaluated)</span>
+                                </span>
+                                <span className="text-gray-400 font-mono flex items-center gap-1">
+                                    {showInspector ? 'Hide Rubrics' : 'View Full Rubrics & Choices'}
+                                    {showInspector ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                                </span>
+                            </button>
+
+                            {showInspector && (
+                                <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1 rounded-lg border border-white/5 p-2 bg-black/50 scrollbar-thin scrollbar-thumb-gray-800">
+                                    {decision.questions_evaluated.map((q) => (
+                                        <div key={q.key} className="p-2 rounded bg-gray-900/80 border border-white/5 space-y-1 text-3xs">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="px-1.5 py-0.2 rounded bg-gray-800 text-gray-400 font-mono text-3xs uppercase">
+                                                        {q.category}
+                                                    </span>
+                                                    <span className="font-semibold text-gray-200">{q.prompt}</span>
+                                                </div>
+                                                <span className={clsx(
+                                                    "px-1.5 py-0.2 rounded font-mono font-bold text-3xs shrink-0",
+                                                    q.status?.includes('FIRED') || q.status?.includes('Triggered') || q.status?.includes('YES')
+                                                        ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                                                        : "bg-gray-800 text-gray-400"
+                                                )}>
+                                                    {q.status}
+                                                </span>
+                                            </div>
+                                            {q.options && typeof q.options === 'object' && (
+                                                <details className="text-gray-500 text-3xs mt-1">
+                                                    <summary className="cursor-pointer hover:text-gray-400 select-none">
+                                                        Available choices &amp; rubric
+                                                    </summary>
+                                                    <div className="mt-1 pl-2 border-l border-white/10 space-y-0.5 font-mono text-gray-400">
+                                                        {Object.entries(q.options).map(([optKey, optDesc]) => (
+                                                            <div key={optKey} className={clsx(String(q.value) === optKey && "text-emerald-300 font-semibold")}>
+                                                                <span className="text-gray-300">{optKey}:</span> {String(optDesc)}
+                                                                {q.probabilities?.[optKey] != null && (
+                                                                    <span className="ml-1 text-emerald-400">({Math.round(q.probabilities[optKey] * 100)}%)</span>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </details>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
         </div>

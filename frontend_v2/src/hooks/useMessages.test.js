@@ -165,7 +165,7 @@ describe('useMessages', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useGenerateSwipe(), { wrapper });
         await act(async () => result.current.mutateAsync({ chatId: 'c1', msgId: 'm1' }));
-        expect(apiMock.post).toHaveBeenCalledWith('/api/v2/chats/c1/messages/m1/generate-swipe');
+        expect(apiMock.post).toHaveBeenCalledWith('/api/v2/chats/c1/messages/m1/generate-swipe', {});
     });
 
     it('useNarrateMessage posts to the narrate endpoint', async () => {

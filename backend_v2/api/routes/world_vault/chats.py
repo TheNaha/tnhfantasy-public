@@ -42,6 +42,7 @@ from core.upload_validation import (
 from services.chat_utils import (
     insert_world_state_marker,
     link_embedded_lorebook,
+    render_agent_template,
     resolve_scenario_defaults,
     resolve_voice_for_character,
     substitute_tavern_vars,
@@ -53,15 +54,6 @@ from services.context_builder import (
     prune_context,
 )
 from services.job_submission_service import submit_llm_job, submit_tts_job
-from services.orchestrator_service import (
-    TOOL_BUDGETS,
-    budget_metadata_for,
-    get_tool_max,
-)
-
-# Every costed tool name, for the trace's budget block. Read from the table so a
-# new costed tool appears in the inspector without a second list to update.
-TOOL_NAMES = frozenset(TOOL_BUDGETS)
 from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
 from services.world_ownership import link_to_world, require_world
 from config import settings
@@ -676,13 +668,13 @@ def create_chat(req: CreateChatRequest, session: Session = Depends(get_session),
     # chat with that character, so link it alongside any requested lorebooks.
     active_lorebook_ids = link_embedded_lorebook(req.active_lorebook_ids, character if req.character_id else None)
 
-    story_location = req.story_location or (character.default_location if character and character.default_location else None)
-    story_time = req.story_time or (character.default_time if character and character.default_time else None)
+    story_location = req.story_location or (getattr(character, "default_location", None) if character else None)
+    story_time = req.story_time or (getattr(character, "default_time", None) if character else None)
     location_id = req.location_id
     if story_location and not location_id:
         from core.entities import Location
         loc_stmt = select(Location).where(func.lower(Location.name) == story_location.strip().lower())
-        effective_world_id = req.world_id or (character.world_id if character else None)
+        effective_world_id = req.world_id or (getattr(character, "world_id", None) if character else None)
         if effective_world_id:
             loc_stmt = loc_stmt.where(Location.world_id == effective_world_id)
         matched_loc = session.exec(loc_stmt).first()
@@ -1114,16 +1106,14 @@ async def _send_message(
                     }
                     for m in (past_messages or [])[-6:]
                 ]
-                decision = await DecisionService(session).evaluate_scene(
+                decision = await DecisionService(session).evaluate_pre_generation_triage(
                     character_name=primary_char_name,
                     user_name=chat.persona_name or "User",
                     story_location=chat.story_location,
                     story_time=chat.story_time,
                     state_snapshot=chat.state_snapshot or {},
                     recent_messages=recent_transcript,
-                    last_speaker="user",
                     has_secondary_character=bool(chat.additional_character_ids),
-                    allow_image_generation=bool(chat.allow_image_generation),
                     allow_narration=bool(chat.allow_narration),
                 )
                 director_decision_dict = decision.to_dict()
@@ -1142,11 +1132,13 @@ async def _send_message(
                 }
                 speed_map = {1: "Slow-motion", 2: "Real-time", 3: "Fast-forward"}
                 speed_label = speed_map.get(round(decision.pacing_speed), "Real-time")
-                ctx_overrides["director_directive"] = (
+                base_dir = (
                     f"{directive_map.get(decision.pacing_directive, decision.pacing_directive)} "
-                    f"(Pacing speed: {speed_label}; Emotional tone: {decision.emotional_tone}; "
-                    f"Suggested expression: {decision.character_expression})"
+                    f"(Pacing speed: {speed_label}; Emotional tone: {decision.emotional_tone})"
                 )
+                if decision.fate_directive:
+                    base_dir += f" | Fate & Skill Check: [{str(decision.fate_outcome).upper()}] {decision.fate_directive}"
+                ctx_overrides["director_directive"] = base_dir
 
                 # Group chat secondary character auto-routing when user didn't pin target_character_id
                 if (
@@ -1173,9 +1165,11 @@ async def _send_message(
             context_trace["user_directive"] = request.directive.strip()
         if director_decision_dict is not None:
             context_trace["director_decision"] = director_decision_dict
+            context_trace["selected_agent"] = director_decision_dict.get("selected_agent", "character")
 
         try:
-            if request.narrate:
+            chosen_agent_slug = director_decision_dict.get("selected_agent") if director_decision_dict else "character"
+            if request.narrate or chosen_agent_slug == "narrator":
                 from config import get_system_prompt_blocks
                 from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
 
@@ -1195,12 +1189,56 @@ async def _send_message(
                     type_="narrator",
                     source="narrator",
                 )
+                metadata["selected_agent"] = "narrator"
+                metadata["agent_slug"] = "narrator"
+                metadata["agent_name"] = "Narrator"
+            elif chosen_agent_slug not in ("character", "secondary_character", "user", None):
+                # Custom registered agent profile (or an explicit
+                # `variant:<slug>` override of one).
+                from services.agent_variants import resolve_agent
+
+                resolved_agent = resolve_agent(session, chosen_agent_slug)
+                if resolved_agent:
+                    custom_agent = resolved_agent.profile
+                    char_name = (ctx_overrides.get("characters") or [None])[0]
+                    c_name = getattr(char_name, "name", "Character") if char_name else "Character"
+                    custom_prompt = render_agent_template(
+                        resolved_agent.prompt_template,
+                        character_name=c_name,
+                        user_name=chat.persona_name or "User",
+                        story_location=chat.story_location or "",
+                        story_time=chat.story_time or "",
+                    )
+                    workflow, metadata = build_chat_llm_workflow(
+                        messages=[
+                            {"role": "system", "content": custom_prompt},
+                            *context,
+                        ],
+                        chat_id=chat_id,
+                        character_id=request.target_character_id or chat.character_id,
+                        system_prompt=system_prompt or None,
+                        model=_model_for_kind(custom_agent.model_target, custom_agent.model_override or chat.llm_model, session),
+                        samplers={**sampler_overrides(chat), **resolved_agent.sampler_overrides()},
+                        type_="chat_reply",
+                        source=custom_agent.slug,
+                    )
+                    metadata["selected_agent"] = chosen_agent_slug
+                    metadata["agent_slug"] = custom_agent.slug
+                    metadata["agent_name"] = custom_agent.name
+                    metadata["agent_variant_slug"] = resolved_agent.variant_slug
+                else:
+                    workflow, metadata = build_chat_llm_workflow(
+                        messages=context,
+                        chat_id=chat_id,
+                        character_id=request.target_character_id or chat.character_id,
+                        system_prompt=system_prompt or None,
+                        model=_model_for_kind("chat_reply", chat.llm_model, session),
+                        samplers=sampler_overrides(chat),
+                    )
+                    metadata["selected_agent"] = "character"
+                    metadata["agent_slug"] = "character"
+                    metadata["agent_name"] = "Character"
             else:
-                # `chat_reply`, not `suggest_reply`. Both kinds currently map to
-                # the same "rp" role in `ROLE_BY_KIND`, so the mismatch was
-                # invisible — but the primary reply path is a *reply*, and it
-                # must not silently follow the suggest/impersonate model if the
-                # role table is ever reordered.
                 workflow, metadata = build_chat_llm_workflow(
                     messages=context,
                     chat_id=chat_id,
@@ -1209,39 +1247,18 @@ async def _send_message(
                     model=_model_for_kind("chat_reply", chat.llm_model, session),
                     samplers=sampler_overrides(chat),
                 )
+                metadata["selected_agent"] = "character"
+                metadata["agent_slug"] = "character"
+                metadata["agent_name"] = "Character"
 
             metadata["autonomous_turn_count"] = 1
             metadata["max_autonomous_turns"] = getattr(chat, "max_autonomous_turns", 4) or 4
             metadata["director_autonomy_level"] = getattr(chat, "director_autonomy_level", "balanced") or "balanced"
 
-            if request.agentic:
-                from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
-                workflow["tools"] = filter_agentic_tools(
-                    AGENTIC_TOOLS,
-                    allow_image=chat.allow_image_generation,
-                    allow_narration=chat.allow_narration,
-                )
-                metadata["agentic"] = True
-                metadata["orchestrator_depth"] = 0
-                metadata["original_messages"] = context
-                effective_max = request.max_agentic_depth or chat.max_agentic_depth
-                if effective_max is not None:
-                    metadata["max_agentic_depth"] = effective_max
-                # The costed-tool caps travel with the depth cap. Both are per
-                # exchange, so both have to be decided once, at the start, or the
-                # first hop is the only one that knew the limit.
-                metadata.update(budget_metadata_for(chat))
-                # The resolved caps, on the exchange record, so the inspector can
-                # show "3 images allowed" next to the turns that asked for them.
-                # Read back off the metadata rather than re-resolved, so what is
-                # displayed is what the gate used.
-                context_trace["budgets"] = {
-                    name: {
-                        "spent": 0,
-                        "max": get_tool_max(name, metadata=metadata),
-                    }
-                    for name in TOOL_NAMES
-                }
+            # `request.agentic` is accepted for client compatibility but no longer
+            # attaches tools: routing, narration, state and illustration are
+            # driven by Laya's pipeline (see services/chat_pipeline.py), not by
+            # the actor model calling tools.
 
             if request.generator_checkpoint:
                 metadata["generator_checkpoint"] = request.generator_checkpoint
@@ -1590,37 +1607,21 @@ async def generate_swipe(
         },
     )
     
-    if prev_agentic:
-        from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
-        workflow["tools"] = filter_agentic_tools(
-            AGENTIC_TOOLS,
-            allow_image=chat.allow_image_generation,
-            allow_narration=chat.allow_narration,
-        )
-        metadata["agentic"] = True
-        metadata["orchestrator_depth"] = 0
-        metadata["original_messages"] = context
-        # This is a re-generation of a turn the user already has, not a new
-        # conversational turn, so it must not trigger memory extraction.
-        #
-        # The extraction hook fires for every job classified `chat_reply`, and
-        # this one is exactly that. `should_extract_memories` counts only USER
-        # messages, so a swipe leaves the count unchanged and RE-OPENS the gate —
-        # the extractor then runs over a near-identical 20-message window and
-        # produces a second copy of the same memories. Deduplication catches the
-        # identical case, but a regeneration deletes the messages the window was
-        # built from, so the two windows differ and the same fact can come back
-        # reworded and slip past an exact match.
-        #
-        # Suppressing it here is the actual fix; the dedup in
-        # `memory_extraction` is the backstop for every other re-run path.
-        metadata["suppress_memory_extraction"] = True
-        metadata["max_agentic_depth"] = chat.max_agentic_depth or 3
-        metadata.update(budget_metadata_for(chat))
-        context_trace["budgets"] = {
-            name: {"spent": 0, "max": get_tool_max(name, metadata=metadata)}
-            for name in TOOL_NAMES
-        }
+    # This is a re-generation of a turn the user already has, not a new
+    # conversational turn, so it must not trigger memory extraction.
+    #
+    # The extraction hook fires for every job classified `chat_reply`, and
+    # this one is exactly that. `should_extract_memories` counts only USER
+    # messages, so a swipe leaves the count unchanged and RE-OPENS the gate —
+    # the extractor then runs over a near-identical 20-message window and
+    # produces a second copy of the same memories. Deduplication catches the
+    # identical case, but a regeneration deletes the messages the window was
+    # built from, so the two windows differ and the same fact can come back
+    # reworded and slip past an exact match.
+    #
+    # Suppressing it here is the actual fix; the dedup in
+    # `memory_extraction` is the backstop for every other re-run path.
+    metadata["suppress_memory_extraction"] = True
 
     if context_trace:
         metadata["context_trace"] = context_trace
@@ -1938,39 +1939,21 @@ async def regenerate_reply(
             "branch_id": anchor_branch_id,
         },
     )
-    if prev_agentic:
-        from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
-        workflow["tools"] = filter_agentic_tools(
-            AGENTIC_TOOLS,
-            allow_image=chat.allow_image_generation,
-            allow_narration=chat.allow_narration,
-        )
-        metadata["agentic"] = True
-        metadata["orchestrator_depth"] = 0
-        metadata["original_messages"] = context
-        # This is a re-generation of a turn the user already has, not a new
-        # conversational turn, so it must not trigger memory extraction.
-        #
-        # The extraction hook fires for every job classified `chat_reply`, and
-        # this one is exactly that. `should_extract_memories` counts only USER
-        # messages, so a swipe leaves the count unchanged and RE-OPENS the gate —
-        # the extractor then runs over a near-identical 20-message window and
-        # produces a second copy of the same memories. Deduplication catches the
-        # identical case, but a regeneration deletes the messages the window was
-        # built from, so the two windows differ and the same fact can come back
-        # reworded and slip past an exact match.
-        #
-        # Suppressing it here is the actual fix; the dedup in
-        # `memory_extraction` is the backstop for every other re-run path.
-        metadata["suppress_memory_extraction"] = True
-        effective_max = chat.max_agentic_depth
-        if effective_max is not None:
-            metadata["max_agentic_depth"] = effective_max
-        metadata.update(budget_metadata_for(chat))
-        context_trace["budgets"] = {
-            name: {"spent": 0, "max": get_tool_max(name, metadata=metadata)}
-            for name in TOOL_NAMES
-        }
+    # This is a re-generation of a turn the user already has, not a new
+    # conversational turn, so it must not trigger memory extraction.
+    #
+    # The extraction hook fires for every job classified `chat_reply`, and
+    # this one is exactly that. `should_extract_memories` counts only USER
+    # messages, so a swipe leaves the count unchanged and RE-OPENS the gate —
+    # the extractor then runs over a near-identical 20-message window and
+    # produces a second copy of the same memories. Deduplication catches the
+    # identical case, but a regeneration deletes the messages the window was
+    # built from, so the two windows differ and the same fact can come back
+    # reworded and slip past an exact match.
+    #
+    # Suppressing it here is the actual fix; the dedup in
+    # `memory_extraction` is the backstop for every other re-run path.
+    metadata["suppress_memory_extraction"] = True
     if prev_checkpoint:
         metadata["generator_checkpoint"] = prev_checkpoint
 
@@ -2113,12 +2096,18 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     )
 
     hint_clause = f" Specifically: {req.hint.strip()}." if req.hint.strip() else ""
-    imp_system = (
-        f"You are {user_name}, the human participant in this roleplay with {char_name}. "
-        f"Write ONE in-character message or action that {user_name} would realistically say or do next.{hint_clause} "
-        f"Output ONLY the raw message text — no labels, no quotes around the whole reply."
-        + (f"\n\n{world_context_str}" if world_context_str else "")
+    from config import get_system_prompt_blocks
+    blocks = get_system_prompt_blocks() or {}
+    imp_template = blocks.get("chat_impersonate") or (
+        "You are {user}, the human participant in this roleplay with {char}. "
+        "Write ONE in-character message or action that {user} would realistically say or do next.{hint_clause} "
+        "Output ONLY the raw message text — no labels, no quotes around the whole reply."
     )
+    if "{user}" in imp_template or "{char}" in imp_template:
+        imp_base = imp_template.format(user=user_name, char=char_name, hint_clause=hint_clause)
+    else:
+        imp_base = f"{imp_template} (User: {user_name}, Character: {char_name}.{hint_clause})"
+    imp_system = imp_base + (f"\n\n{world_context_str}" if world_context_str else "")
 
     # Swap roles for the impersonation LLM call: char→user, user→assistant
     msg_list = []
@@ -2433,19 +2422,16 @@ def _scene_job_prep_sync(
         from services.model_availability_service import ModelAvailabilityService
         checkpoint = ModelAvailabilityService(session).resolve_checkpoint()
 
-    system_prompt = (
+    from config import get_system_prompt_blocks
+    blocks = get_system_prompt_blocks() or {}
+    system_prompt = blocks.get("chat_scene_illustrate") or (
         "You are an AI scene director for a roleplay chat. Read the following recent "
         "roleplay chat context and create a visual depiction of the current scene or the "
         "main character's action (e.g. a selfie).\n"
-        "Call the generate_image tool with a highly detailed ComfyUI image prompt "
+        "Output ONLY a highly detailed ComfyUI image prompt "
         "(comma-separated Danbooru tags: subject, pose, lighting, camera angle, style, "
-        "quality tags).\n"
-        "After the image is generated, reply with a brief in-character caption for the "
-        "image (1-2 sentences).\n"
-        "If you are unable to call tools, output ONLY the image prompt text."
+        "quality tags)."
     )
-
-    from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
 
     workflow, metadata = build_chat_llm_workflow(
         messages=[
@@ -2462,17 +2448,10 @@ def _scene_job_prep_sync(
         extra_metadata={
             "scene_checkpoint": checkpoint,
             "generator_checkpoint": checkpoint,
-            "agentic": True,
-            "orchestrator_depth": 0,
-            # Carried through the agentic chain so the image it spawns is filed
-            # on the same thread the scene was asked for, not the original one.
+            # Carried through to the image job it spawns so it is filed on the
+            # same thread the scene was asked for, not the original one.
             "branch_id": past_messages[0].branch_id if past_messages else None,
         },
-    )
-    workflow["tools"] = filter_agentic_tools(
-        AGENTIC_TOOLS,
-        allow_image=chat.allow_image_generation,
-        allow_narration=chat.allow_narration,
     )
     return chat, workflow, metadata
 
@@ -2860,6 +2839,45 @@ def patch_chat_state_snapshot(
         "story_time": chat.story_time,
         "state_snapshot": chat.state_snapshot,
     }
+
+
+@router.get("/{chat_id}/director-traces")
+def get_chat_director_traces(
+    chat_id: str,
+    limit: int = 50,
+    session: Session = Depends(get_session),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
+):
+    """Retrieve recorded Laya System 1 decision traces for a chat session."""
+    chat = chat_repo.get(chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+
+    from core.entities import DirectorTrace
+    stmt = (
+        select(DirectorTrace)
+        .where(DirectorTrace.chat_id == chat_id)
+        .order_by(DirectorTrace.created_at.desc())
+        .limit(max(1, min(limit, 200)))
+    )
+    rows = session.exec(stmt).all()
+    return [
+        {
+            "id": r.id,
+            "chat_id": r.chat_id,
+            "message_id": r.message_id,
+            "job_id": r.job_id,
+            "stage": r.stage,
+            "turn": r.turn,
+            "selected_agent": r.selected_agent,
+            "selected_variant": r.selected_variant,
+            "decision": r.decision,
+            "extra": r.extra,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
 
 
 

@@ -232,7 +232,8 @@ async def _analyze_avatar_with_vision(
 
     b64_img = base64.b64encode(avatar_bytes).decode("ascii")
     data_uri = f"data:image/png;base64,{b64_img}"
-    system_prompt = (
+    blocks = app_config.get_system_prompt_blocks() or {}
+    system_prompt = blocks.get("vision_avatar_analysis") or (
         "You are a visual character & world design analyzer. Inspect the character portrait "
         "and return ONLY a valid JSON object with these keys:\n"
         "- visual_tags: array of 8-12 concise Danbooru-style appearance tags (hair color/style, eye color, features, lighting)\n"
@@ -694,7 +695,8 @@ async def _synthesize_card_blueprint(
     )
 
     # 2. Optional Util LLM pass for World & Statekeeper blueprint enrichment
-    llm_system = (
+    blocks = app_config.get_system_prompt_blocks() or {}
+    llm_system = blocks.get("world_onboarding") or (
         "You are the World Architect for an AI Fantasy & Roleplay Engine. "
         "Given a character card's text, synthesize a cohesive World Blueprint as a single JSON object:\n"
         "{\n"
@@ -1660,7 +1662,8 @@ async def extract_world_lore_section(
             ],
         }
 
-    llm_system = (
+    blocks = app_config.get_system_prompt_blocks() or {}
+    llm_system = blocks.get("world_lore_enrich") or (
         "You are the World Lore Architect. From the character info, generate a cohesive World setting "
         "with evocative name, 2-3 sentence overview, 2-4 key locations, and 2-4 codex lore entries as valid JSON:\n"
         "{\n"
@@ -2043,7 +2046,8 @@ async def generate_world_crossover(
     traveler_names = ", ".join(t.name for t in travelers)
     resident_names = ", ".join(r.name for r in residents) if residents else "local inhabitants"
 
-    llm_system = (
+    blocks = app_config.get_system_prompt_blocks() or {}
+    llm_system = blocks.get("world_crossover") or (
         "You are the World Crossover & Transmigration Architect. Create a thrilling crossover scenario "
         "where character(s) from Origin World A arrive in Destination World B. Return ONLY valid JSON:\n"
         "{\n"
@@ -2848,14 +2852,16 @@ async def compile_chat_to_story(
     # Try novelizing via RP LLM if online; otherwise format as clean literary prose
     novelized_prose = ""
     if raw_transcript:
+        blocks = app_config.get_system_prompt_blocks() or {}
+        compile_prompt = blocks.get("story_compile") or (
+            "You are a literary fantasy & sci-fi novelist. Rewrite the provided roleplay transcript "
+            "into cohesive, atmospheric third-person novel prose while preserving key dialogue and "
+            "emotional beats. Return ONLY valid JSON: `{\"chapter_title\": \"...\", \"prose\": \"...\"}`"
+        )
         llm_parsed, _ = await _run_llm_json(
             session,
             kind="story_compile",
-            system_prompt=(
-                "You are a literary fantasy & sci-fi novelist. Rewrite the provided roleplay transcript "
-                "into cohesive, atmospheric third-person novel prose while preserving key dialogue and "
-                "emotional beats. Return ONLY valid JSON: `{\"chapter_title\": \"...\", \"prose\": \"...\"}`"
-            ),
+            system_prompt=compile_prompt,
             user_content=f"Character: {char_name}\nCounterpart: {user_name}\nLocation: {chat.story_location or 'Unknown'}\n\nTranscript:\n{raw_transcript[:5000]}",
             max_output_tokens=1500,
             temperature=0.4,
@@ -2946,14 +2952,16 @@ async def run_world_tick(
     char_names = [c.name for c in characters[:8]] or ["Local Factions"]
     loc_names = [loc.name for loc in locations[:8]] or [f"{world.name} Hub"]
 
+    blocks = app_config.get_system_prompt_blocks() or {}
+    tick_prompt = blocks.get("world_tick") or (
+        "You are the Living World Simulation Engine. Advance the world clock and generate "
+        "2-4 off-screen autonomous NPC actions or world rumors. Return ONLY valid JSON:\n"
+        '`{"events": [{"actor": "...", "location": "...", "event": "...", "rumor": "..."}], "new_time_of_day": "..."}`'
+    )
     llm_parsed, engine_used = await _run_llm_json(
         session,
         kind="world_tick",
-        system_prompt=(
-            "You are the Living World Simulation Engine. Advance the world clock and generate "
-            "2-4 off-screen autonomous NPC actions or world rumors. Return ONLY valid JSON:\n"
-            '`{"events": [{"actor": "...", "location": "...", "event": "...", "rumor": "..."}], "new_time_of_day": "..."}`'
-        ),
+        system_prompt=tick_prompt,
         user_content=(
             f"World: {world.name} — {(world.description or '')[:400]}\n"
             f"Time Advance: {time_advance_label}\n"

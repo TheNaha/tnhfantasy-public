@@ -205,7 +205,25 @@ export function useEvaluateDirectorDecisions() {
 
 export const LLM_RUNTIME_DEFAULTS_KEY = ['llm', 'runtime-defaults'];
 
-/** Fetch resolved runtime defaults (context budget, max output tokens, temp, top_p, director_mode, gate_threshold). */
+export const LLM_DIRECTOR_GATES_KEY = ['llm', 'director', 'gates'];
+
+/**
+ * Canonical Director gate registry from the backend.
+ *
+ * The 16-Gate Studio used to keep its own list, and four keys had already
+ * drifted to aliases the Director never emits. Server data replaces it; the
+ * static copy in the page remains only as an offline fallback.
+ */
+export function useLLMDirectorGates(options = {}) {
+    return useQuery({
+        queryKey: LLM_DIRECTOR_GATES_KEY,
+        queryFn: ({ signal } = {}) => api.get(`${API_V2_BASE}/llm/director/gates`, { signal }),
+        staleTime: 60_000,
+        ...options,
+    });
+}
+
+/** Fetch resolved runtime defaults (context budget, max output tokens, temp, top_p, director_mode, gate/image thresholds). */
 export function useLLMRuntimeDefaults(options = {}) {
     return useQuery({
         queryKey: LLM_RUNTIME_DEFAULTS_KEY,
@@ -222,6 +240,7 @@ export function useLLMRuntimeDefaults(options = {}) {
                     presence_penalty: 0.0,
                     director_mode: 'steered',
                     gate_threshold: 0.6,
+                    image_threshold: 0.65,
                 };
             }
         },

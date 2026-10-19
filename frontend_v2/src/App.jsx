@@ -59,6 +59,7 @@ const Worlds = lazy(() => import('./pages/Worlds'));
 const WorldArchitect = lazy(() => import('./pages/WorldArchitect'));
 const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
 const Prompts = lazy(() => import('./pages/Prompts'));
+const LLMStudio = lazy(() => import('./pages/LLMStudio'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 // Keyed by routeKey so a crashed page resets when the user navigates away
@@ -151,6 +152,7 @@ function AnimatedRoutes() {
                 <Route path="/models/installed" element={<Boundary routeKey={routeKey}><InstalledModels /></Boundary>} />
                 <Route path="/models" element={<Navigate to="/models/installed" replace />} />
                 <Route path="/providers" element={<Boundary routeKey={routeKey}><Providers /></Boundary>} />
+                <Route path="/llm-studio" element={<Boundary routeKey={routeKey}><LLMStudio /></Boundary>} />
                 <Route path="/statistics" element={<Boundary routeKey={routeKey}><Statistics /></Boundary>} />
                 <Route path="/settings" element={<Boundary routeKey={routeKey}><Settings /></Boundary>} />
                 <Route path="*" element={<Boundary routeKey={routeKey}><NotFound /></Boundary>} />

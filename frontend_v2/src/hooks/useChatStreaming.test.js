@@ -121,7 +121,33 @@ describe('useChatStreaming', () => {
             providerId: null,
             contextTrace: null,
             directorDecision: null,
+            continuationOfJobId: null,
         });
+    });
+
+    it('carries the continuation parent job id into the streaming payload', async () => {
+        const qc = createQueryClient();
+        renderChatStreaming(qc);
+
+        await act(async () => {
+            wsMock.emit('job.progress', {
+                data: {
+                    job: {
+                        id: 'job-cont',
+                        task_type: 'llm',
+                        text: 'and then the door opened',
+                        metadata_: {
+                            chat_id: 'chat-1',
+                            workspace: 'chat',
+                            continuation_of_job_id: 'job-parent',
+                        },
+                    },
+                },
+            });
+            await sleep(150); // flush the 100ms throttle
+        });
+
+        expect(qc.getQueryData(['streaming', 'job-cont']).continuationOfJobId).toBe('job-parent');
     });
 
     it('routes suggestion job progress straight to setMessage', async () => {

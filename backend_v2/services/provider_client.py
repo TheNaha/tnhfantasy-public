@@ -414,10 +414,27 @@ async def call_in_process_llm_provider(
         # Per-job override wins; otherwise the global default (may be None).
         return workflow.get(key) if workflow.get(key) is not None else global_ai.get(key)
 
+    raw_model = workflow.get("model")
+    resolved_model = raw_model
+    if not resolved_model or resolved_model == "default":
+        kind = workflow.get("type") or workflow.get("kind")
+        from services.llm_config import get_default_llm_model, resolve_model_for_kind
+
+        session = getattr(job_service, "session", None)
+        if kind and session:
+            try:
+                resolved_model = resolve_model_for_kind(kind, session=session)
+            except Exception:
+                resolved_model = get_default_llm_model()
+        else:
+            resolved_model = get_default_llm_model()
+
     payload = {
         "messages": workflow.get("messages"),
         "tools": workflow.get("tools"),
-        "model": workflow.get("model"),
+        "model": resolved_model,
+        "type": workflow.get("type"),
+        "role": workflow.get("role"),
         "temperature": _resolve("temperature"),
         "top_p": _resolve("top_p"),
         "max_output_tokens": _resolve("max_output_tokens"),

@@ -185,6 +185,16 @@ def _served_models(session: Session) -> set[str]:
                 for item in value:
                     if item:
                         served.add(str(item))
+        if getattr(provider, "type", None) in ("modal_llm", "modal_vllm"):
+            try:
+                from services.llm_router import get_router
+
+                reg = get_router().registry
+                for m in reg.models.values():
+                    if m.enabled:
+                        served.add(m.id)
+            except Exception:
+                pass
     return served
 
 

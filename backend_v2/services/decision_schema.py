@@ -13,23 +13,187 @@ from typing import Any, Dict, List, Optional
 
 UPDATER_GATE_THRESHOLD = 0.55
 
+# Laya's illustration trigger is advisory; this is the probability above which
+# an autonomous scene illustration is actually dispatched. Overridable per chat
+# via `state_snapshot.image_threshold` (illustration sensitivity in the UI).
+IMAGE_TRIGGER_THRESHOLD = 0.65
+
+# Completion confidence bands: Laya's `is_complete` probability is authoritative
+# outside the uncertain band; the structural syntax check decides inside it.
+COMPLETION_UNCERTAIN_LOW = 0.40
+COMPLETION_UNCERTAIN_HIGH = 0.60
+
 UPDATER_GATE_KEYS = (
-    "gate_world_state",
-    "gate_character_state",
+    "gate_character_mood",
+    "gate_scene_tone",
+    "gate_relationship_dynamic",
+    "gate_character_outfit",
+    "gate_current_activity",
+    "gate_physical_condition",
     "gate_inventory_or_items",
+    "gate_world_clock",
+    "gate_location_or_scene",
+    "gate_weather_environment",
+    "gate_character_skills",
+    "gate_user_skills",
     "gate_durable_memory",
     "gate_lore_discovery",
+    "gate_quests_or_goals",
+    "gate_social_status",
+    "gate_world_state",
+    "gate_character_state",
 )
+
+GATE_LABELS: Dict[str, str] = {
+    "gate_character_mood": "Character Mood",
+    "gate_scene_tone": "Scene Tone / Atmosphere",
+    "gate_relationship_dynamic": "Relationship Dynamic",
+    "gate_character_outfit": "Outfit & Wardrobe",
+    "gate_current_activity": "Current Activity / Action",
+    "gate_physical_condition": "Physical Condition & Health",
+    "gate_inventory_or_items": "Inventory & Items",
+    "gate_world_clock": "World Clock & Time",
+    "gate_location_or_scene": "Location & Scene Boundary",
+    "gate_weather_environment": "Weather & Environment",
+    "gate_character_skills": "Character Skills",
+    "gate_user_skills": "User Skills",
+    "gate_durable_memory": "Durable Memory",
+    "gate_lore_discovery": "Lore Discovery",
+    "gate_quests_or_goals": "Quests & Narrative Goals",
+    "gate_social_status": "Social Status & Renown",
+    "gate_world_state": "Location / Time (Legacy)",
+    "gate_character_state": "Character State & Outfit (Legacy)",
+}
+
+# User-facing explanations for the 16 primary gates. Kept beside the labels so
+# the LLM Studio gate registry is served from one place instead of a hand-kept
+# frontend copy that had already drifted (it listed `gate_location`,
+# `gate_weather`, `gate_character_activity`, and `gate_quests_and_goals`, none
+# of which are the keys the Director emits).
+GATE_DESCRIPTIONS: Dict[str, str] = {
+    "gate_character_mood": "Emotional shift, vulnerability, hostility, or joy",
+    "gate_scene_tone": "Environmental suspense, intimacy, danger, comedy",
+    "gate_relationship_dynamic": "Trust, romantic intimacy, rivalry, or tension shift",
+    "gate_character_outfit": "Armor damage, disrobing, disguise, clean clothes",
+    "gate_current_activity": "Combat, crafting, traveling, dining, resting",
+    "gate_physical_condition": "Injuries, exhaustion, poison, healing, cyberware strain",
+    "gate_inventory_or_items": "Acquiring, losing, consuming, or equipping gear",
+    "gate_world_clock": "Day advancement, nightfall, rest period duration",
+    "gate_location_or_scene": "Fast-travel, entering a room, terrain change",
+    "gate_weather_environment": "Rainstorm, fog, blizzard, scorching heat",
+    "gate_character_skills": "New martial arts, spells, proficiencies demonstrated",
+    "gate_user_skills": "User stat growth, training completion, reputation perks",
+    "gate_quests_or_goals": "Mission progress, objectives completed, promises made",
+    "gate_social_status": "Faction rank, bounty, outlaw status, aristocracy",
+    "gate_durable_memory": "Key narrative revelation to store in episodic memory",
+    "gate_lore_discovery": "Ancient history, world secrets, mythos unlocked",
+}
+
+# Grouping for the 16-Gate Studio. The tuple order is the display order.
+GATE_CATEGORIES = (
+    {
+        "id": "affect",
+        "title": "Psychological & Affect",
+        "gates": ("gate_character_mood", "gate_scene_tone", "gate_relationship_dynamic"),
+    },
+    {
+        "id": "embodiment",
+        "title": "Embodiment & Gear",
+        "gates": (
+            "gate_character_outfit",
+            "gate_current_activity",
+            "gate_physical_condition",
+            "gate_inventory_or_items",
+        ),
+    },
+    {
+        "id": "world",
+        "title": "World & Environment",
+        "gates": ("gate_world_clock", "gate_location_or_scene", "gate_weather_environment"),
+    },
+    {
+        "id": "progression",
+        "title": "Progression & Stats",
+        "gates": (
+            "gate_character_skills",
+            "gate_user_skills",
+            "gate_quests_or_goals",
+            "gate_social_status",
+        ),
+    },
+    {
+        "id": "memory",
+        "title": "Narrative Knowledge",
+        "gates": ("gate_durable_memory", "gate_lore_discovery"),
+    },
+)
+
+# Which Updater output fields each Director gate authorizes. This is the single
+# source of truth for the Statekeeper prompt schema and for post-hoc filtering:
+# a gate that did not fire may not mutate its fields.
+GATE_FIELD_MAP: Dict[str, tuple] = {
+    "gate_character_mood": ("character_mood", "character_expression"),
+    "gate_scene_tone": ("emotional_tone",),
+    "gate_relationship_dynamic": ("relationship_status", "relationships_update", "affinity_delta"),
+    "gate_character_outfit": ("character_outfit",),
+    "gate_current_activity": ("current_activity",),
+    "gate_physical_condition": ("physical_condition",),
+    "gate_inventory_or_items": ("inventory", "inventory_add", "inventory_remove"),
+    "gate_world_clock": ("story_time", "clock_day_delta", "chronology_event"),
+    "gate_location_or_scene": ("story_location",),
+    "gate_weather_environment": ("weather",),
+    "gate_character_skills": ("character_skills_add",),
+    "gate_user_skills": ("user_skills_add",),
+    "gate_durable_memory": ("new_memories",),
+    "gate_lore_discovery": ("new_lore",),
+    "gate_quests_or_goals": ("quests_and_goals",),
+    "gate_social_status": ("social_status",),
+    # Legacy coarse gates expand to their fine-grained equivalents.
+    "gate_world_state": ("story_location", "story_time", "clock_day_delta", "chronology_event", "weather"),
+    "gate_character_state": ("character_mood", "character_outfit", "current_activity", "physical_condition", "social_status"),
+    # Legacy fine-grained aliases still present in stored job metadata.
+    "gate_location_change": ("story_location",),
+    "gate_weather_change": ("weather",),
+    "gate_character_activity": ("current_activity",),
+    "gate_quests_and_goals": ("quests_and_goals",),
+}
+
+ALWAYS_ALLOWED_UPDATER_FIELDS = ("scene_summary",)
+
+
+def allowed_updater_fields(
+    triggered_gates: Optional[List[str]],
+    director_mode: Optional[str] = None,
+) -> Optional[set]:
+    """Resolve the Updater fields authorized by the fired gates.
+
+    Returns ``None`` for unrestricted application (wild mode, or when gate
+    information is unavailable such as legacy jobs). An empty trigger list
+    authorizes only the always-allowed fields.
+    """
+    if triggered_gates is None or str(director_mode or "").lower() == "wild":
+        return None
+    allowed = set(ALWAYS_ALLOWED_UPDATER_FIELDS)
+    for gate in triggered_gates:
+        allowed.update(GATE_FIELD_MAP.get(gate, ()))
+    return allowed
 
 
 @dataclass
 class DirectorDecisionResult:
-    """Structured result from the 13-question Director pass."""
+    """Structured result from the Director / Laya classification pass."""
 
     # Category A: Turn Routing & Multi-Agent Chaining
     next_speaker: str = "character"
+    selected_agent: str = "character"
+    agent_slug: str = "character"
     next_speaker_probabilities: Dict[str, float] = field(default_factory=dict)
     continue_chain_probability: float = 0.2
+    workflow_stage: str = "full"  # "triage", "audit", "chaining", "full"
+    is_complete: bool = True
+    is_complete_laya_prob: float = 0.5
+    is_complete_syntax: bool = True
+    completion_source: str = "syntax"  # "laya" | "syntax"
 
     # Category B: Narrative Direction & Pacing
     pacing_directive: str = "continue_conversation"
@@ -41,13 +205,20 @@ class DirectorDecisionResult:
     # Category C: Visual & Expression Triggers
     trigger_image_probability: float = 0.15
     should_trigger_image: bool = False
-    image_focus: str = "character_portrait"
-    character_expression: str = "neutral"
+    image_threshold: float = IMAGE_TRIGGER_THRESHOLD
 
     # Category D: Statekeeper (Updater) Gates
     updater_gates: Dict[str, float] = field(default_factory=dict)
     triggered_gates: List[str] = field(default_factory=list)
     should_run_updater: bool = False
+    updater_evaluation: Dict[str, Any] = field(default_factory=dict)
+    questions_evaluated: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Sub-variant routing + user-authored custom questions (see laya_questions.py).
+    selected_variant: Optional[str] = None
+    custom_directives: List[Dict[str, Any]] = field(default_factory=list)
+    # Raw typed answers as returned by the engine; not serialised (to_dict drops it).
+    raw_answers: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     # Category E: Toggleable Fate / Skill Check (Anti-Godmoding & Narrative Control)
     is_risky_action_probability: float = 0.15
@@ -56,13 +227,29 @@ class DirectorDecisionResult:
     fate_directive: Optional[str] = None
     matched_skills: List[str] = field(default_factory=list)
 
-    # Category F: Character Dynamic & Inertia Gates
+    # Category F: Fine-Grained 16 Field Gates
     gate_character_mood: float = 0.2
+    gate_scene_tone: float = 0.2
     gate_relationship_dynamic: float = 0.2
+    gate_character_outfit: float = 0.2
+    gate_current_activity: float = 0.2
+    gate_physical_condition: float = 0.2
+    gate_inventory_or_items: float = 0.2
+    gate_world_clock: float = 0.2
+    gate_location_or_scene: float = 0.2
+    gate_weather_environment: float = 0.2
+    gate_character_skills: float = 0.2
+    gate_user_skills: float = 0.2
+    gate_durable_memory: float = 0.2
+    gate_lore_discovery: float = 0.2
+    gate_quests_or_goals: float = 0.2
+    gate_social_status: float = 0.2
+    gate_world_state: float = 0.2
+    gate_character_state: float = 0.2
+
     mood_shift_detected: bool = False
+    tone_shift_detected: bool = False
     relationship_shift_detected: bool = False
-    affinity_delta: int = 0
-    character_mood: str = "curious_attentive"
     relationship_status: Optional[str] = None
     director_mode: str = "steered"
     user_directive: Optional[str] = None
@@ -74,6 +261,7 @@ class DirectorDecisionResult:
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
+        data.pop("raw_answers", None)
         t_int = max(1, min(5, round(self.scene_tension)))
         tension_labels = {1: "calm", 2: "warm", 3: "rising", 4: "high", 5: "climactic"}
         s_int = max(1, min(3, round(self.pacing_speed)))
@@ -87,31 +275,42 @@ class DirectorDecisionResult:
         data["continue_chain_prob"] = self.continue_chain_probability
         data["trigger_image_prob"] = self.trigger_image_probability
         data["is_risky_action_prob"] = self.is_risky_action_probability
-        data["affinity_delta"] = self.affinity_delta
-        data["character_mood"] = self.character_mood
         data["mood_shift_detected"] = self.mood_shift_detected
         data["relationship_shift_detected"] = self.relationship_shift_detected
+        data["tone_shift_detected"] = self.tone_shift_detected
+        data["gate_scene_tone"] = self.gate_scene_tone
+        data["selected_agent"] = self.selected_agent
+        data["agent_slug"] = self.agent_slug
+        data["is_complete"] = self.is_complete
+        data["workflow_stage"] = self.workflow_stage
+        for k in UPDATER_GATE_KEYS:
+            data[k] = getattr(self, k, self.updater_gates.get(k, 0.2))
+        data["updater_evaluation"] = self.updater_evaluation
+        data["questions_evaluated"] = self.questions_evaluated
         data["director_mode"] = self.director_mode
         data["user_directive"] = self.user_directive
         base_instruction = (
             f"Pacing: {self.pacing_directive} ({speed_labels.get(s_int, 'real-time')}) | "
             f"Tension: {self.scene_tension}/5 ({tension_labels.get(t_int, 'normal')}) | "
-            f"Tone: {self.emotional_tone} | Expression: {self.character_expression}"
+            f"Tone: {self.emotional_tone}"
         )
         if self.user_directive:
             base_instruction = f"[Player Directive: {self.user_directive}] | " + base_instruction
         if self.fate_directive:
             base_instruction += f" | Fate Check: {self.fate_outcome} ({self.fate_directive})"
+        if self.custom_directives:
+            base_instruction += " | " + " | ".join(d.get("directive", "") for d in self.custom_directives if d.get("directive"))
         data["director_instruction"] = base_instruction
         return data
 
 
-def build_director_questions(
+def build_speaker_options(
+    available_agents: Optional[List[Dict[str, Any]]] = None,
     *,
     has_secondary_character: bool = False,
     allow_narration: bool = True,
-) -> List[Dict[str, Any]]:
-    """Return the 13 typed System 1 questions for Laya / `/v1/decisions`."""
+) -> Dict[str, str]:
+    """Build speaker options including built-in and user-registered custom agents."""
     speaker_options: Dict[str, str] = {
         "character": "The primary character should speak or react directly in dialogue and action.",
     }
@@ -123,27 +322,39 @@ def build_director_questions(
         speaker_options["secondary_character"] = (
             "A secondary companion or NPC present in the scene should interject or respond."
         )
+
+    # Inject any custom agents passed in
+    for agent in available_agents or []:
+        slug = agent.get("slug")
+        desc = agent.get("description") or agent.get("name")
+        if slug and desc and slug not in speaker_options and slug != "user":
+            speaker_options[slug] = desc
+
     speaker_options["user"] = (
         "The scene beat is complete and it is now the player's turn to respond."
     )
+    return speaker_options
 
+
+def build_pre_generation_triage_questions(
+    available_agents: Optional[List[Dict[str, Any]]] = None,
+    *,
+    has_secondary_character: bool = False,
+    allow_narration: bool = True,
+) -> List[Dict[str, Any]]:
+    """Build Stage 1 questions: agent routing, narrative pacing, and Fate/Skill checks."""
+    speaker_options = build_speaker_options(
+        available_agents,
+        has_secondary_character=has_secondary_character,
+        allow_narration=allow_narration,
+    )
     return [
-        # --- Category A: Turn Routing & Multi-Agent Chaining ---
         {
             "key": "next_speaker",
             "type": "choice",
-            "question": "Who should take the very next turn in this roleplay scene?",
+            "question": "Which agent or participant should take the immediate response in this roleplay scene?",
             "options": speaker_options,
         },
-        {
-            "key": "continue_chain",
-            "type": "noul",
-            "statement": (
-                "After the next speaker finishes their turn, another AI agent (narrator or character) "
-                "should immediately follow up before yielding control back to the player."
-            ),
-        },
-        # --- Category B: Narrative Direction & Pacing ---
         {
             "key": "pacing_directive",
             "type": "choice",
@@ -179,88 +390,6 @@ def build_director_questions(
             },
         },
         {
-            "key": "emotional_tone",
-            "type": "choice",
-            "question": "What is the dominant emotional tone of the current scene?",
-            "options": {
-                "warm_intimate": "Warm, affectionate, intimate, or tender.",
-                "playful_humorous": "Playful, teasing, lighthearted, or comedic.",
-                "mysterious_tense": "Mysterious, suspenseful, guarded, or uneasy.",
-                "dramatic_conflict": "Confrontational, angry, urgent, or high-stakes.",
-                "melancholic_somber": "Sad, reflective, bittersweet, or vulnerable.",
-            },
-        },
-        # --- Category C: Visual & Expression Triggers ---
-        {
-            "key": "trigger_image",
-            "type": "noul",
-            "statement": (
-                "This moment features a striking visual change, new location, dramatic pose, "
-                "or key emotional beat that warrants generating a scene illustration."
-            ),
-        },
-        {
-            "key": "image_focus",
-            "type": "choice",
-            "question": "If an illustration is generated right now, what should the camera focus on?",
-            "options": {
-                "character_portrait": "Close-up portrait focusing on the character's face, expression, and upper body.",
-                "action_pose": "Dynamic medium or full-body shot capturing physical action, posture, and attire.",
-                "environment_wide": "Wide cinematic establishing shot showcasing the location, lighting, and atmosphere.",
-                "intimate_closeup": "Intimate close-up highlighting proximity, touch, or emotional connection.",
-            },
-        },
-        {
-            "key": "character_expression",
-            "type": "choice",
-            "question": "Which facial expression best matches the primary character's current emotional state?",
-            "options": {
-                "neutral": "Calm, composed, neutral expression.",
-                "happy": "Smiling, cheerful, warm, or delighted.",
-                "blushing": "Flustered, shy, affectionate, or aroused.",
-                "sad": "Downcast, tearful, hurt, or melancholic.",
-                "angry": "Fierce, scowling, annoyed, or defiant.",
-                "surprised": "Wide-eyed, startled, or taken aback.",
-                "seductive": "Alluring, confident, half-lidded, or inviting.",
-            },
-        },
-        # --- Category D: Statekeeper (Updater) Gates ---
-        {
-            "key": "gate_world_state",
-            "type": "noul",
-            "statement": "The location, setting, time of day, or weather changed during this exchange.",
-        },
-        {
-            "key": "gate_character_state",
-            "type": "noul",
-            "statement": (
-                "A character's mood, physical condition, clothing/outfit, current activity, "
-                "or relationship dynamic shifted during this exchange."
-            ),
-        },
-        {
-            "key": "gate_inventory_or_items",
-            "type": "noul",
-            "statement": "An item, weapon, gift, clue, or piece of equipment was acquired, used, lost, or exchanged.",
-        },
-        {
-            "key": "gate_durable_memory",
-            "type": "noul",
-            "statement": (
-                "A significant personal fact, promise, secret, backstory detail, or memorable event "
-                "occurred that should be saved to long-term memory."
-            ),
-        },
-        {
-            "key": "gate_lore_discovery",
-            "type": "noul",
-            "statement": (
-                "A new named location, faction, artifact, or world-building rule was introduced "
-                "that belongs in the World Vault lorebook."
-            ),
-        },
-        # --- Category E: Fate / Skill Check Gate (Toggleable Anti-Godmoding) ---
-        {
             "key": "is_risky_action",
             "type": "noul",
             "statement": (
@@ -280,61 +409,197 @@ def build_director_questions(
                 5: "Extreme: near-impossible feat against overwhelming odds.",
             },
         },
-        # --- Category F: Interpersonal Dynamic & Character Affinity ---
-        {
-            "key": "gate_character_mood",
-            "type": "noul",
-            "statement": (
-                "The primary character's internal mood, emotional stance, or feelings shifted "
-                "or evolved noticeably in this exchange."
-            ),
-        },
-        {
-            "key": "gate_relationship_dynamic",
-            "type": "noul",
-            "statement": (
-                "The interpersonal dynamic, trust, boundary, or bond between the character and the player "
-                "shifted noticeably in this exchange."
-            ),
-        },
-        {
-            "key": "affinity_delta",
-            "type": "score",
-            "question": "How did the player's last statement or action affect the character's affinity, affection, or trust?",
-            "rubric": {
-                1: "Deeply negative: alienated, deeply hurt, betrayed, or hostile (-2 affinity).",
-                2: "Slightly negative: disapproved, annoyed, skeptical, or defensive (-1 affinity).",
-                3: "Neutral: standard conversational beat with no notable bond change (0 affinity).",
-                4: "Mildly positive: appreciated, amused, respected, or intrigued (+1 affinity).",
-                5: "Deeply positive: deeply bonded, charmed, touched, or inspired (+2 affinity).",
-            },
-        },
-        {
-            "key": "character_mood",
-            "type": "choice",
-            "question": "What is the primary character's current emotional state and mood towards the player?",
-            "options": {
-                "warm_affectionate": "Warm, affectionate, trusting, and friendly.",
-                "playful_teasing": "Playful, humorous, teasing, and energetic.",
-                "curious_attentive": "Attentive, engaged, intrigued, and curious.",
-                "flustered_shy": "Flustered, blushing, shy, or emotionally overwhelmed.",
-                "guarded_watchful": "Guarded, cautious, calculating, or suspicious.",
-                "irritated_annoyed": "Annoyed, sharp, impatient, or conflicted.",
-                "melancholic_vulnerable": "Sad, reflective, vulnerable, or weary.",
-            },
-        },
     ]
 
 
-def build_continuation_questions() -> List[Dict[str, Any]]:
-    """Build a fast 1-question System 1 prompt to determine if generation completed naturally."""
+def build_post_generation_audit_questions() -> List[Dict[str, Any]]:
+    """Build Stage 2 questions: text completion, illustration triggers, and 16 narrative state gates."""
     return [
         {
             "key": "is_complete",
             "type": "noul",
             "statement": "The speaker finished their complete sentence, dialog, thought, or scene beat naturally without being cut off mid-sentence.",
-        }
+        },
+        {
+            "key": "trigger_image",
+            "type": "noul",
+            "statement": (
+                "This moment features a striking visual change, new location, dramatic pose, "
+                "or key emotional beat that warrants generating a scene illustration."
+            ),
+        },
+        # --- The 16 Statekeeper Narrative Gates ---
+        {
+            "key": "gate_character_mood",
+            "type": "noul",
+            "statement": "The primary character's internal mood, emotional stance, or feelings shifted noticeably in this exchange.",
+        },
+        {
+            "key": "gate_scene_tone",
+            "type": "noul",
+            "statement": "The scene's ambient atmosphere, emotional tone, or environmental mood shifted noticeably during this exchange.",
+        },
+        {
+            "key": "gate_relationship_dynamic",
+            "type": "noul",
+            "statement": "The interpersonal dynamic, trust, boundary, affinity, or bond between characters shifted noticeably in this exchange.",
+        },
+        {
+            "key": "gate_character_outfit",
+            "type": "noul",
+            "statement": "A character changed clothes, altered their outfit, removed attire, or had their clothing damaged/dirtied/soaked.",
+        },
+        {
+            "key": "gate_current_activity",
+            "type": "noul",
+            "statement": "A character started, completed, or changed their primary physical activity or posture (e.g. sitting, running, resting).",
+        },
+        {
+            "key": "gate_physical_condition",
+            "type": "noul",
+            "statement": "A character suffered an injury, wound, exhaustion, intoxication, illness, or experienced physical healing.",
+        },
+        {
+            "key": "gate_inventory_or_items",
+            "type": "noul",
+            "statement": "An item, weapon, gift, potion, key, or piece of equipment was acquired, used, lost, crafted, or exchanged.",
+        },
+        {
+            "key": "gate_world_clock",
+            "type": "noul",
+            "statement": "Narrative time advanced significantly (hours passed, dawn, noon, dusk, nightfall, or the next day arrived).",
+        },
+        {
+            "key": "gate_location_or_scene",
+            "type": "noul",
+            "statement": "The characters moved to a new location, entered a building, traveled, or crossed a distinct scene boundary.",
+        },
+        {
+            "key": "gate_weather_environment",
+            "type": "noul",
+            "statement": "The weather or ambient environmental conditions changed (e.g. began raining, storming, snow, fog, darkness).",
+        },
+        {
+            "key": "gate_character_skills",
+            "type": "noul",
+            "statement": "A character demonstrated, practiced, unlocked, or improved a notable personal skill, spell, or technique.",
+        },
+        {
+            "key": "gate_user_skills",
+            "type": "noul",
+            "statement": "The player character demonstrated, revealed, or applied a specialized personal skill, knowledge, or proficiency.",
+        },
+        {
+            "key": "gate_durable_memory",
+            "type": "noul",
+            "statement": "A significant personal secret, promise, backstory reveal, or milestone occurred that should be saved to long-term memory.",
+        },
+        {
+            "key": "gate_lore_discovery",
+            "type": "noul",
+            "statement": "A new named faction, historical event, deity, organization, or world rule was introduced that belongs in the Lorebook.",
+        },
+        {
+            "key": "gate_quests_or_goals",
+            "type": "noul",
+            "statement": "A quest, mutual mission, objective, contract, or major goal was initiated, updated, completed, or failed.",
+        },
+        {
+            "key": "gate_social_status",
+            "type": "noul",
+            "statement": "A character or player's social reputation, standing, bounty, noble title, or public perception shifted.",
+        },
+        # Legacy Aliases
+        {
+            "key": "gate_world_state",
+            "type": "noul",
+            "statement": "The location, setting, time of day, or weather changed during this exchange.",
+        },
+        {
+            "key": "gate_character_state",
+            "type": "noul",
+            "statement": "A character's physical condition, clothing/outfit, current activity, or presence shifted during this exchange.",
+        },
     ]
+
+
+def build_turn_chaining_questions(
+    available_agents: Optional[List[Dict[str, Any]]] = None,
+    *,
+    has_secondary_character: bool = False,
+    allow_narration: bool = True,
+) -> List[Dict[str, Any]]:
+    """Build Stage 3 questions: who speaks next in autonomous scene chaining."""
+    speaker_options = build_speaker_options(
+        available_agents,
+        has_secondary_character=has_secondary_character,
+        allow_narration=allow_narration,
+    )
+    return [
+        {
+            "key": "next_speaker",
+            "type": "choice",
+            "question": "Who should take the very next turn in this roleplay scene?",
+            "options": speaker_options,
+        },
+        {
+            "key": "continue_chain",
+            "type": "noul",
+            "statement": (
+                "After the current turn finishes, another AI agent (narrator or character) "
+                "should immediately follow up before yielding control back to the player."
+            ),
+        },
+    ]
+
+
+def build_director_questions(
+    *,
+    has_secondary_character: bool = False,
+    allow_narration: bool = True,
+    available_agents: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Return unified System 1 questions combining triage, pacing, visual, and all 16 state gates."""
+    triage = build_pre_generation_triage_questions(
+        available_agents=available_agents,
+        has_secondary_character=has_secondary_character,
+        allow_narration=allow_narration,
+    )
+    audit = build_post_generation_audit_questions()
+
+    # Include continue_chain and emotional_tone for complete backward compatibility
+    extras = [
+        {
+            "key": "continue_chain",
+            "type": "noul",
+            "statement": (
+                "After the next speaker finishes their turn, another AI agent (narrator or character) "
+                "should immediately follow up before yielding control back to the player."
+            ),
+        },
+        {
+            "key": "emotional_tone",
+            "type": "choice",
+            "question": "What is the dominant emotional tone of the current scene?",
+            "options": {
+                "warm_intimate": "Warm, affectionate, intimate, or tender.",
+                "playful_humorous": "Playful, teasing, lighthearted, or comedic.",
+                "mysterious_tense": "Mysterious, suspenseful, guarded, or uneasy.",
+                "dramatic_conflict": "Confrontational, angry, urgent, or high-stakes.",
+                "melancholic_somber": "Sad, reflective, bittersweet, or vulnerable.",
+            },
+        },
+    ]
+
+    # Combine ensuring keys are unique in order
+    seen = set()
+    combined = []
+    for q in [triage[0], extras[0], *triage[1:], extras[1], *audit]:
+        if q["key"] not in seen:
+            seen.add(q["key"])
+            combined.append(q)
+
+    return combined
 
 
 FATE_OUTCOME_DESCRIPTIONS: Dict[str, str] = {
@@ -506,6 +771,152 @@ def format_director_context(
     return "\n".join(lines)
 
 
+def build_evaluated_questions_trace(
+    raw_answers: Dict[str, Any],
+    result: DirectorDecisionResult,
+    effective_threshold: float,
+    *,
+    has_secondary_character: bool = False,
+    allow_narration: bool = True,
+) -> List[Dict[str, Any]]:
+    """Build a transparent diagnostic trace of all questions evaluated during the Director pass."""
+    questions = build_director_questions(
+        has_secondary_character=has_secondary_character,
+        allow_narration=allow_narration,
+    )
+    evaluated: List[Dict[str, Any]] = []
+
+    category_map = {
+        "next_speaker": "Turn Routing",
+        "continue_chain": "Turn Routing",
+        "pacing_directive": "Narrative Pacing",
+        "scene_tension": "Narrative Pacing",
+        "pacing_speed": "Narrative Pacing",
+        "emotional_tone": "Scene Atmosphere",
+        "trigger_image": "Visual Illustration",
+        "gate_world_state": "Statekeeper Gates",
+        "gate_scene_tone": "Statekeeper Gates",
+        "gate_character_state": "Statekeeper Gates",
+        "gate_character_mood": "Statekeeper Gates",
+        "gate_relationship_dynamic": "Statekeeper Gates",
+        "gate_character_outfit": "Statekeeper Gates",
+        "gate_current_activity": "Statekeeper Gates",
+        "gate_physical_condition": "Statekeeper Gates",
+        "gate_inventory_or_items": "Statekeeper Gates",
+        "gate_world_clock": "Statekeeper Gates",
+        "gate_location_or_scene": "Statekeeper Gates",
+        "gate_location_change": "Statekeeper Gates",
+        "gate_weather_environment": "Statekeeper Gates",
+        "gate_weather_change": "Statekeeper Gates",
+        "gate_character_skills": "Statekeeper Gates",
+        "gate_user_skills": "Statekeeper Gates",
+        "gate_durable_memory": "Statekeeper Gates",
+        "gate_lore_discovery": "Statekeeper Gates",
+        "gate_quests_or_goals": "Statekeeper Gates",
+        "gate_quests_and_goals": "Statekeeper Gates",
+        "gate_social_status": "Statekeeper Gates",
+        "is_complete": "Completion Audit",
+        "is_risky_action": "Fate & Skill Check",
+        "action_difficulty": "Fate & Skill Check",
+    }
+
+    threshold_pct = int(round(effective_threshold * 100))
+
+    for q in questions:
+        key = q["key"]
+        q_type = q["type"]
+        category = category_map.get(key, "General")
+        prompt_text = q.get("question") or q.get("statement") or ""
+        options_or_rubric = q.get("options") or q.get("rubric") or {}
+
+        val: Any = None
+        status_text = ""
+        prob_or_score: Optional[float] = None
+        probabilities: Dict[str, float] = {}
+
+        raw_entry = raw_answers.get(key)
+        if isinstance(raw_entry, dict) and "probabilities" in raw_entry:
+            probabilities = {
+                str(k): round(float(v), 4)
+                for k, v in raw_entry["probabilities"].items()
+                if isinstance(v, (int, float))
+            }
+
+        if q_type == "choice":
+            val = getattr(result, key, "")
+            chosen_desc = options_or_rubric.get(val, "") if isinstance(options_or_rubric, dict) else ""
+            status_text = f"Selected: {val}" + (f" ({chosen_desc})" if chosen_desc else "")
+            if val in probabilities:
+                prob_or_score = probabilities[val]
+        elif q_type == "score":
+            val = getattr(result, key, 0.0)
+            prob_or_score = float(val)
+            if key == "scene_tension":
+                status_text = f"Tension: {val}/5 ({getattr(result, 'scene_tension_label', 'normal')})"
+            elif key == "pacing_speed":
+                status_text = f"Speed: {getattr(result, 'pacing_speed_label', 'real-time')} ({val}/3)"
+            elif key == "action_difficulty":
+                status_text = f"Difficulty: {getattr(result, 'action_difficulty_label', 'moderate')} ({val}/5)"
+            else:
+                status_text = f"Score: {val}"
+        elif q_type == "noul":
+            if key in UPDATER_GATE_KEYS:
+                prob = result.updater_gates.get(key, 0.0)
+                prob_or_score = prob
+                pct = int(round(prob * 100))
+                triggered = key in result.triggered_gates
+                status_text = (
+                    f"FIRED ({pct}% ≥ {threshold_pct}%)"
+                    if triggered
+                    else f"IDLE ({pct}% < {threshold_pct}%)"
+                )
+                val = triggered
+            else:
+                if key == "continue_chain":
+                    prob = result.continue_chain_probability
+                    status_text = f"Continue chain: {int(round(prob * 100))}%"
+                elif key == "trigger_image":
+                    prob = result.trigger_image_probability
+                    image_threshold = getattr(result, "image_threshold", IMAGE_TRIGGER_THRESHOLD)
+                    threshold_pct = int(round(image_threshold * 100))
+                    status_text = (
+                        f"Illustrate: {'YES' if result.should_trigger_image else 'NO'} "
+                        f"({int(round(prob * 100))}% vs {threshold_pct}%)"
+                    )
+                elif key == "is_risky_action":
+                    prob = result.is_risky_action_probability
+                    status_text = f"Risky feat: {int(round(prob * 100))}%"
+                elif key == "is_complete":
+                    laya_prob = getattr(result, "is_complete_laya_prob", 0.5)
+                    prob_or_score = laya_prob
+                    status_text = (
+                        f"Laya: {int(round(laya_prob * 100))}% | "
+                        f"syntax: {'complete' if result.is_complete_syntax else 'incomplete'} | "
+                        f"source: {result.completion_source} -> "
+                        f"{'COMPLETE' if result.is_complete else 'CONTINUE'}"
+                    )
+                    val = result.is_complete
+                else:
+                    prob = 0.0
+                    status_text = f"Probability: {int(round(prob * 100))}%"
+                prob_or_score = prob
+                val = prob >= 0.5
+
+        evaluated.append({
+            "key": key,
+            "category": category,
+            "type": q_type,
+            "prompt": prompt_text,
+            "options": options_or_rubric,
+            "value": val,
+            "probability_or_score": prob_or_score,
+            "probabilities": probabilities,
+            "status": status_text,
+        })
+
+    return evaluated
+
+
 def parse_director_result(
     raw_answers: Dict[str, Any],
     *,
@@ -564,18 +975,48 @@ def parse_director_result(
     pacing_speed = _score("pacing_speed", 2.0, 1.0, 3.0)
     emotional_tone, _ = _choice("emotional_tone", "warm_intimate")
 
-    trigger_img_prob = _noul("trigger_image", 0.15)
-    image_focus, _ = _choice("image_focus", "character_portrait")
-    char_expr, _ = _choice("character_expression", "neutral")
+    selected_variant: Optional[str] = None
+    target_variant_key = f"{next_speaker}_variant"
+    if target_variant_key in raw_answers:
+        v_choice, _ = _choice(target_variant_key, "default")
+        if v_choice and v_choice != "default":
+            selected_variant = v_choice
+    elif next_speaker == "narrator" and "narrator_variant" in raw_answers:
+        v_choice, _ = _choice("narrator_variant", "default")
+        if v_choice and v_choice != "default":
+            selected_variant = v_choice
+    elif "character_variant" in raw_answers and next_speaker not in ("narrator", "user"):
+        v_choice, _ = _choice("character_variant", "default")
+        if v_choice and v_choice != "default":
+            selected_variant = v_choice
 
     snap = state_snapshot or {}
+
+    trigger_img_prob = _noul("trigger_image", 0.15)
+    raw_image_threshold = snap.get("image_threshold", IMAGE_TRIGGER_THRESHOLD)
+    try:
+        image_threshold = max(0.0, min(1.0, float(raw_image_threshold)))
+    except (TypeError, ValueError):
+        image_threshold = IMAGE_TRIGGER_THRESHOLD
+
     effective_threshold = float(snap.get("gate_threshold") or UPDATER_GATE_THRESHOLD)
     director_mode = str(snap.get("director_mode") or "steered").lower()
+
+    gate_scene_tone = _noul("gate_scene_tone", 0.2)
+    gate_mood = _noul("gate_character_mood", 0.2)
+    gate_rel = _noul("gate_relationship_dynamic", 0.2)
 
     updater_gates: Dict[str, float] = {}
     triggered_gates: List[str] = []
     for gate_key in UPDATER_GATE_KEYS:
-        prob = _noul(gate_key, 0.2)
+        if gate_key == "gate_scene_tone":
+            prob = gate_scene_tone
+        elif gate_key == "gate_character_mood":
+            prob = gate_mood
+        elif gate_key == "gate_relationship_dynamic":
+            prob = gate_rel
+        else:
+            prob = _noul(gate_key, 0.2)
         updater_gates[gate_key] = prob
         if prob >= effective_threshold or director_mode == "wild":
             triggered_gates.append(gate_key)
@@ -583,21 +1024,92 @@ def parse_director_result(
     is_risky_prob = _noul("is_risky_action", 0.15)
     action_diff = _score("action_difficulty", 2.0, 1.0, 5.0)
 
-    aff_score = _score("affinity_delta", 3.0, 1.0, 5.0)
-    affinity_delta = int(round(aff_score)) - 3
-    char_mood, _ = _choice("character_mood", "curious_attentive")
 
-    gate_mood = _noul("gate_character_mood", 0.2)
-    gate_rel = _noul("gate_relationship_dynamic", 0.2)
-    mood_shift = gate_mood >= effective_threshold or ("gate_character_state" in triggered_gates) or (director_mode == "wild")
-    rel_shift = gate_rel >= effective_threshold or ("gate_character_state" in triggered_gates) or (director_mode == "wild")
-    updater_gates["gate_character_mood"] = gate_mood
-    updater_gates["gate_relationship_dynamic"] = gate_rel
+    mood_shift = ("gate_character_mood" in triggered_gates) or ("gate_character_state" in triggered_gates) or (director_mode == "wild")
+    tone_shift = ("gate_scene_tone" in triggered_gates) or ("gate_world_state" in triggered_gates) or (director_mode == "wild")
+    rel_shift = ("gate_relationship_dynamic" in triggered_gates) or ("gate_character_state" in triggered_gates) or (director_mode == "wild")
 
     user_directive = snap.get("user_directive") or snap.get("last_user_directive")
 
+    should_run_updater = bool(len(triggered_gates) > 0 or mood_shift or tone_shift or rel_shift or director_mode == "wild")
+
+    top_gate_key = max(updater_gates.keys(), key=lambda k: updater_gates[k]) if updater_gates else "gate_world_state"
+    top_gate_prob = updater_gates.get(top_gate_key, 0.0)
+    top_gate_label = GATE_LABELS.get(top_gate_key, top_gate_key)
+    threshold_pct = int(round(effective_threshold * 100))
+    top_prob_pct = int(round(top_gate_prob * 100))
+
+    if should_run_updater:
+        if director_mode == "wild":
+            diag_summary = "Statekeeper active (Wild director mode: all turns update)"
+        else:
+            triggered_details = [
+                f"{GATE_LABELS.get(g, g)} ({int(round(updater_gates.get(g, 0.0) * 100))}% ≥ {threshold_pct}%)"
+                for g in triggered_gates
+            ]
+            diag_summary = f"Statekeeper triggered by: {', '.join(triggered_details)}"
+    else:
+        diag_summary = f"Statekeeper idle: All gates below {threshold_pct}% activation threshold (highest: {top_gate_label} at {top_prob_pct}%)"
+
+    updater_evaluation = {
+        "should_run_updater": should_run_updater,
+        "activation_threshold": effective_threshold,
+        "activation_threshold_pct": threshold_pct,
+        "director_mode": director_mode,
+        "triggered_gates": triggered_gates,
+        "highest_gate": {
+            "key": top_gate_key,
+            "label": top_gate_label,
+            "probability": top_gate_prob,
+            "probability_pct": top_prob_pct,
+        },
+        "diagnostic_summary": diag_summary,
+        "gates": {
+            k: {
+                "label": GATE_LABELS.get(k, k),
+                "probability": v,
+                "probability_pct": int(round(v * 100)),
+                "triggered": k in triggered_gates,
+            }
+            for k, v in updater_gates.items()
+        },
+    }
+
+    # Completion check: Laya's confidence bands are authoritative when confident;
+    # the structural punctuation syntax check is the fallback in the uncertain band.
+    raw_tail = (context_text or "").strip()
+    syntax_complete = True
+    if raw_tail:
+        dangling_words = {"and", "or", "the", "a", "an", "with", "to", "in", "of", "but", "that", "who", "which", "as", "if"}
+        last_words = re.findall(r"\b\w+\b", raw_tail.lower())
+        ends_dangling = bool(last_words and last_words[-1] in dangling_words)
+        ends_punct = raw_tail.endswith((".", "!", "?", '"', '”', "'", "’", "*", "~", "\n"))
+        if ends_dangling or not ends_punct:
+            syntax_complete = False
+
+    laya_complete_prob = _noul("is_complete", 0.5)
+    completion_policy = str(snap.get("completion_policy") or "confidence_bands").strip().lower()
+    if completion_policy == "syntax":
+        is_complete_val = bool(syntax_complete)
+        completion_source = "syntax"
+    elif completion_policy == "laya":
+        is_complete_val = laya_complete_prob >= 0.5
+        completion_source = "laya"
+    elif laya_complete_prob <= COMPLETION_UNCERTAIN_LOW:
+        is_complete_val = False
+        completion_source = "laya"
+    elif laya_complete_prob >= COMPLETION_UNCERTAIN_HIGH:
+        is_complete_val = True
+        completion_source = "laya"
+    else:
+        is_complete_val = bool(syntax_complete)
+        completion_source = "syntax"
+
     result = DirectorDecisionResult(
         next_speaker=next_speaker,
+        selected_agent=next_speaker,
+        agent_slug=next_speaker,
+        is_complete=is_complete_val,
         next_speaker_probabilities=next_speaker_probs,
         continue_chain_probability=continue_chain_prob,
         pacing_directive=pacing_directive,
@@ -606,26 +1118,51 @@ def parse_director_result(
         pacing_speed=pacing_speed,
         emotional_tone=emotional_tone,
         trigger_image_probability=trigger_img_prob,
-        should_trigger_image=bool(allow_image_generation and trigger_img_prob >= 0.65),
-        image_focus=image_focus,
-        character_expression=char_expr,
+        should_trigger_image=bool(allow_image_generation and trigger_img_prob >= image_threshold),
+        image_threshold=image_threshold,
         updater_gates=updater_gates,
         triggered_gates=triggered_gates,
-        should_run_updater=bool(len(triggered_gates) > 0 or mood_shift or rel_shift or director_mode == "wild"),
+        should_run_updater=should_run_updater,
+        updater_evaluation=updater_evaluation,
         is_risky_action_probability=is_risky_prob,
         action_difficulty=action_diff,
         gate_character_mood=gate_mood,
         gate_relationship_dynamic=gate_rel,
+        gate_scene_tone=gate_scene_tone,
+        gate_character_outfit=updater_gates.get("gate_character_outfit", 0.2),
+        gate_current_activity=updater_gates.get("gate_current_activity", 0.2),
+        gate_physical_condition=updater_gates.get("gate_physical_condition", 0.2),
+        gate_inventory_or_items=updater_gates.get("gate_inventory_or_items", 0.2),
+        gate_world_clock=updater_gates.get("gate_world_clock", 0.2),
+        gate_location_or_scene=updater_gates.get("gate_location_or_scene", 0.2),
+        gate_weather_environment=updater_gates.get("gate_weather_environment", 0.2),
+        gate_character_skills=updater_gates.get("gate_character_skills", 0.2),
+        gate_user_skills=updater_gates.get("gate_user_skills", 0.2),
+        gate_durable_memory=updater_gates.get("gate_durable_memory", 0.2),
+        gate_lore_discovery=updater_gates.get("gate_lore_discovery", 0.2),
+        gate_quests_or_goals=updater_gates.get("gate_quests_or_goals", 0.2),
+        gate_social_status=updater_gates.get("gate_social_status", 0.2),
+        gate_world_state=updater_gates.get("gate_world_state", 0.2),
+        gate_character_state=updater_gates.get("gate_character_state", 0.2),
         mood_shift_detected=mood_shift,
+        tone_shift_detected=tone_shift,
         relationship_shift_detected=rel_shift,
-        affinity_delta=affinity_delta,
-        character_mood=char_mood,
         relationship_status=snap.get("relationship_status"),
         director_mode=director_mode,
         user_directive=user_directive,
         engine_used=engine_used,
         model_id=model_id,
         latency_ms=round(latency_ms, 1),
+        is_complete_laya_prob=laya_complete_prob,
+        is_complete_syntax=bool(syntax_complete),
+        completion_source=completion_source,
+        selected_variant=selected_variant,
+        raw_answers=dict(raw_answers),
+    )
+    result.questions_evaluated = build_evaluated_questions_trace(
+        raw_answers,
+        result,
+        effective_threshold,
     )
     return resolve_fate_check(result, state_snapshot=state_snapshot, context_text=context_text)
 
@@ -654,17 +1191,27 @@ def build_generative_fallback_prompt(
         '  "pacing_speed": float 1.0 to 3.0,\n'
         '  "emotional_tone": one of ["warm_intimate", "playful_humorous", "mysterious_tense", "dramatic_conflict", "melancholic_somber"],\n'
         '  "trigger_image": float 0.0 to 1.0,\n'
-        '  "image_focus": one of ["character_portrait", "action_pose", "environment_wide", "intimate_closeup"],\n'
-        '  "character_expression": one of ["neutral", "happy", "blushing", "sad", "angry", "surprised", "seductive"],\n'
-        '  "gate_world_state": float 0.0 to 1.0,\n'
-        '  "gate_character_state": float 0.0 to 1.0,\n'
+        '  "gate_character_mood": float 0.0 to 1.0,\n'
+        '  "gate_scene_tone": float 0.0 to 1.0,\n'
+        '  "gate_relationship_dynamic": float 0.0 to 1.0,\n'
+        '  "gate_character_outfit": float 0.0 to 1.0,\n'
+        '  "gate_current_activity": float 0.0 to 1.0,\n'
+        '  "gate_physical_condition": float 0.0 to 1.0,\n'
         '  "gate_inventory_or_items": float 0.0 to 1.0,\n'
+        '  "gate_world_clock": float 0.0 to 1.0,\n'
+        '  "gate_location_or_scene": float 0.0 to 1.0,\n'
+        '  "gate_weather_environment": float 0.0 to 1.0,\n'
+        '  "gate_character_skills": float 0.0 to 1.0,\n'
+        '  "gate_user_skills": float 0.0 to 1.0,\n'
         '  "gate_durable_memory": float 0.0 to 1.0,\n'
         '  "gate_lore_discovery": float 0.0 to 1.0,\n'
+        '  "gate_quests_or_goals": float 0.0 to 1.0,\n'
+        '  "gate_social_status": float 0.0 to 1.0,\n'
+        '  "gate_world_state": float 0.0 to 1.0,\n'
+        '  "gate_character_state": float 0.0 to 1.0,\n'
         '  "is_risky_action": float 0.0 to 1.0,\n'
         '  "action_difficulty": float 1.0 to 5.0,\n'
-        '  "affinity_delta": integer 1 to 5,\n'
-        '  "character_mood": one of ["warm_affectionate", "playful_teasing", "curious_attentive", "flustered_shy", "guarded_watchful", "irritated_annoyed", "melancholic_vulnerable"]\n'
+        '  "is_complete": float 0.0 to 1.0 (confidence that the latest character reply is a finished beat)\n'
         "}\n\n"
         f"{context_text}"
     )
@@ -727,39 +1274,37 @@ def heuristic_director_decision(
     tension = 2.0
     tone = "warm_intimate"
     directive = "continue_conversation"
-    expression = "neutral"
 
     if any(w in recent_tail for w in ("scream", "blood", "attack", "sword", "gun", "danger", "furious", "fight")):
         tension = 4.2
         tone = "dramatic_conflict"
         directive = "escalate_tension"
-        expression = "angry"
     elif any(w in recent_tail for w in ("whisper", "shadow", "strange", "secret", "locked", "footsteps", "nervous")):
         tension = 3.3
         tone = "mysterious_tense"
         directive = "sensory_detail"
-        expression = "surprised"
     elif any(w in recent_tail for w in ("kiss", "blush", "touch", "embrace", "heart", "close to", "lips")):
         tension = 3.1
         tone = "warm_intimate"
         directive = "sensory_detail"
-        expression = "blushing"
     elif any(w in recent_tail for w in ("laugh", "grin", "tease", "joke", "smile", "chuckle")):
         tension = 1.8
         tone = "playful_humorous"
         directive = "continue_conversation"
-        expression = "happy"
     elif any(w in recent_tail for w in ("cry", "tears", "sigh", "sorry", "alone", "grief")):
         tension = 2.8
         tone = "melancholic_somber"
         directive = "de_escalate_reflect"
-        expression = "sad"
 
     # Evaluate Statekeeper gates heuristically on recent text
     gate_world = 0.68 if any(
         w in recent_tail
         for w in ("arrive at", "walk into", "enter the", "morning", "nightfall", "sunset", "rain", "bedroom", "tavern", "forest")
     ) else 0.22
+    gate_scene_tone = 0.65 if any(
+        w in recent_tail
+        for w in ("rain", "storm", "dark", "silence", "tension", "chill", "cold", "warmth", "candlelight", "shadows", "ominous", "cheerful", "nightfall", "sunset")
+    ) else 0.20
     gate_char = 0.72 if any(
         w in recent_tail
         for w in ("wear", "dress", "jacket", "shirt", "blush", "angry", "smile", "sit down", "stand up", "trust", "love", "hate")
@@ -777,6 +1322,44 @@ def heuristic_director_decision(
         for w in ("kingdom", "ancient", "guild", "order of", "artifact", "legend", "empire", "magic", "district")
     ) else 0.18
 
+    gate_outfit = 0.70 if any(
+        w in recent_tail
+        for w in ("wear", "dress", "jacket", "shirt", "robe", "cloak", "armor", "uniform", "wet", "dirty", "stripped", "changed into")
+    ) else 0.20
+    gate_activity = 0.70 if any(
+        w in recent_tail
+        for w in ("sit", "stand", "running", "cooking", "eating", "reading", "sleeping", "training", "fleeing", "climbing")
+    ) else 0.20
+    gate_condition = 0.75 if any(
+        w in recent_tail
+        for w in ("wound", "blood", "injured", "bleed", "exhausted", "tired", "poison", "fainted", "healed", "struck", "pain")
+    ) else 0.15
+    gate_clock = 0.70 if any(
+        w in recent_tail
+        for w in ("morning", "evening", "night", "hours later", "next day", "dawn", "dusk", "midnight", "noon", "later that day")
+    ) else 0.20
+    gate_location = gate_world
+    gate_weather = 0.70 if any(
+        w in recent_tail
+        for w in ("rain", "snow", "storm", "thunder", "wind", "fog", "sunlight", "freezing", "hot", "clouds")
+    ) else 0.20
+    gate_char_skills = 0.65 if any(
+        w in recent_tail
+        for w in ("cast", "spell", "technique", "swordplay", "skill", "mastery", "learned", "trained")
+    ) else 0.20
+    gate_user_skills = 0.65 if any(
+        w in recent_tail
+        for w in ("i shoot", "i cast", "i sneak", "i pick the lock", "i decipher", "my training")
+    ) else 0.20
+    gate_quests = 0.70 if any(
+        w in recent_tail
+        for w in ("quest", "mission", "objective", "task", "bounty", "contract", "we must find", "plan is")
+    ) else 0.20
+    gate_social = 0.65 if any(
+        w in recent_tail
+        for w in ("reputation", "outlaw", "hero", "villain", "noble", "knight", "ranked", "famous", "infamous")
+    ) else 0.20
+
     is_risky = 0.72 if any(
         w in recent_tail
         for w in ("try to", "attempt", "hack", "dodge", "strike", "sneak", "pick the lock", "convince", "cast", "leap", "disarm")
@@ -793,15 +1376,14 @@ def heuristic_director_decision(
         if any(w in recent_tail for w in ("despise", "betray", "die", "bastard")):
             aff_delta = -2
 
-    mood_map = {
-        "happy": "playful_teasing" if tone == "playful_humorous" else "warm_affectionate",
-        "blushing": "flustered_shy",
-        "angry": "irritated_annoyed",
-        "sad": "melancholic_vulnerable",
-        "surprised": "curious_attentive",
-        "neutral": "guarded_watchful" if tension > 3.0 else "curious_attentive",
-    }
-    char_mood = mood_map.get(expression, "curious_attentive")
+    gate_mood = 0.70 if any(
+        w in recent_tail
+        for w in ("blush", "angry", "furious", "tear", "cry", "smile", "laugh", "sigh", "scared", "terrified", "pleased", "tender")
+    ) else 0.25
+    gate_rel = 0.65 if aff_delta != 0 or any(
+        w in recent_tail
+        for w in ("trust", "betray", "together", "closer", "step back", "confess", "promise", "secret")
+    ) else 0.20
 
     raw_answers = {
         "next_speaker": {"choice": next_speaker, "probabilities": speaker_probs},
@@ -811,17 +1393,27 @@ def heuristic_director_decision(
         "pacing_speed": {"score": 2.0},
         "emotional_tone": {"choice": tone},
         "trigger_image": {"probability": 0.68 if gate_world >= 0.6 else 0.22},
-        "image_focus": {"choice": "environment_wide" if gate_world >= 0.6 else "character_portrait"},
-        "character_expression": {"choice": expression},
         "gate_world_state": {"probability": gate_world},
+        "gate_scene_tone": {"probability": gate_scene_tone},
         "gate_character_state": {"probability": gate_char},
+        "gate_character_mood": {"probability": gate_mood},
+        "gate_relationship_dynamic": {"probability": gate_rel},
         "gate_inventory_or_items": {"probability": gate_items},
         "gate_durable_memory": {"probability": gate_memory},
         "gate_lore_discovery": {"probability": gate_lore},
+        "gate_character_outfit": {"probability": gate_outfit},
+        "gate_current_activity": {"probability": gate_activity},
+        "gate_physical_condition": {"probability": gate_condition},
+        "gate_world_clock": {"probability": gate_clock},
+        "gate_location_or_scene": {"probability": gate_location},
+        "gate_weather_environment": {"probability": gate_weather},
+        "gate_character_skills": {"probability": gate_char_skills},
+        "gate_user_skills": {"probability": gate_user_skills},
+        "gate_quests_or_goals": {"probability": gate_quests},
+        "gate_social_status": {"probability": gate_social},
         "is_risky_action": {"probability": is_risky},
         "action_difficulty": {"score": action_diff},
-        "affinity_delta": {"score": float(3.0 + aff_delta)},
-        "character_mood": {"choice": char_mood},
+        "is_complete": {"probability": 0.5},
     }
     return parse_director_result(
         raw_answers,

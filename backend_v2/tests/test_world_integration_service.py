@@ -311,7 +311,9 @@ async def test_handle_chat_reply_stores_tool_calls_transcript(session, wired_eng
         # `source_job_id` was added deliberately: it is the link that lets
         # find_unpersisted_chat_replies() detect a JOB_COMPLETED event that was
         # evicted before this consumer saw it. It is bookkeeping, not content.
-        assert msg.message_metadata == {"agentic": True, "source_job_id": "job-7"}
+        assert msg.message_metadata["agentic"] is True
+        assert msg.message_metadata["source_job_id"] == "job-7"
+        assert msg.message_metadata["token_usage"]["completion_tokens"] == 5
 
 
 @pytest.mark.asyncio
@@ -985,3 +987,92 @@ def test_a_suggest_reply_is_not_a_reconcilable_artefact():
     import services.world_integration_service as wis
 
     assert "suggest_reply" not in wis._RECONCILABLE_EVENT_TYPES
+
+
+# ── Continuation merge (one beat, one bubble) ───────────────────────────────
+
+@pytest.mark.asyncio
+async def test_continuation_appends_to_parent_bubble(session, wired_engine):
+    chat_id, char_id = _seed_chat_with_character(session)
+    parent = Message(
+        role=MessageRole.CHAR,
+        kind=MessageKind.CHAR,
+        content="The gates creaked open and",
+        chat_id=chat_id,
+        character_id=char_id,
+        message_metadata={"source_job_id": "job-parent"},
+    )
+    session.add(parent)
+    session.commit()
+    session.refresh(parent)
+    parent_id = parent.id
+
+    payload = {
+        "id": "job-cont",
+        "metadata": {"chat_id": chat_id, "continuation_of_job_id": "job-parent"},
+        "outputs": [{"role": "assistant", "content": "a shadowed figure stepped through."}],
+    }
+    await wis._handle_chat_reply(payload)
+
+    with Session(wired_engine) as check:
+        rows = check.exec(select(Message).where(Message.chat_id == chat_id)).all()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.id == parent_id
+        assert row.content == "The gates creaked open and a shadowed figure stepped through."
+        # The parent's stamp survives; the continuation gets its own list.
+        assert row.message_metadata["source_job_id"] == "job-parent"
+        assert row.message_metadata["continuation_job_ids"] == ["job-cont"]
+
+    # Redelivery is free: `_reply_already_stamped` sees the continuation id.
+    await wis._handle_chat_reply(payload)
+    with Session(wired_engine) as check:
+        row = check.get(Message, parent_id)
+        assert row.content.count("a shadowed figure stepped through.") == 1
+
+
+@pytest.mark.asyncio
+async def test_continuation_without_parent_is_a_no_op(session, wired_engine):
+    chat_id, _ = _seed_chat_with_character(session)
+
+    await wis._handle_chat_reply({
+        "id": "job-cont-orphan",
+        "metadata": {"chat_id": chat_id, "continuation_of_job_id": "job-gone"},
+        "outputs": [{"role": "assistant", "content": "orphaned tail."}],
+    })
+
+    with Session(wired_engine) as check:
+        assert check.exec(select(Message).where(Message.chat_id == chat_id)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_continuation_extends_the_active_swipe_alternate(session, wired_engine):
+    chat_id, char_id = _seed_chat_with_character(session)
+    parent = Message(
+        role=MessageRole.CHAR,
+        kind=MessageKind.CHAR,
+        content="second take, cut",
+        chat_id=chat_id,
+        character_id=char_id,
+        message_metadata={
+            "source_job_id": "job-parent",
+            "alternates": ["first take.", "second take, cut"],
+            "active_index": 1,
+        },
+    )
+    session.add(parent)
+    session.commit()
+    session.refresh(parent)
+    parent_id = parent.id
+
+    await wis._handle_chat_reply({
+        "id": "job-cont-swipe",
+        "metadata": {"chat_id": chat_id, "continuation_of_job_id": "job-parent"},
+        "outputs": [{"role": "assistant", "content": " off."}],
+    })
+
+    with Session(wired_engine) as check:
+        row = check.get(Message, parent_id)
+        assert row.content == "second take, cut off."
+        assert row.message_metadata["alternates"][1] == "second take, cut off."
+        assert row.message_metadata["alternates"][0] == "first take."

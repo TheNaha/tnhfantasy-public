@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import Settings from './Settings';
 
 // Covers the backend-persistence work: the schema-driven Backend tab, the
@@ -33,9 +34,10 @@ vi.mock('../store/confirmationStore', () => ({
     useConfirmation: () => ({ confirm: mockConfirm }),
 }));
 
-vi.mock('../hooks/useProvidersPageData', () => ({
-    useProvidersPageData: () => ({ providers: [], containers: {}, loading: false, refresh: vi.fn() }),
-}));
+vi.mock('../hooks/useProvidersPageData', () => {
+    const mock = () => ({ providers: [], containers: {}, loading: false, refresh: vi.fn() });
+    return { default: mock, useProvidersPageData: mock };
+});
 
 /* `../hooks/useModels` does not exist — there is no such module and no such
  * hook, so this mock protected nothing. The model list comes from
@@ -97,7 +99,9 @@ const renderSettings = () => {
     });
     return render(
         <QueryClientProvider client={queryClient}>
-            <Settings />
+            <MemoryRouter>
+                <Settings />
+            </MemoryRouter>
         </QueryClientProvider>,
     );
 };
@@ -195,5 +199,21 @@ describe('Settings - backend persistence', () => {
         await waitFor(() => expect(mockApi.reset).toHaveBeenCalled());
         // The failure must surface, not be swallowed as a success.
         expect(mockApi.reset).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('Settings - AI / LLM tab', () => {
+    it('renders the unified LLM studio hero banner and navigation tiles', async () => {
+        renderSettings();
+        const aiTab = await screen.findByRole('button', { name: /ai \/ llm/i });
+        fireEvent.click(aiTab);
+
+        expect(await screen.findByText('Unified LLM & Agent Studio')).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: /open llm studio/i })).toHaveAttribute('href', '/llm-studio');
+        expect(screen.getByText('Agent Studio')).toBeInTheDocument();
+        expect(screen.getByText('16-Gate Studio')).toBeInTheDocument();
+        expect(screen.getByText('Model Cluster')).toBeInTheDocument();
+        expect(screen.getByText('Inference & Runtime')).toBeInTheDocument();
+        expect(screen.getByText('Simulator')).toBeInTheDocument();
     });
 });

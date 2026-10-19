@@ -24,7 +24,6 @@ from core.entities import Provider
 from infrastructure.logging import get_logger
 from services.decision_schema import (
     DirectorDecisionResult,
-    build_continuation_questions,
     build_director_questions,
     build_generative_fallback_prompt,
     format_director_context,
@@ -33,6 +32,7 @@ from services.decision_schema import (
     parse_generative_fallback_json,
     resolve_fate_check,
 )
+from services.laya_questions import resolve_stage_questions
 from services.laya_runner import get_laya_runner
 from services.llm_config import get_active_models, resolve_default_provider
 
@@ -83,6 +83,7 @@ class DecisionService:
         questions: List[Dict[str, Any]],
         model_id: str,
         allow_image_generation: bool,
+        state_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Optional[DirectorDecisionResult]:
         """Tier 1: Dispatch to `remote_agent` `/v1/decisions` on CPU/RAM."""
         target = self._find_remote_agent_target()
@@ -124,6 +125,8 @@ class DecisionService:
                 model_id=str(payload.get("model_id") or model_id),
                 latency_ms=latency_ms,
                 allow_image_generation=allow_image_generation,
+                state_snapshot=state_snapshot,
+                context_text=context_text,
             )
         except Exception as exc:
             logger.debug(
@@ -140,6 +143,7 @@ class DecisionService:
         questions: List[Dict[str, Any]],
         model_id: str,
         allow_image_generation: bool,
+        state_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Optional[DirectorDecisionResult]:
         """Dispatch to Modal CPU function `evaluate_decisions`."""
         try:
@@ -172,6 +176,8 @@ class DecisionService:
                             model_id=str(res.get("model_id") or model_id),
                             latency_ms=latency_ms,
                             allow_image_generation=allow_image_generation,
+                            state_snapshot=state_snapshot,
+                            context_text=context_text,
                         )
         except Exception as exc:
             logger.debug("director_modal_laya_call_failed", error=str(exc))
@@ -184,6 +190,7 @@ class DecisionService:
         questions: List[Dict[str, Any]],
         model_id: str,
         allow_image_generation: bool,
+        state_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Optional[DirectorDecisionResult]:
         """Dispatch to Beam `/v1/decisions` on CPU."""
         try:
@@ -216,6 +223,8 @@ class DecisionService:
                             model_id=str(res.get("model_id") or model_id),
                             latency_ms=latency_ms,
                             allow_image_generation=allow_image_generation,
+                            state_snapshot=state_snapshot,
+                            context_text=context_text,
                         )
         except Exception as exc:
             logger.debug("director_beam_laya_call_failed", error=str(exc))
@@ -228,6 +237,7 @@ class DecisionService:
         questions: List[Dict[str, Any]],
         model_id: str,
         allow_image_generation: bool,
+        state_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Optional[DirectorDecisionResult]:
         """Tier 2: Evaluate in-process on backend CPU via `LayaRunner`."""
         runner = get_laya_runner()
@@ -248,6 +258,8 @@ class DecisionService:
                 model_id=str(res.get("model_id") or model_id),
                 latency_ms=float(res.get("latency_ms") or 0.0),
                 allow_image_generation=allow_image_generation,
+                state_snapshot=state_snapshot,
+                context_text=context_text,
             )
         except Exception as exc:
             logger.warning("director_local_laya_failed", model_id=model_id, error=str(exc))
@@ -260,6 +272,7 @@ class DecisionService:
         has_secondary_character: bool,
         allow_image_generation: bool,
         allow_narration: bool,
+        state_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Optional[DirectorDecisionResult]:
         """Tier 3: Evaluate via the active `util` LLM provider using JSON output."""
         resolved = resolve_default_provider(self.session)
@@ -323,10 +336,420 @@ class DecisionService:
                 model_id=util_model,
                 latency_ms=latency_ms,
                 allow_image_generation=allow_image_generation,
+                state_snapshot=state_snapshot,
+                context_text=context_text,
             )
         except Exception as exc:
             logger.debug("director_generative_fallback_failed", error=str(exc))
             return None
+
+    def _get_available_agents(self) -> List[Dict[str, Any]]:
+        """Fetch enabled AgentProfile rows from the database."""
+        if not self.session:
+            return []
+        try:
+            from core.entities import AgentProfile
+            stmt = select(AgentProfile).where(AgentProfile.enabled == True)  # noqa: E712
+            rows = self.session.exec(stmt).all()
+            return [
+                {
+                    "id": a.id,
+                    "slug": a.slug,
+                    "name": a.name,
+                    "agent_type": a.agent_type,
+                    "description": a.description,
+                    "system_prompt_template": a.system_prompt_template,
+                    "model_target": a.model_target,
+                    "model_override": a.model_override,
+                }
+                for a in rows
+            ]
+        except Exception as exc:
+            logger.debug("get_available_agents_failed", error=str(exc))
+            return []
+
+    def _finalize_result(
+        self,
+        res: DirectorDecisionResult,
+        *,
+        stage: str,
+        questions: List[Dict[str, Any]],
+        state_snapshot: Optional[Dict[str, Any]],
+        context_text: str,
+        chat_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+        turn: int = 1,
+    ) -> DirectorDecisionResult:
+        res.workflow_stage = stage
+        res = resolve_fate_check(res, state_snapshot=state_snapshot, context_text=context_text)
+
+        # Inspect raw_answers for sub-variant choice if not already resolved
+        if not res.selected_variant and res.raw_answers:
+            target_variant_key = f"{res.selected_agent}_variant"
+            if target_variant_key in res.raw_answers:
+                choice = res.raw_answers[target_variant_key]
+                val = (choice.get("choice") or choice.get("selected")) if isinstance(choice, dict) else choice
+                if val and val != "default":
+                    res.selected_variant = str(val)
+            elif res.selected_agent == "narrator" and "narrator_variant" in res.raw_answers:
+                choice = res.raw_answers["narrator_variant"]
+                val = (choice.get("choice") or choice.get("selected")) if isinstance(choice, dict) else choice
+                if val and val != "default":
+                    res.selected_variant = str(val)
+            elif "character_variant" in res.raw_answers and res.selected_agent not in ("narrator", "user"):
+                choice = res.raw_answers["character_variant"]
+                val = (choice.get("choice") or choice.get("selected")) if isinstance(choice, dict) else choice
+                if val and val != "default":
+                    res.selected_variant = str(val)
+
+        # Process custom directives from custom questions
+        if res.raw_answers:
+            for q in questions:
+                if q.get("is_custom") and q.get("directive"):
+                    k = q["key"]
+                    ans = res.raw_answers.get(k)
+                    prob = 0.0
+                    if isinstance(ans, dict):
+                        prob = float(ans.get("probability", ans.get("true_probability", ans.get("yes", 0.0))))
+                    elif isinstance(ans, (int, float)):
+                        prob = float(ans)
+                    elif isinstance(ans, bool):
+                        prob = 1.0 if ans else 0.0
+                    threshold = float(q.get("threshold", 0.60))
+                    if prob >= threshold:
+                        res.custom_directives.append({
+                            "key": k,
+                            "directive": q["directive"],
+                            "probability": prob,
+                        })
+
+        # Record DirectorTrace if chat_id provided
+        if chat_id and self.session:
+            try:
+                from core.entities import DirectorTrace
+                trace = DirectorTrace(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    stage=stage,
+                    turn=turn,
+                    selected_agent=res.selected_agent,
+                    selected_variant=res.selected_variant,
+                    decision=res.to_dict(),
+                    extra={"engine_used": res.engine_used, "model_id": res.model_id, "latency_ms": res.latency_ms},
+                )
+                self.session.add(trace)
+                self.session.commit()
+            except Exception as exc:
+                logger.debug("record_director_trace_failed", chat_id=chat_id, error=str(exc))
+
+        return res
+
+    async def _run_cascade(
+        self,
+        *,
+        context_text: str,
+        questions: List[Dict[str, Any]],
+        state_snapshot: Optional[Dict[str, Any]] = None,
+        last_speaker: str = "user",
+        has_secondary_character: bool = False,
+        allow_image_generation: bool = True,
+        allow_narration: bool = True,
+        model_override: Optional[str] = None,
+        stage: str = "full",
+        chat_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+        turn: int = 1,
+    ) -> DirectorDecisionResult:
+        started = time.perf_counter()
+        active_model = model_override or self._active_decisions_model()
+
+        if active_model == "disabled":
+            res = heuristic_director_decision(
+                context_text,
+                last_speaker=last_speaker,
+                has_secondary_character=has_secondary_character,
+                allow_image_generation=allow_image_generation,
+                allow_narration=allow_narration,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                state_snapshot=state_snapshot,
+            )
+            res.engine_used = "disabled"
+            res.model_id = "disabled"
+            return self._finalize_result(
+                res,
+                stage=stage,
+                questions=questions,
+                state_snapshot=state_snapshot,
+                context_text=context_text,
+                chat_id=chat_id,
+                message_id=message_id,
+                turn=turn,
+            )
+
+        # Tier 1: Remote Providers (remote_agent, modal_llm, beam_llm) CPU/RAM Laya
+        if active_model != "same_as_util":
+            remote_res = await self._try_remote_agent(
+                context_text=context_text,
+                questions=questions,
+                model_id=active_model,
+                allow_image_generation=allow_image_generation,
+                state_snapshot=state_snapshot,
+            )
+            if remote_res is not None:
+                return self._finalize_result(
+                    remote_res,
+                    stage=stage,
+                    questions=questions,
+                    state_snapshot=state_snapshot,
+                    context_text=context_text,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    turn=turn,
+                )
+
+            modal_res = await self._try_modal_laya(
+                context_text=context_text,
+                questions=questions,
+                model_id=active_model,
+                allow_image_generation=allow_image_generation,
+                state_snapshot=state_snapshot,
+            )
+            if modal_res is not None:
+                return self._finalize_result(
+                    modal_res,
+                    stage=stage,
+                    questions=questions,
+                    state_snapshot=state_snapshot,
+                    context_text=context_text,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    turn=turn,
+                )
+
+            beam_res = await self._try_beam_laya(
+                context_text=context_text,
+                questions=questions,
+                model_id=active_model,
+                allow_image_generation=allow_image_generation,
+                state_snapshot=state_snapshot,
+            )
+            if beam_res is not None:
+                return self._finalize_result(
+                    beam_res,
+                    stage=stage,
+                    questions=questions,
+                    state_snapshot=state_snapshot,
+                    context_text=context_text,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    turn=turn,
+                )
+
+            # Tier 2: Local Backend CPU LayaRunner
+            local_res = await self._try_local_laya(
+                context_text=context_text,
+                questions=questions,
+                model_id=active_model,
+                allow_image_generation=allow_image_generation,
+                state_snapshot=state_snapshot,
+            )
+            if local_res is not None:
+                return self._finalize_result(
+                    local_res,
+                    stage=stage,
+                    questions=questions,
+                    state_snapshot=state_snapshot,
+                    context_text=context_text,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    turn=turn,
+                )
+
+        # Tier 3: Generative JSON fallback on active `util` LLM provider
+        gen_res = await self._try_generative_util_fallback(
+            context_text=context_text,
+            has_secondary_character=has_secondary_character,
+            allow_image_generation=allow_image_generation,
+            allow_narration=allow_narration,
+            state_snapshot=state_snapshot,
+        )
+        if gen_res is not None:
+            return self._finalize_result(
+                gen_res,
+                stage=stage,
+                questions=questions,
+                state_snapshot=state_snapshot,
+                context_text=context_text,
+                chat_id=chat_id,
+                message_id=message_id,
+                turn=turn,
+            )
+
+        # Tier 4: Deterministic Heuristic Fallback
+        heur = heuristic_director_decision(
+            context_text,
+            last_speaker=last_speaker,
+            has_secondary_character=has_secondary_character,
+            allow_image_generation=allow_image_generation,
+            allow_narration=allow_narration,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            state_snapshot=state_snapshot,
+        )
+        return self._finalize_result(
+            heur,
+            stage=stage,
+            questions=questions,
+            state_snapshot=state_snapshot,
+            context_text=context_text,
+            chat_id=chat_id,
+            message_id=message_id,
+            turn=turn,
+        )
+
+    async def evaluate_pre_generation_triage(
+        self,
+        *,
+        character_name: str = "Character",
+        user_name: str = "User",
+        story_location: Optional[str] = None,
+        story_time: Optional[str] = None,
+        state_snapshot: Optional[Dict[str, Any]] = None,
+        recent_messages: Optional[List[Dict[str, str]]] = None,
+        last_speaker: str = "user",
+        has_secondary_character: bool = False,
+        allow_narration: bool = True,
+        model_override: Optional[str] = None,
+        primary_character_slug: str = "character",
+        chat_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+        turn: int = 1,
+    ) -> DirectorDecisionResult:
+        """Stage 1: Pre-generation triage routing to Character, Narrator, or Custom Agents."""
+        context_text = format_director_context(
+            character_name=character_name,
+            user_name=user_name,
+            story_location=story_location,
+            story_time=story_time,
+            state_snapshot=state_snapshot,
+            recent_messages=recent_messages,
+            last_speaker=last_speaker,
+        )
+        available_agents = self._get_available_agents()
+        questions = resolve_stage_questions(
+            self.session,
+            "triage",
+            available_agents=available_agents,
+            has_secondary_character=has_secondary_character,
+            allow_narration=allow_narration,
+            primary_character_slug=primary_character_slug,
+        )
+        return await self._run_cascade(
+            context_text=context_text,
+            questions=questions,
+            state_snapshot=state_snapshot,
+            last_speaker=last_speaker,
+            has_secondary_character=has_secondary_character,
+            allow_image_generation=False,
+            allow_narration=allow_narration,
+            model_override=model_override,
+            stage="triage",
+            chat_id=chat_id,
+            message_id=message_id,
+            turn=turn,
+        )
+
+    async def evaluate_post_generation_audit(
+        self,
+        *,
+        generated_text: str,
+        character_name: str = "Character",
+        user_name: str = "User",
+        story_location: Optional[str] = None,
+        story_time: Optional[str] = None,
+        state_snapshot: Optional[Dict[str, Any]] = None,
+        recent_messages: Optional[List[Dict[str, str]]] = None,
+        last_speaker: str = "character",
+        allow_image_generation: bool = True,
+        model_override: Optional[str] = None,
+        chat_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+        turn: int = 1,
+    ) -> DirectorDecisionResult:
+        """Stage 2: Post-generation audit evaluating completion, illustration triggers, and 16 gates."""
+        msgs = list(recent_messages or [])
+        if generated_text:
+            msgs.append({"role": last_speaker, "content": generated_text})
+        context_text = format_director_context(
+            character_name=character_name,
+            user_name=user_name,
+            story_location=story_location,
+            story_time=story_time,
+            state_snapshot=state_snapshot,
+            recent_messages=msgs,
+            last_speaker=last_speaker,
+        )
+        questions = resolve_stage_questions(self.session, "audit")
+        return await self._run_cascade(
+            context_text=context_text,
+            questions=questions,
+            state_snapshot=state_snapshot,
+            last_speaker=last_speaker,
+            allow_image_generation=allow_image_generation,
+            model_override=model_override,
+            stage="audit",
+            chat_id=chat_id,
+            message_id=message_id,
+            turn=turn,
+        )
+
+    async def evaluate_turn_chaining(
+        self,
+        *,
+        character_name: str = "Character",
+        user_name: str = "User",
+        story_location: Optional[str] = None,
+        story_time: Optional[str] = None,
+        state_snapshot: Optional[Dict[str, Any]] = None,
+        recent_messages: Optional[List[Dict[str, str]]] = None,
+        last_speaker: str = "character",
+        has_secondary_character: bool = False,
+        allow_narration: bool = True,
+        model_override: Optional[str] = None,
+        chat_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+        turn: int = 1,
+    ) -> DirectorDecisionResult:
+        """Stage 3: Turn chaining check deciding who should take the next autonomous turn."""
+        context_text = format_director_context(
+            character_name=character_name,
+            user_name=user_name,
+            story_location=story_location,
+            story_time=story_time,
+            state_snapshot=state_snapshot,
+            recent_messages=recent_messages,
+            last_speaker=last_speaker,
+        )
+        available_agents = self._get_available_agents()
+        questions = resolve_stage_questions(
+            self.session,
+            "chaining",
+            available_agents=available_agents,
+            has_secondary_character=has_secondary_character,
+            allow_narration=allow_narration,
+        )
+        return await self._run_cascade(
+            context_text=context_text,
+            questions=questions,
+            state_snapshot=state_snapshot,
+            last_speaker=last_speaker,
+            has_secondary_character=has_secondary_character,
+            allow_narration=allow_narration,
+            model_override=model_override,
+            stage="chaining",
+            chat_id=chat_id,
+            message_id=message_id,
+            turn=turn,
+        )
 
     async def evaluate_scene(
         self,
@@ -342,11 +765,11 @@ class DecisionService:
         allow_image_generation: bool = True,
         allow_narration: bool = True,
         model_override: Optional[str] = None,
+        chat_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+        turn: int = 1,
     ) -> DirectorDecisionResult:
-        """Run the 13-question Director evaluation across the 4-tier provider cascade."""
-        started = time.perf_counter()
-        active_model = model_override or self._active_decisions_model()
-
+        """Unified Director evaluation across all questions for backward compatibility."""
         context_text = format_director_context(
             character_name=character_name,
             user_name=user_name,
@@ -356,165 +779,24 @@ class DecisionService:
             recent_messages=recent_messages,
             last_speaker=last_speaker,
         )
-
-        if active_model == "disabled":
-            res = heuristic_director_decision(
-                context_text,
-                last_speaker=last_speaker,
-                has_secondary_character=has_secondary_character,
-                allow_image_generation=allow_image_generation,
-                allow_narration=allow_narration,
-                latency_ms=(time.perf_counter() - started) * 1000,
-                state_snapshot=state_snapshot,
-            )
-            res.engine_used = "disabled"
-            res.model_id = "disabled"
-            return res
-
+        available_agents = self._get_available_agents()
         questions = build_director_questions(
             has_secondary_character=has_secondary_character,
             allow_narration=allow_narration,
+            available_agents=available_agents,
         )
-
-        # Explicit "same_as_util" bypasses Laya and goes straight to Tier 3
-        if active_model != "same_as_util":
-            # Tier 1: Remote Providers (remote_agent, modal_llm, beam_llm) CPU/RAM Laya
-            remote_res = await self._try_remote_agent(
-                context_text=context_text,
-                questions=questions,
-                model_id=active_model,
-                allow_image_generation=allow_image_generation,
-            )
-            if remote_res is not None:
-                return resolve_fate_check(remote_res, state_snapshot=state_snapshot, context_text=context_text)
-
-            modal_res = await self._try_modal_laya(
-                context_text=context_text,
-                questions=questions,
-                model_id=active_model,
-                allow_image_generation=allow_image_generation,
-            )
-            if modal_res is not None:
-                return resolve_fate_check(modal_res, state_snapshot=state_snapshot, context_text=context_text)
-
-            beam_res = await self._try_beam_laya(
-                context_text=context_text,
-                questions=questions,
-                model_id=active_model,
-                allow_image_generation=allow_image_generation,
-            )
-            if beam_res is not None:
-                return resolve_fate_check(beam_res, state_snapshot=state_snapshot, context_text=context_text)
-
-            # Tier 2: Local Backend CPU LayaRunner
-            local_res = await self._try_local_laya(
-                context_text=context_text,
-                questions=questions,
-                model_id=active_model,
-                allow_image_generation=allow_image_generation,
-            )
-            if local_res is not None:
-                return resolve_fate_check(local_res, state_snapshot=state_snapshot, context_text=context_text)
-
-        # Tier 3: Generative JSON fallback on active `util` LLM provider
-        # Attempted when explicitly requested ("same_as_util") OR as fallback when Tier 1 & Tier 2 both failed
-        gen_res = await self._try_generative_util_fallback(
+        return await self._run_cascade(
             context_text=context_text,
-            has_secondary_character=has_secondary_character,
-            allow_image_generation=allow_image_generation,
-            allow_narration=allow_narration,
-        )
-        if gen_res is not None:
-            return resolve_fate_check(gen_res, state_snapshot=state_snapshot, context_text=context_text)
-
-        # Tier 4: Deterministic Heuristic Fallback
-        return heuristic_director_decision(
-            context_text,
+            questions=questions,
+            state_snapshot=state_snapshot,
             last_speaker=last_speaker,
             has_secondary_character=has_secondary_character,
             allow_image_generation=allow_image_generation,
             allow_narration=allow_narration,
-            latency_ms=(time.perf_counter() - started) * 1000,
-            state_snapshot=state_snapshot,
+            model_override=model_override,
+            stage="full",
+            chat_id=chat_id,
+            message_id=message_id,
+            turn=turn,
         )
-
-    async def evaluate_continuation(self, text: str) -> bool:
-        """Evaluate whether generated text has naturally completed or needs continuation.
-
-        Returns True if complete (natural ending), False if cut off (needs continuation).
-        """
-        cleaned = (text or "").rstrip()
-        if not cleaned:
-            return True
-
-        # Quick terminal check: if ends with terminal punctuation and balanced quotes/asterisks
-        terminal_chars = (".", "!", "?", "…")
-        last_char = cleaned[-1]
-
-        quote_count = cleaned.count('"') + cleaned.count("“") + cleaned.count("”")
-        asterisk_count = cleaned.count("*")
-        unbalanced = (quote_count % 2 != 0) or (asterisk_count % 2 != 0)
-
-        if last_char in terminal_chars and not unbalanced:
-            return True
-        if (
-            last_char in ('"', "”", "*")
-            and any(cleaned.rstrip('"”*').endswith(t) for t in terminal_chars)
-            and not unbalanced
-        ):
-            return True
-
-        questions = build_continuation_questions()
-        active_model = self._active_decisions_model()
-        snippet = cleaned[-400:] if len(cleaned) > 400 else cleaned
-
-        try:
-            target = self._find_remote_agent_target()
-            if target:
-                _, agent_url, agent_token = target
-                headers: Dict[str, str] = {"Content-Type": "application/json"}
-                if agent_token:
-                    headers["X-Worker-Token"] = agent_token
-                    headers["Authorization"] = f"Bearer {agent_token}"
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp = await client.post(
-                        f"{agent_url}/v1/decisions",
-                        json={
-                            "context": f"Review the tail end of this generated story text:\n\n{snippet}",
-                            "questions": questions,
-                            "model": active_model,
-                        },
-                        headers=headers,
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        answers = data.get("answers") or {}
-                        is_complete = answers.get("is_complete", {})
-                        prob = float(is_complete.get("probability", 0.5)) if isinstance(is_complete, dict) else 0.5
-                        return prob >= 0.55
-        except Exception as exc:
-            logger.debug("continuation_laya_eval_fallback", error=str(exc))
-
-        # Local CPU LayaRunner
-        runner = get_laya_runner()
-        if runner.is_available() and active_model != "same_as_util":
-            try:
-                res = runner.evaluate_fast(
-                    f"Review the tail end of this generated story text:\n\n{snippet}",
-                    questions,
-                    model_id=active_model,
-                )
-                if res and "is_complete" in res:
-                    ans = res["is_complete"]
-                    prob = float(ans.get("probability", 0.5)) if isinstance(ans, dict) else 0.5
-                    return prob >= 0.55
-            except Exception as exc:
-                logger.debug("continuation_local_laya_fallback", error=str(exc))
-
-        # Heuristic fallback: if unbalanced quotes or asterisks, definitely not complete
-        if unbalanced:
-            return False
-        if last_char in (",", ":", ";", "-", "—", "–") or last_char.isalnum():
-            return False
-        return True
 

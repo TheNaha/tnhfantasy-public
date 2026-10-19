@@ -112,6 +112,7 @@ export function useChatStreaming({
                     progress: job.overall_progress ?? job.progress ?? null,
                     directorDecision: existingJob?.directorDecision || meta.context_trace?.director_decision || null,
                     contextTrace: existingJob?.contextTrace || meta.context_trace || null,
+                    continuationOfJobId: meta.continuation_of_job_id || existingJob?.continuationOfJobId || null,
                 });
                 // Every token is proof of life. `armStallTimer` clears any
                 // previous timer before setting a new one, so this is a reset
@@ -153,7 +154,8 @@ export function useChatStreaming({
                 chatId: eventChatId,
                 type: meta.workspace,
                 taskType: job.task_type ?? null,
-                progress: job.overall_progress ?? job.progress ?? null
+                progress: job.overall_progress ?? job.progress ?? null,
+                continuationOfJobId: meta.continuation_of_job_id || null,
             });
         });
 

@@ -41,6 +41,7 @@ export const QUERY_KEYS = {
     GRAPH_LAYOUT: 'graph-layout',
     GRAPH_EDGES: 'graph-edges',
     TIMELINE: 'timeline',
+    AGENTS: 'agents',
 };
 
 export const buildQueryKey = (...parts) => {

@@ -3,7 +3,7 @@ import {
     Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server,
     Globe, MessageSquare, BookOpen, Images, Sparkles, ChevronDown, Layers3,
     Command, HelpCircle, FileText, ImagePlus, Paintbrush, Image as ImageIcon,
-    PanelLeftClose, PanelLeft
+    PanelLeftClose, PanelLeft, Cpu
 } from 'lucide-react';
 import { useMemo, useState, memo, useEffect, useRef } from 'react';
 import clsx from 'clsx';
@@ -515,6 +515,7 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" isCollapsed={isSidebarCollapsed} />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/discover" icon={Globe} label="Discover Models" isCollapsed={isSidebarCollapsed} />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/providers" icon={Server} label="Providers" isCollapsed={isSidebarCollapsed} />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/llm-studio" icon={Cpu} label="LLM Studio" isCollapsed={isSidebarCollapsed} />
                     <div className={clsx("mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider", isSidebarCollapsed && "lg:hidden")}>System</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/statistics" icon={BarChart3} label="Statistics" isCollapsed={isSidebarCollapsed} />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/settings" icon={Settings2} label="Settings" isCollapsed={isSidebarCollapsed} />

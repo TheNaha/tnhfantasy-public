@@ -291,6 +291,7 @@ class LlamaStack:
         self.models_dir = models_dir
         self.servers: Dict[str, LaunchedServer] = {}
         self.unavailable: Dict[str, str] = {}
+        self.registry: Optional[Registry] = None
 
     # ------------------------------------------------------------------
     def launch(self, registry: Registry) -> Dict[str, int]:
@@ -301,6 +302,7 @@ class LlamaStack:
         at a server that is not up yet. The wait is where the load is paid — on
         the worker's own clock, before the first call rather than inside it.
         """
+        self.registry = registry
         started: Dict[str, int] = {}
         for index, model in enumerate(registry.distinct_primaries()):
             port = SERVER_PORT_BASE + index
@@ -425,9 +427,19 @@ class LlamaStack:
         Not retryable on purpose: an unknown or unserved model is a configuration
         state, so a caller should fail rather than back off.
         """
-        server = self.servers.get(model_id)
+        resolved = model_id
+        if not resolved or resolved in ("default", ""):
+            if self.registry and "rp" in self.registry.roles:
+                resolved = self.registry.primary("rp").id
+            elif self.servers:
+                resolved = next(iter(self.servers))
+        elif resolved in ("rp", "util"):
+            if self.registry and resolved in self.registry.roles:
+                resolved = self.registry.primary(resolved).id
+
+        server = self.servers.get(resolved)
         if server is None or not server.alive:
-            reason = self.unavailable.get(model_id)
+            reason = self.unavailable.get(resolved) or self.unavailable.get(model_id)
             if reason:
                 raise RuntimeError(reason)
             raise RuntimeError(

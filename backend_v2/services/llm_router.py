@@ -62,6 +62,9 @@ ROLE_BY_KIND: Dict[str, str] = {
     "story_parse": "util",
     # Generating an image prompt is descriptive and structured.
     "story_illustrate_prompt": "util",
+    # The Illustrator agent turns Director focus + scene state into an image
+    # prompt and may call the generate_image tool.
+    "illustrator": "util",
     # Memory extraction runs after every turn and produces records; a finetune's
     # prose bias makes it drop fields.
     "memory_extraction": "util",

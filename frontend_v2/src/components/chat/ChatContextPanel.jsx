@@ -19,6 +19,7 @@ import {
 } from '../../hooks/useWorldVault';
 import { useLocations } from '../../hooks/useLocations';
 import { isJobComplete, isJobFailed, isJobRunning } from '../../utils/jobStatus';
+import { parseGalleryDate } from '../../utils/dateTime';
 import ContextField from './ContextField';
 import ContextSlider from './ContextSlider';
 import SamplingControls from '../common/SamplingControls';
@@ -1162,6 +1163,7 @@ function DirectorStatekeeperSection({ chat, onSave }) {
     const [wardrobeNameInput, setWardrobeNameInput] = useState('');
     const [fastTravelLocInput, setFastTravelLocInput] = useState('');
     const [actionFeedback, setActionFeedback] = useState('');
+    const [showDecisionInspector, setShowDecisionInspector] = useState(false);
 
     if (!chat?.id) return null;
 
@@ -1423,6 +1425,49 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                     </select>
                 </div>
 
+                {/* Statekeeper Sensitivity Control */}
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-white/5 text-2xs">
+                    <div>
+                        <label className="text-gray-300 font-medium block">Statekeeper Sensitivity</label>
+                        <span className="text-gray-500">Threshold required to fire background updater</span>
+                    </div>
+                    <select
+                        value={snap.director_mode === 'wild' ? 'wild' : String(snap.gate_threshold || '0.55')}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === 'wild') {
+                                handleFieldSave('director_mode', 'wild');
+                            } else {
+                                handleFieldSave('director_mode', 'steered');
+                                handleFieldSave('gate_threshold', parseFloat(val));
+                            }
+                        }}
+                        className="bg-gray-800 border border-white/10 rounded px-2 py-1 text-2xs text-purple-200 focus:outline-none focus:border-purple-500/50"
+                    >
+                        <option value="0.35">Sensitive (35% threshold — triggers frequently)</option>
+                        <option value="0.55">Standard (55% threshold — balanced)</option>
+                        <option value="0.75">Strict (75% threshold — major changes only)</option>
+                        <option value="wild">Wild (Always trigger on every turn)</option>
+                    </select>
+                </div>
+
+                {/* Illustration Sensitivity Control */}
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-white/5 text-2xs">
+                    <div>
+                        <label className="text-gray-300 font-medium block">Illustration Sensitivity</label>
+                        <span className="text-gray-500">Confidence required for an autonomous scene illustration</span>
+                    </div>
+                    <select
+                        value={String(snap.image_threshold || '0.65')}
+                        onChange={(e) => handleFieldSave('image_threshold', parseFloat(e.target.value))}
+                        className="bg-gray-800 border border-white/10 rounded px-2 py-1 text-2xs text-amber-200 focus:outline-none focus:border-amber-500/50"
+                    >
+                        <option value="0.45">Eager (45% threshold — illustrates more beats)</option>
+                        <option value="0.65">Standard (65% threshold — balanced)</option>
+                        <option value="0.85">Sparing (85% threshold — only striking moments)</option>
+                    </select>
+                </div>
+
                 {/* Scene Tension, Tone & Pacing Controls */}
                 <div className="bg-black/30 rounded-lg p-2.5 border border-white/5 space-y-2">
                     <div className="flex items-center justify-between text-2xs">
@@ -1488,7 +1533,7 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         </div>
                         <input
                             type="text"
-                            value={snap.emotional_tone || lastDecision?.emotional_tone || ''}
+                            value={snap.emotional_tone || ''}
                             onChange={(e) => handleFieldSave('emotional_tone', e.target.value)}
                             placeholder="e.g. Warm & intimate, tense suspense, rain-soaked noir..."
                             className="w-full bg-gray-900/80 border border-white/10 rounded px-2 py-1 text-2xs text-purple-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50"
@@ -1726,6 +1771,26 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         locked={isLocked('character_outfit')}
                         onToggleLock={() => toggleLock('character_outfit')}
                         onSave={(val) => handleFieldSave('character_outfit', val || '')}
+                    />
+                    <ContextField
+                        inline
+                        showLabel
+                        label="Physical State"
+                        value={snap.physical_condition}
+                        placeholder="e.g. Uninjured, fatigued, wounded left shoulder"
+                        locked={isLocked('physical_condition')}
+                        onToggleLock={() => toggleLock('physical_condition')}
+                        onSave={(val) => handleFieldSave('physical_condition', val || '')}
+                    />
+                    <ContextField
+                        inline
+                        showLabel
+                        label="Weather"
+                        value={snap.weather}
+                        placeholder="e.g. Torrential rain, clear night sky, dense fog"
+                        locked={isLocked('weather')}
+                        onToggleLock={() => toggleLock('weather')}
+                        onSave={(val) => handleFieldSave('weather', val || '')}
                     />
 
                     {/* Wardrobe Presets & Reverse Vision Image-to-State */}
@@ -2034,6 +2099,27 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                             </button>
                         </form>
                     </div>
+
+                    <ContextField
+                        inline
+                        showLabel
+                        label="Quests & Goals"
+                        value={snap.quests_and_goals}
+                        placeholder="e.g. Find the missing key, reach the mountain pass"
+                        locked={isLocked('quests_and_goals')}
+                        onToggleLock={() => toggleLock('quests_and_goals')}
+                        onSave={(val) => handleFieldSave('quests_and_goals', val || '')}
+                    />
+                    <ContextField
+                        inline
+                        showLabel
+                        label="Social Status"
+                        value={snap.social_status}
+                        placeholder="e.g. Respected investigator, wanted fugitive"
+                        locked={isLocked('social_status')}
+                        onToggleLock={() => toggleLock('social_status')}
+                        onSave={(val) => handleFieldSave('social_status', val || '')}
+                    />
                 </div>
 
                 {/* World Vault Canon & Living World Actions */}
@@ -2088,6 +2174,48 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                     )}
                 </div>
 
+                {/* Last Statekeeper Action Card */}
+                {snap.last_updater_result ? (
+                    <div className="p-2 rounded-lg bg-purple-950/20 border border-purple-500/25 space-y-1 text-2xs">
+                        <div className="flex items-center justify-between">
+                            <span className="font-bold text-purple-300 flex items-center gap-1">
+                                <Brain size={11} className="text-purple-400" />
+                                Last Statekeeper Action
+                            </span>
+                            <span className="text-3xs text-gray-400 font-mono">
+                                {parseGalleryDate(snap.last_updater_result.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                        </div>
+                        <div className="text-gray-300 text-3xs italic">
+                            &ldquo;{snap.last_updater_result.summary}&rdquo;
+                        </div>
+                        {snap.last_updater_result.applied_fields?.length > 0 && (
+                            <div className="flex flex-wrap gap-1 pt-0.5">
+                                {snap.last_updater_result.applied_fields.map((f) => (
+                                    <span key={f} className="px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-300 font-mono text-3xs border border-purple-500/25">
+                                        {f.replace(/_/g, ' ')}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                ) : lastDecision?.updater_evaluation?.diagnostic_summary ? (
+                    <div className="p-2 rounded-lg bg-gray-900/60 border border-white/5 space-y-1 text-2xs">
+                        <div className="flex items-center justify-between text-gray-400 font-semibold">
+                            <span className="flex items-center gap-1">
+                                <Shield size={11} className="text-gray-400" />
+                                Statekeeper Status
+                            </span>
+                            <span className={clsx("px-1.5 py-0.2 rounded text-3xs font-mono font-bold", lastDecision.should_run_updater ? "bg-purple-500/20 text-purple-300" : "bg-gray-800 text-gray-500")}>
+                                {lastDecision.should_run_updater ? "ACTIVE" : "IDLE"}
+                            </span>
+                        </div>
+                        <div className="text-gray-400 text-3xs">
+                            {lastDecision.updater_evaluation.diagnostic_summary}
+                        </div>
+                    </div>
+                ) : null}
+
                 {/* Last System 1 Decision Breakdown */}
                 {lastDecision && (
                     <div className="pt-2 border-t border-white/5 space-y-1.5">
@@ -2115,14 +2243,18 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         {lastDecision.updater_gates && (
                             <div className="grid grid-cols-2 gap-1.5 pt-1">
                                 {[
-                                    ['Loc/Time', lastDecision.updater_gates.gate_world_state],
-                                    ['Char State', lastDecision.updater_gates.gate_character_state],
-                                    ['Inventory', lastDecision.updater_gates.gate_inventory_or_items],
-                                    ['Memory', lastDecision.updater_gates.gate_durable_memory],
-                                    ['Lore', lastDecision.updater_gates.gate_lore_discovery],
+                                    ['Location & Time', lastDecision.updater_gates.gate_world_state],
+                                    ['Tone & Atmosphere', lastDecision.updater_gates.gate_scene_tone],
+                                    ['Char State & Attire', lastDecision.updater_gates.gate_character_state],
+                                    ['Character Mood', lastDecision.updater_gates.gate_character_mood],
+                                    ['Relationship Dynamic', lastDecision.updater_gates.gate_relationship_dynamic],
+                                    ['Inventory & Items', lastDecision.updater_gates.gate_inventory_or_items],
+                                    ['Durable Memory', lastDecision.updater_gates.gate_durable_memory],
+                                    ['Lore Discovery', lastDecision.updater_gates.gate_lore_discovery],
                                 ].map(([lbl, prob]) => {
                                     const pct = Math.round((prob || 0) * 100);
-                                    const fired = (prob || 0) >= 0.55;
+                                    const threshold = Math.round((lastDecision.updater_evaluation?.activation_threshold || 0.55) * 100);
+                                    const fired = pct >= threshold;
                                     return (
                                         <div key={lbl} className="flex items-center justify-between bg-black/25 px-2 py-0.5 rounded text-2xs">
                                             <span className={fired ? "text-purple-300 font-semibold" : "text-gray-500"}>{lbl}</span>
@@ -2130,6 +2262,42 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                                         </div>
                                     );
                                 })}
+                            </div>
+                        )}
+
+                        {/* Expandable Decision Questions Trace */}
+                        {lastDecision.questions_evaluated?.length > 0 && (
+                            <div className="pt-1.5">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDecisionInspector(v => !v)}
+                                    className="w-full flex items-center justify-between px-2 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-gray-300 text-3xs font-medium border border-white/5 transition-colors"
+                                >
+                                    <span className="flex items-center gap-1">
+                                        <Layers size={10} className="text-emerald-400" />
+                                        <span>Inspect {lastDecision.questions_evaluated.length} Questions &amp; Rubrics</span>
+                                    </span>
+                                    <span>{showDecisionInspector ? 'Hide' : 'Show'}</span>
+                                </button>
+                                {showDecisionInspector && (
+                                    <div className="mt-1.5 max-h-56 overflow-y-auto space-y-1 p-1.5 rounded bg-black/40 border border-white/5 text-3xs scrollbar-thin scrollbar-thumb-gray-800">
+                                        {lastDecision.questions_evaluated.map((q) => (
+                                            <div key={q.key} className="p-1.5 rounded bg-gray-900/90 border border-white/5 space-y-0.5">
+                                                <div className="flex items-center justify-between gap-1">
+                                                    <span className="font-semibold text-gray-200 truncate">{q.prompt}</span>
+                                                    <span className={clsx(
+                                                        "px-1 py-0.2 rounded font-mono text-3xs shrink-0 font-bold",
+                                                        q.status?.includes('FIRED') || q.status?.includes('Triggered')
+                                                            ? "bg-purple-500/25 text-purple-300"
+                                                            : "bg-gray-800 text-gray-400"
+                                                    )}>
+                                                        {q.status}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>

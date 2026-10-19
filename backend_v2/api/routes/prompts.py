@@ -295,7 +295,9 @@ async def magic_prompt(
     
     job_service = JobService(session)
     
-    system_prompt = (
+    from config import get_system_prompt_blocks
+
+    default_magic = (
         "You are an expert AI image generation prompt engineer. "
         "Your task is to take a simple user idea and expand it into a highly detailed, "
         "comma-separated list of Danbooru-style tags and visual descriptions suitable for Stable Diffusion / ComfyUI. "
@@ -303,6 +305,7 @@ async def magic_prompt(
         "and specific subject details. "
         "Return ONLY the expanded prompt text, nothing else. No conversational text."
     )
+    system_prompt = (get_system_prompt_blocks() or {}).get("magic_prompt") or default_magic
     
     workflow = {
         "messages": [

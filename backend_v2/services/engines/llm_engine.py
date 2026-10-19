@@ -306,6 +306,9 @@ class OpenAICompatLLMEngine(InProcessEngine):
         api_key: Optional[str] = None,
         default_model: str = "default-model",
         base_url: Optional[str] = None,
+        default_rp_model: Optional[str] = None,
+        default_util_model: Optional[str] = None,
+        **kwargs: Any,
     ):
         super().__init__(provider_id)
         endpoint = base_url or api_base or "http://localhost:11434/v1"
@@ -313,6 +316,8 @@ class OpenAICompatLLMEngine(InProcessEngine):
         self.base_url = self.api_base
         self.api_key = (api_key or "").strip()
         self.default_model = default_model
+        self.default_rp_model = default_rp_model
+        self.default_util_model = default_util_model
         self._http: Optional[httpx.AsyncClient] = None
 
 
@@ -445,6 +450,10 @@ class OpenAICompatLLMEngine(InProcessEngine):
         messages = workflow.get("messages") or []
         tools = workflow.get("tools")
         model = workflow.get("model") or self.default_model
+        if model in ("rp", "default") and self.default_rp_model and self.default_rp_model not in ("rp", "default"):
+            model = self.default_rp_model
+        elif model == "util" and self.default_util_model and self.default_util_model != "util":
+            model = self.default_util_model
 
         payload: Dict[str, Any] = {
             "model": model,
@@ -594,10 +603,17 @@ class ModalLlamaCPPEngine(InProcessEngine):
         token_secret: str,
         app_name: str = "tnh-llm",
         cls_name: str = "ChatLLM",
+        default_model: str = "default-model",
+        default_rp_model: str = "rp",
+        default_util_model: str = "util",
+        **kwargs: Any,
     ):
         super().__init__(provider_id)
         self.token_id = token_id.strip()
         self.token_secret = token_secret.strip()
+        self.default_model = default_model
+        self.default_rp_model = default_rp_model
+        self.default_util_model = default_util_model
         # The defaults are the names `deployables/modal/llm/app.py` declares
         # (`APP_NAME = "tnh-llm"`, class `ChatLLM`). They used to be
         # `vllm-modal-stack` / `VLLMEngine`, which is what the deleted
@@ -967,7 +983,11 @@ class ModalLlamaCPPEngine(InProcessEngine):
             # timeout_seconds, sampling) — see llm_worker/engines/modal/modal_app.py.
             # The workflow payload carries model/messages/tools plus flat sampling
             # keys (temperature/top_p/max_output_tokens/penalties); unpack them.
-            model_id = workflow.get("model") or "default-model"
+            model_id = workflow.get("model") or self.default_model
+            if model_id in ("rp", "default") and self.default_rp_model and self.default_rp_model not in ("rp", "default"):
+                model_id = self.default_rp_model
+            elif model_id == "util" and self.default_util_model and self.default_util_model != "util":
+                model_id = self.default_util_model
             messages = workflow.get("messages") or []
             tools = workflow.get("tools")
             sampling: Dict[str, Any] = {}

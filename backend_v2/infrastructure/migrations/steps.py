@@ -1875,6 +1875,21 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add max_autonomous_turns and director_autonomy_level to chats",
             apply_fn=_migration_101_chat_director_autonomy,
         ),
+        MigrationStep(
+            version="102_agent_profiles",
+            description="Add agent_profiles table and seed built-in agents",
+            apply_fn=_migration_102_agent_profiles,
+        ),
+        MigrationStep(
+            version="103_agent_prompt_variants",
+            description="Add agent_prompt_variants table for per-agent prompt overrides",
+            apply_fn=_migration_103_agent_prompt_variants,
+        ),
+        MigrationStep(
+            version="104_variant_routing_tags",
+            description="Add agent_prompt_variants.tags/selection_hint so Laya can route to a sub-variant per situation, and seed example (inactive) sub-variants for the built-in character and narrator agents",
+            apply_fn=_migration_104_variant_routing_tags,
+        ),
     ]
 
 
@@ -5022,3 +5037,291 @@ def _migration_101_chat_director_autonomy(conn) -> bool:
 
     return True
 
+
+def _migration_102_agent_profiles(conn) -> bool:
+    """Create agent_profiles table and seed default built-in agents."""
+    inspector = inspect(conn)
+    existing_tables = set(inspector.get_table_names())
+    is_postgres = conn.dialect.name == "postgresql"
+
+    if "agent_profiles" not in existing_tables:
+        if is_postgres:
+            conn.execute(text("""
+                CREATE TABLE agent_profiles (
+                    id TEXT PRIMARY KEY,
+                    slug TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    agent_type TEXT NOT NULL DEFAULT 'generation',
+                    description TEXT NOT NULL,
+                    system_prompt_template TEXT NOT NULL,
+                    model_target TEXT NOT NULL DEFAULT 'rp',
+                    model_override TEXT,
+                    is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    temperature FLOAT,
+                    top_p FLOAT,
+                    max_tokens INTEGER,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_agent_slug ON agent_profiles (slug)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_agent_type ON agent_profiles (agent_type)"))
+        else:
+            conn.execute(text("""
+                CREATE TABLE agent_profiles (
+                    id TEXT PRIMARY KEY,
+                    slug TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    agent_type TEXT NOT NULL DEFAULT 'generation',
+                    description TEXT NOT NULL,
+                    system_prompt_template TEXT NOT NULL,
+                    model_target TEXT NOT NULL DEFAULT 'rp',
+                    model_override TEXT,
+                    is_builtin BOOLEAN NOT NULL DEFAULT 0,
+                    enabled BOOLEAN NOT NULL DEFAULT 1,
+                    temperature REAL,
+                    top_p REAL,
+                    max_tokens INTEGER,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_agent_slug ON agent_profiles (slug)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_agent_type ON agent_profiles (agent_type)"))
+        logger.info("migration_table_created", table="agent_profiles")
+
+    # Seed built-in agents if missing
+    builtins = [
+        {
+            "id": "builtin-character",
+            "slug": "character",
+            "name": "Character Agent",
+            "agent_type": "generation",
+            "description": "The primary character should respond directly to the conversation or situation in their authentic persona and voice.",
+            "system_prompt_template": "You are roleplaying as {{char}}. Respond directly in character, staying true to your personality, backstory, and voice. Embody your character's quirks, mannerisms, and physical reactions.",
+            "model_target": "rp",
+            "is_builtin": True,
+            "enabled": True,
+        },
+        {
+            "id": "builtin-narrator",
+            "slug": "narrator",
+            "name": "Scene Narrator",
+            "agent_type": "generation",
+            "description": "The omniscient scene narrator should describe the environment, atmosphere, sensory details, secondary NPCs, or the passage of time.",
+            "system_prompt_template": "You are the omniscient narrative director and storyteller. Describe the scene environment, sensory atmosphere, pacing, secondary NPC actions, and narrative consequences with cinematic prose. Do not speak for the player character.",
+            "model_target": "rp",
+            "is_builtin": True,
+            "enabled": True,
+        },
+        {
+            "id": "builtin-illustrator",
+            "slug": "illustrator",
+            "name": "Illustrator Agent",
+            "agent_type": "multimodal",
+            "description": "Synthesizes striking visual scene moments into structured ComfyUI image prompts and negative tags.",
+            "system_prompt_template": "You are an expert anime and fantasy prompt artist. Given the current scene beat and character appearances, formulate a high-quality descriptive visual prompt capturing character appearance, outfit, composition, camera angle, and atmosphere.",
+            "model_target": "util",
+            "is_builtin": True,
+            "enabled": True,
+        },
+        {
+            "id": "builtin-updater",
+            "slug": "updater",
+            "name": "Statekeeper Agent",
+            "agent_type": "utility",
+            "description": "Audits the exchange and extracts structured state updates for character mood, atmosphere, inventory, and world lore.",
+            "system_prompt_template": "You are the Statekeeper. Extract state modifications for the activated narrative gates in valid JSON format. Update only the fields that shifted in this beat.",
+            "model_target": "util",
+            "is_builtin": True,
+            "enabled": True,
+        },
+        {
+            "id": "builtin-continuation",
+            "slug": "continuation",
+            "name": "Continuation Agent",
+            "agent_type": "generation",
+            "description": "Seamlessly completes thoughts, dialogue, or action beats that were cut off mid-sentence without repeating previous words.",
+            "system_prompt_template": "You were in the middle of generating a response and were cut off. Continue seamlessly from the exact last word without repeating or summarizing.",
+            "model_target": "rp",
+            "is_builtin": True,
+            "enabled": True,
+        },
+    ]
+
+    now_utc = datetime.now(timezone.utc)
+    for b in builtins:
+        b["created_at"] = now_utc
+        b["updated_at"] = now_utc
+        row = conn.execute(
+            text("SELECT id FROM agent_profiles WHERE slug = :slug"),
+            {"slug": b["slug"]}
+        ).first()
+        if not row:
+            conn.execute(
+                text("""
+                    INSERT INTO agent_profiles (
+                        id, slug, name, agent_type, description, system_prompt_template,
+                        model_target, is_builtin, enabled, created_at, updated_at
+                    ) VALUES (
+                        :id, :slug, :name, :agent_type, :description, :system_prompt_template,
+                        :model_target, :is_builtin, :enabled, :created_at, :updated_at
+                    )
+                """),
+                b
+            )
+            logger.info("builtin_agent_seeded", slug=b["slug"])
+
+    return True
+
+
+
+def _migration_103_agent_prompt_variants(conn) -> bool:
+    """Create agent_prompt_variants for per-agent prompt overrides."""
+    inspector = inspect(conn)
+    if "agent_prompt_variants" in set(inspector.get_table_names()):
+        return True
+
+    is_postgres = conn.dialect.name == "postgresql"
+    if is_postgres:
+        conn.execute(text("""
+            CREATE TABLE agent_prompt_variants (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+                slug TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                system_prompt_template TEXT NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT FALSE,
+                temperature FLOAT,
+                top_p FLOAT,
+                max_tokens INTEGER,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+    else:
+        conn.execute(text("""
+            CREATE TABLE agent_prompt_variants (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+                slug TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                system_prompt_template TEXT NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT 0,
+                temperature REAL,
+                top_p REAL,
+                max_tokens INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_variant_slug ON agent_prompt_variants (slug)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS idx_agent_variant_agent ON agent_prompt_variants (agent_id)"))
+    logger.info("migration_table_created", table="agent_prompt_variants")
+    return True
+
+
+_BUILTIN_SUBVARIANTS = (
+    # (agent slug, variant slug, name, tags, selection hint, prompt)
+    (
+        "narrator", "narrator-combat", "Combat Narrator", ["combat", "danger"],
+        "Use during fights, chases, or any sudden physical danger.",
+        "You are the scene narrator during a moment of action. Write kinetic, concrete third-person present tense: "
+        "short sentences, clear spatial staging, impact and consequence. No dialogue for the player character.",
+    ),
+    (
+        "narrator", "narrator-quiet", "Quiet Moments Narrator", ["calm", "slice-of-life"],
+        "Use for calm, everyday or contemplative scenes with no immediate danger.",
+        "You are the scene narrator during a quiet moment. Write gentle, observant third-person present tense: "
+        "small sensory details, ambient sound, light, and the passing of time. Keep it unhurried and brief.",
+    ),
+    (
+        "narrator", "narrator-travel", "Transition Narrator", ["travel", "time-skip"],
+        "Use when time passes, characters travel, or the scene changes location.",
+        "You are the scene narrator bridging a transition. Summarise what happens between the previous beat and the "
+        "next in a few vivid sentences, then establish the new setting and time. Do not resolve open player choices.",
+    ),
+    (
+        "character", "character-tense", "Tense Character", ["conflict", "high-stakes"],
+        "Use when the character is under pressure, arguing, afraid, or in conflict.",
+        "You are roleplaying as {{char}}. The moment is tense: let emotion leak into word choice, rhythm and body "
+        "language. Stay in character and respond only as {{char}}.",
+    ),
+    (
+        "character", "character-tender", "Tender Character", ["intimate", "emotional"],
+        "Use for close, vulnerable, affectionate or emotionally open moments.",
+        "You are roleplaying as {{char}}. The moment is close and emotional: be present and specific, favour small "
+        "gestures and honest feeling over exposition. Stay in character and respond only as {{char}}.",
+    ),
+    (
+        "character", "character-playful", "Playful Character", ["banter", "lighthearted"],
+        "Use for teasing, jokes, banter and lighthearted exchanges.",
+        "You are roleplaying as {{char}}. The mood is playful: quick wit, teasing and warmth, shorter replies. Stay "
+        "in character and respond only as {{char}}.",
+    ),
+)
+
+
+def _migration_104_variant_routing_tags(conn) -> bool:
+    """Add routing columns to agent_prompt_variants and seed inactive sub-variants."""
+    inspector = inspect(conn)
+    if "agent_prompt_variants" not in set(inspector.get_table_names()):
+        # Fresh install: create_all builds the table with the new columns; the
+        # seed below is applied by the first run that finds the table.
+        return True
+
+    columns = _get_table_columns(conn, "agent_prompt_variants")
+    is_postgres = conn.dialect.name == "postgresql"
+    if "tags" not in columns:
+        col_type = "JSONB" if is_postgres else "JSON"
+        conn.execute(text(f"ALTER TABLE agent_prompt_variants ADD COLUMN tags {col_type}"))
+        conn.execute(text("UPDATE agent_prompt_variants SET tags = '[]'"))
+        logger.info("migration_column_added", table="agent_prompt_variants", column="tags")
+    if "selection_hint" not in columns:
+        conn.execute(text("ALTER TABLE agent_prompt_variants ADD COLUMN selection_hint TEXT NOT NULL DEFAULT ''"))
+        logger.info("migration_column_added", table="agent_prompt_variants", column="selection_hint")
+    _verify_required_columns(conn, "agent_prompt_variants", {"tags", "selection_hint"})
+
+    now_utc = datetime.now(timezone.utc)
+    for agent_slug, slug, name, tags, hint, prompt in _BUILTIN_SUBVARIANTS:
+        agent = conn.execute(
+            text("SELECT id FROM agent_profiles WHERE slug = :slug"), {"slug": agent_slug}
+        ).first()
+        if not agent:
+            continue
+        exists = conn.execute(
+            text("SELECT id FROM agent_prompt_variants WHERE slug = :slug"), {"slug": slug}
+        ).first()
+        if exists:
+            continue
+        conn.execute(
+            text(
+                """
+                INSERT INTO agent_prompt_variants (
+                    id, agent_id, slug, name, description, system_prompt_template,
+                    is_active, tags, selection_hint, created_at, updated_at
+                ) VALUES (
+                    :id, :agent_id, :slug, :name, :description, :prompt,
+                    :is_active, """ + ("CAST(:tags AS JSONB)" if is_postgres else ":tags") + """, :hint, :created_at, :updated_at
+                )
+                """
+            ),
+            {
+                "id": f"builtin-variant-{slug}",
+                "agent_id": agent[0],
+                "slug": slug,
+                "name": name,
+                "description": hint,
+                "prompt": prompt,
+                "is_active": False,
+                "tags": json.dumps(tags),
+                "hint": hint,
+                "created_at": now_utc,
+                "updated_at": now_utc,
+            },
+        )
+        logger.info("builtin_subvariant_seeded", slug=slug, agent=agent_slug)
+    return True

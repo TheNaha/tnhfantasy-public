@@ -74,6 +74,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useLocations: () => ({ data: [] }),
     useLLMAvailableModels: () => ({ data: [] }),
     useLLMDefaultProvider: () => ({ data: null }),
+    useLLMRuntimeDefaults: () => ({ data: {} }),
     useStoryImages: () => ({ data: [] }),
     useUpdateCharacter: () => ({ mutateAsync: vi.fn() }),
     useParseStory: () => ({ mutateAsync: vi.fn() }),

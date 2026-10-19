@@ -10,10 +10,8 @@ Covers:
 - LLM sampler token mapping and impersonation role kind
 """
 
-from contextlib import asynccontextmanager
 from unittest.mock import MagicMock
 
-import pytest
 
 from core.entities import (
     Asset,
@@ -21,7 +19,6 @@ from core.entities import (
     CharacterMemory,
     Chat,
     GraphLayout,
-    Location,
     Lorebook,
     LorebookEntry,
     Persona,
@@ -37,7 +34,6 @@ from services.context_builder import (
 )
 from services.llm_router import ROLE_BY_KIND, get_router
 from services.llm_workflow import build_llm_workflow
-from services.orchestrator_service import _tool_update_world_state
 from services.reference_cleanup import scrub_entity_references
 
 
@@ -137,26 +133,6 @@ class TestScenarioWorkerFallbacks:
         ckpt, voice = resolve_scenario_defaults(session, story)
         assert ckpt == "flux_scifi.safetensors"
         assert voice == "eleven_narrator"
-
-
-class TestOrchestratorLocationSync:
-    @pytest.mark.asyncio
-    async def test_update_world_state_syncs_location_id_by_name(self, session, monkeypatch):
-        loc = _seed(session, _cls=Location, name="The Rusty Anchor", description="A cozy dockside tavern.")
-        chat = _seed(session, _cls=Chat, name="Roleplay")
-
-        @asynccontextmanager
-        async def mock_session_ctx():
-            yield session
-
-        monkeypatch.setattr("infrastructure.deps.get_session_context", mock_session_ctx)
-
-        args = {"location": "The Rusty Anchor"}
-        result = await _tool_update_world_state(args, chat_id=chat.id)
-
-        assert result.get("status") == "success"
-        session.refresh(chat)
-        assert chat.location_id == loc.id
 
 
 class TestReferenceCleanup:

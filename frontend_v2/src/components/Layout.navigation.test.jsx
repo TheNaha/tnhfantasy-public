@@ -56,4 +56,14 @@ describe('Layout sidebar — where "World" goes', () => {
         fireEvent.click(expandBtn);
         expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toBeInTheDocument();
     });
+
+    it('lists LLM Studio once and links the World Vault hub', async () => {
+        const { fireEvent } = await import('@testing-library/react');
+        renderLayout();
+
+        expect(screen.getAllByRole('link', { name: 'LLM Studio' })).toHaveLength(1);
+
+        fireEvent.click(screen.getByRole('button', { name: /Expert tools/i }));
+        expect(screen.getByRole('link', { name: 'World Vault' })).toHaveAttribute('href', '/world-vault');
+    });
 });

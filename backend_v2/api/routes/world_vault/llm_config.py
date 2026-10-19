@@ -232,6 +232,68 @@ def get_llm_routing():
     return get_router().describe()
 
 
+@router.get("/director/gates")
+def get_director_gates():
+    """Return the canonical Director gate registry for LLM Studio.
+
+    The Studio used to hardcode its own gate list, and four of its keys
+    (`gate_location`, `gate_weather`, `gate_character_activity`,
+    `gate_quests_and_goals`) were aliases the Director never emits. Serving the
+    registry means labels, descriptions, grouping, authorized fields, and the
+    threshold all come from `decision_schema.py`.
+    """
+    from services.decision_schema import (
+        ALWAYS_ALLOWED_UPDATER_FIELDS,
+        COMPLETION_UNCERTAIN_HIGH,
+        COMPLETION_UNCERTAIN_LOW,
+        GATE_CATEGORIES,
+        GATE_DESCRIPTIONS,
+        GATE_FIELD_MAP,
+        GATE_LABELS,
+        IMAGE_TRIGGER_THRESHOLD,
+        UPDATER_GATE_KEYS,
+        UPDATER_GATE_THRESHOLD,
+    )
+
+    legacy = {"gate_world_state", "gate_character_state"}
+    categories = [
+        {
+            "id": category["id"],
+            "title": category["title"],
+            "gates": [
+                {
+                    "key": key,
+                    "label": GATE_LABELS.get(key, key),
+                    "description": GATE_DESCRIPTIONS.get(key, ""),
+                    "fields": list(GATE_FIELD_MAP.get(key, ())),
+                }
+                for key in category["gates"]
+            ],
+        }
+        for category in GATE_CATEGORIES
+    ]
+
+    return {
+        "threshold": UPDATER_GATE_THRESHOLD,
+        "image_threshold": IMAGE_TRIGGER_THRESHOLD,
+        "completion_bands": {
+            "uncertain_low": COMPLETION_UNCERTAIN_LOW,
+            "uncertain_high": COMPLETION_UNCERTAIN_HIGH,
+        },
+        "always_allowed_fields": list(ALWAYS_ALLOWED_UPDATER_FIELDS),
+        "categories": categories,
+        "legacy_gates": [
+            {
+                "key": key,
+                "label": GATE_LABELS.get(key, key),
+                "fields": list(GATE_FIELD_MAP.get(key, ())),
+            }
+            for key in UPDATER_GATE_KEYS
+            if key in legacy
+        ],
+    }
+
+
 class UpdateProviderRequest(BaseModel):
     provider_id: str
     model_id: str
@@ -442,6 +504,7 @@ def get_runtime_defaults():
     """Return effective global LLM sampling, token budget, and Director defaults."""
     from config import get_config
     from services.context_builder import DEFAULT_MAX_TOKENS
+    from services.decision_schema import IMAGE_TRIGGER_THRESHOLD, UPDATER_GATE_THRESHOLD
     from services.llm_router import get_router
 
     router_inst = get_router()
@@ -455,6 +518,145 @@ def get_runtime_defaults():
         "frequency_penalty": role_sampler.get("frequency_penalty") or 0.0,
         "presence_penalty": role_sampler.get("presence_penalty") or 0.0,
         "director_mode": "steered",
-        "gate_threshold": 0.55,
+        "gate_threshold": UPDATER_GATE_THRESHOLD,
+        "image_threshold": IMAGE_TRIGGER_THRESHOLD,
     }
+
+
+class UpdateQuestionOverrideRequest(BaseModel):
+    enabled: bool | None = None
+    question: str | None = None
+    options: dict[str, str] | None = None
+    directive: str | None = None
+    threshold: float | None = None
+
+
+class CreateCustomQuestionRequest(BaseModel):
+    key: str
+    question: str
+    directive: str
+    threshold: float = 0.60
+    enabled: bool = True
+
+
+@router.get("/pipeline")
+def get_chat_pipeline():
+    """Return the declarative 6-stage chat pipeline manifest and stage limits."""
+    from services.chat_pipeline import get_pipeline_manifest
+    return get_pipeline_manifest()
+
+
+@router.get("/questions")
+def get_pipeline_questions(session: Session = Depends(get_session)):
+    """Return all Laya questions across triage, audit, and chaining stages with active override status."""
+    from services.laya_questions import list_all_pipeline_questions
+    return list_all_pipeline_questions(session)
+
+
+@router.put("/questions/{stage}/{key}")
+def update_pipeline_question_override(
+    stage: str,
+    key: str,
+    req: UpdateQuestionOverrideRequest,
+    session: Session = Depends(get_session),
+):
+    """Enable/disable a question or update its wording, option hints, or thresholds."""
+    from services.laya_questions import save_or_update_question_override
+    updated = save_or_update_question_override(
+        session,
+        stage,
+        key,
+        enabled=req.enabled,
+        question=req.question,
+        options=req.options,
+        directive=req.directive,
+        threshold=req.threshold,
+    )
+    return {
+        "id": updated.id,
+        "stage": updated.stage,
+        "key": updated.key,
+        "enabled": updated.enabled,
+        "question": updated.question,
+        "options": updated.options,
+        "directive": updated.directive,
+        "threshold": updated.threshold,
+        "is_custom": updated.is_custom,
+    }
+
+
+@router.post("/questions/{stage}/custom")
+def create_pipeline_custom_question(
+    stage: str,
+    req: CreateCustomQuestionRequest,
+    session: Session = Depends(get_session),
+):
+    """Author a new custom boolean question with an actor directive in LLM Studio."""
+    from services.laya_questions import save_or_update_question_override
+    created = save_or_update_question_override(
+        session,
+        stage,
+        req.key,
+        enabled=req.enabled,
+        question=req.question,
+        directive=req.directive,
+        threshold=req.threshold,
+        is_custom=True,
+    )
+    return {
+        "id": created.id,
+        "stage": created.stage,
+        "key": created.key,
+        "enabled": created.enabled,
+        "question": created.question,
+        "directive": created.directive,
+        "threshold": created.threshold,
+        "is_custom": True,
+    }
+
+
+@router.delete("/questions/{stage}/{key}")
+def delete_pipeline_question_override(
+    stage: str,
+    key: str,
+    session: Session = Depends(get_session),
+):
+    """Reset a built-in question to default or delete a user-authored custom question."""
+    from services.laya_questions import delete_question_override
+    success = delete_question_override(session, stage, key)
+    return {"success": success}
+
+
+@router.get("/traces/{chat_id}")
+def get_llm_director_traces(
+    chat_id: str,
+    limit: int = 50,
+    session: Session = Depends(get_session),
+):
+    """Retrieve recorded Laya System 1 decision traces for a chat session."""
+    from core.entities import DirectorTrace
+    stmt = (
+        select(DirectorTrace)
+        .where(DirectorTrace.chat_id == chat_id)
+        .order_by(DirectorTrace.created_at.desc())
+        .limit(max(1, min(limit, 200)))
+    )
+    rows = session.exec(stmt).all()
+    return [
+        {
+            "id": r.id,
+            "chat_id": r.chat_id,
+            "message_id": r.message_id,
+            "job_id": r.job_id,
+            "stage": r.stage,
+            "turn": r.turn,
+            "selected_agent": r.selected_agent,
+            "selected_variant": r.selected_variant,
+            "decision": r.decision,
+            "extra": r.extra,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
 

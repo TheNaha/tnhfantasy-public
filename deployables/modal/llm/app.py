@@ -556,16 +556,25 @@ class ChatLLM:
         )
 
     # ------------------------------------------------------------------
+    def _resolve_model_id(self, model_id: str) -> str:
+        """Map role aliases ('rp', 'util', 'default') to served model IDs."""
+        if not model_id or model_id in ("default", ""):
+            return self._default_model()
+        if model_id in self.serving:
+            return self.serving[model_id]
+        return model_id
+
     def _resolve(self, model_id: str) -> int:
         """The port serving `model_id`, or a clear non-retryable error.
 
         Not retryable on purpose: an unknown or unserved model is a
         configuration state, so a caller should fail rather than back off.
         """
-        server = _SERVERS.get(model_id)
-        if server is not None and model_id in self.serving.values():
+        resolved = self._resolve_model_id(model_id)
+        server = _SERVERS.get(resolved)
+        if server is not None and resolved in self.serving.values():
             return server.port
-        reason = self.unavailable.get(model_id)
+        reason = self.unavailable.get(resolved) or self.unavailable.get(model_id)
         if reason:
             raise RuntimeError(reason)
         raise RuntimeError(
@@ -584,7 +593,7 @@ class ChatLLM:
     def complete(self, messages: list, sampler: dict | None = None,
                  model_id: str = "") -> dict:
         """One-shot completion. Returns the full parsed response."""
-        resolved = model_id or self._default_model()
+        resolved = self._resolve_model_id(model_id)
         port = self._resolve(resolved)
         payload = {"model": resolved, "messages": messages, "stream": False}
         if sampler:
@@ -599,7 +608,7 @@ class ChatLLM:
         A generator method, consumed with `.remote_gen()` over the Modal SDK —
         which is why there is no HTTP endpoint to secure at all.
         """
-        resolved = model_id or self._default_model()
+        resolved = self._resolve_model_id(model_id)
         port = self._resolve(resolved)
         payload = {"model": resolved, "messages": messages, "stream": True}
         if sampler:
@@ -689,7 +698,7 @@ class ChatLLM:
         the in-container server gives up at the same deadline the backend will
         rather than holding a GPU slot past it.
         """
-        resolved = model_id or self._default_model()
+        resolved = self._resolve_model_id(model_id)
         try:
             port = self._resolve(resolved)
         except Exception as exc:

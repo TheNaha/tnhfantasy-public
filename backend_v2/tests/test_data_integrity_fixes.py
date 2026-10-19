@@ -1332,3 +1332,44 @@ class TestStoryArtefactsAreDetectable:
             reread = check.get(StoryChapter, chapter.id)
         assert any(b.get("audio_path") == "2026/08/12/chapter.mp3" for b in reread.beats)
         assert find_unpersisted_chat_replies(session) == []
+
+
+def test_a_merged_continuation_is_not_reported_as_lost(session, wired_engine):
+    """A continuation writes no new row, so it must be recognised by its list."""
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="C", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    session.add(
+        Message(
+            role=MessageRole.CHAR,
+            kind=MessageKind.CHAR,
+            content="the whole merged reply",
+            chat_id=chat.id,
+            message_metadata={
+                "source_job_id": "job-parent",
+                "continuation_job_ids": ["job-cont"],
+            },
+        )
+    )
+    job = Job(
+        task_type="llm",
+        status=JobStatus.COMPLETED,
+        workflow={"type": "chat_reply", "chat_id": chat.id},
+        metadata_={
+            "type": "chat_reply",
+            "chat_id": chat.id,
+            "continuation_of_job_id": "job-parent",
+        },
+        outputs=[{"role": "assistant", "content": "the tail"}],
+    )
+    job.id = "job-cont"
+    session.add(job)
+    session.commit()
+
+    assert wis.find_unpersisted_chat_replies(session) == []

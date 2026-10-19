@@ -264,3 +264,73 @@ def test_llm_engine_targets_agent_url_gateway():
     assert engine_custom.llm_engine.agent_url == "http://100.150.0.99:9000"
 
 
+def test_hybrid_engine_is_util_workload_detection():
+    engine = HybridRemoteEngine(
+        "hyb-test",
+        base_url="http://node",
+        default_rp_model="artemis_31b_q4",
+        default_util_model="gemma3_12b_heretic_util",
+    )
+    # Direct model string matches
+    assert engine._is_util_workload({"model": "util"}) is True
+    assert engine._is_util_workload({"model": "gemma3_12b_heretic_util"}) is True
+    assert engine._is_util_workload({"model": "my_util_model"}) is True
+    assert engine._is_util_workload({"model": "artemis_31b_q4"}) is False
+    assert engine._is_util_workload({"model": "rp"}) is False
+
+    # Workflow role matches
+    assert engine._is_util_workload({"role": "util"}) is True
+    assert engine._is_util_workload({"role": "rp"}) is False
+
+    # Workflow kind/type matches
+    assert engine._is_util_workload({"type": "memory_extraction"}) is True
+    assert engine._is_util_workload({"type": "story_parse"}) is True
+    assert engine._is_util_workload({"type": "state_updater"}) is True
+    assert engine._is_util_workload({"kind": "tool_call"}) is True
+    assert engine._is_util_workload({"type": "chat_reply"}) is False
+    assert engine._is_util_workload({"type": "narrator"}) is False
+
+
+@pytest.mark.asyncio
+async def test_semi_concurrent_util_locking_and_vram_preparation():
+    engine = HybridRemoteEngine(
+        "hyb-test",
+        base_url="http://node",
+        concurrency_policy="semi_concurrent",
+        default_util_model="gemma3_12b_heretic_util",
+    )
+
+    prepare_calls = []
+    release_calls = []
+
+    async def mock_prepare(workload, model=None):
+        prepare_calls.append((workload, model))
+
+    async def mock_release(workload):
+        release_calls.append(workload)
+
+    async def mock_llm_inference(wf, **kwargs):
+        yield {"event": "completed", "text": "done"}
+
+    engine._prepare_agent_vram = mock_prepare
+    engine._release_agent_vram = mock_release
+    engine.llm_engine.inference = mock_llm_inference
+
+    # 1. Util job runs: triggers GPU lock, prepare_agent_vram, and release_agent_vram
+    util_wf = {"messages": [{"role": "user", "content": "extract"}], "type": "memory_extraction", "model": "gemma3_12b_heretic_util"}
+    events = [e async for e in engine.inference(util_wf, job_id="job-util-1")]
+    assert len(events) == 1
+    assert ("llm", "gemma3_12b_heretic_util") in prepare_calls
+    assert "llm" in release_calls
+
+    # 2. RP job runs: bypasses heavy swap lock & prepare call
+    prepare_calls.clear()
+    release_calls.clear()
+    rp_wf = {"messages": [{"role": "user", "content": "hello"}], "type": "chat_reply", "model": "artemis_31b_q4"}
+    events2 = [e async for e in engine.inference(rp_wf, job_id="job-rp-1")]
+    assert len(events2) == 1
+    assert len(prepare_calls) == 0
+    assert len(release_calls) == 0
+
+
+

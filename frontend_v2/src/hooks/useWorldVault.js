@@ -16,5 +16,12 @@ export * from './useWorldVaultSearch';
 
 export * from './useMemories';
 export * from './useWorldOnboarding';
-export { useLLMDefaultProvider, useLLMAvailableModels, useLLMRuntimeDefaults } from './useLLMProviderStatus';
+export * from './useAgents';
+export {
+    useLLMDefaultProvider,
+    useLLMAvailableModels,
+    useLLMRuntimeDefaults,
+    useLLMRouting,
+    useLLMDirectorGates,
+} from './useLLMProviderStatus';
 

@@ -235,11 +235,3 @@ class TestEveryCallSiteUsesIt:
             assert "llm_turn_for(" in source, f"{fn.__name__} has an inline copy of the mapping"
             assert "MessageRole.CHAR" not in source
 
-    def test_the_orchestrator_does_not_have_its_own_copy(self):
-        import inspect
-
-        from services import orchestrator_service
-
-        source = inspect.getsource(orchestrator_service._tool_narrate_scene)
-        assert "llm_turn_for(" in source
-        assert "MessageRole.USER else" not in source, "the blanket else-assign is back"

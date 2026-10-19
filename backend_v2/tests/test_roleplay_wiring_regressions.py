@@ -308,28 +308,3 @@ class TestNarratorIsPersistedOnce:
         rows = session.exec(sa_select(Message).where(Message.chat_id == chat_id)).all()
         assert len(rows) == 1
 
-    def test_narrate_scene_does_not_also_insert_inline(self):
-        """The half that cannot be reached without running a full LLM turn.
-
-        `narrate_scene` must emit the event and nothing else; the inline insert
-        is what made the double write. The behavioural tests above pin the
-        handler, this pins that the tool has exactly one writer.
-        """
-        from services import orchestrator_service
-
-        with open(orchestrator_service.__file__, encoding="utf-8") as handle:
-            body = handle.read()
-
-        start = body.index("async def _tool_narrate_scene")
-        remainder = body.find("\ndef ", start + 10)
-        tool_body = body[start:remainder if remainder != -1 else len(body)]
-
-        assert "kind=MessageKind.NARRATOR" not in tool_body, (
-            "narrate_scene persists inline *and* emits type='narrator'; the "
-            "completion handler writes the message, so the inline insert is a "
-            "guaranteed duplicate"
-        )
-        assert '"type": "narrator"' in tool_body, (
-            "the event is what makes the single write happen; removing it would "
-            "lose the narration entirely"
-        )

@@ -108,11 +108,42 @@ class HybridRemoteEngine(InProcessEngine):
             default_util_model=default_util_model,
         )
 
+        self.default_model = default_model
+        self.default_rp_model = default_rp_model
+        self.default_util_model = default_util_model
+
         # GPU concurrency coordinator
         self._gpu_lock = asyncio.Lock()
         self._resolved_policy: Optional[str] = None
         self._detected_gpu: Optional[Dict[str, Any]] = None
         self._last_workload: Optional[str] = None
+
+    def _is_util_workload(self, workflow: Any) -> bool:
+        """Determine if an LLM workload targets the secondary/util model."""
+        if not isinstance(workflow, dict):
+            return False
+        model = workflow.get("model")
+        util_candidates = {
+            "util",
+            getattr(self, "default_util_model", "util"),
+            getattr(self.llm_engine, "default_util_model", "util"),
+        }
+        if model in util_candidates:
+            return True
+        if isinstance(model, str) and ("util" in model.lower() or "heretic" in model.lower()):
+            return True
+        if workflow.get("role") == "util":
+            return True
+        kind = workflow.get("type") or workflow.get("kind")
+        if kind:
+            try:
+                from services.llm_router import ROLE_BY_KIND
+
+                if ROLE_BY_KIND.get(kind) == "util":
+                    return True
+            except Exception:
+                pass
+        return False
 
     # ----------------------------------------------------------------------
     # Hardware Capability Marker & Policy Resolution
@@ -272,13 +303,20 @@ class HybridRemoteEngine(InProcessEngine):
 
         elif policy == "semi_concurrent":
             # A100-40GB profile: RP and ComfyUI co-exist, but Util or heavy swaps lock
-            is_util = isinstance(workflow, dict) and workflow.get("model") == "util"
+            is_util = self._is_util_workload(workflow)
             if is_util:
                 async with self._gpu_lock:
-                    async for event in self.llm_engine.inference(
-                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
-                    ):
-                        yield event
+                    await self._prepare_agent_vram(
+                        "llm",
+                        model=workflow.get("model") if isinstance(workflow, dict) else None,
+                    )
+                    try:
+                        async for event in self.llm_engine.inference(
+                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                        ):
+                            yield event
+                    finally:
+                        await self._release_agent_vram("llm")
             else:
                 if is_image:
                     async for event in self.image_engine.inference(

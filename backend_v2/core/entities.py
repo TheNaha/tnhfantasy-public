@@ -1575,6 +1575,117 @@ class Persona(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+
+class AgentProfile(SQLModel, table=True):
+    """Configurable system and custom agents for autonomous roleplay and utility workflows."""
+    __tablename__ = "agent_profiles"
+    __table_args__ = (
+        Index("idx_agent_slug", "slug", unique=True),
+        Index("idx_agent_type", "agent_type"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    slug: str = Field(index=True)  # unique identifier e.g. "character", "narrator", "illustrator", "updater", "continuation", "inner_monologue"
+    name: str = Field(index=True)  # human-readable label
+    agent_type: str = Field(default="generation")  # "generation", "utility", "multimodal", "router"
+    description: str = Field(sa_column=Column(Text))  # routing guidance for Laya
+    system_prompt_template: str = Field(sa_column=Column(Text))  # template with {{char}}, {{user}}, etc.
+    model_target: str = Field(default="rp")  # "rp", "util", "director", "custom"
+    model_override: str | None = Field(default=None)
+    is_builtin: bool = Field(default=False)
+    enabled: bool = Field(default=True)
+    temperature: float | None = Field(default=None)
+    top_p: float | None = Field(default=None)
+    max_tokens: int | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class AgentPromptVariant(SQLModel, table=True):
+    """A named alternate system prompt for an :class:`AgentProfile`.
+
+    Built-in agents cannot be edited, so a variant is the supported way to
+    customise their prompt: the profile keeps the shipped default and the
+    variant carries the user's alternative. At most one variant per agent is
+    active; resolution falls back to the profile template when none is.
+    """
+    __tablename__ = "agent_prompt_variants"
+    __table_args__ = (
+        Index("idx_agent_variant_slug", "slug", unique=True),
+        Index("idx_agent_variant_agent", "agent_id"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    agent_id: str = Field(foreign_key="agent_profiles.id", index=True)
+    slug: str = Field(index=True)  # globally unique; used by `variant:<slug>` references
+    name: str = Field(index=True)
+    description: str = Field(sa_column=Column(Text))
+    system_prompt_template: str = Field(sa_column=Column(Text))  # template with {{char}}, {{user}}, etc.
+    is_active: bool = Field(default=False)
+    # Sub-variant routing. Laya chooses among an agent's variants per turn; it
+    # reads the one-line `selection_hint` (falling back to `description`) and
+    # `tags` are the short situational labels shown in LLM Studio and used to
+    # pre-filter / group variants. A variant with no hint and no description is
+    # never offered to Laya. `is_active` still means "the default when Laya
+    # makes no (or an unknown) choice".
+    tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    selection_hint: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    temperature: float | None = Field(default=None)
+    top_p: float | None = Field(default=None)
+    max_tokens: int | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class LayaQuestionOverride(SQLModel, table=True):
+    """User edits to one Laya question, or a user-authored custom question.
+
+    Built-in questions live in code (`decision_schema.py`); a row here layers on
+    top of one: `enabled=False` removes it from the pass, `question` replaces
+    its text, `options` replaces the *descriptions* of a choice question's
+    options (the option keys are fixed because the parser maps them). A row with
+    `is_custom=True` is a yes/no question authored in LLM Studio: when its
+    probability reaches `threshold` its `directive` is injected into the actor's
+    prompt for that turn.
+    """
+    __tablename__ = "laya_question_overrides"
+    __table_args__ = (
+        Index("idx_laya_question_stage_key", "stage", "key", unique=True),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    stage: str = Field(index=True)  # "triage" | "audit" | "chaining"
+    key: str = Field(index=True)
+    enabled: bool = Field(default=True)
+    question: str | None = Field(default=None, sa_column=Column(Text))
+    options: dict[str, str] | None = Field(default=None, sa_column=Column(JSONColumn))
+    is_custom: bool = Field(default=False)
+    directive: str | None = Field(default=None, sa_column=Column(Text))
+    threshold: float | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class DirectorTrace(SQLModel, table=True):
+    """One recorded pipeline decision, so LLM Studio can show what Laya was
+    asked and answered for a given message. Written per stage, per turn."""
+    __tablename__ = "director_traces"
+    __table_args__ = (
+        Index("idx_director_trace_chat_created", "chat_id", "created_at"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    chat_id: str = Field(index=True)
+    message_id: str | None = Field(default=None, index=True)
+    job_id: str | None = Field(default=None, index=True)
+    stage: str = Field(index=True)  # triage | audit | chaining
+    turn: int = Field(default=1)
+    selected_agent: str | None = Field(default=None)
+    selected_variant: str | None = Field(default=None)
+    decision: dict[str, Any] = Field(default={}, sa_column=Column(JSONColumn))
+    extra: dict[str, Any] = Field(default={}, sa_column=Column(JSONColumn))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+
 class Story(SQLModel, table=True):
     __tablename__ = "stories"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)

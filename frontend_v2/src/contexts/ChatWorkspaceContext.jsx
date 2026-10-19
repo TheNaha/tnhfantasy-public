@@ -17,6 +17,7 @@ import { useDebounce } from '../hooks/useDebounce';
 import { useChatStreaming } from '../hooks/useChatStreaming';
 import { CHAT_LIST_KEY } from '../hooks/useChats';
 import { setStreamingJob, useActiveChatStreams } from '../hooks/useStreamingJobs';
+import { buildContinuationTimeline } from '../utils/continuationText';
 import { COMMANDS } from '../components/chat/chatCommands';
 import { warnIfWorldIgnored, WORLD_IGNORED_MESSAGE } from '../utils/worldLinkWarning';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
@@ -265,17 +266,34 @@ export function ChatWorkspaceProvider({ children }) {
         personas, availableModels, defaultLlmConfig, systemPromptData, chatCollection, chatImages,
         collectionsMap, voices, chatJobs,
     } = cwData;
+    const messages = messagesData;
     const cwMutations = useChatWorkspaceMutations();
     const activeStreamEntries = useActiveChatStreams(activeChatId);
-    const activeStreams = useMemo(
-        () => activeStreamEntries
-            .filter(item => item.jobData && item.jobData.status !== 'completed' && item.jobData.status !== 'failed' && item.jobData.status !== 'cancelled')
-            .map(item => ({ _key: `stream-${item.jobId}`, jobId: item.jobId, jobData: item.jobData })),
+    const runningStreamEntries = useMemo(
+        () => activeStreamEntries.filter(item => item.jobData && item.jobData.status !== 'completed' && item.jobData.status !== 'failed' && item.jobData.status !== 'cancelled'),
         [activeStreamEntries]
     );
+    // A continuation is a second LLM pass over the same beat: its tokens belong
+    // in the bubble they continue, not in a second "X is thinking…" row.
+    const { items: timelineMessages, parentJobIds: parentJobIdsInMessages } = useMemo(
+        () => buildContinuationTimeline(messages, runningStreamEntries),
+        [messages, runningStreamEntries]
+    );
+    const activeStreams = useMemo(
+        () => runningStreamEntries
+            // If the parent message is not on the loaded page there is no
+            // bubble to merge into; fall back to the standalone placeholder so
+            // the output is never invisible.
+            .filter(item => {
+                const parentJobId = item.jobData?.continuationOfJobId;
+                return !parentJobId || !parentJobIdsInMessages.has(parentJobId);
+            })
+            .map(item => ({ _key: `stream-${item.jobId}`, jobId: item.jobId, jobData: item.jobData })),
+        [runningStreamEntries, parentJobIdsInMessages]
+    );
     const isGeneratingReply = useMemo(
-        () => activeStreams.some(item => item.jobData?.taskType !== 'image' && item.jobData?.type !== 'image'),
-        [activeStreams]
+        () => runningStreamEntries.some(item => item.jobData?.taskType !== 'image' && item.jobData?.type !== 'image'),
+        [runningStreamEntries]
     );
     const {
         sendMessageMutation: rawSendMessageMutation, createChatMutation: rawCreateChatMutation,
@@ -335,7 +353,6 @@ export function ChatWorkspaceProvider({ children }) {
         [chats, debouncedChatSearchQuery]
     );
 
-    const messages = messagesData;
     const lastLoadedPageFull = messagesData.length === messagePageCount * MESSAGE_PAGE_SIZE;
     const hasMoreMessages = messagePageCount < MAX_MESSAGE_PAGES && lastLoadedPageFull;
         const loadOlderMessages = useCallback(() => {
@@ -353,10 +370,10 @@ export function ChatWorkspaceProvider({ children }) {
             // latter is a linear scan per element, so building this list was
             // O(n^2) — ~125k comparisons at the 500-message cap — and it is
             // recomputed on every streamed token.
-            ...messages.map((msg, i) => ({ _key: msg.id || `msg-${i}`, item: msg })),
+            ...timelineMessages,
             ...activeStreams,
         ],
-        [messages, activeStreams]
+        [timelineMessages, activeStreams]
     );
 
     const rowVirtualizer = useVirtualizer({
@@ -666,7 +683,9 @@ export function ChatWorkspaceProvider({ children }) {
     }, [handleSendMessage, message, activeCommand]);
 
     const handleCancelStreaming = useCallback(async () => {
-        const activeTextStream = activeStreams.find(item => item.jobData?.taskType !== 'image' && item.jobData?.type !== 'image');
+        // Cancellations must also reach a continuation stream: it has no row of
+        // its own, but it is still a live job holding the send button down.
+        const activeTextStream = runningStreamEntries.find(item => item.jobData?.taskType !== 'image' && item.jobData?.type !== 'image');
         if (activeTextStream?.jobId) {
             try {
                 await cancelJob(activeTextStream.jobId);
@@ -675,7 +694,7 @@ export function ChatWorkspaceProvider({ children }) {
                 console.warn('Failed to cancel job:', err);
             }
         }
-    }, [activeStreams]);
+    }, [runningStreamEntries]);
 
     const canSend = useMemo(
         () => !!(message.trim() || pendingAttachment || activeCommand?.noArgs) && !sendMessageMutation.isPending && !isGeneratingReply,

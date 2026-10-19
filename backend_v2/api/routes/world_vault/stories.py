@@ -1559,11 +1559,15 @@ async def story_ai_action(story_id: str, chapter_id: str, data: StoryActionReque
         else f"{directive_line}\n\n{target_text}".strip()
     )
 
+    from config import get_system_prompt_blocks
+    blocks = get_system_prompt_blocks() or {}
+    action_prompt = blocks.get(f"story_action_{action}") or _ACTION_PROMPTS[action]
+
     from services.context_builder import build_context
     system_prompt, context, _sections = await asyncio.to_thread(
         build_context, session, "story", story,
         [{"role": "user", "content": user_content}],
-        system_prompt_override=_ACTION_PROMPTS[action],
+        system_prompt_override=action_prompt,
     )
 
     workflow, metadata = build_llm_workflow(
@@ -2584,7 +2588,9 @@ def _illustrate_system_prompt_sync(
     session: Session, story: Story | None, chapter: StoryChapter
 ) -> str:
     """Assemble the art-director prompt from the story's characters and lore."""
-    system_prompt = (
+    from config import get_system_prompt_blocks
+    blocks = get_system_prompt_blocks() or {}
+    system_prompt = blocks.get("story_illustrate") or (
         "You are an AI art director for a story. Given the story chapter text, "
         "write a highly detailed ComfyUI prompt (comma-separated Danbooru tags, lighting, "
         "camera angle, subjects, mood) that captures the most vivid scene. "
@@ -2819,8 +2825,9 @@ def _resolve_default_checkpoint(session: Session, preferred: str | None = None) 
 
 @router.post("/parse")
 async def parse_story(req: ParseStoryRequest, session: Session = Depends(get_session)) -> dict:
-
-    system_prompt = """You are an AI worldbuilder. Parse the provided story text and extract the following:
+    from config import get_system_prompt_blocks
+    blocks = get_system_prompt_blocks() or {}
+    default_parse_prompt = """You are an AI worldbuilder. Parse the provided story text and extract the following:
 1. Characters (name, physical appearance, personality)
 2. Locations (name, description)
 3. Key Lore (important items, concepts, organizations)
@@ -2832,6 +2839,7 @@ Return a strictly valid JSON object in this format:
   "lorebooks": [ {"name": "...", "description": "..."} ]
 }
 """
+    system_prompt = blocks.get("story_parse") or default_parse_prompt
     workflow, metadata = build_chat_llm_workflow(
         messages=[
             {"role": "system", "content": system_prompt},

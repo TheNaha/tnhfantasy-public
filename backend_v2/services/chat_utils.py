@@ -325,6 +325,31 @@ def substitute_tavern_vars(
     return _expand_macros(text, 0, ctx)
 
 
+def render_agent_template(
+    template: str,
+    *,
+    character_name: str = "Character",
+    user_name: str = "User",
+    story_location: str = "",
+    story_time: str = "",
+) -> str:
+    """Render an ``AgentProfile.system_prompt_template`` with scene placeholders.
+
+    Supports both the seeded SillyTavern-style ``{{char}}``/``{{user}}`` macros
+    and the explicit ``{character_name}``/``{user_name}``/``{story_location}``/
+    ``{story_time}`` placeholders used by custom agents.
+    """
+    if not template:
+        return ""
+    rendered = substitute_tavern_vars(str(template), char=character_name, user=user_name)
+    return (
+        rendered.replace("{character_name}", character_name)
+        .replace("{user_name}", user_name)
+        .replace("{story_location}", story_location or "")
+        .replace("{story_time}", story_time or "")
+    )
+
+
 # ---------------------------------------------------------------------------
 # Character → chat link resolution
 # ---------------------------------------------------------------------------

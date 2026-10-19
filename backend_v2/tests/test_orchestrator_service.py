@@ -27,22 +27,15 @@ def test_filter_agentic_tools_none_returns_empty():
 
 
 def test_filter_agentic_tools_keeps_all_by_default():
-    tools = [_tool("generate_image"), _tool("narrate_scene"), _tool("update_world_state")]
+    tools = [_tool("generate_image"), _tool("other_tool"), _tool("another_tool")]
     assert filter_agentic_tools(tools) == tools
 
 
 def test_filter_agentic_tools_blocks_image_when_disallowed():
-    tools = [_tool("generate_image"), _tool("update_world_state")]
+    tools = [_tool("generate_image"), _tool("other_tool")]
     filtered = filter_agentic_tools(tools, allow_image=False)
     names = [t["function"]["name"] for t in filtered]
-    assert names == ["update_world_state"]
-
-
-def test_filter_agentic_tools_blocks_narration_when_disallowed():
-    tools = [_tool("narrate_scene"), _tool("generate_image")]
-    filtered = filter_agentic_tools(tools, allow_narration=False)
-    names = [t["function"]["name"] for t in filtered]
-    assert names == ["generate_image"]
+    assert names == ["other_tool"]
 
 
 # ── has_tool_calls / depth helpers ──────────────────────────────────────────
@@ -103,43 +96,6 @@ async def test_execute_tool_generate_image_dispatches(monkeypatch):
     assert gen.await_args.args[0] == {"prompt": "a dragon"}
 
 
-@pytest.mark.asyncio
-async def test_execute_tool_narrate_scene_dispatches(monkeypatch):
-    narr = AsyncMock(return_value={"status": "ok"})
-    monkeypatch.setattr("services.orchestrator_service._tool_narrate_scene", narr)
-
-    call = {
-        "function": {
-            "name": "narrate_scene",
-            "arguments": json.dumps({"direction": "storm rolls in"}),
-        }
-    }
-    result = await execute_tool(call, chat_id="c1", source_job_id="j1")
-    assert result == {"status": "ok"}
-    narr.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_execute_tool_update_world_state_dispatches(monkeypatch):
-    # _tool_update_world_state is async (opens its own DB session), so the
-    # mock must be a coroutine function — execute_tool awaits it.
-    calls = []
-    async def fake_update_world_state(args, **kwargs):
-        calls.append((args, kwargs))
-        return {"status": "ok"}
-    monkeypatch.setattr("services.orchestrator_service._tool_update_world_state", fake_update_world_state)
-
-    call = {
-        "function": {
-            "name": "update_world_state",
-            "arguments": json.dumps({"time": "night"}),
-        }
-    }
-    result = await execute_tool(call, chat_id="c1")
-    assert result == {"status": "ok"}
-    assert calls and calls[0][0] == {"time": "night"}
-    assert calls[0][1] == {"chat_id": "c1", "source_job_id": None}
-
 # ── process_tool_calls_and_chain: follow-up tool gating (Batch 1.5) ──────────
 
 class _FakeJob:
@@ -197,22 +153,22 @@ def _chain_fixtures(monkeypatch, assistant_tool_calls, allowed_tools=None):
 async def test_followup_workflow_tools_filtered_by_allowlist(monkeypatch):
     chain, AGENTIC_TOOLS, captured, job_service, enqueue = _chain_fixtures(
         monkeypatch,
-        [_tool_call("generate_image", "c1"), _tool_call("narrate_scene", "c2")],
-        allowed_tools={"narrate_scene"},
+        [_tool_call("generate_image", "c1"), _tool_call("other_tool", "c2")],
+        allowed_tools={"other_tool"},
     )
     result = await chain(
         job=_FakeJob(),
-        assistant_output={"tool_calls": [_tool_call("generate_image", "c1"), _tool_call("narrate_scene", "c2")]},
+        assistant_output={"tool_calls": [_tool_call("generate_image", "c1"), _tool_call("other_tool", "c2")]},
         final_result={},
         chat_id="c1",
         character_id=None,
         job_service=job_service,
         enqueue_fn=enqueue,
-        allowed_tools={"narrate_scene"},
+        allowed_tools={"other_tool"},
     )
     assert result is True
     tool_names = [t["function"]["name"] for t in captured["workflow"]["tools"]]
-    assert "narrate_scene" in tool_names
+    # AGENTIC_TOOLS only offers generate_image now, so the allow-list leaves nothing to re-offer.
     assert "generate_image" not in tool_names
     assert captured["enqueued"] == ["j2"]
 
@@ -249,7 +205,7 @@ async def test_followup_all_tools_filtered_returns_false(monkeypatch):
         character_id=None,
         job_service=job_service,
         enqueue_fn=enqueue,
-        allowed_tools={"narrate_scene"},
+        allowed_tools={"other_tool"},
     )
     assert result is False
     assert captured["workflow"] is None
@@ -295,24 +251,24 @@ async def test_followup_story_mode_builds_story_continue(monkeypatch):
 @pytest.mark.asyncio
 async def test_followup_story_mode_filters_chat_only_tools(monkeypatch):
     chain, _AGENTIC_TOOLS, captured, job_service, enqueue = _chain_fixtures(
-        monkeypatch, [_tool_call("narrate_scene", "c1"), _tool_call("generate_image", "c2")],
-        allowed_tools={"narrate_scene", "generate_image"},
+        monkeypatch, [_tool_call("other_tool", "c1"), _tool_call("generate_image", "c2")],
+        allowed_tools={"other_tool", "generate_image"},
     )
     result = await chain(
         job=_FakeJob(),
         assistant_output={
-            "tool_calls": [_tool_call("narrate_scene", "c1"), _tool_call("generate_image", "c2")]
+            "tool_calls": [_tool_call("other_tool", "c1"), _tool_call("generate_image", "c2")]
         },
         final_result={},
         chat_id=None,
         character_id=None,
         job_service=job_service,
         enqueue_fn=enqueue,
-        allowed_tools={"narrate_scene", "generate_image"},
+        allowed_tools={"other_tool", "generate_image"},
         story_id="s1",
         chapter_id="ch1",
     )
-    # narrate_scene executed (parent allow-list) but the follow-up workflow
+    # other_tool executed (parent allow-list) but the follow-up workflow
     # must only re-offer story-safe tools.
     assert result is True
     tool_names = [t["function"]["name"] for t in captured["workflow"]["tools"]]
@@ -625,160 +581,7 @@ async def test_the_second_hop_refuses_and_keeps_the_conversation_well_formed(mon
     assert messages[-1] is tool
 
 
-# ── The narration budget ─────────────────────────────────────────────────────
-#
-# The image budget in `091` was the prototype. `narrate_scene` has the same
-# shape and was worse: an image is a side effect the user may have wanted, a
-# narration is always a whole extra LLM completion, and it had no cap at all — so
-# the single most expensive discretionary decision in the loop was also the only
-# unbounded one.
-
-
-def test_the_image_and_narration_budgets_are_separate():
-    """Raising one must not lower the other.
-
-    They are separate columns because they answer different questions: an image
-    is a side effect, a narration is a completion. A shared pool would make
-    "allow more images" silently mean "allow fewer narrations".
-    """
-    from services.orchestrator_service import (
-        MAX_AGENTIC_IMAGES_PER_EXCHANGE,
-        MAX_AGENTIC_NARRATIONS_PER_EXCHANGE,
-    )
-
-    assert MAX_AGENTIC_NARRATIONS_PER_EXCHANGE is not None
-    # The default is deliberately tighter: one narration per exchange, because a
-    # narration is the costlier call and the model reaches for it readily.
-    assert MAX_AGENTIC_NARRATIONS_PER_EXCHANGE <= MAX_AGENTIC_IMAGES_PER_EXCHANGE
-
-
-def test_a_narration_refusal_names_the_tool():
-    """Two costed tools means "out of budget" is ambiguous.
-
-    Without the tool name the model may conclude narration is unavailable
-    entirely and stop offering scene descriptions, which is worse than the
-    refusal it was actually given.
-    """
-    from services.orchestrator_service import budget_exhausted_tool_result
-
-    result = budget_exhausted_tool_result("c1", "narrate_scene")
-    assert result["name"] == "narrate_scene"
-    assert "narration" in result["content"]
-    assert "narrate_scene" in result["content"]
-
-    image = budget_exhausted_tool_result("c1", "generate_image")
-    assert image["name"] == "generate_image"
-    assert "image" in image["content"]
-
-
-def _new_cost_job(depth=0, spent=None, caps=None):
-    """A job with costed-tool counters and caps already set on its metadata."""
-    spent = spent or {}
-    caps = caps or {}
-    metadata = {
-        "agentic": True,
-        "orchestrator_depth": depth,
-        "max_agentic_depth": 5,
-        "original_messages": [{"role": "user", "content": "hi"}],
-    }
-    metadata.update(spent)
-    metadata.update(caps)
-
-    class _Job:
-        id = "j-budget"
-        workflow = {"messages": [{"role": "user", "content": "hi"}], "model": "m"}
-        metadata_ = metadata
-
-    return _Job()
-
-
-def _run_chain(tool_calls, job, execute):
-    captured = {}
-
-    class _JobService:
-        async def create_job(self, *, task_type, workflow, metadata):
-            captured["metadata"] = metadata
-            captured["workflow"] = workflow
-            return job
-
-    async def _enqueue(job_id, **kw):
-        captured["enqueued"] = job_id
-
-    import asyncio
-
-    from unittest.mock import patch
-
-    import services.orchestrator_service as orch
-
-    with patch.object(orch, "execute_tool", execute):
-        result = asyncio.run(
-            orch.process_tool_calls_and_chain(
-                job=job,
-                assistant_output={"tool_calls": tool_calls},
-                final_result={},
-                chat_id="c1",
-                character_id=None,
-                job_service=_JobService(),
-                enqueue_fn=_enqueue,
-                allowed_tools=None,
-            )
-        )
-    return result, captured
-
-
-def test_a_narration_is_refused_once_budget_default_is_reached():
-    """One by default, because a narration is a whole completion.
-
-    Two calls in one turn, one budget: exactly one runs, and the other gets a
-    refusal the model can read.
-    """
-    async def execute(tc, **kwargs):
-        return {"status": "ok"}
-
-    job = _new_cost_job()
-    calls = [_tool_call("narrate_scene", "n1"), _tool_call("narrate_scene", "n2")]
-    result, captured = _run_chain(calls, job, execute)
-
-    tool_messages = [m for m in captured["workflow"]["messages"] if m.get("role") == "tool"]
-    assert len(tool_messages) == 2
-    # One success (the tool result, JSON) and one refusal (plain prose naming the
-    # tool), not two successes and not a silently dropped call.
-    succeeded = [m for m in tool_messages if m["content"].startswith("{")]
-    refused = [m for m in tool_messages if "narration budget" in m["content"]]
-    assert len(succeeded) == 1
-    assert len(refused) == 1
-    assert refused[0]["name"] == "narrate_scene"
-
-    assert result is True
-    # The running total is carried so the NEXT hop knows, not reset to zero.
-    assert captured["metadata"]["agentic_narration_jobs"] == 1
-
-
-def test_a_chat_may_raise_narration_without_touching_the_image_budget():
-    """The columns are independent, which is the point of there being two."""
-    from services.orchestrator_service import (
-        get_tool_max,
-        tool_budget_remaining,
-    )
-
-    class _Entity:
-        max_agentic_narrations = 4
-        max_agentic_images = None
-
-    assert get_tool_max("narrate_scene", _Entity()) == 4
-    # Untouched: unset, so the global image default still applies.
-    assert get_tool_max("generate_image", _Entity()) != 4
-    assert tool_budget_remaining("narrate_scene", {}, _Entity()) == 4
-
-
-def test_zero_means_no_narration_rather_than_unset():
-    from services.orchestrator_service import get_tool_max, tool_budget_remaining
-
-    class _Entity:
-        max_agentic_narrations = 0
-
-    assert get_tool_max("narrate_scene", _Entity()) == 0
-    assert tool_budget_remaining("narrate_scene", {}, _Entity()) == 0
+# ── Tool budgets ─────────────────────────────────────────────────────────────
 
 
 def test_budget_metadata_for_stamps_every_costed_tool():
@@ -798,14 +601,15 @@ def test_budget_metadata_for_stamps_every_costed_tool():
 
     stamped = budget_metadata_for(_Entity())
     assert stamped["max_agentic_images"] == 3
-    # An explicit zero is a real setting and must be carried, not dropped.
-    assert stamped["max_agentic_narrations"] == 0
+    # `max_agentic_narrations` remains a DB column for compat but is no longer
+    # a costed tool, so it is not stamped.
+    assert "max_agentic_narrations" not in stamped
     # Everything the table declares, so a new costed tool shows up here without
     # a test change — which is the point of reading the table.
     from services.orchestrator_service import TOOL_BUDGETS
 
     assert set(stamped) == {column for _c, column, _d in TOOL_BUDGETS.values()}
-    assert COSTLY_TOOL_NAMES == {"generate_image", "narrate_scene"}
+    assert COSTLY_TOOL_NAMES == {"generate_image"}
 
 
 def test_budget_metadata_for_skips_unset_columns():

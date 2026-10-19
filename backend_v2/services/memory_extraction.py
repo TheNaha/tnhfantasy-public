@@ -151,13 +151,18 @@ async def enqueue_memory_extraction(
     if not should_extract_memories(recent):
         return False
 
+    from config import get_system_prompt_blocks
     from services.llm_workflow import build_llm_workflow
 
     lines = build_extraction_messages(recent)
     if not lines:
         return False
 
-    prompt = EXTRACTION_PROMPT.format(messages="\n".join(lines))
+    tmpl = (get_system_prompt_blocks() or {}).get("memory_extraction") or EXTRACTION_PROMPT
+    if "{messages}" in tmpl:
+        prompt = tmpl.format(messages="\n".join(lines))
+    else:
+        prompt = f"{tmpl}\n\nConversation:\n" + "\n".join(lines)
     workflow, metadata = build_llm_workflow(
         messages=[{"role": "user", "content": prompt}],
         type_="memory_extraction",
