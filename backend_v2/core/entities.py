@@ -13,6 +13,7 @@ from sqlmodel import Column, Field, Relationship, SQLModel
 from pydantic import field_validator
 
 from core.exceptions import ValidationError
+from core.pipeline_limits import MAX_AUTONOMOUS_TURNS
 
 # JSON stored as JSONB on PostgreSQL (indexable/queryable), plain JSON elsewhere.
 JSONColumn = JSON().with_variant(JSONB(), "postgresql")
@@ -1366,7 +1367,7 @@ class Chat(SQLModel, table=True):
     location_id: str | None = Field(default=None, foreign_key="locations.id", index=True)  # Links to a Location entity
     llm_model: str | None = Field(default=None) # Per-chat LLM model override (falls back to global default)
     allow_image_generation: bool = Field(default=True) # Gates the agentic generate_image tool
-    allow_narration: bool = Field(default=True) # Gates the agentic narrate_scene tool
+    allow_narration: bool = Field(default=True) # Gates the narrator: Laya may route a turn to it
     idle_sim_enabled: bool = Field(default=False) # Opt-in idle simulation: background cron keeps the scene alive
     # Tiered system-prompt customisation:
     #   system_prompt_override — replaces EVERYTHING (character prompt + all blocks).
@@ -1387,7 +1388,21 @@ class Chat(SQLModel, table=True):
     # one, because a narration is always a whole extra LLM completion and an
     # image is a side effect the user may not have wanted at all — so raising
     # the image cap must not silently lower the narration cap.
+    #
+    # VESTIGIAL. The narration tool was never part of `AGENTIC_TOOLS`, so this
+    # budget guarded nothing. The column is kept (dropping it is a schema and
+    # API break for a value nobody sets) but the control that wrote it was
+    # removed from the chat panel — "Allow narration" is the real switch, and
+    # the narrator speaks as a Laya-routed turn rather than as a per-reply tool.
     max_agentic_narrations: int | None = Field(default=None)
+    # Provenance: this chat was started FROM that story.
+    #
+    # The other direction lives on `Story.chat_id` (a story exported FROM a
+    # chat). Two nullable columns rather than one link table, because the
+    # relation is genuinely one-directional in each direction and a pair is
+    # never linked both ways: starting a chat from a story and exporting that
+    # chat back to a story produces a NEW story, not a cycle.
+    story_id: str | None = Field(default=None, foreign_key="stories.id", index=True)
     # Per-chat LLM sampling overrides (None → global defaults from settings)
     temperature: float | None = Field(default=None)
     top_p: float | None = Field(default=None)
@@ -1406,7 +1421,7 @@ class Chat(SQLModel, table=True):
     # System 1 Director (Decision Maker) & Statekeeper (Updater) live state snapshot
     director_enabled: bool = Field(default=True)
     director_autonomy_level: str = Field(default="balanced")  # "strict", "balanced", "cinematic"
-    max_autonomous_turns: int = Field(default=4)  # Default 4 turns
+    max_autonomous_turns: int = Field(default=MAX_AUTONOMOUS_TURNS)  # See core.pipeline_limits
     state_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSONColumn))
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -1597,6 +1612,7 @@ class AgentProfile(SQLModel, table=True):
     temperature: float | None = Field(default=None)
     top_p: float | None = Field(default=None)
     max_tokens: int | None = Field(default=None)
+    avatar_path: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -1715,8 +1731,14 @@ class Story(SQLModel, table=True):
     max_agentic_depth: int | None = Field(default=None)
     # Per-story agentic image budget. See `Chat.max_agentic_images`.
     max_agentic_images: int | None = Field(default=None)
-    # Per-story narration budget. See `Chat.max_agentic_narrations`.
+    # Per-story narration budget. See `Chat.max_agentic_narrations` (vestigial).
     max_agentic_narrations: int | None = Field(default=None)
+    # Provenance: this story was exported FROM that chat.
+    #
+    # The other direction lives on `Chat.story_id` (a chat started from a
+    # story). See that field for why these are two columns and not a link
+    # table.
+    chat_id: str | None = Field(default=None, foreign_key="chats.id", index=True)
     # Per-story LLM sampling overrides (None → global defaults from settings)
     temperature: float | None = Field(default=None)
     top_p: float | None = Field(default=None)

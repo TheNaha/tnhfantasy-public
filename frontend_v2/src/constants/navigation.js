@@ -1,4 +1,4 @@
-import { Users, Contact, User, Calendar, GitBranch, MapPin, Sparkles, Mic, BookMarked, Wand2, Database } from 'lucide-react';
+import { Users, Contact, User, Calendar, GitBranch, MapPin, Sparkles, Mic, BookMarked, Wand2, Database, Cpu } from 'lucide-react';
 
 /**
  * Canonical navigation definitions.
@@ -29,4 +29,5 @@ export const EXPERT_TOOLS = [
     { to: '/scenarios', label: 'Scenarios', icon: Sparkles, description: 'Reusable starting situations', color: 'text-cyan-300' },
     { to: '/voices', label: 'Voices', icon: Mic, description: 'Narration and TTS voices', color: 'text-pink-300' },
     { to: '/lorebooks', label: 'Lorebooks', icon: BookMarked, description: 'Lore facts activated in context', color: 'text-emerald-300' },
+    { to: '/llm-studio', label: 'LLM Studio', icon: Cpu, description: 'Models, agents, and the roleplay pipeline', color: 'text-violet-300' },
 ];

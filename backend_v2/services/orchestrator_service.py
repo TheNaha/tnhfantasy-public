@@ -32,17 +32,16 @@ MAX_AGENTIC_DEPTH = 5
 #
 # `MAX_AGENTIC_DEPTH` above bounds how many times the model may THINK. These
 # bound what it may SPEND, which is a different question and was the one nobody
-# asked: `generate_image` was callable once per hop with nothing in the way, so a
-# single reply could chain `max_depth` paid image jobs while the user asked for
-# one.
+# asked: `generate_image` was callable once per hop with nothing in the way, so
+# a single reply could chain `max_depth` paid image jobs while the user asked
+# for one.
 #
-# `narrate_scene` is here for the same reason and it was the worse of the two.
-# An image is a side effect the user may have wanted; a narration is always a
-# whole extra LLM completion, it is the one tool the model is most likely to
-# reach for, and it had no cap at all — so the single most expensive
-# discretionary decision in the loop was also the only unbounded one.
+# There is exactly one costed tool. A narration tool was once budgeted here
+# too, but it was never part of `AGENTIC_TOOLS`, so the cap guarded nothing
+# and the tool it named did not exist. The row below is the pattern a second
+# costed tool should follow: add a row to `TOOL_BUDGETS`, and the gate, the
+# per-entity column and the job metadata all pick it up.
 MAX_AGENTIC_IMAGES_PER_EXCHANGE = 2
-MAX_AGENTIC_NARRATIONS_PER_EXCHANGE = 1
 
 IMAGE_TOOL_NAME = "generate_image"
 

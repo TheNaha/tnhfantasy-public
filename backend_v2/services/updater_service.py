@@ -1,9 +1,14 @@
 """Statekeeper ("Updater") Service — gated background World Vault state extractor.
 
 Runs asynchronously after a turn ONLY when at least one of the System 1
-Director's 5 `gate_*` probabilities (`gate_world_state`, `gate_character_state`,
-`gate_inventory_or_items`, `gate_durable_memory`, `gate_lore_discovery`) crosses
-threshold (`>= 0.55`), or when manually triggered from the UI.
+Director's `gate_*` probabilities crosses the activation threshold
+(`UPDATER_GATE_THRESHOLD`, in `core.pipeline_limits`), or when manually
+triggered from the UI.
+
+The Updater's system prompt and sampling come from the `updater` agent
+profile and its active variant, so the agent is editable in the LLM Studio
+rather than hardcoded here. The JSON-only requirement is appended to whatever
+the agent says: it is the one contract a prompt rewrite must not break.
 """
 
 from __future__ import annotations
@@ -515,6 +520,60 @@ def build_state_updater_prompt(
     )
 
 
+def _resolve_updater_agent_prompt(
+    session: Session,
+    *,
+    char_name: str,
+    user_name: str,
+    chat: Any,
+) -> tuple[str, Dict[str, Any]]:
+    """Resolve the Statekeeper's system prompt and sampling from its agent profile.
+
+    The `updater` agent row (and any of its prompt variants) used to be
+    decorative: the Statekeeper's system prompt was a hardcoded string, so
+    editing the agent in the LLM Studio changed nothing about how the state
+    extraction actually ran. Every other agent type is variant-driven, and the
+    Updater is the one that was not.
+
+    Resolution mirrors the continuation agent (`job_processing.py`): the agent
+    slug, then its active variant, then the profile's own template, and the
+    hardcoded prompt as the last resort. `require_enabled=False` because a
+    disabled Statekeeper should fall back to the built-in prompt rather than
+    stop extracting state altogether.
+
+    The "output valid JSON only" instruction is NOT part of the agent's
+    template. It is the one requirement of the Statekeeper that a prompt
+    rewrite must not be able to break, so it is appended after the agent's own
+    text.
+    """
+    fallback = "You are a precise JSON-only roleplay state extractor. Output valid JSON only."
+
+    try:
+        from services.agent_variants import resolve_agent
+        from services.chat_utils import render_agent_template
+
+        resolved = resolve_agent(session, "updater", require_enabled=False)
+    except Exception as exc:
+        logger.warning("updater_agent_resolution_failed", error=str(exc))
+        return fallback, {}
+
+    if resolved is None:
+        return fallback, {}
+
+    template = resolved.prompt_template
+    if not template:
+        return fallback, {}
+
+    rendered = render_agent_template(
+        template,
+        character_name=char_name,
+        user_name=user_name,
+        story_location=getattr(chat, "story_location", "") or "",
+        story_time=getattr(chat, "story_time", "") or "",
+    )
+    return f"{rendered.strip()}\n\nOutput valid JSON only.", resolved.sampler_overrides()
+
+
 async def enqueue_state_updater_if_needed(
     session: Session,
     *,
@@ -572,13 +631,20 @@ async def enqueue_state_updater_if_needed(
         available_expressions=list((getattr(character, "expressions", None) or {}).keys()) if character else None,
     )
 
+    system_prompt, samplers = _resolve_updater_agent_prompt(
+        session,
+        char_name=char_name,
+        user_name=user_name,
+        chat=chat,
+    )
+
     from services.llm_workflow import build_llm_workflow
 
     workflow, metadata = build_llm_workflow(
         messages=[
             {
                 "role": "system",
-                "content": "You are a precise JSON-only roleplay state extractor. Output valid JSON only.",
+                "content": system_prompt,
             },
             {"role": "user", "content": prompt},
         ],
@@ -588,8 +654,24 @@ async def enqueue_state_updater_if_needed(
         workspace="chat",
         source="state_updater",
         model=model_for_kind("state_updater", None, session),
-        temperature=0.2,
-        max_output_tokens=600,
+        # Sampling travels in `samplers`, not as loose kwargs. `build_llm_workflow`
+        # has a closed keyword-only signature with no `temperature` /
+        # `max_output_tokens` parameters, and passing them directly raised a
+        # TypeError that escaped this function (the `try` below only wraps the
+        # enqueue, not the build) and was then swallowed at DEBUG level by the
+        # post-turn hook in `job_processing.py` — so the Statekeeper silently
+        # never ran, and with it neither memory extraction nor turn chaining.
+        #
+        # The extraction settings win over the agent's own sampling: a
+        # Statekeeper that runs at a creative temperature produces prose where
+        # the schema wants JSON. The agent's overrides fill in whatever the
+        # extraction settings do not pin, so a variant can still set, say, a
+        # repetition penalty without taking the temperature with it.
+        samplers={
+            **samplers,
+            "temperature": 0.2,
+            "max_output_tokens": 600,
+        },
         background=True,
         extra_metadata={
             "triggered_gates": triggered,
@@ -760,6 +842,13 @@ def apply_updater_result(
     snapshot["world_clock"] = clock
 
     # 2. Character & Scene State Snapshot + Wardrobe Presets
+    #
+    # `scene_tension` and `pacing_directive` used to be in this list. Neither
+    # is authorized by ANY gate in `GATE_FIELD_MAP`, so the filter below always
+    # dropped them and the entries could never do anything. `scene_tension` is
+    # written by the Director instead (`record_director_decision`), and
+    # `pacing_directive` is per-turn routing telemetry, never state — the
+    # Director's own comment says so.
     locked = set(snapshot.get("locked_fields") or [])
     for field_key in (
         "character_mood",
@@ -768,8 +857,6 @@ def apply_updater_result(
         "relationship_status",
         "scene_summary",
         "emotional_tone",
-        "scene_tension",
-        "pacing_directive",
         "physical_condition",
         "weather",
         "social_status",
@@ -779,10 +866,6 @@ def apply_updater_result(
         if field_key == "character_mood" and "mood" in locked:
             continue
         if field_key == "emotional_tone" and "tone" in locked:
-            continue
-        if field_key == "pacing_directive" and "pacing" in locked:
-            continue
-        if field_key == "scene_tension" and "tension" in locked:
             continue
         val = deltas.get(field_key)
         if isinstance(val, str) and val.strip() and val.strip().lower() != "null":

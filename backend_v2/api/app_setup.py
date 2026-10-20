@@ -11,6 +11,7 @@ from api.error_handlers import register_exception_handlers
 from api.routes import (
     collections,
     files,
+    gallery,
     generation,
     health,
     jobs,
@@ -114,6 +115,12 @@ def configure_app(app: FastAPI):
     app.include_router(nodes.router)
     app.include_router(worker_ws.router)
     app.include_router(world_vault.router)
+    # The gallery routes (asset tagging, image sessions) used to be mounted
+    # from `world_vault`, where they were neither about the World Vault nor
+    # anywhere near the other 24% of that package they sat beside. The URLs
+    # are unchanged: `/api/v2/sessions`, `/api/v2/asset/{id}/tags`,
+    # `/api/v2/tags`, `/api/v2/assets/auto-tag`, `/api/v2/assets/facet`.
+    app.include_router(gallery.router)
 
     app.mount("/socket.io", socket_app)
 

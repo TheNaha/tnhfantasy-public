@@ -180,6 +180,19 @@ vi.mock('../hooks/useWorldVault', () => ({
         isError: false,
         refetch: vi.fn(),
     }),
+    // The Agent tab loads the agents and their variants in one request. The
+    // fixture carries the same agents, each with its (empty) variant list.
+    useAgentsWithVariants: () => ({
+        data: mockAgents.map((a) => ({ ...a, variants: [], active_variant_slug: null })),
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+    }),
+    getAgentAvatarUrl: (id) => (id ? `http://localhost:8002/api/v2/agents/${id}/avatar` : null),
+    useUploadAgentAvatar: () => ({
+        mutateAsync: vi.fn().mockResolvedValue({}),
+        isPending: false,
+    }),
     useCreateAgent: () => ({
         mutateAsync: mockCreateAgent,
         isPending: false,

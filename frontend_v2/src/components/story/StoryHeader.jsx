@@ -21,6 +21,7 @@ export default React.memo(function StoryHeader({
     onExport,
     onStartChat,
     isStartingChat,
+    onOpenOriginChat,
 }) {
     const serverTitle = activeStory?.title || '';
     // The title box holds a local draft rather than `defaultValue`, so what is
@@ -76,16 +77,27 @@ export default React.memo(function StoryHeader({
                                  {activeChapter ? `${activeChapter.title || `Chapter ${activeChapter.chapter_number}`}` : 'Select a chapter'}
                                  {activeStory?.genre && <span className="hidden sm:inline font-normal text-xs text-gray-500">· {activeStory.genre}</span>}
                              </p>
-                             {activeChapter?.content && (() => {
-                                 const wordCount = activeChapter.content.trim().split(/\s+/).filter(Boolean).length;
-                                 const readingTime = Math.ceil(wordCount / 200);
-                                 return (
-                                     <p className="text-xs text-gray-500 flex items-center gap-1">
-                                         <FileText size={10} />
-                                         <span>{wordCount} words · {readingTime} min read</span>
-                                     </p>
-                                 );
-                             })()}
+                              {activeChapter?.content && (() => {
+                                  const wordCount = activeChapter.content.trim().split(/\s+/).filter(Boolean).length;
+                                  const readingTime = Math.ceil(wordCount / 200);
+                                  return (
+                                      <p className="text-xs text-gray-500 flex items-center gap-1">
+                                          <FileText size={10} />
+                                          <span>{wordCount} words · {readingTime} min read</span>
+                                      </p>
+                                  );
+                              })()}
+                              {activeStory?.chat_id && (
+                                  <button
+                                      type="button"
+                                      onClick={() => onOpenOriginChat?.(activeStory.chat_id)}
+                                      className="text-xs text-indigo-300/90 hover:text-indigo-200 inline-flex items-center gap-1 transition-colors"
+                                      title="This story was exported from that chat — open it"
+                                  >
+                                      <MessageSquare size={10} />
+                                      <span className="truncate max-w-[200px]">from chat</span>
+                                  </button>
+                              )}
                          </div>
                         {activeChapter && (
                             <button 

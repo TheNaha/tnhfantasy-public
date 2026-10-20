@@ -866,39 +866,6 @@ function ChatContextPanel() {
                     </div>
                     <div>
                         <div className="flex items-center justify-between mb-1.5">
-                            <p className="text-xs text-gray-300 font-medium whitespace-nowrap shrink-0">Agentic Narrations</p>
-                            <span className="text-xs text-gray-500 font-mono min-w-0 truncate text-right">
-                                {activeChat?.max_agentic_narrations != null
-                                    ? (activeChat.max_agentic_narrations > 0
-                                        ? `${activeChat.max_agentic_narrations} per reply`
-                                        : 'Off')
-                                    : 'Global default (1)'}
-                            </span>
-                        </div>
-                        <input
-                            type="range"
-                            min="0"
-                            max="4"
-                            step="1"
-                            value={activeChat?.max_agentic_narrations ?? 1}
-                            onChange={(e) => onChatUpdate({ max_agentic_narrations: parseInt(e.target.value) })}
-                            className="w-full accent-purple-500 min-h-[24px]"
-                            title="How many narrator paragraphs the AI may write on its own per reply. 0 means it may write scene prose inside the reply but will not run separate narration jobs."
-                        />
-                        <div className="flex justify-between text-xs text-gray-600 mt-0.5">
-                            <span>Off</span><span>1</span><span>4</span>
-                        </div>
-                        {activeChat?.max_agentic_narrations != null && (
-                            <button
-                                onClick={() => onChatUpdate({ max_agentic_narrations: null })}
-                                className="mt-1 inline-flex items-center min-h-[24px] text-xs text-gray-500 hover:text-red-400 transition-colors"
-                            >
-                                Reset to global default
-                            </button>
-                        )}
-                    </div>
-                    <div>
-                        <div className="flex items-center justify-between mb-1.5">
                             <p className="text-xs text-gray-300 font-medium whitespace-nowrap shrink-0">Agentic Loop Depth</p>
                             <span className="text-xs text-gray-500 font-mono min-w-0 truncate text-right">
                                 {activeChat?.max_agentic_depth
@@ -2145,7 +2112,7 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                                 {
                                     onSuccess: (res) => {
                                         flashFeedback(`Compiled Story "${res.title}"`);
-                                        if (res.story_id) navigate(`/stories?storyId=${res.story_id}`);
+                                        if (res.story_id) navigate(`/story/${res.story_id}`);
                                     },
                                 }
                             )

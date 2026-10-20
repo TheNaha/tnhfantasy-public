@@ -454,7 +454,11 @@ export default function WorldArchitect() {
             } else if (res.story_id) {
                 navigate(`/story/${res.story_id}`);
             } else if (res.world_id) {
-                navigate(`/worlds/${res.world_id}`);
+                // There is no `/worlds/:worldId` route — the Worlds page is a
+                // list, and it takes no focus parameter. Navigating to
+                // `/worlds/${res.world_id}` landed on a route that does not
+                // exist and rendered nothing.
+                navigate('/worlds');
             }
         } catch (err) {
             setErrorMsg(err?.message || 'Failed to commit World Blueprint.');
@@ -491,7 +495,7 @@ export default function WorldArchitect() {
             });
             setCrossoverPreview(res);
             if (commitImmediately && res.launched_chat_id) {
-                navigate(`/chats?chatId=${res.launched_chat_id}`);
+                navigate(`/chat/${res.launched_chat_id}`);
             }
         } catch (err) {
             setErrorMsg(err?.message || 'Failed to generate crossover scenario.');

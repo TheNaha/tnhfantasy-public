@@ -28,6 +28,11 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
     const meta = msg.message_metadata || {};
     const isNarrator = msg.kind === 'narrator' || meta.source === 'narrator';
     const isIdleSim = meta.source === 'idle_simulation' || meta.idle_simulation === true;
+    // Which agent Laya routed this reply to. The backend has always written
+    // it into the context trace; nothing in the chat UI read it, so the
+    // routing was invisible in the transcript even though it decided who
+    // spoke and with which prompt variant.
+    const routedAgent = meta.context_trace?.selected_agent || null;
     const alternates = meta.alternates || null;
     const activeIndex = meta.active_index ?? 0;
     const altCount = alternates ? alternates.length : 0;
@@ -101,6 +106,15 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                     )}
                     {isIdleSim && (
                         <span className="ml-1.5 text-amber-400/80">· 💤 Idle sim</span>
+                    )}
+                    {routedAgent && (
+                        <span
+                            className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-300/90 text-3xs font-mono"
+                            title={`Laya routed this reply to: ${routedAgent}`}
+                        >
+                            <span>⇢</span>
+                            <span className="truncate max-w-[110px]">{routedAgent}</span>
+                        </span>
                     )}
                     {(meta.context_trace?.user_directive || meta.directive) && (
                         <span

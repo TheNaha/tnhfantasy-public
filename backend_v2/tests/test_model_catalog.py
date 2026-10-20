@@ -81,7 +81,7 @@ class TestModelCatalogAndRegistry:
         refresh_router()
 
         resp = client.put(
-            "/api/v2/world-vault/llm/catalog/active",
+            "/api/v2/llm/catalog/active",
             json={"active_rp": "writers_31b_v2", "active_util": "writers_31b_v2"},
         )
         assert resp.status_code == 200
@@ -91,7 +91,7 @@ class TestModelCatalogAndRegistry:
 
         # Verify same_as_rp is accepted
         same_resp = client.put(
-            "/api/v2/world-vault/llm/catalog/active",
+            "/api/v2/llm/catalog/active",
             json={"active_rp": "sompoa_26b_a4b", "active_util": "same_as_rp"},
         )
         assert same_resp.status_code == 200
@@ -100,7 +100,7 @@ class TestModelCatalogAndRegistry:
         assert same_data["active"]["util"] == "same_as_rp"
 
         # Catalog endpoints report shared_weights=True
-        cat_resp = client.get("/api/v2/world-vault/llm/catalog")
+        cat_resp = client.get("/api/v2/llm/catalog")
         assert cat_resp.status_code == 200
         cat_data = cat_resp.json()
         assert cat_data["shared_weights"] is True
@@ -108,7 +108,7 @@ class TestModelCatalogAndRegistry:
 
         # Verify invalid model rejected with 422 / 400
         bad_resp = client.put(
-            "/api/v2/world-vault/llm/catalog/active",
+            "/api/v2/llm/catalog/active",
             json={"active_rp": "non_existent_model_xyz"},
         )
         assert bad_resp.status_code in (400, 422)

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
-from sqlalchemy import func, delete
+from sqlalchemy import String, cast, func, delete, or_
 
 from api.deps import get_session, get_chat_repo, get_message_repo, get_character_repo, get_location_repo, get_story_repo, get_job_service
 from infrastructure.repositories.chat_repo import ChatRepository
@@ -269,6 +269,7 @@ def list_chats(
     limit: int = Query(50, ge=1, le=MAX_CHAT_PAGE_SIZE),
     offset: int = Query(0, ge=0),
     workspace: str | None = None,
+    character_id: str | None = None,
     q: str | None = Query(None, max_length=MAX_SEARCH_LENGTH),):
     # Capped because `list_messages` 380 lines below this one already is, in the
     # same file, with an explicit range check. A bare `limit: int = 50` meant
@@ -277,6 +278,39 @@ def list_chats(
     stmt = select(Chat).order_by(Chat.updated_at.desc()).offset(offset).limit(limit)
     if workspace:
         stmt = stmt.where(Chat.chat_type == workspace)
+    if character_id:
+        # The character a chat belongs to, or one of its additional cast
+        # members. A character could not be reached from its own chats
+        # anywhere: the chat list had no character filter, so the only way
+        # from a character to its conversations was to read every chat in
+        # the vault and look.
+        #
+        # The cast is not incidental. `Chat.additional_character_ids` is a
+        # JSON array, and SQLAlchemy's `.contains()` is NOT usable for
+        # membership here: on PostgreSQL (where the column is `jsonb`) it
+        # renders the `@>` operator, which is exact, and on SQLite (where it
+        # is `json`) it renders `LIKE '%value%'` — a raw substring match. The
+        # same query would have answered different questions on the two
+        # dialects, and on SQLite a 32-character prefix of a stored id
+        # matched the row.
+        #
+        # Casting the array to text and matching the QUOTED token is exact on
+        # both: the closing quote is part of the pattern, so a prefix cannot
+        # match, and the two dialects serialise an array of strings the same
+        # way. One construct, one answer, no dialect branch.
+        #
+        # The pattern comes from `core.sql_search` like every other LIKE
+        # pattern in the tree, so a `%` or `_` inside an id cannot act as a
+        # wildcard.
+        token = f'"{character_id}"'
+        stmt = stmt.where(
+            or_(
+                Chat.character_id == character_id,
+                cast(Chat.additional_character_ids, String).like(
+                    like_contains(token), escape=LIKE_ESCAPE_CHAR
+                ),
+            )
+        )
     if q and q.strip():
         stmt = stmt.where(Chat.name.ilike(like_contains(q.strip()), escape=LIKE_ESCAPE_CHAR))
     return session.exec(stmt).all()
@@ -1094,61 +1128,29 @@ async def _send_message(
         director_decision_dict: dict[str, Any] | None = None
         if getattr(chat, "director_enabled", True) and ctx_overrides is not None:
             try:
-                from services.decision_service import DecisionService
-                from services.updater_service import record_director_decision
+                from services.pipeline_runner import run_from
 
-                chars_list = ctx_overrides.get("characters") or []
-                primary_char_name = chars_list[0].name if chars_list and getattr(chars_list[0], "name", None) else "Character"
-                recent_transcript = [
+                # Stage 1 of the manifest. The runner resolves the executor
+                # the manifest names, so the order and the shape of the
+                # pipeline come from `services/chat_pipeline.py` rather than
+                # from the shape of this route.
+                triage_ctx = await run_from(
+                    "triage",
                     {
-                        "role": m.role.value if hasattr(m.role, "value") else str(m.role),
-                        "content": m.content or "",
-                    }
-                    for m in (past_messages or [])[-6:]
-                ]
-                decision = await DecisionService(session).evaluate_pre_generation_triage(
-                    character_name=primary_char_name,
-                    user_name=chat.persona_name or "User",
-                    story_location=chat.story_location,
-                    story_time=chat.story_time,
-                    state_snapshot=chat.state_snapshot or {},
-                    recent_messages=recent_transcript,
-                    has_secondary_character=bool(chat.additional_character_ids),
-                    allow_narration=bool(chat.allow_narration),
+                        "session": session,
+                        "chat": chat,
+                        "chat_id": chat_id,
+                        "ctx_overrides": ctx_overrides,
+                        "past_messages": past_messages or [],
+                        "request": request,
+                    },
                 )
-                director_decision_dict = decision.to_dict()
-                updated_snap = await asyncio.to_thread(
-                    record_director_decision, session, chat_id, decision
-                )
-                ctx_overrides["state_snapshot"] = updated_snap
-
-                # Format human-readable pacing directive for the actor LLM
-                directive_map = {
-                    "continue_conversation": "Continue the dialogue and interaction naturally.",
-                    "sensory_detail": "Slow down and emphasize rich sensory, physical, and atmospheric detail.",
-                    "escalate_tension": "Escalate dramatic tension, stakes, or emotional intensity.",
-                    "advance_time_or_scene": "Advance the scene forward in time or transition to the next beat.",
-                    "de_escalate_reflect": "Slow the pace down for emotional reflection, comfort, or aftermath.",
-                }
-                speed_map = {1: "Slow-motion", 2: "Real-time", 3: "Fast-forward"}
-                speed_label = speed_map.get(round(decision.pacing_speed), "Real-time")
-                base_dir = (
-                    f"{directive_map.get(decision.pacing_directive, decision.pacing_directive)} "
-                    f"(Pacing speed: {speed_label}; Emotional tone: {decision.emotional_tone})"
-                )
-                if decision.fate_directive:
-                    base_dir += f" | Fate & Skill Check: [{str(decision.fate_outcome).upper()}] {decision.fate_directive}"
-                ctx_overrides["director_directive"] = base_dir
-
-                # Group chat secondary character auto-routing when user didn't pin target_character_id
-                if (
-                    decision.next_speaker == "secondary_character"
-                    and not request.target_character_id
-                    and chat.additional_character_ids
-                ):
-                    ctx_overrides["active_character_id"] = chat.additional_character_ids[0]
+                director_decision_dict = triage_ctx.get("director_decision_dict")
             except Exception as dir_exc:
-                logger.debug("send_message_director_eval_skipped", chat_id=chat_id, error=str(dir_exc))
+                # The triage decision is what picks the speaker, the variant and
+                # the pacing directive, so skipping it is a real degradation and
+                # not a quiet fallback.
+                logger.warning("send_message_director_eval_skipped", chat_id=chat_id, error=str(dir_exc))
 
         if request.directive and request.directive.strip():
             ctx_overrides["user_directive"] = request.directive.strip()
@@ -1606,6 +1608,36 @@ async def generate_swipe(
             "target_message_id": message_id
         },
     )
+
+    # A swipe on a message that was itself agentic must be agentic too.
+    #
+    # The Laya refactor replaced the old orchestrator entry point with the
+    # job-queue path, and in doing so dropped the stamping that told the
+    # worker the job was allowed to call tools. The job still ran, and still
+    # produced a reply — it just could not call `generate_image`, so a swipe
+    # of an illustrated turn came back as text with the illustration silently
+    # dropped, and nothing said so.
+    #
+    # The stamp is what the worker's tool loop keys off
+    # (`job_processing.py`: `metadata.get("agentic")` and the depth cap), and
+    # the tools themselves are what the model is offered.
+    if prev_agentic:
+        from services.orchestrator_service import (
+            AGENTIC_TOOLS,
+            budget_metadata_for,
+            filter_agentic_tools,
+        )
+
+        workflow["tools"] = filter_agentic_tools(
+            AGENTIC_TOOLS,
+            allow_image=chat.allow_image_generation,
+            allow_narration=chat.allow_narration,
+        )
+        metadata["agentic"] = True
+        metadata["orchestrator_depth"] = 0
+        metadata["original_messages"] = context
+        metadata["max_agentic_depth"] = chat.max_agentic_depth or 3
+        metadata.update(budget_metadata_for(chat))
     
     # This is a re-generation of a turn the user already has, not a new
     # conversational turn, so it must not trigger memory extraction.
@@ -2453,6 +2485,36 @@ def _scene_job_prep_sync(
             "branch_id": past_messages[0].branch_id if past_messages else None,
         },
     )
+
+    # The scene job is agentic: it is offered the `generate_image` tool, and
+    # the worker runs the tool loop when the model calls it.
+    #
+    # The route's own comment claimed this ("it calls the generate_image
+    # tool"), but the stamp that says so and the tools themselves were never
+    # attached — the Laya refactor replaced the old orchestrator entry point
+    # and took the agentic stamping with it. So the model was never offered
+    # the tool, could only answer with a plain-text prompt, and the image
+    # job it spawned came from the fallback path. The comment described
+    # intent the code did not implement.
+    #
+    # `metadata.get("agentic")` is what the worker's tool loop keys off
+    # (`job_processing.py`).
+    from services.orchestrator_service import (
+        AGENTIC_TOOLS,
+        budget_metadata_for,
+        filter_agentic_tools,
+    )
+
+    workflow["tools"] = filter_agentic_tools(
+        AGENTIC_TOOLS,
+        allow_image=chat.allow_image_generation,
+        allow_narration=chat.allow_narration,
+    )
+    metadata["agentic"] = True
+    metadata["orchestrator_depth"] = 0
+    metadata["max_agentic_depth"] = chat.max_agentic_depth or 3
+    metadata.update(budget_metadata_for(chat))
+
     return chat, workflow, metadata
 
 
@@ -2664,6 +2726,9 @@ def export_chat_to_story(
         llm_model=chat.llm_model,
         persona_name=chat.persona_name,
         persona_description=chat.persona_description,
+        # Provenance: this story came FROM this chat. The other direction
+        # (`Chat.story_id`) is set when a chat is started from a story.
+        chat_id=chat.id,
     )
     story.created_at = datetime.now(timezone.utc)
     story.updated_at = story.created_at

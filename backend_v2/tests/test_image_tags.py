@@ -1016,14 +1016,14 @@ class TestTagVocabularyPlansAgainstTheTombstoneSide:
 
 class TestFacetLivenessSpelling:
     def _filters(self, **kwargs):
-        from api.routes.world_vault.tags import AssetFacetFilters
+        from api.routes.gallery.tags import AssetFacetFilters
 
         return AssetFacetFilters(**kwargs)
 
     def test_matched_ids_use_the_anti_join_spelling(self):
         """`_matched_ids` is embedded in every facet count, so it is the one that
         has to be hashed rather than index-probed."""
-        from api.routes.world_vault.tags import _matched_ids
+        from api.routes.gallery.tags import _matched_ids
 
         sql = compiled(_matched_ids(self._filters()))
         assert "deleted_at IS NOT NULL" in sql, sql
@@ -1035,7 +1035,7 @@ class TestFacetLivenessSpelling:
         `deleted_at IS NULL`. The anti-join form cannot be proven to imply that
         predicate, so switching the paged query over would cost the page its
         index. The two spellings have to stay side by side."""
-        from api.routes.world_vault.tags import build_asset_query
+        from api.routes.gallery.tags import build_asset_query
 
         assert "assets.deleted_at IS NULL" in compiled(
             build_asset_query(self._filters())
@@ -1049,7 +1049,7 @@ class TestFacetLivenessSpelling:
         definition of "live"."""
         from sqlmodel import select
 
-        from api.routes.world_vault.tags import build_asset_query
+        from api.routes.gallery.tags import build_asset_query
 
         faceted["c"].deleted_at = datetime.now(timezone.utc)
         session.add(faceted["c"])
@@ -1070,7 +1070,7 @@ class TestFacetLivenessSpelling:
 
 class TestFacetFilterDerivationIsSharedPerRequest:
     def _filters(self, **kwargs):
-        from api.routes.world_vault.tags import AssetFacetFilters
+        from api.routes.gallery.tags import AssetFacetFilters
 
         return AssetFacetFilters(**kwargs)
 
@@ -1078,7 +1078,7 @@ class TestFacetFilterDerivationIsSharedPerRequest:
         """`build_asset_query` honours `exclude` for four dimensions and only
         while that dimension is filtered. Everything else must collapse to the
         un-excluded set, or the sharing below is wrong rather than faster."""
-        from api.routes.world_vault.tags import _facet_exclusion
+        from api.routes.gallery.tags import _facet_exclusion
 
         bare = self._filters()
         assert _facet_exclusion(bare, "tag") is None
@@ -1100,7 +1100,7 @@ class TestFacetFilterDerivationIsSharedPerRequest:
         used to build the filtered asset query four times (three dimensions plus
         `total_matched`) for three identical results. Spy on the derivation
         rather than the timing: this is about how many subqueries exist."""
-        from api.routes.world_vault import tags as tags_routes
+        from api.routes.gallery import tags as tags_routes
 
         calls: list[str | None] = []
         real = tags_routes._matched_ids
@@ -1118,7 +1118,7 @@ class TestFacetFilterDerivationIsSharedPerRequest:
     def test_an_active_dimension_still_gets_its_own_derivation(
         self, client, faceted, monkeypatch
     ):
-        from api.routes.world_vault import tags as tags_routes
+        from api.routes.gallery import tags as tags_routes
 
         calls: list[str | None] = []
         real = tags_routes._matched_ids

@@ -836,36 +836,3 @@ def delete_pipeline_question_override(
     return {"success": success}
 
 
-@router.get("/traces/{chat_id}")
-def get_llm_director_traces(
-    chat_id: str,
-    limit: int = 50,
-    session: Session = Depends(get_session),
-):
-    """Retrieve recorded Laya System 1 decision traces for a chat session."""
-    from core.entities import DirectorTrace
-    stmt = (
-        select(DirectorTrace)
-        .where(DirectorTrace.chat_id == chat_id)
-        .order_by(DirectorTrace.created_at.desc())
-        .limit(max(1, min(limit, 200)))
-    )
-    rows = session.exec(stmt).all()
-    return [
-        {
-            "id": r.id,
-            "chat_id": r.chat_id,
-            "message_id": r.message_id,
-            "job_id": r.job_id,
-            "stage": r.stage,
-            "turn": r.turn,
-            "selected_agent": r.selected_agent,
-            "selected_variant": r.selected_variant,
-            "decision": r.decision,
-            "extra": r.extra,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in rows
-    ]
-
-

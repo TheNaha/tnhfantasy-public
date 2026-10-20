@@ -1,6 +1,7 @@
 import React, { createRef } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockUseChatWorkspace = vi.fn();
 vi.mock('../../contexts/ChatWorkspaceContext', () => ({
@@ -22,6 +23,20 @@ import MessageTimeline from './MessageTimeline';
 
 const PRIMARY = { id: 'c1', name: 'Aria' };
 const SECOND = { id: 'c2', name: 'Borin' };
+
+/**
+ * The pending-reply placeholder renders the Director HUD, which reads the
+ * canonical gate registry — a query. React Query needs a client, so the
+ * whole file renders inside one.
+ */
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderTimeline() {
+    return render(
+        <QueryClientProvider client={queryClient}>
+            <MessageTimeline />
+        </QueryClientProvider>
+    );
+}
 
 function makeContext(overrides = {}) {
     return {
@@ -65,7 +80,7 @@ describe('MessageTimeline group-chat attribution', () => {
             rowVirtualizer: { getVirtualItems: () => [{ index: 0 }], getTotalSize: () => 10 },
         }));
 
-        render(<MessageTimeline />);
+        renderTimeline();
         const rendered = screen.getByTestId('message-item');
         expect(rendered.dataset.speaker).toBe('c2');
     });
@@ -78,7 +93,7 @@ describe('MessageTimeline group-chat attribution', () => {
             rowVirtualizer: { getVirtualItems: () => [{ index: 0 }], getTotalSize: () => 10 },
         }));
 
-        render(<MessageTimeline />);
+        renderTimeline();
         expect(screen.getByTestId('message-item').dataset.speaker).toBe('c1');
     });
 
@@ -89,7 +104,7 @@ describe('MessageTimeline group-chat attribution', () => {
             rowVirtualizer: { getVirtualItems: () => [{ index: 0 }], getTotalSize: () => 10 },
         }));
 
-        render(<MessageTimeline />);
+        renderTimeline();
         expect(screen.getByText(/Borin is thinking/)).toBeInTheDocument();
     });
 });

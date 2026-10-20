@@ -147,6 +147,25 @@ def get_runtime_state(state_id: int = 1) -> LoadBalancerRuntimeState:
 def get_global_runtime_state() -> LoadBalancerRuntimeState:
     return get_runtime_state(1)
 
+
+# Which runtime state keeps each modality's counters.
+#
+# Each modality needs its own `provider_failures`, `provider_job_counts` and
+# `round_robin_index`. TTS shared the image state, which was wrong: a single
+# provider can serve both (the same ComfyUI box serves `image` and `tts`), so
+# a TTS outage incremented the failure count on a provider that was perfectly
+# healthy for images, and the image path's circuit breaker then took it out of
+# image rotation. The failure counts crossed modalities, and `get_stats`
+# reported the shared counters as if they were a per-modality breakdown.
+#
+# This mapping is the single place that knows it; `load_balancer_factory`
+# builds the per-modality balancers from it.
+MODALITY_STATE_IDS: dict[str, int] = {
+    "image": 1,
+    "llm": 2,
+    "tts": 3,
+}
+
 class LoadBalancer:
     """Load balances jobs across multiple serverless providers."""
 
@@ -839,15 +858,25 @@ class LoadBalancer:
                 "failures": failure_counts.get(p.id, 0),
             })
         
-        # Build per-modality routing stats
+        # Build per-modality routing stats.
+        #
+        # Each modality's counters come from ITS OWN runtime state. Reading
+        # them out of `self.runtime_state` — which is one modality's state —
+        # is what made this breakdown a copy of the same numbers three times,
+        # and it is why the modality split had to be made before the numbers
+        # could mean anything.
         by_modality: dict[str, dict[str, Any]] = {}
         for mod in ("image", "llm", "tts"):
             mod_providers = [p for p in providers if p.serves(mod)]
             threshold = streak_threshold_for(mod)
+            state = get_runtime_state(MODALITY_STATE_IDS.get(mod, 1))
+            async with state.get_lock():
+                mod_job_counts = dict(state.provider_job_counts)
+                mod_failure_counts = dict(state.provider_failures)
             by_modality[mod] = {
                 "total_providers": len(mod_providers),
-                "active_jobs": sum(job_counts.get(p.id, 0) for p in mod_providers),
-                "failing_providers": sum(1 for p in mod_providers if failure_counts.get(p.id, 0) >= threshold),
+                "active_jobs": sum(mod_job_counts.get(p.id, 0) for p in mod_providers),
+                "failing_providers": sum(1 for p in mod_providers if mod_failure_counts.get(p.id, 0) >= threshold),
                 "provider_ids": [p.id for p in mod_providers],
             }
 

@@ -44,7 +44,7 @@ per batch, and is resumable with `after_id` — the same contract as
 precedent for a batch job over assets. On 16.4k assets it is seconds of
 synchronous work inside an HTTP request, so the route that calls it is `POST`,
 bounded by `limit`, and documented as not-polling (see
-`api/routes/world_vault/tags.py`).
+`api/routes/gallery/tags.py`).
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ MAX_TAG_LENGTH = 64
 # side against `assets_pkey` once per distinct id — measured at 16,514 index
 # descents for `/api/v2/tags`. Negated, the build side is the few hundred
 # tombstoned ids, `ix_assets_deleted_at` already covers it, and the join hashes.
-# Exported because `api/routes/world_vault/tags.py` needs the identical
+# Exported because `api/routes/gallery/tags.py` needs the identical
 # predicate: two copies of a liveness rule is two places to drift.
 #
 # `Asset.id` is NOT NULL, which is what makes `NOT IN` safe here — `NOT IN`

@@ -211,6 +211,11 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         # the graph layout node below.
         session.exec(delete(Message).where(Message.chat_id == entity_id))
         session.flush()
+        # Provenance: a story exported FROM this chat points at it. The link
+        # is dropped rather than the story, because the story is the surviving
+        # work — it has chapters the chat never had.
+        for story in session.exec(select(Story).where(Story.chat_id == entity_id)).all():
+            story.chat_id = None
         _drop_graph_node(session, entity_id)
         _drop_edges_for_entity(session, entity_id)
     elif kind == "story":
@@ -232,6 +237,10 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         # the tag is dropped and the picture survives.
         for asset in session.exec(select(Asset).where(Asset.story_id == entity_id)).all():
             asset.story_id = None
+        # Provenance: a chat started FROM this story points at it. The chat
+        # survives — it is the live play-session — so only the link is dropped.
+        for chat in session.exec(select(Chat).where(Chat.story_id == entity_id)).all():
+            chat.story_id = None
         _drop_graph_node(session, entity_id)
         _drop_edges_for_entity(session, entity_id)
     else:

@@ -1,6 +1,6 @@
 // Sessions API client - curatable groups of related images.
 //
-// Every payload below is shaped by backend_v2/api/routes/world_vault/sessions.py:
+// Every payload below is shaped by backend_v2/api/routes/gallery/sessions.py:
 // SessionOut (list items), SessionDetailOut (create/split halves, adds
 // `asset_ids`), SessionMembersOut (GET /assets), SessionDetectOut (detect).
 

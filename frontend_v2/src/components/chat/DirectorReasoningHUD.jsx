@@ -4,6 +4,7 @@ import {
     Brain, Sparkles, ChevronDown, ChevronUp, Clock, MapPin, Shield, Zap,
     Gauge, Activity, Compass, Dices, Layers, Bot, ArrowRight
 } from 'lucide-react';
+import { useLLMDirectorGates } from '../../hooks/useLLMProviderStatus';
 
 const TENSION_COLOR = {
     calm: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
@@ -21,6 +22,18 @@ const FATE_OUTCOME_STYLE = {
     failure: 'text-rose-400 bg-rose-500/20 border-rose-500/30',
 };
 
+/**
+ * The offline fallback gate list.
+ *
+ * The backend serves the canonical registry (`GET /llm/director/gates`),
+ * which is what the HUD uses. This copy is only for when that request has
+ * not landed — and it is deliberately kept, because four of its keys are
+ * ALIASES the Director never emits (`gate_location`, `gate_weather`,
+ * `gate_character_activity`, `gate_quests_and_goals`), and each carries a
+ * `fallbackKey` naming the coarse gate the Director does emit in its place.
+ * Those aliases are why the list needs a fallback at all; the canonical
+ * registry has the fine-grained keys and needs none.
+ */
 const SIXTEEN_GATES = [
     { key: 'gate_character_mood', fallbackKey: 'gate_character_mood', label: 'Character Mood' },
     { key: 'gate_scene_tone', fallbackKey: 'gate_scene_tone', label: 'Tone & Atmosphere' },
@@ -44,6 +57,18 @@ export default function DirectorReasoningHUD({ jobData, pendingSpeaker }) {
     const [expanded, setExpanded] = useState(false);
     const [showInspector, setShowInspector] = useState(false);
     const decision = jobData?.directorDecision;
+
+    // The canonical registry, from the same module the Director reads its
+    // gate map from. Until it arrives the offline list above is used, so the
+    // panel is never empty and never invents gates the Director does not
+    // emit.
+    const gatesQuery = useLLMDirectorGates();
+    const registry = gatesQuery.data;
+    const canonicalGates = registry?.categories?.flatMap((c) => c.gates || []) || null;
+    const gates = canonicalGates && canonicalGates.length > 0
+        ? canonicalGates.map((g) => ({ key: g.key, fallbackKey: g.key, label: g.label }))
+        : SIXTEEN_GATES;
+    const gateThreshold = registry?.threshold ?? decision?.updater_evaluation?.activation_threshold ?? 0.55;
 
     return (
         <div className="mb-2 rounded-xl border border-white/10 bg-gray-900/80 backdrop-blur-md overflow-hidden text-xs shadow-lg transition-all duration-300">
@@ -237,10 +262,10 @@ export default function DirectorReasoningHUD({ jobData, pendingSpeaker }) {
                             )}
 
                             <div className="space-y-1 max-h-60 overflow-y-auto custom-scrollbar pr-1">
-                                {SIXTEEN_GATES.map(({ key, fallbackKey, label }) => {
+                                {gates.map(({ key, fallbackKey, label }) => {
                                     const prob = decision.updater_gates?.[key] ?? decision.updater_gates?.[fallbackKey];
                                     const pct = Math.round((prob || 0) * 100);
-                                    const thresholdPct = Math.round((decision.updater_evaluation?.activation_threshold || 0.55) * 100);
+                                    const thresholdPct = Math.round((gateThreshold || 0.55) * 100);
                                     const active = pct >= thresholdPct;
                                     return (
                                         <div key={key} className="space-y-0.5">

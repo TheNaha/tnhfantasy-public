@@ -120,9 +120,45 @@ export function useLLMAvailableModels() {
  */
 export function useLLMProviderTest() {
     return useMutation({
-        mutationFn: (providerId) => api.post(`/api/v2/llm/providers/${providerId}/test`),
+        mutationFn: (providerId) => api.post(`${API_V2_BASE}/llm/providers/${providerId}/test`),
     });
 }
+
+export const LLM_PROVIDERS_HEALTH_KEY = ['llm', 'providers', 'health'];
+
+/**
+ * useProvidersHealth — the aggregate health of every LLM/hybrid provider.
+ *
+ * `GET /llm/providers/health` runs the real connectivity check against every
+ * registered LLM or hybrid provider in parallel and reports how many are up.
+ * It was the one worker-health signal the backend computed and nothing in the
+ * frontend ever asked for, so the roleplay surface had no way to say "every
+ * LLM provider is down" — the user just saw a failed job.
+ *
+ * The check is a live probe, so it is polled on a slow interval rather than
+ * fetched on every render. A 404 means no providers are registered at all,
+ * which is a legitimate state (and not an error).
+ */
+export function useProvidersHealth(options = {}) {
+    return useQuery({
+        queryKey: LLM_PROVIDERS_HEALTH_KEY,
+        queryFn: async ({ signal } = {}) => {
+            try {
+                return await api.get(`${API_V2_BASE}/llm/providers/health`, { signal });
+            } catch (err) {
+                if (err?.status === 404 || err?.response?.status === 404) {
+                    return { providers: [], healthy_count: 0, total_count: 0 };
+                }
+                throw err;
+            }
+        },
+        staleTime: 60_000,
+        refetchInterval: 120_000,
+        retry: 1,
+        ...options,
+    });
+}
+
 
 /**
  * Set the default LLM provider and model.

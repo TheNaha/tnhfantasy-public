@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ModalOverlay from './ModalOverlay';
@@ -24,19 +25,40 @@ import CivitaiSearchModal from '../model-manager/CivitaiSearchModal';
 
 vi.mock('../ProgressiveImage', () => ({ default: () => <img data-testid="mock-image" alt="" /> }));
 vi.mock('../../api', () => ({
-    api: { get: vi.fn().mockResolvedValue({ items: [] }), post: vi.fn().mockResolvedValue({}) },
-    default: { get: vi.fn().mockResolvedValue({ items: [] }), post: vi.fn().mockResolvedValue({}) },
+    api: {
+        // `CharacterDetailsModal` lists the character's own conversations, so
+        // the chats endpoint has to answer with a list. Everything else in
+        // this file answers with the generic collection shape.
+        get: vi.fn((url) =>
+            Promise.resolve(String(url).includes('/chats') ? [] : { items: [] })
+        ),
+        post: vi.fn().mockResolvedValue({}),
+    },
+    getApiUrl: () => 'http://localhost:8002',
+    default: {
+        get: vi.fn((url) =>
+            Promise.resolve(String(url).includes('/chats') ? [] : { items: [] })
+        ),
+        post: vi.fn().mockResolvedValue({}),
+    },
 }));
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 /**
  * `ImageLightbox` renders `AssetTagEditor`, which is query-backed, so it needs a
- * QueryClient the other dialogs in this file do not. Wrapping here rather than
- * per-case keeps every `render` in the file uniform; no assertion changed.
+ * QueryClient the other dialogs in this file do not. `CharacterDetailsModal`
+ * needs a Router as well — it links to the character page and to the
+ * character's chats, and `useNavigate` throws outside a Router. Wrapping here
+ * rather than per-case keeps every `render` in the file uniform; no assertion
+ * changed.
  */
 function renderWithQuery(ui) {
-    return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+    return render(
+        <QueryClientProvider client={queryClient}>
+            <MemoryRouter>{ui}</MemoryRouter>
+        </QueryClientProvider>
+    );
 }
 
 const character = {
@@ -111,7 +133,7 @@ describe('converted dialogs: mounted only while open', () => {
         const onCloseOuter = vi.fn();
         const onCloseInner = vi.fn();
 
-        render(
+        renderWithQuery(
             <>
                 <CharacterDetailsModal character={character} onClose={onCloseOuter} />
                 <NewChatModal characters={[character]} lorebooks={[]} onCreate={vi.fn()} onClose={onCloseInner} />

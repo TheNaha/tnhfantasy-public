@@ -2327,7 +2327,12 @@ def commit_world_blueprint(
             character.default_location = char_bp.get("default_location") or character.default_location
             character.default_time = char_bp.get("default_time") or character.default_time
             character.suggested_persona = char_bp.get("suggested_persona") or character.suggested_persona
-            character.world_id = world.id
+            # `world_id` is written through `link_to_world`, like every other
+            # member. Assigning the column here made this the second writer,
+            # which is the thing `world_ownership` exists to prevent: a member
+            # linked here and unlinked elsewhere leaves the world counting a
+            # member that does not belong to it.
+            link_to_world(session, character, world.id)
             if created_lorebook_ids := ([created_lorebook_id] if created_lorebook_id else []):
                 merged_lids = list(character.lorebook_ids or [])
                 for lid in created_lorebook_ids:

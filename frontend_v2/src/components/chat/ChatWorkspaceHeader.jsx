@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     PanelLeftOpen, PanelLeftClose, PanelRightOpen, MessageSquare, Sparkles,
     Loader2, Clock, MapPin, Download, FileJson, BookOpen, GitBranch, Search,
@@ -36,6 +37,7 @@ export default function ChatWorkspaceHeader({
     const [showCompanionModal, setShowCompanionModal] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchOpen, setSearchOpen] = useState(false);
+    const navigate = useNavigate();
 
     const handleSearchToggle = () => {
         if (searchOpen) {
@@ -141,6 +143,17 @@ export default function ChatWorkspaceHeader({
                         {linkedCharacter ? `${linkedCharacter.name}` : (activeChatId ? 'No character' : 'Select a chat')}
                         {activeChat?.persona_name && ` · as ${activeChat.persona_name}`}
                     </p>
+                    {activeChat?.story_id && (
+                        <button
+                            type="button"
+                            onClick={() => navigate(`/story/${activeChat.story_id}`)}
+                            className="text-xs text-indigo-300/90 hover:text-indigo-200 inline-flex items-center gap-1 mt-0.5 transition-colors"
+                            title="This chat was started from that story — open it"
+                        >
+                            <BookOpen size={11} />
+                            <span className="truncate max-w-[220px]">from story</span>
+                        </button>
+                    )}
                 </div>
             </div>
             

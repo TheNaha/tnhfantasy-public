@@ -475,10 +475,38 @@ async def test_app_serves_requests_after_boot(client, boot):
     # `GET /models/catalog`, `GET /llm/catalog`, and `PUT /llm/catalog/active`.
     # 265 -> 278 for the 13 World Architect & Onboarding Studio routes under
     # `/api/v2/world-vault/onboarding/*`.
-    assert len(spec["paths"]) == 278, (
+    #
+    # 315 -> 291 for the API-surface cleanup. This is the *falling* direction,
+    # and it is the one the assertion usually exists to catch in the other
+    # direction. Removed:
+    #   - 17 duplicate `/api/v2/world-vault/llm/*` paths and 6 duplicate
+    #     `/api/v2/world-vault/agents/*` paths. The LLM configuration and
+    #     agent routers were mounted TWICE, once under their own prefix and
+    #     once under the World Vault namespace. Nothing consumed the second
+    #     copy: the frontend uses `/api/v2/llm/*` and `/api/v2/agents/*`, and
+    #     the only reference anywhere was one backend test.
+    #   - `GET /api/v2/llm/traces/{chat_id}`, which duplicated
+    #     `GET /api/v2/chats/{chat_id}/director-traces` — the one the frontend
+    #     actually calls — with the same payload shape.
+    #   - `PUT`/`DELETE /api/v2/characters/{character_id}/expressions/{name}`.
+    #     The POST/PUT/DELETE expression sub-routes were a SECOND write path
+    #     to the two columns `PATCH /api/v2/characters/{id}` already owned,
+    #     and the two did not agree: the sub-routes merged one expression at a
+    #     time, PATCH replaced the whole map, and the renderer had to pick a
+    #     winner between two shapes of the same data at read time. PATCH is
+    #     now the only writer; the GET remains.
+    # Added:
+    #   - `GET`/`POST /api/v2/agents/{agent_id}/avatar`. The agents API
+    #     accepted an `avatar_path` from the day it was written and the
+    #     `AgentProfile` model never had the column, so the field was dropped
+    #     on create, raised on update, and made
+    #     `GET /api/v2/llm/agents/with-variants` return HTTP 500 for any
+    #     deployment that had agents in the table. The column, the migration
+    #     and the upload route are the fix.
+    assert len(spec["paths"]) == 291, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 361
+    assert sum(len(ops) for ops in spec["paths"].values()) == 379
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 

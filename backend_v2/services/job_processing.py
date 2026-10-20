@@ -7,12 +7,15 @@ from infrastructure.deps import get_session_context
 from config import settings
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
+from core.pipeline_limits import MAX_AUTONOMOUS_TURNS, UPDATER_GATE_THRESHOLD
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
 from services.chat_utils import extract_first_text
 from services.image_processing import build_job_outputs, normalize_persisted_output
 from services.job_service import FAILURE_FINALIZATION
 from services.orchestrator_service import get_max_agentic_depth
+from services.pipeline_runner import run_from
+from services.pipeline_stages import chain_stage
 
 logger = get_logger("job_processing")
 
@@ -448,242 +451,6 @@ def _classify_llm_job_type(job, final_result: dict[str, Any]) -> str:
     return "chat_reply"
 
 
-async def _stage_chain(
-    session,
-    *,
-    job_service: Any,
-    chat_id: str,
-    character_id: str | None,
-    last_speaker: str,
-    current_turns: int,
-    max_turns: int,
-    autonomy_level: str,
-    branch_id: str | None = None,
-) -> None:
-    """Stage 3 turn chaining: evaluate conductor, run Stage 1 triage/fate check, and enqueue next speaker."""
-    from core.entities import Chat, Character
-    from infrastructure.repositories.message_repo import MessageRepository
-    from services.decision_service import DecisionService
-    from services.agent_variants import resolve_agent, render_agent_template
-    from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
-    from services.llm_config import model_for_kind
-    from services.context_builder import build_context
-    from config import get_system_prompt_blocks
-    from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
-    from services.job_queue import queue_manager
-
-    chat_obj = session.get(Chat, chat_id)
-    if not chat_obj:
-        return
-    char_obj = session.get(Character, character_id or chat_obj.character_id) if (character_id or chat_obj.character_id) else None
-
-    msg_repo = MessageRepository(session)
-    recent_msgs_objs = msg_repo.list_by_chat(chat_id, limit=8, newest_first=True)
-    recent_msgs = [
-        {
-            "role": m.role.value if hasattr(m.role, "value") else str(m.role),
-            "content": m.content or "",
-        }
-        for m in recent_msgs_objs
-    ]
-
-    threshold_by_level = {"strict": 1.0, "balanced": 0.65, "cinematic": 0.50}
-    min_chain_prob = threshold_by_level.get(autonomy_level, 0.65)
-
-    chain_decision = await DecisionService(session).evaluate_turn_chaining(
-        last_speaker=last_speaker,
-        character_name=char_obj.name if char_obj else "Character",
-        user_name=chat_obj.persona_name or "User",
-        story_location=chat_obj.story_location,
-        story_time=chat_obj.story_time,
-        state_snapshot=chat_obj.state_snapshot or {},
-        recent_messages=recent_msgs,
-        has_secondary_character=bool(chat_obj.additional_character_ids),
-        allow_narration=bool(chat_obj.allow_narration),
-        chat_id=chat_id,
-        turn=current_turns,
-    )
-
-    if (
-        chain_decision.continue_chain_probability < min_chain_prob
-        or chain_decision.next_speaker == "user"
-    ):
-        return
-
-    target_speaker = chain_decision.next_speaker
-
-    # Run Stage 1 triage and Fate & Skill check for the target speaker
-    primary_slug = "character"
-    if char_obj and hasattr(char_obj, "slug") and char_obj.slug:
-        primary_slug = char_obj.slug
-    triage_decision = await DecisionService(session).evaluate_pre_generation_triage(
-        character_name=char_obj.name if char_obj else "Character",
-        user_name=chat_obj.persona_name or "User",
-        story_location=chat_obj.story_location,
-        story_time=chat_obj.story_time,
-        state_snapshot=chat_obj.state_snapshot or {},
-        recent_messages=recent_msgs,
-        last_speaker=last_speaker,
-        has_secondary_character=bool(chat_obj.additional_character_ids),
-        allow_narration=bool(chat_obj.allow_narration),
-        primary_character_slug=primary_slug,
-        chat_id=chat_id,
-        turn=current_turns,
-    )
-
-    # Resolve agent and selected sub-variant
-    resolved_agent = resolve_agent(session, target_speaker, variant_slug=triage_decision.selected_variant)
-
-    # Build directive text combining pacing, fate directive, and custom directives
-    directives: list[str] = []
-    if chain_decision.pacing_directive:
-        directives.append(f"Pacing: {chain_decision.pacing_directive}")
-    if triage_decision.fate_directive:
-        directives.append(f"Fate Check: {triage_decision.fate_outcome} ({triage_decision.fate_directive})")
-    for cd in triage_decision.custom_directives:
-        if cd.get("directive"):
-            directives.append(cd["directive"])
-    directive_str = " | ".join(directives)
-
-    if target_speaker == "narrator" and getattr(chat_obj, "allow_narration", True):
-        narrator_prompt = resolved_agent.prompt_template if resolved_agent else ((get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT)
-        system_prompt, context, _sections = await asyncio.to_thread(
-            build_context, session, "chat", chat_obj, recent_msgs_objs,
-        )
-        instruction_content = (
-            f"[Scene Direction] {directive_str}: describe the scene consequences, environment, or passage of time."
-            if directive_str
-            else "[Scene Direction] Describe the scene consequences, environment, or passage of time."
-        )
-        workflow, metadata = build_chat_llm_workflow(
-            messages=[
-                {"role": "system", "content": narrator_prompt},
-                *context,
-                {"role": "user", "content": instruction_content},
-            ],
-            chat_id=chat_id,
-            character_id=char_obj.id if char_obj else None,
-            system_prompt=system_prompt or None,
-            model=model_for_kind("narrator", chat_obj.llm_model, session),
-            samplers={**sampler_overrides(chat_obj), **(resolved_agent.sampler_overrides() if resolved_agent else {})},
-            type_="narrator",
-            source="narrator",
-            extra_metadata={
-                "autonomous_turn_count": current_turns,
-                "max_autonomous_turns": max_turns,
-                "branch_id": branch_id,
-                "selected_variant": triage_decision.selected_variant,
-            },
-        )
-        followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
-        await queue_manager.enqueue(followup_job.id, task_type="llm")
-        logger.info("laya_conductor_narrator_chained", chat_id=chat_id, job_id=followup_job.id, turn=current_turns, variant=triage_decision.selected_variant)
-    elif target_speaker == "secondary_character" and getattr(chat_obj, "additional_character_ids", None):
-        secondary_id = chat_obj.additional_character_ids[0]
-        system_prompt, context, _sections = await asyncio.to_thread(
-            build_context, session, "chat", chat_obj, recent_msgs_objs, active_character_id=secondary_id,
-        )
-        instruction_content = (
-            f"[Scene Direction] {directive_str}: react to the situation."
-            if directive_str
-            else "[Scene Direction] React to the situation."
-        )
-        workflow, metadata = build_chat_llm_workflow(
-            messages=[
-                *context,
-                {"role": "user", "content": instruction_content},
-            ],
-            chat_id=chat_id,
-            character_id=secondary_id,
-            system_prompt=system_prompt or None,
-            model=model_for_kind("chat_reply", chat_obj.llm_model, session),
-            samplers=sampler_overrides(chat_obj),
-            extra_metadata={
-                "autonomous_turn_count": current_turns,
-                "max_autonomous_turns": max_turns,
-                "branch_id": branch_id,
-            },
-        )
-        followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
-        await queue_manager.enqueue(followup_job.id, task_type="llm")
-        logger.info("laya_conductor_secondary_char_chained", chat_id=chat_id, secondary_id=secondary_id, job_id=followup_job.id, turn=current_turns)
-    elif target_speaker == "character" and char_obj is not None:
-        char_custom_prompt = resolved_agent.prompt_template if resolved_agent else None
-        system_prompt, context, _sections = await asyncio.to_thread(
-            build_context, session, "chat", chat_obj, recent_msgs_objs,
-        )
-        instruction_content = (
-            f"[Scene Direction] {directive_str}: continue the scene as {char_obj.name}."
-            if directive_str
-            else f"[Scene Direction] Continue the scene as {char_obj.name}."
-        )
-        workflow, metadata = build_chat_llm_workflow(
-            messages=[
-                *context,
-                {"role": "user", "content": instruction_content},
-            ],
-            chat_id=chat_id,
-            character_id=char_obj.id,
-            system_prompt=(char_custom_prompt or system_prompt) or None,
-            model=model_for_kind("chat_reply", chat_obj.llm_model, session),
-            samplers={**sampler_overrides(chat_obj), **(resolved_agent.sampler_overrides() if resolved_agent else {})},
-            type_="chat_reply",
-            source="character",
-            extra_metadata={
-                "autonomous_turn_count": current_turns,
-                "max_autonomous_turns": max_turns,
-                "branch_id": branch_id,
-                "selected_variant": triage_decision.selected_variant,
-            },
-        )
-        followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
-        await queue_manager.enqueue(followup_job.id, task_type="llm")
-        logger.info("laya_conductor_character_chained", chat_id=chat_id, job_id=followup_job.id, turn=current_turns, variant=triage_decision.selected_variant)
-    elif resolved_agent:
-        custom_agent = resolved_agent.profile
-        char_name = char_obj.name if char_obj else "Character"
-        u_name = chat_obj.persona_name or "User"
-        rendered_prompt = render_agent_template(
-            resolved_agent.prompt_template,
-            character_name=char_name,
-            user_name=u_name,
-            story_location=chat_obj.story_location or "",
-            story_time=chat_obj.story_time or "",
-        )
-        system_prompt, context, _sections = await asyncio.to_thread(
-            build_context, session, "chat", chat_obj, recent_msgs_objs,
-        )
-        instruction_content = (
-            f"[Agent Directive: {custom_agent.name}] {directive_str}: Continue the scene according to your persona and expertise."
-            if directive_str
-            else f"[Agent Directive: {custom_agent.name}] Continue the scene according to your persona and expertise."
-        )
-        workflow, metadata = build_chat_llm_workflow(
-            messages=[
-                {"role": "system", "content": rendered_prompt},
-                *context,
-                {"role": "user", "content": instruction_content},
-            ],
-            chat_id=chat_id,
-            character_id=char_obj.id if char_obj else None,
-            system_prompt=system_prompt or None,
-            model=model_for_kind(custom_agent.model_target, custom_agent.model_override or chat_obj.llm_model, session),
-            samplers={**sampler_overrides(chat_obj), **resolved_agent.sampler_overrides()},
-            type_="chat_reply",
-            source="custom_agent",
-            extra_metadata={
-                "autonomous_turn_count": current_turns,
-                "max_autonomous_turns": max_turns,
-                "branch_id": branch_id,
-                "agent_slug": target_speaker,
-                "selected_variant": triage_decision.selected_variant,
-            },
-        )
-        followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
-        await queue_manager.enqueue(followup_job.id, task_type="llm")
-        logger.info("laya_conductor_custom_agent_chained", chat_id=chat_id, agent=target_speaker, job_id=followup_job.id, turn=current_turns, variant=triage_decision.selected_variant)
-
-
 async def _finalize_llm_job(
     *,
     job,
@@ -820,16 +587,22 @@ async def _finalize_llm_job(
         )
         if pending_chain and chat_id and hasattr(job_service, "session") and job_service.session:
             try:
-                await _stage_chain(
-                    job_service.session,
-                    job_service=job_service,
-                    chat_id=chat_id,
-                    character_id=character_id,
-                    last_speaker=pending_chain.get("last_speaker", "character"),
-                    current_turns=int(pending_chain.get("turn", 1)),
-                    max_turns=int(pending_chain.get("max_turns", 4)),
-                    autonomy_level=pending_chain.get("autonomy_level", "balanced"),
-                    branch_id=pending_chain.get("branch_id"),
+                # The chain that the Statekeeper deferred. It runs HERE, in
+                # the updater job's completion hook, rather than straight after
+                # the update — so that it reads the state the Statekeeper has
+                # just written instead of the pre-update snapshot.
+                await chain_stage(
+                    {
+                        "session": job_service.session,
+                        "job_service": job_service,
+                        "chat_id": chat_id,
+                        "character_id": character_id,
+                        "last_speaker": pending_chain.get("last_speaker", "character"),
+                        "current_turns": int(pending_chain.get("turn", 1)),
+                        "max_turns": int(pending_chain.get("max_turns", MAX_AUTONOMOUS_TURNS)),
+                        "autonomy_level": pending_chain.get("autonomy_level", "balanced"),
+                        "branch_id": pending_chain.get("branch_id"),
+                    }
                 )
             except Exception as chain_exc:
                 logger.warning("chained_turn_after_updater_failed", chat_id=chat_id, error=str(chain_exc))
@@ -916,9 +689,13 @@ async def _finalize_llm_job(
                     if isinstance(t, dict) and t.get("function", {}).get("name")
                 }
                 if not allowed_tools:
-                    allowed_tools = {"generate_image"} if is_story_job else {
-                        "generate_image", "narrate_scene", "update_world_state"
-                    }
+                    # `generate_image` is the only tool `AGENTIC_TOOLS` defines.
+                    # This list used to name `narrate_scene` and
+                    # `update_world_state` as well, but neither tool exists, so
+                    # the two names were dead allow-list entries that could
+                    # never match a call and made the tool set look wider than
+                    # it was.
+                    allowed_tools = {"generate_image"}
                 from services.orchestrator_service import process_tool_calls_and_chain
                 from services.job_queue import queue_manager
 
@@ -1036,8 +813,6 @@ async def _finalize_llm_job(
             try:
                 from core.entities import Chat, Character
                 from infrastructure.repositories.message_repo import MessageRepository
-                from services.decision_service import DecisionService
-                from services.updater_service import record_director_decision, enqueue_state_updater_if_needed
 
                 session = job_service.session
                 chat_obj = session.get(Chat, chat_id)
@@ -1057,143 +832,44 @@ async def _finalize_llm_job(
                     continuation_count = int(job_meta.get("continuation_count", 0))
                     current_turns = int(job_meta.get("autonomous_turn_count", 1))
 
-                    # 1. Stage 2 Post-Generation Audit (Completion Check & Gating)
-                    audit_decision = await DecisionService(session).evaluate_post_generation_audit(
-                        generated_text=assistant_content or "",
-                        character_name=char_obj.name if char_obj else "Character",
-                        user_name=chat_obj.persona_name or "User",
-                        story_location=chat_obj.story_location,
-                        story_time=chat_obj.story_time,
-                        state_snapshot=chat_obj.state_snapshot or {},
-                        recent_messages=recent_msgs,
-                        allow_image_generation=bool(chat_obj.allow_image_generation),
-                        chat_id=chat_id,
-                        turn=current_turns,
+                    # Stages 3-6, in the order the manifest declares them.
+                    #
+                    # `run_from("audit", ...)` walks
+                    # `PIPELINE_STAGES["audit"].next_stages` — the audit
+                    # itself, then illustrate, update, chain — and each stage
+                    # is the function the manifest names. The order and the
+                    # limits come from `services/chat_pipeline.py` now, not
+                    # from the shape of this function.
+                    pipeline_ctx = await run_from(
+                        "audit",
+                        {
+                            "session": session,
+                            "job_service": job_service,
+                            "job": job,
+                            "job_id": job_id,
+                            "chat": chat_obj,
+                            "character": char_obj,
+                            "chat_id": chat_id,
+                            "character_id": character_id,
+                            "assistant_content": assistant_content,
+                            "final_result": final_result,
+                            "outputs": outputs,
+                            "recent_msgs": recent_msgs,
+                            "recent_msgs_objs": recent_msgs_objs,
+                            "last_speaker": last_speaker,
+                            "current_turns": current_turns,
+                            "continuation_count": continuation_count,
+                            "job_meta": job_meta,
+                        },
                     )
 
-                    # Continuation check: check finish_reason == "length" first, fallback to Laya is_complete
-                    finish_reason = (
-                        final_result.get("finish_reason")
-                        or (outputs[0].get("finish_reason") if outputs and isinstance(outputs[0], dict) else None)
-                        or ""
-                    )
-                    is_incomplete = (finish_reason == "length") or (not audit_decision.is_complete)
-                    if is_incomplete and continuation_count < 4:
-                        from services.agent_variants import resolve_agent, render_agent_template
-                        from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
-                        from services.llm_config import model_for_kind
-                        from services.context_builder import build_context
-
-                        system_prompt, context, _sections = await asyncio.to_thread(
-                            build_context, session, "chat", chat_obj, recent_msgs_objs,
-                        )
-
-                        resolved_cont_agent = resolve_agent(session, "continuation", require_enabled=False)
-                        fallback_prompt = (
-                            "[System Note: Your previous response was cut off mid-thought. Continue seamlessly from the exact word where you stopped, without repeating previous text.]"
-                        )
-                        cont_instruction = None
-                        cont_agent_slug = None
-                        cont_variant_slug = None
-                        cont_samplers: dict = {}
-                        if resolved_cont_agent is not None:
-                            cont_agent_slug = resolved_cont_agent.slug
-                            cont_variant_slug = resolved_cont_agent.variant_slug
-                            cont_instruction = render_agent_template(
-                                resolved_cont_agent.prompt_template,
-                                character_name=char_obj.name if char_obj else "Character",
-                                user_name=chat_obj.persona_name or "User",
-                                story_location=chat_obj.story_location or "",
-                                story_time=chat_obj.story_time or "",
-                            )
-                            cont_samplers = resolved_cont_agent.sampler_overrides()
-                        if cont_instruction is None:
-                            cont_instruction = fallback_prompt
-
-                        cont_workflow, cont_metadata = build_chat_llm_workflow(
-                            messages=[
-                                *context,
-                                {"role": "assistant", "content": assistant_content or ""},
-                                {"role": "user", "content": cont_instruction},
-                            ],
-                            chat_id=chat_id,
-                            character_id=char_obj.id if char_obj else None,
-                            system_prompt=system_prompt or None,
-                            model=model_for_kind("chat_reply", chat_obj.llm_model, session),
-                            samplers={**sampler_overrides(chat_obj), **cont_samplers},
-                            type_="chat_reply",
-                            source="continuation",
-                            extra_metadata={
-                                "continuation_count": continuation_count + 1,
-                                "continuation_of_job_id": job.id,
-                                "branch_id": job_meta.get("branch_id"),
-                                "autonomous_turn_count": job_meta.get("autonomous_turn_count", 1),
-                                "max_autonomous_turns": job_meta.get("max_autonomous_turns", 4),
-                                "agent_slug": cont_agent_slug or "continuation",
-                                "agent_variant_slug": cont_variant_slug,
-                            },
-                        )
-                        cont_job = await job_service.create_job(task_type="llm", workflow=cont_workflow, metadata=cont_metadata)
-                        from services.job_queue import queue_manager
-                        await queue_manager.enqueue(cont_job.id, task_type="llm")
-                        logger.info("laya_continuation_triggered", chat_id=chat_id, continuation_count=continuation_count + 1, finish_reason=finish_reason, agent_slug=cont_agent_slug or "continuation", variant_slug=cont_variant_slug)
-                        return
-
-                    # Record the final audited decision
-                    await asyncio.to_thread(record_director_decision, session, chat_id, audit_decision)
-
-                    # 3. Autonomous scene illustration via the Illustrator agent.
+                    # Gated episodic memory extraction. It is not a manifest
+                    # stage: it is a side effect of the durable-memory gate,
+                    # and it has no place in the stage graph.
+                    audit_decision = pipeline_ctx.get("audit_decision")
                     if (
-                        audit_decision.should_trigger_image
-                        and getattr(chat_obj, "allow_image_generation", True)
-                        and job_meta.get("agentic_image_count", 0) < (getattr(chat_obj, "max_agentic_images", 2) or 2)
-                    ):
-                        try:
-                            from services.illustrator_service import enqueue_scene_illustration_job
-                            illustrator_job_id = await enqueue_scene_illustration_job(
-                                session,
-                                job_service=job_service,
-                                chat_id=chat_id,
-                                character_id=character_id or chat_obj.character_id,
-                                source_job_id=job.id,
-                                branch_id=job_meta.get("branch_id"),
-                            )
-                            if illustrator_job_id:
-                                logger.info(
-                                    "illustrator_agent_image_triggered",
-                                    chat_id=chat_id,
-                                    job_id=illustrator_job_id,
-                                )
-                        except Exception as img_exc:
-                            logger.debug("illustrator_agent_trigger_failed", job_id=job.id, error=str(img_exc))
-
-                    # 4. Gated Statekeeper (Updater) scoped to the 16 fine-grained gates & Stage 3 Turn Chaining
-                    autonomy_level = getattr(chat_obj, "director_autonomy_level", "balanced") or "balanced"
-                    max_turns = getattr(chat_obj, "max_autonomous_turns", 4) or 4
-
-                    should_chain = (autonomy_level != "strict" and current_turns < max_turns)
-                    chain_payload = {
-                        "turn": current_turns + 1,
-                        "max_turns": max_turns,
-                        "autonomy_level": autonomy_level,
-                        "branch_id": job_meta.get("branch_id"),
-                        "last_speaker": last_speaker,
-                    } if should_chain else None
-
-                    updater_job_id = None
-                    if audit_decision.should_run_updater and (character_id or chat_obj.character_id):
-                        updater_job_id = await enqueue_state_updater_if_needed(
-                            session,
-                            chat_id=chat_id,
-                            character_id=character_id or chat_obj.character_id,
-                            decision=audit_decision,
-                            job_service=job_service,
-                            pending_chain=chain_payload,
-                        )
-
-                    # 5. Gated episodic memory extraction
-                    if (
-                        audit_decision.updater_gates.get("gate_durable_memory", 0.0) >= 0.55
+                        audit_decision is not None
+                        and audit_decision.updater_gates.get("gate_durable_memory", 0.0) >= UPDATER_GATE_THRESHOLD
                         and (character_id or chat_obj.character_id)
                     ):
                         from services.memory_extraction import enqueue_memory_extraction
@@ -1202,22 +878,6 @@ async def _finalize_llm_job(
                             chat_id=chat_id,
                             character_id=character_id or chat_obj.character_id,
                             job_service=job_service,
-                        )
-
-                    # 6. Stage 3 Autonomous Multi-Turn Scene Chaining
-                    # If an updater job was enqueued, the chain will execute in the updater's completion hook
-                    # to prevent stale state races. If no updater was needed, chain immediately.
-                    if should_chain and not updater_job_id:
-                        await _stage_chain(
-                            session,
-                            job_service=job_service,
-                            chat_id=chat_id,
-                            character_id=character_id or chat_obj.character_id,
-                            last_speaker=last_speaker,
-                            current_turns=current_turns + 1,
-                            max_turns=max_turns,
-                            autonomy_level=autonomy_level,
-                            branch_id=job_meta.get("branch_id"),
                         )
                 elif character_id:
                     from services.memory_extraction import enqueue_memory_extraction
@@ -1228,7 +888,17 @@ async def _finalize_llm_job(
                         job_service=job_service,
                     )
             except Exception as exc:
-                logger.debug("post_turn_director_or_memory_hook_failed", job_id=job_id, error=str(exc))
+                # WARNING, not debug. This handler wraps the whole post-turn
+                # Director block — the audit, the continuation, the illustrator,
+                # the Statekeeper, memory extraction and the turn chain — so a
+                # failure here does not degrade the reply, it deletes the rest
+                # of the pipeline for that turn. At debug level that was
+                # invisible: a TypeError in the Statekeeper's workflow builder
+                # and an ImportError in the chain's prompt import both landed
+                # here, and the suite stayed green while the Updater, the
+                # episodic memory extraction and the autonomous multi-turn
+                # chaining silently never ran.
+                logger.warning("post_turn_director_or_memory_hook_failed", job_id=job_id, error=str(exc))
 
 
 _AUDIO_OUTPUT_SUFFIXES = (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac", ".opus")

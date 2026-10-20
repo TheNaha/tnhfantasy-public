@@ -11,12 +11,12 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
-UPDATER_GATE_THRESHOLD = 0.55
+from core.pipeline_limits import IMAGE_TRIGGER_THRESHOLD, UPDATER_GATE_THRESHOLD
 
-# Laya's illustration trigger is advisory; this is the probability above which
-# an autonomous scene illustration is actually dispatched. Overridable per chat
-# via `state_snapshot.image_threshold` (illustration sensitivity in the UI).
-IMAGE_TRIGGER_THRESHOLD = 0.65
+__all__ = [
+    "IMAGE_TRIGGER_THRESHOLD",
+    "UPDATER_GATE_THRESHOLD",
+]
 
 # Completion confidence bands: Laya's `is_complete` probability is authoritative
 # outside the uncertain band; the structural syntax check decides inside it.

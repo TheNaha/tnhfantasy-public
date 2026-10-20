@@ -50,16 +50,16 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of **2026-10-10**, re-measured after the
-delta audit recorded in `docs/audit-2026-10-10.md`:
+All three suites green as of **2026-10-19**, re-measured after the roleplay
+remediation pass recorded in §1c below:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **3237 passed, 9 skipped** (~6 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
-| Frontend | **1783 passed across 193 files** (~3.5 min) | `cd frontend_v2 && npx vitest run` |
+| Backend | **3757 passed, 5 skipped** (~10.5 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Frontend | **1951 passed across 217 files** (~3 min) | `cd frontend_v2 && npx vitest run` |
 | remote_agent | exports clean (no tests of its own) | covered by `tests/test_in_process_engines.py` contract tests |
 
-`npm run lint` is **0 errors / 2 warnings** and `ruff check .` is clean.
+`npm run lint` is **0 errors / 1 warning** and `ruff check .` is clean.
 
 Stack verified live after the changes: `localhost:5174` → 200,
 `/api/live` and `/api/ready` → 200, and the negative-`limit` probes that used to
@@ -199,7 +199,7 @@ two Dockerfiles (plus `backend_v2/requirements.txt` and
 there because GitHub has no job-level `paths:` — `on.<event>.paths` filters the
 whole workflow — and it is a few minutes on a Dockerfile change.
 
-`docs/api.md` documents **247 of 249** live paths (99.2%) on the 329-operation
+`docs/api.md` documents **289 of 291** live paths (99.3%) on the 379-operation
 router. It had 26 endpoints that did not exist until 2026-09-29, including two
 whole sections under the wrong URL prefix. It is checked against
 `app.openapi()["paths"]`, not against itself — but the check's assertion is
@@ -252,6 +252,137 @@ themselves. See the audit.
 >   offenders are fixed; the architectural cause is not.
 
 ## What was actually wrong, and is now fixed
+
+### The 2026-10-19 roleplay remediation pass
+
+A review of the roleplay subsystem asked whether the pieces were cohesive
+enough. The **data and API layer turned out to be genuinely cohesive** — 21
+entities, every one with a route and a live frontend consumer; world
+membership normalized under `services/world_ownership.py`; one
+`build_context(session, workspace)` serving both chat and story modes; no
+`TODO`/`FIXME`/stub marker anywhere in the roleplay layer.
+
+The **agentic pipeline on top of it was half-alive**, and failed silently.
+Three defects, each proven by a traceback rather than by reading:
+
+1. **`TypeError` in the Statekeeper's workflow builder.**
+   `services/updater_service.py` called `build_llm_workflow()` with
+   `temperature=` and `max_output_tokens=`, which its closed keyword-only
+   signature does not accept. The `try` in that function starts *after* the
+   call, so the error escaped the function and landed in the post-turn hook in
+   `services/job_processing.py`, which swallowed it at **DEBUG** level. The
+   Updater never ran — and because the same hook aborts at that point, neither
+   did memory extraction nor turn chaining. Every chat turn was silently
+   losing three of the pipeline's six stages.
+
+2. **`ImportError` in the chain and continuation paths.**
+   `services/job_processing.py` imported `render_agent_template` from
+   `services.agent_variants`, which does not define it — it lives in
+   `services/chat_utils`. The autonomous multi-turn chain and the truncated-
+   reply continuation both raised on their first statement.
+
+3. **`GET /api/v2/llm/agents/with-variants` returned HTTP 500.**
+   Verified against the running stack, not inferred: the response builder read
+   `profile.avatar_path`, and `AgentProfile` had no such column. It was
+   copy-pasted from `Character`. Any deployment with agents in the table got a
+   500. The existing test could not see it — it guarded with `if body:` and the
+   test database has no seeded agents, so the loop that raised never ran.
+
+A fourth defect was a **dead tier**: the Director's Tier 3 generative
+fallback read `event == "token"` and `status == "success"`, a dialect **no
+engine in the backend emits** (they emit `delta` and `completed`). The tier
+always returned `None`, so the cascade fell through to the deterministic
+heuristic on every single decision, whatever the provider was doing.
+
+**Why the suite was green.** The post-turn Director block is wrapped in
+`except Exception → logger.debug`. That is *why* three defects produced a
+passing build. Every one of those log statements is now `logger.warning`, and
+`backend_v2/tests/test_chat_pipeline_execution.py` (17 tests) exercises the
+stages that had no coverage at all: the Statekeeper's enqueue half, the
+autonomous chain, the continuation, the Director's Tier 3, the manifest's
+contract with the code, and the agents endpoint with a **seeded** agent.
+
+**What else changed, and why:**
+
+- **The pipeline manifest is authoritative.** `services/chat_pipeline.py` used
+  to *describe* a pipeline that lived in `services/job_processing.py`, with
+  nothing connecting the two — and the limits disagreed, in four places at
+  once (the manifest, the entity column default, the executor's literals, and
+  the decision schema's constants). It is now the source of truth: each stage
+  names its executor, `next_stages` declares the order, and every limit is
+  read from the new leaf module `core/pipeline_limits.py`, which the code
+  itself imports. `services/pipeline_runner.py` walks it and
+  `services/pipeline_stages.py` holds the executors. `GET /api/v2/llm/pipeline`
+  therefore cannot quote a number the pipeline does not enforce.
+- **The API surface lost 25 paths and gained one.** The LLM configuration and
+  agent routers were mounted **twice**, once under their own prefix and once
+  under `/world-vault/*`, giving 23 endpoints two URLs each with no consumer
+  of the second copy. `GET /api/v2/llm/traces/{chat_id}` duplicated
+  `GET /api/v2/chats/{chat_id}/director-traces`. The three
+  `POST`/`PUT`/`DELETE /characters/{id}/expressions` sub-routes were a second
+  write path to two columns `PATCH /characters/{id}` already owned, and the
+  two disagreed — the renderer had to pick a winner between two shapes of the
+  same data at read time. `PATCH` is now the only writer; the GET remains.
+  Added: `GET`/`POST /api/v2/agents/{agent_id}/avatar`.
+  **This is a breaking change for any consumer of the `/world-vault/llm/*` and
+  `/world-vault/agents/*` prefixes.**
+- **The gallery code left the World Vault namespace.** `tags.py` (973 lines)
+  and `sessions.py` (696) — 24% of `api/routes/world_vault/` — are gallery
+  domain, not roleplay. They are now `api/routes/gallery/`. **The URLs are
+  unchanged**, so the frontend and every OpenAPI consumer see exactly what
+  they saw before.
+- **TTS and image no longer share LoadBalancer state.** They were both
+  `state_id=1`, so their `provider_failures` and round-robin index were shared
+  and a TTS outage could trip the image circuit breaker for a provider that
+  serves both. TTS is now `state_id=3`, like LLM's `state_id=2`. No migration:
+  `LoadBalancerState` rows are created on demand.
+- **The Updater reads its agent profile.** Its system prompt was a hardcoded
+  string, so editing the `updater` agent in the LLM Studio changed nothing.
+  It now resolves the profile and its active variant, the way every other
+  agent type already worked. The "output valid JSON only" instruction is
+  appended after the agent's own text, because it is the one requirement a
+  prompt rewrite must not be able to break — and the JSON-extraction
+  temperature and token ceiling override the agent's own sampling, so a
+  variant written for prose cannot make the extractor write prose.
+- **The agent slug is editable again.** The Agent Studio's slug field is
+  enabled for anything that is not a built-in, and it sends the slug on
+  save — but `AgentProfileUpdate` never declared it, so the backend dropped
+  it silently and the user's new slug vanished on reload. It is now declared
+  and applied, with the same normalisation and collision check the create
+  route uses. A built-in agent's slug is refused rather than changed,
+  because a built-in is looked up *by* its slug. The request models also
+  set `extra="forbid"` now, so a misspelled field is a 422 rather than a
+  silent drop — which is only safe because the field the Studio actually
+  sends is declared.
+- **Chat and story can point at each other.** `Chat.story_id` and
+  `Story.chat_id` are nullable provenance columns — two columns, not a link
+  table, because each direction is genuinely one-way and a pair is never
+  linked both ways.
+- **The roleplay UI shows worker health.** `GET /api/v2/llm/providers/health`
+  was computed by the backend and requested by nothing, so a user whose only
+  LLM provider was down saw a failed job and nothing else. There is now a
+  banner and a card on the roleplay front door, and a link to the LLM Studio
+  from there. The chat panel also shows **which agent Laya routed the reply
+  to** — `context_trace["selected_agent"]` was written by the backend and read
+  by nobody — and reads the gate registry from
+  `GET /api/v2/llm/director/gates` instead of a hand-copied list.
+- **Three dead internal links are fixed.** `/stories?storyId=` and
+  `/chats?chatId=` were not routes; `/worlds/${id}` was a route with no
+  `:worldId` parameter. A character could not be reached from its own chats
+  anywhere, so `GET /api/v2/chats` grew a `character_id` filter and the
+  character panel lists its conversations.
+
+**Two of the twelve pre-existing test failures were not what they looked
+like.** The eleven world-onboarding routes reported as blocking the event
+loop were a **false positive in the analyser**: it collected `ast.Await` but
+not `ast.AsyncFor`, so it could not see that the LLM call underneath
+(`async for event in engine.inference(...)`, which really does suspend on
+`await client.post(...)`) was a genuine suspension. Converting eleven routes
+to plain `def` on the strength of that would have changed their concurrency
+behaviour for no reason; the analyser was fixed instead, and it still flags
+all 23 routes that are registered as known debt. The other was a genuine
+second writer for `world_id` in `world_onboarding_service.py`, which now goes
+through `link_to_world` like every other member.
 
 ### The 2026-10-09 consolidation-cleanup pass
 

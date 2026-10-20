@@ -1,6 +1,6 @@
 """Image tags, and the facet query that answers "what used this?".
 
-Router paths are mounted under `/api/v2` by `world_vault/__init__.py` with no
+Router paths are mounted under `/api/v2` by `gallery/__init__.py` with no
 sub-prefix, so the public paths are:
 
     GET    /api/v2/asset/{asset_id}/tags   list one image's tags + provenance

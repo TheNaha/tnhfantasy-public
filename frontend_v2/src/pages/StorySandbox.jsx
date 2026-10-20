@@ -1267,6 +1267,7 @@ export default function StorySandbox() {
                                     onExport={handleExportStory}
                                     onStartChat={handleStartChat}
                                     isStartingChat={startChat.isPending}
+                                    onOpenOriginChat={(chatId) => navigate(`/chat/${chatId}`)}
                                 />
                                 <StoryEditor
                                     isPreviewMode={isPreviewMode}

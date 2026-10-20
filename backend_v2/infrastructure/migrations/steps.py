@@ -1890,6 +1890,16 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add agent_prompt_variants.tags/selection_hint so Laya can route to a sub-variant per situation, and seed example (inactive) sub-variants for the built-in character and narrator agents",
             apply_fn=_migration_104_variant_routing_tags,
         ),
+        MigrationStep(
+            version="105_agent_profile_avatar_path",
+            description="Add agent_profiles.avatar_path so the agents API stops dropping the field and GET /llm/agents/with-variants stops returning HTTP 500",
+            apply_fn=_migration_105_agent_profile_avatar_path,
+        ),
+        MigrationStep(
+            version="106_chat_story_provenance",
+            description="Add chats.story_id and stories.chat_id so a chat started from a story and a story exported from a chat can point at each other",
+            apply_fn=_migration_106_chat_story_provenance,
+        ),
     ]
 
 
@@ -5324,4 +5334,69 @@ def _migration_104_variant_routing_tags(conn) -> bool:
             },
         )
         logger.info("builtin_subvariant_seeded", slug=slug, agent=agent_slug)
+    return True
+
+
+def _migration_105_agent_profile_avatar_path(conn) -> bool:
+    """Add avatar_path to agent_profiles.
+
+    The agents API accepted and assigned `avatar_path` from the day it was
+    written, but `AgentProfile` never had the column, so the value was silently
+    dropped on create and raised a ValueError on update (which aborted the
+    whole update, because the raise preceded the commit). The
+    `GET /llm/agents/with-variants` response builder read the attribute and
+    returned HTTP 500 for any deployment that had agents in the table.
+    """
+    inspector = inspect(conn)
+    if "agent_profiles" not in set(inspector.get_table_names()):
+        # Fresh install: create_all builds the table with the column.
+        return True
+
+    columns = _get_table_columns(conn, "agent_profiles")
+    if "avatar_path" not in columns:
+        conn.execute(text("ALTER TABLE agent_profiles ADD COLUMN avatar_path TEXT"))
+        logger.info("migration_column_added", table="agent_profiles", column="avatar_path")
+    _verify_required_columns(conn, "agent_profiles", {"avatar_path"})
+    return True
+
+
+def _migration_106_chat_story_provenance(conn) -> bool:
+    """Add the chat<->story provenance columns.
+
+    A chat and a story could already be converted into one another, but
+    nothing recorded that they were the same piece of work: the two were
+    separate objects that happened to share content, and neither could point
+    at the other.
+
+    Two nullable columns, not a link table. Each direction is genuinely
+    one-way, and a pair is never linked in both directions — starting a chat
+    from a story and exporting that chat back to a story produces a NEW
+    story rather than a cycle, so a many-to-many table would model a shape
+    the data never takes.
+    """
+    inspector = inspect(conn)
+    tables = set(inspector.get_table_names())
+    if "chats" not in tables or "stories" not in tables:
+        # Fresh install: create_all builds both tables with the columns.
+        return True
+
+    is_postgres = conn.dialect.name == "postgresql"
+
+    if "story_id" not in _get_table_columns(conn, "chats"):
+        conn.execute(text("ALTER TABLE chats ADD COLUMN story_id TEXT"))
+        logger.info("migration_column_added", table="chats", column="story_id")
+        if is_postgres:
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS idx_chat_story_id ON chats (story_id)")
+            )
+        else:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chat_story_id ON chats (story_id)"))
+
+    if "chat_id" not in _get_table_columns(conn, "stories"):
+        conn.execute(text("ALTER TABLE stories ADD COLUMN chat_id TEXT"))
+        logger.info("migration_column_added", table="stories", column="chat_id")
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_story_chat_id ON stories (chat_id)"))
+
+    _verify_required_columns(conn, "chats", {"story_id"})
+    _verify_required_columns(conn, "stories", {"chat_id"})
     return True

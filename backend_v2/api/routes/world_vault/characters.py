@@ -385,56 +385,16 @@ class ExpressionUpdateRequest(BaseModel):
     image_path: str | None = None
     lora: str | None = None
 
-@router.post("/{character_id}/expressions")
-def add_character_expression(character_id: str, req: ExpressionUpdateRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
-    character = character_repo.get(character_id)
-    if not character:
-        raise NotFoundError("Character", character_id)
-    expressions = dict(character.expressions or {})
-    expressions[req.name] = req.image_path or ""
-    character.expressions = expressions
-    if req.lora:
-        loras = list(character.expressions_lora or [])
-        if req.lora not in loras:
-            loras.append(req.lora)
-            character.expressions_lora = loras
-    character.updated_at = datetime.now(timezone.utc)
-    session.add(character)
-    session.commit()
-    session.refresh(character)
-    return _character_to_dict(character)
-
-@router.put("/{character_id}/expressions/{name}")
-def update_character_expression(character_id: str, name: str, req: ExpressionUpdateRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
-    character = character_repo.get(character_id)
-    if not character:
-        raise NotFoundError("Character", character_id)
-    expressions = dict(character.expressions or {})
-    if name not in expressions:
-        raise NotFoundError("Expression", name)
-    expressions[name] = req.image_path or ""
-    character.expressions = expressions
-    character.updated_at = datetime.now(timezone.utc)
-    session.add(character)
-    session.commit()
-    session.refresh(character)
-    return _character_to_dict(character)
-
-@router.delete("/{character_id}/expressions/{name}")
-def delete_character_expression(character_id: str, name: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
-    character = character_repo.get(character_id)
-    if not character:
-        raise NotFoundError("Character", character_id)
-    expressions = dict(character.expressions or {})
-    if name not in expressions:
-        raise NotFoundError("Expression", name)
-    expressions.pop(name, None)
-    character.expressions = expressions
-    character.updated_at = datetime.now(timezone.utc)
-    session.add(character)
-    session.commit()
-    session.refresh(character)
-    return _character_to_dict(character)
+# The POST/PUT/DELETE `/characters/{id}/expressions` sub-routes were removed.
+#
+# They were a SECOND write path to the same two columns that
+# `PATCH /characters/{id}` already owns, and the two did not agree: the
+# sub-routes merged one expression at a time and appended LoRAs, while PATCH
+# replaced the whole map. The frontend used PATCH (`hooks/useExpressions.js`)
+# and the sub-routes had no consumer, so the renderer had to pick a winner
+# between two shapes of the same data at read time
+# (`components/chat/ExpressionSelector.jsx`). PATCH is now the only writer.
+# Reading the expressions is still supported: `GET /{character_id}/expressions`.
 
 @router.get("/{character_id}")
 def get_character(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):

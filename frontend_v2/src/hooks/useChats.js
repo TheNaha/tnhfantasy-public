@@ -5,14 +5,16 @@ import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { isActiveJobStatus } from '../utils/jobStatus';
 
 // Chat cache layout:
-//   ['world_vault','chats','list',workspace,limit,offset]  the list
-//   ['world_vault','chats','list','search',query]           the sidebar search
+//   ['world_vault','chats','list',workspace,limit,offset,query,character]  the list
 //   ['world_vault','chats',chatId]                         one chat's detail
 //   ['world_vault','chats',chatId,'system-prompt'|'jobs'|'images'|'branches']
 //
 // The list used to hang off the root with no marker of its own, so every
 // `invalidateQueries({queryKey: CHAT_LIST_KEY})` — rename, update, send, import,
 // create — also refetched the system-prompt assembly of every cached chat.
+//
+// The list's own key used to be spelled three different ways. See
+// `chatListKey` below.
 const CHATS_ROOT_KEY = buildQueryKey(QUERY_KEYS.CHATS);
 const MESSAGES_ROOT_KEY = buildQueryKey(QUERY_KEYS.MESSAGES);
 const CHAT_LIST_KEY = [...CHATS_ROOT_KEY, 'list'];
@@ -20,14 +22,60 @@ const CHAT_DETAIL_KEY = (chatId) => [...CHATS_ROOT_KEY, chatId];
 
 export { CHATS_ROOT_KEY, CHAT_LIST_KEY };
 
-export const useChats = ({ limit = 50, offset = 0, workspace } = {}) => {
+/**
+ * The one key factory for every chat-list query.
+ *
+ * The chat list used to be cached under three different keys: the plain list
+ * (`list`, workspace, limit, offset), the sidebar search (`list`, 'search',
+ * query), and a bare `list` used by the onboarding hooks. React Query matches
+ * a query key by PREFIX, so the bare `list` key was a prefix of both of the
+ * others — an invalidation aimed at one of them hit all three, and a stale
+ * list could survive an update because the invalidation missed the key the
+ * list was actually stored under.
+ *
+ * Every list query now goes through this factory, and the shapes are
+ * distinct enough that a prefix match can only ever mean "all chat lists",
+ * which is what an invalidation after a chat was created or deleted wants.
+ */
+export const chatListKey = ({ workspace, limit, offset, query, character_id } = {}) =>
+    buildQueryKey(
+        QUERY_KEYS.CHATS,
+        'list',
+        workspace ?? null,
+        limit ?? null,
+        offset ?? null,
+        query ?? null,
+        character_id ?? null
+    );
+
+export const useChats = ({ limit = 50, offset = 0, workspace, character_id } = {}) => {
     const params = {};
     if (workspace) params.workspace = workspace;
+    if (character_id) params.character_id = character_id;
     if (limit) params.limit = limit;
     if (offset) params.offset = offset;
     return useQuery({
-        queryKey: buildQueryKey(QUERY_KEYS.CHATS, 'list', workspace, limit, offset),
+        queryKey: chatListKey({ workspace, limit, offset, character_id }),
         queryFn: ({ signal }) => api.get('/api/v2/chats', { params, signal })
+    });
+};
+
+/**
+ * The chats a character appears in — as the primary character or as one of
+ * the additional cast.
+ *
+ * There was no way to get from a character to its conversations: the chat
+ * list had no character filter, so the only route was to read every chat in
+ * the vault and look.
+ */
+export const useChatsByCharacter = (characterId, { limit = 20 } = {}) => {
+    return useQuery({
+        queryKey: chatListKey({ character_id: characterId, limit }),
+        queryFn: ({ signal }) => api.get('/api/v2/chats', {
+            params: { character_id: characterId, limit },
+            signal,
+        }),
+        enabled: Boolean(characterId),
     });
 };
 
@@ -314,7 +362,7 @@ export const CHAT_SEARCH_MIN_LENGTH = 2;
 
 export const useSearchChats = (query) => {
     return useQuery({
-        queryKey: buildQueryKey(QUERY_KEYS.CHATS, 'list', 'search', query),
+        queryKey: chatListKey({ query }),
         queryFn: ({ signal }) => api.get('/api/v2/chats', { params: { q: query }, signal }),
         enabled: !!query && query.trim().length >= CHAT_SEARCH_MIN_LENGTH,
     });

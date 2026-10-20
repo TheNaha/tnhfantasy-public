@@ -2904,6 +2904,10 @@ def start_chat_from_story(
         persona_name=story.persona_name,
         persona_description=story.persona_description,
         llm_model=story.llm_model,
+        # Provenance: this chat was started FROM this story. The other
+        # direction (`Story.chat_id`) is set when a chat is exported to a
+        # story.
+        story_id=story.id,
     )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at

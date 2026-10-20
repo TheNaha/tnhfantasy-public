@@ -132,7 +132,7 @@ DB-backed gallery index (replaces the old in-memory `GalleryIndexer`). The asset
 
 ### Chats (`/api/v2/chats`) — Roleplay pillar
 
-- `GET /api/v2/chats` — List chats. Query: `workspace=roleplay` selects roleplay chats (`chat_type == workspace`).
+- `GET /api/v2/chats` — List chats. Query: `workspace=roleplay` selects roleplay chats (`chat_type == workspace`); `character_id=<id>` selects the chats a character is in, as the primary character or as one of the additional cast.
 - `POST /api/v2/chats` — Create a chat. Body: `{character_id, title?, chat_type?}`; auto-creates a root message.
 - `GET /api/v2/chats/{chat_id}` — Fetch a chat + its character.
 - `PATCH /api/v2/chats/{chat_id}` — Update chat-level fields (title, chat type).
@@ -150,8 +150,14 @@ DB-backed gallery index (replaces the old in-memory `GalleryIndexer`). The asset
 - `POST /api/v2/chats/{chat_id}/messages/{message_id}/swipe` — Swipe to a regenerated variant (returns `Message`).
 - `POST /api/v2/chats/{chat_id}/rollback` — Rollback the conversation to a prior message.
 - `POST /api/v2/chats/{chat_id}/regenerate` — Regenerate the last assistant turn.
+- `GET /api/v2/chats/{chat_id}/director-traces` — The Laya System 1 decision trace for every turn of this chat.
+- `POST /api/v2/chats/{chat_id}/director/evaluate` — Run one Director decision (triage, audit or chaining) against the chat's current state and return it.
+- `PATCH /api/v2/chats/{chat_id}/state-snapshot` — Replace the chat's `state_snapshot`.
+- `POST /api/v2/chats/{chat_id}/export-story` — Create a story from this chat. The new story records `chat_id`, so the two stay linked.
 
-> Agentic mode: the orchestrator (`MAX_AGENTIC_DEPTH = 5`) exposes tools `generate_image` / `narrate_scene` / `update_world_state`. A chat turn may issue tool calls that fan out to image + lorebook updates; remaining depth is surfaced in the transcript.
+> Agentic mode: the orchestrator (`MAX_AGENTIC_DEPTH = 5`) exposes one tool, `generate_image`. A chat turn may issue tool calls that fan out to image jobs; remaining depth is surfaced in the transcript. The tool is offered only when the job's metadata says `agentic` — the swipe and scene routes stamp that, and the plain send path does not, because the Laya pipeline routes the turn instead of letting the model reach for a tool.
+>
+> `chat.story_id` records that a chat was started FROM a story, and `story.chat_id` that a story was exported FROM a chat. Each direction is one-way and the pair is never linked both ways: starting a chat from a story and exporting it back produces a NEW story, not a cycle.
 
 ### Stories (`/api/v2/stories`) — Story pillar
 
@@ -215,7 +221,27 @@ The prefix is `/llm`, not `/llm-config`; this file used to document both, and th
 - `PUT /api/v2/llm/default-provider` — Set the default LLM provider.
 - `GET /api/v2/llm/available-models` — Models exposed by the configured LLM provider.
 - `GET /api/v2/llm/providers` — Available LLM providers for chat/story narration.
+- `GET /api/v2/llm/providers/health` — Aggregate health of every LLM/hybrid provider, probed in parallel. Returns `{providers, healthy_count, total_count}`.
 - `POST /api/v2/llm/providers/{provider_id}/test` — **Test Connection**: instantiates the provider's in-process engine and runs its `health`/`object_info`/list path, returning liveness and available models (no remote worker URL involved).
+- `GET /api/v2/llm/agents/with-variants` — Every agent profile with its prompt variants and its resolved active variant, in one response. The Agent tab uses this instead of one request per agent.
+- `GET /api/v2/llm/pipeline` — The roleplay chat pipeline manifest: the stages, their order, their executors and their limits. The numbers come from `core/pipeline_limits`, which the code also imports, so this cannot quote a limit the pipeline does not enforce.
+- `GET /api/v2/llm/director/gates` — The canonical Statekeeper gate registry: the categories, the gates, the fields each gate unlocks, and the activation threshold. The chat panel renders this rather than a hand-copied list.
+- `GET /api/v2/llm/decisions/evaluate` — Evaluate a Director decision against a supplied context.
+
+### Agents (`/api/v2/agents`)
+
+Agent profiles are the Laya routing targets: the Character, Narrator, Updater, Illustrator, Continuation and custom agents, each with a system prompt and a set of prompt variants.
+
+- `GET /api/v2/agents` — List agent profiles. Query: `include_disabled`.
+- `POST /api/v2/agents` — Create an agent profile.
+- `GET /api/v2/agents/{agent_id}` — Fetch one agent profile.
+- `PUT /api/v2/agents/{agent_id}` — Update an agent profile.
+- `DELETE /api/v2/agents/{agent_id}` — Delete an agent profile.
+- `GET`, `POST` `/api/v2/agents/{agent_id}/avatar` — Fetch or upload an agent's avatar. The column is `agent_profiles.avatar_path`; it was accepted by the API from the day the API was written and the model never had the column, so the field was dropped on create, raised on update, and made `GET /api/v2/llm/agents/with-variants` return HTTP 500 for any deployment that had agents in the table.
+- `GET`, `POST` `/api/v2/agents/{agent_id}/variants` — List and create prompt variants.
+- `GET`, `PUT`, `DELETE` `/api/v2/agents/{agent_id}/variants/{variant_id}` — Read, update and delete a variant.
+- `POST /api/v2/agents/{agent_id}/variants/{variant_id}/activate` — Make a variant the active one.
+- `POST /api/v2/agents/simulate` — Run a workflow simulation against an agent.
 
 ### Worlds (`/api/v2/worlds`)
 
@@ -406,7 +432,7 @@ exposed `/live` and the compose healthcheck used `/api/ready`. The provider
 
 <!-- Generated by scripts/generate_api_docs.py. Do not edit by hand. -->
 
-The live surface is **236 paths / 316 operations**. Everything below is
+The live surface is **291 paths / 379 operations**. Everything below is
 derived from `app.openapi()`, so it cannot name a route that does not exist.
 
 ### Characters
@@ -419,8 +445,7 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `POST` `/api/v2/characters/{character_id}/avatar/animate`
 - `POST` `/api/v2/characters/{character_id}/clone`
 - `GET` `/api/v2/characters/{character_id}/export`
-- `GET`, `POST` `/api/v2/characters/{character_id}/expressions`
-- `PUT`, `DELETE` `/api/v2/characters/{character_id}/expressions/{name}`
+- `GET` `/api/v2/characters/{character_id}/expressions`
 
 ### Chats
 
@@ -428,7 +453,10 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `POST` `/api/v2/chats/import`
 - `GET`, `PATCH`, `DELETE` `/api/v2/chats/{chat_id}`
 - `GET`, `POST` `/api/v2/chats/{chat_id}/branches`
+- `GET` `/api/v2/chats/{chat_id}/director-traces`
+- `POST` `/api/v2/chats/{chat_id}/director/evaluate`
 - `GET` `/api/v2/chats/{chat_id}/export`
+- `POST` `/api/v2/chats/{chat_id}/export-story`
 - `POST` `/api/v2/chats/{chat_id}/illustrate`
 - `GET` `/api/v2/chats/{chat_id}/images`
 - `POST` `/api/v2/chats/{chat_id}/impersonate`
@@ -443,6 +471,7 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `POST` `/api/v2/chats/{chat_id}/regenerate`
 - `POST` `/api/v2/chats/{chat_id}/rollback`
 - `POST` `/api/v2/chats/{chat_id}/scene`
+- `PATCH` `/api/v2/chats/{chat_id}/state-snapshot`
 - `POST` `/api/v2/chats/{chat_id}/suggest`
 - `GET` `/api/v2/chats/{chat_id}/system-prompt`
 
@@ -453,14 +482,17 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET` `/api/v2/stories/published/{token}`
 - `GET` `/api/v2/stories/published/{token}/export`
 - `GET`, `PUT`, `DELETE` `/api/v2/stories/{story_id}`
+- `POST` `/api/v2/stories/{story_id}/adopt-worldbuilding`
 - `GET`, `POST` `/api/v2/stories/{story_id}/chapters` — List a story's chapters.
 - `POST` `/api/v2/stories/{story_id}/chapters/reorder` — Reorder the chapter list.
 - `GET`, `PUT`, `DELETE` `/api/v2/stories/{story_id}/chapters/{chapter_id}` — Read or replace one chapter.
 - `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/ai-action`
 - `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/beats`
 - `PATCH`, `DELETE` `/api/v2/stories/{story_id}/chapters/{chapter_id}/beats/{beat_id}`
+- `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/beats/{beat_id}/select-alternate`
 - `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/branch`
 - `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/continue`
+- `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/discover-worldbuilding`
 - `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/illustrate`
 - `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/narrate`
 - `POST` `/api/v2/stories/{story_id}/chapters/{chapter_id}/retry-last`
@@ -469,6 +501,7 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET` `/api/v2/stories/{story_id}/export`
 - `GET` `/api/v2/stories/{story_id}/images`
 - `POST` `/api/v2/stories/{story_id}/publish` — Publish a story to a token URL.
+- `POST` `/api/v2/stories/{story_id}/start-chat`
 - `POST` `/api/v2/stories/{story_id}/unpublish`
 
 ### Worlds
@@ -481,7 +514,28 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 
 - `GET` `/api/v2/world-vault/entities`
 - `POST` `/api/v2/world-vault/estimate-tokens`
+- `GET`, `POST` `/api/v2/world-vault/graph-edges`
+- `DELETE` `/api/v2/world-vault/graph-edges/{edge_id}`
 - `GET`, `PUT`, `DELETE` `/api/v2/world-vault/graph-layout/`
+- `POST` `/api/v2/world-vault/onboarding/analyze-card`
+- `POST` `/api/v2/world-vault/onboarding/analyze-character/{character_id}`
+- `POST` `/api/v2/world-vault/onboarding/analyze-document`
+- `POST` `/api/v2/world-vault/onboarding/analyze-story-text`
+- `GET` `/api/v2/world-vault/onboarding/archetypes`
+- `POST` `/api/v2/world-vault/onboarding/commit`
+- `POST` `/api/v2/world-vault/onboarding/commit-canon/{chat_id}`
+- `POST` `/api/v2/world-vault/onboarding/compile-story/{chat_id}`
+- `POST` `/api/v2/world-vault/onboarding/crossover-preview`
+- `POST` `/api/v2/world-vault/onboarding/enrich-field`
+- `POST` `/api/v2/world-vault/onboarding/extract-scenarios`
+- `POST` `/api/v2/world-vault/onboarding/extract-statekeeper`
+- `POST` `/api/v2/world-vault/onboarding/extract-visual-tags`
+- `POST` `/api/v2/world-vault/onboarding/extract-world-lore`
+- `POST` `/api/v2/world-vault/onboarding/fast-travel/{chat_id}`
+- `POST` `/api/v2/world-vault/onboarding/ingest-story-chained`
+- `POST` `/api/v2/world-vault/onboarding/reverse-vision/{chat_id}`
+- `POST` `/api/v2/world-vault/onboarding/visualize-item/{chat_id}`
+- `POST` `/api/v2/world-vault/onboarding/world-tick/{world_id}`
 - `GET` `/api/v2/world-vault/relationships`
 - `GET` `/api/v2/world-vault/search`
 
@@ -559,6 +613,7 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `POST` `/api/v2/models/autopopulate-candidates/batch`
 - `GET` `/api/v2/models/autopopulate-pending`
 - `GET` `/api/v2/models/autopopulate-status`
+- `GET` `/api/v2/models/catalog`
 - `POST` `/api/v2/models/check-installed/batch`
 - `GET` `/api/v2/models/check-installed/{civitai_model_id}`
 - `GET` `/api/v2/models/directory/{directory}`
@@ -592,6 +647,8 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET`, `POST` `/api/v2/providers/`
 - `POST` `/api/v2/providers/cleanup-orphaned-statuses`
 - `GET`, `PUT` `/api/v2/providers/config/load-balancing`
+- `POST` `/api/v2/providers/deploy`
+- `GET` `/api/v2/providers/deploy/targets`
 - `GET` `/api/v2/providers/load-balancer/stats`
 - `GET`, `PUT` `/api/v2/providers/load-balancing`
 - `GET` `/api/v2/providers/model-cache`
@@ -602,8 +659,12 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET` `/api/v2/providers/status-cards`
 - `POST` `/api/v2/providers/test-connection`
 - `GET`, `PUT`, `PATCH`, `DELETE` `/api/v2/providers/{provider_id}`
+- `GET`, `PUT` `/api/v2/providers/{provider_id}/credentials`
+- `DELETE` `/api/v2/providers/{provider_id}/credentials/{key}`
 - `GET` `/api/v2/providers/{provider_id}/diagnostics`
+- `POST` `/api/v2/providers/{provider_id}/free-vram`
 - `GET` `/api/v2/providers/{provider_id}/live-metrics`
+- `GET` `/api/v2/providers/{provider_id}/logs`
 - `GET` `/api/v2/providers/{provider_id}/modal-stats`
 - `GET`, `DELETE` `/api/v2/providers/{provider_id}/models`
 - `GET` `/api/v2/providers/{provider_id}/models/discovered`
@@ -665,6 +726,7 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET`, `POST` `/api/settings/favorites`
 - `GET` `/api/settings/presets`
 - `POST` `/api/settings/reset`
+- `GET` `/api/settings/scheduler`
 - `GET` `/api/settings/schema`
 - `GET`, `POST` `/api/settings/session`
 - `GET`, `PUT` `/api/settings/system-prompts`
@@ -709,12 +771,31 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET` `/api/live`
 - `GET` `/api/ready`
 - `GET` `/api/thumbnail/{size}/{filename}`
+- `GET`, `POST` `/api/v2/agents`
+- `POST` `/api/v2/agents/simulate`
+- `GET`, `PUT`, `DELETE` `/api/v2/agents/{agent_id}`
+- `GET`, `POST` `/api/v2/agents/{agent_id}/avatar`
+- `GET`, `POST` `/api/v2/agents/{agent_id}/variants`
+- `GET`, `PUT`, `DELETE` `/api/v2/agents/{agent_id}/variants/{variant_id}`
+- `POST` `/api/v2/agents/{agent_id}/variants/{variant_id}/activate`
 - `GET`, `POST` `/api/v2/asset/{asset_id}/tags`
 - `DELETE` `/api/v2/asset/{asset_id}/tags/{tag}`
+- `GET` `/api/v2/llm/agents/with-variants`
 - `GET` `/api/v2/llm/available-models`
+- `GET` `/api/v2/llm/catalog`
+- `PUT` `/api/v2/llm/catalog/active`
+- `POST` `/api/v2/llm/decisions/evaluate`
 - `GET`, `PUT` `/api/v2/llm/default-provider`
+- `GET` `/api/v2/llm/director/gates`
+- `GET` `/api/v2/llm/pipeline`
 - `GET` `/api/v2/llm/providers`
+- `GET` `/api/v2/llm/providers/health`
 - `POST` `/api/v2/llm/providers/{provider_id}/test`
+- `GET` `/api/v2/llm/questions`
+- `POST` `/api/v2/llm/questions/{stage}/custom`
+- `PUT`, `DELETE` `/api/v2/llm/questions/{stage}/{key}`
+- `GET` `/api/v2/llm/routing`
+- `GET` `/api/v2/llm/runtime-defaults`
 - `GET`, `POST` `/api/v2/personas`
 - `GET`, `PUT`, `DELETE` `/api/v2/personas/{persona_id}`
 - `GET` `/api/v2/tags`

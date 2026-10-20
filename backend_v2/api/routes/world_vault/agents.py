@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from api.deps import get_session
+import config as app_config
 from core.entities import AgentProfile, AgentPromptVariant
 from core.exceptions import NotFoundError, ValidationError
+from core.upload_validation import (
+    MAX_AVATAR_SIZE_MB,
+    inspect_image,
+    read_upload_bounded,
+    require_declared_size,
+)
 from services.agent_variants import (
     activate_variant,
     clean_agent_slug,
@@ -24,8 +33,15 @@ from services.decision_service import DecisionService
 
 router = APIRouter()
 
+MAX_AVATAR_BYTES = MAX_AVATAR_SIZE_MB * 1024 * 1024
+
 
 class AgentProfileCreate(BaseModel):
+    # `extra="forbid"` so a misspelled field is a 422 instead of a silently
+    # dropped value. The characters routes set the same on their request
+    # models for the same reason.
+    model_config = {"extra": "forbid"}
+
     slug: str = Field(..., min_length=2, max_length=50)
     name: str = Field(..., min_length=1, max_length=100)
     agent_type: str = "custom"
@@ -41,7 +57,17 @@ class AgentProfileCreate(BaseModel):
 
 
 class AgentProfileUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
     name: Optional[str] = None
+    # The Agent Studio's slug field is editable for anything that is not a
+    # built-in, and it sent the slug on save — but this model never declared
+    # it, so the backend dropped it silently and the user saw their new slug
+    # disappear on reload. Declaring it here makes the field real, and the
+    # `extra="forbid"` above is only safe because of it: with the field
+    # absent, forbidding extras would have turned the frontend's own save
+    # into a 422.
+    slug: Optional[str] = None
     agent_type: Optional[str] = None
     description: Optional[str] = None
     system_prompt_template: Optional[str] = None
@@ -194,6 +220,22 @@ def update_agent(
 
     if req.name is not None:
         profile.name = req.name.strip()
+    if req.slug is not None:
+        # A built-in agent is looked up by its slug (`resolve_agent(session,
+        # "character")`), so its slug is part of the contract and is not
+        # editable. `agent_type` is protected for the same reason.
+        if profile.is_builtin:
+            raise ValidationError("A built-in agent's slug cannot be changed.")
+        clean_slug = re.sub(r"[^a-z0-9_]+", "_", req.slug.lower().strip()).strip("_")
+        if not clean_slug:
+            raise ValidationError("Agent slug must contain at least one alphanumeric character.")
+        if clean_slug != profile.slug:
+            existing = session.exec(
+                select(AgentProfile).where(AgentProfile.slug == clean_slug)
+            ).first()
+            if existing:
+                raise ValidationError(f"An agent with slug '{clean_slug}' already exists.")
+            profile.slug = clean_slug
     if req.agent_type is not None and not profile.is_builtin:
         profile.agent_type = req.agent_type.strip()
     if req.description is not None:
@@ -220,6 +262,58 @@ def update_agent(
     session.commit()
     session.refresh(profile)
     return profile
+
+
+@router.post("/{agent_id}/avatar")
+async def upload_agent_avatar(
+    agent_id: str,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
+    """Upload an avatar for an agent profile.
+
+    Mirrors the character avatar route: the file is bounded and has to be a
+    real image (an `.html` or `.svg` renamed to `.png` is rejected), and it is
+    written to the avatar directory under the agent's own id.
+    """
+    profile = session.get(AgentProfile, agent_id)
+    if not profile:
+        profile = session.exec(select(AgentProfile).where(AgentProfile.slug == agent_id)).first()
+    if not profile:
+        raise NotFoundError("AgentProfile", agent_id)
+
+    require_declared_size(file, MAX_AVATAR_BYTES)
+    content = await read_upload_bounded(file, MAX_AVATAR_BYTES)
+    inspect_image(content, field="file", label="Avatar")
+
+    os.makedirs(f"{app_config.settings.character_avatar_dir}/{profile.id}", exist_ok=True)
+    avatar_path = f"{app_config.settings.character_avatar_dir}/{profile.id}/avatar.png"
+
+    with open(avatar_path, "wb") as buffer:
+        buffer.write(content)
+
+    profile.avatar_path = avatar_path
+    profile.updated_at = datetime.now(timezone.utc)
+    session.add(profile)
+    session.commit()
+    session.refresh(profile)
+
+    return {"message": "Avatar uploaded", "avatar_path": avatar_path, "has_avatar": True}
+
+
+@router.get("/{agent_id}/avatar")
+def get_agent_avatar(agent_id: str, session: Session = Depends(get_session)):
+    """Serve an agent's avatar image."""
+    profile = session.get(AgentProfile, agent_id)
+    if not profile:
+        profile = session.exec(select(AgentProfile).where(AgentProfile.slug == agent_id)).first()
+    if not profile or not profile.avatar_path or not os.path.exists(profile.avatar_path):
+        raise NotFoundError("Avatar", agent_id)
+
+    media_type = "video/webp" if profile.avatar_path.lower().endswith(".webp") else None
+    response = FileResponse(profile.avatar_path, media_type=media_type)
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @router.delete("/{agent_id}")

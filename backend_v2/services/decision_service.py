@@ -21,6 +21,7 @@ import httpx
 from sqlmodel import Session, select
 
 from core.entities import Provider
+from core.pipeline_limits import DIRECTOR_TIMEOUT_SECONDS
 from infrastructure.logging import get_logger
 from services.decision_schema import (
     DirectorDecisionResult,
@@ -73,7 +74,7 @@ class DecisionService:
                 if agent_url:
                     return provider.id, str(agent_url).rstrip("/"), str(agent_token)
         except Exception as exc:
-            logger.debug("director_remote_agent_lookup_failed", error=str(exc))
+            logger.warning("director_remote_agent_lookup_failed", error=str(exc))
         return None
 
     async def _try_remote_agent(
@@ -97,7 +98,7 @@ class DecisionService:
 
         started = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=DIRECTOR_TIMEOUT_SECONDS) as client:
                 resp = await client.post(
                     f"{agent_url}/v1/decisions",
                     headers=headers,
@@ -108,7 +109,7 @@ class DecisionService:
                     },
                 )
             if resp.status_code >= 400:
-                logger.debug(
+                logger.warning(
                     "director_remote_agent_unavailable",
                     provider_id=provider_id,
                     status_code=resp.status_code,
@@ -129,7 +130,7 @@ class DecisionService:
                 context_text=context_text,
             )
         except Exception as exc:
-            logger.debug(
+            logger.warning(
                 "director_remote_agent_call_failed",
                 provider_id=provider_id,
                 error=str(exc),
@@ -165,7 +166,7 @@ class DecisionService:
                         model_id=model_id,
                         context_text=context_text,
                         questions=questions,
-                        timeout=15.0,
+                        timeout=DIRECTOR_TIMEOUT_SECONDS,
                     )
                     if res and res.get("status") == "success":
                         answers = res.get("answers") or res
@@ -180,7 +181,7 @@ class DecisionService:
                             context_text=context_text,
                         )
         except Exception as exc:
-            logger.debug("director_modal_laya_call_failed", error=str(exc))
+            logger.warning("director_modal_laya_call_failed", error=str(exc))
         return None
 
     async def _try_beam_laya(
@@ -212,7 +213,7 @@ class DecisionService:
                         model_id=model_id,
                         context_text=context_text,
                         questions=questions,
-                        timeout=15.0,
+                        timeout=DIRECTOR_TIMEOUT_SECONDS,
                     )
                     if res and res.get("status") == "success":
                         answers = res.get("answers") or res
@@ -227,7 +228,7 @@ class DecisionService:
                             context_text=context_text,
                         )
         except Exception as exc:
-            logger.debug("director_beam_laya_call_failed", error=str(exc))
+            logger.warning("director_beam_laya_call_failed", error=str(exc))
         return None
 
     async def _try_local_laya(
@@ -275,13 +276,10 @@ class DecisionService:
         state_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Optional[DirectorDecisionResult]:
         """Tier 3: Evaluate via the active `util` LLM provider using JSON output."""
-        resolved = resolve_default_provider(self.session)
-        if not resolved:
+        provider = await self._select_healthy_llm_provider()
+        if not provider:
             return None
-        provider_id, _ = resolved
-        provider = self.session.get(Provider, provider_id)
-        if not provider or not provider.enabled:
-            return None
+        provider_id = provider.id
 
         try:
             from services.engines.engine_factory import get_engine
@@ -313,17 +311,25 @@ class DecisionService:
 
             started = time.perf_counter()
             full_text = ""
-            async for event in engine.inference(workflow, timeout=15.0):
+            async for event in engine.inference(workflow, timeout=DIRECTOR_TIMEOUT_SECONDS):
                 if not isinstance(event, dict):
                     continue
-                if event.get("event") == "token" and event.get("text"):
-                    full_text += str(event["text"])
-                elif event.get("status") == "success":
-                    output = event.get("output") or {}
-                    if isinstance(output, dict) and output.get("text"):
-                        full_text = str(output["text"])
-                    elif event.get("text"):
-                        full_text = str(event["text"])
+                # Canonical TaskEvent dialect. The engines emit `delta` and
+                # `completed`; the older `event == "token"` / `status ==
+                # "success"` dialect this used to read is emitted by nothing in
+                # the backend, so `full_text` stayed empty and Tier 3 always
+                # returned None — the cascade fell through to the Tier 4
+                # heuristic every single time, whatever the provider was doing.
+                event_kind = event.get("event")
+                if event_kind == "delta":
+                    if event.get("text"):
+                        full_text += str(event["text"])
+                elif event_kind == "completed":
+                    outputs = event.get("outputs") or []
+                    first = outputs[0] if outputs and isinstance(outputs[0], dict) else {}
+                    content = first.get("content") or first.get("text")
+                    if content:
+                        full_text = str(content)
 
             if not full_text.strip():
                 return None
@@ -340,8 +346,42 @@ class DecisionService:
                 context_text=context_text,
             )
         except Exception as exc:
-            logger.debug("director_generative_fallback_failed", error=str(exc))
+            logger.warning("director_generative_fallback_failed", error=str(exc))
             return None
+
+    async def _select_healthy_llm_provider(self) -> Optional[Provider]:
+        """Pick an LLM provider for Tier 3, preferring one that is actually up.
+
+        This used to call `resolve_default_provider`, which reads the
+        configured default and ignores provider health entirely: if that one
+        provider was down, Tier 3 failed instead of trying another, and the
+        Director silently degraded to the Tier 4 keyword scorer. The
+        LoadBalancer already knows which providers are enabled, un-striped by
+        failure streak, so route through it and keep the configured default as
+        the fallback.
+        """
+        try:
+            from services.load_balancer_factory import create_load_balancer
+
+            lb = create_load_balancer(self.session, task_type="llm")
+            provider = await lb.get_next_provider(task_type="llm")
+            if provider is not None:
+                return provider
+        except Exception as exc:
+            logger.warning("director_llm_provider_selection_failed", error=str(exc))
+
+        try:
+            resolved = resolve_default_provider(self.session)
+        except Exception as exc:
+            logger.warning("director_default_provider_lookup_failed", error=str(exc))
+            return None
+        if not resolved:
+            return None
+        provider_id, _ = resolved
+        provider = self.session.get(Provider, provider_id)
+        if not provider or not provider.enabled:
+            return None
+        return provider
 
     def _get_available_agents(self) -> List[Dict[str, Any]]:
         """Fetch enabled AgentProfile rows from the database."""
@@ -365,7 +405,7 @@ class DecisionService:
                 for a in rows
             ]
         except Exception as exc:
-            logger.debug("get_available_agents_failed", error=str(exc))
+            logger.warning("get_available_agents_failed", error=str(exc))
             return []
 
     def _finalize_result(
@@ -440,7 +480,7 @@ class DecisionService:
                 self.session.add(trace)
                 self.session.commit()
             except Exception as exc:
-                logger.debug("record_director_trace_failed", chat_id=chat_id, error=str(exc))
+                logger.warning("record_director_trace_failed", chat_id=chat_id, error=str(exc))
 
         return res
 

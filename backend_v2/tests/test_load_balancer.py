@@ -383,3 +383,89 @@ class TestLoadBalancer:
 
         assert svc._available_models_cache == {}
         assert svc._cached_available_models("checkpoints") is None
+
+
+class TestModalityIsolation:
+    """TTS and image keep separate counters.
+
+    They used to share one runtime state, so a TTS outage incremented the
+    failure count on a provider that was healthy for images — and the image
+    path's circuit breaker then took it out of image rotation. The same
+    sharing is why `get_stats`' per-modality breakdown was one set of
+    numbers printed three times.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_lb_state(self):
+        LoadBalancer.reset_state()
+        yield
+        LoadBalancer.reset_state()
+
+    async def test_a_tts_failure_does_not_take_a_provider_out_of_image_rotation(
+        self, session: Session
+    ):
+        from services.load_balancer_factory import create_load_balancer
+
+        # One provider that serves both modalities, which is the real shape:
+        # the same ComfyUI box serves `image` and `tts`.
+        provider = Provider(
+            id="comfy-box",
+            type="direct_comfy",
+            worker_type="comfyui",
+            capabilities=["image", "tts"],
+            enabled=True,
+            priority=1,
+            credentials={},
+            config={},
+        )
+        session.add(provider)
+        session.commit()
+
+        image_lb = create_load_balancer(session, task_type="image")
+        tts_lb = create_load_balancer(session, task_type="tts")
+
+        # Fail the TTS side hard.
+        for _ in range(5):
+            await tts_lb.report_failure(provider.id)
+
+        # The image side must be untouched.
+        image_state = image_lb.runtime_state
+        assert image_state.provider_failures.get(provider.id, 0) == 0
+
+        selected = await image_lb.get_next_provider(task_type="image")
+        assert selected is not None and selected.id == "comfy-box"
+
+    async def test_the_stats_breakdown_reads_each_modality_own_counters(
+        self, session: Session
+    ):
+        from services.load_balancer_factory import create_load_balancer
+
+        provider = Provider(
+            id="comfy-box",
+            type="direct_comfy",
+            worker_type="comfyui",
+            capabilities=["image", "tts"],
+            enabled=True,
+            priority=1,
+            credentials={},
+            config={},
+        )
+        session.add(provider)
+        session.commit()
+
+        image_lb = create_load_balancer(session, task_type="image")
+        tts_lb = create_load_balancer(session, task_type="tts")
+
+        image_lb.runtime_state.provider_job_counts[provider.id] = 7
+        tts_lb.runtime_state.provider_job_counts[provider.id] = 2
+        tts_lb.runtime_state.provider_failures[provider.id] = 9
+
+        stats = await image_lb.get_stats()
+        by_modality = stats["by_modality"]
+
+        assert by_modality["image"]["active_jobs"] == 7
+        assert by_modality["tts"]["active_jobs"] == 2
+        # Nine TTS failures is past the image threshold, but the image
+        # breakdown must not see them.
+        assert by_modality["image"]["failing_providers"] == 0
+        assert by_modality["tts"]["failing_providers"] == 1

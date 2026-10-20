@@ -204,18 +204,54 @@ FUNCTION_INDEX = _function_index()
 
 
 def _awaited_names(node) -> set[str]:
-    """Names of functions this body awaits (`await self.svc.method(...)`)."""
+    """Names of functions this body awaits (`await self.svc.method(...)`).
+
+    `async for` and `async with` count too.
+
+    They are the same thing as far as the event loop is concerned: `async for
+    x in agen(...)` awaits the generator's `__anext__` on every iteration, and
+    `async with cm(...)` awaits `__aenter__` and `__aexit__`. Both suspend.
+
+    The resolver only collected `ast.Await`, so an `async for` over an async
+    generator was invisible to it. That is not a theoretical gap: it is how
+    the eleven world-onboarding routes were being reported. Their chain is
+    route -> service -> `_run_llm_json` -> `async for event in
+    engine.inference(...)`, and `inference` is where the outbound HTTP call
+    lives — `await client.post(...)`, `await asyncio.wait_for(...)`. The work
+    really did leave the loop; the analysis simply could not see the
+    suspension that made it safe.
+
+    The alternative was to convert eleven routes to plain `def` on the
+    strength of a false positive, which would have moved them to a worker
+    thread and changed their concurrency behaviour for no reason.
+    """
     names = set()
     for child in ast.walk(node):
-        if not isinstance(child, ast.Await):
-            continue
-        value = child.value
-        if isinstance(value, ast.Call):
-            func = value.func
-            if isinstance(func, ast.Attribute):
-                names.add(func.attr)
-            elif isinstance(func, ast.Name):
-                names.add(func.id)
+        if isinstance(child, ast.Await):
+            value = child.value
+            if isinstance(value, ast.Call):
+                func = value.func
+                if isinstance(func, ast.Attribute):
+                    names.add(func.attr)
+                elif isinstance(func, ast.Name):
+                    names.add(func.id)
+        elif isinstance(child, ast.AsyncFor):
+            # `async for x in f(...)` — the iterable is what gets awaited.
+            value = child.iter
+            if isinstance(value, ast.Call):
+                func = value.func
+                if isinstance(func, ast.Attribute):
+                    names.add(func.attr)
+                elif isinstance(func, ast.Name):
+                    names.add(func.id)
+        elif isinstance(child, ast.AsyncWith):
+            value = child.items[0].context_expr
+            if isinstance(value, ast.Call):
+                func = value.func
+                if isinstance(func, ast.Attribute):
+                    names.add(func.attr)
+                elif isinstance(func, ast.Name):
+                    names.add(func.id)
     return names
 
 

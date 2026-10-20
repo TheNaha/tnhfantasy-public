@@ -62,6 +62,27 @@ Provider *selection* is not in the factory: it is the load balancer's job, and i
 filters by **capability**, not by worker type
 (`backend_v2/services/load_balancer.py:447`, `provider.serves(task_type)`).
 
+### One exception: the Director does not go through the load balancer
+
+The Laya System 1 Director — the agent that routes a chat turn, audits the
+reply, and decides whether the scene wants another turn — calls its engines
+**directly**, out of band, with its own 15-second timeouts. It is not a
+provider job, it produces no artefact, and it does not belong in the job
+queue. But it does mean the Director's failures are not counted by the load
+balancer's health accounting, which is worth knowing when a Director
+decision is the thing that misbehaved.
+
+Its Tier 3 — the generative fallback, used when the cheaper Laya tiers cannot
+answer — selects its provider through the load balancer
+(`get_next_provider(task_type="llm")`) so that a dead default provider does
+not silently degrade the Director to its keyword heuristic. It used to read
+the configured default directly, which ignored provider health entirely.
+
+The TTS and image paths each have their own load-balancer runtime state
+(`state_id=3` and `state_id=1`; LLM is `2`). They used to share one, which
+meant a TTS outage incremented the failure count on a provider that was
+healthy for images and could take it out of image rotation.
+
 ## Names are a contract
 
 The engines look classes and functions up by name in someone else's cloud. The

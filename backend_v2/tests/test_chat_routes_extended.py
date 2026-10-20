@@ -41,6 +41,59 @@ def _add_message(session, chat, role, content):
     return msg
 
 
+class TestListChatsByCharacter:
+    """`GET /api/v2/chats?character_id=…` — the character's own conversations.
+
+    There was no way to get from a character to its chats: the chat list had
+    no character filter, so the only route was to read every chat in the
+    vault and look.
+    """
+
+    def test_the_primary_character_matches(self, client, session):
+        char = _seed_character_named(session, "Aria")
+        chat = _seed_chat(session, char)
+        _seed_chat(session)  # a chat with no character
+
+        resp = client.get(f"/api/v2/chats?character_id={char.id}")
+        assert resp.status_code == 200, resp.text
+        ids = [c["id"] for c in resp.json()]
+        assert chat.id in ids
+        assert len(ids) == 1
+
+    def test_the_additional_cast_matches(self, client, session):
+        char = _seed_character_named(session, "Borin")
+        other = _seed_character_named(session, "Aria")
+        chat = _seed_chat(session, other)
+        chat.additional_character_ids = [char.id]
+        session.add(chat)
+        session.commit()
+
+        resp = client.get(f"/api/v2/chats?character_id={char.id}")
+        assert resp.status_code == 200, resp.text
+        assert [c["id"] for c in resp.json()] == [chat.id]
+
+    def test_a_prefix_of_a_stored_id_does_not_match(self, client, session):
+        """The membership test is exact, not a substring match.
+
+        `additional_character_ids` is a JSON array, and SQLAlchemy's
+        `.contains()` renders `LIKE '%value%'` on SQLite — a raw substring
+        match — while the same call on PostgreSQL's `jsonb` renders the exact
+        `@>` operator. The filter casts the array to text and matches the
+        QUOTED token instead, so the closing quote is part of the pattern and
+        a prefix cannot match.
+        """
+        char = _seed_character_named(session, "Ceri")
+        chat = _seed_chat(session)
+        chat.additional_character_ids = [char.id]
+        session.add(chat)
+        session.commit()
+
+        prefix = char.id[:-4]
+        resp = client.get(f"/api/v2/chats?character_id={prefix}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == [], "a prefix of a stored id matched the row"
+
+
 # ── DELETE message ───────────────────────────────────────────────────────────
 
 class TestDeleteMessage:

@@ -14,7 +14,7 @@ split and merge are the operations people actually need and both mutate
 membership — and because a split has to survive the next recompute, which it
 only can if membership is stored.
 
-Router paths are mounted under `/api/v2` by `world_vault/__init__.py`, so the
+Router paths are mounted under `/api/v2` by `gallery/__init__.py`, so the
 public prefix is `/api/v2/sessions`.
 """
 

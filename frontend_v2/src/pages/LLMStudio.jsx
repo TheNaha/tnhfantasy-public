@@ -11,6 +11,9 @@ import toast from 'react-hot-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
     useAgents,
+    useAgentsWithVariants,
+    getAgentAvatarUrl,
+    useUploadAgentAvatar,
     useCreateAgent,
     useUpdateAgent,
     useDeleteAgent,
@@ -426,7 +429,11 @@ export default function LLMStudio() {
 
     // Queries & mutations
     const queryClient = useQueryClient();
-    const { data: agents = [], isLoading: isLoadingAgents, isError: isAgentsError, error: agentsError, refetch: refetchAgents } = useAgents();
+    const { data: agentsWithVariants, isLoading: isLoadingAgents, isError: isAgentsError, error: agentsError, refetch: refetchAgents } = useAgentsWithVariants();
+    // The combined endpoint returns every agent with its variants attached.
+    // If it fails, fall back to the plain list so the tab still renders.
+    const { data: agentsFallback = [] } = useAgents();
+    const agents = agentsWithVariants ?? agentsFallback;
     const createAgentMutation = useCreateAgent();
     const updateAgentMutation = useUpdateAgent();
     const deleteAgentMutation = useDeleteAgent();
@@ -689,11 +696,17 @@ export default function LLMStudio() {
     const gateThreshold = runtimeDefaults?.gate_threshold ?? gateRegistry?.threshold ?? 0.55;
 
     // Filtered agents
+    //
+    // The list comes from the combined endpoint, which returns every agent
+    // together with its variants and its resolved active variant. The tab
+    // used to load the list and then fetch each agent's variants separately —
+    // one request per agent — which the backend already had a single
+    // response for.
     const filteredAgents = useMemo(() => {
         return agents.filter(agent => {
             const matchesSearch = agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                agent.slug.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                (agent.description && agent.description.toLowerCase().includes(searchQuery.toLowerCase()));
+            agent.slug.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (agent.description && agent.description.toLowerCase().includes(searchQuery.toLowerCase()));
             const matchesType = agentFilter === 'all' || agent.agent_type === agentFilter;
             return matchesSearch && matchesType;
         });
@@ -2302,6 +2315,65 @@ export default function LLMStudio() {
     );
 }
 
+function AgentAvatarField({ agent }) {
+    const uploadAvatar = useUploadAgentAvatar();
+    const inputRef = useRef(null);
+    const [preview, setPreview] = useState(null);
+
+    // The saved avatar is served by the backend; the local preview is only
+    // there so the image appears the instant it is picked, before the
+    // upload round-trips.
+    const src = preview || (agent.avatar_path ? getAgentAvatarUrl(agent.id) : null);
+
+    const handleFile = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        setPreview(URL.createObjectURL(file));
+        try {
+            await uploadAvatar.mutateAsync({ agentId: agent.id, file });
+            toast.success('Avatar uploaded.');
+            setPreview(null);
+        } catch (err) {
+            setPreview(null);
+            toast.error(err?.message || 'Avatar upload failed.');
+        }
+    };
+
+    return (
+        <div className="flex items-center gap-4 rounded-xl border border-white/5 bg-black/20 p-3">
+            <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-gray-900 flex items-center justify-center">
+                {src ? (
+                    <img src={src} alt="" className="h-full w-full object-cover" />
+                ) : (
+                    <Bot size={22} className="text-gray-600" />
+                )}
+            </div>
+            <div className="min-w-0 flex-1">
+                <p className="text-3xs font-semibold text-gray-400 uppercase tracking-wider">Avatar</p>
+                <p className="mt-1 text-3xs text-gray-500">
+                    Shown wherever this agent is picked. PNG or WebP, up to 5 MB.
+                </p>
+                <input
+                    ref={inputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={handleFile}
+                    className="hidden"
+                />
+                <button
+                    type="button"
+                    onClick={() => inputRef.current?.click()}
+                    disabled={uploadAvatar.isPending}
+                    className="mt-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 text-3xs font-semibold transition-colors disabled:opacity-50"
+                >
+                    {uploadAvatar.isPending ? 'Uploading…' : (src ? 'Replace avatar' : 'Upload avatar')}
+                </button>
+            </div>
+        </div>
+    );
+}
+
 function AgentModal({ agent, availableModels = [], onClose, onSave }) {
     const isBuiltin = Boolean(agent?.is_builtin);
     const [name, setName] = useState(agent?.name || '');
@@ -2365,6 +2437,9 @@ function AgentModal({ agent, availableModels = [], onClose, onSave }) {
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+                    {agent?.id && (
+                        <AgentAvatarField agent={agent} />
+                    )}
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label className="text-3xs font-semibold text-gray-400 uppercase tracking-wider block mb-1">
@@ -2534,7 +2609,7 @@ function AgentModal({ agent, availableModels = [], onClose, onSave }) {
                         </div>
                     </div>
 
-                    {agent?.id && <AgentVariantsSection agent={agent} />}
+                    {agent?.id && <AgentVariantsSection agent={agent} variants={agent.variants} />}
 
                     <div className="flex items-center justify-between pt-2">
                         <label className="flex items-center gap-2 cursor-pointer">
@@ -2574,9 +2649,15 @@ function AgentModal({ agent, availableModels = [], onClose, onSave }) {
     );
 }
 
-function AgentVariantsSection({ agent }) {
+function AgentVariantsSection({ agent, variants: providedVariants }) {
     const { confirm } = useConfirmation();
-    const { data: variants = [], isLoading } = useAgentVariants(agent.id);
+    // The parent already loaded every agent together with its variants in one
+    // request, so the per-agent query is only needed when that list is not
+    // available (a direct mount of this section).
+    const { data: fetchedVariants = [], isLoading } = useAgentVariants(agent.id, {
+        enabled: !providedVariants,
+    });
+    const variants = providedVariants ?? fetchedVariants;
     const createVariant = useCreateAgentVariant();
     const updateVariant = useUpdateAgentVariant();
     const deleteVariant = useDeleteAgentVariant();

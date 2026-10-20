@@ -4,6 +4,7 @@ import {
     ArrowRight,
     BookOpen,
     Compass,
+    Cpu,
     Globe2,
     MapPin,
     MessageSquare,
@@ -17,6 +18,7 @@ import { useChats } from '../hooks/useChats';
 import { useStories } from '../hooks/useStories';
 import { useWorlds } from '../hooks/useWorlds';
 import { useWorldVaultDashboard } from '../hooks/useWorldVaultSearch';
+import { useProvidersHealth } from '../hooks/useLLMProviderStatus';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 import { QueryErrorState } from '../components/common/QueryState';
 import { parseGalleryDate } from '../utils/dateTime';
@@ -49,6 +51,16 @@ export default function RoleplayWorkspace() {
     const storiesQuery = useStories();
     const worldsQuery = useWorlds();
     const vaultQuery = useWorldVaultDashboard();
+    // The roleplay surface had no worker-health signal at all: the backend
+    // computed it (`GET /llm/providers/health`) and nothing asked for it, so
+    // a user whose only LLM provider was down saw a failed job and nothing
+    // else. The LLM Studio lives in the Resources sidebar group, so a user
+    // who never went looking for it had no way to check.
+    const healthQuery = useProvidersHealth();
+    const health = healthQuery.data;
+    const healthTotal = health?.total_count ?? 0;
+    const healthHealthy = health?.healthy_count ?? 0;
+    const healthAllDown = healthTotal > 0 && healthHealthy === 0;
     const { data: chatData, isLoading: chatsLoading } = chatsQuery;
     const { data: storyData, isLoading: storiesLoading } = storiesQuery;
     const { data: worldData } = worldsQuery;
@@ -126,6 +138,31 @@ export default function RoleplayWorkspace() {
                     </div>
                 </div>
             </section>
+
+            {healthAllDown && (
+                <section
+                    role="status"
+                    className="flex flex-col gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                    <div className="min-w-0">
+                        <p className="text-sm font-semibold text-amber-200">
+                            No LLM provider is responding.
+                        </p>
+                        <p className="mt-1 text-xs text-amber-100/70">
+                            Every registered provider failed its health check, so chats and stories cannot
+                            be generated right now.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => navigate('/llm-studio')}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-400/20"
+                    >
+                        <Cpu size={15} aria-hidden="true" />
+                        Open LLM Studio
+                    </button>
+                </section>
+            )}
 
             <section aria-labelledby="roleplay-start-heading">
                 <div className="mb-4 flex items-end justify-between gap-4">
@@ -249,6 +286,33 @@ export default function RoleplayWorkspace() {
                         <CountCard label="Locations" value={counts.locations || 0} icon={MapPin} onClick={() => navigate('/locations')} />
                         <CountCard label="Worlds" value={worlds.length} icon={Globe2} onClick={() => navigate('/worlds')} />
                     </div>
+                )}
+                {healthTotal > 0 && (
+                    <button
+                        type="button"
+                        onClick={() => navigate('/llm-studio')}
+                        className={clsx(
+                            'mt-3 flex w-full items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition',
+                            healthAllDown
+                                ? 'border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/15'
+                                : 'border-white/10 bg-white/5 hover:bg-white/10'
+                        )}
+                    >
+                        <span className="flex min-w-0 items-center gap-3">
+                            <Cpu
+                                size={16}
+                                className={healthAllDown ? 'text-amber-300' : 'text-violet-300'}
+                                aria-hidden="true"
+                            />
+                            <span className="min-w-0">
+                                <span className="block text-sm font-medium text-white">Model providers</span>
+                                <span className="block truncate text-xs text-slate-500">
+                                    {healthHealthy} of {healthTotal} responding
+                                </span>
+                            </span>
+                        </span>
+                        <ArrowRight size={16} className="shrink-0 text-slate-600" aria-hidden="true" />
+                    </button>
                 )}
             </section>
 
