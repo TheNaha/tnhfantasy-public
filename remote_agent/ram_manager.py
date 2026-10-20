@@ -851,7 +851,27 @@ _RAM_MANAGER: Optional[RamModelManager] = None
 
 
 def get_ram_manager() -> RamModelManager:
+    """The shared RAM cache manager.
+
+    The manager is a singleton because the cache is a process-wide resource
+    with an eviction policy, and two instances over one directory would
+    evict each other's entries.
+
+    It is REBUILT when `RAM_CACHE_DIR` changes. The directory is read from
+    the environment, and the environment can change under a long-lived
+    process - and it does under a test run, where each test points
+    `RAM_CACHE_DIR` at its own temporary directory. With one instance built
+    from the FIRST directory it ever saw, every later test looked in the
+    wrong place and failed, and the failure depended on which tests had run
+    first.
+    """
     global _RAM_MANAGER
-    if _RAM_MANAGER is None:
-        _RAM_MANAGER = RamModelManager()
+    wanted = os.environ.get("RAM_CACHE_DIR", "/dev/shm/tnh_ram_cache")
+    # `ram_dir` is a Path and `wanted` is a str, so they must be compared as
+    # strings: `Path("/tmp/x") != "/tmp/x"` is True, and the manager was
+    # therefore rebuilt on EVERY call - which threw away the cache between
+    # two requests of the same client (prewarm, then evict, and the evict
+    # found nothing).
+    if _RAM_MANAGER is None or str(_RAM_MANAGER.ram_dir) != str(wanted):
+        _RAM_MANAGER = RamModelManager(ram_dir=wanted)
     return _RAM_MANAGER

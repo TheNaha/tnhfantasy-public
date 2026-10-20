@@ -311,14 +311,26 @@ class VRAMManager:
     # ----------------------------------------------------------------------
 
     def is_comfy_generating(self, timeout: float = 2.0) -> bool:
-        """Check if ComfyUI has a prompt actively executing or pending in its queue.
+        """Is ComfyUI executing or queuing a prompt?
 
-        FAILS SAFE. A probe that cannot reach ComfyUI — a timeout on a loaded
-        box, a transient connection error, ComfyUI busy loading a checkpoint
-        and not answering — used to return False, which reads as "idle" to the
-        two gates that exist precisely to prevent evicting a running
-        generation. A false negative there means ComfyUI's VRAM is freed under
-        a live diffusion pass. "Could not tell" is now treated as "busy".
+        The failure modes are distinguished, because they mean OPPOSITE
+        things, and treating them the same is expensive:
+
+        * ComfyUI REFUSES the connection -> it is not running -> it is
+          definitely not generating -> False. A worker that serves only the
+          LLM has no ComfyUI at all, and answering "busy" here would put a
+          60-second drain in front of every one of its requests.
+        * ComfyUI ACCEPTS the connection but does not ANSWER in time -> it is
+          running and busy -> True. Freeing its VRAM now would kill a live
+          generation.
+        * ComfyUI answers with an HTTP error -> it is running, and it is not
+          generating -> False.
+
+        The old version answered False for every failure, so a timeout on a
+        loaded ComfyUI freed its VRAM under a live generation. The version
+        that answered True for every failure stalled every request on a
+        worker with no ComfyUI - and made the test suite 60 seconds slower
+        per affected test. Neither is right; this distinguishes them.
         """
         try:
             req = urllib.request.Request(f"{self.comfy_url}/queue")
@@ -328,11 +340,23 @@ class VRAMManager:
                     running = data.get("queue_running") or []
                     pending = data.get("queue_pending") or []
                     return bool(running or pending)
-        except Exception as exc:
-            # Treat "cannot tell" as "busy" — see the docstring.
-            logger.debug("comfy_generating_probe_failed_assuming_busy", extra={"error": str(exc)})
+                # It answered, with something that is not a queue.
+                return False
+        except urllib.error.HTTPError:
+            # It answered, with an error. It is running; it is not generating.
+            return False
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            if isinstance(reason, ConnectionRefusedError):
+                # Not running at all.
+                return False
+            # A timeout or a reset: it is running and we cannot tell, so
+            # assume busy.
+            logger.debug("comfy_generating_probe_uncertain", extra={"error": str(exc)})
             return True
-        return True
+        except Exception as exc:
+            logger.debug("comfy_generating_probe_failed", extra={"error": str(exc)})
+            return True
 
     def free_comfy_vram(self, timeout: float = 2.5) -> bool:
         """Instruct ComfyUI to purge its cached diffusion models from GPU VRAM."""
