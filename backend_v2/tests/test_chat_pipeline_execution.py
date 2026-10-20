@@ -291,6 +291,9 @@ class TestAutonomousChain:
         lives in `services.chat_utils`. The ImportError killed every
         autonomous chained turn, so the "up to 4 turns" budget was never
         spent.
+
+        `current_turns` is the turn that JUST RAN; the chain creates the one
+        after it. So a chain that runs after turn 1 creates turn 2.
         """
         from services.pipeline_stages import chain_stage
 
@@ -319,7 +322,7 @@ class TestAutonomousChain:
                 "chat_id": chat.id,
                 "character_id": char.id,
                 "last_speaker": "character",
-                "current_turns": 2,
+                "current_turns": 1,
                 "max_turns": 4,
                 "autonomy_level": "balanced",
             }
@@ -332,6 +335,42 @@ class TestAutonomousChain:
         assert len(jobs) == 1, "the chain did not enqueue a follow-up turn"
         assert jobs[0].metadata_["autonomous_turn_count"] == 2
         assert jobs[0].metadata_["max_autonomous_turns"] == 4
+
+    async def test_the_deferred_chain_payload_carries_the_turn_that_ran(
+        self, session, no_enqueue, monkeypatch
+    ):
+        """The two chain paths must agree on what the turn number means.
+
+        The payload the Statekeeper defers with used to carry
+        `current_turns + 1` — the turn to CREATE — while the walk handed the
+        chain the turn that RAN. The chain then wrote
+        `autonomous_turn_count` unchanged, so on the direct path the counter
+        never advanced.
+
+        The payload now carries the turn that ran, and the chain adds one.
+        """
+        from services.pipeline_stages import update_stage
+
+        chat, char = _seed_chat(session)
+        ctx = {
+            "session": session,
+            "job_service": JobService(session),
+            "chat": chat,
+            "character": char,
+            "chat_id": chat.id,
+            "character_id": char.id,
+            "audit_decision": _audit_decision(should_run_updater=False),
+            "current_turns": 2,
+            "last_speaker": "character",
+            "job_meta": {},
+        }
+        await update_stage(ctx)
+
+        payload = ctx.get("chain_payload")
+        assert payload is not None, "the chain payload was not built"
+        assert payload["turn"] == 2, (
+            f"the payload must carry the turn that ran, got {payload['turn']!r}"
+        )
 
     async def test_a_stop_decision_enqueues_nothing(self, session, no_enqueue, monkeypatch):
         from services.pipeline_stages import chain_stage
@@ -394,6 +433,156 @@ class TestAutonomousChain:
         )
 
         no_enqueue.assert_not_awaited()
+
+
+    async def test_the_turn_budget_stops_the_chain(self, session, no_enqueue, monkeypatch):
+        """The "up to 4 turns" budget has to stop the chain, not just be quoted.
+
+        The gate lived in `update_stage` only, and `update_stage` only runs
+        the chain when it DEFERS it - that is, when the Statekeeper ran. So
+        the budget was enforced on the deferred path and not on the direct
+        one, and the direct path is the common one: the audit decides the
+        updater should not run, so `updater_job_id` is None, so the chain
+        stage runs in the walk itself.
+
+        On that path the chain had no turn limit at all, and the follow-up
+        job it created carried `autonomous_turn_count` UNCHANGED - so the
+        counter never advanced and the next turn read the same number.
+        The chain could run for as long as the Director kept asking for
+        another turn.
+        """
+        from services.pipeline_stages import chain_stage
+
+        chat, char = _seed_chat(session)
+
+        chain = _audit_decision(
+            workflow_stage="chaining",
+            next_speaker="character",
+            continue_chain_probability=0.99,
+        )
+        triage = _audit_decision(workflow_stage="triage", next_speaker="character")
+
+        monkeypatch.setattr(
+            "services.decision_service.DecisionService.evaluate_turn_chaining",
+            AsyncMock(return_value=chain),
+        )
+        monkeypatch.setattr(
+            "services.decision_service.DecisionService.evaluate_pre_generation_triage",
+            AsyncMock(return_value=triage),
+        )
+
+        await chain_stage(
+            {
+                "session": session,
+                "job_service": JobService(session),
+                "chat_id": chat.id,
+                "character_id": char.id,
+                "last_speaker": "character",
+                "current_turns": 4,
+                "max_turns": 4,
+                "autonomy_level": "balanced",
+            }
+        )
+
+        no_enqueue.assert_not_awaited()
+        jobs = session.exec(
+            select(Job).where(Job.task_type == "llm")
+        ).all()
+        assert jobs == [], "the chain chained past its turn budget"
+
+    async def test_strict_autonomy_never_chains(self, session, no_enqueue, monkeypatch):
+        """Strict autonomy means the Director never takes another turn.
+
+        The check was in `update_stage`, for the same reason as the turn
+        budget: it only ran on the deferred path.
+        """
+        from services.pipeline_stages import chain_stage
+
+        chat, char = _seed_chat(session)
+
+        chain = _audit_decision(
+            workflow_stage="chaining",
+            next_speaker="character",
+            continue_chain_probability=0.99,
+        )
+        triage = _audit_decision(workflow_stage="triage", next_speaker="character")
+
+        monkeypatch.setattr(
+            "services.decision_service.DecisionService.evaluate_turn_chaining",
+            AsyncMock(return_value=chain),
+        )
+        monkeypatch.setattr(
+            "services.decision_service.DecisionService.evaluate_pre_generation_triage",
+            AsyncMock(return_value=triage),
+        )
+
+        await chain_stage(
+            {
+                "session": session,
+                "job_service": JobService(session),
+                "chat_id": chat.id,
+                "character_id": char.id,
+                "last_speaker": "character",
+                "current_turns": 1,
+                "max_turns": 4,
+                "autonomy_level": "strict",
+            }
+        )
+
+        no_enqueue.assert_not_awaited()
+        jobs = session.exec(
+            select(Job).where(Job.task_type == "llm")
+        ).all()
+        assert jobs == [], "strict autonomy chained anyway"
+
+    async def test_the_turn_counter_advances(self, session, no_enqueue, monkeypatch):
+        """The follow-up turn has to know it is the next turn.
+
+        The job the chain creates carried `autonomous_turn_count` unchanged,
+        so the turn that read it saw the same number forever and the budget
+        could never run out - the counter was the thing that was supposed
+        to stop it.
+        """
+        from services.pipeline_stages import chain_stage
+
+        chat, char = _seed_chat(session)
+
+        chain = _audit_decision(
+            workflow_stage="chaining",
+            next_speaker="character",
+            continue_chain_probability=0.99,
+        )
+        triage = _audit_decision(workflow_stage="triage", next_speaker="character")
+
+        monkeypatch.setattr(
+            "services.decision_service.DecisionService.evaluate_turn_chaining",
+            AsyncMock(return_value=chain),
+        )
+        monkeypatch.setattr(
+            "services.decision_service.DecisionService.evaluate_pre_generation_triage",
+            AsyncMock(return_value=triage),
+        )
+
+        await chain_stage(
+            {
+                "session": session,
+                "job_service": JobService(session),
+                "chat_id": chat.id,
+                "character_id": char.id,
+                "last_speaker": "character",
+                "current_turns": 2,
+                "max_turns": 4,
+                "autonomy_level": "balanced",
+            }
+        )
+
+        jobs = session.exec(
+            select(Job).where(Job.task_type == "llm")
+        ).all()
+        assert len(jobs) == 1
+        assert jobs[0].metadata_["autonomous_turn_count"] == 3, (
+            "the follow-up turn does not know it is the next turn"
+        )
 
 
 # --------------------------------------------------------------------------

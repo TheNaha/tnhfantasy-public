@@ -371,8 +371,19 @@ async def update_stage(ctx: dict[str, Any]) -> str | None:
     job_meta = ctx.get("job_meta") or {}
 
     should_chain = (autonomy_level != "strict" and current_turns < max_turns)
+    # `turn` is the turn that JUST RAN, not the turn to create.
+    #
+    # It used to be `current_turns + 1`, which made the deferred and the
+    # direct chain paths disagree about what `current_turns` means: the
+    # hook handed the chain the turn to CREATE, and the walk handed it the
+    # turn that RAN. The chain then wrote `autonomous_turn_count`
+    # unchanged, so on the direct path the counter never advanced and the
+    # budget could never run out.
+    #
+    # One meaning, everywhere: the turn that just ran. The chain creates
+    # the next one.
     chain_payload = {
-        "turn": current_turns + 1,
+        "turn": current_turns,
         "max_turns": max_turns,
         "autonomy_level": autonomy_level,
         "branch_id": job_meta.get("branch_id"),
@@ -404,8 +415,18 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
     """Decide whether the scene wants another autonomous turn, and take it.
 
     Declines to run when the Statekeeper ran: the chain is then deferred to
-    the updater job's completion hook, where it reads the state the
-    Statekeeper just wrote.
+    the updater job's completion hook, where it reads the state the Statekeeper
+    just wrote.
+
+    The turn budget is enforced HERE, not in `update_stage`.
+    `update_stage` only gates the chain it DEFERS, so on the direct path —
+    the one taken when the audit decides the Statekeeper should not run, so
+    `updater_job_id` is None and the chain runs in the walk itself — the
+    budget was not checked at all. The strict-autonomy gate was bypassed the
+    same way.
+
+    `current_turns` means the turn that JUST RAN, on both paths, and the
+    follow-up job is the turn after it.
     """
     if ctx.get("updater_job_id"):
         return None
@@ -428,14 +449,44 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
     character_id = ctx.get("character_id")
     last_speaker = ctx.get("last_speaker") or "character"
     current_turns = int(ctx.get("current_turns", 1))
-    max_turns = int(ctx.get("max_turns", MAX_AUTONOMOUS_TURNS))
-    autonomy_level = ctx.get("autonomy_level") or "balanced"
     branch_id = ctx.get("branch_id")
 
     chat_obj = session.get(Chat, chat_id)
     if not chat_obj:
         return None
+
+    # The autonomy level and the budget come from the chat, because the walk
+    # does not put them in the context. The deferred path does put them there
+    # (the payload carries them), and the two agree because the payload was
+    # built from the same chat.
+    autonomy_level = (
+        ctx.get("autonomy_level")
+        or getattr(chat_obj, "director_autonomy_level", "balanced")
+        or "balanced"
+    )
+    max_turns = int(
+        ctx.get("max_turns")
+        or getattr(chat_obj, "max_autonomous_turns", MAX_AUTONOMOUS_TURNS)
+        or MAX_AUTONOMOUS_TURNS
+    )
+
+    # The budget. "Up to 4 autonomous turns" means the chain stops when the
+    # turn that just ran was the fourth.
+    if autonomy_level == "strict" or current_turns >= max_turns:
+        logger.info(
+            "laya_chain_budget_exhausted",
+            chat_id=chat_id,
+            current_turns=current_turns,
+            max_turns=max_turns,
+            autonomy_level=autonomy_level,
+        )
+        return None
+
+    # The turn this chain is about to create.
+    next_turn = current_turns + 1
+
     char_obj = session.get(Character, character_id or chat_obj.character_id) if (character_id or chat_obj.character_id) else None
+
 
     msg_repo = MessageRepository(session)
     recent_msgs_objs = msg_repo.list_by_chat(chat_id, limit=8, newest_first=True)
@@ -558,7 +609,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
             type_="narrator",
             source="narrator",
             extra_metadata={
-                "autonomous_turn_count": current_turns,
+                "autonomous_turn_count": next_turn,
                 "max_autonomous_turns": max_turns,
                 "branch_id": branch_id,
                 "selected_variant": triage_decision.selected_variant,
@@ -566,7 +617,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
         )
         followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
         await queue_manager.enqueue(followup_job.id, task_type="llm")
-        logger.info("laya_conductor_narrator_chained", chat_id=chat_id, job_id=followup_job.id, turn=current_turns, variant=triage_decision.selected_variant)
+        logger.info("laya_conductor_narrator_chained", chat_id=chat_id, job_id=followup_job.id, turn=next_turn, variant=triage_decision.selected_variant)
     elif target_speaker == "secondary_character" and getattr(chat_obj, "additional_character_ids", None):
         secondary_id = chat_obj.additional_character_ids[0]
         system_prompt, context, _sections = await asyncio.to_thread(
@@ -588,14 +639,14 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
             model=model_for_kind("chat_reply", chat_obj.llm_model, session),
             samplers=sampler_overrides(chat_obj),
             extra_metadata={
-                "autonomous_turn_count": current_turns,
+                "autonomous_turn_count": next_turn,
                 "max_autonomous_turns": max_turns,
                 "branch_id": branch_id,
             },
         )
         followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
         await queue_manager.enqueue(followup_job.id, task_type="llm")
-        logger.info("laya_conductor_secondary_char_chained", chat_id=chat_id, secondary_id=secondary_id, job_id=followup_job.id, turn=current_turns)
+        logger.info("laya_conductor_secondary_char_chained", chat_id=chat_id, secondary_id=secondary_id, job_id=followup_job.id, turn=next_turn)
     elif target_speaker == "character" and char_obj is not None:
         # The character agent speaks as the character card, so its variant is
         # an OVERLAY on that card. It used to be passed as `system_prompt=`,
@@ -633,7 +684,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
             type_="chat_reply",
             source="character",
             extra_metadata={
-                "autonomous_turn_count": current_turns,
+                "autonomous_turn_count": next_turn,
                 "max_autonomous_turns": max_turns,
                 "branch_id": branch_id,
                 "selected_variant": triage_decision.selected_variant,
@@ -641,7 +692,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
         )
         followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
         await queue_manager.enqueue(followup_job.id, task_type="llm")
-        logger.info("laya_conductor_character_chained", chat_id=chat_id, job_id=followup_job.id, turn=current_turns, variant=triage_decision.selected_variant)
+        logger.info("laya_conductor_character_chained", chat_id=chat_id, job_id=followup_job.id, turn=next_turn, variant=triage_decision.selected_variant)
     elif resolved_agent:
         custom_agent = resolved_agent.profile
         char_name = char_obj.name if char_obj else "Character"
@@ -675,7 +726,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
             type_="chat_reply",
             source="custom_agent",
             extra_metadata={
-                "autonomous_turn_count": current_turns,
+                "autonomous_turn_count": next_turn,
                 "max_autonomous_turns": max_turns,
                 "branch_id": branch_id,
                 "agent_slug": target_speaker,
@@ -684,6 +735,6 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
         )
         followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
         await queue_manager.enqueue(followup_job.id, task_type="llm")
-        logger.info("laya_conductor_custom_agent_chained", chat_id=chat_id, agent=target_speaker, job_id=followup_job.id, turn=current_turns, variant=triage_decision.selected_variant)
+        logger.info("laya_conductor_custom_agent_chained", chat_id=chat_id, agent=target_speaker, job_id=followup_job.id, turn=next_turn, variant=triage_decision.selected_variant)
 
     return followup_job.id if followup_job is not None else None

@@ -591,6 +591,9 @@ async def _finalize_llm_job(
                 # the updater job's completion hook, rather than straight after
                 # the update — so that it reads the state the Statekeeper has
                 # just written instead of the pre-update snapshot.
+                #
+                # `pending_chain["turn"]` is the turn that JUST RAN, on both
+                # chain paths. The chain creates the one after it.
                 await chain_stage(
                     {
                         "session": job_service.session,
