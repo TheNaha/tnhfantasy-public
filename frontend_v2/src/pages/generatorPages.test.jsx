@@ -82,6 +82,10 @@ vi.mock('../api/config', () => ({ getApiUrl: () => '/api' }));
 vi.mock('../utils/modelType', () => ({
     isUnetModel: () => false, isFluxModel: () => false,
     isAuraFlowModel: () => false, isPonyModel: () => false,
+    // The whole module's surface. A mock that leaves a member out makes it
+    // `undefined`, and the page throws when it calls it - which is how a
+    // mock that protected nothing can still break the suite.
+    resolveModelType: () => 'sd15',
 }));
 vi.mock('../constants/modelDirectories', () => ({ GENERATOR_MODEL_REQUESTS: [] }));
 

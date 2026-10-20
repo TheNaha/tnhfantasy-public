@@ -41,8 +41,20 @@ function postCalls() {
     return fetchMock.mock.calls.filter((call) => call[1]?.method === 'POST');
 }
 
+/**
+ * The BATCH post, as opposed to the preflight post.
+ *
+ * The page makes two: `POST /api/jobs/validate` (the preflight, which is
+ * new) and `POST /api/generate/batch`. A test that counts the posts, or
+ * reads the first one, has to say which it means.
+ */
+function batchPostCalls() {
+    return postCalls().filter((call) => String(call[0]).includes('/api/generate/batch'));
+}
+
 function lastBatchBody() {
-    return JSON.parse(postCalls()[postCalls().length - 1][1].body);
+    const calls = batchPostCalls();
+    return JSON.parse(calls[calls.length - 1][1].body);
 }
 
 function savedPresets() {
@@ -90,6 +102,17 @@ describe('BatchGenerate presets and control parity', () => {
 
         fetchMock.mockImplementation((url, init = {}) => {
             if ((init.method || 'GET') === 'POST') {
+                // The preflight asks whether the models are installed before
+                // the batch is submitted. One canned answer for both made
+                // the preflight read `valid: undefined` - falsy - and the
+                // batch was never submitted.
+                if (String(url).includes('/api/jobs/validate')) {
+                    return Promise.resolve(jsonResponse({
+                        valid: true,
+                        eligible_providers: ['p1'],
+                        global_missing: {},
+                    }));
+                }
                 const count = JSON.parse(init.body).workflows.length;
                 return Promise.resolve(jsonResponse({
                     count,
@@ -123,7 +146,7 @@ describe('BatchGenerate presets and control parity', () => {
             fireEvent.change(screen.getByLabelText('Batch Size (images per prompt)'), { target: { value: '2' } });
 
             fireEvent.click(screen.getByRole('button', { name: /Generate 8 Images/ }));
-            await waitFor(() => expect(postCalls()).toHaveLength(1));
+            await waitFor(() => expect(batchPostCalls()).toHaveLength(1));
 
             const { options, metadata } = lastBatchBody().workflows[0];
             expect(options).toMatchObject({
@@ -139,7 +162,12 @@ describe('BatchGenerate presets and control parity', () => {
                 batchSize: 2,
             });
             expect(metadata).toMatchObject({
-                checkpoint: 'dreamer.safetensors',
+                // The model RECORD, not its name. The Batch page used to
+                // send the name, and the Simple page the record - and the
+                // gallery shows the record's display name and its visual
+                // fields, so a Batch job showed a bare filename where a
+                // Simple job showed the model. One builder, one shape.
+                checkpoint: expect.objectContaining({ name: 'dreamer.safetensors' }),
                 sampler: 'dpmpp_sde',
                 steps: 9,
             });
@@ -154,7 +182,7 @@ describe('BatchGenerate presets and control parity', () => {
             expect(useGeneratorStore.getState().seed).toBe(42);
 
             fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
-            await waitFor(() => expect(postCalls()).toHaveLength(1));
+            await waitFor(() => expect(batchPostCalls()).toHaveLength(1));
             expect(lastBatchBody().workflows.map((wf) => wf.options.seed)).toEqual([42, 43, 44, 45]);
         });
 
@@ -219,7 +247,7 @@ describe('BatchGenerate presets and control parity', () => {
             expect(screen.getByLabelText('LoRA 1 strength')).toHaveValue(0.65);
 
             fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
-            await waitFor(() => expect(postCalls()).toHaveLength(1));
+            await waitFor(() => expect(batchPostCalls()).toHaveLength(1));
             expect(lastBatchBody().workflows[0].options.loras)
                 .toEqual([{ name: 'style.safetensors', strength: 0.65 }]);
         });
@@ -357,13 +385,13 @@ describe('BatchGenerate presets and control parity', () => {
 
             // The picker already flags it; nothing has been submitted.
             expect(screen.getByRole('alert')).toHaveTextContent('checkpoint "ghost.safetensors"');
-            expect(postCalls()).toHaveLength(0);
+            expect(batchPostCalls()).toHaveLength(0);
 
             fireEvent.click(screen.getByRole('button', { name: 'Load preset Ghost' }));
             const pageWarning = screen.getByText(/cannot resolve that model/).closest('div[role="alert"]');
             expect(pageWarning).toHaveTextContent('ghost.safetensors');
             expect(pageWarning).toHaveTextContent('ghost_lora.safetensors');
-            expect(postCalls()).toHaveLength(0);
+            expect(batchPostCalls()).toHaveLength(0);
         });
 
         it('flags a preset in the picker even when it is not the loaded one', async () => {
@@ -398,7 +426,7 @@ describe('BatchGenerate presets and control parity', () => {
             expect(submit).toBeDisabled();
 
             fireEvent.click(submit);
-            await waitFor(() => expect(postCalls()).toHaveLength(0));
+            await waitFor(() => expect(batchPostCalls()).toHaveLength(0));
         });
 
         it('allows exactly the cap', async () => {
@@ -410,7 +438,7 @@ describe('BatchGenerate presets and control parity', () => {
 
             expect(screen.queryByRole('alert')).not.toBeInTheDocument();
             fireEvent.click(screen.getByRole('button', { name: /Generate 60 Images/ }));
-            await waitFor(() => expect(postCalls()).toHaveLength(1));
+            await waitFor(() => expect(batchPostCalls()).toHaveLength(1));
             expect(lastBatchBody().workflows).toHaveLength(60);
         });
 

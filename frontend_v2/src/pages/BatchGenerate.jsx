@@ -246,7 +246,19 @@ export default function BatchGenerate() {
         return seedMode === 'increment' ? base + index : base;
     }, [seedMode, seed]);
 
-    const buildWorkflows = useCallback(() => {
+    // NOT a `useCallback`.
+    //
+    // `buildPayload` is a fresh function on every render, and it reads the
+    // generator store - so a memoised `buildWorkflows` captures the
+    // builder from the render in which the memo was created, and reads the
+    // store as it was THEN. The page's controls changed the store, the
+    // memo did not notice, and the batch was submitted with the DEFAULT
+    // steps, cfg, sampler and dimensions. The user changed nine controls
+    // and the request ignored all of them.
+    //
+    // A plain function is called from the click handler, so it always sees
+    // the current render's builder and the current store.
+    const buildWorkflows = () => {
         const batchPreset = activePresetName || bakedType;
         return generatedPrompts.map((prompt, idx) => {
             const jobSeed = resolveSeedForIndex(idx);
@@ -266,15 +278,7 @@ export default function BatchGenerate() {
                 },
             };
         });
-        // `buildPayload` is a fresh function on every render (it reads the
-        // store), so it is deliberately NOT a dependency: listing it would
-        // rebuild the list on every render, and NOT listing it would pin a
-        // stale one. The list is rebuilt from the live store each time
-        // `buildWorkflows` is called, which is when it matters.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [
-        generatedPrompts, resolveSeedForIndex, activePresetName, bakedType,
-    ]);
+    };
 
     const handleGenerate = async () => {
         // Defence in depth: the button is disabled while over the limit, but a

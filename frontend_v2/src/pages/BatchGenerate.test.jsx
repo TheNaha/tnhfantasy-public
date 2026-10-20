@@ -36,6 +36,19 @@ describe('BatchGenerate page', () => {
             if ((init.method || 'GET') !== 'POST') {
                 return Promise.resolve({ ok: true, status: 200, headers: jsonHeaders, json: async () => ({ files: [], total: 0 }) });
             }
+            // The preflight asks whether the models are installed before the
+            // batch is submitted, so the page makes TWO posts: the validate
+            // and then the batch. A single canned answer for both made the
+            // preflight read `valid: undefined` - falsy - and the batch was
+            // never submitted.
+            if (String(url).includes('/api/jobs/validate')) {
+                return Promise.resolve({
+                    ok: true,
+                    status: 200,
+                    headers: jsonHeaders,
+                    json: async () => ({ valid: true, eligible_providers: ['p1'], global_missing: {} }),
+                });
+            }
             return Promise.resolve({
                 ok: true,
                 status: 200,
@@ -47,6 +60,18 @@ describe('BatchGenerate page', () => {
 
     function postCalls() {
         return fetchMock.mock.calls.filter(c => c[1]?.method === 'POST');
+    }
+
+    /**
+     * The BATCH post, as opposed to the preflight post.
+     *
+     * The page makes two: `POST /api/jobs/validate` (the preflight) and
+     * `POST /api/generate/batch`. The preflight is new - without it a
+     * Batch could submit a checkpoint that is not installed, and then
+     * every job in the batch failed on the provider.
+     */
+    function batchPostCalls() {
+        return postCalls().filter(c => String(c[0]).includes('/api/generate/batch'));
     }
 
     it('renders the main heading and subtitle', () => {
@@ -114,9 +139,9 @@ describe('BatchGenerate page', () => {
         });
         fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
 
-        await waitFor(() => expect(postCalls()).toHaveLength(1));
+        await waitFor(() => expect(batchPostCalls()).toHaveLength(1));
 
-        const [url, init] = postCalls()[0];
+        const [url, init] = batchPostCalls()[0];
         expect(url).toBe('/api/generate/batch');
         const body = JSON.parse(init.body);
         expect(body.workflows).toHaveLength(4);
@@ -140,8 +165,8 @@ describe('BatchGenerate page', () => {
         fireEvent.change(screen.getByPlaceholderText('Base seed'), { target: { value: '42' } });
         fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
 
-        await waitFor(() => expect(postCalls()).toHaveLength(1));
-        const body = JSON.parse(postCalls()[0][1].body);
+        await waitFor(() => expect(batchPostCalls()).toHaveLength(1));
+        const body = JSON.parse(batchPostCalls()[0][1].body);
         expect(body.workflows.map((w) => w.options.seed)).toEqual([42, 43, 44, 45]);
     });
 
@@ -151,8 +176,8 @@ describe('BatchGenerate page', () => {
         fireEvent.change(screen.getByPlaceholderText('Base seed'), { target: { value: '777' } });
         fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
 
-        await waitFor(() => expect(postCalls()).toHaveLength(1));
-        const body = JSON.parse(postCalls()[0][1].body);
+        await waitFor(() => expect(batchPostCalls()).toHaveLength(1));
+        const body = JSON.parse(batchPostCalls()[0][1].body);
         expect(body.workflows.map((w) => w.options.seed)).toEqual([777, 777, 777, 777]);
     });
 
