@@ -70,6 +70,40 @@ from core.workflow_limits import (
 )
 
 
+#: How the scene's upscaler vocabulary maps onto the generator's.
+#:
+#: The two are not the same vocabulary, and the scene's was passed through
+#: untranslated - so NONE of the scene's three values matched the builder's.
+#:
+#: The scene says which UPSCALING to do (`latent`, `bilinear`,
+#: `nearest-exact`); the generator's options say which UPSCALER to use
+#: (`Latent`, `Pixel`, or a model name). The builder branches on
+#: `"Latent"` and `"Pixel"` and treats everything else as a MODEL name, so
+#: a scene with a hires fix asked the provider for a model called "latent",
+#: and the job failed on a file nobody had.
+#:
+#: Two of the scene's values are latent upscales (the difference is the
+#: resampling method, which the builder hardcodes) and one is a pixel
+#: upscale, so the three collapse onto the generator's two.
+SCENE_UPSCALER_TO_GENERATOR: dict[str, str] = {
+    "latent": "Latent",
+    "bilinear": "Latent",
+    "nearest-exact": "Pixel",
+}
+
+
+def hires_upscaler_for_generator(upscaler: str | None) -> str:
+    """The generator's name for the scene's upscaler.
+
+    A value that is not one of the scene's own is a MODEL name, and the
+    generator takes model names as they are.
+    """
+    if not upscaler:
+        return "Latent"
+    key = str(upscaler).strip().lower()
+    return SCENE_UPSCALER_TO_GENERATOR.get(key, upscaler)
+
+
 def _round_dimension(value: int) -> int:
     """ComfyUI silently truncates a dimension that is not a multiple of 8.
 
@@ -431,7 +465,7 @@ def scene_spec_to_options(
         controlnets=controlnets,
         ipAdapters=ip_adapters,
         hiresFix=spec.hires_fix.enabled,
-        hiresUpscaler=spec.hires_fix.upscaler,
+        hiresUpscaler=hires_upscaler_for_generator(spec.hires_fix.upscaler),
         hiresDenoise=spec.hires_fix.denoise,
         hiresUpscale=spec.hires_fix.scale_by,
         hiresSteps=spec.hires_fix.steps,
