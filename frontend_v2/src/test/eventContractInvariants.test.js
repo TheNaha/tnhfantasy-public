@@ -298,3 +298,87 @@ describe('backend/frontend event contract', () => {
         expect(eventsPy).not.toContain('def emit_download_event');
     });
 });
+
+/**
+ * The job EVENT PAYLOAD contract.
+ *
+ * The event vocabulary - which event types exist, and who publishes and
+ * subscribes to them - was already pinned above. This is the other half: what
+ * a job event carries.
+ *
+ * The LLM path used to build its progress payloads by hand and publish them
+ * straight to `emit_job_event`, which gave them:
+ *
+ *   - no `task_type`, so the frontend's global realtime handler dropped every
+ *     one of them (it drops a payload without a task_type, because a partial
+ *     payload merged into the cached job drops `task_type` and `provider_id`
+ *     and can move the status backwards);
+ *   - a `status` that was a hand-written string ("evaluating_prompt",
+ *     "generating") rather than a `JobStatus`, so the job's `status` field
+ *     had two vocabularies depending on which event you read;
+ *   - a `metadata` that REPLACED the job's own metadata with eight keys, so
+ *     the frontend's background-job guard (`meta.background`) could not fire
+ *     on a progress frame - and a memory-extraction job rendered as a second
+ *     "X is thinking..." bubble under the reply it was extracted from.
+ *
+ * So the rule is: a job event's payload is the job's own representation.
+ * `task_type` is always there, `status` is always a `JobStatus`, and the
+ * metadata is the job's metadata rather than a hand-built subset.
+ */
+describe('job event payload contract', () => {
+    const BACKEND_SERVICES = join(BACKEND, 'services');
+
+    it('no job event is published with a hand-built payload', () => {
+        // `emit_job_event(type, {...})` with a literal payload is how the LLM
+        // path did it. A job event has to go through `update_job`, which
+        // builds the payload from the row - or carry the row's own
+        // representation, spread into the payload it adds extras to.
+        const offenders = [];
+        for (const file of walk(BACKEND_SERVICES).concat(walk(join(BACKEND, 'api')))) {
+            const src = read(file);
+            const calls = src.matchAll(/emit_job_event\(\s*EventType\.JOB_\w+\s*,([\s\S]{0,220})/g);
+            for (const [, payload] of calls) {
+                const carriesTheJob =
+                    payload.includes('_job_to_dict') || /\{\s*\*\*/.test(payload);
+                if (!carriesTheJob) {
+                    offenders.push(`${file}: ${payload.trim().split('\n')[0]}`);
+                }
+            }
+        }
+        expect(offenders, offenders.join('\n')).toEqual([]);
+    });
+
+    it('the LLM reducer publishes through update_job', () => {
+        const src = read(join(BACKEND_SERVICES, 'provider_client.py'));
+        expect(src).toContain('update_job');
+        // And it no longer reaches for the event helper directly.
+        expect(src).not.toMatch(/emit_job_event\(\s*EventType\.JOB_PROGRESS/);
+    });
+
+    it('a job status is never a hand-written string', () => {
+        // The spellings that are not `JobStatus` members. `jobStatus.test.js`
+        // pins the frontend's own vocabulary; this is the backend's side of
+        // the same rule. The LLM path used to publish "evaluating_prompt"
+        // and "generating" in the `status` key - neither is a `JobStatus`.
+        //
+        // The same words are legitimate as a PHASE: `status` says what the
+        // job IS, `phase` says what it is DOING.
+        const offenders = [];
+        for (const file of walk(BACKEND_SERVICES)) {
+            const src = read(file);
+            for (const spelling of ['evaluating_prompt', 'generating']) {
+                const asStatus = new RegExp(`["']status["']\\s*:\\s*["']${spelling}["']`);
+                if (asStatus.test(src)) offenders.push(`${file}: status "${spelling}"`);
+            }
+        }
+        expect(offenders, offenders.join('\n')).toEqual([]);
+    });
+
+    it('the frontend realtime handler drops a payload without a task_type', () => {
+        // The guard is what makes "a job event carries the job's own
+        // representation" a rule rather than a hope: a partial payload is
+        // dropped rather than merged.
+        const src = read(join(SRC, 'hooks', 'useJobsRealtime.jsx'));
+        expect(src).toContain('if (!job.task_type) return;');
+    });
+});

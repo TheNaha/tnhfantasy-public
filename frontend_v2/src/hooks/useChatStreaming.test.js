@@ -98,6 +98,13 @@ describe('useChatStreaming', () => {
                     job: {
                         id: 'job-1',
                         task_type: 'llm',
+                        // The backend's own status. The LLM path used to
+                        // hand-build this payload with a status of
+                        // "evaluating_prompt"/"generating" - spellings
+                        // `JobStatus` does not have - and the streaming store
+                        // invented a third one ("running") for when the
+                        // payload had none. There is one vocabulary now.
+                        status: 'connected',
                         text: 'Once upon',
                         metadata_: { chat_id: 'chat-1', workspace: 'chat' },
                     },
@@ -108,7 +115,7 @@ describe('useChatStreaming', () => {
 
         expect(qc.getQueryData(['streaming', 'job-1'])).toEqual({
             text: 'Once upon',
-            status: 'running',
+            status: 'connected',
             chatId: 'chat-1',
             type: 'chat',
             taskType: 'llm',

@@ -753,16 +753,57 @@ class JobService:
         jobs = self.repo.search_prompts(query, limit=limit)
         return [self._job_to_dict(job) for job in jobs]
     
-    async def update_job(self, job_id: str, event_extra: dict | None = None, **updates) -> Job:
+    async def job_event_payload(
+        self, job_id: str, *, include_full_metadata: bool = False
+    ) -> dict[str, Any] | None:
+        """The job's wire representation, for an event that is not a status change.
+
+        Some announcements are about the job but not a transition of it - "the
+        thumbnails are done", for instance. They still have to look like a job
+        on the wire: the frontend's realtime handler drops any event payload
+        without a `task_type`, because a partial payload merged into the
+        cached job drops `task_type` and `provider_id` and can move the
+        status backwards.
+
+        So a partial payload is not an option. This returns the job's own
+        representation, and the caller adds its extras.
+        """
+        job = self.repo.get(job_id)
+        if not job:
+            return None
+        return self._job_to_dict(job, include_full_metadata=include_full_metadata)
+
+    async def update_job(
+        self,
+        job_id: str,
+        event_extra: dict | None = None,
+        *,
+        event_type: EventType | None = None,
+        include_full_metadata: bool = True,
+        **updates,
+    ) -> Job:
         """
         Update a job.
-        
+
         Args:
             job_id: Job ID
             event_extra: Optional dict merged into the emitted event payload
                 (used to carry rich fields like type/chat_id/content on completion).
+            event_type: Override the event type the update implies. The event
+                type is derived from the new status, which is right for a
+                status change and wrong for a progress frame on a job whose
+                status did not move - the LLM path streams tokens while the
+                job stays `connected`, and its frames have to be
+                `job.progress` events or the frontend never sees them.
+            include_full_metadata: Whether the emitted payload carries the
+                job's whole metadata. False strips the heavyweight
+                conversation blobs (`original_messages`, `messages`). An
+                event is a notification - the full metadata is one
+                `GET /api/jobs/{id}` away - and a deep agentic job's
+                metadata can be tens of kilobytes, which is a lot to put on
+                the wire per streamed token.
             **updates: Fields to update
-            
+
         Returns:
             Updated job
         """
@@ -909,20 +950,25 @@ class JobService:
         job, status, updates = await run_db(_db_work)
         
         # Determine event type based on status
-        if status == JobStatus.COMPLETED:
-            event_type = EventType.JOB_COMPLETED
+        if event_type is not None:
+            selected_event_type = (
+                event_type if isinstance(event_type, EventType) else EventType(event_type)
+            )
+        elif status == JobStatus.COMPLETED:
+            selected_event_type = EventType.JOB_COMPLETED
         elif status == JobStatus.POST_PROCESSING:
-            event_type = EventType.JOB_POST_PROCESSING
+            selected_event_type = EventType.JOB_POST_PROCESSING
         elif status == JobStatus.FAILED:
-            event_type = EventType.JOB_FAILED
+            selected_event_type = EventType.JOB_FAILED
         elif status == JobStatus.CANCELLED:
-            event_type = EventType.JOB_CANCELLED
+            selected_event_type = EventType.JOB_CANCELLED
         elif "progress" in updates:
-            event_type = EventType.JOB_PROGRESS
+            selected_event_type = EventType.JOB_PROGRESS
         else:
-            event_type = EventType.JOB_UPDATED
-        
-        await emit_job_event(event_type, self._build_event_payload(self._job_to_dict(job), event_extra))
+            selected_event_type = EventType.JOB_UPDATED
+
+        job_dict = self._job_to_dict(job, include_full_metadata=include_full_metadata)
+        await emit_job_event(selected_event_type, self._build_event_payload(job_dict, event_extra))
 
         return job
 

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { getStreamingJob, setStreamingJob, clearStreamingJob } from './useStreamingJobs';
-import { jobMetadata } from '../utils/jobStatus';
+import { jobMetadata, JOB_STATUS } from '../utils/jobStatus';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 
 export function useChatStreaming({
@@ -96,10 +96,14 @@ export function useChatStreaming({
 
             const existingJob = getStreamingJob(queryClient, eventId);
             const eventChatId = meta.chat_id || existingJob?.chatId;
-            if (eventChatId && (streamText != null || job.phase || job.status === 'evaluating_prompt')) {
+            if (eventChatId && (streamText != null || job.phase || job.status === JOB_STATUS.CONNECTED)) {
                 setStreamingJob(queryClient, eventId, {
                     text: streamText ?? existingJob?.text ?? '',
-                    status: job.status || 'running',
+                    // The backend's own status. It used to be a fallback of
+                    // 'running', a spelling `JobStatus` does not have, so the
+                    // streaming store held a status vocabulary of its own
+                    // alongside the backend's.
+                    status: job.status || existingJob?.status || JOB_STATUS.CONNECTED,
                     phase: job.phase || (streamText ? 'generating' : 'evaluating_prompt'),
                     speedTps: job.speed_tps ?? meta.speed_tps ?? existingJob?.speedTps ?? null,
                     tokenCount: job.token_count ?? meta.token_count ?? existingJob?.tokenCount ?? 0,
@@ -150,7 +154,11 @@ export function useChatStreaming({
 
             const eventChatId = meta.chat_id || null;
             setStreamingJob(queryClient, eventId, {
-                status: 'queued',
+                // The backend's status, not a spelling of our own. The
+                // `job.created` event carries the job's whole representation,
+                // and its status is `pending` - which is what "queued" meant,
+                // said in the one vocabulary the project has.
+                status: job.status ?? JOB_STATUS.PENDING,
                 chatId: eventChatId,
                 type: meta.workspace,
                 taskType: job.task_type ?? null,
@@ -232,7 +240,7 @@ export function useChatStreaming({
             if (meta.background) return;
 
             if (eventChatId) {
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', eventChatId] });
+                queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, eventChatId) });
                 // `exact: true` is load-bearing. The 3-element chat key is a
                 // *prefix* of the sub-queries
                 // (['world_vault','chats',id,'system-prompt' | 'jobs' |
@@ -243,10 +251,10 @@ export function useChatStreaming({
                 // event cannot change. The jobs and images lists are named
                 // explicitly below because they are the sub-queries that do
                 // move when a job finishes.
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId], exact: true });
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId, 'jobs'], exact: true });
+                queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHATS, eventChatId), exact: true });
+                queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHATS, eventChatId, 'jobs'), exact: true });
                 if (job.task_type === 'image') {
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId, 'images'], exact: true });
+                    queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHATS, eventChatId, 'images'), exact: true });
                 }
                 // A chat completion is also where memory extraction runs: the
                 // backend scans the new exchange and writes character memories

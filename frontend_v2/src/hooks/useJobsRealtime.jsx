@@ -117,12 +117,18 @@ export function useJobsRealtime() {
             markEventReceived();
             if (event.sequence_number) lastSequenceNumberRef.current = event.sequence_number;
 
-            // Partial LLM stream payloads ({id, status, stream_chunk, text,
-            // metadata_}) carry no task_type or progress and would corrupt the
-            // cached job (dropping task_type/provider_id, regressing status
-            // out-of-order). Their text content is consumed via the streaming
-            // store instead. Full job payloads always have task_type.
-            if (!job.task_type && job.progress == null && job.overall_progress == null) return;
+            // A partial payload cannot be merged into the cached job: it
+            // drops `task_type` and `provider_id`, and it can move the status
+            // backwards. So a payload without a `task_type` is not a job
+            // event and is dropped.
+            //
+            // This used to be a duck-type check - "no task_type AND no
+            // progress AND no overall_progress" - because the LLM path
+            // hand-built its progress payloads and they carried none of the
+            // three. The LLM path now goes through `update_job` like every
+            // other job event, so its frames carry the job's own
+            // representation and the check can be a type check.
+            if (!job.task_type) return;
 
             // Update the single source of truth
             queryClient.setQueryData(['jobs', job.id], (old) => old ? { ...old, ...job } : job);

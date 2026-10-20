@@ -3,7 +3,7 @@ import json
 import time
 
 from core.entities import JobStatus
-from core.events import emit_job_event, EventType
+from core.events import EventType
 from core.progress import coerce_worker_percent
 from infrastructure.logging import get_logger
 from services.engines.base import EngineAuthError
@@ -206,7 +206,32 @@ class _ImageReducer:
 
 
 class _LLMReducer:
-    """Reduce unified TaskEvents into LLM-job state + final result (text/tool_calls)."""
+    """Reduce unified TaskEvents into LLM-job state + final result (text/tool_calls).
+
+    The frames go out through `update_job`, like every other job event, so
+    there is ONE contract.
+
+    They used to be built by hand and pushed straight to `emit_job_event`.
+    That had three consequences, all of them invisible from the outside:
+
+      * the payload carried no `task_type`, and the frontend's global
+        realtime handler drops any event without one - so the LLM progress
+        frames never reached the global subscribers at all;
+
+      * the payload's `status` was a hand-written string ("evaluating_prompt",
+        "generating") rather than a `JobStatus`, so the job's `status` field
+        had two different vocabularies depending on which event you read;
+
+      * the payload's `metadata` REPLACED the job's own metadata with a
+        hand-built eight-key dict. The frontend's background-job guard
+        reads `meta.background`, and that flag was never in the payload -
+        so a memory-extraction job could render as a second "X is thinking"
+        bubble under the reply it was extracted from. Every other key the
+        job carried was lost the same way.
+
+    `status` says what the job IS. The LLM sub-state is what it is DOING,
+    and that travels as `phase`.
+    """
 
     def __init__(self, job_id, job_service, provider_id, workflow):
         self.job_id = job_id
@@ -219,27 +244,27 @@ class _LLMReducer:
         self.start_time = time.monotonic()
         self.first_token_time = None
 
+    async def _emit_phase(self, *, phase: str, stream_chunk: str, text: str, **extra) -> None:
+        """One streaming frame, on the canonical job path."""
+        event_extra = {
+            "stream_chunk": stream_chunk,
+            "text": text,
+            "phase": phase,
+            "provider_id": self.provider_id,
+            "model": self.workflow.get("model"),
+            **extra,
+        }
+        await self.job_service.update_job(
+            self.job_id,
+            event_extra=event_extra,
+            event_type=EventType.JOB_PROGRESS,
+            include_full_metadata=False,
+        )
+
     async def __call__(self, ev: dict) -> None:
         event = ev.get("event")
         if event == "started":
-            await emit_job_event(EventType.JOB_PROGRESS, {
-                "id": self.job_id,
-                "status": "evaluating_prompt",
-                "stream_chunk": "",
-                "text": "",
-                "phase": "evaluating_prompt",
-                "provider_id": self.provider_id,
-                "model": self.workflow.get("model"),
-                "metadata_": {
-                    "chat_id": self.workflow.get("chat_id"),
-                    "story_id": self.workflow.get("story_id"),
-                    "chapter_id": self.workflow.get("chapter_id"),
-                    "type": self.workflow.get("type"),
-                    "provider_id": self.provider_id,
-                    "model": self.workflow.get("model"),
-                    "phase": "evaluating_prompt",
-                },
-            })
+            await self._emit_phase(phase="evaluating_prompt", stream_chunk="", text="")
         elif event == "delta":
             msg = ev.get("text") or ""
             self.full_content += msg
@@ -252,57 +277,27 @@ class _LLMReducer:
 
             if now - self.last_emit >= LLM_PROGRESS_THROTTLE_SECONDS:
                 self.last_emit = now
-                await emit_job_event(EventType.JOB_PROGRESS, {
-                    "id": self.job_id,
-                    "status": "generating",
-                    "stream_chunk": msg,
-                    "text": self.full_content,
-                    "phase": "generating",
-                    "token_count": self.token_count,
-                    "speed_tps": speed_tps,
-                    "elapsed_seconds": round(now - self.start_time, 1),
-                    "provider_id": self.provider_id,
-                    "model": self.workflow.get("model"),
-                    "metadata_": {
-                        "chat_id": self.workflow.get("chat_id"),
-                        "story_id": self.workflow.get("story_id"),
-                        "chapter_id": self.workflow.get("chapter_id"),
-                        "type": self.workflow.get("type"),
-                        "provider_id": self.provider_id,
-                        "model": self.workflow.get("model"),
-                        "phase": "generating",
-                        "token_count": self.token_count,
-                        "speed_tps": speed_tps,
-                    },
-                })
+                await self._emit_phase(
+                    phase="generating",
+                    stream_chunk=msg,
+                    text=self.full_content,
+                    token_count=self.token_count,
+                    speed_tps=speed_tps,
+                    elapsed_seconds=round(now - self.start_time, 1),
+                )
         elif event == "completed":
             now = time.monotonic()
             elapsed_total = max(now - self.start_time, 0.001)
             avg_speed_tps = round(self.token_count / elapsed_total, 1) if self.token_count > 0 else 0.0
             if self.full_content:
-                await emit_job_event(EventType.JOB_PROGRESS, {
-                    "id": self.job_id,
-                    "status": "generating",
-                    "stream_chunk": "",
-                    "text": self.full_content,
-                    "phase": "generating",
-                    "token_count": self.token_count,
-                    "speed_tps": avg_speed_tps,
-                    "elapsed_seconds": round(elapsed_total, 1),
-                    "provider_id": self.provider_id,
-                    "model": self.workflow.get("model"),
-                    "metadata_": {
-                        "chat_id": self.workflow.get("chat_id"),
-                        "story_id": self.workflow.get("story_id"),
-                        "chapter_id": self.workflow.get("chapter_id"),
-                        "type": self.workflow.get("type"),
-                        "provider_id": self.provider_id,
-                        "model": self.workflow.get("model"),
-                        "phase": "generating",
-                        "token_count": self.token_count,
-                        "speed_tps": avg_speed_tps,
-                    },
-                })
+                await self._emit_phase(
+                    phase="generating",
+                    stream_chunk="",
+                    text=self.full_content,
+                    token_count=self.token_count,
+                    speed_tps=avg_speed_tps,
+                    elapsed_seconds=round(elapsed_total, 1),
+                )
             outputs = ev.get("outputs") or []
             first = outputs[0] if outputs and isinstance(outputs[0], dict) else {}
             cancelled = ev.get("status") == "cancelled" or bool(first.get("cancelled"))

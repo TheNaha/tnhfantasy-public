@@ -125,16 +125,12 @@ function sitesInFile(rel) {
  * the frozen one, which is why the table is down to a single row. The
  * byte-equivalence half of that work is pinned by the `CASES` table below.
  */
-const REPORTED_OUTSTANDING = {
-    'hooks/useChatStreaming.js': [235, 246, 247, 249],
-};
+const REPORTED_OUTSTANDING = {};
 
 const OWNED_DIRECTORIES = ['api', 'constants', 'hooks', 'store', 'utils'];
 
 /** An owned directory does not mean an ownable file. */
-const OWNED_DIRECTORY_EXCEPTIONS = {
-    'hooks/useChatStreaming.js': 'mid-change in another workstream',
-};
+const OWNED_DIRECTORY_EXCEPTIONS = {};
 
 describe("no production file hand-writes the 'world_vault' namespace", () => {
     it('finds nothing in any directory this workstream owns', () => {
