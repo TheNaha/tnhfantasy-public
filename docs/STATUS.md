@@ -325,6 +325,113 @@ express — the expressions, the voice binding, the world and its
 locations, the vault's lorebooks, the gallery, the chats, the memories —
 and the export menu shows that list before the download.
 
+### The 2026-10-20 image-generation coherence pass
+
+An audit of the image generation surface — the Simple Generator and its
+Enhancements panel, the Advanced Generator, Batch/Img2Img/Inpaint, the
+Gallery, the job system, and the model/provider catalogue — found the
+backend well-factored and the frontend carrying **four generator surfaces
+that each had their own idea of what a generation request is**. The
+Enhancements panel was the visible end of it: it is the part of the
+Simple Generator that reaches past the guided form into the graph, and it
+reached into the graph with a vocabulary the rest of the system did not
+share.
+
+**A restart re-paid for generations that had already completed.**
+`recover_post_processing_jobs` awaits `finalize_persisted_job_outputs`, and
+the finaliser ends in `start_background_task(...)` — so the await returned
+before the finalisation ran, the startup sweep moved the still-POST_PROCESSING
+job to PENDING with `claimed_at = NULL`, and PENDING-with-no-claim IS the
+claim predicate. A live worker then ran the entire **paid** generation
+again. The finalisation is awaited now, and the sweep EXCLUDES
+POST_PROCESSING, which is a second guard that does not depend on the
+ordering at all.
+
+**The dashboard's "Recover" button failed jobs that were running
+normally.** `STALE_JOB_TIMEOUT_SECONDS` was a global 300 seconds against a
+legal image timeout of 3600, and the route's own docstring said "there is
+no frontend consumer" — there is one, and it sent no timeout. Every job
+running more than five minutes was marked FAILED. The stale window is now
+each job's own task-type timeout, and the route REPORTS what is stale
+instead of failing it unless the caller passes `force=true`.
+
+**The job system had three contract systems, and the LLM path was one of
+them.** The LLM reducer built its progress payloads by hand and published
+them straight to `emit_job_event`: no `task_type` (so the frontend's
+global handler dropped every frame), a `status` that was a hand-written
+string rather than a `JobStatus`, and a `metadata` that REPLACED the job's
+own — so the frontend's background-job guard could not fire, and a
+memory-extraction job rendered as a second "X is thinking…" bubble under
+the reply it was extracted from. It goes through `update_job` now. `status`
+says what the job IS; the LLM sub-state is what it is DOING, and travels
+as `phase`.
+
+**`POST /api/generate` accepted two body shapes and the kind was
+INFERRED**, so a hand-written ComfyUI graph with a node keyed `prompt` or
+`mode` was routed to `options` and rejected by the option schema. The kind
+is explicit now, and — the part that mattered — the two kinds get the
+SAME treatment. The graph path had no prompt-shortcut expansion, no
+embedding check, and no metadata at all: the gallery said "Unknown Model",
+"Reuse parameters" restored nothing, and the PNG sidecar carried none of
+the allowlisted keys.
+
+**The Batch page was a second request builder**, carrying 15 of the Simple
+page's 36 option fields. The missing ones were not cosmetic: a Flux model
+was transmitted as `checkpoint` (and a UNET lives in `models/unet/`, not
+`models/checkpoints/`, so no provider had it), `modelType` fell back to
+`sd15` and gave an SDXL model the SD1.5 FreeU curve, and none of the
+enhancements could be expressed at all. It calls the shared builder now,
+and it runs the preflight. A partial batch is reported rather than thrown:
+the jobs already created are real work, and the old code let the exception
+escape, so the client got a 5xx, `setJobIds` never ran, and the Batch Jobs
+panel stayed EMPTY while N-1 images were being produced somewhere.
+
+**The Enhancements panel asked the provider nothing.** It hardcoded the
+provider's node vocabulary in Python — `FreeU_V2`,
+`PerturbedAttentionGuidance`, `FaceDetailer` — and the builder emitted
+those nodes whatever the provider had installed, so a FreeU toggle
+produced a graph the provider could not run and the job failed at dispatch
+with "node type not found". `GET /api/nodes/capabilities` derives the
+answer from the provider's OWN node graph, through the same cached
+`object_info` the node palette already reads. "Not known" and "not
+supported" are different answers, and the difference matters: a provider
+that is down is not a provider that cannot do FreeU.
+
+**Every image model read "Partial — 2 of 4 online providers ready."** The
+badge's denominator was every online provider, and every provider with an
+engine has the runtime state `in_process` — so the LLM and TTS providers
+were counted, and they can never have an image model. And the backend wrote
+a `pending` status row for every enabled provider BEFORE it worked out
+which ones could act on it, so every LLM and TTS provider accumulated a
+`pending` row for every image model, forever. Both halves are fixed.
+
+**The scene's hires upscaler asked for a model named "latent."** There
+were three vocabularies for it, none matching the others, and the scene's
+was passed through untranslated — so the builder's model branch emitted an
+`UpscaleModelLoader` with `model_name: "latent"`, for every one of the
+scene's three values. The scene's hires fix did not work at all.
+
+**And a config file that could not be parsed was overwritten with the
+defaults.** The test suite restored the real `config.json` with a
+truncating write, a parallel worker read it in the window, and the next
+load replaced the operator's settings with `DEFAULT_CONFIG`. The
+unreadable file is moved aside now, with a timestamp, and the restores are
+atomic. This repository's own `config.json` was caught by it during this
+work and restored from git history.
+
+Also: the inpaint mask grew twice (`GrowMask` by the amount the user
+asked for, then `VAEEncodeForInpaint` by a hardcoded 6); the "Inpaint
+Masked Only" control was declared, sent, and ignored by a hardcoded
+`noise_mask: True`; FreeU and PAG were "ignored for Flux models" in the
+help text while the toggle stayed live and the rule lived in the backend,
+so the user turned it on and nothing happened; the generator's model lists
+are a different cache from the Models Manager's and nothing invalidated
+them, so the generator showed a stale list for five minutes after a model
+installed; the Providers page invalidated two query keys that matched
+nothing, so it did not refresh after a credential edit or a deploy; and
+four Gallery call sites fully invalidated an infinite query after a
+deletion, which refetches every loaded page to remove one item.
+
 ### The 2026-10-20 remote-agent reliability pass
 
 The remote agent was reported as unreliable on its minimum target (an L4, 24 GB
@@ -1154,6 +1261,66 @@ deliberately left alone — this is a capacity and billing decision, not a bug f
     1.5 MB model dump (`/api/v2/models/cache`, `/api/v2/models/all`,
     `/api/v2/providers/model-cache`, `/api/v2/gallery`) in four separate
     implementations. Removing them is an API-surface decision, not a cleanup.
+
+### Added by the 2026-10-20 image-generation audit
+
+The full audit covered the Simple Generator and its Enhancements panel, the
+Advanced Generator, Batch/Img2Img/Inpaint, the Gallery, the job system, and
+the model/provider catalogue. The pass above fixed the parts that cost
+money, killed live work, or made a request fail for a reason the user could
+not see. These are the ones it found and did NOT fix, in the order they are
+worth doing:
+
+1. **The capability gate is build-time only.** The builder now skips what the
+   target provider cannot do and says so in the job's metadata — but there is
+   no DISPATCH-time filter, so a graph that reaches the provider with a node
+   it lacks still fails with "node type not found" rather than being pruned.
+   The prune is strictly better than the failure, but it changes the output,
+   so it needs a home of its own: one "prepare this workflow for this
+   provider" step, with what it removed recorded in the job's diagnostics.
+
+2. **There is no provider picker.** The Enhancements panel asks about the
+   first ENABLED image provider, which is the target in every current
+   deployment — `load-balancer/stats` reports `total_providers: 1`, five of
+   six being disabled. With two enabled providers the panel would describe
+   one and the balancer might run the other. The plumbing is already there:
+   `preferred_provider_id` is honoured end to end by the backend
+   (`job_submission_service` → the job's metadata → the load balancer), and
+   the request model has the field. What is missing is the UI, and the
+   Advanced Generator's silent `providers.filter(p => p.enabled)[0]` for its
+   `object_info` should become that same selection.
+
+3. **The gallery drops a completed job.** `dashboardItems.js` returns
+   without pushing when a job is completed but not yet indexed, and the
+   filter then excludes it because it is `completed` — so a job that
+   finished between two polls vanishes from the gallery instead of
+   appearing. The desktop polling gap is the same shape: with the socket
+   down, the active-jobs list is never polled on desktop.
+
+4. **`file.path` does not exist in the `/api/files` projection**, so the
+   Provider Status list always filters the LLM providers out
+   (`ModelDetailsModal.jsx`). The projection is in `api/routes/files.py`.
+
+5. **The badge and the submit-time gate still answer different questions.**
+   The badge uses the model-level aggregate and the gate uses the exact
+   `(directory, filename)` pair, and they disagree about the same row. One
+   function — "can this provider run this exact file, right now" — used by
+   both, would settle it.
+
+6. **There is no integrity verification anywhere.** The `.sha256` sidecar IS
+   read (`image_worker/comfy/models_utils.py`), but it holds a locally
+   computed hash that is never compared to the upstream one, and
+   `ProviderVersionStatus.verified_at` has zero writers. The download gate
+   is size plus magic bytes. `ModelFile.hash_sha256` also conflates the
+   upstream expected hash with the provider's local one in a single column.
+
+7. **`jobs_cleanup` has zero consumers**, so the `jobs` table grows without
+   bound, and **`get_pending_downloads` has no per-provider assignment
+   filter**, so every provider converges on the whole catalogue. Coherent as
+   a policy, but undocumented.
+
+8. **`/api/v2/models/catalog` returns the LLM registry, not models.** An
+   API-surface decision rather than a cleanup.
 
 ### Added by the 2026-09-28 audit
 
