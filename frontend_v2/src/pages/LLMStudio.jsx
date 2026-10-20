@@ -848,14 +848,23 @@ export default function LLMStudio() {
             {/* Page Header */}
             <div className="max-w-7xl w-full mx-auto space-y-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/5">
-                    <div>
+                    {/* The title column is capped, not free.
+
+                    It used to be an unconstrained flex child, so the tab strip
+                    could take the whole row and leave the title a column two
+                    characters wide — "LLM / Studio & / Multi- / Agent /
+                    Workflow" — with the subtitle under it in a 140px ribbon.
+                    The cap gives the title its natural width and hands the
+                    rest of the row to the tabs, which then scroll.
+                    */}
+                    <div className="min-w-0 md:max-w-lg">
                         <div className="flex items-center gap-2.5">
-                            <span className="p-2 rounded-xl bg-gradient-to-tr from-blue-600/20 to-purple-600/20 border border-blue-500/30 text-blue-400">
+                            <span className="shrink-0 p-2 rounded-xl bg-gradient-to-tr from-blue-600/20 to-purple-600/20 border border-blue-500/30 text-blue-400">
                                 <Cpu size={22} />
                             </span>
-                            <div>
-                                <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                                    LLM Studio &amp; Multi-Agent Workflow
+                            <div className="min-w-0">
+                                <h1 className="text-2xl font-bold tracking-tight text-white">
+                                    <span className="truncate block">LLM Studio &amp; Multi-Agent Workflow</span>
                                 </h1>
                                 <p className="text-xs text-gray-400">
                                     Manage modular agents, 16-gate Statekeeper thresholds, model cluster routing, and workflow pipeline execution.
@@ -864,8 +873,21 @@ export default function LLMStudio() {
                         </div>
                     </div>
 
-                    {/* Navigation Tabs */}
-                    <div className="flex items-center gap-1.5 p-1 rounded-xl bg-gray-900/80 border border-white/10 shrink-0 overflow-x-auto">
+                    {/* Navigation Tabs
+
+                    `shrink-0` and `overflow-x-auto` were on the same element,
+                    and `shrink-0` won: the strip refused to give up any
+                    width, so it kept its full intrinsic width, overflowed the
+                    page, and the last tab was cut off with no way to reach
+                    it. The `overflow-x-auto` was there to scroll and never
+                    could.
+
+                    It scrolls now — but a strip with five of its nine tabs
+                    hidden behind a scroll is a strip nobody can find
+                    anything on, so it wraps instead. Every tab is on the
+                    page, and the page never scrolls sideways.
+                    */}
+                    <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-gray-900/80 border border-white/10 min-w-0 flex-1">
                         <button
                             type="button"
                             onClick={() => handleTabChange('workflow')}
