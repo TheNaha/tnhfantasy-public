@@ -7,6 +7,7 @@ import { JOB_STATUS, isJobCancelled, isJobComplete, isJobFailed, isJobRunning, j
 
 import { memo } from 'react';
 import ModalOverlay from '../common/ModalOverlay';
+import { checkpointName } from '../../utils/modelDisplay';
 
 // ⚡ Bolt: Wrap JobDetailsModal in React.memo to prevent unnecessary re-renders when parent Dashboard updates
 export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete, onRetry }) {
@@ -16,7 +17,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
 
     const meta = jobMetadata(job);
     const diagnostics = job.diagnostics || null;
-    const checkpoint = typeof meta.checkpoint === 'object' ? meta.checkpoint?.name : meta.checkpoint;
+    const checkpoint = checkpointName(meta);
     // The previous hand-written lists here carried four phantom statuses
     // ('processing', 'executing', 'progress', 'running') plus a 'queued'
     // pending state that `JobStatus` does not have, so an in-flight job could

@@ -448,7 +448,12 @@ class WorkflowBuilder:
                 "pixels": load_image,
                 "vae": current_vae,
                 "mask": processed_mask,
-                "grow_mask_by": 6
+                # The mask has ALREADY been grown, by the GrowMask node
+                # above, with the amount the user asked for. This node grew
+                # it by a hardcoded 6 as well, so the mask grew TWICE: six
+                # pixels from GrowMask and another six from here, twelve in
+                # total, and the user could not change either number.
+                "grow_mask_by": 0
             }), 0]
         else:
             raise ValueError(f"Unknown mode: {mode}")

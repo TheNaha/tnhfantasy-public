@@ -172,6 +172,7 @@ export const useGeneratorStore = create(
             denoise: 0.7,         // Denoise strength for Img2Img/Inpaint (0.0-1.0)
             maskImage: null,      // Base64 data URL of the mask for inpainting
             maskBlur: 4,          // Blur mask edges (0-20 pixels)
+            growMask: 6,          // Grow the mask outwards (pixels), before blurring
 
 
 
@@ -271,6 +272,7 @@ export const useGeneratorStore = create(
             setDenoise: (denoise) => set({ denoise }),
             setMaskImage: (maskImage) => set({ maskImage }),
             setMaskBlur: (maskBlur) => set({ maskBlur }),
+            setGrowMask: (growMask) => set({ growMask }),
             clearSourceImage: () => set({ sourceImage: null, maskImage: null }),
 
 

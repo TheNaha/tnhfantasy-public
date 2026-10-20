@@ -22,7 +22,7 @@ import { api, ApiError, createIdempotencyKey, generateApi } from "../../api";
 import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
 import ContextMenu, { createImageActions } from "../ContextMenu";
-import { getCheckpointDisplayName } from "../../utils/modelDisplay";
+import { checkpointName, getCheckpointDisplayName } from "../../utils/modelDisplay";
 import { assetMetadataUrl, assetUrl, assetPath } from "../../utils/assetUrl";
 import { formatTimestamp } from "../../utils/dateTime";
 import { copyToClipboard } from "../../utils/clipboard";
@@ -193,7 +193,7 @@ const FeedCard = memo(function FeedCard({
         seed: newSeed,
         // Override the image input to make sure it feeds correctly for img2img
         inputImage: meta.sourceImage, 
-        checkpoint: meta.checkpoint?.name || meta.checkpoint,
+        checkpoint: checkpointName(meta),
         unet: meta.unet?.name || meta.unet,
         clip: meta.clip?.name || meta.clip,
         vae: meta.vae?.name || meta.vae,

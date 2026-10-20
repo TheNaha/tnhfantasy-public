@@ -214,9 +214,17 @@ async def generate_batch(
 
         async def _create_batch_jobs():
             created_jobs = []
+            failures: list[dict[str, Any]] = []
 
             for i, entry in enumerate(workflows):
-                workflow, entry_metadata = _normalize_item(entry)
+                try:
+                    workflow, entry_metadata = _normalize_item(entry)
+                except Exception as exc:
+                    # A malformed entry is this entry's problem, not the
+                    # batch's. The other entries are fine.
+                    failures.append({"index": i, "error": str(exc)})
+                    continue
+
                 # Add batch index to metadata; per-workflow metadata (e.g. the
                 # frontend's per-prompt entries) wins over the request-level one.
                 job_metadata = {
@@ -225,14 +233,42 @@ async def generate_batch(
                     "batch_index": i,
                     "batch_total": len(workflows),
                 }
-                job = await submission_service.create_and_enqueue_job(
-                    workflow=workflow,
-                    metadata=job_metadata,
-                )
+                try:
+                    job = await submission_service.create_and_enqueue_job(
+                        workflow=workflow,
+                        metadata=job_metadata,
+                    )
+                except Exception as exc:
+                    # The jobs already created are REAL work - they are
+                    # enqueued, they will run, and they will cost. The old
+                    # code let the exception escape, so the client got a
+                    # 5xx, `setJobIds` never ran, and the Batch Jobs panel
+                    # stayed EMPTY while N-1 images were being produced
+                    # somewhere.
+                    #
+                    # So the failure is reported WITH the jobs that were
+                    # created, and the client shows both.
+                    failures.append({"index": i, "error": str(exc)})
+                    logger.warning(
+                        "generate_batch_entry_failed",
+                        index=i,
+                        created_so_far=len(created_jobs),
+                        error=str(exc),
+                    )
+                    continue
+
                 created_jobs.append(submission_service.job_service._job_to_dict(job))
 
-            logger.info("generate_batch_created", count=len(created_jobs))
-            return {"jobs": created_jobs, "count": len(created_jobs)}
+            logger.info(
+                "generate_batch_created",
+                count=len(created_jobs),
+                failed=len(failures),
+            )
+            result = {"jobs": created_jobs, "count": len(created_jobs)}
+            if failures:
+                result["failures"] = failures
+                result["failed_count"] = len(failures)
+            return result
 
         if idempotency_key:
             dedup_key = make_key("generate_batch", idempotency_key.strip())

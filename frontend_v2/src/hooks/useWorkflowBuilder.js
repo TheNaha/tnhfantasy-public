@@ -1,7 +1,8 @@
 import { useGeneratorCore } from './useGeneratorCore';
 import { generateApi, createIdempotencyKey } from '../api';
-import { isUnetModel, isFluxModel, isAuraFlowModel, isPonyModel } from '../utils/modelType';
+import { isUnetModel, isFluxModel, isAuraFlowModel, isPonyModel, resolveModelType } from '../utils/modelType';
 import { useSettings } from '../store/settingsStore';
+import { lorasFromSelectedLoras, lorasToRequestOptions } from './useBatchPresets';
 
 export function useWorkflowBuilder(mode) {
     const { store, preflight: { runWithPreflight } } = useGeneratorCore();
@@ -34,6 +35,11 @@ export function useWorkflowBuilder(mode) {
     };
 
     const buildPayload = (jobSeed, additionalOverrides = {}) => {
+        // The overrides MERGE over the store's values, rather than being a
+        // fixed set of extra keys. The Batch page supplies its own prompt
+        // for each entry, and the inpaint page supplies the mask and the
+        // model to use for the inpaint pass - so an override has to be able
+        // to replace a value, not only add one.
         const {
             prompt, negativePrompt, seed, steps, cfg, sampler, scheduler, width, height, batchSize,
             selectedCheckpoint, selectedVae, selectedClip, selectedClip2, selectedLoras, controlnets,
@@ -42,18 +48,51 @@ export function useWorkflowBuilder(mode) {
             clipSkip, enableFreeU, enablePAG, pagScale,
             enableLatentUpscale, latentUpscaleMultiplier,
             ipAdapters, sourceImage, denoise, maskBlur,
-        } = store;
+            growMask,
+        } = { ...store, ...additionalOverrides };
 
         const actualSeed = jobSeed !== undefined ? jobSeed : seed;
+
+        // The loras are narrowed to the backend's LoraOption shape on
+        // purpose. `selectedLoras` carries preview images and CivitAI
+        // metadata, which Pydantic drops - but the body still carries them,
+        // and a batch multiplies that across every entry. The METADATA
+        // keeps the records, because "Reuse parameters" restores from it.
+        const requestLoras = lorasToRequestOptions(lorasFromSelectedLoras(selectedLoras));
+
+        // The model, and the loader it needs.
+        //
+        // The backend chooses the loader from `unet` + `clip`, NOT from the
+        // mode, so these fields belong in EVERY mode. They used to be sent
+        // only for t2i, which meant a UNET model selected in img2img mode
+        // was sent as `checkpoint` - and a UNET lives in models/unet/, not
+        // models/checkpoints/, so no provider had it and the request failed
+        // with "Missing Models" for a model the user had installed.
+        const isUnet = isUnetModel(selectedCheckpoint);
+        let effectiveVae = selectedVae;
+        if (effectiveVae === "Baked in" && isUnet) {
+            if (isFluxModel(selectedCheckpoint)) effectiveVae = "ae.safetensors";
+            else if (isAuraFlowModel(selectedCheckpoint) || isPonyModel(selectedCheckpoint)) effectiveVae = "sdxl_vae.safetensors";
+        }
+
+        const modelOptions = {
+            checkpoint: isUnet ? null : selectedCheckpoint?.name,
+            unet: isUnet ? selectedCheckpoint?.name : null,
+            clip: isUnet ? selectedClip : null,
+            clip2: (isUnet && isFluxModel(selectedCheckpoint)) ? selectedClip2 : null,
+            vae: effectiveVae,
+            modelType: resolveModelType(selectedCheckpoint),
+        };
 
         // Base options shared across all modes
         let options = {
             mode,
             prompt, negativePrompt, seed: actualSeed, steps, cfg, sampler, scheduler,
-            loras: selectedLoras, controlnets, ipAdapters,
+            loras: requestLoras, controlnets, ipAdapters,
             clipSkip, enableFreeU, enablePAG, pagScale,
             enableLatentUpscale, latentUpscaleMultiplier,
             adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
+            ...modelOptions,
         };
 
         let metadata = {
@@ -62,32 +101,25 @@ export function useWorkflowBuilder(mode) {
             loras: selectedLoras, controlnets, ipAdapters,
             clipSkip, enableFreeU, enablePAG, pagScale,
             enableLatentUpscale,
-            adetailer, adetailerModel
+            adetailer, adetailerModel,
+            // The model RECORD, not its name: the gallery shows the record's
+            // display name and its visual fields. The backend's own
+            // graph-derived metadata carries the name, because the backend
+            // does not know the record - so the readers of this field accept
+            // both shapes.
+            checkpoint: selectedCheckpoint,
+            vae: selectedVae,
         };
 
-        const isUnet = mode === 't2i' && isUnetModel(selectedCheckpoint);
-        let effectiveVae = selectedVae;
-        
         if (mode === 't2i') {
-            if (effectiveVae === "Baked in" && isUnet) {
-                if (isFluxModel(selectedCheckpoint)) effectiveVae = "ae.safetensors";
-                else if (isAuraFlowModel(selectedCheckpoint) || isPonyModel(selectedCheckpoint)) effectiveVae = "sdxl_vae.safetensors";
-            }
             options = {
                 ...options,
                 width, height, batchSize,
-                checkpoint: isUnet ? null : selectedCheckpoint?.name,
-                unet: isUnet ? selectedCheckpoint?.name : null,
-                clip: isUnet ? selectedClip : null,
-                clip2: (isUnet && isFluxModel(selectedCheckpoint)) ? selectedClip2 : null,
-                vae: effectiveVae,
                 hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,
-                modelType: isFluxModel(selectedCheckpoint) ? 'flux' : (isPonyModel(selectedCheckpoint) || isAuraFlowModel(selectedCheckpoint)) ? 'sdxl' : 'sd15'
             };
             metadata = {
                 ...metadata,
                 width, height, batchSize,
-                checkpoint: selectedCheckpoint, vae: selectedVae,
                 embeddings: extractEmbeddingsFromPrompt(prompt, negativePrompt),
                 shortcuts: extractShortcutsFromPrompt(prompt, negativePrompt),
                 hiresFix, hiresUpscaler
@@ -97,8 +129,6 @@ export function useWorkflowBuilder(mode) {
                 ...options,
                 inputImage: sourceImage?.filename,
                 denoise,
-                checkpoint: selectedCheckpoint?.name,
-                vae: selectedVae,
             };
             metadata = {
                 ...metadata,
@@ -106,8 +136,6 @@ export function useWorkflowBuilder(mode) {
                 width: sourceImage?.width,
                 height: sourceImage?.height,
                 sourceImage: sourceImage?.filename,
-                checkpoint: selectedCheckpoint,
-                vae: selectedVae,
             };
         } else if (mode === 'inpaint') {
             options = {
@@ -115,10 +143,14 @@ export function useWorkflowBuilder(mode) {
                 inputImage: sourceImage?.filename,
                 maskImage: additionalOverrides.maskResult?.filename,
                 denoise,
-                checkpoint: additionalOverrides.checkpointToUse || selectedCheckpoint?.name,
-                vae: selectedVae,
+                // The inpaint pass can use a different model from the one the
+                // page has selected. Only then does it override the model
+                // fields; otherwise they stand.
+                ...(additionalOverrides.checkpointToUse
+                    ? { checkpoint: additionalOverrides.checkpointToUse, unet: null, clip: null, clip2: null }
+                    : {}),
                 maskBlur,
-                growMask: 6,
+                growMask: growMask ?? 6,
             };
             metadata = {
                 ...metadata,
@@ -129,7 +161,6 @@ export function useWorkflowBuilder(mode) {
                 sourceImage: sourceImage?.filename,
                 maskImage: additionalOverrides.maskResult?.filename,
                 checkpoint: additionalOverrides.inpaintCheckpoint || selectedCheckpoint,
-                vae: selectedVae,
                 usedInpaintModel: !!additionalOverrides.inpaintCheckpoint
             };
         }

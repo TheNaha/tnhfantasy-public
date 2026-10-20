@@ -15,6 +15,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { generateApi, ApiError } from '../api';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { useJobStatus } from '../hooks/useJobStatus';
+import { useWorkflowBuilder } from '../hooks/useWorkflowBuilder';
+import { useGenerationPreflight } from '../hooks/useGenerationPreflight';
 import { assetUrl } from '../utils/assetUrl';
 import useSettingsStore from '../store/settingsStore';
 import { useGeneratorStore } from '../store/generatorStore';
@@ -31,7 +33,6 @@ import {
     exceedsBatchLimit,
     findMissingModels,
     lorasFromSelectedLoras,
-    lorasToRequestOptions,
     lorasToSelectedLoras,
     resolvePrompts,
     useBatchPresets,
@@ -147,6 +148,15 @@ export default function BatchGenerate() {
     const installedLoras = modelsByKey.loras ?? NO_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? NO_MODELS;
 
+    // The SAME builder the Simple Generator uses. The Batch page used to
+    // hand-roll its own request body, which carried 15 of the Simple
+    // page's 36 option fields - no unet, no clip, no modelType, no
+    // enhancements - so a Batch of a Flux model sent the model as a
+    // checkpoint name, and none of the enhancements could be expressed at
+    // all.
+    const { buildPayload } = useWorkflowBuilder('t2i');
+    const { runWithPreflight } = useGenerationPreflight();
+
     const {
         presets,
         getPreset,
@@ -237,57 +247,33 @@ export default function BatchGenerate() {
     }, [seedMode, seed]);
 
     const buildWorkflows = useCallback(() => {
-        // `loras` is narrowed to the backend's LoraOption shape on purpose:
-        // selectedLoras carries preview images and CivitAI metadata, and
-        // multiplying that across every entry of the batch is a large request
-        // body for fields Pydantic would drop anyway.
-        const requestLoras = lorasToRequestOptions(lorasFromSelectedLoras(selectedLoras));
         const batchPreset = activePresetName || bakedType;
         return generatedPrompts.map((prompt, idx) => {
             const jobSeed = resolveSeedForIndex(idx);
+            // The shared builder, with this entry's prompt. The builder
+            // reads the store, which is where this page's steps, cfg,
+            // sampler, checkpoint, loras and dimensions already live - so
+            // there is one request builder, not two that have to agree.
+            const { options, metadata } = buildPayload(jobSeed, { prompt });
             return {
                 workflow: { nodes: {}, edges: [] },
-                options: {
-                    mode: 't2i',
-                    prompt,
-                    negativePrompt,
-                    seed: jobSeed,
-                    width,
-                    height,
-                    steps,
-                    cfg,
-                    sampler,
-                    scheduler,
-                    clipSkip,
-                    batchSize,
-                    loras: requestLoras,
-                    vae: selectedVae || 'Baked in',
-                    ...(checkpointName ? { checkpoint: checkpointName } : {}),
-                },
+                options,
                 metadata: {
-                    prompt,
-                    negativePrompt,
-                    seed: jobSeed,
-                    width,
-                    height,
-                    steps,
-                    cfg,
-                    sampler,
-                    scheduler,
-                    clipSkip,
-                    loras: requestLoras,
-                    checkpoint: checkpointName || null,
-                    vae: selectedVae,
+                    ...metadata,
                     batch_index: idx,
                     batch_total: generatedPrompts.length,
                     batch_preset: batchPreset,
                 },
             };
         });
+        // `buildPayload` is a fresh function on every render (it reads the
+        // store), so it is deliberately NOT a dependency: listing it would
+        // rebuild the list on every render, and NOT listing it would pin a
+        // stale one. The list is rebuilt from the live store each time
+        // `buildWorkflows` is called, which is when it matters.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
-        generatedPrompts, resolveSeedForIndex, negativePrompt, width, height, steps, cfg,
-        sampler, scheduler, clipSkip, batchSize, selectedLoras, selectedVae, checkpointName,
-        activePresetName, bakedType,
+        generatedPrompts, resolveSeedForIndex, activePresetName, bakedType,
     ]);
 
     const handleGenerate = async () => {
@@ -305,12 +291,43 @@ export default function BatchGenerate() {
         setIsGenerating(true);
         try {
             const workflows = buildWorkflows();
-            const data = await generateApi.batch(workflows);
-            const created = data.jobs || [];
-            created.forEach((job) => queryClient.setQueryData(['jobs', job.id], job));
-            setJobIds(created.map((job) => job.id));
-            setSettledCount(0);
-            toast.success(`Created ${created.length} generation jobs`);
+            // The preflight, like the Simple page. Without it a Batch could
+            // submit a checkpoint that is not installed: the request was
+            // accepted, the jobs were created, and then every one of them
+            // failed on the provider - N failures for one missing model.
+            //
+            // Every entry of the batch needs the same models, so validating
+            // the first one validates the batch.
+            const { ok, submissionResult } = await runWithPreflight(workflows[0].options, {
+                onValid: async () => {
+                    const data = await generateApi.batch(workflows);
+                    const created = data.jobs || [];
+                    const failed = data.failed_count || (data.failures || []).length;
+
+                    created.forEach((job) => queryClient.setQueryData(['jobs', job.id], job));
+                    setJobIds(created.map((job) => job.id));
+                    setSettledCount(0);
+
+                    if (failed > 0) {
+                        // The jobs that WERE created are real and are
+                        // running, so they are shown - and the failures are
+                        // said out loud. The old behaviour was a 5xx with an
+                        // empty job list, which looked like nothing had
+                        // happened while N-1 images were being produced.
+                        toast.error(
+                            `Created ${created.length} of ${created.length + failed} jobs - ${failed} failed`,
+                            { icon: '⚠️' }
+                        );
+                    } else {
+                        toast.success(`Created ${created.length} generation jobs`);
+                    }
+                    return data;
+                },
+            });
+            if (!ok) {
+                return;
+            }
+            return submissionResult;
         } catch (e) {
             if (e instanceof ApiError) {
                 toast.error(e.message || 'Batch generation failed');

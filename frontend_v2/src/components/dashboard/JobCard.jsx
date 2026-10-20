@@ -4,6 +4,7 @@ import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed } from '../../utils/dateTime';
 import { useJobStatus } from '../../hooks/useJobStatus';
 import useGlobalClock from '../../hooks/useGlobalClock';
+import { checkpointName } from '../../utils/modelDisplay';
 import {
     JOB_STATUS,
     JOB_PHASE_ORDER,
@@ -72,7 +73,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
 
     // Extract metadata
     const meta = jobMetadata(job);
-    const checkpoint = typeof meta.checkpoint === 'object' ? meta.checkpoint?.name : meta.checkpoint;
+    const checkpoint = checkpointName(meta);
     const checkpointShort = checkpoint ? checkpoint.replace('.safetensors', '').slice(0, 20) : null;
     const loraCount = (meta.loras || []).length;
 

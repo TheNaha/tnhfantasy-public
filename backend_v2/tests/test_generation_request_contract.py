@@ -18,10 +18,6 @@ all things the graph path was missing:
     seed, no dimensions and no model name for it.
 """
 
-import pytest
-
-from core.exceptions import ValidationError
-
 
 def _graph(**overrides):
     """A minimal compiled ComfyUI graph, in the API node-map form.

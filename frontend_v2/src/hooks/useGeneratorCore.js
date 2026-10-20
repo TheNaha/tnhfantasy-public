@@ -43,6 +43,7 @@ export const generatorCoreSelector = (state) => ({
     denoise: state.denoise,
     maskImage: state.maskImage,
     maskBlur: state.maskBlur,
+    growMask: state.growMask,
     setPrompt: state.setPrompt,
     setNegativePrompt: state.setNegativePrompt,
     setSeed: state.setSeed,
