@@ -178,6 +178,16 @@ async function ensureProvidersRealtime(queryClient) {
             patchReconciliation(event);
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
             queryClient.invalidateQueries({ queryKey: ['models'] });
+            // And the cache the GENERATOR reads from.
+            //
+            // The generator's model lists come from `useModelDirectories`,
+            // which keys on `['model-directory', <directory>]`. Nothing
+            // invalidated that, so after a model installed the Simple
+            // Generator, Img2Img, Inpaint, Settings and Onboarding kept
+            // showing the old list until the five-minute stale time ran
+            // out. The Models Manager refreshed; the things you generate
+            // with did not.
+            queryClient.invalidateQueries({ queryKey: ['model-directory'] });
         }));
         unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_FAILED, () => {
             // An engine failure has no progress payload to patch in, so
@@ -214,6 +224,9 @@ async function ensureProvidersRealtime(queryClient) {
                 // status update changed it, and nothing refetched it.
                 queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.MODELS] });
                 queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
+                // The generator's model lists are a different cache again -
+                // see the note on the reconciliation handler.
+                queryClient.invalidateQueries({ queryKey: ['model-directory'] });
             }
 
             if (!hasExpectedSchema || !providersPatched) {

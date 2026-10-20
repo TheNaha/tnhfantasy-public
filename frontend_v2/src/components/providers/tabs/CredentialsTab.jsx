@@ -13,6 +13,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { providersApi } from '../../../api';
 import { QueryErrorState } from '../../common/QueryState';
+import { PROVIDERS_PAGE_QUERY_KEYS } from '../../../hooks/useProvidersPageData';
 
 const INPUT_CLASS =
     'w-full rounded-lg border border-gray-700 bg-gray-800/80 px-4 py-2.5 text-sm text-white ' +
@@ -121,7 +122,7 @@ export default function CredentialsTab({ providerId, credentialSummary }) {
             providersApi.setCredentials(providerId, payload.credentials),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['provider-credentials', providerId] });
-            queryClient.invalidateQueries({ queryKey: ['providers'] });
+            queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
             setForm({});
             setSetError(null);
         },
@@ -132,7 +133,7 @@ export default function CredentialsTab({ providerId, credentialSummary }) {
         mutationFn: ({ key }) => providersApi.deleteCredential(providerId, key),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['provider-credentials', providerId] });
-            queryClient.invalidateQueries({ queryKey: ['providers'] });
+            queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
         },
     });
 

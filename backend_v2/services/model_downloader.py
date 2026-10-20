@@ -53,11 +53,68 @@ class ModelDownloader:
         if not providers:
             return {"status": "skipped", "message": "No enabled providers"}
             
-        # Add pending statuses for all relevant files and providers BEFORE triggering
+        # The providers that actually manage model files.
+        #
+        # The LLM and TTS providers do not - they have no ComfyUI model tree
+        # to reconcile against - and they are skipped below. But the pending
+        # rows used to be written for EVERY provider, before that skip, so
+        # every LLM and TTS provider accumulated a `pending` row for every
+        # image model, forever. Those rows are in the availability badge's
+        # denominator, so an image model on two image providers read
+        # "Partial - 2 of 4 providers ready" and no model ever read as
+        # fully available.
+        #
+        # So the providers are sorted FIRST, and the pending rows are written
+        # only for the ones that can act on them.
+        results = {"triggered": 0, "providers": []}
+        model_managing: list[tuple[Any, Any]] = []
+
+        from services.provider_runtime import resolve_provider_runtime
+
+        for provider in providers:
+            runtime = resolve_provider_runtime(provider)
+
+            if runtime.mode != "in_process":
+                results["providers"].append({
+                    "provider_id": provider.id,
+                    "status": "skipped",
+                    "error": f"Runtime unavailable ({runtime.mode})",
+                })
+                continue
+
+            # Everything below is the in-process case: the guard above already
+            # `continue`d for every other mode, so `runtime.mode == "in_process"`
+            # here is a tautology. The block it used to wrap was written as one
+            # of three arms — and the third (`type in {direct_url, remote_comfy}`
+            # answering "external") is unreachable for the same reason: an
+            # external host is not an in-process runtime.
+            from services.engines.engine_factory import get_engine
+
+            engine = get_engine(provider.id, provider)
+            # Skip engines with no model tree (hosted LLM/TTS), same as
+            # the container path skipping llm worker_types — but keyed
+            # off the engine flag, not a "vllm" substring in the id, so
+            # a renamed ModalVLLM still reconciles. ModalVLLM keeps
+            # manages_model_files=True.
+            if engine is None or (
+                not getattr(engine, "manages_model_files", False)
+                and not getattr(engine, "supports_discovery_reconcile", False)
+            ):
+                results["providers"].append({
+                    "provider_id": provider.id,
+                    "status": "skipped",
+                    "error": "LLM workers do not reconcile model files",
+                })
+                continue
+
+            model_managing.append((provider, engine))
+
+        # Add pending statuses for all relevant files and providers BEFORE
+        # triggering - but only for the providers that can act on them.
         all_versions = self.repo.get_versions_for_model(model_id)
         target_versions = [v for v in all_versions if v.id in version_ids] if version_ids else all_versions
-        
-        for provider in providers:
+
+        for provider, _engine in model_managing:
             for version in target_versions:
                 file = self.repo.get_primary_file_for_version(version.id)
                 if file:
@@ -76,45 +133,9 @@ class ModelDownloader:
                         force_create=True
                     )
 
-        results = {"triggered": 0, "providers": []}
-        
-        for provider in providers:
-            from services.provider_runtime import resolve_provider_runtime
-            runtime = resolve_provider_runtime(provider)
+        from services.in_process_reconciliation import trigger_in_process_reconciliation
 
-            if runtime.mode != "in_process":
-                results["providers"].append({
-                    "provider_id": provider.id,
-                    "status": "skipped",
-                    "error": f"Runtime unavailable ({runtime.mode})",
-                })
-                continue
-
-            # Everything below is the in-process case: the guard above already
-            # `continue`d for every other mode, so `runtime.mode == "in_process"`
-            # here is a tautology. The block it used to wrap was written as one
-            # of three arms — and the third (`type in {direct_url, remote_comfy}`
-            # answering "external") is unreachable for the same reason: an
-            # external host is not an in-process runtime.
-            from services.engines.engine_factory import get_engine
-            from services.in_process_reconciliation import trigger_in_process_reconciliation
-
-            engine = get_engine(provider.id, provider)
-            # Skip engines with no model tree (hosted LLM/TTS), same as
-            # the container path skipping llm worker_types — but keyed
-            # off the engine flag, not a "vllm" substring in the id, so
-            # a renamed ModalVLLM still reconciles. ModalVLLM keeps
-            # manages_model_files=True.
-            if engine is None or (
-                not getattr(engine, "manages_model_files", False)
-                and not getattr(engine, "supports_discovery_reconcile", False)
-            ):
-                results["providers"].append({
-                    "provider_id": provider.id,
-                    "status": "skipped",
-                    "error": "LLM workers do not reconcile model files",
-                })
-                continue
+        for provider, engine in model_managing:
             # Same trigger the container path POSTs to /reconcile with no
             # body: a full reconciliation, not a quick sync.
             result = await trigger_in_process_reconciliation(

@@ -53,6 +53,7 @@ import {
     applyGeneratorStateFromMetadata,
 } from '../utils/reuseParameters';
 import { buildSessionGroupedEntries } from '../utils/dashboardItems';
+import { refetchNewestGalleryPage } from '../hooks/useGallery';
 
 export default function Dashboard() {
     const navigate = useNavigate();
@@ -351,7 +352,12 @@ export default function Dashboard() {
         if (!accepted) return;
         try {
             await filesApi.deleteMultiple([filename]);
-            queryClient.invalidateQueries({ queryKey: ['gallery', filters] });
+            // A DELETION, not an addition: the item is gone, so the whole
+            // listing has to be re-read. But a full invalidation of an
+            // infinite query refetches EVERY loaded page, one after the
+            // other - and a deletion removes one item, usually from the
+            // first page.
+            await refetchNewestGalleryPage(queryClient);
             // Compare IDENTITIES, not names.
             //
             // This was `if (selectedImage?.name === filename)`, and it never
@@ -382,7 +388,7 @@ export default function Dashboard() {
                 duration: toastErrorDuration,
             });
         }
-    }, [closeSelectedImage, confirm, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration, filters]);
+    }, [closeSelectedImage, confirm, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration]);
 
     const handleJobDelete = useCallback(async (jobId) => {
         const accepted = await confirm({

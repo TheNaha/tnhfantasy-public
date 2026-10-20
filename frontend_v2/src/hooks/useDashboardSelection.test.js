@@ -33,7 +33,7 @@ function mount({ removeFromCollection = vi.fn().mockResolvedValue(undefined) } =
     const hook = renderHook(() => useDashboardSelection({
         favorites: [],
         addFavorites: vi.fn(),
-        queryClient: { invalidateQueries: vi.fn() },
+        queryClient: mockQueryClient(),
         filters: { sort: 'date_desc' },
         confirm,
         activeCollection: 'col-1',
@@ -42,6 +42,22 @@ function mount({ removeFromCollection = vi.fn().mockResolvedValue(undefined) } =
     }));
     act(() => { hook.result.current.setSelectedFiles(new Set(FOUR_IMAGES)); });
     return { ...hook, confirm, removeFromCollection };
+}
+
+/**
+ * A query client with the parts the hook uses.
+ *
+ * `getQueryCache` is here because the gallery refresh reads the cache to
+ * find the loaded listings - a mock without it makes the refresh throw, and
+ * the throw lands in the handler's catch, so the selection is never
+ * cleared and the test fails for a reason that has nothing to do with the
+ * behaviour it is about.
+ */
+function mockQueryClient() {
+    return {
+        invalidateQueries: vi.fn(),
+        getQueryCache: () => ({ findAll: () => [] }),
+    };
 }
 
 describe('handleRemoveSelectionFromCollection', () => {
@@ -104,7 +120,7 @@ describe('handleRemoveSelectionFromCollection', () => {
         const { result } = renderHook(() => useDashboardSelection({
             favorites: [],
             addFavorites: vi.fn(),
-            queryClient: { invalidateQueries: vi.fn() },
+            queryClient: mockQueryClient(),
             filters: {},
             confirm: vi.fn(),
             activeCollection: null,
@@ -126,7 +142,7 @@ describe('handleRemoveSelectionFromCollection', () => {
         const { result } = renderHook(() => useDashboardSelection({
             favorites: [],
             addFavorites: vi.fn(),
-            queryClient: { invalidateQueries: vi.fn() },
+            queryClient: mockQueryClient(),
             filters: {},
             confirm: vi.fn(),
             activeCollection: 'col-1',
@@ -162,7 +178,7 @@ describe('the sibling handlers stay on one request too', () => {
         const { result } = renderHook(() => useDashboardSelection({
             favorites: ['a.png'],
             addFavorites,
-            queryClient: { invalidateQueries: vi.fn() },
+            queryClient: mockQueryClient(),
             filters: {},
             confirm: vi.fn(),
             activeCollection: 'col-1',

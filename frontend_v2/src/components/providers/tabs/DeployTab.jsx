@@ -15,6 +15,7 @@ import { copyToClipboard } from '../../../utils/clipboard';
 import { formatTimestamp } from '../../../utils/dateTime';
 import { getDeployTargetForProvider } from '../../../utils/providerStatus';
 import { QueryErrorState } from '../../common/QueryState';
+import { PROVIDERS_PAGE_QUERY_KEYS } from '../../../hooks/useProvidersPageData';
 
 const TARGET_DETAILS = {
     image: {
@@ -123,8 +124,8 @@ export default function DeployTab({ provider }) {
                             setIsDeploying(false);
                             setStreamResult(result);
                             queryClient.invalidateQueries({ queryKey: ['provider-logs', provider?.id] });
-                            queryClient.invalidateQueries({ queryKey: ['providers'] });
-                            queryClient.invalidateQueries({ queryKey: ['provider-status-cards'] });
+                            queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
+                            queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.loadBalancer });
                             if (result.ok) {
                                 toast.success(`${details.label} deployed successfully!`);
                             } else {
@@ -148,8 +149,8 @@ export default function DeployTab({ provider }) {
                 setStreamResult(result);
                 setStreamOutput(result.output || '');
                 queryClient.invalidateQueries({ queryKey: ['provider-logs', provider?.id] });
-                queryClient.invalidateQueries({ queryKey: ['providers'] });
-                queryClient.invalidateQueries({ queryKey: ['provider-status-cards'] });
+                queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
+                queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.loadBalancer });
                 if (result.ok) {
                     toast.success(`${details.label} deployed successfully!`);
                 } else {

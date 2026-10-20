@@ -15,6 +15,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ModalOverlay } from '../common/ModalOverlay';
 import { copyToClipboard } from '../../utils/clipboard';
 import { providersApi } from '../../api';
+import { PROVIDERS_PAGE_QUERY_KEYS } from '../../hooks/useProvidersPageData';
 
 
 const TARGET_OPTIONS = [
@@ -125,7 +126,7 @@ export default function DeployModal({
             }
             queryClient?.invalidateQueries({ queryKey: ['provider-logs'] });
             queryClient?.invalidateQueries({ queryKey: ['provider-diagnostics'] });
-            queryClient?.invalidateQueries({ queryKey: ['providers'] });
+            queryClient?.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
         } catch (err) {
             setStatus('failed');
             const msg = err?.response?.data?.message || err?.message || 'Deployment failed';

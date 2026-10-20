@@ -67,6 +67,51 @@ describe('modelAvailability utilities', () => {
         expect(summary.label).toBe('No providers online');
     });
 
+    it('does not count providers the model is not tracked for', () => {
+        /**
+         * The LLM and TTS providers are "online" - every provider with an
+         * engine has the runtime state `in_process` - and they can never
+         * have an image model.
+         *
+         * The scope used to be every online provider, so an image model on
+         * two image providers read "Partial - 2 of 4 online providers
+         * ready", and no model ever read as fully available.
+         *
+         * The scope is the providers the model is TRACKED for, which is
+         * what the backend writes a status row for.
+         */
+        const summary = getModelAvailabilitySummary(
+            {
+                'modal-step': 'ready',
+                'modal-zetsuke': 'ready',
+            },
+            [
+                { id: 'modal-step', runtime_state: { status: 'in_process' } },
+                { id: 'modal-zetsuke', runtime_state: { status: 'in_process' } },
+                // Not tracked for this model, so not in the scope.
+                { id: 'llm-provider', runtime_state: { status: 'in_process' } },
+                { id: 'tts-provider', runtime_state: { status: 'in_process' } },
+            ]
+        );
+
+        expect(summary.label).toBe('Available');
+        expect(summary.availableCount).toBe(2);
+        expect(summary.scopeCount).toBe(2);
+    });
+
+    it('falls back to the online providers for a model with no status rows', () => {
+        // A model that has never been synced anywhere has no rows, so there
+        // is nothing to narrow the scope with.
+        const summary = getModelAvailabilitySummary(
+            {},
+            [
+                { id: 'modal-step', runtime_state: { status: 'running' } },
+            ]
+        );
+
+        expect(summary.scopeCount).toBe(1);
+    });
+
     it('falls back to provider statuses when runtime provider list is unavailable', () => {
         const summary = getModelAvailabilitySummary({
             'modal-step': 'ready',

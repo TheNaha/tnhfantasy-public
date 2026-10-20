@@ -2,12 +2,12 @@ import { useState, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { filesApi } from '../api';
 import { triggerFile } from '../utils/download';
+import { refetchNewestGalleryPage } from './useGallery';
 
 export function useDashboardSelection({
     favorites,
     addFavorites,
     queryClient,
-    filters,
     confirm,
     activeCollection,
     removeFromCollection,
@@ -119,8 +119,12 @@ export function useDashboardSelection({
         if (!accepted) return;
         try {
             await filesApi.deleteMultiple(Array.from(selectedFiles));
-            // Prefix, not `exact`: the gallery key ends in the page size.
-            queryClient.invalidateQueries({ queryKey: ['gallery', filters] });
+            // A DELETION, not an addition: the item is gone, so the whole
+            // listing has to be re-read. But a full invalidation of an
+            // infinite query refetches EVERY loaded page, one after the
+            // other - and a deletion removes one item, usually from the
+            // first page.
+            await refetchNewestGalleryPage(queryClient);
             setSelectedFiles(new Set());
             setSelectionMode(false);
             toast.success(`Deleted ${selectedFiles.size} images`);
@@ -128,7 +132,7 @@ export function useDashboardSelection({
             console.error(e);
             toast.error(`Failed to delete: ${e.message}`);
         }
-    }, [queryClient, selectedFiles, filters, confirm]);
+    }, [queryClient, selectedFiles, confirm]);
 
     const handleCancelSelectionMode = useCallback(() => {
         setSelectionMode(false);

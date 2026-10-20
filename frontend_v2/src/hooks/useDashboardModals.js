@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { jobsApi } from '../api/jobs';
+import { refetchNewestGalleryPage } from './useGallery';
 
 export function useDashboardModals({ queryClient, filters }) {
     const [selectedJobId, setSelectedJobId] = useState(null);
@@ -11,7 +12,12 @@ export function useDashboardModals({ queryClient, filters }) {
         try {
             await jobsApi.delete(jobId);
             queryClient.invalidateQueries({ queryKey: ['jobs'] });
-            queryClient.invalidateQueries({ queryKey: ['gallery', filters] });
+            // A DELETION, not an addition: the item is gone, so the whole
+            // listing has to be re-read. But a full invalidation of an
+            // infinite query refetches EVERY loaded page, one after the
+            // other - and a deletion removes one item, usually from the
+            // first page.
+            await refetchNewestGalleryPage(queryClient);
         } catch (error) {
             console.error('Failed to delete job:', error);
             throw error;
@@ -24,7 +30,12 @@ export function useDashboardModals({ queryClient, filters }) {
             // A retried job is re-enqueued — refresh the job cache, the active
             // list and the queue panel, not just the gallery.
             queryClient.invalidateQueries({ queryKey: ['jobs'] });
-            queryClient.invalidateQueries({ queryKey: ['gallery', filters] });
+            // A DELETION, not an addition: the item is gone, so the whole
+            // listing has to be re-read. But a full invalidation of an
+            // infinite query refetches EVERY loaded page, one after the
+            // other - and a deletion removes one item, usually from the
+            // first page.
+            await refetchNewestGalleryPage(queryClient);
             return result;
         } catch (error) {
             console.error('Failed to retry job:', error);

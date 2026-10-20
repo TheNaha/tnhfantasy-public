@@ -59,9 +59,24 @@ export function getModelAvailabilitySummary(providerStatusesInput, runtimeProvid
     const runtimeList = Array.isArray(runtimeProviders) ? runtimeProviders : [];
     const statusEntries = Object.entries(providerStatuses);
     const statusProviderIds = new Set(statusEntries.map(([providerId]) => providerId));
+
+    // The providers this model is TRACKED for.
+    //
+    // The scope used to be every online provider. Every provider with an
+    // engine has the runtime state `in_process`, so the LLM and TTS
+    // providers were online too - and they can never have an image model.
+    // So an image model on two image providers read "Partial - 2 of 4
+    // online providers ready", and no model ever read as fully available.
+    //
+    // The tracked set is the right scope: the backend writes a status row
+    // for a provider exactly when that provider is relevant to the model.
+    // A model with no rows at all has never been synced anywhere, so the
+    // scope falls back to the online providers.
+    const trackedProviderIds = statusProviderIds;
     const onlineProviderIds = new Set(
         runtimeList
             .filter((provider) => isProviderOnline(provider))
+            .filter((provider) => trackedProviderIds.size === 0 || trackedProviderIds.has(provider.id))
             .map((provider) => provider.id)
     );
 
