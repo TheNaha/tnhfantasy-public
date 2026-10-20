@@ -50,13 +50,13 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of **2026-10-19**, re-measured after the roleplay
-remediation pass recorded in §1c below:
+All three suites green as of **2026-10-20**, re-measured after the
+chat-workflow pass recorded in §1c below:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **3757 passed, 5 skipped** (~10.5 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
-| Frontend | **1951 passed across 217 files** (~3 min) | `cd frontend_v2 && npx vitest run` |
+| Backend | **3805 passed, 5 skipped** (~11 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Frontend | **1951 passed across 217 files** (~5 min) | `cd frontend_v2 && npx vitest run` |
 | remote_agent | exports clean (no tests of its own) | covered by `tests/test_in_process_engines.py` contract tests |
 
 `npm run lint` is **0 errors / 1 warning** and `ruff check .` is clean.
@@ -199,7 +199,7 @@ two Dockerfiles (plus `backend_v2/requirements.txt` and
 there because GitHub has no job-level `paths:` — `on.<event>.paths` filters the
 whole workflow — and it is a few minutes on a Dockerfile change.
 
-`docs/api.md` documents **289 of 291** live paths (99.3%) on the 379-operation
+`docs/api.md` documents **291 of 293** live paths (99.3%) on the 383-operation
 router. It had 26 endpoints that did not exist until 2026-09-29, including two
 whole sections under the wrong URL prefix. It is checked against
 `app.openapi()["paths"]`, not against itself — but the check's assertion is
@@ -252,6 +252,87 @@ themselves. See the audit.
 >   offenders are fixed; the architectural cause is not.
 
 ## What was actually wrong, and is now fixed
+
+### The 2026-10-20 chat-workflow pass — making Laya's decision reach the model
+
+A review of the roleplay subsystem asked one question: does Laya's routing
+decision actually reach the model? The answer was **no**, and the gap was
+larger than the shape of the system suggested.
+
+**Laya was asked which prompt variant to use, Laya answered, and the answer
+was thrown away on the normal chat path.** `resolve_agent` was called without
+`variant_slug`, and the character branch never resolved an agent profile at
+all — so six seeded variants (three character, three narrator) existed and
+none of them could change a prompt a user would see. The autonomous chain
+had the mirror-image bug: it put the character variant into
+`workflow["character_system_prompt"]`, a key **no engine reads** (the LLM
+engines read `workflow["messages"]`, and the character card is already the
+first message there). The parameter is now gone rather than left as a no-op,
+so the next person cannot make the same mistake.
+
+The character variant is an **overlay**, not a replacement: the seeded
+variants read "You are roleplaying as {{char}}. The moment is tense", which
+is a mood directive, and replacing the character card with it would throw
+the character away. It now goes into the prompt as its own section, after
+the character block, through `build_context`.
+
+**The variant axis had no model dimension.** "Many different variations of
+system prompts for various LLMs" needs one, and there was none: the only
+axis was per-agent, chosen by scene content, and the router picked the model
+before the prompt was built. `agent_prompt_variants.model_scope` is now a
+nullable model id or role — a scoped variant is only offered to Laya when
+the agent it belongs to will actually answer with that model, and it is
+applied automatically when it matches. `gate_scope` is the same idea for the
+Statekeeper: the schema was already gate-specific, and this is the prompt
+half.
+
+**The LLM Studio showed a parallel, not the runtime.** The question list was
+a second implementation with hand-written placeholder variant questions whose
+only option was `{"default": …}`, and the Director Playground ran a third
+list — so an override made in the Studio had no effect on what the
+playground ran. All three now go through one builder, and the Studio shows
+the real variant slugs. A score question's rubric was also un-overridable:
+the override was merged into `options` and the runner reads `rubric`.
+
+**The system-prompt collection could not grow.** It was a fixed set of keys
+the code looks up by name — adding one meant editing the config schema,
+the validation allow-list and the frontend's copy of the defaults, and there
+was no way to remove one. It is now a list, with add, edit and remove.
+
+**Two bugs found while doing it.** `config._split_unset` filtered the
+updates with `if isinstance(body, dict)`, so a list-valued section never
+reached the validator or the merge — and `update_config` returned success
+having written nothing. Every add, edit and remove of a prompt-library entry
+was a silent no-op that reported 200. And the event-loop analyser's
+`_awaited_names` collected `ast.Await` but not `ast.AsyncFor`, so it could
+not see that the LLM call underneath
+`async for event in engine.inference(...)` really does suspend on
+`await client.post(...)` — it reported eleven world-onboarding routes as
+blocking the loop when they do not.
+
+**The Illustrator may now author the scene's parameters** — the sampler,
+the resolution, the steps, the LoRA, the hires pass — as a **spec**, not a
+raw ComfyUI graph. A raw graph is not safe to accept: there is no node
+allow-list anywhere, the workflow dimensions and step counts are unbounded,
+and the gallery reads the builder's metadata. The spec is bounded, checked
+before the job is created, and falls back to the prompt-text path when the
+model's answer is not a spec — so the illustration still happens. It is
+opt-in per chat.
+
+**Two numbers were wrong.** The continuation budget was `MAX_CONTINUATIONS
+= 4` with the check `continuation_count < 4` — the original plus four
+continuations, five generations — while the manifest said "4 repeats". It
+now counts attempts, and says so. The "13 Questions" label on the Director
+Playground was a third question list's size and is gone; the gate count was
+checked and is right (16 in the registry, the other two keys are legacy
+aliases).
+
+**One diagnosis in the original review was wrong.** The chain's triage was
+reported as asking about "the wrong character's variants". It was not: the
+character card has no `slug` column, so the `hasattr` guard always fell
+through to the agent slug and the chain did ask the right question. The
+constant is now explicit so a Character that grows a `slug` field cannot
+change it silently.
 
 ### The 2026-10-19 roleplay remediation pass
 

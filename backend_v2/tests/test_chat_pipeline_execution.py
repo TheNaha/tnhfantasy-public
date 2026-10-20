@@ -501,6 +501,30 @@ class TestContinuation:
         continuations = [j for j in jobs if j.metadata_.get("source") == "continuation"]
         assert not continuations
 
+    async def test_the_budget_counts_attempts_not_continuations(self, session, no_enqueue, monkeypatch):
+        """Four attempts, not one attempt plus four continuations.
+
+        The check used to be `continuation_count < 4`, which is the original
+        plus four continuations — five generations — while the manifest said
+        "max_continuations: 4" and the UI said "4 repeats". The budget now
+        counts attempts, and the name says so.
+        """
+        from core.pipeline_limits import MAX_CONTINUATION_ATTEMPTS
+        from services import pipeline_stages
+
+        chat, char = _seed_chat(session)
+
+        # The third attempt (continuation_count == 2) may still continue.
+        assert (2 + 1) < MAX_CONTINUATION_ATTEMPTS
+        # The fourth (continuation_count == 3) may not.
+        assert not ((3 + 1) < MAX_CONTINUATION_ATTEMPTS)
+
+        # And the stage reads the same number the manifest publishes.
+        from services.pipeline_runner import limit
+
+        assert limit("audit", "max_continuation_attempts") == MAX_CONTINUATION_ATTEMPTS
+        assert pipeline_stages._max_continuation_attempts() == MAX_CONTINUATION_ATTEMPTS
+
 
 # --------------------------------------------------------------------------
 # The Director's Tier 3
@@ -654,7 +678,7 @@ class TestPipelineManifest:
 
         limits = get_pipeline_manifest()["limits"]
         assert limits["max_autonomous_turns"] == pipeline_limits.MAX_AUTONOMOUS_TURNS
-        assert limits["max_continuations"] == pipeline_limits.MAX_CONTINUATIONS
+        assert limits["max_continuation_attempts"] == pipeline_limits.MAX_CONTINUATION_ATTEMPTS
         assert limits["max_agentic_images"] == pipeline_limits.MAX_AGENTIC_IMAGES
         assert limits["gate_threshold"] == pipeline_limits.UPDATER_GATE_THRESHOLD
         assert limits["image_threshold"] == pipeline_limits.IMAGE_TRIGGER_THRESHOLD

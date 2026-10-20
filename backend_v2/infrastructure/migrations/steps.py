@@ -1900,6 +1900,16 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add chats.story_id and stories.chat_id so a chat started from a story and a story exported from a chat can point at each other",
             apply_fn=_migration_106_chat_story_provenance,
         ),
+        MigrationStep(
+            version="107_variant_scopes",
+            description="Add agent_prompt_variants.model_scope and .gate_scope so a variant can be scoped to a model (or role) and to a Statekeeper gate",
+            apply_fn=_migration_107_variant_scopes,
+        ),
+        MigrationStep(
+            version="108_scene_graph_settings",
+            description="Add chats.scene_graph_enabled and chats.scene_graph_budget so a chat can opt into Illustrator-authored generation parameters with a spend cap",
+            apply_fn=_migration_108_scene_graph_settings,
+        ),
     ]
 
 
@@ -5399,4 +5409,79 @@ def _migration_106_chat_story_provenance(conn) -> bool:
 
     _verify_required_columns(conn, "chats", {"story_id"})
     _verify_required_columns(conn, "stories", {"chat_id"})
+    return True
+
+
+def _migration_107_variant_scopes(conn) -> bool:
+    """Add the two scope columns to agent_prompt_variants.
+
+    `model_scope` — which model (or model role) a variant is FOR. NULL means
+    "any model". The variant axis was per-agent and chosen by scene content,
+    so one prompt served every model that answered; the router picks the
+    model before the prompt is built, and a prompt that suits a large
+    instruct model does not necessarily suit a small finetune.
+
+    `gate_scope` — which Statekeeper gate a variant is FOR. NULL means "any
+    gate". The Updater's schema was already gate-specific, which restricts
+    the fields; this is the prompt half, so the extractor is told in words
+    what shifted rather than only being handed a narrow schema.
+
+    Both are nullable and additive: no backfill, and every existing variant
+    keeps its current meaning ("any model", "any gate").
+    """
+    inspector = inspect(conn)
+    if "agent_prompt_variants" not in set(inspector.get_table_names()):
+        # Fresh install: create_all builds the table with the columns.
+        return True
+
+    columns = _get_table_columns(conn, "agent_prompt_variants")
+    for column in ("model_scope", "gate_scope"):
+        if column not in columns:
+            conn.execute(
+                text(f"ALTER TABLE agent_prompt_variants ADD COLUMN {column} TEXT")
+            )
+            logger.info(
+                "migration_column_added", table="agent_prompt_variants", column=column
+            )
+            conn.execute(
+                text(
+                    f"CREATE INDEX IF NOT EXISTS idx_agent_variant_{column} "
+                    f"ON agent_prompt_variants ({column})"
+                )
+            )
+    _verify_required_columns(
+        conn, "agent_prompt_variants", {"model_scope", "gate_scope"}
+    )
+    return True
+
+
+def _migration_108_scene_graph_settings(conn) -> bool:
+    """Add the per-chat scene-graph settings.
+
+    `scene_graph_enabled` — whether the Illustrator may author the scene's
+    generation PARAMETERS (sampler, resolution, steps, LoRA) as well as its
+    prompt. Off by default: the prompt-text path is what the system has
+    always done and it cannot fail in a way that loses the illustration, so
+    the graph path is opt-in until it has earned its place.
+
+    `scene_graph_budget` — how much scene authoring this chat may spend, in
+    the cost units of `core.scene_graph.scene_spec_cost` (one unit is a
+    1024x1024 image at 20 steps). NULL means the global default.
+    """
+    inspector = inspect(conn)
+    if "chats" not in set(inspector.get_table_names()):
+        # Fresh install: create_all builds the table with the columns.
+        return True
+
+    columns = _get_table_columns(conn, "chats")
+    for column, ddl in (
+        ("scene_graph_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("scene_graph_budget", "REAL"),
+    ):
+        if column not in columns:
+            conn.execute(text(f"ALTER TABLE chats ADD COLUMN {column} {ddl}"))
+            logger.info("migration_column_added", table="chats", column=column)
+    _verify_required_columns(
+        conn, "chats", {"scene_graph_enabled", "scene_graph_budget"}
+    )
     return True

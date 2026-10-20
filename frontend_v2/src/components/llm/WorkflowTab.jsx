@@ -66,7 +66,7 @@ export default function WorkflowTab() {
                         </div>
                         <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
                             <span className="text-2xs text-gray-400 uppercase font-bold block">Continuation Cap</span>
-                            <span className="text-lg font-black text-purple-400">{limits.max_continuations || 4} repeats</span>
+                            <span className="text-lg font-black text-purple-400">{limits.max_continuation_attempts || 4} attempts</span>
                         </div>
                         <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
                             <span className="text-2xs text-gray-400 uppercase font-bold block">Gate Threshold</span>

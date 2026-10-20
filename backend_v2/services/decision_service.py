@@ -15,7 +15,7 @@ Cascade order:
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
 from sqlmodel import Session, select
@@ -25,7 +25,6 @@ from core.pipeline_limits import DIRECTOR_TIMEOUT_SECONDS
 from infrastructure.logging import get_logger
 from services.decision_schema import (
     DirectorDecisionResult,
-    build_director_questions,
     build_generative_fallback_prompt,
     format_director_context,
     heuristic_director_decision,
@@ -466,7 +465,30 @@ class DecisionService:
         # Record DirectorTrace if chat_id provided
         if chat_id and self.session:
             try:
-                from core.entities import DirectorTrace
+                from core.entities import AgentPromptVariant, DirectorTrace
+
+                # Which model (or gate) the chosen variant was scoped to.
+                #
+                # Without it the trace says WHICH variant was used but not
+                # which situation it was written for, so a prompt that was
+                # selected because it suits this model is indistinguishable
+                # from one that suits every model.
+                variant_scope: Dict[str, Any] = {}
+                if res.selected_variant:
+                    try:
+                        v = self.session.exec(
+                            select(AgentPromptVariant).where(
+                                AgentPromptVariant.slug == res.selected_variant
+                            )
+                        ).first()
+                        if v is not None:
+                            variant_scope = {
+                                "model_scope": v.model_scope,
+                                "gate_scope": v.gate_scope,
+                            }
+                    except Exception:
+                        variant_scope = {}
+
                 trace = DirectorTrace(
                     chat_id=chat_id,
                     message_id=message_id,
@@ -475,7 +497,12 @@ class DecisionService:
                     selected_agent=res.selected_agent,
                     selected_variant=res.selected_variant,
                     decision=res.to_dict(),
-                    extra={"engine_used": res.engine_used, "model_id": res.model_id, "latency_ms": res.latency_ms},
+                    extra={
+                        "engine_used": res.engine_used,
+                        "model_id": res.model_id,
+                        "latency_ms": res.latency_ms,
+                        "variant_scope": variant_scope,
+                    },
                 )
                 self.session.add(trace)
                 self.session.commit()
@@ -660,6 +687,7 @@ class DecisionService:
         allow_narration: bool = True,
         model_override: Optional[str] = None,
         primary_character_slug: str = "character",
+        model_scopes: Optional[Dict[str, Iterable[str]]] = None,
         chat_id: Optional[str] = None,
         message_id: Optional[str] = None,
         turn: int = 1,
@@ -682,6 +710,7 @@ class DecisionService:
             has_secondary_character=has_secondary_character,
             allow_narration=allow_narration,
             primary_character_slug=primary_character_slug,
+            model_scopes=model_scopes,
         )
         return await self._run_cascade(
             context_text=context_text,
@@ -820,11 +849,32 @@ class DecisionService:
             last_speaker=last_speaker,
         )
         available_agents = self._get_available_agents()
-        questions = build_director_questions(
-            has_secondary_character=has_secondary_character,
-            allow_narration=allow_narration,
-            available_agents=available_agents,
-        )
+        # The playground asks the same questions the pipeline asks.
+        #
+        # It used to call `build_director_questions` — a third question list,
+        # hardcoded and separate from both the stage builders and the
+        # override system. So an override made in the LLM Studio's Laya
+        # Questions tab had no effect on what the playground ran, and the
+        # playground was the one place a user could try a change and see
+        # nothing happen.
+        #
+        # The union of the three stages' RESOLVED questions is what the
+        # playground means by "the whole workflow", and resolving them means
+        # the user's overrides are in force.
+        questions: List[Dict[str, Any]] = []
+        seen_keys: set[str] = set()
+        for stage in ("triage", "audit", "chaining"):
+            for q in resolve_stage_questions(
+                self.session,
+                stage,
+                available_agents=available_agents,
+                has_secondary_character=has_secondary_character,
+                allow_narration=allow_narration,
+            ):
+                if q["key"] in seen_keys:
+                    continue
+                seen_keys.add(q["key"])
+                questions.append(q)
         return await self._run_cascade(
             context_text=context_text,
             questions=questions,

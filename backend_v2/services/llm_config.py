@@ -257,6 +257,39 @@ def model_for_kind(kind: str | None, override: str | None, session) -> str:
     return resolve_model_for_kind(kind, session=session, override=override)
 
 
+def model_scopes_for_kind(
+    kind: str | None, override: str | None, session
+) -> set[str]:
+    """The model scopes that apply to a job of this kind.
+
+    A variant can be scoped to a model id ("artemis_31b") or to a role
+    ("rp"). Both are offered, so a variant can say "for the prose model"
+    without pinning a particular file — which is the useful form, because the
+    chat's model pin changes and a pinned scope would stop matching.
+
+    This is the set `AgentPromptVariant.model_scope` is matched against, and
+    it is what makes "many different variations of system prompts for various
+    LLMs" expressible: the router picks the model before the prompt is
+    built, and the prompt Laya may choose is filtered by that model.
+    """
+    scopes: set[str] = set()
+    try:
+        model = model_for_kind(kind, override, session)
+    except Exception:
+        model = None
+    if model:
+        scopes.add(str(model).strip().lower())
+    try:
+        from services.llm_router import get_router
+
+        role = get_router().role_for_kind(kind)
+        if role:
+            scopes.add(str(role).strip().lower())
+    except Exception:
+        pass
+    return scopes
+
+
 def set_default_provider(provider_id: str, model_id: str) -> None:
     """Persist the user-selected default LLM provider/model to llm_config.json.
 

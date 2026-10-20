@@ -586,6 +586,7 @@ def build_system_prompt_sections(
     location_id: str | None = None,
     system_prompt_override: str | None = None,
     append_system_prompt: str | None = None,
+    agent_variant_prompt: str | None = None,
     include_roleplay_default: bool = True,
     # Author's note is a message-level injection (build_chat_context) — accepted
     # here so chat_context_kwargs can feed both builders uniformly; unused.
@@ -622,6 +623,16 @@ def build_system_prompt_sections(
 
     3. Per-chat append (``append_system_prompt`` arg — comes from chat.append_system_prompt)
        is injected after the character block.
+
+    3a. The agent variant overlay (``agent_variant_prompt`` arg) is injected
+       immediately after the character block, before the per-chat append.
+
+       This is the prompt Laya chose: the character agent's sub-variant for
+       this beat ("the moment is tense", "keep it playful"). It is an
+       OVERLAY, not a replacement — the character card is still the card, and
+       the overlay sits on top of it. The seeded character variants say "You
+       are roleplaying as {{char}}. The moment is tense…", which is a mood
+       directive; replacing the card with it would throw away the character.
 
     4. Global ``roleplay_default`` config block.
 
@@ -702,6 +713,19 @@ def build_system_prompt_sections(
                 "content": char.append_system_prompt,
                 "source": "char_append"
             })
+
+    # The agent variant overlay — the sub-variant Laya selected for this beat.
+    #
+    # It sits directly after the character block because it is a character
+    # directive: it says HOW to play the character right now, and the card
+    # says WHO the character is. Both are needed.
+    if agent_variant_prompt and agent_variant_prompt.strip():
+        sections.append({
+            "key": "agent_variant",
+            "label": "Agent variant",
+            "content": agent_variant_prompt.strip(),
+            "source": "agent_variant",
+        })
 
     if system_prompt_override and system_prompt_override.strip():
         sections.append({
@@ -1415,6 +1439,7 @@ def build_chat_context_with_sections(
     location_id: str | None = None,
     system_prompt_override: str | None = None,
     append_system_prompt: str | None = None,
+    agent_variant_prompt: str | None = None,
     authors_note: str | None = None,
     authors_note_depth: int | None = None,
     story_genre: str | None = None,
@@ -1498,6 +1523,7 @@ def build_chat_context_with_sections(
         location_id=location_id,
         system_prompt_override=system_prompt_override,
         append_system_prompt=append_system_prompt,
+        agent_variant_prompt=agent_variant_prompt,
         _lorebook_query=_lorebook_query or None,
         story_genre=story_genre,
         story_memory=story_memory,
@@ -1868,6 +1894,12 @@ def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> 
         "world_description": world.description if world is not None else None,
         "system_prompt_override": getattr(chat, "system_prompt_override", None),
         "append_system_prompt": getattr(chat, "append_system_prompt", None),
+        # The agent variant overlay Laya selected for this turn. It has no
+        # entity counterpart — it is decided per turn — so it comes straight
+        # from the caller's override. `overrides` is not blanket-applied
+        # below (each key is re-applied explicitly, because an unlisted
+        # override used to be silently dropped), so it is set here.
+        "agent_variant_prompt": overrides.get("agent_variant_prompt"),
         "authors_note": getattr(chat, "authors_note", None),
         "authors_note_depth": getattr(chat, "authors_note_depth", None),
     }
@@ -2022,6 +2054,10 @@ def story_context_kwargs(
         "world_description": world_description,
         "system_prompt_override": system_prompt_override,
         "append_system_prompt": getattr(story, "append_system_prompt", None),
+        # The agent variant overlay Laya selected for this turn — see the
+        # chat-side note. It has no entity counterpart, so it comes from the
+        # caller's override.
+        "agent_variant_prompt": overrides.get("agent_variant_prompt"),
     }
     if primary_character_id:
         kwargs["character_id"] = primary_character_id

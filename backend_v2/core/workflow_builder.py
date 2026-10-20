@@ -725,6 +725,88 @@ def build_image_job_workflow(
     return workflow, metadata
 
 
+def build_scene_job_workflow(
+    spec: Any,
+    *,
+    checkpoint: str = DEFAULT_CHECKPOINT,
+    model_type: str = "sdxl",
+    filename_prefix: Optional[str] = None,
+    source: Optional[str] = None,
+    workspace: str = "main",
+    chat_id: Optional[str] = None,
+    character_id: Optional[str] = None,
+    story_id: Optional[str] = None,
+    chapter_id: Optional[str] = None,
+    parent_job_id: Optional[str] = None,
+    branch_id: Optional[str] = None,
+    extra_metadata: Optional[dict[str, Any]] = None,
+    lora_name: Optional[str] = None,
+    controlnet_image: Optional[str] = None,
+    ipadapter_image: Optional[str] = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Render a scene-graph spec into a workflow and its job metadata.
+
+    The graph itself is the same one the stock image job produces — the
+    `WorkflowBuilder` — so the node structure, the gallery metadata and the
+    "reuse parameters" reverse mapping all keep working. What the spec
+    changes is the VALUES: the sampler, the resolution, the steps, the LoRA,
+    the hires pass.
+
+    `spec` is a `core.scene_graph.SceneGraphSpec`. It is typed loosely here
+    so that `core.workflow_builder` does not have to import
+    `core.scene_graph`, which imports this module.
+    """
+    from core.scene_graph import scene_spec_to_options
+
+    options = scene_spec_to_options(
+        spec,
+        checkpoint=checkpoint,
+        model_type=model_type,
+        lora_name=lora_name,
+        controlnet_image=controlnet_image,
+        ipadapter_image=ipadapter_image,
+    )
+    options.filenamePrefix = filename_prefix
+    builder = WorkflowBuilder()
+    workflow = builder.build(options)
+
+    composition = spec.composition
+    sampler = spec.sampler
+    metadata: dict[str, Any] = {
+        "source": source,
+        "workspace": workspace,
+        "prompt": spec.prompt,
+        "negativePrompt": spec.negative_prompt,
+        "checkpoint": checkpoint,
+        "steps": sampler.steps,
+        "cfg": sampler.cfg,
+        "sampler": sampler.name,
+        "scheduler": sampler.scheduler,
+        "width": composition.width,
+        "height": composition.height,
+        "seed": sampler.seed,
+        "scene_graph": True,
+    }
+    if lora_name:
+        metadata["loras"] = [lora_name]
+    if chat_id is not None:
+        metadata["chat_id"] = chat_id
+    if character_id is not None:
+        metadata["character_id"] = character_id
+    if story_id is not None:
+        metadata["story_id"] = story_id
+    if chapter_id is not None:
+        metadata["chapter_id"] = chapter_id
+    if parent_job_id is not None:
+        metadata["parent_job_id"] = parent_job_id
+    if branch_id is not None:
+        metadata["branch_id"] = branch_id
+    if extra_metadata:
+        metadata.update(extra_metadata)
+
+    return workflow, metadata
+
+
 def build_video_job_workflow(
     prompt: str,
     negative: str = DEFAULT_NEGATIVE_PROMPT,

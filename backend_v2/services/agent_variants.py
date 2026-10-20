@@ -4,22 +4,44 @@ A variant is a named alternate prompt for an agent. Resolution order is:
 
 * an explicit ``variant:<slug>`` reference selects that variant directly
   (used by the simulator and any API that previews a variant);
+* a variant whose scope matches the current context — the model that will
+  answer, the Statekeeper gate that fired — is preferred;
 * an agent slug selects the agent's active variant, falling back to the
   profile's own ``system_prompt_template`` when no variant is active.
 
 Sampling overrides follow the same specificity: a variant value wins, then the
 profile value, and ``None`` means "inherit the chat/story or global default".
+
+Scoping
+-------
+
+A variant may carry two scopes:
+
+``model_scope``
+    The model (or model role) the variant is FOR. ``None`` means "any model".
+    This is what makes "many different variations of system prompts for
+    various LLMs" expressible: before it, the only axis was the scene, so one
+    prompt served every model that answered.
+
+``gate_scope``
+    The Statekeeper gate the variant is FOR. ``None`` means "any gate". The
+    Updater's *schema* was already gate-specific — an unfired gate's field was
+    absent from the JSON the model was shown — so this is the prompt half:
+    the extractor is told in words what shifted.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable, Optional
 
 from sqlmodel import Session, select
 
 from core.entities import AgentProfile, AgentPromptVariant
+from infrastructure.logging import get_logger
+
+logger = get_logger("agent_variants")
 
 VARIANT_PREFIX = "variant:"
 
@@ -27,6 +49,87 @@ VARIANT_PREFIX = "variant:"
 def clean_agent_slug(raw: str) -> str:
     """Lowercase and collapse anything that is not [a-z0-9_] into underscores."""
     return re.sub(r"[^a-z0-9_]+", "_", (raw or "").lower().strip()).strip("_")
+
+
+def _scope_set(values: Optional[Iterable[str]]) -> set[str]:
+    return {(v or "").strip().lower() for v in (values or []) if (v or "").strip()}
+
+
+def variant_applies(
+    variant: AgentPromptVariant,
+    *,
+    model_scopes: Optional[Iterable[str]] = None,
+    gate_scopes: Optional[Iterable[str]] = None,
+) -> bool:
+    """Does this variant apply in this context?
+
+    A scoped variant applies only when its scope is in the applicable set. An
+    unscoped variant applies everywhere. The applicable model set is the model
+    that will answer TOGETHER WITH its role, so a variant scoped to `"rp"`
+    matches whichever prose model is bound to the rp role, and a variant
+    scoped to a specific model id matches only that one.
+    """
+    variant_model = (getattr(variant, "model_scope", None) or "").strip().lower()
+    if variant_model:
+        if variant_model not in _scope_set(model_scopes):
+            return False
+
+    variant_gate = (getattr(variant, "gate_scope", None) or "").strip().lower()
+    if variant_gate:
+        if variant_gate not in _scope_set(gate_scopes):
+            return False
+
+    return True
+
+
+def scoped_variants(
+    session: Optional[Session],
+    agent_slug: str,
+    *,
+    model_scopes: Optional[Iterable[str]] = None,
+    gate_scopes: Optional[Iterable[str]] = None,
+) -> list[AgentPromptVariant]:
+    """The variants of an agent that apply in this context.
+
+    Ordered so the most specific wins: a variant scoped to both the model and
+    the gate, then one scoped to either, then an unscoped one. Within a
+    tier, the active variant first, then slug.
+    """
+    if not session or not agent_slug:
+        return []
+    try:
+        profile = session.exec(
+            select(AgentProfile).where(AgentProfile.slug == agent_slug)
+        ).first()
+        if not profile:
+            return []
+
+        variants = session.exec(
+            select(AgentPromptVariant).where(AgentPromptVariant.agent_id == profile.id)
+        ).all()
+    except Exception as exc:
+        logger.debug("scoped_variants_failed", agent=agent_slug, error=str(exc))
+        return []
+
+    def _specificity(v: AgentPromptVariant) -> int:
+        score = 1
+        if (getattr(v, "model_scope", None) or "").strip():
+            score += 1
+        if (getattr(v, "gate_scope", None) or "").strip():
+            score += 1
+        return score
+
+    applicable = [
+        v for v in variants if variant_applies(v, model_scopes=model_scopes, gate_scopes=gate_scopes)
+    ]
+    applicable.sort(
+        key=lambda v: (
+            -_specificity(v),
+            0 if v.is_active else 1,
+            v.slug,
+        )
+    )
+    return applicable
 
 
 @dataclass(frozen=True)
@@ -84,8 +187,16 @@ def resolve_agent(
     *,
     variant_slug: str | None = None,
     require_enabled: bool = True,
+    model_scopes: Optional[Iterable[str]] = None,
+    gate_scopes: Optional[Iterable[str]] = None,
 ) -> ResolvedAgent | None:
     """Resolve an agent slug or ``variant:<slug>`` reference with optional variant_slug override.
+
+    ``model_scopes`` and ``gate_scopes`` narrow which variants are eligible.
+    A variant scoped to a model that will not answer, or to a gate that did
+    not fire, is not a candidate: it is a prompt written for a different
+    situation. The most specific eligible variant wins — one scoped to both
+    the model and the gate, then one scoped to either, then an unscoped one.
 
     Returns ``None`` when the reference matches nothing, so callers keep their
     existing "unknown speaker" fallbacks instead of raising mid-generation.
@@ -132,15 +243,39 @@ def resolve_agent(
         ).first()
 
     if variant is None:
-        variant = session.exec(
-            select(AgentPromptVariant)
-            .where(
-                AgentPromptVariant.agent_id == profile.id,
-                AgentPromptVariant.is_active == True,  # noqa: E712
+        # No explicit choice. A variant SCOPED to the model that will answer,
+        # or to a gate that fired, is a better fit than the agent's generic
+        # active variant — it was written for exactly this situation, and the
+        # scope IS its activation.
+        #
+        # An unscoped INACTIVE variant is never auto-applied. The built-in
+        # sub-variants are seeded that way on purpose: they are examples of
+        # what a variant looks like, and Laya picks them by name. Auto-
+        # applying the first one alphabetically would silently replace the
+        # agent's default persona with an example.
+        scoped = [
+            v
+            for v in scoped_variants(
+                session,
+                ref,
+                model_scopes=model_scopes,
+                gate_scopes=gate_scopes,
             )
-            .order_by(AgentPromptVariant.updated_at.desc())
-            .limit(1)
-        ).first()
+            if (getattr(v, "model_scope", None) or "").strip()
+            or (getattr(v, "gate_scope", None) or "").strip()
+        ]
+        if scoped:
+            variant = scoped[0]
+        else:
+            variant = session.exec(
+                select(AgentPromptVariant)
+                .where(
+                    AgentPromptVariant.agent_id == profile.id,
+                    AgentPromptVariant.is_active == True,  # noqa: E712
+                )
+                .order_by(AgentPromptVariant.updated_at.desc())
+                .limit(1)
+            ).first()
 
     return ResolvedAgent(profile=profile, variant=variant)
 

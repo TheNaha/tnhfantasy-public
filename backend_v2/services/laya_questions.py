@@ -11,11 +11,12 @@ directly from LLM Studio.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from sqlmodel import Session, select
 
 from core.entities import AgentProfile, AgentPromptVariant, LayaQuestionOverride
 from infrastructure.logging import get_logger
+from services.agent_variants import variant_applies
 from services.decision_schema import (
     GATE_DESCRIPTIONS,
     GATE_LABELS,
@@ -29,9 +30,24 @@ logger = get_logger("laya_questions")
 
 
 def get_agent_variant_options(
-    session: Optional[Session], agent_slug: str
+    session: Optional[Session],
+    agent_slug: str,
+    *,
+    model_scopes: Optional[Iterable[str]] = None,
 ) -> Dict[str, str]:
-    """Return choice options for sub-variants of an agent, or empty if none have hints."""
+    """Return choice options for sub-variants of an agent, or empty if none have hints.
+
+    `model_scopes` narrows the list to the variants that apply to the model
+    that will answer (the model id plus its role). A variant scoped to a
+    different model is not offered at all — it is a prompt written for a
+    different situation, and offering it would let Laya pick a prompt the
+    model it chose was never written for.
+
+    A variant with no `selection_hint` and no `description` is never offered.
+    That is not a display detail: it means the variant is invisible to the
+    routing that is supposed to choose it, so it is the default and not an
+    error.
+    """
     if not session:
         return {}
     try:
@@ -49,6 +65,8 @@ def get_agent_variant_options(
             "default": f"Standard {profile.name} default persona"
         }
         for v in variants:
+            if not variant_applies(v, model_scopes=model_scopes):
+                continue
             hint = (v.selection_hint or v.description or "").strip()
             if hint:
                 tags_str = f" [{', '.join(v.tags)}]" if v.tags else ""
@@ -78,7 +96,7 @@ def load_question_overrides(
         return {}
 
 
-def resolve_stage_questions(
+def build_stage_questions(
     session: Optional[Session],
     stage: str,
     *,
@@ -86,8 +104,15 @@ def resolve_stage_questions(
     has_secondary_character: bool = False,
     allow_narration: bool = True,
     primary_character_slug: str = "character",
+    model_scopes: Optional[Dict[str, Iterable[str]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Assemble the active questions for a pipeline stage with user overrides and sub-variant selection."""
+    """The questions a stage asks, BEFORE the user's overrides are applied.
+
+    Split out from `resolve_stage_questions` so the LLM Studio can show both
+    the shipped default and the current text. They used to be two separate
+    implementations — the Studio built its own list, with placeholder
+    variant questions — and the two could not be compared.
+    """
     if stage == "triage":
         base_questions = _default_triage_questions(
             available_agents=available_agents,
@@ -96,7 +121,9 @@ def resolve_stage_questions(
         )
         # Inject sub-variant choice questions if the character or narrator have sub-variants
         if session:
-            char_variants = get_agent_variant_options(session, primary_character_slug)
+            char_variants = get_agent_variant_options(
+                session, primary_character_slug, model_scopes=(model_scopes or {}).get(primary_character_slug)
+            )
             if char_variants:
                 base_questions.append({
                     "key": "character_variant",
@@ -105,7 +132,9 @@ def resolve_stage_questions(
                     "options": char_variants,
                 })
             if allow_narration:
-                narr_variants = get_agent_variant_options(session, "narrator")
+                narr_variants = get_agent_variant_options(
+                    session, "narrator", model_scopes=(model_scopes or {}).get("narrator")
+                )
                 if narr_variants:
                     base_questions.append({
                         "key": "narrator_variant",
@@ -118,7 +147,9 @@ def resolve_stage_questions(
                 agent_slug = agent.get("slug")
                 if not agent_slug or agent_slug in ("user", primary_character_slug, "narrator"):
                     continue
-                agent_variants = get_agent_variant_options(session, agent_slug)
+                agent_variants = get_agent_variant_options(
+                    session, agent_slug, model_scopes=(model_scopes or {}).get(agent_slug)
+                )
                 if agent_variants:
                     base_questions.append({
                         "key": f"{agent_slug}_variant",
@@ -136,8 +167,19 @@ def resolve_stage_questions(
         )
     else:
         base_questions = []
+    return base_questions
 
-    overrides = load_question_overrides(session, stage)
+
+def apply_question_overrides(
+    base_questions: List[Dict[str, Any]],
+    overrides: Dict[str, LayaQuestionOverride],
+) -> List[Dict[str, Any]]:
+    """Merge the user's overrides into a stage's questions.
+
+    Split out from `resolve_stage_questions` so the LLM Studio can show the
+    shipped default next to the current text without building a second copy
+    of the question list.
+    """
     resolved: List[Dict[str, Any]] = []
 
     for q in base_questions:
@@ -154,10 +196,22 @@ def resolve_stage_questions(
                 else:
                     item["question"] = override.question
             if override.options and isinstance(override.options, dict):
-                # User updated descriptions of options
-                merged_opts = dict(item.get("options") or {})
-                merged_opts.update(override.options)
-                item["options"] = merged_opts
+                if item.get("type") == "score":
+                    # A score question's rubric is its `key -> description`
+                    # map, and the Laya runner reads `rubric` for those. The
+                    # override's `options` is the same shape — it is what the
+                    # Studio edits — so it is written where the runner looks.
+                    # Before this, an override of a score question was
+                    # merged into `options`, which the runner never reads, so
+                    # editing a score question's rubric changed nothing.
+                    merged_rubric = dict(item.get("rubric") or {})
+                    merged_rubric.update(override.options)
+                    item["rubric"] = merged_rubric
+                else:
+                    # User updated descriptions of options
+                    merged_opts = dict(item.get("options") or {})
+                    merged_opts.update(override.options)
+                    item["options"] = merged_opts
             resolved.append(item)
         else:
             resolved.append(q)
@@ -177,71 +231,113 @@ def resolve_stage_questions(
     return resolved
 
 
+def resolve_stage_questions(
+    session: Optional[Session],
+    stage: str,
+    *,
+    available_agents: Optional[List[Dict[str, Any]]] = None,
+    has_secondary_character: bool = False,
+    allow_narration: bool = True,
+    primary_character_slug: str = "character",
+    model_scopes: Optional[Dict[str, Iterable[str]]] = None,
+) -> List[Dict[str, Any]]:
+    """Assemble the active questions for a pipeline stage with user overrides and sub-variant selection.
+
+    `model_scopes` maps an AGENT SLUG to the model scopes that apply to it —
+    the model that agent will answer with, plus its role. A variant scoped to
+    a model outside that set is not offered: Laya is choosing the best prompt
+    for an agent whose model has already been picked, and offering it a prompt
+    written for a different model would defeat the point.
+
+    It is per agent rather than per turn because each agent can be bound to a
+    different model — the character agent answers on the chat's prose model
+    and the narrator on the narrator's.
+    """
+    base_questions = build_stage_questions(
+        session,
+        stage,
+        available_agents=available_agents,
+        has_secondary_character=has_secondary_character,
+        allow_narration=allow_narration,
+        primary_character_slug=primary_character_slug,
+        model_scopes=model_scopes,
+    )
+    return apply_question_overrides(base_questions, load_question_overrides(session, stage))
+
+
 def list_all_pipeline_questions(session: Optional[Session]) -> List[Dict[str, Any]]:
-    """Return all questions across all stages with metadata and override state for LLM Studio."""
+    """Return all questions across all stages with metadata and override state for LLM Studio.
+
+    This is the SAME function the pipeline runs — `resolve_stage_questions` —
+    so what the Studio shows is what Laya is actually asked.
+
+    It used to build a parallel list: the base questions from the builders
+    with no agent list, plus hand-written placeholder variant questions whose
+    only option was `{"default": …}`. So the Studio's Laya Questions tab
+    showed a variant question that could never have been asked, with none of
+    the real variant slugs in it, and an edit made there had no relationship
+    to what the pipeline would ask.
+    """
     stages = ["triage", "audit", "chaining"]
     result: List[Dict[str, Any]] = []
 
+    available_agents: List[Dict[str, Any]] = []
+    if session:
+        try:
+            rows = session.exec(
+                select(AgentProfile).where(AgentProfile.enabled == True)  # noqa: E712
+            ).all()
+            available_agents = [
+                {
+                    "id": a.id,
+                    "slug": a.slug,
+                    "name": a.name,
+                    "agent_type": a.agent_type,
+                    "description": a.description,
+                    "system_prompt_template": a.system_prompt_template,
+                    "model_target": a.model_target,
+                    "model_override": a.model_override,
+                }
+                for a in rows
+            ]
+        except Exception as exc:
+            logger.warning("list_all_pipeline_questions_agents_failed", error=str(exc))
+            available_agents = []
+
     for stg in stages:
         overrides = load_question_overrides(session, stg)
-        if stg == "triage":
-            base_qs = _default_triage_questions()
-            # Sample variant placeholders for studio display
-            base_qs.extend([
-                {
-                    "key": "character_variant",
-                    "type": "choice",
-                    "question": "Which personality variant of the character best fits this scene beat?",
-                    "options": {"default": "Standard authentic persona"},
-                },
-                {
-                    "key": "narrator_variant",
-                    "type": "choice",
-                    "question": "Which storytelling tone or narrative variant best fits the scene?",
-                    "options": {"default": "Standard omniscient narrative description"},
-                },
-            ])
-            # Inject variant placeholders for any other agent that has variants
-            if session:
-                all_agents = session.exec(select(AgentProfile)).all()
-                for agent in all_agents:
-                    if agent.slug in ("user", "character", "narrator"):
-                        continue
-                    variants = session.exec(
-                        select(AgentPromptVariant).where(AgentPromptVariant.agent_id == agent.id)
-                    ).all()
-                    if variants:
-                        options = {"default": f"Standard {agent.name} default persona"}
-                        for v in variants:
-                            hint = (v.selection_hint or v.description or "").strip()
-                            if hint:
-                                tags_str = f" [{', '.join(v.tags)}]" if v.tags else ""
-                                options[v.slug] = f"{v.name}{tags_str}: {hint}"
-                        if len(options) > 1:
-                            base_qs.append({
-                                "key": f"{agent.slug}_variant",
-                                "type": "choice",
-                                "question": f"Which variant of {agent.name} best fits this scene beat?",
-                                "options": options,
-                            })
-        elif stg == "audit":
-            base_qs = _default_audit_questions()
-        else:
-            base_qs = _default_chaining_questions()
+        # The Studio shows every possible question, so it asks for the widest
+        # possible stage: every enabled agent, narration allowed, a secondary
+        # character in the cast. A question that would be skipped in a
+        # particular chat is still a question the user can configure.
+        #
+        # The DEFAULTS come from the builder, and the current text from the
+        # override merge — the same two functions the pipeline runs, so the
+        # Studio cannot drift from the runtime.
+        base_qs = build_stage_questions(
+            session,
+            stg,
+            available_agents=available_agents,
+            has_secondary_character=True,
+            allow_narration=True,
+        )
+        resolved_qs = apply_question_overrides(base_qs, overrides)
+        resolved_by_key = {q["key"]: q for q in resolved_qs}
 
         seen_keys = set()
         for q in base_qs:
             key = q["key"]
             seen_keys.add(key)
             ov = overrides.get(key)
+            current = resolved_by_key.get(key, q)
             result.append({
                 "stage": stg,
                 "key": key,
                 "type": q["type"],
                 "default_question": q.get("question") or q.get("statement") or "",
-                "question": ov.question if (ov and ov.question) else (q.get("question") or q.get("statement") or ""),
+                "question": current.get("question") or current.get("statement") or "",
                 "default_options": q.get("options") or q.get("rubric") or {},
-                "options": ov.options if (ov and ov.options) else (q.get("options") or q.get("rubric") or {}),
+                "options": current.get("options") or current.get("rubric") or {},
                 "enabled": ov.enabled if ov else True,
                 "is_custom": False,
                 "is_gate": key in UPDATER_GATE_KEYS,

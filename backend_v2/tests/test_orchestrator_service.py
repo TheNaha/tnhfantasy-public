@@ -127,7 +127,11 @@ def _chain_fixtures(monkeypatch, assistant_tool_calls, allowed_tools=None):
 
     captured = {"workflow": None, "enqueued": []}
 
-    def fake_build_llm_workflow(*, messages, type_, chat_id, character_id, character_system_prompt,
+    # The signature mirrors `services.llm_workflow.build_llm_workflow`, which
+    # has no `character_system_prompt` parameter any more: the key it wrote
+    # (`workflow["character_system_prompt"]`) was read by nothing, and the
+    # character card is already the first message in `messages`.
+    def fake_build_llm_workflow(*, messages, type_, chat_id, character_id,
                                 model, workspace, parent_job_id, extra_metadata, samplers=None,
                                 story_id=None, chapter_id=None):
         wf = {"messages": messages, "type": type_, "model": model}

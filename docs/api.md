@@ -135,7 +135,10 @@ DB-backed gallery index (replaces the old in-memory `GalleryIndexer`). The asset
 - `GET /api/v2/chats` — List chats. Query: `workspace=roleplay` selects roleplay chats (`chat_type == workspace`); `character_id=<id>` selects the chats a character is in, as the primary character or as one of the additional cast.
 - `POST /api/v2/chats` — Create a chat. Body: `{character_id, title?, chat_type?}`; auto-creates a root message.
 - `GET /api/v2/chats/{chat_id}` — Fetch a chat + its character.
-- `PATCH /api/v2/chats/{chat_id}` — Update chat-level fields (title, chat type).
+- `PATCH /api/v2/chats/{chat_id}` — Update chat-level fields (title, chat type,
+  the per-chat budgets, and `scene_graph_enabled` / `scene_graph_budget` — whether the
+  Illustrator may author a scene's generation PARAMETERS as well as its prompt, and how
+  much scene authoring this chat may spend).
 - `DELETE /api/v2/chats/{chat_id}` — Delete a chat (cascades messages).
 - `GET /api/v2/chats/{chat_id}/messages` — All messages (DB-backed conversation; `metadata_` JSON + `tool_calls` columns).
 - `POST /api/v2/chats/{chat_id}/messages` — Append a user message; server-side context assembled by `context_builder` (backend-owned, per VISION #7) → enqueues an LLM task and returns the created message.
@@ -242,6 +245,26 @@ Agent profiles are the Laya routing targets: the Character, Narrator, Updater, I
 - `GET`, `PUT`, `DELETE` `/api/v2/agents/{agent_id}/variants/{variant_id}` — Read, update and delete a variant.
 - `POST /api/v2/agents/{agent_id}/variants/{variant_id}/activate` — Make a variant the active one.
 - `POST /api/v2/agents/simulate` — Run a workflow simulation against an agent.
+
+A variant may carry two scopes, and they are what make the sub-variant system
+answer to "a different prompt for a different LLM" and "a prompt for the mood
+that just changed":
+
+- `model_scope` — the model (or model **role**, e.g. `rp`) the variant is
+  FOR. `null` means "any model". A scoped variant is only offered to Laya
+  when the agent it belongs to will actually answer with that model, and it
+  is applied automatically when it matches — the scope IS its activation.
+  An unscoped, inactive variant is never auto-applied: the built-in
+  sub-variants are seeded that way on purpose, as examples Laya picks by
+  name.
+- `gate_scope` — the Statekeeper gate the variant is FOR. `null` means "any
+  gate". The Updater's *schema* was already gate-specific — an unfired
+  gate's field is absent from the JSON the model is shown, and anything
+  smuggled in is dropped on the way back. This is the prompt half: the
+  extractor is told in words what shifted.
+
+A variant with no `selection_hint` and no `description` is never offered to
+Laya, so it can only be used by naming it. The LLM Studio marks those.
 
 ### Worlds (`/api/v2/worlds`)
 
@@ -730,6 +753,16 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET` `/api/settings/schema`
 - `GET`, `POST` `/api/settings/session`
 - `GET`, `PUT` `/api/settings/system-prompts`
+- `GET` `/api/settings/system-prompts/library` — The user's own system-prompt blocks.
+- `POST` `/api/settings/system-prompts/library` — Add one. Body: `{key, label, category, prompt}`.
+- `PUT` `/api/settings/system-prompts/library/{key}` — Edit one.
+- `DELETE` `/api/settings/system-prompts/library/{key}` — Remove one.
+
+The built-in `system_prompts` blocks are a fixed set the code looks up by
+name, so they could not grow and could not be removed. The library is a list,
+so it can be both. Its entries are merged into the blocks the rest of the
+system resolves, so a prompt of your own is usable by key everywhere a
+built-in one is. A library key may not collide with a built-in one.
 
 ### Statistics
 

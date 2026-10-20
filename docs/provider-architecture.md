@@ -81,7 +81,44 @@ the configured default directly, which ignored provider health entirely.
 The TTS and image paths each have their own load-balancer runtime state
 (`state_id=3` and `state_id=1`; LLM is `2`). They used to share one, which
 meant a TTS outage incremented the failure count on a provider that was
-healthy for images and could take it out of image rotation.
+healthy for images and could take it out of image rotation. `get_stats` had
+the mirror-image bug: it built its per-modality breakdown out of ONE
+modality's counters, so the three numbers it printed were the same number
+three times.
+
+### The Illustrator authors a spec, not a graph
+
+The scene Illustrator may choose the generation PARAMETERS of an image —
+the sampler, the resolution, the steps, the CFG, the LoRA, the hires pass,
+ControlNet, IPAdapter, the detailer — and not only its prompt.
+
+It does so by emitting a **spec** (`backend_v2/core/scene_graph.py`), and the
+backend renders the graph with the same `WorkflowBuilder` the stock image job
+uses. It is deliberately NOT a raw ComfyUI graph, for three concrete
+reasons:
+
+* **There is no node allow-list anywhere in the system.** A raw graph can
+  contain any node the provider has installed, including custom nodes that
+  read files, reach the network or spawn processes. The only server-side
+  gate is ComfyUI's own validation, which runs at DISPATCH — after the
+  job has been billed.
+* **There is no cost guard.** `EmptyLatentImage.width` and `.height` are
+  unbounded, `KSampler.steps` is unbounded, and `batch_size` is unbounded.
+  `core/upload_validation.py`'s `MAX_IMAGE_DIMENSION` is about uploaded
+  image BYTES and says nothing about the dimensions a workflow requests.
+* **The gallery depends on the builder's metadata.** `prompt`, `seed`,
+  `steps`, `checkpoint`, `width` and `height` are what the assets table and
+  `frontend_v2/src/utils/reuseParameters.js` read. A raw graph bypasses that
+  and breaks "reuse parameters".
+
+So the spec is bounded by `backend_v2/core/workflow_limits.py` and checked
+BEFORE the job is created, the model names it names are checked against what
+is installed (a name that is not installed is dropped, not passed through),
+and an answer that is not a spec at all falls back to the prompt-text path —
+so the illustration still happens, it is just not node-customised.
+
+The feature is opt-in per chat (`chat.scene_graph_enabled`), off by
+default, and the prompt-text path is what it falls back to.
 
 ## Names are a contract
 

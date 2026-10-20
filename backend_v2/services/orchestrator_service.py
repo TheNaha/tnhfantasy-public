@@ -674,7 +674,7 @@ async def process_tool_calls_and_chain(
         story_id=story_id or None,
         chapter_id=chapter_id,
         character_id=character_id,
-        character_system_prompt=metadata.get("character_system_prompt"),
+        # The character card is the first system message in `messages`.
         model=followup_model,
         workspace="story" if is_story_chain else "chat",
         parent_job_id=job.id,

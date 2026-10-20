@@ -34,10 +34,16 @@ async def submit_image_job(
     task_type: str = "image",
     extra_metadata: dict[str, Any] | None = None,
     preferred_provider_id: str | None = None,
+    spec: Any = None,
 ) -> Any:
     """Build, validate, create and enqueue an image job.
 
     Returns the created Job.
+
+    `spec` is an optional `core.scene_graph.SceneGraphSpec`: the parameters
+    the Illustrator agent authored for this scene. When it is present the
+    workflow is rendered from it and the gallery metadata reflects it; when
+    it is absent the stock prompt-and-parameters path is used, unchanged.
     """
     # Resolve checkpoint: preferred → config default → hardcoded fallback.
     # Unlike resolve_checkpoint(), we preserve the *preferred* name in the
@@ -51,22 +57,41 @@ async def submit_image_job(
     fallback_name = checkpoint or resolve_default_checkpoint()
     resolved_checkpoint = availability.get_available_checkpoint(fallback_name) or fallback_name
 
-    workflow, metadata = build_image_job_workflow(
-        prompt=prompt,
-        negative=negative_prompt or "",
-        checkpoint=resolved_checkpoint,
-        lora=lora,
-        filename_prefix=filename_prefix,
-        source=source,
-        workspace=workspace,
-        chat_id=chat_id,
-        character_id=character_id,
-        story_id=story_id,
-        chapter_id=chapter_id,
-        parent_job_id=parent_job_id,
-        branch_id=branch_id,
-        extra_metadata=extra_metadata,
-    )
+    if spec is not None:
+        from core.workflow_builder import build_scene_job_workflow
+
+        workflow, metadata = build_scene_job_workflow(
+            spec,
+            checkpoint=resolved_checkpoint,
+            filename_prefix=filename_prefix,
+            source=source,
+            workspace=workspace,
+            chat_id=chat_id,
+            character_id=character_id,
+            story_id=story_id,
+            chapter_id=chapter_id,
+            parent_job_id=parent_job_id,
+            branch_id=branch_id,
+            extra_metadata=extra_metadata,
+            lora_name=spec.lora.name if getattr(spec, "lora", None) else None,
+        )
+    else:
+        workflow, metadata = build_image_job_workflow(
+            prompt=prompt,
+            negative=negative_prompt or "",
+            checkpoint=resolved_checkpoint,
+            lora=lora,
+            filename_prefix=filename_prefix,
+            source=source,
+            workspace=workspace,
+            chat_id=chat_id,
+            character_id=character_id,
+            story_id=story_id,
+            chapter_id=chapter_id,
+            parent_job_id=parent_job_id,
+            branch_id=branch_id,
+            extra_metadata=extra_metadata,
+        )
 
     submission = JobSubmissionService(session)
     return await submission.create_and_enqueue_job(

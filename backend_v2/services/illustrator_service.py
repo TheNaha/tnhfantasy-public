@@ -20,6 +20,44 @@ FALLBACK_ILLUSTRATOR_PROMPT = (
 
 _RECENT_SCENE_MESSAGES = 6
 
+# The instruction the Illustrator is given when it may author the scene's
+# generation PARAMETERS and not just its prompt.
+#
+# The vocabulary is closed on purpose. The model picks the axes; the backend
+# renders the graph, validates the numbers and resolves the model names. See
+# `core/scene_graph.py` for why a raw graph is not something to accept from
+# an LLM.
+SCENE_GRAPH_INSTRUCTION = """Choose the image prompt AND the generation parameters for this scene.
+
+Respond with ONE JSON object and nothing else. No prose, no markdown fences.
+
+{
+  "prompt": "comma-separated visual tags describing the scene",
+  "negative_prompt": "comma-separated tags to avoid",
+  "composition": {"width": 832, "height": 1216, "batch_size": 1},
+  "sampler": {"name": "euler", "scheduler": "normal", "steps": 24, "cfg": 7.0, "denoise": 1.0, "seed": 0},
+  "lora": {"name": "<one of the available LoRAs, or omit this field>", "strength": 0.8},
+  "hires_fix": {"enabled": false, "upscaler": "latent", "scale_by": 1.5, "steps": 10, "denoise": 0.3},
+  "controlnet": {"name": "<one of the available ControlNets, or omit this field>", "strength": 0.6},
+  "ipadapter": {"name": "<one of the available IPAdapters, or omit this field>", "weight": 0.4},
+  "detailer": {"enabled": false, "model": "<one of the available detailer models, or omit this field>", "steps": 20, "denoise": 0.4}
+}
+
+Rules:
+- Omit a field entirely rather than inventing a value for it.
+- `width` and `height` must be multiples of 8.
+- `seed` of 0 means "pick one".
+- Only use the model names listed below. A name that is not listed will be
+  dropped, so inventing one wastes the setting.
+"""
+
+SCENE_GRAPH_MODEL_DIRECTORIES = {
+    "LoRAs": "loras",
+    "ControlNets": "controlnet",
+    "IPAdapters": "ipadapter",
+    "Detailer models": "unet",
+}
+
 
 def _illustration_context(
     chat: Chat,
@@ -75,6 +113,51 @@ def _illustration_context(
     return "\n".join(lines)
 
 
+def _scene_graph_context(
+    chat: Chat,
+    character: Character | None,
+    *,
+    recent_messages: list[Message] | None = None,
+    available_models: dict[str, list[str]] | None = None,
+) -> str:
+    """The scene facts plus the model names, for the scene-graph mode.
+
+    The model names are listed because a name the LLM invents is a name the
+    backend has to drop: the spec is rendered with the model it names, and a
+    model that is not installed fails the job's availability check at
+    dispatch — after it was billed.
+    """
+    base = _illustration_context(chat, character, recent_messages=recent_messages)
+    # The prompt-text instruction at the end of the context is wrong for this
+    # mode; the scene-graph instruction replaces it.
+    marker = "Write the image prompt now."
+    head = base.split(marker)[0].rstrip() if marker in base else base
+
+    lines = [head, ""]
+    for label, names in (available_models or {}).items():
+        if not names:
+            continue
+        shown = names[:25]
+        suffix = f" (+{len(names) - len(shown)} more)" if len(names) > len(shown) else ""
+        lines.append(f"Available {label}: {', '.join(shown)}{suffix}")
+    lines.append("")
+    lines.append(SCENE_GRAPH_INSTRUCTION)
+    return "\n".join(lines)
+
+
+def _available_scene_models(session: Session) -> dict[str, list[str]]:
+    """The model names the Illustrator may use, grouped by kind."""
+    service = ModelAvailabilityService(session)
+    out: dict[str, list[str]] = {}
+    for label, directory in SCENE_GRAPH_MODEL_DIRECTORIES.items():
+        try:
+            out[label] = list(service.get_available_models(directory))
+        except Exception as exc:
+            logger.debug("illustrator_model_list_failed", directory=directory, error=str(exc))
+            out[label] = []
+    return out
+
+
 def _load_session_messages(session: Session, chat_id: str, limit: int = _RECENT_SCENE_MESSAGES) -> list[Message]:
     newest = list(
         session.exec(
@@ -96,6 +179,7 @@ async def enqueue_scene_illustration_job(
     character_id: Optional[str] = None,
     branch_id: Optional[str] = None,
     source_job_id: Optional[str] = None,
+    scene_graph: Optional[bool] = None,
 ) -> Optional[str]:
     """Queue the illustrator agent's LLM job, which chains into an image job.
 
@@ -104,10 +188,19 @@ async def enqueue_scene_illustration_job(
     job is marked `source: scene_prompt` and `background: true` so
     `job_processing` chains its returned prompt text into an image without
     rendering a reply bubble. The Illustrator never calls tools.
+
+    With `scene_graph` on, the job is marked `source: scene_graph` instead and
+    the agent is asked for a scene-graph SPEC rather than prompt text, so it
+    may also choose the generation parameters. The default is the chat's own
+    `scene_graph_enabled` flag, which is off unless the user turns it on.
     """
     chat = session.get(Chat, chat_id)
     if not chat:
         return None
+
+    use_scene_graph = (
+        bool(chat.scene_graph_enabled) if scene_graph is None else bool(scene_graph)
+    )
 
     character = session.get(Character, character_id or chat.character_id) if (character_id or chat.character_id) else None
 
@@ -130,11 +223,19 @@ async def enqueue_scene_illustration_job(
     )
 
     recent_messages = _load_session_messages(session, chat_id)
-    context = _illustration_context(
-        chat,
-        character,
-        recent_messages=recent_messages,
-    )
+    if use_scene_graph:
+        context = _scene_graph_context(
+            chat,
+            character,
+            recent_messages=recent_messages,
+            available_models=_available_scene_models(session),
+        )
+    else:
+        context = _illustration_context(
+            chat,
+            character,
+            recent_messages=recent_messages,
+        )
 
     checkpoint = character.checkpoint if character else None
     if not checkpoint:
@@ -164,7 +265,7 @@ async def enqueue_scene_illustration_job(
         character_id=character.id if character else None,
         model=model_for_kind("illustrator", chat.llm_model, session),
         workspace="chat",
-        source="scene_prompt",
+        source="scene_graph" if use_scene_graph else "scene_prompt",
         parent_job_id=source_job_id,
         background=True,
         samplers=resolved.sampler_overrides() if resolved is not None else None,

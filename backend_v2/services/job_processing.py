@@ -737,10 +737,17 @@ async def _finalize_llm_job(
         # Scene generation fallback: the LLM returned plain prompt text instead
         # of a tool call (model without tool-calling support). Chain the text
         # directly into an image job instead of persisting it as a chat reply.
-        is_scene_prompt = (
-            isinstance(job.metadata_, dict)
-            and job.metadata_.get("source") == "scene_prompt"
+        #
+        # `scene_graph` is the same chain with a different payload: the
+        # Illustrator answered with a scene-graph SPEC rather than prompt
+        # text, and the handler decides whether it is one (and renders it) or
+        # whether it is text after all (and uses the text path).
+        scene_source = (
+            job.metadata_.get("source")
+            if isinstance(job.metadata_, dict)
+            else None
         )
+        is_scene_prompt = scene_source in ("scene_prompt", "scene_graph")
         if is_scene_prompt and not assistant_output.get("tool_calls"):
             scene_checkpoint = (
                 job.metadata_.get("scene_checkpoint")
@@ -755,7 +762,7 @@ async def _finalize_llm_job(
                 load_balancer=load_balancer,
                 process_image_background_fn=None,
                 event_extra={
-                    "type": "scene_prompt",
+                    "type": scene_source,
                     "chat_id": entity_id,
                     "character_id": job.metadata_.get("character_id"),
                     "prompt": assistant_content,
@@ -763,8 +770,8 @@ async def _finalize_llm_job(
                     "metadata": {
                         "chat_id": entity_id,
                         "character_id": job.metadata_.get("character_id"),
-                        "type": "scene_prompt",
-                        "source": "scene_prompt",
+                        "type": scene_source,
+                        "source": scene_source,
                     },
                 },
             )

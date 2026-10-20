@@ -198,7 +198,7 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
                 ],
                 chat_id=chat.id,
                 character_id=chat.character_id,
-                system_prompt=system_prompt or None,
+                # The character card is the first system message in `messages`.
                 model=_idle_sim_model(chat, session),
                 type_="chat_reply",
                 source="idle_simulation",

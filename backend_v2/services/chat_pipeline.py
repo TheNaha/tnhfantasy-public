@@ -49,7 +49,7 @@ from core.pipeline_limits import (
     IMAGE_TRIGGER_THRESHOLD,
     MAX_AGENTIC_IMAGES,
     MAX_AUTONOMOUS_TURNS,
-    MAX_CONTINUATIONS,
+    MAX_CONTINUATION_ATTEMPTS,
     UPDATER_GATE_THRESHOLD,
 )
 
@@ -113,7 +113,7 @@ PIPELINE_STAGES: tuple[PipelineStage, ...] = (
         input_type="generated_text_and_snapshot",
         output_type="audit_decision",
         limits={
-            "max_continuations": MAX_CONTINUATIONS,
+            "max_continuation_attempts": MAX_CONTINUATION_ATTEMPTS,
             "timeout_ms": 15000,
             "gate_threshold": UPDATER_GATE_THRESHOLD,
         },
@@ -173,7 +173,7 @@ def get_pipeline_manifest() -> Dict[str, Any]:
         "limits": {
             "max_autonomous_turns": MAX_AUTONOMOUS_TURNS,
             "max_turns": MAX_AUTONOMOUS_TURNS,
-            "max_continuations": MAX_CONTINUATIONS,
+            "max_continuation_attempts": MAX_CONTINUATION_ATTEMPTS,
             "max_agentic_images": MAX_AGENTIC_IMAGES,
             "gate_threshold": UPDATER_GATE_THRESHOLD,
             "image_threshold": IMAGE_TRIGGER_THRESHOLD,

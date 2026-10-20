@@ -273,7 +273,7 @@ vi.mock('../hooks/usePipeline', () => ({
             ],
             limits: {
                 max_autonomous_turns: 4,
-                max_continuations: 4,
+                max_continuation_attempts: 4,
                 gate_threshold: 0.55,
                 image_threshold: 0.65,
             },

@@ -158,7 +158,7 @@ async def _handle_impersonation(job_data: dict[str, Any], session: Any = None):
                     type_="chat_reply",
                     chat_id=imp_chat_id,
                     character_id=_chat.character_id,
-                    character_system_prompt=_sp or None,
+                    # The character card is the first system message in `messages`.
                     model=_impersonation_reply_model(_chat, session),
                     workspace="chat",
                 )
@@ -258,6 +258,148 @@ async def _handle_scene_prompt(job_data: dict[str, Any]):
             logger.info("scene_image_job_queued", job_id=img_job.id, chat_id=chat_id)
     except Exception as e:
         logger.error("scene_chain_failed", job_id=job_data.get("id"), error=str(e), exc_info=True)
+
+
+async def _handle_scene_graph(job_data: dict[str, Any]):
+    """Chain a scene-graph SPEC into an image job.
+
+    The Illustrator, in scene-graph mode, answers with a JSON spec instead of
+    prompt text. This parses it, checks it against the limits, resolves the
+    model names it named against what is actually installed, and renders the
+    graph.
+
+    If the answer is not a spec — the model answered with prose, or with
+    something that is not JSON — the TEXT path is used instead. The
+    illustration still happens; it just is not node-customised. That
+    difference is the difference between an illustration and no illustration,
+    and no amount of the model misbehaving should cost the user the picture.
+    """
+    raw = _first_text(job_data)
+    metadata = job_data.get("metadata", {})
+    chat_id = metadata.get("chat_id")
+    character_id = metadata.get("character_id")
+    branch_id = metadata.get("branch_id")
+    preferred_checkpoint = (
+        metadata.get("scene_checkpoint")
+        or metadata.get("checkpoint")
+    )
+
+    if not raw or not chat_id:
+        return
+
+    from core.scene_graph import (
+        apply_scene_spec_limits,
+        parse_scene_spec,
+        scene_spec_cost,
+        validate_scene_spec,
+    )
+    from core.pipeline_limits import DEFAULT_SCENE_GRAPH_BUDGET
+
+    spec = parse_scene_spec(raw)
+    if spec is None:
+        logger.info(
+            "scene_graph_spec_unparsed",
+            job_id=job_data.get("id"),
+            chat_id=chat_id,
+            falling_back="prompt_text",
+        )
+        await _handle_scene_prompt(job_data)
+        return
+
+    issues = validate_scene_spec(spec)
+    spec = apply_scene_spec_limits(spec)
+
+    async with get_session_context() as session:
+        from core.entities import Chat
+        from services.image_submission import submit_image_job
+        from services.model_availability_service import ModelAvailabilityService
+
+        chat = session.get(Chat, chat_id) if chat_id else None
+        budget = getattr(chat, "scene_graph_budget", None) if chat else None
+        if budget is None:
+            budget = DEFAULT_SCENE_GRAPH_BUDGET
+        cost = scene_spec_cost(spec)
+        if cost > budget:
+            logger.info(
+                "scene_graph_budget_exceeded",
+                job_id=job_data.get("id"),
+                chat_id=chat_id,
+                cost=cost,
+                budget=budget,
+                falling_back="prompt_text",
+            )
+            await _handle_scene_prompt(job_data)
+            return
+
+        # The model names the spec named, checked against what is installed.
+        # A name that is not installed is dropped rather than passed through:
+        # the job's availability check runs at dispatch, which is after it has
+        # been billed.
+        availability = ModelAvailabilityService(session)
+        lora_name = None
+        if spec.lora is not None:
+            lora_name = availability.get_available_lora(spec.lora.name)
+            if not lora_name:
+                issues.append(_dropped_issue("lora.name", spec.lora.name, "not installed"))
+                spec = spec.model_copy(update={"lora": None})
+
+        detailer_model = None
+        if spec.detailer.enabled and spec.detailer.model:
+            # The detailer model is an UNet, not a LoRA.
+            installed_unets = availability.get_available_models("unet")
+            detailer_model = (
+                spec.detailer.model if spec.detailer.model in installed_unets else None
+            )
+            if not detailer_model:
+                issues.append(
+                    _dropped_issue("detailer.model", spec.detailer.model, "not installed")
+                )
+                spec = spec.model_copy(
+                    update={"detailer": spec.detailer.model_copy(update={"enabled": False})}
+                )
+
+        logger.info(
+            "scene_graph_chaining",
+            job_id=job_data.get("id"),
+            chat_id=chat_id,
+            cost=cost,
+            budget=budget,
+            issues=len(issues),
+        )
+
+        img_job = await submit_image_job(
+            session,
+            prompt=spec.prompt,
+            negative_prompt=spec.negative_prompt,
+            checkpoint=preferred_checkpoint,
+            source="scene_illustrate",
+            workspace="chat",
+            chat_id=chat_id,
+            character_id=character_id,
+            branch_id=branch_id,
+            spec=spec,
+            extra_metadata={
+                # The prompt travels with the job, because that is what the
+                # IMAGE message is built from.
+                "image_context": spec.prompt,
+                "scene_graph": True,
+                "scene_graph_cost": cost,
+                "scene_graph_issues": [i.model_dump() for i in issues],
+            },
+        )
+        logger.info("scene_graph_image_job_queued", job_id=img_job.id, chat_id=chat_id)
+
+
+def _dropped_issue(field: str, value: Any, problem: str):
+    """A scene-graph issue for something that was dropped rather than clamped."""
+    from core.scene_graph import SceneSpecIssue
+
+    return SceneSpecIssue(
+        field=field,
+        value=value,
+        problem=problem,
+        resolution="dropped; the feature is off for this image",
+    )
 
 
 async def _handle_narrator(job_data: dict[str, Any], session: Any = None):
@@ -1494,6 +1636,7 @@ _EVENT_DISPATCH: dict[str, Any] = {
     "suggest_reply": _handle_suggest_reply,
     "story_illustrate_prompt": _handle_story_illustrate,
     "scene_prompt": _handle_scene_prompt,
+    "scene_graph": _handle_scene_graph,
     "narrator": _handle_narrator,
     "chat_reply": _handle_chat_reply,
     "story_continue": _handle_story_continue,

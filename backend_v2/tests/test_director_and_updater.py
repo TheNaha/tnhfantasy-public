@@ -717,7 +717,7 @@ class TestDirectorCascadeAndUpdater:
         assert "stages" in data
         assert len(data["stages"]) == 6
         assert data["limits"]["max_turns"] == 4
-        assert data["limits"]["max_continuations"] == 4
+        assert data["limits"]["max_continuation_attempts"] == 4
 
         # List questions
         q_resp = client.get("/api/v2/llm/questions")

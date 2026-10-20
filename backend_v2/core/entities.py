@@ -1403,6 +1403,17 @@ class Chat(SQLModel, table=True):
     # never linked both ways: starting a chat from a story and exporting that
     # chat back to a story produces a NEW story, not a cycle.
     story_id: str | None = Field(default=None, foreign_key="stories.id", index=True)
+    # Whether the Illustrator may author the scene's generation PARAMETERS
+    # (sampler, resolution, steps, LoRA) as well as its prompt.
+    #
+    # Off by default. The prompt-text path is what the system has always done
+    # and it cannot fail in a way that loses the illustration; the graph path
+    # is new, so it is opt-in until it has earned its place.
+    scene_graph_enabled: bool = Field(default=False)
+    # How much scene authoring this chat may spend, in the cost units of
+    # `core.scene_graph.scene_spec_cost` (one unit is a 1024x1024 image at 20
+    # steps). None means the global default.
+    scene_graph_budget: float | None = Field(default=None)
     # Per-chat LLM sampling overrides (None → global defaults from settings)
     temperature: float | None = Field(default=None)
     top_p: float | None = Field(default=None)
@@ -1645,6 +1656,30 @@ class AgentPromptVariant(SQLModel, table=True):
     # makes no (or an unknown) choice".
     tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     selection_hint: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    # Which model this variant is FOR. NULL means "any model".
+    #
+    # The variant axis was per-agent and chosen by scene content, so the same
+    # prompt was used for every model that answered. "Many different
+    # variations of system prompts for various LLMs" needs a second axis: a
+    # prompt that a large instruct model handles well is not necessarily the
+    # prompt a small finetune handles well, and the router picks the model
+    # before the prompt is built.
+    #
+    # The value is a model id OR a role ("rp", "util", "decisions"). A role
+    # scope means "any model currently bound to that role", which is the
+    # common case — "a prompt for the utility model" rather than for one
+    # particular GGUF file.
+    model_scope: str | None = Field(default=None, index=True)
+    # Which Statekeeper gate this variant is FOR. NULL means "any gate".
+    #
+    # The Updater's *schema* was already gate-specific — an unfired gate's
+    # field was absent from the JSON the model was shown, and anything
+    # smuggled in was dropped on the way back. That is the field restriction,
+    # and it is stronger than a prompt instruction. This column is the
+    # PROMPT half: a variant scoped to a gate says so in words, so the
+    # extractor is told what shifted rather than only being shown a narrow
+    # schema.
+    gate_scope: str | None = Field(default=None, index=True)
     temperature: float | None = Field(default=None)
     top_p: float | None = Field(default=None)
     max_tokens: int | None = Field(default=None)

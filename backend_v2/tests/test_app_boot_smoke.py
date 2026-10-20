@@ -503,10 +503,15 @@ async def test_app_serves_requests_after_boot(client, boot):
     #     `GET /api/v2/llm/agents/with-variants` return HTTP 500 for any
     #     deployment that had agents in the table. The column, the migration
     #     and the upload route are the fix.
-    assert len(spec["paths"]) == 291, (
+    #
+    # 291 -> 293 for the prompt library. The built-in `system_prompts` blocks
+    # are a fixed set the code looks up by name, so they could not grow and
+    # could not be removed. `system_prompt_library` is a list, and these are
+    # its four routes.
+    assert len(spec["paths"]) == 293, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 379
+    assert sum(len(ops) for ops in spec["paths"].values()) == 383
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 

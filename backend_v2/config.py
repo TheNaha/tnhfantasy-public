@@ -260,7 +260,19 @@ DEFAULT_CONFIG = {
         "charGenSystemPromptPrompt": "You are an expert character creator. Write a custom system prompt that instructs an AI how to play this character. Return ONLY the text, no markdown.",
         "charGenVisualTagsPrompt": "You are an expert character creator. Generate a comma-separated list of Danbooru-style visual tags that describe this character's appearance. Return ONLY the tags, no markdown.",
         "charGenEnrichPrompt": "You are an expert character creator. Read the provided character details and fill in ALL missing fields to enrich the character profile. Output MUST be valid JSON matching exactly these keys: \"description\", \"personality\", \"scenario\", \"first_mes\", \"mes_example\", \"default_time\", \"default_location\". Do not include markdown code blocks, just raw JSON."
-    }
+    },
+    # The user's OWN system-prompt blocks.
+    #
+    # `system_prompts` above is a fixed set of keys the code looks up by name,
+    # so it cannot grow: adding a prompt meant editing the config schema, the
+    # validation allow-list and the frontend's copy of the defaults, and there
+    # was no way to remove one either.
+    #
+    # This is a LIST, so it can. Each entry is
+    # `{"key", "label", "category", "prompt"}`; the key is what the rest of
+    # the system looks a block up by, and the entries are merged into
+    # `get_system_prompt_blocks()` alongside the fixed ones.
+    "system_prompt_library": [],
 }
 
 
@@ -513,8 +525,21 @@ def _split_unset(updates: dict[str, Any]) -> tuple[dict[str, Any], set[tuple[str
     re-create them.
     """
     unset: set[tuple[str, str]] = set()
-    remaining = {section: dict(body) for section, body in updates.items() if isinstance(body, dict)}
+    # A section that is not a dict is passed through UNCHANGED.
+    #
+    # It used to be filtered out with `if isinstance(body, dict)`, so a
+    # list-valued section never reached the validator or the merge — and
+    # `update_config` returned success having written nothing. The first
+    # list-valued section, `system_prompt_library`, is how a user adds their
+    # own system-prompt blocks, and every add, edit and remove of one was a
+    # silent no-op that reported 200.
+    remaining: dict[str, Any] = {
+        section: (dict(body) if isinstance(body, dict) else body)
+        for section, body in updates.items()
+    }
     for section, body in list(remaining.items()):
+        if not isinstance(body, dict):
+            continue
         for key, value in list(body.items()):
             if (section, key) in BLANK_MEANS_UNSET and isinstance(value, str) and not value.strip():
                 unset.add((section, key))
@@ -991,6 +1016,37 @@ def _validate_config(config: dict[str, Any]) -> None:
         for key, value in prompts.items():
             _check_str("system_prompts", key, value)
 
+    if "system_prompt_library" in config:
+        library = config["system_prompt_library"]
+        if not isinstance(library, list):
+            raise ValueError("system_prompt_library must be a list")
+        seen_keys: set[str] = set()
+        for entry in library:
+            if not isinstance(entry, dict):
+                raise ValueError("each system_prompt_library entry must be an object")
+            unknown = sorted(set(entry) - {"key", "label", "category", "prompt"})
+            if unknown:
+                raise ValueError(
+                    "unknown system_prompt_library field(s): "
+                    f"{', '.join(unknown)}. Allowed: category, key, label, prompt"
+                )
+            key = str(entry.get("key") or "").strip()
+            if not key:
+                raise ValueError("a system_prompt_library entry needs a key")
+            if key in SYSTEM_PROMPT_KEYS:
+                raise ValueError(
+                    f"system_prompt_library key '{key}' collides with a built-in prompt block"
+                )
+            if key in seen_keys:
+                raise ValueError(f"duplicate system_prompt_library key '{key}'")
+            seen_keys.add(key)
+            for field in ("label", "category", "prompt"):
+                value = entry.get(field)
+                if value is not None and not isinstance(value, str):
+                    raise ValueError(
+                        f"system_prompt_library entry '{key}' field '{field}' must be a string"
+                    )
+
 
 # ============================================================================
 # CONVENIENCE FUNCTIONS for accessing common settings
@@ -1126,13 +1182,48 @@ def get_llm_failover_stagger_delay() -> float:
 
 def get_system_prompt_blocks() -> dict:
     """Get configurable system prompt blocks (roleplay_default, narrator, ...).
-    File config wins per-key; DEFAULT_CONFIG fills the rest."""
+    File config wins per-key; DEFAULT_CONFIG fills the rest.
+
+    The user's own library entries are merged in as well, so a prompt the
+    Studio added is usable by key everywhere a built-in one is.
+    """
     configured = get_config().get("system_prompts", {}) or {}
     defaults = DEFAULT_CONFIG.get("system_prompts", {}) or {}
     merged = dict(defaults)
     if isinstance(configured, dict):
         merged.update({k: v for k, v in configured.items() if isinstance(v, str) and v.strip()})
+    for entry in get_system_prompt_library():
+        key = str(entry.get("key") or "").strip()
+        prompt = str(entry.get("prompt") or "").strip()
+        if key and prompt:
+            merged[key] = prompt
     return merged
+
+
+def get_system_prompt_library() -> list:
+    """The user's own system-prompt blocks, as a list of entries.
+
+    Each entry is `{"key", "label", "category", "prompt"}`. The list is
+    returned as stored, with the built-in defaults supplied for the optional
+    fields so the Studio always has something to render.
+    """
+    entries = get_config().get("system_prompt_library", []) or []
+    if not isinstance(entries, list):
+        return []
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        key = str(entry.get("key") or "").strip()
+        if not key:
+            continue
+        out.append({
+            "key": key,
+            "label": str(entry.get("label") or key),
+            "category": str(entry.get("category") or "Custom"),
+            "prompt": str(entry.get("prompt") or ""),
+        })
+    return out
 
 
 # Model sync settings

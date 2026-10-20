@@ -920,6 +920,31 @@ function ChatContextPanel() {
                     </div>
                     <div className="flex items-center justify-between">
                         <div>
+                            <p className="text-xs text-gray-300 font-medium">Illustrator authors the parameters</p>
+                            <p className="text-xs text-gray-600 mt-1">
+                                Lets the Illustrator choose the sampler, resolution, steps and LoRA for
+                                a scene, not just its prompt. The numbers are bounded and the model
+                                names are checked before the image is generated.
+                            </p>
+                        </div>
+                        <button
+                            role="switch"
+                            aria-label="Illustrator authors the parameters"
+                            aria-checked={activeChat?.scene_graph_enabled === true}
+                            onClick={() => onChatUpdate({ scene_graph_enabled: activeChat?.scene_graph_enabled !== true })}
+                            className={clsx(
+                                "relative w-10 h-6 rounded-full transition-colors shrink-0",
+                                activeChat?.scene_graph_enabled === true ? "bg-purple-500" : "bg-gray-700"
+                            )}
+                        >
+                            <span className={clsx(
+                                "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                activeChat?.scene_graph_enabled === true ? "left-5.5" : "left-0.5"
+                            )} />
+                        </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <div>
                             <p className="text-xs text-gray-300 font-medium">Allow narration</p>
                             <p className="text-xs text-gray-600 mt-1">
                                 Lets the LLM call the <code className="text-gray-500">narrate_scene</code> tool when the story calls for it.

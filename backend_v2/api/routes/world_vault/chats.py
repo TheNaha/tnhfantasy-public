@@ -192,6 +192,13 @@ class UpdateChatRequest(BaseModel):
     # while the chat silently ran on the global `MAX_AGENTIC_*` defaults.
     max_agentic_images: int | None = None
     max_agentic_narrations: int | None = None
+    # Whether the Illustrator may author the scene's generation PARAMETERS
+    # (sampler, resolution, steps, LoRA) as well as its prompt, and how much
+    # scene authoring this chat may spend. Off by default: the prompt-text
+    # path is what the system has always done, and it cannot fail in a way
+    # that loses the illustration.
+    scene_graph_enabled: bool | None = None
+    scene_graph_budget: float | None = None
     temperature: float | None = None
     top_p: float | None = None
     max_output_tokens: int | None = None
@@ -1108,6 +1115,93 @@ async def add_message(
     )
 
 
+def _resolve_actor_agent(
+    session: Session,
+    *,
+    chat,
+    request,
+    director_decision_dict: dict[str, Any] | None,
+    characters: list | None,
+) -> dict[str, Any]:
+    """Resolve which agent speaks this turn, and which of its variants.
+
+    Laya's job is to pick the best agent *and* the best prompt for the beat.
+    The sub-variant system exists for exactly that — the character agent has
+    a "tense" / "tender" / "playful" variant, the narrator has a "combat" /
+    "quiet" / "travel" one — and Laya is asked which fits.
+
+    The variant used to be resolved for the autonomous chain and dropped
+    everywhere else. `resolve_agent` was called without `variant_slug`, and
+    the character branch never resolved an agent profile at all, so six
+    seeded variants existed and none of them could change a prompt a user
+    would actually see.
+
+    Returns a dict with:
+      slug          — the agent profile slug that will speak
+      variant_slug  — the variant Laya chose, if any
+      resolved      — the `ResolvedAgent`, or None
+      prompt        — the variant's prompt, rendered, or None
+      is_character  — True when the character agent is speaking
+    """
+    from services.agent_variants import resolve_agent
+
+    decision = director_decision_dict or {}
+    chosen = (decision.get("selected_agent") or "character").strip() or "character"
+    if request.narrate:
+        chosen = "narrator"
+
+    variant_slug = (decision.get("selected_variant") or "").strip() or None
+
+    # The model scopes that apply to this agent, so a variant written for a
+    # different model is not a candidate.
+    model_scopes = None
+    try:
+        from services.llm_config import model_scopes_for_kind
+        from services.pipeline_stages import _agent_model_scopes
+
+        per_agent = _agent_model_scopes(session, chat)
+        model_scopes = per_agent.get(chosen)
+        if model_scopes is None:
+            kind = "narrator" if chosen == "narrator" else "chat_reply"
+            model_scopes = model_scopes_for_kind(kind, chat.llm_model, session)
+    except Exception:
+        model_scopes = None
+
+    # A variant slug only applies to the agent it belongs to. When Laya
+    # chose the character but the user forced a narration, the character's
+    # variant is meaningless for the narrator, and `resolve_agent` falls back
+    # to the narrator's active variant rather than misapplying it.
+    resolved = resolve_agent(
+        session, chosen, variant_slug=variant_slug, model_scopes=model_scopes
+    )
+
+    char_name = "Character"
+    if characters:
+        first = characters[0]
+        char_name = getattr(first, "name", None) or "Character"
+
+    prompt = None
+    if resolved is not None and resolved.prompt_template:
+        prompt = render_agent_template(
+            resolved.prompt_template,
+            character_name=char_name,
+            user_name=chat.persona_name or "User",
+            story_location=chat.story_location or "",
+            story_time=chat.story_time or "",
+        )
+
+    return {
+        "slug": chosen,
+        "variant_slug": resolved.variant_slug if resolved is not None else variant_slug,
+        "resolved": resolved,
+        "prompt": prompt,
+        # The character agent speaks as the character card, so its variant is
+        # an OVERLAY on that card. The narrator and a custom agent speak with
+        # their own voice, so their variant REPLACES their base prompt.
+        "is_character": chosen in ("character", "secondary_character"),
+    }
+
+
 async def _send_message(
     session: Session,
     chat_repo: ChatRepository,
@@ -1155,6 +1249,24 @@ async def _send_message(
         if request.directive and request.directive.strip():
             ctx_overrides["user_directive"] = request.directive.strip()
 
+        # Resolve the agent and Laya's chosen variant BEFORE the context is
+        # assembled: the character variant is an overlay on the character
+        # card, so it has to be part of the context build rather than
+        # patched onto the finished prompt.
+        actor = _resolve_actor_agent(
+            session,
+            chat=chat,
+            request=request,
+            director_decision_dict=director_decision_dict,
+            characters=ctx_overrides.get("characters"),
+        )
+        chosen_agent_slug = actor["slug"]
+        resolved_agent = actor["resolved"]
+        selected_variant = actor["variant_slug"]
+        actor_prompt = actor["prompt"]
+        if actor["is_character"] and actor_prompt:
+            ctx_overrides["agent_variant_prompt"] = actor_prompt
+
         # One assembly through the unified context builder, run off the event
         # loop like the previous async builder. The trace is the only record of
         # what THIS reply was actually told.
@@ -1168,14 +1280,25 @@ async def _send_message(
         if director_decision_dict is not None:
             context_trace["director_decision"] = director_decision_dict
             context_trace["selected_agent"] = director_decision_dict.get("selected_agent", "character")
+        if selected_variant:
+            context_trace["selected_variant"] = selected_variant
 
         try:
-            chosen_agent_slug = director_decision_dict.get("selected_agent") if director_decision_dict else "character"
             if request.narrate or chosen_agent_slug == "narrator":
                 from config import get_system_prompt_blocks
                 from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
 
-                narrator_prompt = (get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT
+                # The narrator speaks in its own voice, so a variant REPLACES
+                # the base prompt rather than overlaying it. The narrator
+                # agent profile's variants are seeded ("You are the scene
+                # narrator during a moment of action…") and Laya chooses
+                # between them; the hardcoded block is only the fallback for
+                # a deployment with no narrator profile.
+                narrator_prompt = (
+                    actor_prompt
+                    or (get_system_prompt_blocks() or {}).get("narrator")
+                    or NARRATOR_SYSTEM_PROMPT
+                )
 
                 workflow, metadata = build_chat_llm_workflow(
                     messages=[
@@ -1185,7 +1308,7 @@ async def _send_message(
                     ],
                     chat_id=chat_id,
                     character_id=request.target_character_id or chat.character_id,
-                    system_prompt=system_prompt or None,
+                    # The character card is the first system message in `messages`.
                     model=_model_for_kind("narrator", chat.llm_model, session),
                     samplers=sampler_overrides(chat),
                     type_="narrator",
@@ -1194,23 +1317,19 @@ async def _send_message(
                 metadata["selected_agent"] = "narrator"
                 metadata["agent_slug"] = "narrator"
                 metadata["agent_name"] = "Narrator"
+                if selected_variant:
+                    metadata["agent_variant_slug"] = selected_variant
+                    metadata["selected_variant"] = selected_variant
             elif chosen_agent_slug not in ("character", "secondary_character", "user", None):
                 # Custom registered agent profile (or an explicit
                 # `variant:<slug>` override of one).
-                from services.agent_variants import resolve_agent
-
-                resolved_agent = resolve_agent(session, chosen_agent_slug)
+                #
+                # `resolved_agent` was resolved with Laya's `selected_variant`
+                # already applied, so the variant Laya chose is the one that
+                # speaks.
                 if resolved_agent:
                     custom_agent = resolved_agent.profile
-                    char_name = (ctx_overrides.get("characters") or [None])[0]
-                    c_name = getattr(char_name, "name", "Character") if char_name else "Character"
-                    custom_prompt = render_agent_template(
-                        resolved_agent.prompt_template,
-                        character_name=c_name,
-                        user_name=chat.persona_name or "User",
-                        story_location=chat.story_location or "",
-                        story_time=chat.story_time or "",
-                    )
+                    custom_prompt = actor_prompt or custom_agent.system_prompt_template
                     workflow, metadata = build_chat_llm_workflow(
                         messages=[
                             {"role": "system", "content": custom_prompt},
@@ -1218,7 +1337,7 @@ async def _send_message(
                         ],
                         chat_id=chat_id,
                         character_id=request.target_character_id or chat.character_id,
-                        system_prompt=system_prompt or None,
+                        # The character card is the first system message in `messages`.
                         model=_model_for_kind(custom_agent.model_target, custom_agent.model_override or chat.llm_model, session),
                         samplers={**sampler_overrides(chat), **resolved_agent.sampler_overrides()},
                         type_="chat_reply",
@@ -1233,7 +1352,7 @@ async def _send_message(
                         messages=context,
                         chat_id=chat_id,
                         character_id=request.target_character_id or chat.character_id,
-                        system_prompt=system_prompt or None,
+                        # The character card is the first system message in `messages`.
                         model=_model_for_kind("chat_reply", chat.llm_model, session),
                         samplers=sampler_overrides(chat),
                     )
@@ -1241,17 +1360,24 @@ async def _send_message(
                     metadata["agent_slug"] = "character"
                     metadata["agent_name"] = "Character"
             else:
+                # The character agent speaks as the character card, and Laya's
+                # variant is an overlay on that card — so it was already
+                # merged into the context by `build_context` above. The card
+                # and the overlay are both in `context[0]`.
                 workflow, metadata = build_chat_llm_workflow(
                     messages=context,
                     chat_id=chat_id,
                     character_id=request.target_character_id or chat.character_id,
-                    system_prompt=system_prompt or None,
+                    # The character card is the first system message in `messages`.
                     model=_model_for_kind("chat_reply", chat.llm_model, session),
-                    samplers=sampler_overrides(chat),
+                    samplers={**sampler_overrides(chat), **(resolved_agent.sampler_overrides() if resolved_agent else {})},
                 )
                 metadata["selected_agent"] = "character"
                 metadata["agent_slug"] = "character"
                 metadata["agent_name"] = "Character"
+                if selected_variant:
+                    metadata["agent_variant_slug"] = selected_variant
+                    metadata["selected_variant"] = selected_variant
 
             metadata["autonomous_turn_count"] = 1
             metadata["max_autonomous_turns"] = getattr(chat, "max_autonomous_turns", 4) or 4
@@ -1600,7 +1726,7 @@ async def generate_swipe(
         messages=context,
         chat_id=chat_id,
         character_id=chat.character_id,
-        system_prompt=system_prompt or None,
+        # The character card is the first system message in `messages`.
         model=_model_for_kind("chat_reply", chat.llm_model, session),
         samplers=sampler_overrides(chat),
         extra_metadata={
@@ -1961,7 +2087,7 @@ async def regenerate_reply(
         messages=context,
         chat_id=chat_id,
         character_id=anchor_character_id or chat.character_id,
-        system_prompt=system_prompt or None,
+        # The character card is the first system message in `messages`.
         model=_model_for_kind("chat_reply", chat.llm_model, session),
         samplers=sampler_overrides(chat),
         extra_metadata={

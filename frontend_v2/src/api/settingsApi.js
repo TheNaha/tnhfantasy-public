@@ -24,6 +24,14 @@ export const settingsApi = {
     getSystemPrompts: (options = {}) => api.get(`${BASE}/system-prompts`, options),
     updateSystemPrompts: (data) => api.put(`${BASE}/system-prompts`, data),
 
+    // The user's OWN system-prompt blocks. The built-in ones are a fixed set
+    // the code looks up by name; these are a list, so they can be added and
+    // removed.
+    getSystemPromptLibrary: (options = {}) => api.get(`${BASE}/system-prompts/library`, options),
+    createSystemPromptLibraryEntry: (data) => api.post(`${BASE}/system-prompts/library`, data),
+    updateSystemPromptLibraryEntry: (key, data) => api.put(`${BASE}/system-prompts/library/${key}`, data),
+    deleteSystemPromptLibraryEntry: (key) => api.delete(`${BASE}/system-prompts/library/${key}`),
+
     getBranding: (options = {}) => api.get(`${BASE}/branding`, options),
     updateBranding: (data) => api.post(`${BASE}/branding`, data),
 

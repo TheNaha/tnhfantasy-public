@@ -32,10 +32,28 @@ from infrastructure.logging import get_logger
 from core.pipeline_limits import (
     AUTONOMY_CHAIN_THRESHOLDS,
     MAX_AUTONOMOUS_TURNS,
-    MAX_CONTINUATIONS,
+    MAX_CONTINUATION_ATTEMPTS,
 )
 
 logger = get_logger("pipeline_stages")
+
+
+def _agent_model_scopes(session, chat) -> dict[str, set[str]]:
+    """The model scopes that apply to each agent in this turn.
+
+    A variant may be scoped to a model id or to a role, and it is only
+    offered to Laya when the agent it belongs to will actually answer with
+    that model. The character agent answers on the chat's prose model and the
+    narrator on the narrator's, so the scopes are per agent rather than per
+    turn.
+    """
+    from services.llm_config import model_scopes_for_kind
+
+    scopes: dict[str, set[str]] = {
+        "character": model_scopes_for_kind("chat_reply", chat.llm_model, session),
+        "narrator": model_scopes_for_kind("narrator", chat.llm_model, session),
+    }
+    return scopes
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +89,11 @@ async def triage_stage(ctx: dict[str, Any]) -> Any:
         }
         for m in past_messages[-6:]
     ]
+
+    # The model scopes that apply to each agent, so a variant written for one
+    # model is not offered for an agent that will answer with another.
+    model_scopes = _agent_model_scopes(session, chat)
+
     decision = await DecisionService(session).evaluate_pre_generation_triage(
         character_name=primary_char_name,
         user_name=chat.persona_name or "User",
@@ -80,6 +103,7 @@ async def triage_stage(ctx: dict[str, Any]) -> Any:
         recent_messages=recent_transcript,
         has_secondary_character=bool(chat.additional_character_ids),
         allow_narration=bool(chat.allow_narration),
+        model_scopes=model_scopes,
     )
     ctx["director_decision"] = decision
     ctx["director_decision_dict"] = decision.to_dict()
@@ -164,7 +188,8 @@ async def audit_stage(ctx: dict[str, Any]) -> Any:
         or ""
     )
     is_incomplete = (finish_reason == "length") or (not audit_decision.is_complete)
-    if is_incomplete and continuation_count < _max_continuations():
+    # The budget counts ATTEMPTS: the original plus its continuations.
+    if is_incomplete and (continuation_count + 1) < _max_continuation_attempts():
         cont_job_id = await _enqueue_continuation(ctx, finish_reason=finish_reason)
         if cont_job_id:
             ctx["halt"] = True
@@ -176,10 +201,15 @@ async def audit_stage(ctx: dict[str, Any]) -> Any:
     return audit_decision
 
 
-def _max_continuations() -> int:
+def _max_continuation_attempts() -> int:
+    """The total number of generation attempts one turn may make.
+
+    Read from the manifest so the number the LLM Studio shows is the number
+    the pipeline enforces.
+    """
     from services.pipeline_runner import limit
 
-    return int(limit("audit", "max_continuations", MAX_CONTINUATIONS))
+    return int(limit("audit", "max_continuation_attempts", MAX_CONTINUATION_ATTEMPTS))
 
 
 async def _enqueue_continuation(ctx: dict[str, Any], *, finish_reason: str) -> str | None:
@@ -236,7 +266,7 @@ async def _enqueue_continuation(ctx: dict[str, Any], *, finish_reason: str) -> s
         ],
         chat_id=chat_id,
         character_id=char_obj.id if char_obj else None,
-        system_prompt=system_prompt or None,
+        # The character card is the first system message in `messages`.
         model=model_for_kind("chat_reply", chat_obj.llm_model, session),
         samplers={**sampler_overrides(chat_obj), **cont_samplers},
         type_="chat_reply",
@@ -443,10 +473,16 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
 
     target_speaker = chain_decision.next_speaker
 
-    # Run Stage 1 triage and Fate & Skill check for the target speaker
+    # Run Stage 1 triage and Fate & Skill check for the target speaker.
+    #
+    # `primary_character_slug` names the AGENT that plays the character, not
+    # the character card. It used to be `char_obj.slug` — the card's slug —
+    # guarded by `hasattr(char_obj, "slug")`. `Character` has no `slug`
+    # column, so the guard always fell through to "character" and the chain
+    # happened to ask the right question. The explicit constant says what it
+    # means, so a Character that grows a slug field cannot silently change
+    # which agent's variants are offered.
     primary_slug = "character"
-    if char_obj and hasattr(char_obj, "slug") and char_obj.slug:
-        primary_slug = char_obj.slug
     triage_decision = await DecisionService(session).evaluate_pre_generation_triage(
         character_name=char_obj.name if char_obj else "Character",
         user_name=chat_obj.persona_name or "User",
@@ -458,12 +494,21 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
         has_secondary_character=bool(chat_obj.additional_character_ids),
         allow_narration=bool(chat_obj.allow_narration),
         primary_character_slug=primary_slug,
+        model_scopes=_agent_model_scopes(session, chat_obj),
         chat_id=chat_id,
         turn=current_turns,
     )
 
-    # Resolve agent and selected sub-variant
-    resolved_agent = resolve_agent(session, target_speaker, variant_slug=triage_decision.selected_variant)
+    # Resolve agent and selected sub-variant.
+    #
+    # The scopes narrow which variants are eligible: a variant written for a
+    # model this agent will not answer with is not a candidate.
+    resolved_agent = resolve_agent(
+        session,
+        target_speaker,
+        variant_slug=triage_decision.selected_variant,
+        model_scopes=_agent_model_scopes(session, chat_obj).get(target_speaker),
+    )
 
     # Build directive text combining pacing, fate directive, and custom directives
     directives: list[str] = []
@@ -478,7 +523,19 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
 
     followup_job = None
     if target_speaker == "narrator" and getattr(chat_obj, "allow_narration", True):
-        narrator_prompt = resolved_agent.prompt_template if resolved_agent else ((get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT)
+        # The narrator speaks in its own voice, so a variant REPLACES the base
+        # prompt. It is rendered, because a user-authored variant can contain
+        # the same `{{char}}` macros the character variants use.
+        if resolved_agent is not None and resolved_agent.prompt_template:
+            narrator_prompt = render_agent_template(
+                resolved_agent.prompt_template,
+                character_name=char_obj.name if char_obj else "Character",
+                user_name=chat_obj.persona_name or "User",
+                story_location=chat_obj.story_location or "",
+                story_time=chat_obj.story_time or "",
+            )
+        else:
+            narrator_prompt = (get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT
         system_prompt, context, _sections = await asyncio.to_thread(
             build_context, session, "chat", chat_obj, recent_msgs_objs,
         )
@@ -495,7 +552,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
             ],
             chat_id=chat_id,
             character_id=char_obj.id if char_obj else None,
-            system_prompt=system_prompt or None,
+            # The character card is the first system message in `messages`.
             model=model_for_kind("narrator", chat_obj.llm_model, session),
             samplers={**sampler_overrides(chat_obj), **(resolved_agent.sampler_overrides() if resolved_agent else {})},
             type_="narrator",
@@ -527,7 +584,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
             ],
             chat_id=chat_id,
             character_id=secondary_id,
-            system_prompt=system_prompt or None,
+            # The character card is the first system message in `messages`.
             model=model_for_kind("chat_reply", chat_obj.llm_model, session),
             samplers=sampler_overrides(chat_obj),
             extra_metadata={
@@ -540,9 +597,23 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
         await queue_manager.enqueue(followup_job.id, task_type="llm")
         logger.info("laya_conductor_secondary_char_chained", chat_id=chat_id, secondary_id=secondary_id, job_id=followup_job.id, turn=current_turns)
     elif target_speaker == "character" and char_obj is not None:
-        char_custom_prompt = resolved_agent.prompt_template if resolved_agent else None
+        # The character agent speaks as the character card, so its variant is
+        # an OVERLAY on that card. It used to be passed as `system_prompt=`,
+        # which lands in `workflow["character_system_prompt"]` — a key no
+        # engine reads. The card reaches the model inside `context[0]`, and
+        # the overlay has to go there too.
+        variant_overlay = None
+        if resolved_agent is not None and resolved_agent.prompt_template:
+            variant_overlay = render_agent_template(
+                resolved_agent.prompt_template,
+                character_name=char_obj.name,
+                user_name=chat_obj.persona_name or "User",
+                story_location=chat_obj.story_location or "",
+                story_time=chat_obj.story_time or "",
+            )
+        build_kwargs = {"agent_variant_prompt": variant_overlay} if variant_overlay else {}
         system_prompt, context, _sections = await asyncio.to_thread(
-            build_context, session, "chat", chat_obj, recent_msgs_objs,
+            build_context, session, "chat", chat_obj, recent_msgs_objs, **build_kwargs,
         )
         instruction_content = (
             f"[Scene Direction] {directive_str}: continue the scene as {char_obj.name}."
@@ -556,7 +627,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
             ],
             chat_id=chat_id,
             character_id=char_obj.id,
-            system_prompt=(char_custom_prompt or system_prompt) or None,
+            # The character card is the first system message in `messages`.
             model=model_for_kind("chat_reply", chat_obj.llm_model, session),
             samplers={**sampler_overrides(chat_obj), **(resolved_agent.sampler_overrides() if resolved_agent else {})},
             type_="chat_reply",
@@ -598,7 +669,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
             ],
             chat_id=chat_id,
             character_id=char_obj.id if char_obj else None,
-            system_prompt=system_prompt or None,
+            # The character card is the first system message in `messages`.
             model=model_for_kind(custom_agent.model_target, custom_agent.model_override or chat_obj.llm_model, session),
             samplers={**sampler_overrides(chat_obj), **resolved_agent.sampler_overrides()},
             type_="chat_reply",

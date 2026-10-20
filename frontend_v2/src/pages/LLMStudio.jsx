@@ -4,7 +4,7 @@ import {
     AlertCircle, Layers, Shield, Zap, RefreshCw, Cpu, CheckCircle2,
     Eye, ArrowRight, Activity, Clock, Compass, HelpCircle, Lock,
     ChevronDown, ChevronUp, Search, Filter, Server, CheckCircle, XCircle,
-    Loader2, Save, RotateCcw, Volume2, Copy, GitBranch
+    Loader2, Save, RotateCcw, Volume2, Copy, GitBranch, Library
 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
@@ -386,7 +386,7 @@ export default function LLMStudio() {
         if (typeof window !== 'undefined' && window.location?.search) {
             const params = new URLSearchParams(window.location.search);
             const t = params.get('tab');
-            if (t && ['workflow', 'agents', 'gates', 'questions', 'traces', 'cluster', 'runtime', 'simulator'].includes(t)) {
+            if (t && ['workflow', 'agents', 'library', 'gates', 'questions', 'traces', 'cluster', 'runtime', 'simulator'].includes(t)) {
                 return t;
             }
         }
@@ -591,6 +591,18 @@ export default function LLMStudio() {
     const [promptSearch, setPromptSearch] = useState('');
     const seededDraftRef = useRef(false);
 
+    // The user's OWN prompt blocks. The built-in ones are a fixed set the
+    // code looks up by name; these are a list, so they can be added and
+    // removed.
+    const { data: promptLibraryData } = useQuery({
+        queryKey: ['system_prompt_library'],
+        queryFn: () => settingsApi.getSystemPromptLibrary(),
+        staleTime: 30000,
+    });
+    const promptLibrary = useMemo(() => promptLibraryData?.entries || [], [promptLibraryData]);
+    const [newPromptOpen, setNewPromptOpen] = useState(false);
+    const [newPromptDraft, setNewPromptDraft] = useState({ key: '', label: '', category: 'Custom', prompt: '' });
+
     useEffect(() => {
         if (seededDraftRef.current || !blocksData?.blocks) return;
         seededDraftRef.current = true;
@@ -638,8 +650,25 @@ export default function LLMStudio() {
         }
     };
 
+    // The built-in blocks and the user's own, as one list.
+    //
+    // The built-in ones carry their metadata from a compiled-in constant; the
+    // user's own carry theirs from the API, because only the backend knows
+    // what was actually stored.
+    const allPromptMetadata = useMemo(() => {
+        const builtin = SYSTEM_PROMPT_METADATA.map((p) => ({ ...p, custom: false }));
+        const custom = promptLibrary.map((e) => ({
+            key: e.key,
+            label: e.label,
+            category: e.category || 'Custom',
+            desc: 'Your own prompt block.',
+            custom: true,
+        }));
+        return [...builtin, ...custom];
+    }, [promptLibrary]);
+
     const filteredPrompts = useMemo(() => {
-        return SYSTEM_PROMPT_METADATA.filter((p) => {
+        return allPromptMetadata.filter((p) => {
             if (promptCategoryFilter !== 'all' && p.category !== promptCategoryFilter) {
                 return false;
             }
@@ -648,11 +677,68 @@ export default function LLMStudio() {
             return (
                 p.label.toLowerCase().includes(query) ||
                 p.key.toLowerCase().includes(query) ||
-                p.desc.toLowerCase().includes(query) ||
+                (p.desc || '').toLowerCase().includes(query) ||
                 (promptDraft[p.key] || '').toLowerCase().includes(query)
             );
         });
-    }, [promptCategoryFilter, promptSearch, promptDraft]);
+    }, [allPromptMetadata, promptCategoryFilter, promptSearch, promptDraft]);
+
+    const handleAddPrompt = async () => {
+        const key = (newPromptDraft.key || '').trim();
+        if (!key || !newPromptDraft.prompt.trim()) {
+            toast.error('A prompt block needs a key and a prompt.');
+            return;
+        }
+        try {
+            await settingsApi.createSystemPromptLibraryEntry({
+                key,
+                label: newPromptDraft.label.trim() || key,
+                category: newPromptDraft.category.trim() || 'Custom',
+                prompt: newPromptDraft.prompt.trim(),
+            });
+            toast.success(`Added prompt block "${key}".`);
+            setNewPromptOpen(false);
+            setNewPromptDraft({ key: '', label: '', category: 'Custom', prompt: '' });
+            queryClient.invalidateQueries({ queryKey: ['system_prompt_library'] });
+            queryClient.invalidateQueries({ queryKey: ['system_prompts_blocks'] });
+        } catch (err) {
+            toast.error(err?.message || 'Could not add the prompt block.');
+        }
+    };
+
+    const handleRemovePrompt = async (entry) => {
+        try {
+            await settingsApi.deleteSystemPromptLibraryEntry(entry.key);
+            toast.success(`Removed prompt block "${entry.key}".`);
+            setPromptDraft((prev) => {
+                const next = { ...prev };
+                delete next[entry.key];
+                return next;
+            });
+            queryClient.invalidateQueries({ queryKey: ['system_prompt_library'] });
+            queryClient.invalidateQueries({ queryKey: ['system_prompts_blocks'] });
+        } catch (err) {
+            toast.error(err?.message || 'Could not remove the prompt block.');
+        }
+    };
+
+    const handleSavePromptLibraryEntry = async (entry) => {
+        const value = (promptDraft[entry.key] || '').trim();
+        if (!value || value === (entry.prompt || '').trim()) return;
+        try {
+            await settingsApi.updateSystemPromptLibraryEntry(entry.key, {
+                key: entry.key,
+                label: entry.label,
+                category: entry.category,
+                prompt: value,
+            });
+            toast.success(`Saved "${entry.key}".`);
+            queryClient.invalidateQueries({ queryKey: ['system_prompt_library'] });
+            queryClient.invalidateQueries({ queryKey: ['system_prompts_blocks'] });
+        } catch (err) {
+            toast.error(err?.message || 'Could not save the prompt block.');
+        }
+    };
 
     const handleRunDirectorEval = () => {
         const lines = directorDialogue.split('\n').filter(Boolean);
@@ -804,6 +890,17 @@ export default function LLMStudio() {
                         </button>
                         <button
                             type="button"
+                            onClick={() => handleTabChange('library')}
+                            className={clsx(
+                                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0",
+                                activeTab === 'library' ? "bg-fuchsia-600 text-white shadow-md shadow-fuchsia-500/20" : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
+                            )}
+                        >
+                            <Library size={14} />
+                            <span>Prompt Library</span>
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => handleTabChange('gates')}
                             className={clsx(
                                 "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0",
@@ -875,6 +972,7 @@ export default function LLMStudio() {
                 {activeTab === 'workflow' && <WorkflowTab />}
 
                 {/* Tab: Laya Questions */}
+                {activeTab === 'library' && <PromptLibraryTab agents={agents} />}
                 {activeTab === 'questions' && <LayaQuestionsTab />}
 
                 {/* Tab: Decision Traces */}
@@ -1681,7 +1779,7 @@ export default function LLMStudio() {
                                             System Prompt Blocks &amp; Templates
                                         </h4>
                                         <span className="px-2 py-0.5 rounded-full text-3xs font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                                            {SYSTEM_PROMPT_METADATA.length} Prompts
+                                            {allPromptMetadata.length} Prompts
                                         </span>
                                         {modifiedPromptCount > 0 && (
                                             <span className="px-2 py-0.5 rounded-full text-3xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse">
@@ -1705,6 +1803,14 @@ export default function LLMStudio() {
                                     )}
                                     <button
                                         type="button"
+                                        onClick={() => setNewPromptOpen((v) => !v)}
+                                        className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-medium border border-white/10 transition-all"
+                                        title="Add a system prompt block of your own"
+                                    >
+                                        {newPromptOpen ? 'Cancel' : '+ Add Prompt'}
+                                    </button>
+                                    <button
+                                        type="button"
                                         onClick={handleSavePrompts}
                                         disabled={savingPrompts}
                                         className="px-4 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-md shadow-purple-500/20 flex items-center gap-1.5 transition-all disabled:opacity-50"
@@ -1715,12 +1821,60 @@ export default function LLMStudio() {
                                 </div>
                             </div>
 
+                            {newPromptOpen && (
+                                <div className="rounded-xl border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
+                                    <p className="text-3xs text-purple-200/80">
+                                        A prompt block of your own. The key is what the rest of the
+                                        system looks it up by; the label and category are for you.
+                                    </p>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <input
+                                            type="text"
+                                            value={newPromptDraft.key}
+                                            onChange={(e) => setNewPromptDraft({ ...newPromptDraft, key: e.target.value })}
+                                            placeholder="key (e.g. my_ritual)"
+                                            className="bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-3xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50"
+                                        />
+                                        <input
+                                            type="text"
+                                            value={newPromptDraft.label}
+                                            onChange={(e) => setNewPromptDraft({ ...newPromptDraft, label: e.target.value })}
+                                            placeholder="Label (e.g. The Ritual)"
+                                            className="bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-3xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50"
+                                        />
+                                    </div>
+                                    <input
+                                        type="text"
+                                        value={newPromptDraft.category}
+                                        onChange={(e) => setNewPromptDraft({ ...newPromptDraft, category: e.target.value })}
+                                        placeholder="Category"
+                                        className="w-full bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-3xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50"
+                                    />
+                                    <textarea
+                                        rows={4}
+                                        value={newPromptDraft.prompt}
+                                        onChange={(e) => setNewPromptDraft({ ...newPromptDraft, prompt: e.target.value })}
+                                        placeholder="The prompt text..."
+                                        className="w-full bg-gray-900 border border-white/10 rounded-lg p-2.5 font-mono text-3xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50 resize-none"
+                                    />
+                                    <div className="flex justify-end">
+                                        <button
+                                            type="button"
+                                            onClick={handleAddPrompt}
+                                            className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-3xs font-semibold transition-colors"
+                                        >
+                                            Add Prompt Block
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Category Filter Pills & Search */}
                             <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
                                 <div className="flex flex-wrap items-center gap-1.5">
                                     {SYSTEM_PROMPT_CATEGORIES.map((cat) => {
                                         const count = cat.id === 'all'
-                                            ? SYSTEM_PROMPT_METADATA.length
+                                            ? allPromptMetadata.length
                                             : SYSTEM_PROMPT_METADATA.filter(m => m.category === cat.id).length;
                                         const isActive = promptCategoryFilter === cat.id;
                                         return (
@@ -1819,15 +1973,39 @@ export default function LLMStudio() {
                                                     </div>
 
                                                     <div className="flex items-center gap-1.5 shrink-0">
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleResetPrompt(p.key)}
-                                                            title="Reset this prompt to default template"
-                                                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-3xs text-gray-400 hover:text-white hover:bg-white/10 transition-colors border border-transparent hover:border-white/10"
-                                                        >
-                                                            <RotateCcw size={11} />
-                                                            <span>Reset to Default</span>
-                                                        </button>
+                                                        {p.custom ? (
+                                                            <>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleSavePromptLibraryEntry(promptLibrary.find((e) => e.key === p.key) || { key: p.key, label: p.label, category: p.category })}
+                                                                    disabled={!isModified}
+                                                                    title="Save this prompt block"
+                                                                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-3xs text-gray-400 hover:text-white hover:bg-white/10 transition-colors border border-transparent hover:border-white/10 disabled:opacity-40"
+                                                                >
+                                                                    <Save size={11} />
+                                                                    <span>Save</span>
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleRemovePrompt({ key: p.key })}
+                                                                    title="Remove this prompt block"
+                                                                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-3xs text-gray-500 hover:text-rose-300 hover:bg-rose-500/10 transition-colors border border-transparent hover:border-rose-500/20"
+                                                                >
+                                                                    <Trash2 size={11} />
+                                                                    <span>Remove</span>
+                                                                </button>
+                                                            </>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleResetPrompt(p.key)}
+                                                                title="Reset this prompt to default template"
+                                                                className="flex items-center gap-1 px-2 py-1 rounded-lg text-3xs text-gray-400 hover:text-white hover:bg-white/10 transition-colors border border-transparent hover:border-white/10"
+                                                            >
+                                                                <RotateCcw size={11} />
+                                                                <span>Reset to Default</span>
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
 
@@ -1900,7 +2078,7 @@ export default function LLMStudio() {
                                 )}
                             >
                                 <Sparkles size={13} />
-                                <span>System 1 Director Playground (13 Questions)</span>
+                                <span>System 1 Director Playground</span>
                             </button>
                         </div>
 
@@ -2649,6 +2827,205 @@ function AgentModal({ agent, availableModels = [], onClose, onSave }) {
     );
 }
 
+/**
+ * The cross-agent prompt library.
+ *
+ * A variant used to be reachable only through the agent that owns it, so
+ * "what prompts do I have" meant opening each agent in turn. This lists every
+ * variant of every agent in one place, and shows the two scopes that decide
+ * when each one applies: the model it is written for, and the Statekeeper
+ * gate it fires on.
+ */
+function PromptLibraryTab({ agents = [] }) {
+    const { data: agentsWithVariants = [] } = useAgentsWithVariants();
+    const [agentFilter, setAgentFilter] = useState('all');
+    const [scopeFilter, setScopeFilter] = useState('all');
+    const [search, setSearch] = useState('');
+    const [editing, setEditing] = useState(null);
+    const [draft, setDraft] = useState('');
+
+    const updateVariant = useUpdateAgentVariant();
+
+    const rows = useMemo(() => {
+        const out = [];
+        for (const agent of agentsWithVariants) {
+            for (const variant of agent.variants || []) {
+                out.push({
+                    agentSlug: agent.slug,
+                    agentName: agent.name,
+                    // The variant carries its own agent id; the agent's id is
+                    // the fallback for a payload that does not.
+                    agentId: variant.agent_id || agent.id,
+                    variant,
+                });
+            }
+        }
+        return out;
+    }, [agentsWithVariants]);
+
+    const filtered = useMemo(() => {
+        return rows.filter(({ agentSlug, variant }) => {
+            if (agentFilter !== 'all' && agentSlug !== agentFilter) return false;
+            if (scopeFilter === 'model' && !variant.model_scope) return false;
+            if (scopeFilter === 'gate' && !variant.gate_scope) return false;
+            if (scopeFilter === 'unscoped' && (variant.model_scope || variant.gate_scope)) return false;
+            if (scopeFilter === 'unselectable' && (variant.selection_hint || variant.description)) return false;
+            if (!search.trim()) return true;
+            const q = search.toLowerCase();
+            return (
+                (variant.name || '').toLowerCase().includes(q) ||
+                (variant.slug || '').toLowerCase().includes(q) ||
+                (variant.system_prompt_template || '').toLowerCase().includes(q) ||
+                agentSlug.toLowerCase().includes(q) ||
+                (Array.isArray(variant.tags) ? variant.tags.join(' ').toLowerCase().includes(q) : false)
+            );
+        });
+    }, [rows, agentFilter, scopeFilter, search]);
+
+    const handleSave = async (row) => {
+        try {
+            await updateVariant.mutateAsync({
+                agentId: row.agentId,
+                variantId: row.variant.id,
+                system_prompt_template: draft.trim(),
+            });
+            toast.success(`Saved "${row.variant.name}".`);
+            setEditing(null);
+        } catch (err) {
+            toast.error(err?.message || 'Could not save the variant.');
+        }
+    };
+
+    return (
+        <div className="space-y-4">
+            <div className="glass-panel p-4 rounded-2xl border border-white/10">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                        <h4 className="font-bold text-xs uppercase tracking-wider text-white flex items-center gap-2">
+                            <Library size={14} className="text-fuchsia-300" />
+                            Prompt Library
+                        </h4>
+                        <p className="text-3xs text-gray-400 mt-0.5">
+                            Every prompt variant of every agent. A variant with a model scope is only
+                            offered to Laya when that agent answers with that model; one with a gate
+                            scope is used by the Statekeeper when that gate fires.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <input
+                            type="text"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            placeholder="Search prompts..."
+                            className="bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-3xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-fuchsia-500/50"
+                        />
+                        <select
+                            value={agentFilter}
+                            onChange={(e) => setAgentFilter(e.target.value)}
+                            className="bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-3xs text-gray-300 focus:outline-none focus:border-fuchsia-500/50"
+                        >
+                            <option value="all">All agents</option>
+                            {(agents.length ? agents : agentsWithVariants).map((a) => (
+                                <option key={a.slug} value={a.slug}>{a.name}</option>
+                            ))}
+                        </select>
+                        <select
+                            value={scopeFilter}
+                            onChange={(e) => setScopeFilter(e.target.value)}
+                            className="bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-3xs text-gray-300 focus:outline-none focus:border-fuchsia-500/50"
+                        >
+                            <option value="all">Any scope</option>
+                            <option value="model">Model-scoped</option>
+                            <option value="gate">Gate-scoped</option>
+                            <option value="unscoped">Unscoped</option>
+                            <option value="unselectable">Not selectable by Laya</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div className="glass-panel p-4 rounded-2xl border border-white/10 space-y-2">
+                {filtered.length === 0 ? (
+                    <p className="text-xs text-gray-500 text-center py-6">
+                        No prompt variants match.
+                    </p>
+                ) : (
+                    filtered.map(({ agentSlug, variant }) => {
+                        const isEditing = editing === variant.id;
+                        return (
+                            <div key={variant.id} className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1.5">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-3xs font-mono">
+                                        {agentSlug}
+                                    </span>
+                                    <span className="font-semibold text-xs text-white">{variant.name}</span>
+                                    <span className="text-3xs text-gray-500 font-mono">{variant.slug}</span>
+                                    {variant.model_scope && (
+                                        <span className="px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-mono text-3xs">
+                                            model:{variant.model_scope}
+                                        </span>
+                                    )}
+                                    {variant.gate_scope && (
+                                        <span className="px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-mono text-3xs">
+                                            gate:{variant.gate_scope}
+                                        </span>
+                                    )}
+                                    {variant.is_active && (
+                                        <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold uppercase text-3xs">Active</span>
+                                    )}
+                                    {!variant.selection_hint && !variant.description && (
+                                        <span className="px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 font-bold uppercase text-3xs">
+                                            Not selectable by Laya
+                                        </span>
+                                    )}
+                                    <div className="ml-auto flex items-center gap-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setEditing(isEditing ? null : variant.id);
+                                                setDraft(variant.system_prompt_template || '');
+                                            }}
+                                            className="px-2 py-1 rounded-lg text-3xs text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                                        >
+                                            {isEditing ? 'Cancel' : 'Edit'}
+                                        </button>
+                                        {isEditing && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSave({ variant })}
+                                                className="px-2 py-1 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-3xs font-semibold transition-colors"
+                                            >
+                                                Save
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                                {isEditing ? (
+                                    <textarea
+                                        rows={5}
+                                        value={draft}
+                                        onChange={(e) => setDraft(e.target.value)}
+                                        className="w-full bg-gray-900 border border-white/10 rounded-lg p-2.5 font-mono text-3xs text-gray-200 focus:outline-none focus:border-fuchsia-500/50 resize-none"
+                                    />
+                                ) : (
+                                    <p className="text-3xs text-gray-400 font-mono leading-relaxed whitespace-pre-wrap break-words">
+                                        {variant.system_prompt_template}
+                                    </p>
+                                )}
+                                {variant.selection_hint && (
+                                    <p className="text-3xs text-purple-300/70">
+                                        Hint: {variant.selection_hint}
+                                    </p>
+                                )}
+                            </div>
+                        );
+                    })
+                )}
+            </div>
+        </div>
+    );
+}
+
 function AgentVariantsSection({ agent, variants: providedVariants }) {
     const { confirm } = useConfirmation();
     // The parent already loaded every agent together with its variants in one
@@ -2669,6 +3046,8 @@ function AgentVariantsSection({ agent, variants: providedVariants }) {
     const [slug, setSlug] = useState('');
     const [tags, setTags] = useState('');
     const [selectionHint, setSelectionHint] = useState('');
+    const [modelScope, setModelScope] = useState('');
+    const [gateScope, setGateScope] = useState('');
     const [prompt, setPrompt] = useState('');
     const [temperature, setTemperature] = useState('');
     const [topP, setTopP] = useState('');
@@ -2682,6 +3061,8 @@ function AgentVariantsSection({ agent, variants: providedVariants }) {
         setSlug('');
         setTags('');
         setSelectionHint('');
+        setModelScope('');
+        setGateScope('');
         setPrompt('');
         setTemperature('');
         setTopP('');
@@ -2701,6 +3082,8 @@ function AgentVariantsSection({ agent, variants: providedVariants }) {
         setSlug(variant.slug);
         setTags(Array.isArray(variant.tags) ? variant.tags.join(', ') : '');
         setSelectionHint(variant.selection_hint || '');
+        setModelScope(variant.model_scope || '');
+        setGateScope(variant.gate_scope || '');
         setPrompt(variant.system_prompt_template);
         setTemperature(variant.temperature ?? '');
         setTopP(variant.top_p ?? '');
@@ -2723,6 +3106,8 @@ function AgentVariantsSection({ agent, variants: providedVariants }) {
             system_prompt_template: prompt.trim(),
             tags: tags.split(',').map(t => t.trim()).filter(Boolean),
             selection_hint: selectionHint.trim(),
+            model_scope: modelScope.trim() || null,
+            gate_scope: gateScope.trim() || null,
             temperature: temperature === '' ? null : parseFloat(temperature),
             top_p: topP === '' ? null : parseFloat(topP),
             max_tokens: maxTokens === '' ? null : parseInt(maxTokens, 10),
@@ -2817,6 +3202,30 @@ function AgentVariantsSection({ agent, variants: providedVariants }) {
                                     {variant.is_active && (
                                         <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold uppercase text-3xs">Active</span>
                                     )}
+                                    {variant.model_scope && (
+                                        <span
+                                            className="px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-mono text-3xs"
+                                            title={`Only offered when the agent answers with this model or role. Current scope: ${variant.model_scope}`}
+                                        >
+                                            model:{variant.model_scope}
+                                        </span>
+                                    )}
+                                    {variant.gate_scope && (
+                                        <span
+                                            className="px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-mono text-3xs"
+                                            title={`Only used when this Statekeeper gate fires. Current gate: ${variant.gate_scope}`}
+                                        >
+                                            gate:{variant.gate_scope}
+                                        </span>
+                                    )}
+                                    {!variant.selection_hint && !variant.description && (
+                                        <span
+                                            className="px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 font-bold uppercase text-3xs"
+                                            title="Laya is never offered a variant with no selection hint and no description, so this one can only be used by naming it."
+                                        >
+                                            Not selectable by Laya
+                                        </span>
+                                    )}
                                     {Array.isArray(variant.tags) && variant.tags.map((t) => (
                                         <span key={t} className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 text-3xs font-mono">
                                             #{t}
@@ -2901,6 +3310,38 @@ function AgentVariantsSection({ agent, variants: providedVariants }) {
                             className="bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-3xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50"
                         />
                     </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <label className="block">
+                            <span className="text-3xs text-gray-500 block mb-1">
+                                Model scope <span className="text-gray-600">(blank = any model)</span>
+                            </span>
+                            <input
+                                type="text"
+                                value={modelScope}
+                                onChange={(e) => setModelScope(e.target.value)}
+                                placeholder="rp, util — or a model id"
+                                className="w-full bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-3xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50"
+                            />
+                        </label>
+                        <label className="block">
+                            <span className="text-3xs text-gray-500 block mb-1">
+                                Gate scope <span className="text-gray-600">(blank = any gate)</span>
+                            </span>
+                            <input
+                                type="text"
+                                value={gateScope}
+                                onChange={(e) => setGateScope(e.target.value)}
+                                placeholder="gate_character_mood"
+                                className="w-full bg-gray-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-3xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50"
+                            />
+                        </label>
+                    </div>
+                    <p className="text-3xs text-gray-600 leading-relaxed">
+                        A model-scoped variant is only offered to Laya when the agent answers with that
+                        model or role, and is applied automatically when it matches. A gate-scoped variant
+                        is used by the Statekeeper when that gate fires. Both are how "a different prompt
+                        for a different LLM" and "a prompt for the mood that just changed" are expressed.
+                    </p>
                     <textarea
                         rows={4}
                         value={prompt}

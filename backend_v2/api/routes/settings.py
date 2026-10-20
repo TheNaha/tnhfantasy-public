@@ -16,12 +16,12 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session
 
 import config as app_config
 from api.deps import get_session
-from core.exceptions import ComfyError, ValidationError
+from core.exceptions import ComfyError, NotFoundError, ValidationError
 from infrastructure.logging import get_logger
 
 logger = get_logger("settings_route")
@@ -633,6 +633,111 @@ async def update_system_prompts(request: SystemPromptsRequest) -> dict[str, Any]
         merged = {**current, **updates}
         await asyncio.to_thread(app_config.update_config, {"system_prompts": merged}, True)
         return {"status": "success", "blocks": merged}
+    except ComfyError:
+        raise
+    except Exception as e:
+        raise ComfyError(str(e))
+
+
+# ---------------------------------------------------------------------------
+# The user's own system-prompt blocks
+# ---------------------------------------------------------------------------
+#
+# `system_prompts` is a fixed set of keys the code looks up by name, so it
+# cannot grow: adding a prompt meant editing the config schema, the
+# validation allow-list and the frontend's copy of the defaults, and there
+# was no way to remove one at all. These are the ones the user adds.
+
+
+class SystemPromptLibraryEntry(BaseModel):
+    key: str = Field(..., min_length=1, max_length=80)
+    label: str = Field(..., min_length=1, max_length=120)
+    category: str = Field(default="Custom", max_length=60)
+    prompt: str = Field(..., min_length=1)
+
+
+def _library_key(value: str) -> str:
+    """A prompt-library key: lower-case, [a-z0-9_], no leading/trailing junk."""
+    import re
+
+    return re.sub(r"[^a-z0-9_]+", "_", (value or "").lower().strip()).strip("_")
+
+
+@router.get("/system-prompts/library")
+def get_system_prompt_library() -> dict[str, Any]:
+    """The user's own system-prompt blocks."""
+    return {"entries": app_config.get_system_prompt_library()}
+
+
+@router.post("/system-prompts/library")
+async def create_system_prompt_library_entry(entry: SystemPromptLibraryEntry) -> dict[str, Any]:
+    """Add a system-prompt block of the user's own."""
+    try:
+        key = _library_key(entry.key)
+        if not key:
+            raise ValidationError("A prompt block needs a key with at least one alphanumeric character.")
+        if key in SYSTEM_PROMPT_BLOCK_KEYS:
+            raise ValidationError(f"'{key}' is a built-in prompt block. Edit it instead.")
+        entries = app_config.get_system_prompt_library()
+        if any(e["key"] == key for e in entries):
+            raise ValidationError(f"A prompt block with key '{key}' already exists.")
+        entries.append({
+            "key": key,
+            "label": entry.label.strip(),
+            "category": (entry.category or "Custom").strip(),
+            "prompt": entry.prompt.strip(),
+        })
+        await asyncio.to_thread(
+            app_config.update_config, {"system_prompt_library": entries}, True
+        )
+        return {"status": "success", "entry": entries[-1], "entries": entries}
+    except ComfyError:
+        raise
+    except Exception as e:
+        raise ComfyError(str(e))
+
+
+@router.put("/system-prompts/library/{key}")
+async def update_system_prompt_library_entry(
+    key: str, entry: SystemPromptLibraryEntry
+) -> dict[str, Any]:
+    """Edit one of the user's own system-prompt blocks."""
+    try:
+        target = _library_key(key)
+        entries = app_config.get_system_prompt_library()
+        found = next((e for e in entries if e["key"] == target), None)
+        if not found:
+            raise NotFoundError("System prompt block", key)
+        found["label"] = entry.label.strip()
+        found["category"] = (entry.category or "Custom").strip()
+        found["prompt"] = entry.prompt.strip()
+        await asyncio.to_thread(
+            app_config.update_config, {"system_prompt_library": entries}, True
+        )
+        return {"status": "success", "entry": found, "entries": entries}
+    except ComfyError:
+        raise
+    except Exception as e:
+        raise ComfyError(str(e))
+
+
+@router.delete("/system-prompts/library/{key}")
+async def delete_system_prompt_library_entry(key: str) -> dict[str, Any]:
+    """Remove one of the user's own system-prompt blocks."""
+    try:
+        target = _library_key(key)
+        if target in SYSTEM_PROMPT_BLOCK_KEYS:
+            raise ValidationError(
+                f"'{target}' is a built-in prompt block and cannot be removed here."
+            )
+        entries = app_config.get_system_prompt_library()
+        remaining = [e for e in entries if e["key"] != target]
+        if len(remaining) == len(entries):
+            raise NotFoundError("System prompt block", key)
+        await asyncio.to_thread(
+            app_config.update_config, {"system_prompt_library": remaining}, True
+        )
+        return {"status": "success", "entries": remaining}
     except ComfyError:
         raise
     except Exception as e:

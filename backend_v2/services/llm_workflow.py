@@ -27,7 +27,6 @@ def build_llm_workflow(
     story_id: str | None = None,
     chapter_id: str | None = None,
     character_id: str | None = None,
-    character_system_prompt: str | None = None,
     model: str | None = None,
     workspace: str = "chat",
     source: str | None = None,
@@ -37,6 +36,20 @@ def build_llm_workflow(
     background: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build a standardized LLM job workflow + metadata pair.
+
+    There is deliberately no `character_system_prompt` parameter. There used
+    to be one, and it wrote `workflow["character_system_prompt"]` — a key
+    that **no engine reads**. The LLM engines only ever read
+    `workflow["messages"]` (`services/engines/llm_engine.py`), and the
+    character card is already the first system message in `messages`, because
+    `context_builder.build_chat_context_with_sections` puts it there.
+
+    So the key was a duplicate of something already being sent, and it was
+    the place the chain path put the character agent's variant template —
+    which is why that variant was silently lost on every autonomous turn
+    while the code looked like it was passing it. The parameter is gone
+    rather than left as a no-op, so the next person cannot make the same
+    mistake.
 
     Returns:
         (workflow, metadata)
@@ -89,8 +102,6 @@ def build_llm_workflow(
         workflow["story_id"] = story_id
     if chapter_id is not None:
         workflow["chapter_id"] = chapter_id
-    if character_system_prompt is not None:
-        workflow["character_system_prompt"] = character_system_prompt
 
     metadata: dict[str, Any] = {
         "chat_id": chat_id,
@@ -119,7 +130,6 @@ def build_chat_llm_workflow(
     *,
     chat_id: str,
     character_id: str | None = None,
-    system_prompt: str | None = None,
     model: str | None = None,
     type_: str = "chat_reply",
     workspace: str = "chat",
@@ -131,6 +141,12 @@ def build_chat_llm_workflow(
 
     Pre-fills chat_id, character_id, workspace, and type so callers don't have
     to repeat them on every route.
+
+    The character card is the first message in `messages` — put it there by
+    `context_builder.build_context`, which is the single place the prompt is
+    assembled. There is no separate "system prompt" argument, because a
+    separate argument is a second source of truth for the same text, and the
+    last one written was the one nothing read.
     """
     metadata: dict[str, Any] = {
         "chat_id": chat_id,
@@ -148,7 +164,6 @@ def build_chat_llm_workflow(
         type_=type_,
         chat_id=chat_id,
         character_id=character_id,
-        character_system_prompt=system_prompt,
         model=model,
         workspace=workspace,
         source=source,

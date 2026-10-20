@@ -36,6 +36,7 @@ from services.chat_utils import insert_world_state_marker
 from services.decision_schema import (
     ALWAYS_ALLOWED_UPDATER_FIELDS,
     GATE_FIELD_MAP,
+    GATE_LABELS,
     UPDATER_GATE_KEYS,
     DirectorDecisionResult,
     allowed_updater_fields,
@@ -489,6 +490,22 @@ def build_state_updater_prompt(
     schema_lines.append('  "scene_summary": "1-2 sentence factual summary of the current scene state"')
 
     schema_block = "{\n" + ",\n".join(schema_lines) + "\n}"
+
+    # Name the gates that fired. The field restriction is structural — an
+    # unfired gate's field is not in the schema above — but saying WHICH
+    # situation triggered the extraction is the prompt half: the model is
+    # told "the mood shifted and the clock advanced", not just handed a
+    # narrow set of keys with no reason.
+    fired_note = ""
+    if triggered_gates:
+        labels = [GATE_LABELS.get(g, g) for g in triggered_gates]
+        fired_note = (
+            "\nThe Director detected that these changed in this turn: "
+            + ", ".join(labels)
+            + ". Update only what those changes imply, and leave every other "
+            "field alone. A field is not listed because it did not change."
+        )
+
     current_state_summary = {
         "story_location": current_location,
         "story_time": current_time,
@@ -512,6 +529,8 @@ def build_state_updater_prompt(
     return (
         "You are the World Vault Statekeeper (Updater). Read the current state and the recent "
         "conversation transcript, then extract ONLY factual updates that occurred.\n"
+        + fired_note
+        + "\n"
         "Respond with ONLY a valid JSON object matching this exact schema (no markdown fences, no commentary):\n"
         f"{schema_block}\n\n"
         f"Current State:\n{json.dumps(current_state_summary, ensure_ascii=False)}\n\n"
@@ -526,6 +545,7 @@ def _resolve_updater_agent_prompt(
     char_name: str,
     user_name: str,
     chat: Any,
+    triggered_gates: Optional[List[str]] = None,
 ) -> tuple[str, Dict[str, Any]]:
     """Resolve the Statekeeper's system prompt and sampling from its agent profile.
 
@@ -541,6 +561,12 @@ def _resolve_updater_agent_prompt(
     disabled Statekeeper should fall back to the built-in prompt rather than
     stop extracting state altogether.
 
+    A variant scoped to one of the FIRED GATES wins over the generic active
+    variant, so the extractor is told in words what shifted. The field
+    restriction was already structural — an unfired gate's field is absent
+    from the schema it is shown, and anything smuggled in is dropped on the
+    way back — and this is the prompt half of the same idea.
+
     The "output valid JSON only" instruction is NOT part of the agent's
     template. It is the one requirement of the Statekeeper that a prompt
     rewrite must not be able to break, so it is appended after the agent's own
@@ -549,10 +575,29 @@ def _resolve_updater_agent_prompt(
     fallback = "You are a precise JSON-only roleplay state extractor. Output valid JSON only."
 
     try:
-        from services.agent_variants import resolve_agent
+        from services.agent_variants import resolve_agent, scoped_variants
         from services.chat_utils import render_agent_template
 
-        resolved = resolve_agent(session, "updater", require_enabled=False)
+        gates = [g for g in (triggered_gates or []) if g]
+        if gates:
+            scoped = scoped_variants(session, "updater", gate_scopes=gates)
+            if scoped:
+                from core.entities import AgentProfile
+
+                profile = session.get(AgentProfile, scoped[0].agent_id)
+                if profile is not None:
+                    from services.agent_variants import ResolvedAgent
+
+                    resolved = ResolvedAgent(profile=profile, variant=scoped[0])
+                else:
+                    resolved = None
+            else:
+                resolved = None
+        else:
+            resolved = None
+
+        if resolved is None:
+            resolved = resolve_agent(session, "updater", require_enabled=False)
     except Exception as exc:
         logger.warning("updater_agent_resolution_failed", error=str(exc))
         return fallback, {}
@@ -636,6 +681,7 @@ async def enqueue_state_updater_if_needed(
         char_name=char_name,
         user_name=user_name,
         chat=chat,
+        triggered_gates=triggered,
     )
 
     from services.llm_workflow import build_llm_workflow

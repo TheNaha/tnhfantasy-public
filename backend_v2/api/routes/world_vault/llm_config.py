@@ -691,6 +691,7 @@ def list_agents_with_variants(session: Session = Depends(get_session)):
             "variants": [
                 {
                     "id": v.id,
+                    "agent_id": v.agent_id,
                     "slug": v.slug,
                     "name": v.name,
                     "description": v.description,
@@ -701,6 +702,11 @@ def list_agents_with_variants(session: Session = Depends(get_session)):
                     "is_active": bool(v.is_active),
                     "selection_hint": v.selection_hint,
                     "tags": v.tags,
+                    # The scopes, so a client can tell WHICH situations a
+                    # variant applies to without a second request — and so the
+                    # cross-agent prompt library can show them.
+                    "model_scope": v.model_scope,
+                    "gate_scope": v.gate_scope,
                 }
                 for v in variants
             ],

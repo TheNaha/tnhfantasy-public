@@ -102,6 +102,15 @@ class AgentVariantCreate(BaseModel):
     top_p: Optional[float] = Field(default=None, ge=0, le=1)
     max_tokens: Optional[int] = Field(default=None, ge=1, le=32768)
     activate: bool = False
+    # Which model (or model role) this variant is FOR. None means "any
+    # model". A variant scoped to a model is only offered to Laya when that
+    # model is the one the agent will answer with, and is auto-applied when
+    # it matches — the scope IS its activation.
+    model_scope: Optional[str] = None
+    # Which Statekeeper gate this variant is FOR. None means "any gate".
+    # The Updater's schema was already gate-specific; this is the prompt
+    # half, so the extractor is told in words what shifted.
+    gate_scope: Optional[str] = None
 
 
 class AgentVariantUpdate(BaseModel):
@@ -112,6 +121,8 @@ class AgentVariantUpdate(BaseModel):
     top_p: Optional[float] = Field(default=None, ge=0, le=1)
     max_tokens: Optional[int] = Field(default=None, ge=1, le=32768)
     is_active: Optional[bool] = None
+    model_scope: Optional[str] = None
+    gate_scope: Optional[str] = None
 
 
 def _get_agent_or_404(session: Session, agent_id: str) -> AgentProfile:
@@ -393,6 +404,8 @@ def create_agent_variant(
         temperature=req.temperature,
         top_p=req.top_p,
         max_tokens=req.max_tokens,
+        model_scope=(req.model_scope or "").strip() or None,
+        gate_scope=(req.gate_scope or "").strip() or None,
         created_at=now,
         updated_at=now,
     )
@@ -439,6 +452,10 @@ def update_agent_variant(
         variant.top_p = req.top_p
     if "max_tokens" in req.model_fields_set:
         variant.max_tokens = req.max_tokens
+    if "model_scope" in req.model_fields_set:
+        variant.model_scope = (req.model_scope or "").strip() or None
+    if "gate_scope" in req.model_fields_set:
+        variant.gate_scope = (req.gate_scope or "").strip() or None
 
     variant.updated_at = datetime.now(timezone.utc)
     session.add(variant)
