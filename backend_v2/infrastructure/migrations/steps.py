@@ -1094,15 +1094,58 @@ def _migration_backfill_message_kind(conn) -> bool:
     else:
         roles = {"system": "system", "user": "user", "char": "char"}
 
+    # The `role` comparison needs a cast on PostgreSQL.
+    #
+    # `role` is a Postgres enum (`messagerole`), and comparing an enum column
+    # to a VARCHAR parameter is not a valid operation:
+    #
+    #     ERROR: operator does not exist: messagerole = character varying
+    #
+    # A bound string is typed VARCHAR, so `role = :role` cannot compare. The
+    # parameter has to be cast to the column's own enum type.
+    #
+    # This never showed up on an existing deployment because the column was
+    # VARCHAR when these migrations were written, and by the time it became
+    # an enum this step had already been recorded as applied. On a FRESH
+    # PostgreSQL database the column is created as the enum by `create_all`
+    # and this step runs against it — so it failed there. The test suite
+    # could not see it: SQLite has no enum type, and the whole suite runs on
+    # SQLite.
+    if is_postgres:
+        role_column = next(
+            (c["type"] for c in inspector.get_columns("messages") if c["name"] == "role"),
+            None,
+        )
+        enum_name = getattr(role_column, "name", None)
+        if enum_name:
+            # `role = CAST(:role AS messagerole)` — the cast is on the
+            # PARAMETER, and the comparison stays a boolean expression. A
+            # bare `CAST(:role AS messagerole)` would be an enum where a
+            # boolean belongs, and Postgres rejects that too
+            # ("argument of AND must be type boolean").
+            role_predicate = f"role = CAST(:role AS {enum_name})"
+        else:
+            # Not an enum (an old database where the column is still TEXT):
+            # the plain comparison is correct.
+            role_predicate = ":role"
+    else:
+        role_predicate = ":role"
+
     result = conn.execute(
-        text("UPDATE messages SET kind = 'narrator' WHERE kind IS NULL AND role = :role").bindparams(
+        text(
+            "UPDATE messages SET kind = 'narrator' "
+            f"WHERE kind IS NULL AND {role_predicate}"
+        ).bindparams(
             role=roles["system"]
         )
     )
     if result.rowcount:
         logger.info("migration_backfilled_kind", role="system", rows=result.rowcount)
     result = conn.execute(
-        text("UPDATE messages SET kind = 'user' WHERE kind IS NULL AND role = :role").bindparams(
+        text(
+            "UPDATE messages SET kind = 'user' "
+            f"WHERE kind IS NULL AND {role_predicate}"
+        ).bindparams(
             role=roles["user"]
         )
     )
@@ -1110,7 +1153,10 @@ def _migration_backfill_message_kind(conn) -> bool:
         logger.info("migration_backfilled_kind", role="user", rows=result.rowcount)
     if is_postgres:
         result = conn.execute(
-            text("UPDATE messages SET kind = 'char' WHERE kind IS NULL AND role = :role").bindparams(
+            text(
+                "UPDATE messages SET kind = 'char' "
+                f"WHERE kind IS NULL AND {role_predicate}"
+            ).bindparams(
                 role=roles["char"]
             )
         )
@@ -5098,8 +5144,8 @@ def _migration_102_agent_profiles(conn) -> bool:
                     system_prompt_template TEXT NOT NULL,
                     model_target TEXT NOT NULL DEFAULT 'rp',
                     model_override TEXT,
-                    is_builtin BOOLEAN NOT NULL DEFAULT 0,
-                    enabled BOOLEAN NOT NULL DEFAULT 1,
+                    is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     temperature REAL,
                     top_p REAL,
                     max_tokens INTEGER,
@@ -5230,7 +5276,7 @@ def _migration_103_agent_prompt_variants(conn) -> bool:
                 name TEXT NOT NULL,
                 description TEXT NOT NULL,
                 system_prompt_template TEXT NOT NULL,
-                is_active BOOLEAN NOT NULL DEFAULT 0,
+                is_active BOOLEAN NOT NULL DEFAULT FALSE,
                 temperature REAL,
                 top_p REAL,
                 max_tokens INTEGER,
@@ -5475,7 +5521,7 @@ def _migration_108_scene_graph_settings(conn) -> bool:
 
     columns = _get_table_columns(conn, "chats")
     for column, ddl in (
-        ("scene_graph_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("scene_graph_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("scene_graph_budget", "REAL"),
     ):
         if column not in columns:
