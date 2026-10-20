@@ -155,13 +155,26 @@ const PRESERVED_KEYS = [
     'stored_metadata',
 ];
 const WARNING_KEYS = ['warnings', 'warning_messages', 'messages'];
+const INERT_KEYS = [
+    'preserved_but_inert',
+    'preservedButInert',
+    'inert_fields',
+    'inertFields',
+    'preserved_not_executed',
+];
 
 /**
  * Normalize a backend compatibility report.
  *
  * Returns null-safe defaults so callers can render unconditionally:
- * `{ format, spec, specVersion, warnings, lost, preserved,
+ * `{ format, spec, specVersion, warnings, lost, preserved, inert,
  *    lorebookConverted, unknownExtensionsPreserved, hasReport, lossless }`
+ *
+ * `inert` is the bucket that matters and used to be missing: features the
+ * card carried that are preserved and re-exported but NOT acted on here (a
+ * SillyTavern `regex_scripts` extension, a lorebook entry's `position`). With
+ * `lost` empty and no notion of `inert`, the report computed `lossless` and
+ * the modal printed "Fully compatible. All reported card data was imported."
  */
 export function normalizeCardCompatibility(raw) {
     const empty = {
@@ -171,6 +184,7 @@ export function normalizeCardCompatibility(raw) {
         warnings: [],
         lost: [],
         preserved: [],
+        inert: [],
         lorebookConverted: null,
         unknownExtensionsPreserved: null,
         hasReport: false,
@@ -181,6 +195,7 @@ export function normalizeCardCompatibility(raw) {
     const lost = toEntries(pick(raw, LOST_KEYS));
     const preserved = toEntries(pick(raw, PRESERVED_KEYS));
     const warnings = toEntries(pick(raw, WARNING_KEYS));
+    const inert = toEntries(pick(raw, INERT_KEYS));
 
     return {
         format: String(pick(raw, ['format', 'card_format', 'kind']) || ''),
@@ -189,12 +204,16 @@ export function normalizeCardCompatibility(raw) {
         warnings,
         lost,
         preserved,
+        inert,
         lorebookConverted: truthyFlag(pick(raw, ['lorebook_converted', 'lorebookConverted', 'lorebook_created'])),
         unknownExtensionsPreserved: truthyFlag(
             pick(raw, ['unknown_extensions_preserved', 'unknownExtensionsPreserved', 'extensions_preserved'])
         ),
         hasReport: true,
-        lossless: lost.length === 0 && warnings.length === 0,
+        // A card that preserved features it cannot execute is NOT lossless —
+        // the data is safe, but the behaviour is not the same. The report says
+        // so, and the modal says so.
+        lossless: lost.length === 0 && warnings.length === 0 && inert.length === 0,
     };
 }
 

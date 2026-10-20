@@ -1956,6 +1956,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add chats.scene_graph_enabled and chats.scene_graph_budget so a chat can opt into Illustrator-authored generation parameters with a spend cap",
             apply_fn=_migration_108_scene_graph_settings,
         ),
+        MigrationStep(
+            version="109_lorebook_entry_semantics",
+            description="Add lorebook_entries.enabled and .secondary_keys so a SillyTavern character_book entry can be disabled, and so its selective matching can be honoured",
+            apply_fn=_migration_109_lorebook_entry_semantics,
+        ),
     ]
 
 
@@ -5498,6 +5503,40 @@ def _migration_107_variant_scopes(conn) -> bool:
     _verify_required_columns(
         conn, "agent_prompt_variants", {"model_scope", "gate_scope"}
     )
+    return True
+
+
+def _migration_109_lorebook_entry_semantics(conn) -> bool:
+    """Add the lorebook columns that carry SillyTavern entry semantics.
+
+    `enabled` — a ST `character_book` entry can carry `enabled: false`, and
+    the flag was dropped on import, so a disabled entry activated anyway.
+    There was no column to hold it.
+
+    `secondary_keys` — ST's `secondary_keys` were dropped too, and with them
+    `selective` could not be honoured even if it had been stored.
+
+    `DEFAULT TRUE` so every existing row keeps activating: this migration
+    adds the ability to express a disabled entry, it does not disable
+    anything that was already there.
+    """
+    inspector = inspect(conn)
+    if "lorebook_entries" not in set(inspector.get_table_names()):
+        # Fresh install: create_all builds the table with the columns.
+        return True
+
+    columns = _get_table_columns(conn, "lorebook_entries")
+    if "enabled" not in columns:
+        conn.execute(
+            text("ALTER TABLE lorebook_entries ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT TRUE")
+        )
+        logger.info("migration_column_added", table="lorebook_entries", column="enabled")
+    if "secondary_keys" not in columns:
+        conn.execute(
+            text("ALTER TABLE lorebook_entries ADD COLUMN secondary_keys JSON")
+        )
+        logger.info("migration_column_added", table="lorebook_entries", column="secondary_keys")
+    _verify_required_columns(conn, "lorebook_entries", {"enabled", "secondary_keys"})
     return True
 
 

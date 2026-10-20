@@ -599,7 +599,7 @@ async def analyze_card_for_onboarding(
 
     is_png = file_bytes[:8] == b"\x89PNG\r\n\x1a\n"
     try:
-        char_data, avatar_bytes = parse_card_file(file_bytes, filename or "card.png")
+        char_data, avatar_bytes, _archive_members = parse_card_file(file_bytes, filename or "card.png")
     except CardParseError as exc:
         raise ValidationError(str(exc)) from exc
 

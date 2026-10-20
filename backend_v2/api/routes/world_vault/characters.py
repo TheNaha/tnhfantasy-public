@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import re
 import json
 import os
 import shutil
@@ -13,6 +15,7 @@ from sqlmodel import Session, select
 from api.deps import get_session, get_character_repo
 from infrastructure.logging import get_logger
 from infrastructure.repositories.character_repo import CharacterRepository
+from services.character_portability import not_portable_features, portable_summary
 from services.reference_cleanup import scrub_entity_references
 from services.world_ownership import apply_world_id, require_world
 from core.workflow_builder import DEFAULT_CHECKPOINT
@@ -25,8 +28,11 @@ from core.character_cards import (
     encode_png_card,
     lorebook_from_character_book,
     parse_card_file,
+    preserved_but_inert,
+    strip_png_text_chunks,
+    take_expression_assets,
 )
-from core.entities import Character, Collection, Lorebook, LorebookEntry
+from core.entities import Character, Collection, Lorebook, LorebookEntry, VoiceModel
 from core.exceptions import NotFoundError, ValidationError
 from core.upload_validation import (
     MAX_AVATAR_SIZE_MB,
@@ -158,13 +164,24 @@ def _compatibility_report(
     source_format: str,
     lorebook_created: bool,
     lorebook_preserved_only: bool,
+    lost_fields: list[dict[str, str]] | None = None,
 ) -> dict:
     """Describe what an import kept, for the UI's compatibility report.
 
-    `lost_fields` stays empty while the codec is lossless; anything the vault
-    cannot use functionally (an embedded book with no usable entries) is
-    reported as a warning plus the preserved location instead of being dropped
-    silently.
+    Three buckets, and the distinction between them is the whole point:
+
+    * `lost_fields` — values the card carried that this app DROPPED. They
+      are gone, and the user should be told.
+    * `preserved_fields` — groups of card data kept verbatim in
+      `card_metadata` and written back on export.
+    * `preserved_but_inert` — preserved, and round-tripped, but NOT ACTED ON
+      here. A SillyTavern `regex_scripts` extension, an entry's `position`:
+      they survive the trip and change nothing about how this app behaves.
+
+    The report used to hardcode `lost_fields: []` and the UI turned that into
+    "Fully compatible. All reported card data was imported." — while the
+    report itself only ever counted groups, and said nothing at all about the
+    features that were inert.
     """
     metadata = char_data.get("card_metadata") or {}
     residual_data = metadata.get("data") or {}
@@ -188,13 +205,22 @@ def _compatibility_report(
             "detail": "No usable entries; kept in card metadata only",
         })
 
+    inert = preserved_but_inert(char_data)
+    if inert:
+        warnings.append({
+            "name": "preserved but not executed",
+            "field": "preserved_but_inert",
+            "detail": f"{len(inert)} feature(s) are preserved and re-exported, but do not change how this app behaves",
+        })
+
     return {
         "format": source_format,
         "spec": char_data.get("card_spec") or CARD_SPEC_V1,
         "spec_version": char_data.get("card_spec_version") or "",
         "warnings": warnings,
-        "lost_fields": [],
+        "lost_fields": list(lost_fields or []),
         "preserved_fields": preserved,
+        "preserved_but_inert": inert,
         "lorebook_converted": lorebook_created,
         "unknown_extensions_preserved": bool(residual_data.get("extensions")),
     }
@@ -293,6 +319,53 @@ def _create_embedded_lorebook(session: Session, character_book: dict | None) -> 
     return lorebook.id
 
 
+def _write_expression_images(
+    session: Session, character: Character, assets: list[dict[str, str]]
+) -> dict[str, str]:
+    """Materialise a card's expression images as real expression files.
+
+    A SillyTavern V3 card carries its expression images in `data.assets` as
+    base64. They were preserved as inert JSON in the residual blob and never
+    turned into images, so `Character.expressions` was always empty after an
+    import, and an exported card never carried them back out.
+
+    Returns `{emotion: path}` for the ones that were written.
+    """
+    if not assets:
+        return {}
+    out: dict[str, str] = {}
+    base_dir = f"{app_config.settings.character_avatar_dir}/{character.id}/expressions"
+    for asset in assets:
+        emotion = asset.get("emotion") or ""
+        if not emotion:
+            continue
+        try:
+            raw = base64.b64decode(asset.get("data") or "", validate=True)
+        except Exception:
+            logger.warning("card_expression_decode_failed", emotion=emotion)
+            continue
+        if not raw:
+            continue
+        try:
+            # The bytes have to be an actual image, or the expression picker
+            # would serve something the browser cannot render.
+            inspect_image(raw, field="expression", label=f"expression '{emotion}'")
+        except Exception as exc:
+            logger.warning("card_expression_not_an_image", emotion=emotion, error=str(exc))
+            continue
+        safe = re.sub(r"[^A-Za-z0-9_-]+", "_", emotion).strip("_") or "expression"
+        try:
+            os.makedirs(base_dir, exist_ok=True)
+            path = os.path.join(base_dir, f"{safe}.png")
+            with open(path, "wb") as handle:
+                handle.write(raw)
+        except OSError as exc:
+            logger.warning("card_expression_write_failed", emotion=emotion, error=str(exc))
+            continue
+        out[emotion] = path
+    return out
+
+
 @router.post("/import")
 def import_character_card(
     file: UploadFile = File(...),
@@ -300,7 +373,9 @@ def import_character_card(
 ):
     filename = file.filename or ""
     if not filename.lower().endswith(CARD_FILE_SUFFIXES):
-        raise ValidationError("Only PNG and JSON character cards are supported")
+        raise ValidationError(
+            "Only PNG, JSON and CHARX character cards are supported"
+        )
 
     # Bounded read: a card is a few hundred KB, so a huge body is refused after
     # the first over-limit chunk instead of being held in memory.
@@ -310,12 +385,13 @@ def import_character_card(
         raise ValidationError("Character card file is empty")
 
     is_png = payload[:8] == b"\x89PNG\r\n\x1a\n"
+    is_charx = (filename or "").lower().endswith(".charx")
     if is_png:
         # Card dimensions are bounded like any other image upload.
         inspect_image(payload, field="file", label="Character card")
 
     try:
-        char_data, avatar_bytes = parse_card_file(payload, filename)
+        char_data, avatar_bytes, archive_members = parse_card_file(payload, filename)
     except CardParseError as exc:
         raise ValidationError(str(exc)) from exc
 
@@ -327,9 +403,31 @@ def import_character_card(
     character = Character(**{k: v for k, v in char_data.items() if k in known_fields and v})
     character.created_at = datetime.now(timezone.utc)
     character.updated_at = character.created_at
-    session.add(character)
-    session.commit()
-    session.refresh(character)
+
+    # A card can name a voice model. If this vault does not have it, the
+    # INSERT failed the foreign key and the WHOLE import was lost to a 500.
+    #
+    # The value is dropped instead, and reported, because a card from another
+    # vault is a normal thing to import and "the voice model it referenced is
+    # not here" is a fact about the card, not a reason to refuse it.
+    dropped_voice_model = None
+    if character.voice_model_id:
+        exists = session.get(VoiceModel, character.voice_model_id)
+        if exists is None:
+            dropped_voice_model = character.voice_model_id
+            character.voice_model_id = None
+
+    try:
+        session.add(character)
+        session.commit()
+        session.refresh(character)
+    except Exception as exc:
+        session.rollback()
+        # A constraint violation on a card-supplied value is a fact about the
+        # card, not a server fault. Answer 400 with the reason rather than
+        # letting the generic handler turn it into a 500.
+        logger.warning("character_card_import_write_failed", error=str(exc))
+        raise ValidationError(f"The card could not be imported: {exc}") from exc
 
     lorebook_id = _create_embedded_lorebook(session, character_book)
     if lorebook_id:
@@ -337,11 +435,34 @@ def import_character_card(
 
     # Save avatar from card image (JSON cards carry no image)
     if avatar_bytes:
+        # The card PNG carries the whole character in a `chara`/`ccv3` text
+        # chunk, so the file that is ALSO the avatar is mostly card payload —
+        # served to every browser that loads the avatar, and re-read on every
+        # request. The chunks come back on export, which writes its own.
+        avatar_bytes = strip_png_text_chunks(avatar_bytes)
         os.makedirs(f"{app_config.settings.character_avatar_dir}/{character.id}", exist_ok=True)
         avatar_path = f"{app_config.settings.character_avatar_dir}/{character.id}/avatar.png"
         with open(avatar_path, "wb") as f:
             f.write(avatar_bytes)
         character.avatar_path = avatar_path
+
+    # SillyTavern expression images, turned into real expression files.
+    expression_assets = take_expression_assets(char_data)
+    # A CHARX references its assets BY PATH rather than carrying base64, so
+    # the archive's members are resolved here.
+    for asset in expression_assets:
+        reference = asset.get("data") or ""
+        if reference in archive_members:
+            asset["data"] = base64.b64encode(archive_members[reference]).decode("ascii")
+    if expression_assets:
+        # `session.refresh()` above re-read the row, so `character.card_metadata`
+        # is a FRESH object and no longer the same dict `char_data` holds.
+        # Without this the residual keeps the base64 of images that are now
+        # real expression files, and every export carries them twice.
+        character.card_metadata = char_data.get("card_metadata")
+        expressions = _write_expression_images(session, character, expression_assets)
+        if expressions:
+            character.expressions = expressions
 
     character.updated_at = datetime.now(timezone.utc)
     session.add(character)
@@ -362,9 +483,20 @@ def import_character_card(
 
     report = _compatibility_report(
         char_data,
-        source_format="png" if is_png else "json",
+        source_format="png" if is_png else ("charx" if is_charx else "json"),
         lorebook_created=bool(lorebook_id),
         lorebook_preserved_only=bool(character_book) and not lorebook_id,
+        lost_fields=(
+            [
+                {
+                    "name": "extensions.voice_model_id",
+                    "field": "voice_model_id",
+                    "detail": f"no voice model with id '{dropped_voice_model}' in this vault",
+                }
+            ]
+            if dropped_voice_model
+            else []
+        ),
     )
     # The character dict is returned unchanged (existing consumers read id/name/...)
     # with the compatibility report as an extra key.
@@ -672,6 +804,34 @@ def clone_character(character_id: str, session: Session = Depends(get_session), 
     session.refresh(new_char)
 
     return _character_to_dict(new_char)
+
+
+@router.get("/{character_id}/export/preview")
+def export_character_preview(
+    character_id: str,
+    session: Session = Depends(get_session),
+    character_repo: CharacterRepository = Depends(get_character_repo),
+):
+    """What an export of this character can and cannot carry.
+
+    The export itself is a PNG or an archive, so it has nowhere to say "this
+    character has six expressions and a voice model and the card has neither".
+    This is that list, so the export menu can show it BEFORE the download
+    rather than the user discovering it by opening the card elsewhere.
+    """
+    character = character_repo.get(character_id)
+    if not character:
+        raise NotFoundError("Character", character_id)
+
+    features = not_portable_features(session, character)
+    return {
+        "character_id": character.id,
+        "name": character.name,
+        "formats": list(CARD_EXPORT_FORMATS),
+        "not_portable": features,
+        "not_portable_summary": portable_summary(features),
+        "lossless": not features,
+    }
 
 
 @router.get("/{character_id}/export")

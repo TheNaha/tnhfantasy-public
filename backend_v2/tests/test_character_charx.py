@@ -33,7 +33,7 @@ def _card(name: str = "Archivist") -> dict:
 def test_parse_charx_preserves_card_and_manifest():
     from core.character_cards import parse_card_file
 
-    mapped, avatar = parse_card_file(_charx_bytes(_card()), "archivist.charx")
+    mapped, avatar, _members = parse_card_file(_charx_bytes(_card()), "archivist.charx")
     assert mapped["name"] == "Archivist"
     assert mapped["card_metadata"]["data"]["custom_field"] == {"kept": True}
     assert mapped["card_metadata"]["charx_assets"] == ["assets/main.png"]

@@ -314,13 +314,13 @@ class TestJsonCards:
             parse_json_card("[1, 2, 3]")
 
     def test_parse_card_file_detects_json(self):
-        fields, avatar = parse_card_file(json.dumps(_v3_card()).encode(), "card.json")
+        fields, avatar, _members = parse_card_file(json.dumps(_v3_card()).encode(), "card.json")
         assert fields["name"] == "Lossless Lena"
         assert avatar is None
 
     def test_parse_card_file_detects_png(self):
         png = _png_with_chunks({"chara": _b64(_v3_card())})
-        fields, avatar = parse_card_file(png, "card.png")
+        fields, avatar, _members = parse_card_file(png, "card.png")
         assert fields["name"] == "Lossless Lena"
         assert avatar == png
 
@@ -346,7 +346,12 @@ class TestFieldMapping:
         assert mapped["scenario"] == "A floating archive"
         assert mapped["first_mes"] == "You found the door I sealed."
         assert mapped["mes_example"].startswith("<START>")
-        assert mapped["visual_tags"] == ["librarian", "fantasy"]
+        # The card's `data.tags` is CHARACTER metadata ("librarian",
+        # "fantasy"). It is NOT this app's image-generation tag list, so it does
+        # not reach the `visual_tags` column — it is preserved verbatim and
+        # written back on export.
+        assert mapped["visual_tags"] == ["librarian", "glasses"]
+        assert mapped["card_metadata"]["data"]["tags"] == ["librarian", "fantasy"]
         assert mapped["alternate_greetings"] == ["Second greeting", "Third greeting"]
 
     def test_post_history_instructions_maps_to_append_system_prompt(self, mapped):
@@ -387,9 +392,16 @@ class TestFieldMapping:
         assert mapped["name"] == "42"
         assert mapped["character_version"] == "3"
 
-    def test_tags_of_wrong_type_are_ignored(self):
+    def test_tags_of_wrong_type_do_not_reach_the_image_tag_column(self):
+        """A malformed `tags` never becomes an image-generation tag.
+
+        It is preserved verbatim in the residual blob, so it still round-trips
+        — but the column this app uses for image prompts is untouched.
+        """
         card = {"spec": "chara_card_v2", "data": {"name": "T", "tags": "not-a-list"}}
-        assert parse_json_card(json.dumps(card))["visual_tags"] == ["not-a-list"]
+        mapped = parse_json_card(json.dumps(card))
+        assert mapped["visual_tags"] == []
+        assert mapped["card_metadata"]["data"]["tags"] == "not-a-list"
 
 
 class TestPreservation:
@@ -413,11 +425,12 @@ class TestPreservation:
         extensions = mapped["card_metadata"]["data"]["extensions"]
         assert extensions["regex_scripts"] == [{"scriptName": "strip", "find_regex": "/x/"}]
         assert extensions["depth_prompt"] == {"prompt": "deeper", "depth": 4}
-        # Column-backed extension keys are not duplicated into the residual blob,
-        # except a visual_tags list that disagrees with data.tags.
+        # Column-backed extension keys are not duplicated into the residual
+        # blob. The column IS the extension's home, and the live value must
+        # win on export — so there is no divergent copy to keep.
         assert "lora_triggers" not in extensions
         assert "voice_profile" not in extensions
-        assert extensions["visual_tags"] == ["librarian", "glasses"]
+        assert "visual_tags" not in extensions
 
     def test_character_book_preserved_verbatim_with_unknown_entry_keys(self, mapped):
         book = mapped["card_metadata"]["data"]["character_book"]
@@ -432,8 +445,12 @@ class TestPreservation:
 
     def test_mapped_keys_are_not_duplicated_in_residual(self, mapped):
         data = mapped["card_metadata"]["data"]
-        for key in ("name", "description", "tags", "creator", "character_version", "alternate_greetings"):
+        for key in ("name", "description", "creator", "character_version", "alternate_greetings"):
             assert key not in data
+        # `tags` IS in the residual on purpose: the card's own tag list is
+        # character metadata and is not this app's `visual_tags` column, so
+        # it has to be kept somewhere to round-trip.
+        assert data["tags"] == ["librarian", "fantasy"]
 
 
 # ---------------------------------------------------------------------------
@@ -499,23 +516,31 @@ class TestRoundTrip:
         mapped["voice_profile"] = "edited-voice"
         payload = build_card_payload(_stub_character(**mapped))
         assert payload["data"]["name"] == "Renamed"
-        assert payload["data"]["tags"] == ["edited"]
+        # The live image-tag column is exported as the EXTENSION it came from.
+        assert payload["data"]["extensions"]["visual_tags"] == ["edited"]
+        # The card's own metadata tags are a different thing and are
+        # untouched by an edit to the image-tag column.
+        assert payload["data"]["tags"] == ["librarian", "fantasy"]
         assert payload["data"]["extensions"]["lora_triggers"] == ["edited-lora"]
         assert payload["data"]["extensions"]["voice_profile"] == "edited-voice"
 
-    def test_divergent_extension_visual_tags_are_preserved_not_rewritten(self):
-        """`data.tags` wins the column, the card's own extension list survives.
+    def test_the_two_tag_lists_stay_independent(self):
+        """`data.tags` and `extensions.visual_tags` are different things.
 
-        The extension list is the only record of the card's original value, and
-        it usually equals `data.tags`, in which case nothing is duplicated and
-        the live column is written straight back out.
+        `data.tags` is the card's CHARACTER metadata; `extensions.visual_tags`
+        is this app's IMAGE-GENERATION tag list. They used to share one
+        column, which put "elf" into the character's own image prompts.
+
+        So the card's tags are preserved verbatim and written back as
+        `data.tags`, and the column is written back as the extension it came
+        from. Neither overwrites the other.
         """
         divergent = _v3_card()
         mapped = parse_card_file(
             _png_with_chunks({"chara": _b64(divergent)}), "card.png"
         )[0]
-        assert mapped["visual_tags"] == divergent["data"]["tags"]
-        assert mapped["card_metadata"]["data"]["extensions"]["visual_tags"] == divergent["data"]["extensions"]["visual_tags"]
+        assert mapped["visual_tags"] == divergent["data"]["extensions"]["visual_tags"]
+        assert mapped["card_metadata"]["data"]["tags"] == divergent["data"]["tags"]
 
         payload = build_card_payload(_stub_character(**mapped))
         assert payload["data"]["tags"] == divergent["data"]["tags"]
@@ -626,10 +651,17 @@ class TestEmbeddedCharacterBook:
         assert entry["keys"] == ["archive", "library"]
         assert entry["content"] == "The archive floats above the clouds."
         assert entry["category"] == "Setting"
-        assert entry["depth"] == 2
         assert entry["probability"] == 75
         assert entry["case_sensitive"] is False
         assert entry["selective_logic"] == "1"
+        # The flags that decide WHETHER the entry fires.
+        assert entry["enabled"] is True
+        assert entry["secondary_keys"] == []
+        # `insertion_order` is NOT this vault's `depth`. ST's is where in the
+        # prompt the entry lands; `depth` is a scan depth that activation never
+        # reads. Mapping one onto the other made the value meaningless while
+        # looking meaningful, so it stays in the card's residual blob instead.
+        assert "depth" not in entry
 
     def test_empty_book_returns_none(self):
         assert lorebook_from_character_book({"name": "Empty", "entries": []}) is None

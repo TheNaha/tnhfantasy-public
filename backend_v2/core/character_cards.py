@@ -23,10 +23,14 @@ import base64
 import binascii
 import io
 import json
+import logging
+import os
 import struct
 import zipfile
 import zlib
 from typing import Any
+
+logger = logging.getLogger("character_cards")
 
 try:
     import cbor2
@@ -80,7 +84,10 @@ _MAPPED_DATA_KEYS = frozenset(
         "group_greetings",
         "creator",
         "character_version",
-        "tags",
+        # NOT "tags": SillyTavern's `data.tags` is character metadata, and
+        # this app's `visual_tags` is the image-generation tag list. They are
+        # different things, so the card's own tags are preserved verbatim in
+        # the residual blob instead of being mapped onto the column.
         "extensions",
     }
 )
@@ -117,7 +124,8 @@ _REBUILT_DATA_KEYS = frozenset(
         "alternate_greetings",
         "group_greeting",
         "group_greetings",
-        "tags",
+        # NOT "tags": the residual copy of the card's own tags must win, or
+        # exporting would replace "fantasy, elf" with this app's image tags.
         "creator",
         "character_version",
         "extensions",
@@ -321,17 +329,14 @@ def _group_greetings(data: dict) -> list[str]:
     return out
 
 
-def _residual_card_metadata(
-    root: dict,
-    data: dict,
-    data_wrapper: bool,
-    keep_extension_keys: frozenset[str] = frozenset(),
-) -> dict:
+def _residual_card_metadata(root: dict, data: dict, data_wrapper: bool) -> dict:
     """Everything in the card that has no column, grouped for stable export.
 
-    `keep_extension_keys` names `data.extensions` keys to preserve even though a
-    column mirrors them, because the card's own value differs from the one the
-    column ends up holding (two tag lists, for example).
+    A `data.extensions` key that a column mirrors is NOT preserved here: the
+    column is that extension's home, and the live value must win on export.
+    The one thing that used to need a divergent copy was `visual_tags`, and
+    that was only because `data.tags` and `extensions.visual_tags` used to
+    share a column. They do not any more.
     """
     metadata: dict[str, Any] = {}
 
@@ -345,7 +350,7 @@ def _residual_card_metadata(
             extra_ext = {
                 k: v
                 for k, v in value.items()
-                if k not in _MAPPED_EXTENSION_KEYS or k in keep_extension_keys
+                if k not in _MAPPED_EXTENSION_KEYS
             }
             if extra_ext:
                 residual_data[key] = extra_ext
@@ -395,14 +400,21 @@ def parse_card_payload(payload: dict, *, spec_hint: str | None = None) -> dict:
         card_spec, card_spec_version = spec_hint, spec_hint.rsplit("_v", 1)[-1] + ".0"
     else:
         card_spec, card_spec_version = normalize_spec(root.get("spec"), root.get("spec_version"))
-    tags = _as_str_list(data.get("tags"))
     extensions = data.get("extensions") if isinstance(data.get("extensions"), dict) else {}
-    # `data.tags` and the TNHComfy `extensions.visual_tags` mirror one column, so
-    # the spec field wins and a divergent extension value is kept in the
-    # residual blob instead of being dropped.
+    # ST's `data.tags` and this app's `extensions.visual_tags` are DIFFERENT
+    # things that used to share one column.
+    #
+    # `data.tags` is character metadata ("fantasy", "elf"). `visual_tags` is
+    # the image-generation tag list. Mapping one onto the other put "elf"
+    # into the character's own image prompts, and the character then
+    # polluted its own generations.
+    #
+    # So the card's tags stay in the residual blob (`tags` is not in
+    # `_MAPPED_DATA_KEYS`, so it is preserved verbatim and written back on
+    # export), and only the TNHComyu `extensions.visual_tags` reaches the
+    # column.
     ext_visual_tags = _as_str_list(extensions.get("visual_tags"))
-    visual_tags = tags or ext_visual_tags
-    keep_extension_keys = frozenset({"visual_tags"}) if ext_visual_tags and ext_visual_tags != tags else frozenset()
+    visual_tags = ext_visual_tags
 
     creator_notes = _as_text(data.get("creator_notes"))
     alternate_greetings = _as_str_list(data.get("alternate_greetings"))
@@ -421,7 +433,10 @@ def parse_card_payload(payload: dict, *, spec_hint: str | None = None) -> dict:
         "creator_notes": creator_notes,
         "system_prompt": _as_text(data.get("system_prompt")),
         "append_system_prompt": _as_text(data.get("post_history_instructions")),
-        "suggested_persona": _as_text(data.get("suggested_persona")),
+        "suggested_persona": (
+            _as_text(data.get("suggested_persona"))
+            or _as_text(extensions.get("suggested_persona"))
+        ),
         "visual_tags": visual_tags,
         "alternate_greetings": alternate_greetings,
         "group_greetings": _group_greetings(data),
@@ -437,7 +452,7 @@ def parse_card_payload(payload: dict, *, spec_hint: str | None = None) -> dict:
         "lora": _as_text(data.get("lora")) or _as_text(extensions.get("lora")) or None,
         "default_time": _as_text(data.get("default_time")) or _as_text(extensions.get("default_time")) or None,
         "default_location": _as_text(data.get("default_location")) or _as_text(extensions.get("default_location")) or None,
-        "card_metadata": _residual_card_metadata(root, data, data_wrapper, keep_extension_keys),
+        "card_metadata": _residual_card_metadata(root, data, data_wrapper),
     }
 
     character_book = data.get("character_book")
@@ -485,8 +500,15 @@ def parse_json_card(raw: bytes | str) -> dict:
     return parse_card_payload(payload)
 
 
-def parse_charx_card(data: bytes) -> tuple[dict, bytes | None]:
-    """Parse a CHARX/ZIP card, preserving its JSON card payload and manifest."""
+def parse_charx_card(data: bytes) -> tuple[dict, bytes | None, dict[str, bytes]]:
+    """Parse a CHARX/ZIP card, preserving its JSON card payload and manifest.
+
+    Returns `(mapped fields, avatar bytes or None, archive members)`. The
+    archive members are returned so the caller can materialise the assets the
+    card REFERENCES BY PATH — a CHARX's `data.assets` entries point at archive
+    members rather than carrying base64, and an expression image referenced
+    that way is otherwise just a filename.
+    """
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             card_name = next(
@@ -508,35 +530,226 @@ def parse_charx_card(data: bytes) -> tuple[dict, bytes | None]:
                 None,
             )
             avatar = archive.read(avatar_name) if avatar_name else None
-            return mapped, avatar
+            members = {name: archive.read(name) for name in assets}
+            return mapped, avatar, members
     except zipfile.BadZipFile as exc:
         raise CardParseError("CHARX archive is not a valid ZIP file") from exc
 
 
-def parse_card_file(data: bytes, filename: str | None = None) -> tuple[dict, bytes | None]:
-    """Parse an uploaded card. Returns `(mapped fields, avatar bytes or None)`.
+def parse_card_file(
+    data: bytes, filename: str | None = None
+) -> tuple[dict, bytes | None, dict[str, bytes]]:
+    """Parse an uploaded card.
 
-    PNG uploads double as the avatar image; JSON cards have no image.
+    Returns `(mapped fields, avatar bytes or None, archive members)`. PNG
+    uploads double as the avatar image; JSON cards have no image; a CHARX
+    archive carries its own members.
     """
     if data[:8] == PNG_SIGNATURE:
-        return parse_png_card(data), data
+        return parse_png_card(data), data, {}
 
     name = (filename or "").lower()
     if data[:2] == b"PK" or name.endswith(".charx"):
         return parse_charx_card(data)
     if name.endswith(".json") or not name:
         try:
-            return parse_json_card(data), None
+            return parse_json_card(data), None, {}
         except CardParseError:
             if not name:
                 raise
     raise CardParseError("Could not parse character card data from PNG, JSON, or CHARX")
 
 
+# SillyTavern `character_book` entry fields this vault has no equivalent for.
+#
+# They are preserved verbatim in the card's residual blob, so they round-trip
+# back out on export — but nothing here acts on them, so the import report has
+# to say so. The report used to claim "fully compatible" while every one of
+# these was silently inert.
+_INERT_LOREBOOK_ENTRY_FIELDS: dict[str, str] = {
+    "position": "no equivalent: this vault has no per-entry prompt position",
+    "insertion_order": "no equivalent: this vault's `depth` is a scan depth, not a prompt position",
+    "priority": "no equivalent: this vault has no per-entry priority",
+    "use_regex": "no equivalent: this vault matches keys literally",
+    "group": "no equivalent: this vault has no entry groups",
+    "id": "no equivalent: this vault assigns its own entry ids",
+}
+
+# `data.extensions` keys this app DOES act on, so they are not "inert".
+# They are column-backed (see `_MAPPED_EXTENSION_KEYS`).
+_EXECUTED_EXTENSION_KEYS = frozenset(
+    {
+        "lora_triggers",
+        "visual_tags",
+        "voice_profile",
+        "voice_model_id",
+        "checkpoint",
+        "lora",
+        "default_time",
+        "default_location",
+        "suggested_persona",
+    }
+)
+
+
+def take_expression_assets(char_data: dict) -> list[dict[str, str]]:
+    """Remove the expression images a card carries and return them.
+
+    SillyTavern V3 puts expression images in `data.assets` as entries of
+    `type: "expression"`, keyed by the emotion name, with the image as
+    base64 in `data`.
+
+    The codec preserved them as inert JSON in the residual blob and never
+    turned them into images, so `Character.expressions` was always empty
+    after an import and an exported card never carried the expressions back
+    out.
+
+    They are REMOVED from the residual as they are taken, because the caller
+    materialises them as real expression files — and keeping the base64 as
+    well would carry every expression image twice.
+    """
+    metadata = char_data.get("card_metadata") or {}
+    residual = metadata.get("data") or {}
+    assets = residual.get("assets")
+    if not isinstance(assets, list):
+        return []
+
+    taken: list[dict[str, str]] = []
+    kept: list[Any] = []
+    for asset in assets:
+        if isinstance(asset, dict) and str(asset.get("type") or "").lower() == "expression":
+            name = str(asset.get("name") or "").strip()
+            data = asset.get("data")
+            if name and isinstance(data, str) and data.strip():
+                taken.append({"emotion": name, "data": data})
+            continue
+        kept.append(asset)
+
+    if taken:
+        residual["assets"] = kept
+    return taken
+
+
+def expression_assets_to_card(expressions: dict[str, str] | None) -> list[dict[str, str]]:
+    """The `data.assets` entries for a character's expression images.
+
+    The inverse of `take_expression_assets`. `expressions` maps an emotion
+    name to the path of its image; the image is read and base64'd by
+    `_expression_asset_bytes`, which knows the file system.
+    """
+    return [
+        {"type": "expression", "name": emotion}
+        for emotion in sorted(expressions or {})
+        if (expressions or {}).get(emotion)
+    ]
+
+
+def _expression_asset_bytes(path: str) -> tuple[str, str] | None:
+    """`(extension, base64)` for an expression image, or None.
+
+    The extension is sniffed from the file, and falls back to `png` — the
+    format SillyTavern expects and the one the avatar directory uses.
+    """
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+    if not data:
+        return None
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    if ext not in ("png", "webp", "jpg", "jpeg"):
+        ext = "png"
+    return ext, base64.b64encode(data).decode("ascii")
+
+
+def preserved_but_inert(char_data: dict) -> list[dict[str, str]]:
+    """Features the card carried that this app preserves but does NOT act on.
+
+    The import report used to say "fully compatible" while every one of these
+    was silently inert. This is the list it should have been showing.
+
+    Each entry is `{"name", "field", "detail"}`, where `detail` says WHY it is
+    inert — a preserved extension is not automatically an inert one, and
+    "preserved but not executed" is a different thing from "lost".
+    """
+    out: list[dict[str, str]] = []
+    metadata = char_data.get("card_metadata") or {}
+    residual = metadata.get("data") or {}
+
+    extensions = residual.get("extensions") or {}
+    if isinstance(extensions, dict):
+        for key in sorted(extensions):
+            if key in _EXECUTED_EXTENSION_KEYS:
+                continue
+            out.append(
+                {
+                    "name": f"data.extensions.{key}",
+                    "field": key,
+                    "detail": "preserved and re-exported, but not executed by this app",
+                }
+            )
+
+    book = residual.get("character_book") or {}
+    if isinstance(book, dict):
+        inert_keys: dict[str, str] = {}
+        for entry in book.get("entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            for key, reason in _INERT_LOREBOOK_ENTRY_FIELDS.items():
+                if key in entry:
+                    inert_keys.setdefault(key, reason)
+        for key, reason in sorted(inert_keys.items()):
+            out.append(
+                {
+                    "name": f"data.character_book.entries[].{key}",
+                    "field": key,
+                    "detail": reason,
+                }
+            )
+
+    return out
+
+
+def strip_png_text_chunks(data: bytes) -> bytes:
+    """Return the PNG with its textual chunks removed.
+
+    A card PNG carries the whole character in a `chara`/`ccv3` text chunk, so
+    the file that is ALSO the character's avatar is a few hundred KB, most of
+    it the card payload — which is then served to every browser that loads
+    the avatar, and would be re-read on every avatar request.
+
+    The export path writes a fresh `PngInfo`, so the re-exported card is
+    unaffected: it gets its chunks back from the payload.
+
+    Returns the input unchanged if it is not a PNG or cannot be rewritten.
+    """
+    if not data.startswith(PNG_SIGNATURE):
+        return data
+    try:
+        from PIL import Image
+
+        image = Image.open(io.BytesIO(data))
+        image.load()
+        output = io.BytesIO()
+        # No `pnginfo=`, so PIL writes no textual chunks at all.
+        image.save(output, format="PNG")
+        return output.getvalue()
+    except Exception as exc:  # pragma: no cover - PIL failure keeps the original
+        logger.debug("card_avatar_chunk_strip_failed", error=str(exc))
+        return data
+
+
 # ---------------------------------------------------------------------------
 # Character -> card
 # ---------------------------------------------------------------------------
-def build_card_payload(character, *, version: str = CARD_SPEC_V2, spec: str | None = None) -> dict:
+def build_card_payload(
+    character,
+    *,
+    version: str = CARD_SPEC_V2,
+    spec: str | None = None,
+    expression_assets_mode: str = "embed",
+) -> dict:
     """Build a card payload for export, merging residual metadata back in.
 
     Live column values always win over a stale copy in `card_metadata`, so edits
@@ -555,7 +768,7 @@ def build_card_payload(character, *, version: str = CARD_SPEC_V2, spec: str | No
     # A card that carried its own `extensions.visual_tags` keeps them: that value
     # is the only record of the card's original tag list, which may differ from
     # the live column (which mirrors `data.tags`).
-    extensions.setdefault("visual_tags", list(character.visual_tags or []))
+    extensions["visual_tags"] = list(character.visual_tags or [])
     extensions["voice_profile"] = character.voice_profile or ""
     if character.voice_model_id:
         extensions["voice_model_id"] = character.voice_model_id
@@ -583,8 +796,7 @@ def build_card_payload(character, *, version: str = CARD_SPEC_V2, spec: str | No
         "system_prompt": character.system_prompt or "",
         "post_history_instructions": character.append_system_prompt or "",
         "alternate_greetings": list(character.alternate_greetings or []),
-        "tags": list(character.visual_tags or []),
-        "creator": character.creator or "",
+        "tags": list(character.visual_tags or []),        "creator": character.creator or "",
         "character_version": character.character_version or "",
         "extensions": extensions,
     }
@@ -597,7 +809,57 @@ def build_card_payload(character, *, version: str = CARD_SPEC_V2, spec: str | No
     for key, value in residual_data.items():
         if key in _REBUILT_DATA_KEYS:
             continue
+        if key == "tags":
+            # The card's own tag list, normalised. It wins over this app's
+            # `visual_tags`, which are a DIFFERENT thing (the image-generation
+            # tag list) and must not be written over the card's metadata tags.
+            data["tags"] = _as_str_list(value)
+            continue
         data[key] = value
+    if "tags" not in residual_data:
+        # No card provenance for the tags: a character created here exports its
+        # image-generation tags as the card's, which is the useful default.
+        data["tags"] = list(character.visual_tags or [])
+
+    # Expression images, as SillyTavern V3 `data.assets` entries.
+    #
+    # The LIVE expression files win for the emotions they cover; the card's
+    # own other assets (a background, a character book image) are kept. A
+    # character whose expressions were never imported simply has none, and
+    # the card carries none — which is honest, and the export report says so.
+    expression_assets: list[dict[str, Any]] = []
+    for emotion, path in sorted((getattr(character, "expressions", None) or {}).items()):
+        loaded = _expression_asset_bytes(path)
+        if not loaded:
+            continue
+        ext, encoded = loaded
+        if expression_assets_mode == "path":
+            # A CHARX carries the image as an archive member and the entry
+            # references it by path.
+            expression_assets.append(
+                {
+                    "type": "expression",
+                    "name": emotion,
+                    "ext": ext,
+                    "data": f"assets/expressions/{emotion}.{ext}",
+                }
+            )
+        else:
+            expression_assets.append(
+                {"type": "expression", "name": emotion, "ext": ext, "data": encoded}
+            )
+    if expression_assets:
+        covered = {asset["name"] for asset in expression_assets}
+        merged = [
+            asset
+            for asset in (data.get("assets") or [])
+            if not (
+                isinstance(asset, dict)
+                and str(asset.get("type") or "").lower() == "expression"
+                and str(asset.get("name") or "") in covered
+            )
+        ]
+        data["assets"] = merged + expression_assets
 
     spec_string = character.card_spec or CARD_SPEC_V2
     spec_version_string = character.card_spec_version or (spec_string.rsplit("_v", 1)[-1] + ".0")
@@ -668,13 +930,35 @@ def encode_png_card(
 
 
 def encode_charx_card(character, avatar_bytes: bytes | None = None) -> bytes:
-    """Encode a V3 card and available avatar assets as a CHARX/ZIP archive."""
+    """Encode a V3 card and available avatar assets as a CHARX/ZIP archive.
+
+    The expression images go in as archive MEMBERS and the card's
+    `data.assets` entries reference them BY PATH — which is what CHARX is
+    for, and what a SillyTavern client that reads a CHARX expects. The
+    reference is the archive-relative path, so the same archive is the
+    transport.
+    """
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        payload = build_card_payload(character, version=CARD_SPEC_V3)
+        payload = build_card_payload(character, version=CARD_SPEC_V3, expression_assets_mode="path")
         archive.writestr("card.json", json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
         if avatar_bytes:
             archive.writestr("assets/main.png", avatar_bytes)
+        for asset in payload.get("data", {}).get("assets") or []:
+            if not isinstance(asset, dict):
+                continue
+            if str(asset.get("type") or "").lower() != "expression":
+                continue
+            source = getattr(character, "expressions", None) or {}
+            path = source.get(str(asset.get("name") or ""))
+            loaded = _expression_asset_bytes(path) if path else None
+            if not loaded:
+                continue
+            ext, encoded = loaded
+            archive.writestr(
+                f"assets/expressions/{asset.get('name')}.{ext}",
+                base64.b64decode(encoded),
+            )
     return output.getvalue()
 
 
@@ -704,16 +988,32 @@ def lorebook_from_character_book(character_book: Any) -> tuple[dict, list[dict]]
         content = _as_text(raw.get("content"))
         if not content:
             continue
+        # `constant: true` means "always on" in SillyTavern, and this vault's
+        # always-on test is a KEYLESS entry (`rag_pipeline` and
+        # `context_builder` both select on `not e.keys`). A ST entry that is
+        # constant AND has keys therefore became KEY-GATED and stopped firing
+        # unless the user happened to type one of them. Making it keyless
+        # restores the ST meaning.
+        #
+        # `insertion_order` is NOT written to `depth`. The two are different
+        # concepts — ST's is where in the prompt the entry lands, this vault's
+        # `depth` is a scan depth that activation never reads — so mapping
+        # one onto the other made the value meaningless while looking
+        # meaningful. It stays in the card's residual blob and round-trips.
+        keys = [] if raw.get("constant") else _as_str_list(raw.get("keys") or raw.get("key"))
         entry_kwargs.append(
             {
-                "keys": _as_str_list(raw.get("keys") or raw.get("key")),
+                "keys": keys,
                 "content": content,
                 "category": _as_text(raw.get("comment")) or None,
                 "tags": _as_str_list(raw.get("tags")),
-                "depth": _as_int(raw.get("insertion_order"), default=4),
                 "case_sensitive": bool(raw.get("case_sensitive", False)),
                 "selective_logic": _as_text(raw.get("selective_logic")) or None,
                 "probability": _as_int(raw.get("probability"), default=None),
+                # A disabled ST entry must not activate here.
+                "enabled": bool(raw.get("enabled", True)),
+                # ST's secondary keys, for `selective` matching.
+                "secondary_keys": _as_str_list(raw.get("secondary_keys")),
             }
         )
 

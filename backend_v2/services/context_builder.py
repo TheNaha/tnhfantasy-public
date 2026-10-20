@@ -558,6 +558,8 @@ def _load_constant_lorebook_entries(
     """
     entries: list[LorebookEntry] = []
     try:
+        from services.rag_pipeline import entry_is_enabled
+
         for lb_id in lorebook_ids:
             rows = session.exec(
                 select(LorebookEntry)
@@ -565,7 +567,7 @@ def _load_constant_lorebook_entries(
                 .order_by(LorebookEntry.created_at)
                 .limit(limit * 2)
             ).all()
-            entries.extend(e for e in rows if not e.keys)
+            entries.extend(e for e in rows if not e.keys and entry_is_enabled(e))
             if len(entries) >= limit:
                 break
     except Exception as exc:  # pragma: no cover - defensive, never breaks a chat
@@ -789,7 +791,11 @@ def build_system_prompt_sections(
         # Computed once here and handed to both. `search_lorebook_entries` now
         # takes the same precomputed-vector parameter `search_memories` already
         # had, so the two retrieval paths are symmetric.
-        from services.rag_pipeline import _is_postgres, _try_embedding, rag_enabled
+        from services.rag_pipeline import (
+            _is_postgres,
+            _try_embedding,
+            rag_enabled,
+        )
 
         _q_vec = (
             _try_embedding(_query_text)

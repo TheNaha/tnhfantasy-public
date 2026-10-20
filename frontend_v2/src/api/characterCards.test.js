@@ -131,11 +131,27 @@ describe('normalizeCardCompatibility', () => {
             warnings: [],
             lost: [],
             preserved: [],
+            inert: [],
             lorebookConverted: null,
             unknownExtensionsPreserved: null,
             hasReport: false,
             lossless: true,
         });
+    });
+
+    it('is not lossless when features are preserved but not executed', () => {
+        // The bucket that was missing. A card whose SillyTavern extensions
+        // survive the trip but change nothing here is not "fully compatible" -
+        // the data is safe, the BEHAVIOUR is not the same.
+        const report = normalizeCardCompatibility({
+            format: 'png',
+            preserved_but_inert: [
+                { name: 'data.extensions.regex_scripts', detail: 'preserved, not executed' },
+            ],
+        });
+        expect(report.inert).toHaveLength(1);
+        expect(report.inert[0].label).toContain('regex_scripts');
+        expect(report.lossless).toBe(false);
     });
 });
 

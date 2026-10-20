@@ -55,7 +55,16 @@ export default function CharacterCardImportReport({
     const lost = compatibility?.lost || [];
     const preserved = compatibility?.preserved || [];
     const warnings = compatibility?.warnings || [];
+    const inert = compatibility?.inert || [];
+    // "Lossy" covers two different things and they are NOT the same:
+    //   - LOST: the card carried it and this app DROPPED it. The data is gone.
+    //   - INERT: the card carried it, it is preserved and will be written
+    //     back on export, but nothing here ACTS on it — so the character
+    //     behaves differently than it would in SillyTavern.
+    // The old report had no `inert` bucket, so a card whose behaviour
+    // differed still reported "Fully compatible".
     const lossy = lost.length > 0 || warnings.length > 0;
+    const behavesDifferently = inert.length > 0;
 
     return (
         <ModalOverlay
@@ -99,19 +108,25 @@ export default function CharacterCardImportReport({
                             className={`flex items-start gap-2 rounded-xl border p-3 text-xs ${
                                 lossy
                                     ? 'border-amber-500/30 bg-amber-500/5 text-amber-200'
+                                    : behavesDifferently
+                                    ? 'border-sky-500/30 bg-sky-500/5 text-sky-200'
                                     : 'border-emerald-500/30 bg-emerald-500/5 text-emerald-200'
                             }`}
                             data-testid="card-import-status"
                         >
                             {lossy ? (
                                 <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+                            ) : behavesDifferently ? (
+                                <Info size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
                             ) : (
                                 <CheckCircle2 size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
                             )}
                             <span>
                                 {lossy
                                     ? 'Imported with warnings. Some card data could not be carried over.'
-                                    : 'Fully compatible. All reported card data was imported.'}
+                                    : behavesDifferently
+                                    ? 'Imported. Some card features are preserved but are not executed here, so this character may behave differently than it does in SillyTavern.'
+                                    : 'Fully compatible. All reported card data was imported and is in use.'}
                             </span>
                         </div>
                     ) : (
@@ -140,6 +155,13 @@ export default function CharacterCardImportReport({
                         entries={lost}
                         tone="amber"
                         testId="card-import-lost"
+                    />
+                    <DetailList
+                        title="Preserved, but not used here"
+                        icon={Info}
+                        entries={inert}
+                        tone="amber"
+                        testId="card-import-inert"
                     />
                     <DetailList
                         title="Preserved card metadata"

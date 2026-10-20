@@ -329,12 +329,14 @@ def search_lorebook_entries(
             _append_keyless(session, lb_id, seen, results, limit, len(results))
             continue
 
-        query_lower = query.lower()
         matched: list[LorebookEntry] = []
         for e in entries[:scan_cap]:
             # Keyless entries are "always on" — `context_builder` injects them
-            # unconditionally — so they match whatever the query is.
-            if not e.keys or any(k.lower() in query_lower for k in e.keys):
+            # unconditionally — so they match whatever the query is. A DISABLED
+            # entry never matches, and a `selective` entry needs a secondary
+            # key as well. `entry_matches_keys` is the single definition of
+            # those rules.
+            if entry_matches_keys(e, query):
                 if e.id not in seen and len(results) + len(matched) < limit:
                     seen.add(e.id)
                     matched.append(e)
@@ -360,6 +362,51 @@ def search_lorebook_entries(
         _append_keyless(session, lb_id, seen, results, limit, len(results))
 
     return results[:limit]
+
+
+def entry_is_enabled(entry: LorebookEntry) -> bool:
+    """Whether this entry is allowed to activate at all.
+
+    A SillyTavern `character_book` entry can carry `enabled: false`, and the
+    flag was DROPPED on import — there was no column to hold it — so a
+    disabled entry activated anyway.
+    """
+    return bool(getattr(entry, "enabled", True))
+
+
+def entry_matches_keys(entry: LorebookEntry, query: str) -> bool:
+    """Does this entry's key set match the query?
+
+    * A DISABLED entry never matches.
+    * A KEYLESS entry is "always on". This is the vault's convention, and it
+      is how a SillyTavern `constant: true` entry is represented: ST's
+      `constant` flag was dropped on import, so the entry was made keyless
+      instead — and this vault's always-on test is "no keys".
+    * A keyed entry matches when one of its keys appears in the query. With
+      `secondary_keys` set, a SECONDARY key must match too, which is
+      SillyTavern's `selective` matching — its `secondary_keys` were dropped
+      on import along with the flag.
+    """
+    if not entry_is_enabled(entry):
+        return False
+
+    keys = [k for k in (entry.keys or []) if k]
+    if not keys:
+        return True
+
+    case_sensitive = bool(getattr(entry, "case_sensitive", False))
+    haystack = query if case_sensitive else query.lower()
+
+    def _hits(words: list[str]) -> bool:
+        return any((w if case_sensitive else w.lower()) in haystack for w in words)
+
+    if not _hits(keys):
+        return False
+
+    secondary = [k for k in (getattr(entry, "secondary_keys", None) or []) if k]
+    if secondary and not _hits(secondary):
+        return False
+    return True
 
 
 def _append_keyless(
@@ -409,7 +456,10 @@ def _append_keyless(
         logger.debug("keyless_entry_query_skipped", lorebook_id=lorebook_id, error=str(exc))
         return
     for entry in keyless:
-        if not entry.keys and entry.id not in seen:
+        # A DISABLED entry never activates, even when it is keyless. The
+        # `enabled` flag was dropped on import, so a SillyTavern entry with
+        # `enabled: false` was always-on here.
+        if not entry.keys and entry_is_enabled(entry) and entry.id not in seen:
             seen.add(entry.id)
             results.append(entry)
 

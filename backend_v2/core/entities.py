@@ -1567,6 +1567,18 @@ class LorebookEntry(SQLModel, table=True):
     case_sensitive: bool = Field(default=False)
     selective_logic: str | None = Field(default=None)
     probability: int | None = Field(default=None)
+    # Whether this entry activates at all.
+    #
+    # A SillyTavern `character_book` entry can carry `enabled: false`, and the
+    # flag was DROPPED on import — so a card with a disabled entry had it
+    # activated anyway. There was no column to hold it.
+    enabled: bool = Field(default=True)
+    # Secondary trigger words, for SillyTavern's `selective` matching: the
+    # entry fires when a primary key AND a secondary key both match.
+    #
+    # ST's `secondary_keys` were dropped on import too, and with them
+    # `selective` could not be honoured even if it had been stored.
+    secondary_keys: list[str] = Field(default=[], sa_column=Column(JSONColumn))
 
     # 384 dimensions for all-MiniLM-L6-v2 (CPU optimized)
     # Excluded from serialisation for the same reason as `CharacterMemory.embedding`:
