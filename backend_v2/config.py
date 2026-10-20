@@ -476,7 +476,23 @@ def load_config(config_path: str = None) -> dict[str, Any]:
                 return _config
         except Exception as e:
             _cfg_logger.warning("config_load_failed", path=_config_path, error=str(e))
-    
+            # A config file that cannot be parsed is the OPERATOR'S settings,
+            # and overwriting it with the defaults destroys them. It used to
+            # be exactly that: the parse failed, the file was replaced with
+            # DEFAULT_CONFIG, and whatever the operator had set was gone with
+            # no record of it.
+            #
+            # It is easy to hit by accident. The file is written atomically
+            # now, but a reader that catches it between a truncate and a
+            # write - a test restoring the file, a sync tool, an editor that
+            # does not write atomically - sees an empty file, and the next
+            # load replaced it.
+            #
+            # So: move the unreadable file aside, with a timestamp, and only
+            # then write the defaults. The operator gets a working app AND
+            # their file, under a name that says what happened to it.
+            _quarantine_unreadable_config(_config_path)
+
     # Create default config file
     _config = DEFAULT_CONFIG.copy()
     try:
@@ -486,8 +502,37 @@ def load_config(config_path: str = None) -> dict[str, Any]:
         _cfg_logger.info("config_created_default", path=_config_path)
     except Exception as e:
         _cfg_logger.warning("config_create_failed", error=str(e))
-    
+
     return _config
+
+
+def _quarantine_unreadable_config(path: str) -> str | None:
+    """Move a config file that could not be parsed aside, and say where.
+
+    Returns the new path, or None if the move did not happen.
+    """
+    import datetime
+
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    quarantine = f"{path}.unreadable-{stamp}"
+    try:
+        os.replace(path, quarantine)
+    except OSError as exc:
+        _cfg_logger.warning(
+            "config_quarantine_failed", path=path, error=str(exc)
+        )
+        return None
+    _cfg_logger.warning(
+        "config_quarantined",
+        path=path,
+        moved_to=quarantine,
+        detail=(
+            "The config file could not be parsed. It has been moved aside and "
+            "the defaults written in its place. Nothing was lost: the "
+            "original is at the path above."
+        ),
+    )
+    return quarantine
 
 
 def get_config() -> dict[str, Any]:
