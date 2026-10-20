@@ -555,17 +555,22 @@ def _resolve_updater_agent_prompt(
     extraction actually ran. Every other agent type is variant-driven, and the
     Updater is the one that was not.
 
-    Resolution mirrors the continuation agent (`job_processing.py`): the agent
-    slug, then its active variant, then the profile's own template, and the
-    hardcoded prompt as the last resort. `require_enabled=False` because a
-    disabled Statekeeper should fall back to the built-in prompt rather than
-    stop extracting state altogether.
+    Resolution order:
 
-    A variant scoped to one of the FIRED GATES wins over the generic active
-    variant, so the extractor is told in words what shifted. The field
-    restriction was already structural — an unfired gate's field is absent
-    from the schema it is shown, and anything smuggled in is dropped on the
-    way back — and this is the prompt half of the same idea.
+    1. a variant SCOPED to one of the fired gates (and/or to the model that
+       will answer) — the most specific match wins;
+    2. the agent's active variant;
+    3. the profile's own template;
+    4. the hardcoded prompt.
+
+    `require_enabled=False` because a disabled Statekeeper should fall back
+    to the built-in prompt rather than stop extracting state altogether.
+
+    A scoped variant is a deliberate statement that the prompt is FOR that
+    situation, so it is applied automatically — the scope IS its activation.
+    The field restriction was already structural — an unfired gate's field is
+    absent from the schema it is shown, and anything smuggled in is dropped
+    on the way back — and this is the prompt half of the same idea.
 
     The "output valid JSON only" instruction is NOT part of the agent's
     template. It is the one requirement of the Statekeeper that a prompt
@@ -574,30 +579,52 @@ def _resolve_updater_agent_prompt(
     """
     fallback = "You are a precise JSON-only roleplay state extractor. Output valid JSON only."
 
+    gates = [g for g in (triggered_gates or []) if g]
     try:
-        from services.agent_variants import resolve_agent, scoped_variants
+        from services.agent_variants import ResolvedAgent, resolve_agent, scoped_variants
         from services.chat_utils import render_agent_template
+        from core.entities import AgentProfile
 
-        gates = [g for g in (triggered_gates or []) if g]
-        if gates:
-            scoped = scoped_variants(session, "updater", gate_scopes=gates)
-            if scoped:
-                from core.entities import AgentProfile
+        model_scopes: Optional[set[str]] = None
+        try:
+            from services.llm_config import model_scopes_for_kind
 
-                profile = session.get(AgentProfile, scoped[0].agent_id)
+            model_scopes = model_scopes_for_kind("state_updater", None, session)
+        except Exception:
+            model_scopes = None
+
+        resolved = None
+        if gates or model_scopes:
+            # The variants that apply here, most specific first: scoped to
+            # both the model and the gate, then either, then unscoped.
+            applicable = scoped_variants(
+                session,
+                "updater",
+                model_scopes=model_scopes,
+                gate_scopes=gates,
+            )
+            # Only a SCOPED variant is auto-applied. An unscoped one is the
+            # agent's generic default, and picking it here would bypass the
+            # "active variant" rule the rest of the system follows.
+            scoped_only = [
+                v
+                for v in applicable
+                if (getattr(v, "model_scope", None) or "").strip()
+                or (getattr(v, "gate_scope", None) or "").strip()
+            ]
+            if scoped_only:
+                profile = session.get(AgentProfile, scoped_only[0].agent_id)
                 if profile is not None:
-                    from services.agent_variants import ResolvedAgent
-
-                    resolved = ResolvedAgent(profile=profile, variant=scoped[0])
-                else:
-                    resolved = None
-            else:
-                resolved = None
-        else:
-            resolved = None
+                    resolved = ResolvedAgent(profile=profile, variant=scoped_only[0])
 
         if resolved is None:
-            resolved = resolve_agent(session, "updater", require_enabled=False)
+            resolved = resolve_agent(
+                session,
+                "updater",
+                require_enabled=False,
+                model_scopes=model_scopes,
+                gate_scopes=gates or None,
+            )
     except Exception as exc:
         logger.warning("updater_agent_resolution_failed", error=str(exc))
         return fallback, {}
@@ -616,7 +643,22 @@ def _resolve_updater_agent_prompt(
         story_location=getattr(chat, "story_location", "") or "",
         story_time=getattr(chat, "story_time", "") or "",
     )
-    return f"{rendered.strip()}\n\nOutput valid JSON only.", resolved.sampler_overrides()
+
+    # The prompt names what shifted. The schema below already restricts the
+    # fields; saying it in words is the other half.
+    gate_note = ""
+    if gates:
+        from services.decision_schema import GATE_LABELS
+
+        labels = [GATE_LABELS.get(g, g) for g in gates]
+        gate_note = (
+            "\nThe Director detected that these changed in this turn: "
+            + ", ".join(labels)
+            + ". Update only what those changes imply, and leave every other "
+            "field alone."
+        )
+
+    return f"{rendered.strip()}{gate_note}\n\nOutput valid JSON only.", resolved.sampler_overrides()
 
 
 async def enqueue_state_updater_if_needed(

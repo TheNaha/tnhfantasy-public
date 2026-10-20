@@ -19,6 +19,14 @@ from services.character_portability import not_portable_features, portable_summa
 from services.reference_cleanup import scrub_entity_references
 from services.world_ownership import apply_world_id, require_world
 from core.workflow_builder import DEFAULT_CHECKPOINT
+from core.character_bundle import (
+    APP_EXTENSION_KEY,
+    BUNDLE_SUFFIX,
+    build_bundle,
+    card_fields_from_bundle,
+    is_bundle as bundle_is_bundle,
+    parse_bundle,
+)
 from core.character_cards import (
     CARD_SPEC_V1,
     CARD_SPEC_V3,
@@ -32,7 +40,19 @@ from core.character_cards import (
     strip_png_text_chunks,
     take_expression_assets,
 )
-from core.entities import Character, Collection, Lorebook, LorebookEntry, VoiceModel
+from core.entities import (
+    Chat,
+    Character,
+    Collection,
+    Location,
+    Lorebook,
+    LorebookEntry,
+    Message,
+    MessageKind,
+    MessageRole,
+    VoiceModel,
+    World,
+)
 from core.exceptions import NotFoundError, ValidationError
 from core.upload_validation import (
     MAX_AVATAR_SIZE_MB,
@@ -50,8 +70,8 @@ router = APIRouter()
 MAX_AVATAR_BYTES = MAX_AVATAR_SIZE_MB * 1024 * 1024
 MAX_CARD_BYTES = MAX_CARD_SIZE_MB * 1024 * 1024
 
-CARD_FILE_SUFFIXES = (".png", ".json", ".charx")
-CARD_EXPORT_FORMATS = ("default", "v2", "v3", "json", "charx")
+CARD_FILE_SUFFIXES = (".png", ".json", ".charx", BUNDLE_SUFFIX)
+CARD_EXPORT_FORMATS = ("default", "v2", "v3", "json", "charx", "bundle")
 
 
 class CharacterCreateRequest(BaseModel):
@@ -366,6 +386,161 @@ def _write_expression_images(
     return out
 
 
+def _card_identity(char_data: dict) -> str | None:
+    """The id of the character this card came from, if it says.
+
+    A card exported from this app carries the character id in the app's own
+    `data.extensions.tnhcomfy` namespace. SillyTavern preserves unknown
+    extensions, so a card that has been through SillyTavern still carries it —
+    which is what lets a re-import UPDATE the character instead of creating a
+    second one with the same name.
+
+    A card from anywhere else has no such identity and is a new character.
+    """
+    metadata = char_data.get("card_metadata") or {}
+    residual = metadata.get("data") or {}
+    extensions = residual.get("extensions")
+    if not isinstance(extensions, dict):
+        return None
+    identity = extensions.get(APP_EXTENSION_KEY)
+    if not isinstance(identity, dict):
+        return None
+    character_id = str(identity.get("character_id") or "").strip()
+    return character_id or None
+
+
+def _restore_bundle(session: Session, character: Character, bundle: dict) -> None:
+    """Restore what a bundle carries that a card cannot.
+
+    A bundle is this app's own model of a character, so the round trip is
+    the whole point: the expressions, the world and its locations, the
+    vault's lorebook library, and the chat history.
+    """
+    # Expression images.
+    expressions = bundle.get("expressions") or {}
+    if expressions:
+        base_dir = f"{app_config.settings.character_avatar_dir}/{character.id}/expressions"
+        written: dict[str, str] = {}
+        for emotion, data in expressions.items():
+            if not data:
+                continue
+            try:
+                inspect_image(data, field="expression", label=f"expression '{emotion}'")
+            except Exception as exc:
+                logger.warning("bundle_expression_not_an_image", emotion=emotion, error=str(exc))
+                continue
+            safe = re.sub(r"[^A-Za-z0-9_-]+", "_", str(emotion)).strip("_") or "expression"
+            try:
+                os.makedirs(base_dir, exist_ok=True)
+                path = os.path.join(base_dir, f"{safe}.png")
+                with open(path, "wb") as handle:
+                    handle.write(data)
+                written[str(emotion)] = path
+            except OSError as exc:
+                logger.warning("bundle_expression_write_failed", emotion=emotion, error=str(exc))
+        if written:
+            character.expressions = written
+
+    # The world and its locations.
+    world_payload = bundle.get("world")
+    if world_payload and not character.world_id:
+        world_data = world_payload.get("world") or {}
+        world_id = str(world_data.get("id") or "").strip()
+        if world_id:
+            world = session.get(World, world_id)
+            if world is None:
+                world = World(
+                    id=world_id,
+                    name=str(world_data.get("name") or "Imported World"),
+                    description=world_data.get("description"),
+                )
+                session.add(world)
+                session.flush()
+            for location_data in world_payload.get("locations") or []:
+                location_id = str(location_data.get("id") or "").strip()
+                if not location_id or session.get(Location, location_id) is not None:
+                    continue
+                session.add(
+                    Location(
+                        id=location_id,
+                        name=str(location_data.get("name") or "Imported Location"),
+                        description=location_data.get("description"),
+                        world_id=world.id,
+                    )
+                )
+            session.flush()
+            character.world_id = world.id
+
+    # The vault's lorebook library.
+    lorebook_ids: list[str] = list(character.lorebook_ids or [])
+    for payload in bundle.get("lorebooks") or []:
+        book = payload.get("lorebook") or {}
+        book_id = str(book.get("id") or "").strip()
+        if not book_id or session.get(Lorebook, book_id) is not None:
+            continue
+        session.add(
+            Lorebook(
+                id=book_id,
+                name=str(book.get("name") or "Imported Lorebook"),
+                description=book.get("description"),
+            )
+        )
+        session.flush()
+        for entry_data in payload.get("entries") or []:
+            entry_id = str(entry_data.get("id") or "").strip()
+            if not entry_id or session.get(LorebookEntry, entry_id) is not None:
+                continue
+            session.add(
+                LorebookEntry(
+                    id=entry_id,
+                    lorebook_id=book_id,
+                    keys=list(entry_data.get("keys") or []),
+                    content=entry_data.get("content") or "",
+                    category=entry_data.get("category"),
+                    tags=list(entry_data.get("tags") or []),
+                    depth=int(entry_data.get("depth") or 4),
+                    case_sensitive=bool(entry_data.get("case_sensitive", False)),
+                    selective_logic=entry_data.get("selective_logic"),
+                    probability=entry_data.get("probability"),
+                    enabled=bool(entry_data.get("enabled", True)),
+                    secondary_keys=list(entry_data.get("secondary_keys") or []),
+                )
+            )
+        if book_id not in lorebook_ids:
+            lorebook_ids.append(book_id)
+    if lorebook_ids:
+        character.lorebook_ids = lorebook_ids
+
+    # The chat history.
+    for message in bundle.get("chat") or []:
+        chat_id = str(message.get("chat_id") or "").strip()
+        if not chat_id:
+            continue
+        chat = session.get(Chat, chat_id)
+        if chat is None:
+            chat = Chat(
+                id=chat_id,
+                name=str(message.get("chat_name") or "Imported Chat"),
+                character_id=character.id,
+            )
+            session.add(chat)
+            session.flush()
+        role = str(message.get("role") or "user")
+        try:
+            role_enum = MessageRole(role)
+        except Exception:
+            role_enum = MessageRole.USER
+        session.add(
+            Message(
+                chat_id=chat.id,
+                role=role_enum,
+                kind=MessageKind.CHAR if role_enum == MessageRole.CHAR else MessageKind.USER,
+                content=message.get("content") or "",
+            )
+        )
+    session.flush()
+
+
 @router.post("/import")
 def import_character_card(
     file: UploadFile = File(...),
@@ -374,7 +549,7 @@ def import_character_card(
     filename = file.filename or ""
     if not filename.lower().endswith(CARD_FILE_SUFFIXES):
         raise ValidationError(
-            "Only PNG, JSON and CHARX character cards are supported"
+            "Only PNG, JSON, CHARX and TNHComfy bundle files are supported"
         )
 
     # Bounded read: a card is a few hundred KB, so a huge body is refused after
@@ -386,23 +561,65 @@ def import_character_card(
 
     is_png = payload[:8] == b"\x89PNG\r\n\x1a\n"
     is_charx = (filename or "").lower().endswith(".charx")
+    is_bundle = (filename or "").lower().endswith(BUNDLE_SUFFIX) or bundle_is_bundle(payload)
     if is_png:
         # Card dimensions are bounded like any other image upload.
         inspect_image(payload, field="file", label="Character card")
 
-    try:
-        char_data, avatar_bytes, archive_members = parse_card_file(payload, filename)
-    except CardParseError as exc:
-        raise ValidationError(str(exc)) from exc
+    bundle: dict | None = None
+    if is_bundle:
+        try:
+            bundle = parse_bundle(payload)
+        except Exception as exc:
+            raise ValidationError(f"Could not read the character bundle: {exc}") from exc
+        char_data = card_fields_from_bundle(bundle)
+        avatar_bytes = None
+        archive_members = {}
+        # The bundle's own character payload wins: it is this app's model of
+        # the character, and the card inside it is the portable projection.
+        for key, value in (bundle.get("character") or {}).items():
+            if key in Character.model_fields and value is not None:
+                char_data[key] = value
+        # The world and the lorebook library are recreated by
+        # `_restore_bundle`, so they must not be written onto the character
+        # first — the rows do not exist yet, and the write would fail the
+        # foreign key. The bundle restores them with their own ids.
+        char_data.pop("world_id", None)
+        char_data.pop("lorebook_ids", None)
+    else:
+        try:
+            char_data, avatar_bytes, archive_members = parse_card_file(payload, filename)
+        except CardParseError as exc:
+            raise ValidationError(str(exc)) from exc
 
     if not char_data.get("name"):
         raise ValidationError("Character card must have a name")
 
     character_book = char_data.pop("character_book", None)
     known_fields = set(Character.model_fields)
-    character = Character(**{k: v for k, v in char_data.items() if k in known_fields and v})
-    character.created_at = datetime.now(timezone.utc)
-    character.updated_at = character.created_at
+
+    # MERGE, not duplicate.
+    #
+    # A card exported from this app carries the character's id in the app's
+    # own extension namespace, and SillyTavern preserves unknown extensions —
+    # so a card that has been through SillyTavern still says which character
+    # it is. Re-importing it UPDATES that character instead of creating a
+    # second one with the same name.
+    #
+    # A card from anywhere else has no such identity, and is a new character.
+    identity_id = _card_identity(char_data)
+    existing = session.get(Character, identity_id) if identity_id else None
+
+    if existing is not None:
+        character = existing
+        for key, value in char_data.items():
+            if key in known_fields and key not in ("id", "created_at") and value is not None:
+                setattr(character, key, value)
+        character.updated_at = datetime.now(timezone.utc)
+    else:
+        character = Character(**{k: v for k, v in char_data.items() if k in known_fields and v})
+        character.created_at = datetime.now(timezone.utc)
+        character.updated_at = character.created_at
 
     # A card can name a voice model. If this vault does not have it, the
     # INSERT failed the foreign key and the WHOLE import was lost to a 500.
@@ -463,6 +680,9 @@ def import_character_card(
         expressions = _write_expression_images(session, character, expression_assets)
         if expressions:
             character.expressions = expressions
+
+    if bundle is not None:
+        _restore_bundle(session, character, bundle)
 
     character.updated_at = datetime.now(timezone.utc)
     session.add(character)
@@ -806,6 +1026,62 @@ def clone_character(character_id: str, session: Session = Depends(get_session), 
     return _character_to_dict(new_char)
 
 
+def _bundle_world_payload(session: Session, character: Character) -> dict | None:
+    """The character's world and its locations, for the bundle."""
+    if not character.world_id:
+        return None
+    world = session.get(World, character.world_id)
+    if world is None:
+        return None
+    locations = session.exec(
+        select(Location).where(Location.world_id == character.world_id)
+    ).all()
+    return {
+        "world": world.model_dump(),
+        "locations": [location.model_dump() for location in locations],
+    }
+
+
+def _bundle_lorebook_payloads(session: Session, character: Character) -> list[dict]:
+    """The vault's lorebook library for this character, for the bundle."""
+    payloads: list[dict] = []
+    for lorebook_id in character.lorebook_ids or []:
+        lorebook = session.get(Lorebook, lorebook_id)
+        if lorebook is None:
+            continue
+        entries = session.exec(
+            select(LorebookEntry).where(LorebookEntry.lorebook_id == lorebook_id)
+        ).all()
+        payloads.append(
+            {
+                "lorebook": lorebook.model_dump(),
+                "entries": [entry.model_dump() for entry in entries],
+            }
+        )
+    return payloads
+
+
+def _bundle_chat_payloads(session: Session, character: Character) -> list[dict]:
+    """The character's chat history, for the bundle."""
+    chats = session.exec(select(Chat).where(Chat.character_id == character.id)).all()
+    payloads: list[dict] = []
+    for chat in chats:
+        messages = session.exec(
+            select(Message).where(Message.chat_id == chat.id).order_by(Message.created_at)
+        ).all()
+        for message in messages:
+            payloads.append(
+                {
+                    "chat_id": chat.id,
+                    "chat_name": chat.name,
+                    "role": message.role.value if hasattr(message.role, "value") else str(message.role),
+                    "content": message.content,
+                    "created_at": message.created_at.isoformat() if message.created_at else None,
+                }
+            )
+    return payloads
+
+
 @router.get("/{character_id}/export/preview")
 def export_character_preview(
     character_id: str,
@@ -840,17 +1116,27 @@ def export_character(
     export_format: str = Query(
         default="default",
         alias="format",
-        description="default/v2: PNG with chara + ccv3 chunks. v3: canonical V3 spec in ccv3. json: plain JSON card. charx: ZIP card with avatar assets.",
+        description="default/v2: PNG with chara + ccv3 chunks. v3: canonical V3 spec in ccv3. json: plain JSON card. charx: ZIP card with avatar assets. bundle: the TNHComfy bundle, which carries what a card cannot.",
+    ),
+    include: str = Query(
+        default="",
+        description="For format=bundle: a comma-separated list of the optional sections to carry (expressions, voice, generation, world, lorebooks, chat).",
     ),
     session: Session = Depends(get_session),
     character_repo: CharacterRepository = Depends(get_character_repo),
 ):
-    """Export a character as a SillyTavern card.
+    """Export a character as a SillyTavern card, or as a TNHComfy bundle.
 
     PNG exports always carry the backward-compatible `chara` chunk plus the V3
     `ccv3` chunk, so old and new clients both read the same file. Fields with no
     column in the vault are written back from `card_metadata`, which makes
     import -> export lossless.
+
+    The BUNDLE is the other answer to the same question. A card has a small
+    fixed vocabulary; this app's characters have expression image sets, a
+    voice binding, a world with locations, a lorebook library, a gallery and
+    chats. The bundle carries those, and the card alongside, so one file is
+    both a SillyTavern card and a complete TNHComfy character.
     """
     character = character_repo.get(character_id)
     if not character:
@@ -861,6 +1147,23 @@ def export_character(
         raise ValidationError(f"Unsupported card format '{export_format}'. Use one of: {', '.join(CARD_EXPORT_FORMATS)}")
 
     basename = _safe_card_basename(character)
+
+    if fmt == "bundle":
+        wanted = [s.strip() for s in (include or "").split(",") if s.strip()]
+        bundle = build_bundle(
+            character,
+            session=session,
+            include=wanted,
+            avatar_bytes=_avatar_bytes(character),
+            world_payload=_bundle_world_payload(session, character) if "world" in wanted else None,
+            lorebook_payloads=_bundle_lorebook_payloads(session, character) if "lorebooks" in wanted else None,
+            chat_payloads=_bundle_chat_payloads(session, character) if "chat" in wanted else None,
+        )
+        return Response(
+            content=bundle,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{basename}.tnhzip"'},
+        )
 
     if fmt == "json":
         payload = build_card_payload(character, version=CARD_SPEC_V3)

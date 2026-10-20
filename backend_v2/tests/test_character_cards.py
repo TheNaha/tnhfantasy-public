@@ -62,7 +62,11 @@ def _v3_card() -> dict:
             "creator_notes_multilingual": {"de": "Notizen"},
             "some_future_data_field": {"nested": [1, 2, 3]},
             "assets": [
-                {"type": "expression", "name": "happy", "data": "aGVsbG8="},
+                # A REAL 1x1 PNG, not a placeholder: an expression asset is
+                # materialised into an image file on import, and bytes that are
+                # not an image are rejected (correctly).
+                {"type": "expression", "name": "happy", "ext": "png",
+                 "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="},
                 {"type": "background", "name": "main", "data": "d29ybGQ="},
             ],
             "extensions": {
@@ -883,17 +887,42 @@ class TestHttpRoundTrip:
         for key in ("name", "description", "personality", "scenario", "first_mes", "mes_example",
                     "creator_notes", "system_prompt", "post_history_instructions", "alternate_greetings",
                     "group_greetings", "tags", "creator", "character_version", "version", "fav",
-                    "creator_notes_multilingual", "some_future_data_field", "assets", "character_book"):
+                    "creator_notes_multilingual", "some_future_data_field", "character_book"):
             assert payload["data"][key] == original["data"][key], key
         assert payload["root_unknown_field"] == original["root_unknown_field"]
         assert payload["spec"] == "chara_card_v3"
         assert payload["data"]["extensions"]["regex_scripts"] == original["data"]["extensions"]["regex_scripts"]
 
+        # The assets are the same set. The ORDER is not: an expression image
+        # is now a real expression file, so it is rebuilt from that file and
+        # appended, rather than carried as base64 in the card. The list is
+        # keyed by name and type, and the order is not meaningful.
+        def _asset_key(asset):
+            return (asset.get("type"), asset.get("name"))
+
+        assert sorted(_asset_key(a) for a in payload["data"]["assets"]) == sorted(
+            _asset_key(a) for a in original["data"]["assets"]
+        )
+        # And the expression image really is in the exported card.
+        expression = next(
+            a for a in payload["data"]["assets"] if a.get("type") == "expression"
+        )
+        assert base64.b64decode(expression["data"])[:4] == b"\x89PNG"
+
         # And the exported card re-imports to the same preserved payload.
         again = _post_card(client, exported.content, "again.png")
         assert again.status_code == 200, again.text
         third = json.loads(base64.b64decode(parse_png_chunks(client.get(f"/api/v2/characters/{again.json()['id']}/export?format=v3").content)["ccv3"][0]))
-        assert third == payload
+        # The IDENTITY differs, and it must: the re-import is a new character,
+        # so it carries its own id in the app's extension namespace. That is
+        # what lets a card be recognised as the same character on a LATER
+        # import — and what stops an import from silently overwriting one.
+        assert third["data"]["extensions"]["tnhcomfy"]["character_id"] == again.json()["id"]
+        assert payload["data"]["extensions"]["tnhcomfy"]["character_id"] == char_id
+        third["data"]["extensions"].pop("tnhcomfy")
+        expected = json.loads(json.dumps(payload))
+        expected["data"]["extensions"].pop("tnhcomfy")
+        assert third == expected
 
     def test_json_export_import_round_trip(self, client):
         original = _v3_card()
@@ -902,7 +931,11 @@ class TestHttpRoundTrip:
         exported = client.get(f"/api/v2/characters/{first.json()['id']}/export?format=json")
         reimported = json.loads(exported.content)
         assert reimported["data"]["character_book"] == original["data"]["character_book"]
-        assert reimported["data"]["assets"] == original["data"]["assets"]
+        # The assets are the same set; the expression is rebuilt from the
+        # expression file, so it is appended rather than carried in place.
+        assert sorted(
+            (a.get("type"), a.get("name")) for a in reimported["data"]["assets"]
+        ) == sorted((a.get("type"), a.get("name")) for a in original["data"]["assets"])
         assert reimported["root_unknown_field"] == original["root_unknown_field"]
 
     def test_v2_png_round_trip_keeps_legacy_spec(self, client):

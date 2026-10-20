@@ -347,10 +347,12 @@ def _residual_card_metadata(root: dict, data: dict, data_wrapper: bool) -> dict:
     residual_data: dict[str, Any] = {}
     for key, value in data.items():
         if key == "extensions" and isinstance(value, dict):
+            # `tnhcomyu` is app-owned: it is written on every export and is
+            # never kept here, so the identity is not carried twice.
             extra_ext = {
                 k: v
                 for k, v in value.items()
-                if k not in _MAPPED_EXTENSION_KEYS
+                if k not in _MAPPED_EXTENSION_KEYS and k != "tnhcomyu"
             }
             if extra_ext:
                 residual_data[key] = extra_ext
@@ -764,8 +766,7 @@ def build_card_payload(
     data_version = metadata.get("data_version")
 
     extensions: dict[str, Any] = dict(residual_data.get("extensions") or {})
-    extensions["lora_triggers"] = list(character.lora_triggers or [])
-    # A card that carried its own `extensions.visual_tags` keeps them: that value
+    extensions["lora_triggers"] = list(character.lora_triggers or [])    # A card that carried its own `extensions.visual_tags` keeps them: that value
     # is the only record of the card's original tag list, which may differ from
     # the live column (which mirrors `data.tags`).
     extensions["visual_tags"] = list(character.visual_tags or [])
@@ -782,6 +783,20 @@ def build_card_payload(
         extensions["default_location"] = character.default_location
     if character.suggested_persona:
         extensions["suggested_persona"] = character.suggested_persona
+
+    # This app's IDENTITY, so a card that has been through SillyTavern is
+    # recognised as the same character when it comes back.
+    #
+    # SillyTavern preserves unknown `data.extensions` keys, and so does this
+    # app's residual blob, so the identity survives a round trip through
+    # another client. That is what lets a re-import UPDATE a character
+    # instead of creating a second one.
+    #
+    # The key is app-owned: it is written on every export and excluded from
+    # the residual, so it is never carried twice.
+    from core.character_bundle import APP_EXTENSION_KEY, app_extension
+
+    extensions[APP_EXTENSION_KEY] = app_extension(getattr(character, "id", "") or "")
 
     group_greetings = list(character.group_greetings or [])
 

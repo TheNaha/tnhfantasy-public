@@ -306,3 +306,83 @@ class TestUpdaterPromptNamesTheGate:
             available_expressions=None,
         )
         assert "the director detected" not in prompt.lower()
+
+
+class TestUpdaterAgentPromptResolution:
+    """The Statekeeper's OWN prompt, not just the schema it is shown."""
+
+    def _chat(self, session):
+        from core.entities import Chat, Character
+
+        character = Character(id=str(uuid.uuid4()), name="Aria", description="A courier")
+        session.add(character)
+        session.commit()
+
+        chat = Chat(
+            id=str(uuid.uuid4()),
+            name="Scene",
+            character_id=character.id,
+            persona_name="Player",
+            story_location="The Bridge",
+            story_time="Dusk",
+        )
+        session.add(chat)
+        session.commit()
+        return chat
+
+    def test_a_gate_scoped_variant_becomes_the_system_prompt(self, session):
+        from services.updater_service import _resolve_updater_agent_prompt
+
+        profile = _agent(session, "updater", "Statekeeper", "You are the Statekeeper.")
+        _variant(
+            session,
+            profile.id,
+            "updater-mood",
+            "The character's mood shifted. Update only the mood.",
+            gate_scope="gate_character_mood",
+        )
+        chat = self._chat(session)
+
+        prompt, _samplers = _resolve_updater_agent_prompt(
+            session,
+            char_name="Aria",
+            user_name="Player",
+            chat=chat,
+            triggered_gates=["gate_character_mood"],
+        )
+        assert "mood shifted" in prompt.lower(), (
+            "the gate-scoped variant did not become the Statekeeper's prompt"
+        )
+
+    def test_the_prompt_names_the_fired_gate(self, session):
+        from services.updater_service import _resolve_updater_agent_prompt
+
+        _agent(session, "updater", "Statekeeper", "You are the Statekeeper.")
+        chat = self._chat(session)
+
+        prompt, _samplers = _resolve_updater_agent_prompt(
+            session,
+            char_name="Aria",
+            user_name="Player",
+            chat=chat,
+            triggered_gates=["gate_character_mood"],
+        )
+        assert "mood" in prompt.lower(), (
+            "the Statekeeper was not told which gate fired"
+        )
+
+    def test_an_unscoped_agent_still_resolves(self, session):
+        """The gate scope is an addition, not a requirement."""
+        from services.updater_service import _resolve_updater_agent_prompt
+
+        _agent(session, "updater", "Statekeeper", "You are the Statekeeper.")
+        chat = self._chat(session)
+
+        prompt, _samplers = _resolve_updater_agent_prompt(
+            session,
+            char_name="Aria",
+            user_name="Player",
+            chat=chat,
+            triggered_gates=["gate_character_mood"],
+        )
+        assert "statekeeper" in prompt.lower()
