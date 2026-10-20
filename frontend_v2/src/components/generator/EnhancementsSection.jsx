@@ -2,7 +2,41 @@ import { memo } from 'react';
 import { Sparkles } from 'lucide-react';
 import CollapsibleSection from '../CollapsibleSection';
 
+/**
+ * A short note about what the provider can do.
+ *
+ * `capabilities` is the answer from `GET /api/nodes/capabilities` for the
+ * provider the job will run on: which node classes it has, and which files
+ * it has for each of them.
+ *
+ * The panel used to hardcode the provider's node vocabulary in Python and
+ * offer a FreeU toggle to a provider with no FreeU node - and the request
+ * failed at dispatch with "node type not found", after the user had picked
+ * the enhancement and waited for the job.
+ *
+ * `known: false` means the answer could not be obtained (the provider is
+ * down, or has never been introspected). That is NOT the same as "not
+ * supported": a provider that is down must not be read as a provider that
+ * cannot do FreeU, so the control stays live and nothing is claimed.
+ */
+function capabilityNote(capabilities, key, what) {
+    if (!capabilities || !capabilities.known) return null;
+    if (capabilities.nodes?.[key] !== false) return null;
+    return `The provider does not have the ${what} node, so this cannot be applied.`;
+}
+
+function UnsupportedHint({ children }) {
+    if (!children) return null;
+    return (
+        <p className="text-xs text-amber-400/90 leading-relaxed" role="note">
+            {children}
+        </p>
+    );
+}
+
 const EnhancementsSection = memo(function EnhancementsSection({
+    capabilities = null,
+    modelType = 'sd15',
     hiresFix,
     setHiresFix,
     hiresUpscaler,
@@ -38,6 +72,51 @@ const EnhancementsSection = memo(function EnhancementsSection({
     latentUpscaleMultiplier,
     setLatentUpscaleMultiplier
 }) {
+    // What the provider can do.
+    //
+    // "Not known" and "not supported" are different: a provider that is
+    // down is not a provider that cannot do FreeU, so an unavailable
+    // answer leaves the control live and claims nothing.
+    const freeUAvailable = capabilities?.nodes?.freeu !== false && modelType !== 'flux';
+    const pagAvailable = capabilities?.nodes?.pag !== false && modelType !== 'flux';
+    const adetailerAvailable = capabilities?.nodes?.adetailer !== false
+        && capabilities?.nodes?.detector !== false;
+    const hiresModelAvailable = capabilities?.nodes?.upscale_model !== false;
+
+    const freeUNote = capabilities?.nodes?.freeu === false
+        ? capabilityNote(capabilities, 'freeu', 'FreeU')
+        : (modelType === 'flux'
+            ? 'FreeU is not applied to Flux models - the model does not use U-Net skip connections the way it does.'
+            : null);
+    const pagNote = capabilities?.nodes?.pag === false
+        ? capabilityNote(capabilities, 'pag', 'Perturbed Attention Guidance')
+        : (modelType === 'flux'
+            ? 'PAG is not applied to Flux models.'
+            : null);
+    const adetailerNote = capabilities?.nodes?.adetailer === false
+        ? capabilityNote(capabilities, 'adetailer', 'ADetailer')
+        : (capabilities?.nodes?.detector === false
+            ? capabilityNote(capabilities, 'detector', 'detector')
+            : null);
+
+    // The provider's OWN list of models for each input, when it has one.
+    // The panel used to offer the union catalogue - models from the server
+    // and from every provider - so it offered files the target provider did
+    // not have, and the job failed on the missing file.
+    const providerUpscalerModels = capabilities?.models?.upscale_model || null;
+    const providerDetectorModels = capabilities?.models?.detector || null;
+    // With no loader node on the provider, a MODEL upscaler cannot run at
+    // all - so the dropdown offers only Latent, rather than offering files
+    // that would fail at dispatch.
+    const upscalerChoices = !hiresModelAvailable
+        ? []
+        : (providerUpscalerModels
+            ? providerUpscalerModels.map((name) => ({ name }))
+            : (upscalerModels || []));
+    const detectorChoices = providerDetectorModels
+        ? providerDetectorModels.map((name) => ({ name }))
+        : (adetailerModels || []);
+
     return (
         <CollapsibleSection
             title="Enhancements"
@@ -65,7 +144,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
 
                         <div className={`space-y-4 transition-all duration-300 ${hiresFix ? 'opacity-100 max-h-[500px]' : 'opacity-30 pointer-events-none max-h-0 overflow-hidden'}`}>
                             <p className="text-xs text-gray-400 leading-relaxed">
-                                Performs a second pass to upscale the image and add finer details. Use Latent for hallucinated details or a Pixel upscaler for structural preservation.
+                                Performs a second pass to upscale the image and add finer details. Use Latent for hallucinated details, or a model upscaler for structural preservation.
                             </p>
                             <div className="space-y-1.5">
                                 <label className="block text-2xs font-bold text-yellow-400 uppercase tracking-widest px-1">Upscaler</label>
@@ -75,7 +154,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                                     className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white focus:ring-2 focus:ring-yellow-500/50 focus:border-yellow-500/50 outline-none transition-all glow-focus"
                                 >
                                     <option value="Latent">Latent (Default)</option>
-                                    {(upscalerModels || []).map(m => (
+                                    {upscalerChoices.map(m => (
                                         <option key={m.name} value={m.name}>{m.name}</option>
                                     ))}
                                 </select>
@@ -121,13 +200,14 @@ const EnhancementsSection = memo(function EnhancementsSection({
                             <div className="relative flex items-center justify-center w-5 h-5">
                                 <input
                                     type="checkbox"
-                                    checked={adetailer || false}
+                                    checked={adetailerAvailable ? (adetailer || false) : false}
+                                    disabled={!adetailerAvailable}
                                     onChange={(e) => setAdetailer(e.target.checked)}
-                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 peer"
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 peer disabled:cursor-not-allowed"
                                     id="adetailer"
                                 />
                                 <div className="w-5 h-5 rounded border-2 border-gray-600 bg-black/40 peer-checked:bg-orange-500 peer-checked:border-orange-500 transition-colors flex items-center justify-center shadow-inner">
-                                    {adetailer && <Sparkles size={12} className="text-white drop-shadow-md" />}
+                                    {adetailerAvailable && adetailer && <Sparkles size={12} className="text-white drop-shadow-md" />}
                                 </div>
                             </div>
                             <label htmlFor="adetailer" className="text-sm font-bold text-white cursor-pointer select-none tracking-wide">ADetailer</label>
@@ -137,6 +217,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                             <p className="text-xs text-gray-400 leading-relaxed">
                                 Automatically detects faces, hands, or other objects to fix structural issues by performing localized inpainting.
                             </p>
+                            <UnsupportedHint>{adetailerNote}</UnsupportedHint>
                             <div className="space-y-1.5">
                                 <label className="block text-2xs font-bold text-orange-400 uppercase tracking-widest px-1">Model</label>
                                 <select
@@ -144,7 +225,7 @@ const EnhancementsSection = memo(function EnhancementsSection({
                                     onChange={(e) => setAdetailerModel(e.target.value)}
                                     className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 outline-none transition-all glow-focus"
                                 >
-                                    {(adetailerModels || []).map(m => (
+                                    {detectorChoices.map(m => (
                                         <option key={m.name} value={m.name}>{m.name}</option>
                                     ))}
                                 </select>
@@ -202,22 +283,24 @@ const EnhancementsSection = memo(function EnhancementsSection({
                             <div className="relative flex items-center justify-center w-5 h-5">
                                 <input
                                     type="checkbox"
-                                    checked={enableFreeU}
+                                    checked={freeUAvailable ? enableFreeU : false}
+                                    disabled={!freeUAvailable}
                                     onChange={(e) => setEnableFreeU(e.target.checked)}
-                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 peer"
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 peer disabled:cursor-not-allowed"
                                     id="enableFreeU"
                                 />
                                 <div className="w-5 h-5 rounded border-2 border-gray-600 bg-black/40 peer-checked:bg-blue-500 peer-checked:border-blue-500 transition-colors flex items-center justify-center shadow-inner">
-                                    {enableFreeU && <Sparkles size={12} className="text-white drop-shadow-md" />}
+                                    {freeUAvailable && enableFreeU && <Sparkles size={12} className="text-white drop-shadow-md" />}
                                 </div>
                             </div>
                             <label htmlFor="enableFreeU" className="text-sm font-bold text-white cursor-pointer select-none tracking-wide">FreeU (v2)</label>
                         </div>
                     </div>
-                    <div className={`transition-all duration-300 ${enableFreeU ? 'opacity-100 max-h-[500px] mt-4' : 'opacity-30 pointer-events-none max-h-0 overflow-hidden mt-0'}`}>
+                    <div className={`transition-all duration-300 ${enableFreeU && freeUAvailable ? 'opacity-100 max-h-[500px] mt-4' : 'opacity-30 pointer-events-none max-h-0 overflow-hidden mt-0'}`}>
                         <p className="text-xs text-gray-400 leading-relaxed">
-                            Substantially improves image quality by adjusting U-Net skip connections. (Ignored for Flux models)
+                            Substantially improves image quality by adjusting U-Net skip connections.
                         </p>
+                        <UnsupportedHint>{freeUNote}</UnsupportedHint>
                     </div>
                 </div>
 
@@ -226,13 +309,14 @@ const EnhancementsSection = memo(function EnhancementsSection({
                         <div className="relative flex items-center justify-center w-5 h-5">
                             <input
                                 type="checkbox"
-                                checked={enablePAG}
+                                checked={pagAvailable ? enablePAG : false}
+                                disabled={!pagAvailable}
                                 onChange={(e) => setEnablePAG(e.target.checked)}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 peer"
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 peer disabled:cursor-not-allowed"
                                 id="enablePAG"
                             />
                             <div className="w-5 h-5 rounded border-2 border-gray-600 bg-black/40 peer-checked:bg-purple-500 peer-checked:border-purple-500 transition-colors flex items-center justify-center shadow-inner">
-                                {enablePAG && <Sparkles size={12} className="text-white drop-shadow-md" />}
+                                {pagAvailable && enablePAG && <Sparkles size={12} className="text-white drop-shadow-md" />}
                             </div>
                         </div>
                         <label htmlFor="enablePAG" className="text-sm font-bold text-white cursor-pointer select-none tracking-wide">PAG (Perturbed Attention Guidance)</label>
@@ -240,8 +324,9 @@ const EnhancementsSection = memo(function EnhancementsSection({
 
                     <div className={`space-y-4 transition-all duration-300 ${enablePAG ? 'opacity-100 max-h-[500px]' : 'opacity-30 pointer-events-none max-h-0 overflow-hidden'}`}>
                         <p className="text-xs text-gray-400 leading-relaxed">
-                            Enhances structural coherence and overall image quality without requiring additional training or prompt changes. (Ignored for Flux)
+                            Enhances structural coherence and overall image quality without requiring additional training or prompt changes.
                         </p>
+                        <UnsupportedHint>{pagNote}</UnsupportedHint>
                         <div className="space-y-1.5">
                             <label className="block text-2xs font-bold text-purple-400 uppercase tracking-widest px-1">PAG Scale</label>
                             <input

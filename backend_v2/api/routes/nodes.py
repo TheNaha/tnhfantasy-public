@@ -177,30 +177,16 @@ def node_schema_digest(object_info: dict[str, Any]) -> dict[str, Any]:
     return digest
 
 
-@router.get("/object_info", response_model=dict[str, Any])
-async def get_object_info(
-    provider_id: str, full: bool = False, session: Session = Depends(get_session)
-):
-    """
-    The node definition mapping (object_info) for a provider.
+async def _fetch_provider_object_info(provider_id: str, session: Session) -> tuple[dict, dict]:
+    """The provider's node graph and its digest, cached per provider.
 
-    Two things are worth knowing about this endpoint.
-
-    **It is cached per provider, with single flight.** The answer comes from the
-    provider's own ComfyUI, which has to spin up to introspect itself, so it cost
-    2.345-3.033 s per call for 2,388 kB — and the frontend asks for it *twice*
-    on the first paint of `/advanced`, so an uncached load is two concurrent
-    upstream extractions for one answer. That duplicate fetch is the frontend's
-    to fix, not this endpoint's; the single flight here means the duplicate costs
-    one extraction, not two.
-
-    **The response is a digest unless `?full=true`.** The upstream graph is four
-    times the size of what the node palette and editor read — see
-    `node_schema_digest` for exactly which fields go and how that was confirmed.
+    Shared by `GET /object_info` and `GET /capabilities`, so the
+    capabilities answer costs nothing the node palette has not already
+    paid: the digest is the same digest, from the same cache.
     """
     cached = _object_info_cache.get(provider_id)
     if cached is not None:
-        return cached[1] if full else cached[0]
+        return cached[0], cached[1]
 
     lock = _object_info_inflight.get(provider_id)
     owner = lock is None
@@ -213,7 +199,7 @@ async def get_object_info(
             # Re-check: the caller we queued behind has already stored it.
             cached = _object_info_cache.get(provider_id)
             if cached is not None:
-                return cached[1] if full else cached[0]
+                return cached[0], cached[1]
 
             service = get_provider_service(session)
             provider = await service.get_provider(provider_id)
@@ -283,9 +269,67 @@ async def get_object_info(
                 provider_id=provider_id,
                 nodes=len(graph) if hasattr(graph, "__len__") else None,
             )
-            return graph if full else digest
+            return digest, graph
         finally:
             lock.release()
     finally:
         if owner:
             _object_info_inflight.pop(provider_id, None)
+
+
+@router.get("/object_info", response_model=dict[str, Any])
+async def get_object_info(
+    provider_id: str, full: bool = False, session: Session = Depends(get_session)
+):
+    """
+    The node definition mapping (object_info) for a provider.
+
+    Two things are worth knowing about this endpoint.
+
+    **It is cached per provider, with single flight.** The answer comes from the
+    provider's own ComfyUI, which has to spin up to introspect itself, so it cost
+    2.345-3.033 s per call for 2,388 kB — and the frontend asks for it *twice*
+    on the first paint of `/advanced`, so an uncached load is two concurrent
+    upstream extractions for one answer. That duplicate fetch is the frontend's
+    to fix, not this endpoint's; the single flight here means the duplicate costs
+    one extraction, not two.
+
+    **The response is a digest unless `?full=true`.** The upstream graph is four
+    times the size of what the node palette and editor read — see
+    `node_schema_digest` for exactly which fields go and how that was confirmed.
+    """
+    digest, graph = await _fetch_provider_object_info(provider_id, session)
+    return graph if full else digest
+
+
+@router.get("/capabilities", response_model=dict[str, Any])
+async def get_capabilities(
+    provider_id: str, session: Session = Depends(get_session)
+):
+    """
+    What a provider can actually do, derived from its own node graph.
+
+    The Enhancements panel used to hardcode the provider's node vocabulary
+    in Python and emit those nodes whatever the provider had installed, so
+    it offered a FreeU toggle to a provider with no FreeU node and the
+    request failed at dispatch with "node type not found".
+
+    This endpoint answers the question the panel has to ask, from the same
+    cached `object_info` the node palette already reads - so it costs
+    nothing extra.
+
+    `known` is False when the provider's node definitions could not be
+    read. The panel then says "unknown", not "unsupported": a provider
+    that is down is not a provider that cannot do FreeU.
+    """
+    from core.provider_capabilities import derive_capabilities
+
+    digest, _graph = await _fetch_provider_object_info(provider_id, session)
+    capabilities = derive_capabilities(digest, provider_id=provider_id)
+    logger.info(
+        "provider_capabilities_derived",
+        provider_id=provider_id,
+        known=capabilities.get("known"),
+        freeu=capabilities.get("nodes", {}).get("freeu"),
+    )
+    return capabilities

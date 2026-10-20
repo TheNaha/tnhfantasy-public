@@ -28,6 +28,7 @@ from config import DEFAULT_CHECKPOINT, settings  # noqa: E402,F401
 # graph path needs it too and it cannot import this module - this module
 # imports it. The names are re-exported here because the builder's callers
 # have always imported them from here.
+from infrastructure.logging import get_logger
 from core.workflow_postprocess import (  # noqa: F401
     embedding_file_exists as _embedding_file_exists,
     expand_prompt_shortcuts,
@@ -130,10 +131,49 @@ class GeneratorOptions(BaseModel):
     filenamePrefix: str | None = None
 
 
+logger = get_logger("workflow_builder")
+
+
 class WorkflowBuilder:
-    def __init__(self):
+    def __init__(self, capabilities: dict[str, Any] | None = None):
         self.nodes = {}
         self.last_node_id = 0
+        # What the TARGET provider can do, as derived from its own node
+        # graph (see `core.provider_capabilities`).
+        #
+        # The builder used to hardcode the provider's node vocabulary in
+        # Python and emit those nodes whatever the provider had installed,
+        # so it built a graph with a `FaceDetailer` node for a provider with
+        # no Impact Pack, and the request failed at dispatch with "node
+        # type not found" - after the user had picked the enhancement and
+        # waited for the job.
+        #
+        # `None` means "not known" - the provider's graph was not
+        # available - and then the builder behaves as it always did. A
+        # provider that is down must not be read as a provider that cannot
+        # do FreeU.
+        self.capabilities = capabilities
+        # What the builder could not do, and why. The route puts these in
+        # the job's metadata, so the reason reaches the user instead of
+        # being a dispatch failure.
+        self.warnings: list[str] = []
+
+    def _supports(self, key: str) -> bool | None:
+        """Whether the target provider supports a capability.
+
+        None means "not known", and the caller carries on as before.
+        """
+        from core.provider_capabilities import supports
+
+        return supports(self.capabilities, key)
+
+    def _warn_unsupported(self, key: str, label: str) -> None:
+        message = (
+            f"{label} was not applied: the provider does not have the node "
+            f"it needs."
+        )
+        self.warnings.append(message)
+        logger.info("workflow_capability_skipped", capability=key, label=label)
 
     def add_node(self, class_type: str, inputs: dict[str, Any]) -> str:
         self.last_node_id += 1
@@ -297,7 +337,12 @@ class WorkflowBuilder:
             "scheduler": options.scheduler,
             "denoise": options.adetailerDenoise,
             "feather": 5,
-            "noise_mask": True,
+            # The "Inpaint Masked Only" option, which the Enhancements panel
+            # has always offered and the backend has always ignored - it was
+            # hardcoded to True, so the control did nothing. It is the
+            # detailer's `noise_mask`: True regenerates only the masked
+            # region, False regenerates the whole image.
+            "noise_mask": bool(options.adetailerInpaintMasked),
             "force_inpaint": True,
             "bbox_threshold": 0.5,
             "bbox_dilation": 10,
@@ -379,10 +424,19 @@ class WorkflowBuilder:
         current_model, current_clip = self.apply_loras(current_model, current_clip, options.loras)
 
         if options.enableFreeU and options.modelType != "flux":
-            current_model = self.apply_freeu(current_model, options.modelType)
+            # The provider has to have the node. It used to be emitted
+            # regardless, and the job failed at dispatch with "node type not
+            # found" - after the user picked the enhancement and waited.
+            if self._supports("freeu") is False:
+                self._warn_unsupported("freeu", "FreeU")
+            else:
+                current_model = self.apply_freeu(current_model, options.modelType)
 
         if options.enablePAG and options.modelType != "flux":
-            current_model = self.apply_pag(current_model, options.pagScale)
+            if self._supports("pag") is False:
+                self._warn_unsupported("pag", "Perturbed Attention Guidance")
+            else:
+                current_model = self.apply_pag(current_model, options.pagScale)
 
         current_model = self.apply_ip_adapters(current_model, options.ipAdapters)
 
@@ -493,20 +547,43 @@ class WorkflowBuilder:
                         "scale_by": options.hiresUpscale
                     }), 0]
                 else:
-                    upscaler_loader = [self.add_node("UpscaleModelLoader", {"model_name": options.hiresUpscaler}), 0]
-                    upscale_with_model = [self.add_node("ImageUpscaleWithModel", {
-                        "upscale_model": upscaler_loader,
-                        "image": vae_decode1
-                    }), 0]
-                    target_width = math.floor(options.width * options.hiresUpscale)
-                    target_height = math.floor(options.height * options.hiresUpscale)
-                    upscale_image = [self.add_node("ImageScale", {
-                        "image": upscale_with_model,
-                        "upscale_method": "lanczos",
-                        "width": target_width,
-                        "height": target_height,
-                        "crop": "disabled"
-                    }), 0]
+                    # A MODEL upscaler needs the loader node, and the
+                    # provider's own list of models. It used to be emitted
+                    # whatever the provider had, and the job failed at
+                    # dispatch with "node type not found" - or with a model
+                    # name the provider did not have.
+                    if self._supports("upscale_model") is False:
+                        self._warn_unsupported(
+                            "upscale_model", "The hires-fix upscaler model"
+                        )
+                        upscale_image = [
+                            self.add_node("VAEDecode", {"samples": final_latent, "vae": current_vae}),
+                            0,
+                        ]
+                    else:
+                        upscaler_loader = [
+                            self.add_node("UpscaleModelLoader", {"model_name": options.hiresUpscaler}),
+                            0,
+                        ]
+                        upscale_with_model = [
+                            self.add_node("ImageUpscaleWithModel", {
+                                "upscale_model": upscaler_loader,
+                                "image": vae_decode1
+                            }),
+                            0,
+                        ]
+                        target_width = math.floor(options.width * options.hiresUpscale)
+                        target_height = math.floor(options.height * options.hiresUpscale)
+                        upscale_image = [
+                            self.add_node("ImageScale", {
+                                "image": upscale_with_model,
+                                "upscale_method": "lanczos",
+                                "width": target_width,
+                                "height": target_height,
+                                "crop": "disabled"
+                            }),
+                            0,
+                        ]
                 final_latent = [self.add_node("VAEEncode", {"pixels": upscale_image, "vae": current_vae}), 0]
 
             final_latent = [self.add_node("KSampler", {
@@ -525,7 +602,13 @@ class WorkflowBuilder:
         final_image = [self.add_node("VAEDecode", {"samples": final_latent, "vae": current_vae}), 0]
 
         if options.adetailer:
-            final_image = self.apply_adetailer(final_image, current_model, current_clip, current_vae, positive_cond, negative_cond, options)
+            # Both nodes have to exist on the provider: the detailer AND the
+            # detector it loads. It used to emit both regardless, and the
+            # job failed at dispatch with "node type not found".
+            if self._supports("adetailer") is False or self._supports("detector") is False:
+                self._warn_unsupported("adetailer", "ADetailer")
+            else:
+                final_image = self.apply_adetailer(final_image, current_model, current_clip, current_vae, positive_cond, negative_cond, options)
 
         prefix_type = "T2I"
         if mode == 't2i':

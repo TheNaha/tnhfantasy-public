@@ -133,6 +133,53 @@ describe('the metadata checkpoint', () => {
     });
 });
 
+describe('the provider capabilities', () => {
+    it('the panel reads the capabilities instead of assuming', () => {
+        // The panel used to hardcode the provider's node vocabulary in
+        // Python and emit those nodes whatever the provider had installed,
+        // so it offered a FreeU toggle to a provider with no FreeU node and
+        // the job failed at dispatch with "node type not found".
+        const panel = read(join(SRC, 'components', 'generator', 'EnhancementsSection.jsx'));
+        expect(panel).toContain('capabilities');
+        expect(panel).toContain("capabilities?.nodes?.freeu");
+        expect(panel).toContain("capabilities?.nodes?.adetailer");
+    });
+
+    it('the layout fetches them for the provider the job will run on', () => {
+        const layout = read(join(SRC, 'components', 'generator', 'UnifiedGeneratorLayout.jsx'));
+        expect(layout).toContain('useProviderCapabilities');
+        expect(layout).toContain('capabilities={capabilities}');
+    });
+
+    it('"not known" is not "not supported"', () => {
+        // A provider that is down, or has never been introspected, must not
+        // be read as a provider that cannot do FreeU - so the control stays
+        // live and nothing is claimed.
+        const panel = read(join(SRC, 'components', 'generator', 'EnhancementsSection.jsx'));
+        expect(panel).toContain("capabilities?.nodes?.freeu !== false");
+        expect(panel).toContain('!capabilities.known');
+    });
+
+    it('the model lists come from the provider, not from the union catalogue', () => {
+        // The panel used to offer the union catalogue - the server's models
+        // and every provider's - so it offered files the target provider did
+        // not have.
+        const panel = read(join(SRC, 'components', 'generator', 'EnhancementsSection.jsx'));
+        expect(panel).toContain('capabilities?.models?.upscale_model');
+        expect(panel).toContain('capabilities?.models?.detector');
+    });
+
+    it('the backend derives them from the provider own node graph', () => {
+        const BACKEND = join(HERE, '..', '..', '..', 'backend_v2');
+        const caps = read(join(BACKEND, 'core', 'provider_capabilities.py'));
+        expect(caps).toContain('def derive_capabilities');
+        // And the builder asks before it emits.
+        const builder = read(join(BACKEND, 'core', 'workflow_builder.py'));
+        expect(builder).toContain('self._supports("freeu")');
+        expect(builder).toContain('self._supports("adetailer")');
+    });
+});
+
 describe('the batch partial failure', () => {
     it('the backend reports the jobs it created alongside the failures', () => {
         const BACKEND = join(HERE, '..', '..', '..', 'backend_v2');

@@ -17,6 +17,7 @@ export { default as filesApi, assetsApi } from './files';
 export { default as modelsApi } from './models';
 export { default as providersApi } from './providers';
 export { default as generateApi } from './generate';
+export { fetchProviderCapabilities } from './nodes';
 export { default as promptsApi } from './promptsApi';
 export {
   listCollections,

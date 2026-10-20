@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FolderOpen } from 'lucide-react';
 import { useGeneratorCore } from '../../hooks/useGeneratorCore';
@@ -12,6 +12,8 @@ import ModelSection from './ModelSection';
 import ControlNetSection from './ControlNetSection';
 import IPAdapterSection from './IPAdapterSection';
 import EnhancementsSection from './EnhancementsSection';
+import { useProviderCapabilities } from '../../hooks/useProviderCapabilities';
+import { resolveModelType } from '../../utils/modelType';
 import GeneratorReadinessPanel from './GeneratorReadinessPanel';
 import NoCheckpointCTA from './NoCheckpointCTA';
 import SamplingSettings from './SamplingSettings';
@@ -77,6 +79,27 @@ export default function UnifiedGeneratorLayout({
 
     const { data: activeJobs = [] } = useActiveJobs();
     const activeJobCount = activeJobs.length;
+
+    // The provider the job will run on, and what it can do.
+    //
+    // The load balancer chooses the provider, so with more than one enabled
+    // image provider the target is not known until the job is submitted.
+    // The capabilities are fetched for the first enabled one, which is the
+    // target in every current deployment - and the panel is a hint, not a
+    // guarantee: the backend re-checks at build time and says so in the
+    // job's metadata if it had to skip something.
+    const targetProviderId = useMemo(() => {
+        const enabled = (providers || []).filter((p) => p.enabled);
+        return enabled.length > 0 ? enabled[0].id : null;
+    }, [providers]);
+
+    const { capabilities } = useProviderCapabilities(targetProviderId);
+
+    // The model family, for the rules that depend on it. FreeU and PAG are
+    // not applied to Flux models, and the panel used to say so in its help
+    // text while leaving the toggle live - so the user turned it on, and
+    // nothing happened.
+    const modelType = resolveModelType(selectedCheckpoint);
 
     // Advanced mode uses entirely its own inner structure in GeneratorShell
     if (mode === 'advanced') {
@@ -162,6 +185,8 @@ export default function UnifiedGeneratorLayout({
                             />
 
                             <EnhancementsSection
+                                capabilities={capabilities}
+                                modelType={modelType}
                                 hiresFix={mode === 't2i' ? hiresFix : undefined}
                                 setHiresFix={setHiresFix}
                                 hiresUpscaler={hiresUpscaler}

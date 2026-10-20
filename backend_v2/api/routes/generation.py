@@ -20,6 +20,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
+from sqlmodel import Session
 
 from api.deps import get_job_submission_service
 from core.exceptions import ValidationError
@@ -73,6 +74,34 @@ class GenerateBatchRequest(BaseModel):
     metadata: dict[str, Any] = {}
 
 
+async def _target_capabilities(
+    provider_id: str | None, session: Session
+) -> dict[str, Any] | None:
+    """What a provider can do, or None when that could not be determined.
+
+    The answer comes from the provider's own node graph, through the same
+    cached `object_info` the node palette reads - so it costs nothing the
+    palette has not already paid.
+
+    None means "not known". A provider that is down, or a provider that
+    has never been introspected, must not be read as a provider that
+    cannot do FreeU - so the builder carries on as it always did.
+    """
+    if not provider_id:
+        return None
+    try:
+        from api.routes.nodes import _fetch_provider_object_info
+        from core.provider_capabilities import derive_capabilities
+
+        digest, _graph = await _fetch_provider_object_info(provider_id, session)
+        return derive_capabilities(digest, provider_id=provider_id)
+    except Exception as exc:
+        logger.warning(
+            "capabilities_unavailable", provider_id=provider_id, error=str(exc)
+        )
+        return None
+
+
 @router.post("/generate")
 async def generate(
     request: GenerateRequest,
@@ -113,7 +142,29 @@ async def generate(
         if kind == "guided":
             if not request.options:
                 raise ValidationError("options is required for a guided request", field="options")
-            workflow = WorkflowBuilder().build(request.options)
+            # What the TARGET provider can do.
+            #
+            # The builder used to hardcode the provider's node vocabulary in
+            # Python and emit those nodes whatever the provider had
+            # installed - so a FreeU toggle produced a graph with a
+            # `FreeU_V2` node, and a provider without it failed at dispatch
+            # with "node type not found", after the user had picked the
+            # enhancement and waited for the job.
+            #
+            # With the capabilities in hand the builder skips what the
+            # provider cannot do and says so, and the reason lands in the
+            # job's metadata where the user can see it.
+            #
+            # "Not known" is not "no": a provider that is down is not a
+            # provider that cannot do FreeU, so an unavailable answer leaves
+            # the builder behaving as it always did.
+            capabilities = await _target_capabilities(
+                request.preferred_provider_id, submission_service.session
+            )
+            builder = WorkflowBuilder(capabilities=capabilities)
+            workflow = builder.build(request.options)
+            if builder.warnings:
+                metadata["capability_warnings"] = list(builder.warnings)
         else:
             if not workflow:
                 raise ValidationError("workflow is required for a graph request", field="workflow")

@@ -93,6 +93,12 @@ vi.mock('../hooks/useGeneratorCore', () => ({
     useGeneratorCore: () => mocks.makeCore(mocks.storeOverrides.value),
 }));
 vi.mock('../hooks/useActiveJobs', () => ({ useActiveJobs: () => ({ data: [] }) }));
+/* The capabilities hook is a real React Query hook, and this file renders
+   the pages without a QueryClientProvider - every other data hook it uses is
+   mocked away. It is mocked here for the same reason. */
+vi.mock('../hooks/useProviderCapabilities', () => ({
+    useProviderCapabilities: () => ({ capabilities: null, isLoading: false, isError: false }),
+}));
 /* AdvancedGenerator reaches for these two directly instead of through
    useGeneratorCore. */
 vi.mock('../hooks/useProvidersPageData', () => ({

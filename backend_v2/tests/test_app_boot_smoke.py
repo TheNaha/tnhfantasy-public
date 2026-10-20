@@ -513,10 +513,15 @@ async def test_app_serves_requests_after_boot(client, boot):
     # import can be previewed before it writes) and the export preview
     # (`/characters/{id}/export/preview`, so the export menu can say what a
     # card cannot carry before the download).
-    assert len(spec["paths"]) == 296, (
+    # 296 -> 297 for the provider capabilities
+    # (`/api/nodes/capabilities`, so the Enhancements panel can ask what the
+    # target provider can actually do instead of hardcoding its node
+    # vocabulary in Python and offering a FreeU toggle to a provider with
+    # no FreeU node).
+    assert len(spec["paths"]) == 297, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 386
+    assert sum(len(ops) for ops in spec["paths"].values()) == 387
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 
