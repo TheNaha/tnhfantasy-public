@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from api.lifecycle import recover_post_processing_jobs, requeue_inflight_jobs_for_shutdown
 from core.entities import Job, JobStatus
+from core.events import EventType
 
 
 class TestMainLifecycle:
@@ -101,6 +102,72 @@ class TestMainLifecycle:
         finalize_mock.assert_awaited_once()
         assert finalize_mock.await_args.kwargs["job_id"] == job_id
         assert finalize_mock.await_args.kwargs["provider_id"] == "provider-a"
+
+    @pytest.mark.asyncio
+    async def test_the_recovery_waits_for_the_finalisation(self, session, monkeypatch):
+        """The recovery must not return before the finalisation has finished.
+
+        The finalisation used to be SCHEDULED and the recovery returned
+        immediately. The startup sweep then ran, moved the still-POST_PROCESSING
+        job to PENDING with the claim cleared - and PENDING-with-no-claim is
+        the claim predicate, so a live worker picked the job up and ran the
+        entire PAID generation a second time.
+
+        `await_completion=True` is the fix, and this asserts it is passed.
+        """
+        job = Job(
+            status=JobStatus.POST_PROCESSING,
+            workflow={"nodes": {}},
+            outputs=[{"filename": "output.png", "relative_path": "2026/04/01/output.png"}],
+            provider_id="provider-a",
+        )
+        session.add(job)
+        session.commit()
+
+        finalize_mock = AsyncMock()
+        monkeypatch.setattr("api.lifecycle.get_session_sync", lambda: session)
+        monkeypatch.setattr("services.job_processing.finalize_persisted_job_outputs", finalize_mock)
+
+        await recover_post_processing_jobs()
+
+        assert finalize_mock.await_args.kwargs.get("await_completion") is True, (
+            "the recovery scheduled the finalisation instead of awaiting it, "
+            "so the sweep can re-queue a job that has already been paid for"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_post_processing_job_with_no_outputs_is_failed_visibly(
+        self, session, monkeypatch
+    ):
+        """A job in post-processing with no outputs cannot be finalised.
+
+        It is failed through `mark_failed`, so the frontend gets the event.
+        The direct row write it replaced emitted nothing, so the browser
+        waited for a completion that was never announced.
+        """
+        job = Job(
+            status=JobStatus.POST_PROCESSING,
+            workflow={"nodes": {}},
+            outputs=[],
+            provider_id="provider-a",
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+        monkeypatch.setattr("api.lifecycle.get_session_sync", lambda: session)
+
+        with patch("services.job_service.emit_job_event", new_callable=AsyncMock) as mock_emit:
+            recovered = await recover_post_processing_jobs()
+
+        assert recovered == 0
+        refreshed = session.get(Job, job_id)
+        assert refreshed.status == JobStatus.FAILED
+        assert refreshed.error is not None
+        # The event is the point: a FAILED row nobody is told about is a job
+        # the browser waits on forever.
+        assert mock_emit.called
+        assert mock_emit.call_args_list[0][0][0] == EventType.JOB_FAILED
 
 
 class TestStartupRecoveryOrder:

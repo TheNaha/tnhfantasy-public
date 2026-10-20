@@ -249,6 +249,7 @@ async def finalize_persisted_job_outputs(
     process_image_background_fn: Callable[[str, str], Awaitable[Any]] | None = None,
     event_extra: dict | None = None,
     timings: dict[str, Any] | None = None,
+    await_completion: bool = False,
 ) -> None:
     try:
         job = await job_service.get_job(job_id)
@@ -416,6 +417,21 @@ async def finalize_persisted_job_outputs(
                     await load_balancer.release_job(provider_id)
             finally:
                 await _release_finalization(job_id)
+
+    if await_completion:
+        # The recovery path has to KNOW that the finalisation finished before
+        # it returns, because the startup sweep runs next and it is the
+        # sweep that re-queues a POST_PROCESSING job for a second, PAID
+        # generation.
+        #
+        # Scheduling this and returning immediately is what made the sweep
+        # see the job still in POST_PROCESSING, move it to PENDING, and let a
+        # live worker re-run an image that had already been paid for.
+        #
+        # `complete_when_ready` handles its own failures, so awaiting it
+        # cannot raise.
+        await complete_when_ready()
+        return
 
     start_background_task(
         complete_when_ready(),

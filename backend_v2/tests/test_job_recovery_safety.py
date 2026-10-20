@@ -63,16 +63,24 @@ def stub_queue_manager(monkeypatch):
 
 
 class TestTimeoutFloor:
-    def test_floor_matches_startup_recovery(self):
-        """A manual recover must never be more aggressive than an automatic one."""
-        from services.job_service import STALE_JOB_TIMEOUT_SECONDS
+    def test_floor_is_the_shortest_legal_job_timeout(self):
+        """A manual recover must never be more aggressive than an automatic one.
 
-        assert MIN_RECOVER_TIMEOUT_SECONDS == STALE_JOB_TIMEOUT_SECONDS
+        Startup recovery uses each job's own task-type timeout, so the floor
+        for an explicit request is the shortest window any task type allows.
+        """
+        from api.routes.jobs import _min_recover_timeout_seconds
+        from config import get_job_timeout
+        from core.entities import VALID_TASK_TYPES
+
+        expected = min(get_job_timeout(task_type) for task_type in VALID_TASK_TYPES)
+        assert _min_recover_timeout_seconds() == expected
+        assert MIN_RECOVER_TIMEOUT_SECONDS == expected
 
     def test_ceiling_is_still_applied(self):
         assert MAX_RECOVER_TIMEOUT_SECONDS == 3600
 
-    @pytest.mark.parametrize("requested", [1, 30, 60, 299])
+    @pytest.mark.parametrize("requested", [1, 30, 60, 179])
     def test_short_timeouts_are_clamped_up(self, client, session, stub_queue_manager, requested):
         make_job(session, status=JobStatus.PENDING)
 
@@ -130,6 +138,12 @@ class TestNoRedispatchOfLiveJobs:
     def test_stale_jobs_are_still_failed_alongside_a_live_one(
         self, client, session, stub_queue_manager
     ):
+        """With `force=true`, a stale job is failed and a live one is left alone.
+
+        The stale half is opt-in: the dashboard's "Recover" button used to
+        fire it unconditionally, and a 300-second window against a
+        3600-second image timeout failed every generation still running.
+        """
         stuck = make_job(
             session,
             status=JobStatus.GENERATING,
@@ -141,7 +155,7 @@ class TestNoRedispatchOfLiveJobs:
             started_at=datetime.now(timezone.utc) - timedelta(seconds=5),
         )
 
-        resp = client.post("/api/jobs/recover")
+        resp = client.post("/api/jobs/recover?force=true")
 
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -150,6 +164,57 @@ class TestNoRedispatchOfLiveJobs:
         assert body["skipped_running"] == [alive.id]
         assert session.get(Job, stuck.id).status == JobStatus.FAILED
         assert session.get(Job, alive.id).status == JobStatus.GENERATING
+
+    def test_the_default_reports_stale_jobs_without_failing_them(
+        self, client, session, stub_queue_manager
+    ):
+        """The safe default is a report, not a mutation.
+
+        The job had been running for two hours, well past any timeout, so
+        recovery WOULD fail it. The default does not: it says so, and leaves
+        the decision to whoever asked.
+        """
+        stuck = make_job(
+            session,
+            status=JobStatus.GENERATING,
+            started_at=datetime.now(timezone.utc) - timedelta(seconds=7200),
+        )
+
+        resp = client.post("/api/jobs/recover")
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["mode"] == "report_only"
+        assert body["failed"] == 0
+        assert body["failed_job_ids"] == []
+        assert stuck.id in body["stale_candidate_ids"]
+        # The job is untouched.
+        assert session.get(Job, stuck.id).status == JobStatus.GENERATING
+        # ...and the destructive path was never reached.
+        assert stub_queue_manager == []
+
+    def test_a_post_processing_job_is_never_swept_as_stale(
+        self, client, session, stub_queue_manager
+    ):
+        """A job writing its outputs is work in progress, not a wedge.
+
+        This is the one state where a false failure is most expensive: the
+        generation behind it has already been paid for, and the job is
+        writing the files.
+        """
+        writing = make_job(
+            session,
+            status=JobStatus.POST_PROCESSING,
+            started_at=datetime.now(timezone.utc) - timedelta(seconds=7200),
+        )
+
+        resp = client.post("/api/jobs/recover?force=true")
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["failed"] == 0
+        assert writing.id not in body["stale_candidate_ids"]
+        assert session.get(Job, writing.id).status == JobStatus.POST_PROCESSING
 
     def test_pending_unclaimed_jobs_do_not_block_recovery(
         self, client, session, stub_queue_manager

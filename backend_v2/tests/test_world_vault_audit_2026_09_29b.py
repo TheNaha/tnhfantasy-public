@@ -793,10 +793,17 @@ def _repo_root():
 class TestStartupRecoveryOrder:
     def test_pending_sweep_runs_after_post_processing(self, monkeypatch):
         """`_reset_claims_and_requeue_sync` (inside `recover_pending_jobs`)
-        includes POST_PROCESSING in its status list and sets `PENDING` with the
-        claim cleared — the claim predicate. So the jobs being finalised must be
-        finished or failed first, or a live worker re-runs the paid generation
-        and overwrites the outputs the first finalization was writing."""
+        used to include POST_PROCESSING in its status list and set `PENDING`
+        with the claim cleared — the claim predicate. So the jobs being
+        finalised must be finished or failed first, or a live worker re-runs
+        the paid generation and overwrites the outputs the first finalization
+        was writing.
+
+        The sweep no longer includes POST_PROCESSING at all, so the ordering
+        is the FIRST of two guards rather than the only one. It stays: the
+        recovery has to finish the finalisation before anything else touches
+        the queue, and the ordering is what says so.
+        """
         import inspect
 
         from api import lifecycle
@@ -815,33 +822,37 @@ class TestStartupRecoveryOrder:
         phase_order = re.findall(r"await (recover_\w+)\(\)", phase_src)
         order = phase_order or order
         assert order == ["recover_post_processing_jobs", "recover_pending_jobs"], (
-            "recover_pending_jobs() resets POST_PROCESSING rows to PENDING with the "
-            "claim cleared, so it must run AFTER the post-processing jobs have "
-            f"been finalised; startup order is {order}"
+            "recover_pending_jobs() must run AFTER the post-processing jobs "
+            f"have been finalised; startup order is {order}"
         )
 
-    def test_the_reset_sweep_really_includes_post_processing(self):
-        """Guards the assumption above: if the sweep ever drops POST_PROCESSING,
-        the ordering constraint is documented as load-bearing and would be wrong.
+    def test_the_reset_sweep_excludes_post_processing(self):
+        """The second guard against paying twice for the same image.
 
-        The sweep's status list used to be six hand-copied SQL string literals
-        inside the statement. It is now interpolated from
-        `core.entities.ACTIVE_JOB_STATUSES` — the same tuple the Python paths
-        read — so the guard checks that the tuple still holds the state the
-        ordering depends on, rather than that the method spells it out. The
-        literal spelling and the enum had no link, so a new status added to the
-        tuple would have left the reset stranded forever in that state.
+        A POST_PROCESSING job has already been generated and paid for; it is
+        writing its outputs. The sweep sets PENDING with the claim cleared,
+        and PENDING-with-no-claim IS the claim predicate — so a sweep that
+        included POST_PROCESSING would put a finished, paid-for generation
+        back on the queue and a live worker would run it a second time.
+
+        The sweep's status list is interpolated from
+        `core.entities.ACTIVE_JOB_STATUSES`, so the guard checks the SQL
+        itself rather than the enum: the exclusion has to be IN the
+        statement, and the enum alone would not be enough.
         """
         import inspect
 
-        from core.entities import ACTIVE_JOB_STATUSES, JobStatus
-
         from services.job_queue import QueueManager
 
-        assert JobStatus.POST_PROCESSING in ACTIVE_JOB_STATUSES
-
         src = inspect.getsource(QueueManager._reset_claims_and_requeue_sync)
-        assert "ACTIVE_JOB_STATUSES" in src
+        assert "POST_PROCESSING" in src, (
+            "the reset sweep must exclude POST_PROCESSING: a job in that "
+            "state has already been paid for, and re-queueing it runs the "
+            "generation a second time"
+        )
+        assert "!= 'POST_PROCESSING'" in src, (
+            "the exclusion has to be in the SQL, not only in the enum"
+        )
 
 
 # ── D11: the timeline materialised whole Asset rows ───────────────────────

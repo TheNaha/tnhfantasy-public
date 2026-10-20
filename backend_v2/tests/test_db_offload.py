@@ -179,23 +179,30 @@ class TestOffloadPool:
         re-derived the event type from the caller's argument instead of the
         value after the write, a rejected CANCELLED would still broadcast a
         cancellation that never happened.
+
+        The transition used here has to be one the FSM still forbids.
+        PENDING -> COMPLETED used to be the example and no longer is: a job
+        that holds persisted outputs must be able to complete, and the edge
+        was added for that. CANCELLED -> COMPLETED is still forbidden, and it
+        is the more important one - a cancelled job must not come back to life.
         """
         from core.events import event_bus
         from services.job_service import JobService
 
         service = JobService(session)
         job = await service.create_job(task_type="image", workflow={"1": {}}, metadata={})
+        await service.update_job(job.id, status=JobStatus.CANCELLED)
 
         seen = []
         event_bus.subscribe(lambda event: seen.append(event), "job")
 
-        # PENDING -> COMPLETED is not an allowed transition.
+        # CANCELLED -> COMPLETED is not an allowed transition.
         await service.update_job(job.id, status=JobStatus.COMPLETED, outputs=[])
 
         assert not any(e.type == "job.completed" for e in seen), (
             "an illegal transition emitted a completion event"
         )
-        assert job.status == JobStatus.PENDING
+        assert job.status == JobStatus.CANCELLED
 
 
 class TestTheOffloadDeclinesWhenItWouldRace:

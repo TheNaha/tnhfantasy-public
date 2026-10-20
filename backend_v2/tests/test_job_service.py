@@ -271,12 +271,55 @@ class TestJobServiceFsm:
     back to PENDING during retries and provider failover."""
 
     @pytest.mark.asyncio
-    async def test_in_flight_cannot_reset_to_pending(self, session: Session, sample_workflow):
-        service = JobService(session)
-        job = await service.create_job(workflow=sample_workflow, metadata={})
-        await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
-        updated = await service.update_job(job.id, status=JobStatus.PENDING, message="Retrying...")
-        assert updated.status == JobStatus.SENT_TO_PROVIDER
+    async def test_failover_can_reset_to_pending(self, session: Session, sample_workflow):
+        """Provider failover puts the job back on the queue.
+
+        `mark_provider_exhausted` does exactly this when a provider fails
+        and another one has to take the job. The edge was missing from the
+        FSM, so the write was rejected, the job stayed SENT_TO_PROVIDER, and
+        - the part that made it invisible - NO EVENT WAS EMITED AT ALL. The
+        frontend never learned the job was still alive, and the job could
+        not be claimed again because the claim query wants PENDING.
+        """
+        from core.events import EventType
+
+        with patch("services.job_service.emit_job_event", new_callable=AsyncMock) as mock_emit:
+            service = JobService(session)
+            job = await service.create_job(workflow=sample_workflow, metadata={})
+            await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
+            mock_emit.reset_mock()
+
+            updated = await service.update_job(job.id, status=JobStatus.PENDING, message="Retrying...")
+
+            assert updated.status == JobStatus.PENDING
+            # The event is the whole point: without it the job vanishes from
+            # the frontend's view of the world.
+            mock_emit.assert_called_once()
+            assert mock_emit.call_args[0][0] == EventType.JOB_UPDATED
+
+    @pytest.mark.asyncio
+    async def test_a_pending_job_can_complete(self, session: Session, sample_workflow):
+        """A job that holds persisted outputs must be able to complete.
+
+        The edge was missing, so `complete_job` on a job that was still
+        PENDING had its transition rejected: the status was popped, the job
+        kept a 100% progress event instead of a completion, and the
+        frontend - which polls on status - waited forever.
+        """
+        from core.events import EventType
+
+        with patch("services.job_service.emit_job_event", new_callable=AsyncMock) as mock_emit:
+            service = JobService(session)
+            job = await service.create_job(workflow=sample_workflow, metadata={})
+            mock_emit.reset_mock()
+
+            updated = await service.update_job(
+                job.id, status=JobStatus.COMPLETED, outputs=[{"filename": "a.png"}]
+            )
+
+            assert updated.status == JobStatus.COMPLETED
+            mock_emit.assert_called_once()
+            assert mock_emit.call_args[0][0] == EventType.JOB_COMPLETED
 
     @pytest.mark.asyncio
     async def test_generating_cannot_reset_to_pending(self, session: Session, sample_workflow):

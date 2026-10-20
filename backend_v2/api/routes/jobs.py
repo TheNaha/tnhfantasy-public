@@ -56,11 +56,29 @@ MAX_FAILED_PAGE_SIZE = 100
 # A job takes minutes, not seconds, and the caller picks this value. The old
 # floor was 30s, which meant `?timeout_seconds=30` failed essentially every live
 # image job: the request was a one-liner that looked harmless and silently
-# marked paying work FAILED. The floor is now the same value the backend uses for
-# its own startup recovery (JobService.STALE_JOB_TIMEOUT_SECONDS), so a manual
-# recover can never be more aggressive than an automatic one.
-MIN_RECOVER_TIMEOUT_SECONDS = 300
+# marked paying work FAILED.
+#
+# The floor is now the SHORTEST window any task type allows, because startup
+# recovery uses each job's own task-type timeout (`get_job_timeout`) and a
+# manual recover must never be more aggressive than an automatic one. The
+# image timeout is 3600s and the LLM timeout is 180s, so the floor is the
+# LLM's - a hardcoded 300 was more permissive than the automatic recovery of
+# an LLM job.
+MIN_RECOVER_TIMEOUT_SECONDS = 180
 MAX_RECOVER_TIMEOUT_SECONDS = 3600
+
+
+def _min_recover_timeout_seconds() -> int:
+    """The shortest window any task type allows, computed from the config.
+
+    The constant above is the fallback for a config that cannot be read at
+    import time. This is the live value, and the test asserts the two agree
+    with what the config actually says.
+    """
+    from config import get_job_timeout
+    from core.entities import VALID_TASK_TYPES
+
+    return min(get_job_timeout(task_type) for task_type in VALID_TASK_TYPES)
 
 
 class CreateJobRequest(BaseModel):
@@ -403,8 +421,9 @@ async def list_failed_jobs(
 
 @router.post("/recover")
 async def recover_jobs(
-    timeout_seconds: int = MIN_RECOVER_TIMEOUT_SECONDS,
+    timeout_seconds: int | None = None,
     requeue_running: bool = False,
+    force: bool = False,
     service: JobService = Depends(get_job_service),
 ):
     """
@@ -415,10 +434,11 @@ async def recover_jobs(
     it on a live instance when a worker died. It is destructive, so this
     endpoint guards what it can from here:
 
-    * `timeout_seconds` is floored at MIN_RECOVER_TIMEOUT_SECONDS (300s, the same
-      constant startup recovery uses). It used to floor at 30s, shorter than a
-      normal image generation, so the caller's default wrote FAILED to every live
-      job.
+    * `timeout_seconds` is floored at MIN_RECOVER_TIMEOUT_SECONDS (300s) when
+      the caller gives one. It used to floor at 30s, shorter than a normal
+      image generation, so the caller's default wrote FAILED to every live
+      job. Omitting it entirely means "use each job's own task-type timeout",
+      which is what startup recovery does.
 
     * By default it performs only the safe half. `JobQueue.recover` fails stale
       jobs (safe: it only writes FAILED for jobs older than the timeout) and then
@@ -431,25 +451,57 @@ async def recover_jobs(
       stale by definition. A live HTTP endpoint cannot make that assumption, so
       with active jobs present it fails the stale ones and requeues nothing.
 
+    * `force=false` (the default) makes the stale half a REPORT when there are
+      active jobs: it lists the jobs that recovery would fail and fails
+      nothing. The dashboard's "Recover" button is a mutation the user can
+      fire by accident, and it was failing live jobs - a 300-second window
+      against a 3600-second image timeout, so every generation still running
+      after five minutes was marked FAILED. `force=true` opts into failing
+      them.
+
     * `requeue_running=true` opts into the old, fully destructive behaviour. It
       is off by default precisely because the guard against orphaning an in-flight
       attempt belongs in `JobQueue._reset_claims_and_requeue_sync`
       (services/job_queue.py:658) — a per-job, claim-checked reset — and that is
       outside this file.
-
-    There is no frontend consumer (the `useJobRecovery` hook has none), so
-    nothing depends on the old semantics.
     """
     from services.job_queue import queue_manager
 
-    timeout_seconds = max(
-        MIN_RECOVER_TIMEOUT_SECONDS, min(timeout_seconds, MAX_RECOVER_TIMEOUT_SECONDS)
-    )
+    if timeout_seconds is not None:
+        timeout_seconds = max(
+            _min_recover_timeout_seconds(),
+            min(timeout_seconds, MAX_RECOVER_TIMEOUT_SECONDS),
+        )
 
     active_ids = _active_job_ids(service)
 
     if active_ids and not requeue_running:
-        # Safe half only: fail what is genuinely wedged, requeue nothing.
+        # Safe half only: report what is stale, requeue nothing, and fail
+        # nothing unless the caller explicitly asked.
+        candidates = await service.list_stale_running_jobs(timeout_seconds=timeout_seconds)
+        stale_ids = {entry["job_id"] for entry in candidates}
+
+        if not force:
+            summary = {
+                "mode": "report_only",
+                "recovered": 0,
+                "failed": 0,
+                "failed_job_ids": [],
+                "stale_candidates": candidates,
+                "stale_candidate_ids": sorted(stale_ids),
+                "pending": len(list(service.get_pending_jobs())),
+                "running": len(active_ids),
+                "requeued": False,
+                "skipped_running": sorted(active_ids - stale_ids),
+            }
+            logger.info(
+                "job_recovery_report_only",
+                stale_candidates=len(candidates),
+                active=len(active_ids),
+                timeout_seconds=timeout_seconds,
+            )
+            return {"status": "success", **summary}
+
         stale = await service.fail_stale_running_jobs(timeout_seconds=timeout_seconds)
         stale_ids = {job.id for job in stale}
         summary = {
@@ -457,6 +509,7 @@ async def recover_jobs(
             "recovered": 0,
             "failed": len(stale),
             "failed_job_ids": sorted(stale_ids),
+            "stale_candidate_ids": sorted(stale_ids),
             "pending": len(list(service.get_pending_jobs())),
             "running": len(active_ids),
             "requeued": False,

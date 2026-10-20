@@ -15,6 +15,10 @@ from infrastructure.metrics import metrics
 from infrastructure.db_executor import run_db
 from infrastructure.repositories import JobRepository
 
+# Imported lazily inside the functions that need it: `config` reads the
+# settings module, and importing it at module scope made the import graph
+# of every service depend on it.
+
 logger = job_logger()
 
 # ---------------------------------------------------------------------------
@@ -33,9 +37,13 @@ MAX_TRACKED_ATTEMPTS = 20
 # Error strings are truncated on write to keep the JSON column small.
 MAX_ERROR_DETAIL_LENGTH = 500
 
-# A job still sitting in an active state after this long is assumed wedged
-# (worker crash, provider hang) and is failed by recovery instead of blocking
-# the queue forever.
+# The floor for an EXPLICIT stale window. Startup recovery does not use it:
+# it uses each job's own task-type timeout (`get_job_timeout`), because a
+# single global window was 300 seconds against a legal image timeout of
+# 3600, and recovery failed generations that were still running.
+#
+# It remains the floor for `POST /api/jobs/recover`, so a manual recover can
+# never be more aggressive than the shortest legal job timeout.
 STALE_JOB_TIMEOUT_SECONDS = 300
 STALE_JOB_ERROR = "Server restart during processing - job timed out"
 
@@ -80,8 +88,19 @@ JOB_STATUS_TRANSITIONS = {
     # one job id forever. PENDING is also the only state RETRYING is reachable
     # from on a manual retry, so a transient failure that happens before the
     # job is ever dispatched needs the same edge.
-    JobStatus.PENDING: {JobStatus.SENT_TO_PROVIDER, JobStatus.RETRYING, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.SENT_TO_PROVIDER: {JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    # PENDING -> COMPLETED. A job that holds persisted outputs and is
+    # completed from PENDING used to have its transition rejected: the FSM
+    # had no edge, `update_job` popped the status, and the job stayed
+    # PENDING forever with a 100% progress event instead of a completion.
+    # The frontend polls on status, so the job was never finished and never
+    # appeared in the gallery.
+    JobStatus.PENDING: {JobStatus.SENT_TO_PROVIDER, JobStatus.RETRYING, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.COMPLETED},
+    # SENT_TO_PROVIDER -> PENDING. Provider failover puts the job back on
+    # the queue so a different provider can take it. The edge was missing,
+    # so the failover write was rejected by the FSM and the job was left
+    # in SENT_TO_PROVIDER with NO event emitted at all - the frontend
+    # never learned the job was still alive.
+    JobStatus.SENT_TO_PROVIDER: {JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PENDING},
     JobStatus.CONNECTED: {JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
     JobStatus.PRE_GENERATION: {JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
     JobStatus.GENERATING: {JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
@@ -525,8 +544,64 @@ class JobService:
             updates["provider_id"] = provider_id
         return await self.update_job(job_id, **updates)
 
+    def _stale_running_candidates(
+        self, timeout_seconds: int | None = None
+    ) -> list[tuple[Job, float]]:
+        """The active jobs that have been running longer than their timeout.
+
+        `timeout_seconds=None` means "use each job's own task-type timeout",
+        which is the only correct default. A single global window was 300
+        seconds, against a legal image timeout of 3600: the dashboard's
+        "Recover" button therefore failed every generation that was still
+        running perfectly well, and the frontend showed it as a failure.
+
+        POST_PROCESSING is never a candidate. A job in that state is writing
+        its outputs, which is work in progress, not a wedge - and it is the
+        one state where a false failure is most expensive, because the
+        generation behind it has already been paid for.
+        """
+        from config import get_job_timeout
+
+        now = datetime.now(timezone.utc)
+        candidates: list[tuple[Job, float]] = []
+
+        for job in self.get_running_jobs():
+            if job.status == JobStatus.POST_PROCESSING:
+                continue
+            if not job.started_at:
+                continue
+            elapsed = (now - as_utc(job.started_at)).total_seconds()
+            limit = (
+                timeout_seconds
+                if timeout_seconds is not None
+                else get_job_timeout(job.task_type or "image")
+            )
+            if elapsed > limit:
+                candidates.append((job, elapsed))
+
+        return candidates
+
+    async def list_stale_running_jobs(
+        self, timeout_seconds: int | None = None
+    ) -> list[dict[str, Any]]:
+        """The stale candidates, without failing anything.
+
+        A report, so an operator can see what recovery WOULD do before
+        letting it do it. The dashboard's "Recover" button used to be a
+        mutation, and it failed live jobs.
+        """
+        return [
+            {
+                "job_id": job.id,
+                "task_type": job.task_type,
+                "elapsed_seconds": round(elapsed, 1),
+                "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+            }
+            for job, elapsed in self._stale_running_candidates(timeout_seconds)
+        ]
+
     async def fail_stale_running_jobs(
-        self, timeout_seconds: int = STALE_JOB_TIMEOUT_SECONDS
+        self, timeout_seconds: int | None = None
     ) -> list[Job]:
         """Fail jobs wedged in an active state for longer than the timeout.
 
@@ -536,51 +611,47 @@ class JobService:
         active -> FAILED transitions; recovery has to override that.
         """
         now = datetime.now(timezone.utc)
-        stale: list[tuple[Job, float]] = []
-
-        for job in self.get_running_jobs():
-            if not job.started_at:
-                continue
-            elapsed = (now - as_utc(job.started_at)).total_seconds()
-            if elapsed > timeout_seconds:
-                stale.append((job, elapsed))
+        stale = self._stale_running_candidates(timeout_seconds)
 
         if not stale:
             return []
 
-        try:
-            for job, elapsed in stale:
-                job.status = JobStatus.FAILED
-                job.error = STALE_JOB_ERROR
-                job.completed_at = now
-                job.updated_at = now
-
-                metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
-                diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
-                diagnostics["failure_kind"] = FAILURE_STALE
-                diagnostics["stale_seconds"] = round(elapsed, 3)
-                diagnostics["failed_at"] = now.isoformat()
-                metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
-                job.metadata_ = metadata
-
-                self.session.add(job)
-            self.session.commit()
-        except Exception as exc:
-            try:
-                self.session.rollback()
-            except Exception:
-                pass
-            logger.error("job_recovery_atomic_update_failed", error=str(exc), exc_info=True)
-            return []
-
         failed_jobs: list[Job] = []
         for job, elapsed in stale:
+            metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
+            diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
+            diagnostics["failure_kind"] = FAILURE_STALE
+            diagnostics["stale_seconds"] = round(elapsed, 3)
+            diagnostics["failed_at"] = now.isoformat()
+            metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
+
+            # The atomic guard. A cancel request and this sweep are writers
+            # of the same row, and the sweep read its status a moment
+            # earlier; a plain read-then-write let a cancellation be
+            # overwritten, and both a `job.cancelled` and a `job.failed`
+            # event went out for the same id.
+            failed = self.repo.update_where_status(
+                job.id,
+                job.status,
+                status=JobStatus.FAILED,
+                error=STALE_JOB_ERROR,
+                completed_at=now,
+                metadata_=metadata,
+            )
+            if failed is None:
+                logger.info(
+                    "job_recovery_stale_skipped",
+                    job_id=job.id,
+                    reason="status_changed",
+                )
+                continue
+
             logger.warning("job_recovery_timeout", job_id=job.id, elapsed=f"{elapsed:.0f}s")
             try:
-                await emit_job_event(EventType.JOB_FAILED, self._job_to_dict(job))
+                await emit_job_event(EventType.JOB_FAILED, self._job_to_dict(failed))
             except Exception as exc:
                 logger.warning("job_recovery_emit_failed", job_id=job.id, error=str(exc))
-            failed_jobs.append(job)
+            failed_jobs.append(failed)
 
         return failed_jobs
 
@@ -613,44 +684,45 @@ class JobService:
         if not stranded:
             return []
 
-        try:
-            for job, elapsed in stranded:
-                job.status = JobStatus.FAILED
-                job.error = STRANDED_PENDING_JOB_ERROR
-                job.completed_at = now
-                job.updated_at = now
-
-                metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
-                diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
-                diagnostics["failure_kind"] = FAILURE_STRANDED_PENDING
-                diagnostics["stale_seconds"] = round(elapsed, 3)
-                diagnostics["failed_at"] = now.isoformat()
-                metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
-                job.metadata_ = metadata
-
-                self.session.add(job)
-            self.session.commit()
-        except Exception as exc:
-            try:
-                self.session.rollback()
-            except Exception:
-                pass
-            logger.error("job_recovery_stranded_update_failed", error=str(exc), exc_info=True)
-            return []
-
         failed_jobs: list[Job] = []
         for job, elapsed in stranded:
+            metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
+            diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
+            diagnostics["failure_kind"] = FAILURE_STRANDED_PENDING
+            diagnostics["stale_seconds"] = round(elapsed, 3)
+            diagnostics["failed_at"] = now.isoformat()
+            metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
+
+            # The atomic guard, for the same reason as `fail_stale_running_jobs`:
+            # a cancel racing this sweep must not be overwritten.
+            failed = self.repo.update_where_status(
+                job.id,
+                job.status,
+                status=JobStatus.FAILED,
+                error=STRANDED_PENDING_JOB_ERROR,
+                completed_at=now,
+                metadata_=metadata,
+            )
+            if failed is None:
+                logger.info(
+                    "job_recovery_stranded_skipped",
+                    job_id=job.id,
+                    reason="status_changed",
+                )
+                continue
+
             logger.warning(
                 "job_recovery_stranded",
                 job_id=job.id,
-                age=f"{elapsed:.0f}s",
-                enqueued_at=None,
+                elapsed=f"{elapsed:.0f}s",
             )
             try:
-                await emit_job_event(EventType.JOB_FAILED, self._job_to_dict(job))
+                await emit_job_event(EventType.JOB_FAILED, self._job_to_dict(failed))
             except Exception as exc:
-                logger.warning("job_recovery_emit_failed", job_id=job.id, error=str(exc))
-            failed_jobs.append(job)
+                logger.warning(
+                    "job_recovery_stranded_emit_failed", job_id=job.id, error=str(exc)
+                )
+            failed_jobs.append(failed)
 
         return failed_jobs
 

@@ -17,7 +17,6 @@ from infrastructure.background_tasks import start_background_task
 from infrastructure.database import database_url
 from infrastructure.logging import get_logger
 from services.job_service import (
-    STALE_JOB_TIMEOUT_SECONDS,
     STRANDED_PENDING_TIMEOUT_SECONDS,
 )
 
@@ -863,7 +862,7 @@ class QueueManager:
         self,
         job_service,
         *,
-        timeout_seconds: int = STALE_JOB_TIMEOUT_SECONDS,
+        timeout_seconds: int | None = None,
         stranded_timeout_seconds: int = STRANDED_PENDING_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
         """Requeue interrupted work and fail jobs wedged past the stale timeout.
@@ -871,6 +870,10 @@ class QueueManager:
         Used at startup and by `POST /api/jobs/recover`, so an operator can run
         the exact same recovery on a live instance when a worker dies without
         taking the queue down. Returns a summary instead of raising.
+
+        `timeout_seconds=None` means "use each job's own task-type timeout".
+        A single global window was 300 seconds, against a legal image timeout
+        of 3600, so recovery failed generations that were still running.
         """
         stale_jobs = await job_service.fail_stale_running_jobs(timeout_seconds=timeout_seconds)
         stale_ids = {job.id for job in stale_jobs}
@@ -927,11 +930,26 @@ class QueueManager:
 
     @staticmethod
     def _reset_claims_and_requeue_sync() -> None:
-        """Reset all jobs to PENDING and clear claim markers (Postgres only).
+        """Reset active jobs to PENDING and clear claim markers (Postgres only).
 
         Runs after a backend restart: in-flight jobs were interrupted and their
         claim markers are stale. Terminal jobs (COMPLETED/FAILED/CANCELLED) are
         left untouched.
+
+        POST_PROCESSING is EXCLUDED, and that exclusion is the second guard
+        against paying twice for the same image.
+
+        A job in POST_PROCESSING has already been generated and paid for; it
+        is writing its outputs. PENDING-with-no-claim IS the claim predicate,
+        so a POST_PROCESSING job that this sweep moved to PENDING would be
+        picked up by a live worker and the entire generation would run again.
+
+        The first guard is the ordering in `_run_job_recovery_phase`: the
+        post-processing jobs are finished BEFORE this sweep runs. That guard
+        depends on the finalisation actually completing, which is why the
+        recovery path awaits it rather than scheduling it. This one does not
+        depend on anything: even if the ordering is broken, a
+        POST_PROCESSING job is not re-queued.
         """
         from sqlalchemy import text
 
@@ -952,9 +970,10 @@ class QueueManager:
                 """
                 UPDATE jobs
                 SET status = 'PENDING', started_at = NULL, claimed_at = NULL
-                WHERE status IN """
+                WHERE (status IN """
                 f"{placeholders}"
                 """
+                   AND status != 'POST_PROCESSING')
                    OR (status = 'PENDING' AND claimed_at IS NOT NULL)
                 """
             ), params)

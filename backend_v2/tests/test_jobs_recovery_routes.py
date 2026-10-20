@@ -126,6 +126,12 @@ class TestJobDiagnosticsEndpoint:
 
 class TestRecoverEndpoint:
     def test_fails_stale_jobs_and_reports_summary(self, client, session):
+        """`force=true` fails the stale jobs.
+
+        The window is given explicitly, because the default is now each
+        job's own task-type timeout - and the image timeout is 3600s, so a
+        1200-second-old job is NOT stale by default.
+        """
         stuck = make_job(
             session,
             status=JobStatus.GENERATING,
@@ -133,7 +139,7 @@ class TestRecoverEndpoint:
         )
         make_job(session, status=JobStatus.PENDING)
 
-        response = client.post("/api/jobs/recover")
+        response = client.post("/api/jobs/recover?force=true&timeout_seconds=600")
 
         assert response.status_code == 200
         data = response.json()
@@ -144,6 +150,27 @@ class TestRecoverEndpoint:
         refreshed = session.get(Job, stuck.id)
         assert refreshed.status == JobStatus.FAILED
         assert refreshed.error is not None
+
+    def test_the_default_does_not_fail_a_job_that_is_within_its_timeout(
+        self, client, session
+    ):
+        """A 1200-second-old image job is inside the 3600-second image timeout.
+
+        The old global window was 300 seconds, so the dashboard's "Recover"
+        button failed every generation still running after five minutes.
+        """
+        running = make_job(
+            session,
+            status=JobStatus.GENERATING,
+            started_at=datetime.now(timezone.utc) - timedelta(seconds=1200),
+        )
+
+        response = client.post("/api/jobs/recover?force=true")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["failed"] == 0
+        assert session.get(Job, running.id).status == JobStatus.GENERATING
 
     def test_is_safe_with_nothing_to_recover(self, client):
         response = client.post("/api/jobs/recover")

@@ -26,7 +26,7 @@ from infrastructure.scheduler import (
     stop_scheduler,
 )
 from services.job_queue import queue_manager
-from services.job_service import JobService
+from services.job_service import FAILURE_FINALIZATION, JobService
 from services.provider_runtime import monitor_provider_changes
 
 logger = get_logger("lifecycle")
@@ -513,7 +513,19 @@ async def _run_job_recovery_phase() -> None:
 
 
 async def recover_post_processing_jobs(process_image_background_fn=None) -> int:
-    """Resume jobs that already have persisted outputs but were not marked completed yet."""
+    """Resume jobs that already have persisted outputs but were not marked completed yet.
+
+    The finalisation is AWAITED, not scheduled. That is the whole point of
+    this pass, and it is what the ordering in `_run_job_recovery_phase`
+    depends on: the startup sweep runs next, and it moves every active job
+    back to PENDING - including a POST_PROCESSING job, which is the one
+    state where being moved means the paid generation runs a second time.
+
+    So the jobs are read first, the read session is closed, and each
+    finalisation then runs to completion on its own session. Holding the
+    read session open across the await would keep a read transaction open
+    on the very rows being written.
+    """
     from core.entities import Job
     from services.job_processing import finalize_persisted_job_outputs
 
@@ -521,35 +533,65 @@ async def recover_post_processing_jobs(process_image_background_fn=None) -> int:
 
     session = get_session_sync()
     try:
-        job_service = JobService(session)
-        post_processing_jobs = session.exec(
-            select(Job).where(Job.status == JobStatus.POST_PROCESSING)
-        ).all()
+        pending = [
+            (job.id, list(job.outputs or []), job.provider_id)
+            for job in session.exec(
+                select(Job).where(Job.status == JobStatus.POST_PROCESSING)
+            ).all()
+        ]
+        # End the read transaction. The finalisation writes through its own
+        # session, and holding a read transaction open on the very rows
+        # being written is a lock wait on SQLite and a stale snapshot on
+        # Postgres.
+        session.rollback()
 
         recovered = 0
-        for job in post_processing_jobs:
-            outputs = job.outputs or []
+        for job_id, outputs, provider_id in pending:
             if not outputs:
-                job.status = JobStatus.FAILED
-                job.error = "Job entered post-processing without persisted outputs"
-                session.add(job)
+                await _fail_post_processing_without_outputs(session, job_id)
                 continue
 
-            await finalize_persisted_job_outputs(
-                job_service=job_service,
-                job_id=job.id,
-                outputs=outputs,
-                provider_id=job.provider_id,
-                load_balancer=None,
-                process_image_background_fn=process_image_background_fn,
-            )
-            recovered += 1
-
-        if post_processing_jobs:
-            session.commit()
+            try:
+                job_service = JobService(session)
+                await finalize_persisted_job_outputs(
+                    job_service=job_service,
+                    job_id=job_id,
+                    outputs=outputs,
+                    provider_id=provider_id,
+                    load_balancer=None,
+                    process_image_background_fn=process_image_background_fn,
+                    await_completion=True,
+                )
+                recovered += 1
+            except Exception as exc:
+                # One job's failure must not stop the others from being recovered.
+                logger.warning(
+                    "post_processing_recovery_failed", job_id=job_id, error=str(exc)
+                )
 
         if recovered:
             logger.info("post_processing_jobs_recovered", count=recovered)
         return recovered
     finally:
         session.close()
+
+
+async def _fail_post_processing_without_outputs(session, job_id: str) -> None:
+    """A job in post-processing with no outputs cannot be finalised.
+
+    It is failed through `mark_failed` rather than by writing the row
+    directly, so the failure reaches the frontend as an event. The direct
+    write it replaced emitted nothing, so the job sat FAILED in the database
+    and the browser waited for a completion that was never announced.
+    """
+    try:
+        service = JobService(session)
+        await service.mark_failed(
+            job_id,
+            error="Job entered post-processing without persisted outputs",
+            error_type=FAILURE_FINALIZATION,
+        )
+    except Exception as exc:
+        logger.warning(
+            "post_processing_recovery_fail_failed", job_id=job_id, error=str(exc)
+        )
