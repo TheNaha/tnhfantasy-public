@@ -857,28 +857,181 @@ if mode_key in ("llm", "hybrid"):
         except Exception:
             llama_ready = False
 
-    if not llama_ready:
-        os.makedirs(llama_dir, exist_ok=True)
-        if os.path.exists(cached_bundle) and os.path.getsize(cached_bundle) > 50_000_000:
-            print("⚡ Restoring CUDA-accelerated llama.cpp bundle from Google Drive cache...")
-            subprocess.run(f"tar -xzf '{cached_bundle}' -C '{llama_dir}'", shell=True, check=True)
-            print("✅ llama.cpp bundle restored from cache in ~1s!")
-        else:
-            print("📥 Fetching CUDA-accelerated llama.cpp binary & runtime libraries...")
-            llama_tar = "/tmp/llama_server.tar.gz"
-            llama_url = "https://github.com/ggml-org/llama.cpp/releases/download/b11647/llama-b11647-bin-ubuntu-cuda-12.8-x64.tar.gz"
-            subprocess.run(["curl", "-fsSL", "--retry", "3", llama_url, "-o", llama_tar], check=True)
-            subprocess.run(f"tar -xzf '{llama_tar}' -C '{llama_dir}' --strip-components=1", shell=True, check=True)
-            try:
-                shutil.copy(llama_tar, cached_bundle)
-                print("💾 Cached complete llama.cpp bundle to Google Drive for future sessions.")
-            except Exception as e:
-                print(f"⚠️ Could not cache bundle to Drive: {e}")
-            if os.path.exists(llama_tar):
+
+# ── llama-server: install, LINK and VERIFY ─────────────────────────────────
+# The CUDA release is built for a specific Ubuntu and needs a glibc the
+# container may not have: the b11647 CUDA 12.8 bundle wants GLIBC 2.38, and
+# Modal's Debian 12 image has 2.36. A binary that cannot start is WORSE
+# than no binary, because the readiness check passes (the file exists) and
+# the failure only surfaces much later as a 503 from the provider.
+#
+# So the install is VERIFIED by running it, a bundle that cannot run here
+# is discarded rather than cached again, and llama.cpp is BUILT FROM SOURCE
+# as the fallback — which always matches the container's toolchain, because
+# it is built with it.
+LLAMA_TAG = "b11647"
+LLAMA_RELEASE_URL = (
+    "https://github.com/ggml-org/llama.cpp/releases/download/"
+    + LLAMA_TAG + "/llama-" + LLAMA_TAG + "-bin-ubuntu-cuda-12.8-x64.tar.gz"
+)
+
+
+def _llama_can_run(binary_path: str) -> bool:
+    # Can this llama-server actually START here?
+    if not binary_path or not os.path.exists(binary_path):
+        return False
+    try:
+        probe = subprocess.run(
+            [binary_path, "--version"], capture_output=True, text=True, timeout=30
+        )
+        return probe.returncode == 0
+    except Exception:
+        return False
+
+
+def _link_llama_bundle(search_root: str, target_llama: str) -> None:
+    # Link the bundle's binary and shared libraries into place.
+    #
+    # The libraries are linked UNCONDITIONALLY. The old code only linked a
+    # library that was not already there, so a container that already had an
+    # older libstdc++ kept it and the bundle's own newer one was ignored --
+    # the server then failed with "GLIBCXX_3.4.32 not found" on a machine
+    # that HAD the right library sitting in the bundle.
+    for root, dirs, files in os.walk(search_root):
+        for f in files:
+            src_path = os.path.join(root, f)
+            if f == "llama-server":
                 try:
-                    os.remove(llama_tar)
+                    if os.path.exists(target_llama) or os.path.islink(target_llama):
+                        os.remove(target_llama)
+                    os.symlink(src_path, target_llama)
+                except Exception:
+                    shutil.copy(src_path, target_llama)
+                try:
+                    os.chmod(target_llama, 0o755)
                 except Exception:
                     pass
+            elif f.endswith(".so") or ".so." in f:
+                dst_lib = os.path.join("/usr/local/lib", f)
+                try:
+                    if os.path.exists(dst_lib) or os.path.islink(dst_lib):
+                        os.remove(dst_lib)
+                    os.symlink(src_path, dst_lib)
+                except Exception:
+                    try:
+                        shutil.copy(src_path, dst_lib)
+                    except Exception:
+                        pass
+    subprocess.run(["ldconfig"], check=False)
+
+
+def _build_llama_from_source(llama_dir: str) -> bool:
+    # Build llama.cpp against THIS container's toolchain.
+    #
+    # The prebuilt release cannot be made to work on an image whose glibc is
+    # older than the one it was built against, and glibc cannot be swapped
+    # without breaking everything else in the container. Building from source
+    # always matches.
+    print("🔨 Building llama.cpp from source for this image (a few minutes)...")
+    build_root = os.path.join(llama_dir, "src")
+    if not os.path.isdir(os.path.join(build_root, ".git")):
+        try:
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--branch", LLAMA_TAG,
+                 "https://github.com/ggml-org/llama.cpp", build_root],
+                check=True, capture_output=True, text=True, timeout=900,
+            )
+        except Exception as exc:
+            print(f"⚠️ Could not clone llama.cpp: {exc}")
+            return False
+    try:
+        if not shutil.which("cmake"):
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--quiet", "cmake", "ninja"],
+                check=False, capture_output=True, text=True, timeout=900,
+            )
+        build_dir = os.path.join(build_root, "build")
+        subprocess.run(
+            ["cmake", "-B", build_dir, "-S", build_root,
+             "-DCMAKE_BUILD_TYPE=Release", "-DGGML_CUDA=ON",
+             "-DLLAMA_CURL=OFF"],
+            check=True, capture_output=True, text=True, timeout=1800,
+        )
+        subprocess.run(
+            ["cmake", "--build", build_dir, "--config", "Release",
+             "--target", "llama-server",
+             "-j", str(max(1, (os.cpu_count() or 4) - 1))],
+            check=True, capture_output=True, text=True, timeout=5400,
+        )
+    except Exception as exc:
+        print(f"⚠️ llama.cpp source build failed: {exc}")
+        return False
+    return os.path.exists(os.path.join(build_dir, "bin", "llama-server"))
+
+
+def _install_llama_server(llama_dir: str, target_llama: str, cached_bundle: str) -> bool:
+    # Install a WORKING llama-server. Returns whether one is in place.
+    #
+    # Restore, download and build are all tried, and each result is verified
+    # by running the binary. A bundle that cannot run on this image is
+    # discarded instead of being cached again for the next run to trip over.
+    os.makedirs(llama_dir, exist_ok=True)
+    if _llama_can_run(target_llama):
+        return True
+
+    if os.path.exists(cached_bundle) and os.path.getsize(cached_bundle) > 50_000_000:
+        print("⚡ Restoring CUDA-accelerated llama.cpp bundle from Google Drive cache...")
+        subprocess.run(f"tar -xzf '{cached_bundle}' -C '{llama_dir}'", shell=True, check=False)
+        _link_llama_bundle(llama_dir, target_llama)
+        if _llama_can_run(target_llama):
+            print("✅ llama.cpp bundle restored from cache and verified.")
+            return True
+        print("⚠️ The cached llama.cpp bundle cannot run on this image (it needs a newer glibc). Discarding it.")
+        try:
+            os.remove(cached_bundle)
+        except Exception:
+            pass
+
+    print("📥 Fetching CUDA-accelerated llama.cpp binary & runtime libraries...")
+    llama_tar = "/tmp/llama_server.tar.gz"
+    try:
+        subprocess.run(
+            ["curl", "-fsSL", "--retry", "3", LLAMA_RELEASE_URL, "-o", llama_tar],
+            check=True, capture_output=True, text=True, timeout=900,
+        )
+        subprocess.run(
+            f"tar -xzf '{llama_tar}' -C '{llama_dir}' --strip-components=1",
+            shell=True, check=False,
+        )
+        _link_llama_bundle(llama_dir, target_llama)
+    except Exception as exc:
+        print(f"⚠️ Could not fetch the llama.cpp release: {exc}")
+    if os.path.exists(llama_tar):
+        try:
+            os.remove(llama_tar)
+        except Exception:
+            pass
+
+    if _llama_can_run(target_llama):
+        try:
+            os.makedirs(os.path.dirname(cached_bundle), exist_ok=True)
+            shutil.copy(llama_tar, cached_bundle)
+            print("💾 Cached complete llama.cpp bundle to Google Drive for future sessions.")
+        except Exception as e:
+            print(f"⚠️ Could not cache bundle to Drive: {e}")
+        return True
+
+    print("⚠️ The prebuilt bundle cannot run on this image either. Building from source.")
+    if _build_llama_from_source(llama_dir):
+        _link_llama_bundle(os.path.join(llama_dir, "src", "build"), target_llama)
+        if _llama_can_run(target_llama):
+            print("✅ llama.cpp built from source and verified.")
+            return True
+    print("❌ No working llama-server could be installed. LLM requests will fail.")
+    return False
+
+    if not llama_ready:
+        _install_llama_server(llama_dir, target_llama, cached_bundle)
 
         # Link all shared libraries (*.so*) into /usr/local/lib
         for root, dirs, files in os.walk(llama_dir):
@@ -1998,24 +2151,187 @@ if mode_key in ("hybrid", "llm"):
             cuda_dirs.extend(glob.glob(pat))
         cuda_dirs = [p for p in list(dict.fromkeys(cuda_dirs)) if os.path.isdir(p)]
 
-    # 3. Restore or fetch llama-server if missing
-    if not (os.path.exists(target_llama) or shutil.which("llama-server")):
-        os.makedirs(llama_dir, exist_ok=True)
-        if os.path.exists(cached_bundle) and os.path.getsize(cached_bundle) > 50_000_000:
-            print("⚡ Restoring CUDA-accelerated llama.cpp bundle from Google Drive cache...")
-            subprocess.run(f"tar -xzf '{cached_bundle}' -C '{llama_dir}' --strip-components=1", shell=True, check=False)
-        else:
-            print("📥 Fetching CUDA-accelerated llama.cpp binary & runtime libraries...")
-            llama_tar = "/tmp/llama_server.tar.gz"
-            llama_url = "https://github.com/ggml-org/llama.cpp/releases/download/b11647/llama-b11647-bin-ubuntu-cuda-12.8-x64.tar.gz"
-            subprocess.run(["curl", "-fsSL", "--retry", "3", llama_url, "-o", llama_tar], check=False)
-            if os.path.exists(llama_tar):
-                subprocess.run(f"tar -xzf '{llama_tar}' -C '{llama_dir}' --strip-components=1", shell=True, check=False)
+
+# ── llama-server: install, LINK and VERIFY ─────────────────────────────────
+# The CUDA release is built for a specific Ubuntu and needs a glibc the
+# container may not have: the b11647 CUDA 12.8 bundle wants GLIBC 2.38, and
+# Modal's Debian 12 image has 2.36. A binary that cannot start is WORSE
+# than no binary, because the readiness check passes (the file exists) and
+# the failure only surfaces much later as a 503 from the provider.
+#
+# So the install is VERIFIED by running it, a bundle that cannot run here
+# is discarded rather than cached again, and llama.cpp is BUILT FROM SOURCE
+# as the fallback — which always matches the container's toolchain, because
+# it is built with it.
+LLAMA_TAG = "b11647"
+LLAMA_RELEASE_URL = (
+    "https://github.com/ggml-org/llama.cpp/releases/download/"
+    + LLAMA_TAG + "/llama-" + LLAMA_TAG + "-bin-ubuntu-cuda-12.8-x64.tar.gz"
+)
+
+
+def _llama_can_run(binary_path: str) -> bool:
+    # Can this llama-server actually START here?
+    if not binary_path or not os.path.exists(binary_path):
+        return False
+    try:
+        probe = subprocess.run(
+            [binary_path, "--version"], capture_output=True, text=True, timeout=30
+        )
+        return probe.returncode == 0
+    except Exception:
+        return False
+
+
+def _link_llama_bundle(search_root: str, target_llama: str) -> None:
+    # Link the bundle's binary and shared libraries into place.
+    #
+    # The libraries are linked UNCONDITIONALLY. The old code only linked a
+    # library that was not already there, so a container that already had an
+    # older libstdc++ kept it and the bundle's own newer one was ignored --
+    # the server then failed with "GLIBCXX_3.4.32 not found" on a machine
+    # that HAD the right library sitting in the bundle.
+    for root, dirs, files in os.walk(search_root):
+        for f in files:
+            src_path = os.path.join(root, f)
+            if f == "llama-server":
                 try:
-                    os.makedirs(gdrive_bin, exist_ok=True)
-                    shutil.copy(llama_tar, cached_bundle)
+                    if os.path.exists(target_llama) or os.path.islink(target_llama):
+                        os.remove(target_llama)
+                    os.symlink(src_path, target_llama)
+                except Exception:
+                    shutil.copy(src_path, target_llama)
+                try:
+                    os.chmod(target_llama, 0o755)
                 except Exception:
                     pass
+            elif f.endswith(".so") or ".so." in f:
+                dst_lib = os.path.join("/usr/local/lib", f)
+                try:
+                    if os.path.exists(dst_lib) or os.path.islink(dst_lib):
+                        os.remove(dst_lib)
+                    os.symlink(src_path, dst_lib)
+                except Exception:
+                    try:
+                        shutil.copy(src_path, dst_lib)
+                    except Exception:
+                        pass
+    subprocess.run(["ldconfig"], check=False)
+
+
+def _build_llama_from_source(llama_dir: str) -> bool:
+    # Build llama.cpp against THIS container's toolchain.
+    #
+    # The prebuilt release cannot be made to work on an image whose glibc is
+    # older than the one it was built against, and glibc cannot be swapped
+    # without breaking everything else in the container. Building from source
+    # always matches.
+    print("🔨 Building llama.cpp from source for this image (a few minutes)...")
+    build_root = os.path.join(llama_dir, "src")
+    if not os.path.isdir(os.path.join(build_root, ".git")):
+        try:
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--branch", LLAMA_TAG,
+                 "https://github.com/ggml-org/llama.cpp", build_root],
+                check=True, capture_output=True, text=True, timeout=900,
+            )
+        except Exception as exc:
+            print(f"⚠️ Could not clone llama.cpp: {exc}")
+            return False
+    try:
+        if not shutil.which("cmake"):
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--quiet", "cmake", "ninja"],
+                check=False, capture_output=True, text=True, timeout=900,
+            )
+        build_dir = os.path.join(build_root, "build")
+        subprocess.run(
+            ["cmake", "-B", build_dir, "-S", build_root,
+             "-DCMAKE_BUILD_TYPE=Release", "-DGGML_CUDA=ON",
+             "-DLLAMA_CURL=OFF"],
+            check=True, capture_output=True, text=True, timeout=1800,
+        )
+        subprocess.run(
+            ["cmake", "--build", build_dir, "--config", "Release",
+             "--target", "llama-server",
+             "-j", str(max(1, (os.cpu_count() or 4) - 1))],
+            check=True, capture_output=True, text=True, timeout=5400,
+        )
+    except Exception as exc:
+        print(f"⚠️ llama.cpp source build failed: {exc}")
+        return False
+    return os.path.exists(os.path.join(build_dir, "bin", "llama-server"))
+
+
+def _install_llama_server(llama_dir: str, target_llama: str, cached_bundle: str) -> bool:
+    # Install a WORKING llama-server. Returns whether one is in place.
+    #
+    # Restore, download and build are all tried, and each result is verified
+    # by running the binary. A bundle that cannot run on this image is
+    # discarded instead of being cached again for the next run to trip over.
+    os.makedirs(llama_dir, exist_ok=True)
+    if _llama_can_run(target_llama):
+        return True
+
+    if os.path.exists(cached_bundle) and os.path.getsize(cached_bundle) > 50_000_000:
+        print("⚡ Restoring CUDA-accelerated llama.cpp bundle from Google Drive cache...")
+        subprocess.run(f"tar -xzf '{cached_bundle}' -C '{llama_dir}'", shell=True, check=False)
+        _link_llama_bundle(llama_dir, target_llama)
+        if _llama_can_run(target_llama):
+            print("✅ llama.cpp bundle restored from cache and verified.")
+            return True
+        print("⚠️ The cached llama.cpp bundle cannot run on this image (it needs a newer glibc). Discarding it.")
+        try:
+            os.remove(cached_bundle)
+        except Exception:
+            pass
+
+    print("📥 Fetching CUDA-accelerated llama.cpp binary & runtime libraries...")
+    llama_tar = "/tmp/llama_server.tar.gz"
+    try:
+        subprocess.run(
+            ["curl", "-fsSL", "--retry", "3", LLAMA_RELEASE_URL, "-o", llama_tar],
+            check=True, capture_output=True, text=True, timeout=900,
+        )
+        subprocess.run(
+            f"tar -xzf '{llama_tar}' -C '{llama_dir}' --strip-components=1",
+            shell=True, check=False,
+        )
+        _link_llama_bundle(llama_dir, target_llama)
+    except Exception as exc:
+        print(f"⚠️ Could not fetch the llama.cpp release: {exc}")
+    if os.path.exists(llama_tar):
+        try:
+            os.remove(llama_tar)
+        except Exception:
+            pass
+
+    if _llama_can_run(target_llama):
+        try:
+            os.makedirs(os.path.dirname(cached_bundle), exist_ok=True)
+            shutil.copy(llama_tar, cached_bundle)
+            print("💾 Cached complete llama.cpp bundle to Google Drive for future sessions.")
+        except Exception as e:
+            print(f"⚠️ Could not cache bundle to Drive: {e}")
+        return True
+
+    print("⚠️ The prebuilt bundle cannot run on this image either. Building from source.")
+    if _build_llama_from_source(llama_dir):
+        _link_llama_bundle(os.path.join(llama_dir, "src", "build"), target_llama)
+        if _llama_can_run(target_llama):
+            print("✅ llama.cpp built from source and verified.")
+            return True
+    print("❌ No working llama-server could be installed. LLM requests will fail.")
+    return False
+    # 3. Restore, fetch or BUILD llama-server — and verify it can run
+    #
+    # The install used to be trusted on sight: a cached bundle was restored
+    # and the notebook carried on, so a bundle built for a newer glibc than
+    # this image has left a llama-server that could never start. The failure
+    # did not surface until a request needed the LLM, as a 503 from a
+    # provider the notebook had already declared healthy.
+    if not _llama_can_run(target_llama):
+        _install_llama_server(llama_dir, target_llama, cached_bundle)
 
     # Clean up any stray symlinks in /usr/local/lib to prevent PyTorch cuDNN conflicts
     for f_pat in ("libcudart.so*", "libcublas.so*", "libcublasLt.so*", "libcuda.so*", "libggml*.so*", "libllama*.so*"):
@@ -2060,6 +2376,14 @@ if mode_key in ("hybrid", "llm"):
         if "CUDA" in dev_info:
             c_lines = [l.strip() for l in dev_info.split("\\n") if "CUDA" in l]
             print(f"  ✅ CUDA GPU acceleration active: {', '.join(c_lines)}")
+        elif "not found" in dev_info or "error while loading shared libraries" in dev_info:
+            # The binary could not START. Printing this as a "notice" is how a
+            # provider that can never serve a completion was declared healthy:
+            # the loader error is right there in the message and was read as
+            # a warning.
+            print("  ❌ llama-server could not start on this image:")
+            print(f"     {dev_info.replace(chr(10), ' ')}")
+            print("     The LLM track WILL FAIL. See the install log above.")
         else:
             print(f"  ⚠️ llama-server device notice: {dev_info.replace(chr(10), ' ') or 'no devices reported'}")
     except Exception as e:
@@ -2345,6 +2669,18 @@ if mode_key == "llm":
     # models per role.
     services_to_check.append(("llm", agent_port, "/info", "agent LLM stack"))
 
+# The LLM track is Just-In-Time in hybrid mode - the agent starts a
+# llama-server on the first request - so there is no port to probe at
+# startup. But the BINARY has to be able to start, and nothing checked
+# that. A provider that is declared healthy and cannot serve a completion is
+# worse than one that never came up: the failure surfaces much later as a
+# 503, with nothing in the notebook to explain it.
+if mode_key in ("hybrid", "llm") and not _llama_can_run(target_llama):
+    print("❌ llama-server cannot run on this image - LLM requests WILL fail.")
+    print("   (The LLM track is Just-In-Time, so this is the only startup check for it.)")
+else:
+    print("✅ llama-server binary can start on this image.")
+
 healthy_services = set()
 # The agent launches its llama-servers at IMPORT, before uvicorn starts, so
 # the agent's /health does not answer until the models are loaded. In llm mode
@@ -2569,7 +2905,13 @@ def _register_provider():
     ):
         try:
             req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method=method)
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            # 60 seconds, not 15. The provider route builds a full status
+            # record, which PROBES the provider: a runtime check and a deploy
+            # check, each with its own timeout, over the mesh to a worker
+            # that is still loading its models. 15 seconds was not enough, and
+            # the registration reported "could not reach the backend" for a
+            # backend that was answering the catalog sync a moment earlier.
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 body = resp.read().decode("utf-8", errors="replace")
                 return resp.status, body
         except urllib.error.HTTPError as exc:

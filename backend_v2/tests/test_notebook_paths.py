@@ -244,6 +244,98 @@ class TestNoHardcodedWorkspacePaths:
             )
 
 
+class TestTheLlamaServerIsVerified:
+    """The notebook must not declare a provider healthy it cannot serve.
+
+    The CUDA llama.cpp release is built for a specific Ubuntu and needs a
+    glibc the container may not have — the b11647 CUDA 12.8 bundle wants
+    GLIBC 2.38, and Modal's Debian 12 image has 2.36.
+
+    The install used to be TRUSTED ON SIGHT: a cached bundle was restored
+    from Google Drive and the notebook carried on. The binary could not
+    start, the loader error scrolled past as a "device notice", and the
+    notebook reported "Remote Agent is online and healthy" and "ComfyUI is
+    online and healthy". The failure then surfaced much later, as a 503 from
+    a provider that had been declared healthy — with nothing in the log to
+    explain it.
+    """
+
+    def test_the_install_is_verified_by_running_the_binary(self):
+        for index, source in _cells().items():
+            if "_install_llama_server" not in source:
+                continue
+            assert "_llama_can_run(" in source, (
+                f"cell {index} installs llama-server without checking that it "
+                f"can run"
+            )
+            # And the check is a real run, not a file-exists test.
+            assert '"--version"' in source, (
+                f"cell {index} does not verify llama-server by running it"
+            )
+
+    def test_a_bundle_that_cannot_run_is_not_cached_again(self):
+        """The cache is what made the failure permanent.
+
+        The bundle was cached in Google Drive and restored on every run, so
+        the same broken binary came back each time. A bundle that cannot run
+        has to be discarded, not re-cached.
+        """
+        for index, source in _cells().items():
+            if "_install_llama_server" not in source:
+                continue
+            body = source[source.index("def _install_llama_server"):]
+            body = body[: body.index("\ndef ") if "\ndef " in body else len(body)]
+            assert "os.remove(cached_bundle)" in body, (
+                f"cell {index} keeps a bundle that cannot run, and restores "
+                f"it on every run"
+            )
+
+    def test_there_is_a_source_build_fallback(self):
+        """A prebuilt binary cannot be made to work on an older glibc.
+
+        glibc cannot be swapped without breaking the rest of the container,
+        so the only universal answer is to build against the toolchain that
+        is there.
+        """
+        for index, source in _cells().items():
+            if "_install_llama_server" not in source:
+                continue
+            assert "_build_llama_from_source" in source, (
+                f"cell {index} has no source-build fallback"
+            )
+            assert "GGML_CUDA=ON" in source, (
+                f"cell {index}'s source build is not a CUDA build"
+            )
+
+    def test_the_readiness_check_looks_at_the_llm(self):
+        """In hybrid mode there is no LLM port to probe — it is Just-In-Time.
+
+        So the only startup check for the LLM is that the BINARY can start.
+        Without it, a provider that can never serve a completion is declared
+        healthy.
+        """
+        for index, source in _cells().items():
+            if "healthy_services = set()" not in source:
+                continue
+            assert '_llama_can_run(target_llama)' in source, (
+                f"cell {index} declares the stack healthy without checking "
+                f"that llama-server can run"
+            )
+
+    def test_a_loader_error_is_not_a_notice(self):
+        """The GLIBC error was printed as a "device notice" and read as one.
+
+        It is the entire explanation for a 503, so it has to be loud.
+        """
+        for index, source in _cells().items():
+            if "llama-server device notice" not in source:
+                continue
+            around = source[max(0, source.index("llama-server device notice") - 900):]
+            assert "could not start" in around, (
+                f"cell {index} prints a loader error as a notice"
+            )
+
+
 class TestTheShmRemountIsGuarded:
     def test_it_only_runs_when_shm_is_too_small(self):
         """The remount needs CAP_SYS_ADMIN, which a container does not have.
