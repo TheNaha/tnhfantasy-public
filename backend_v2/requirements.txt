@@ -87,6 +87,10 @@ tenacity>=8.2.0
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0
+# Parallel test execution. The suite is ~3,900 tests and ran serially; with
+# eight workers it is a fraction of the wall clock. `pytest -n auto` (or the
+# `-n auto` in pytest.ini's addopts) uses one worker per core.
+pytest-xdist>=3.6.0
 
 h2>=4.1.0
 

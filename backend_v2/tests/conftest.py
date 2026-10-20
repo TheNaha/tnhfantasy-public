@@ -142,6 +142,69 @@ def _redirect_sync_sessions(engine):
             module.get_session_sync = original
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _remote_agent_token():
+    """Let `remote_agent/server.py` be imported by any test, in any order.
+
+    The module refuses to import without a token:
+
+        RuntimeError: REMOTE_AGENT_TOKEN must be set unless
+        REMOTE_AGENT_ALLOW_INSECURE=1
+
+    So the tests that import it only passed if some EARLIER test had
+    happened to set the variable - which is why they worked in the serial
+    suite and failed under a parallel one, where the distribution is
+    different. A test that only passes in the right order is not a test.
+
+    The token is a test value, and the tests that exercise the auth path set
+    their own.
+    """
+    previous = os.environ.get("REMOTE_AGENT_TOKEN")
+    os.environ["REMOTE_AGENT_TOKEN"] = "test-token"
+    yield
+    if previous is None:
+        os.environ.pop("REMOTE_AGENT_TOKEN", None)
+    else:
+        os.environ["REMOTE_AGENT_TOKEN"] = previous
+
+
+@pytest.fixture(autouse=True)
+def _stub_laya_runner(monkeypatch):
+    """The Director's local tier must not load a real model in a test.
+
+    `laya.load()` pulls a 200 MB transformer out of HuggingFace and runs it
+    on CPU: roughly 40 seconds on the first call in a process, and a
+    DOWNLOAD on a machine that does not have it cached. With eight xdist
+    workers that is eight loads, and it dominated the suite's critical path.
+
+    The tier itself is the product behaviour and the tests assert the
+    DECISION it produces, not which tier produced it. So the runner answers
+    the questions deterministically instead of loading anything.
+    """
+    from services import laya_runner
+
+    def _fake_evaluate(self, *, context_text, questions, model_id, **kwargs):
+        answers = {}
+        for question in questions or []:
+            key = question.get("key")
+            if not key:
+                continue
+            qtype = question.get("type")
+            if qtype == "choice":
+                options = list((question.get("options") or {}).keys())
+                answers[key] = options[0] if options else "default"
+            elif qtype == "noul":
+                answers[key] = "false"
+            elif qtype == "score":
+                answers[key] = 0.5
+            else:
+                answers[key] = ""
+        return {"answers": answers, "model_id": model_id, "latency_ms": 0.0}
+
+    monkeypatch.setattr(laya_runner.LayaRunner, "evaluate", _fake_evaluate)
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _stub_embedding_service(monkeypatch):
     """Never load a real sentence-transformers model in a test.
@@ -162,27 +225,27 @@ def _stub_embedding_service(monkeypatch):
     returns one for an empty text, and similarity against it is uniformly
     uninformative, which is what a test wants.
 
-    A test that cares about embedding behaviour patches the service itself
+    The stub patches the CLASS's methods, not the factory. A test that cares
+    about embedding behaviour patches the same methods
     (`monkeypatch.setattr` inside the test body runs after this fixture, so
-    the test's own patch wins). `tests/test_data_integrity_fixes.py` already
-    does exactly that.
+    the test's own patch wins) - `tests/test_data_integrity_fixes.py` and
+    `tests/test_rag_pipeline.py` both do exactly that. Patching the FACTORY
+    instead would bypass the class patch entirely, and the test would assert
+    against the stub's zeros.
     """
     import services.embedding_service as embedding_module
 
-    class _StubEmbeddingService:
-        dimension = 384
+    def _zero_embedding(self, text):
+        return [0.0] * 384
 
-        def _zero(self):
-            return [0.0] * self.dimension
-
-        def generate_embedding(self, text):
-            return self._zero()
-
-        def generate_embeddings(self, texts):
-            return [self._zero() for _ in texts]
+    def _zero_embeddings(self, texts):
+        return [[0.0] * 384 for _ in texts]
 
     monkeypatch.setattr(
-        embedding_module, "get_embedding_service", lambda: _StubEmbeddingService()
+        embedding_module.EmbeddingService, "generate_embedding", _zero_embedding
+    )
+    monkeypatch.setattr(
+        embedding_module.EmbeddingService, "generate_embeddings", _zero_embeddings
     )
     yield
 

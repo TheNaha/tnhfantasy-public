@@ -74,4 +74,7 @@ jobs:
 
     - name: Run tests with pytest
       run: |
+        # `-n auto` is in pytest.ini's addopts: one worker per core. The
+        # suite is ~3,900 tests and ran serially, which dominated the job's
+        # wall clock. It needs pytest-xdist, which is in requirements.txt.
         pytest tests
