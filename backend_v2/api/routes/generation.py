@@ -16,7 +16,7 @@
 # Optional idempotency:
 #   - POST /api/generate and POST /api/generate/batch accept `Idempotency-Key`
 #     to deduplicate duplicate submissions within a short server-side window.
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
@@ -42,10 +42,25 @@ MAX_GENERATE_BATCH = 60
 
 
 class GenerateRequest(BaseModel):
-    """Request body for single-image generation."""
+    """Request body for single-image generation.
+
+    `kind` says which of the two request shapes this is:
+
+      * `guided` - the backend compiles `options` into a ComfyUI graph.
+      * `graph` - the client compiled the graph and sends it as `workflow`.
+
+    It is optional, and omitting it keeps the old behaviour (a request
+    carrying `workflow` is a graph, one carrying `options` is guided), so
+    existing clients keep working. It exists because the old rule was
+    "whichever field is present", and a hand-written ComfyUI graph with a
+    node keyed `prompt` or `mode` was routed to `options` and rejected by
+    the option schema. The frontend sends it explicitly.
+    """
+    kind: Literal["guided", "graph"] | None = None
     workflow: dict[str, Any] | None = None  # Full ComfyUI workflow node graph
     options: dict[str, Any] | None = None  # Generator options
     metadata: dict[str, Any] = {}  # Optional: prompt, seed, model info for gallery display
+    preferred_provider_id: str | None = None  # Pin the job to one provider
 
 
 class GenerateBatchRequest(BaseModel):
@@ -80,20 +95,50 @@ async def generate(
     """
     try:
         from core.workflow_builder import WorkflowBuilder
+        from core.workflow_metadata import derive_metadata_from_workflow, merge_metadata
+        from core.workflow_postprocess import postprocess_graph
+
+        if request.kind is not None:
+            kind = request.kind
+        elif request.workflow:
+            kind = "graph"
+        elif request.options:
+            kind = "guided"
+        else:
+            raise ValidationError("workflow or options is required", field="workflow")
+
         workflow = request.workflow
-        if not workflow and request.options:
-            builder = WorkflowBuilder()
-            workflow = builder.build(request.options)
-            
+        metadata = dict(request.metadata or {})
+
+        if kind == "guided":
+            if not request.options:
+                raise ValidationError("options is required for a guided request", field="options")
+            workflow = WorkflowBuilder().build(request.options)
+        else:
+            if not workflow:
+                raise ValidationError("workflow is required for a graph request", field="workflow")
+            # The graph path gets the same prompt treatment as the guided
+            # one: the shortcuts expanded and the embedding references
+            # checked. It used to get neither, because the client had
+            # compiled the graph - so a graph with a missing embedding
+            # reference reached the provider and failed there.
+            postprocess_graph(workflow)
+            # The graph path sent `metadata: {}`, so the gallery had no
+            # prompt, no seed and no model name for it. Derive them from
+            # the graph, and let the client's own metadata win where it
+            # sent one.
+            metadata = merge_metadata(derive_metadata_from_workflow(workflow), metadata)
+
         if not workflow:
             raise ValidationError("workflow or options is required", field="workflow")
 
         async def _create_generation_job():
             job = await submission_service.create_and_enqueue_job(
                 workflow=workflow,
-                metadata=request.metadata,
+                metadata=metadata,
+                preferred_provider_id=request.preferred_provider_id,
             )
-            logger.info("generate_job_created", job_id=job.id)
+            logger.info("generate_job_created", job_id=job.id, kind=kind)
             return submission_service.job_service._job_to_dict(job)
 
         if idempotency_key:

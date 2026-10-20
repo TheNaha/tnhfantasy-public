@@ -32,6 +32,7 @@ describe('generateApi', () => {
         expect(postMock).toHaveBeenCalledWith(
             '/api/generate',
             {
+                kind: 'graph',
                 workflow,
                 metadata,
             },
@@ -53,6 +54,7 @@ describe('generateApi', () => {
         expect(postMock).toHaveBeenCalledWith(
             '/api/generate',
             {
+                kind: 'graph',
                 workflow,
                 metadata: { steps: 20 },
             },
@@ -61,6 +63,39 @@ describe('generateApi', () => {
             },
         );
         expect(createIdempotencyKeyMock).not.toHaveBeenCalled();
+    });
+
+
+    it('sends the kind explicitly, and pins the provider when asked', async () => {
+        postMock.mockResolvedValue({ ok: true });
+
+        await generateApi.submit(
+            { kind: 'guided', options: { prompt: 'a cat', mode: 't2i' } },
+            { prompt: 'a cat' },
+            { preferredProviderId: 'modal-primary' }
+        );
+
+        expect(postMock).toHaveBeenCalledWith(
+            '/api/generate',
+            {
+                kind: 'guided',
+                options: { prompt: 'a cat', mode: 't2i' },
+                metadata: { prompt: 'a cat' },
+                preferred_provider_id: 'modal-primary',
+            },
+            { idempotencyKey: 'generated-idempotency-key' }
+        );
+    });
+
+    it('reads an options-shaped argument as guided, not as a graph', async () => {
+        postMock.mockResolvedValue({ ok: true });
+
+        await generateApi.workflow({ prompt: 'a cat', mode: 't2i' });
+
+        const body = postMock.mock.calls[0][1];
+        expect(body.kind).toBe('guided');
+        expect(body.options).toEqual({ prompt: 'a cat', mode: 't2i' });
+        expect(body.workflow).toBeUndefined();
     });
 
 });

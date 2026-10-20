@@ -1,11 +1,7 @@
 import math
-import os
-import re
 from typing import Any, Optional, Union
 from datetime import datetime
 from pydantic import BaseModel, Field
-
-from core.exceptions import ValidationError
 
 
 # Single source of truth for the last-resort checkpoint filename.
@@ -28,64 +24,16 @@ from config import DEFAULT_CHECKPOINT, settings  # noqa: E402,F401
 # ---------------------------------------------------------------------------
 
 #: File extensions recognised for embedding files in `models/embeddings/`.
-_EMBEDDING_EXTENSIONS = (".safetensors", ".pt", ".bin", ".ckpt")
-
-
-def _resolve_embeddings_dir() -> str:
-    """Return the absolute path to `models/embeddings/`.
-
-    Uses `settings.input_dir` (default `data/input`) and resolves `models/`
-    as a sibling directory, mirroring how ComfyUI lays out its model tree.
-    """
-    data_dir = os.path.dirname(os.path.abspath(settings.input_dir))
-    return os.path.join(data_dir, "models", "embeddings")
-
-
-def _embedding_file_exists(name: str) -> bool:
-    """Check whether an embedding file exists for `name`.
-
-    Tries the name verbatim first, then appends each known extension.
-    """
-    embeddings_dir = _resolve_embeddings_dir()
-    if not os.path.isdir(embeddings_dir):
-        return False
-    candidates = [name]
-    if not os.path.splitext(name)[1]:
-        candidates = [name + ext for ext in _EMBEDDING_EXTENSIONS] + [name]
-    for cand in candidates:
-        if os.path.isfile(os.path.join(embeddings_dir, cand)):
-            return True
-    return False
-
-
-def extract_embedding_names(text: str) -> list[str]:
-    """Extract `embedding:NAME` tokens from a prompt string.
-
-    Returns a list of embedding names (without the `embedding:` prefix).
-    """
-    return re.findall(r"embedding:([\w_\-]+(?:\.[\w]+)?)", text)
-
-
-def expand_prompt_shortcuts(text: str) -> str:
-    """Expand configured prompt shortcut tokens in `text`.
-
-    Shortcut names are matched on word boundaries, longest-first, so
-    `lazypos_v2` takes precedence over `lazypos`. Unmatched text passes
-    through unchanged. Returns the expanded string.
-    """
-    from config import get_config
-
-    shortcuts = (get_config().get("generator", {}) or {}).get("prompt_shortcuts", {})
-    if not shortcuts:
-        return text
-
-    # Sort by length descending so longer names match first (e.g. lazypos_v2
-    # before lazypos). Word boundaries prevent partial matches inside other
-    # words.
-    pattern = re.compile(
-        r"\b(" + "|".join(re.escape(name) for name in sorted(shortcuts, key=len, reverse=True)) + r")\b"
-    )
-    return pattern.sub(lambda m: shortcuts[m.group(0)], text)
+# The prompt post-processing lives in `core.workflow_postprocess`, because the
+# graph path needs it too and it cannot import this module - this module
+# imports it. The names are re-exported here because the builder's callers
+# have always imported them from here.
+from core.workflow_postprocess import (  # noqa: F401
+    embedding_file_exists as _embedding_file_exists,
+    expand_prompt_shortcuts,
+    extract_embedding_names,
+    postprocess_prompt_text,
+)
 
 
 class LoraOption(BaseModel):
@@ -440,21 +388,13 @@ class WorkflowBuilder:
 
         # CLIP Encoding — expand prompt shortcuts and validate embedding
         # references before the text reaches ComfyUI.
-        expanded_prompt = expand_prompt_shortcuts(options.prompt)
-        expanded_negative = expand_prompt_shortcuts(options.negativePrompt)
-
-        embedding_names = (
-            extract_embedding_names(expanded_prompt)
-            + extract_embedding_names(expanded_negative)
-        )
-        if embedding_names:
-            missing = [n for n in embedding_names if not _embedding_file_exists(n)]
-            if missing:
-                raise ValidationError(
-                    "Embedding file(s) not found in models/embeddings/: "
-                    + ", ".join(missing),
-                    field="prompt",
-                )
+        #
+        # The same treatment the graph path gets, from the same module: the
+        # graph path used to skip it entirely, so a graph with an
+        # `embedding:` reference to a file that does not exist reached the
+        # provider and failed there.
+        expanded_prompt = postprocess_prompt_text(options.prompt)
+        expanded_negative = postprocess_prompt_text(options.negativePrompt, field="negativePrompt")
 
         positive_cond = [self.add_node("CLIPTextEncode", {
             "text": expanded_prompt,
