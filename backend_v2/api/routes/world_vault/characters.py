@@ -6,7 +6,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from io import BytesIO
 from pydantic import BaseModel, Field
@@ -386,6 +386,56 @@ def _write_expression_images(
     return out
 
 
+def _parse_card_upload(payload: bytes, filename: str) -> dict:
+    """Parse an uploaded card WITHOUT writing anything.
+
+    Shared by the one-shot import, the analyze preview and the commit, so the
+    three cannot disagree about what a card contains.
+    """
+    is_png = payload[:8] == b"\x89PNG\r\n\x1a\n"
+    is_charx = (filename or "").lower().endswith(".charx")
+    is_bundle = (filename or "").lower().endswith(BUNDLE_SUFFIX) or bundle_is_bundle(payload)
+    if is_png:
+        # Card dimensions are bounded like any other image upload.
+        inspect_image(payload, field="file", label="Character card")
+
+    bundle: dict | None = None
+    if is_bundle:
+        try:
+            bundle = parse_bundle(payload)
+        except Exception as exc:
+            raise ValidationError(f"Could not read the character bundle: {exc}") from exc
+        char_data = card_fields_from_bundle(bundle)
+        avatar_bytes = None
+        archive_members: dict[str, bytes] = {}
+        # The bundle's own character payload wins: it is this app's model of
+        # the character, and the card inside it is the portable projection.
+        for key, value in (bundle.get("character") or {}).items():
+            if key in Character.model_fields and value is not None:
+                char_data[key] = value
+        # The world and the lorebook library are recreated by
+        # `_restore_bundle`, so they must not be written onto the character
+        # first — the rows do not exist yet, and the write would fail the
+        # foreign key. The bundle restores them with their own ids.
+        char_data.pop("world_id", None)
+        char_data.pop("lorebook_ids", None)
+    else:
+        try:
+            char_data, avatar_bytes, archive_members = parse_card_file(payload, filename)
+        except CardParseError as exc:
+            raise ValidationError(str(exc)) from exc
+
+    return {
+        "char_data": char_data,
+        "avatar_bytes": avatar_bytes,
+        "archive_members": archive_members,
+        "bundle": bundle,
+        "is_png": is_png,
+        "is_charx": is_charx,
+        "is_bundle": is_bundle,
+    }
+
+
 def _card_identity(char_data: dict) -> str | None:
     """The id of the character this card came from, if it says.
 
@@ -469,7 +519,12 @@ def _restore_bundle(session: Session, character: Character, bundle: dict) -> Non
                     )
                 )
             session.flush()
-            character.world_id = world.id
+            # Through the one sanctioned writer: `world_id` is written in
+            # exactly one place, so a member cannot end up linked to a world
+            # that does not count it.
+            from services.world_ownership import link_to_world
+
+            link_to_world(session, character, world.id)
 
     # The vault's lorebook library.
     lorebook_ids: list[str] = list(character.lorebook_ids or [])
@@ -541,6 +596,163 @@ def _restore_bundle(session: Session, character: Character, bundle: dict) -> Non
     session.flush()
 
 
+@router.post("/import/analyze")
+def analyze_character_card_import(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
+    """What importing this card would do. Writes nothing.
+
+    The import used to write immediately, so the only way to find out what a
+    card would do was to do it — and re-importing a card created a SECOND
+    character with the same name, silently, because the merge needed the
+    identity that the card may or may not carry.
+
+    This is the preview: what the card holds, whether it matches a character
+    that already exists, and what the two scopes would create.
+    """
+    filename = file.filename or ""
+    if not filename.lower().endswith(CARD_FILE_SUFFIXES):
+        raise ValidationError(
+            "Only PNG, JSON, CHARX and TNHComfy bundle files are supported"
+        )
+    payload = read_upload_file_bounded(file, MAX_CARD_BYTES)
+    if not payload:
+        raise ValidationError("Character card file is empty")
+
+    parsed = _parse_card_upload(payload, filename)
+    char_data = parsed["char_data"]
+    if not char_data.get("name"):
+        raise ValidationError("Character card must have a name")
+
+    # The match, resolved the way the commit will resolve it.
+    identity_id = _card_identity(char_data)
+    existing = session.get(Character, identity_id) if identity_id else None
+    if existing is None:
+        # A card from elsewhere may still name a character that is here.
+        existing = session.exec(
+            select(Character).where(Character.name == str(char_data.get("name")))
+        ).first()
+
+    book = char_data.get("character_book") or {}
+    expression_assets = take_expression_assets(dict(char_data))
+
+    return {
+        "format": (
+            "png"
+            if parsed["is_png"]
+            else ("charx" if parsed["is_charx"] else ("bundle" if parsed["is_bundle"] else "json"))
+        ),
+        "spec": char_data.get("card_spec") or "",
+        "spec_version": char_data.get("card_spec_version") or "",
+        "name": char_data.get("name"),
+        "description": char_data.get("description") or "",
+        "personality": char_data.get("personality") or "",
+        "scenario": char_data.get("scenario") or "",
+        "first_mes": char_data.get("first_mes") or "",
+        "mes_example": char_data.get("mes_example") or "",
+        "alternate_greetings": list(char_data.get("alternate_greetings") or []),
+        "creator": char_data.get("creator") or "",
+        "character_version": char_data.get("character_version") or "",
+        "match": {
+            "character_id": existing.id if existing is not None else None,
+            "name": existing.name if existing is not None else None,
+            "action": "update" if existing is not None else "create",
+            "by": "identity" if (identity_id and existing is not None) else ("name" if existing is not None else None),
+        },
+        "counts": {
+            "lorebook_entries": len(book.get("entries") or []),
+            "expressions": len(expression_assets),
+            "alternate_greetings": len(char_data.get("alternate_greetings") or []),
+        },
+        "scopes": [
+            {
+                "id": "character",
+                "label": "Just the character",
+                "detail": "A character with the card's fields, its expressions and its embedded lorebook. No world.",
+            },
+            {
+                "id": "world",
+                "label": "Into a world",
+                "detail": "The World Architect's depth: a world, its locations, a lorebook and the members — with the optional Vision and enrichment passes.",
+            },
+        ],
+    }
+
+
+@router.post("/import/commit")
+async def commit_character_card_import(
+    file: UploadFile = File(...),
+    scope: str = Form("character"),
+    match_action: str = Form("auto"),
+    use_vision: bool = Form(False),
+    session: Session = Depends(get_session),
+):
+    """Import a card, with the scope and the match already chosen.
+
+    `scope` is `character` (the card's fields and nothing else) or `world`
+    (the World Architect's blueprint). `match_action` is `auto` (update the
+    character the card identifies, else create one), `update` or `create`.
+    """
+    filename = file.filename or ""
+    if not filename.lower().endswith(CARD_FILE_SUFFIXES):
+        raise ValidationError(
+            "Only PNG, JSON, CHARX and TNHComfy bundle files are supported"
+        )
+    payload = read_upload_file_bounded(file, MAX_CARD_BYTES)
+    if not payload:
+        raise ValidationError("Character card file is empty")
+
+    if (scope or "character").strip().lower() == "world":
+        # The deep scope, delegated to the World Architect — one parser, one
+        # blueprint, one commit. The card path does not reimplement it.
+        from services.world_onboarding_service import (
+            analyze_card_for_onboarding,
+            commit_world_blueprint,
+        )
+
+        blueprint = await analyze_card_for_onboarding(
+            session,
+            file_bytes=payload,
+            filename=filename,
+            use_vision=use_vision,
+        )
+        result = await asyncio.to_thread(
+            commit_world_blueprint, session, blueprint
+        )
+        return {"scope": "world", "blueprint": blueprint, "result": result}
+
+    if (match_action or "auto").strip().lower() == "create":
+        # Explicitly create a new character even if the card names one.
+        parsed = _parse_card_upload(payload, filename)
+        char_data = parsed["char_data"]
+        char_data.pop("id", None)
+        metadata = char_data.get("card_metadata")
+        if isinstance(metadata, dict):
+            extensions = metadata.get("data", {}).get("extensions")
+            if isinstance(extensions, dict):
+                extensions.pop(APP_EXTENSION_KEY, None)
+        return _import_card_payload(session, payload, filename, force_new=True)
+
+    return _import_card_payload(session, payload, filename, force_new=False)
+
+
+def _import_card_payload(
+    session: Session, payload: bytes, filename: str, *, force_new: bool = False
+) -> dict:
+    """The one-shot import, shared by the old route and the commit route."""
+    parsed = _parse_card_upload(payload, filename)
+    char_data = parsed["char_data"]
+    if force_new:
+        char_data.pop("id", None)
+        metadata = char_data.get("card_metadata")
+        if isinstance(metadata, dict):
+            extensions = (metadata.get("data") or {}).get("extensions")
+            if isinstance(extensions, dict):
+                extensions.pop(APP_EXTENSION_KEY, None)
+    return _import_parsed_card(session, parsed)
+
+
 @router.post("/import")
 def import_character_card(
     file: UploadFile = File(...),
@@ -559,38 +771,21 @@ def import_character_card(
     if not payload:
         raise ValidationError("Character card file is empty")
 
-    is_png = payload[:8] == b"\x89PNG\r\n\x1a\n"
-    is_charx = (filename or "").lower().endswith(".charx")
-    is_bundle = (filename or "").lower().endswith(BUNDLE_SUFFIX) or bundle_is_bundle(payload)
-    if is_png:
-        # Card dimensions are bounded like any other image upload.
-        inspect_image(payload, field="file", label="Character card")
+    parsed = _parse_card_upload(payload, filename)
+    return _import_parsed_card(session, parsed)
 
-    bundle: dict | None = None
-    if is_bundle:
-        try:
-            bundle = parse_bundle(payload)
-        except Exception as exc:
-            raise ValidationError(f"Could not read the character bundle: {exc}") from exc
-        char_data = card_fields_from_bundle(bundle)
-        avatar_bytes = None
-        archive_members = {}
-        # The bundle's own character payload wins: it is this app's model of
-        # the character, and the card inside it is the portable projection.
-        for key, value in (bundle.get("character") or {}).items():
-            if key in Character.model_fields and value is not None:
-                char_data[key] = value
-        # The world and the lorebook library are recreated by
-        # `_restore_bundle`, so they must not be written onto the character
-        # first — the rows do not exist yet, and the write would fail the
-        # foreign key. The bundle restores them with their own ids.
-        char_data.pop("world_id", None)
-        char_data.pop("lorebook_ids", None)
-    else:
-        try:
-            char_data, avatar_bytes, archive_members = parse_card_file(payload, filename)
-        except CardParseError as exc:
-            raise ValidationError(str(exc)) from exc
+
+def _import_parsed_card(session: Session, parsed: dict) -> dict:
+    """Write a parsed card into the vault.
+
+    Shared by the one-shot import, the commit route and the World
+    Architect's card path, so the three cannot disagree about what a card
+    creates.
+    """
+    char_data = parsed["char_data"]
+    avatar_bytes = parsed["avatar_bytes"]
+    archive_members = parsed["archive_members"]
+    bundle = parsed["bundle"]
 
     if not char_data.get("name"):
         raise ValidationError("Character card must have a name")
@@ -609,7 +804,6 @@ def import_character_card(
     # A card from anywhere else has no such identity, and is a new character.
     identity_id = _card_identity(char_data)
     existing = session.get(Character, identity_id) if identity_id else None
-
     if existing is not None:
         character = existing
         for key, value in char_data.items():
@@ -703,7 +897,11 @@ def import_character_card(
 
     report = _compatibility_report(
         char_data,
-        source_format="png" if is_png else ("charx" if is_charx else "json"),
+        source_format=(
+            "png"
+            if parsed["is_png"]
+            else ("charx" if parsed["is_charx"] else ("bundle" if parsed["is_bundle"] else "json"))
+        ),
         lorebook_created=bool(lorebook_id),
         lorebook_preserved_only=bool(character_book) and not lorebook_id,
         lost_fields=(

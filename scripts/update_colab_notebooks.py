@@ -37,6 +37,15 @@ if not IS_COLAB:
     if os.path.exists("/mnt/data") or "MODAL_IMAGE_ID" in os.environ or "MODAL_ENVIRONMENT" in os.environ:
         IS_MODAL = True
 
+# The workspace root, derived from the ENVIRONMENT - see cell 3 for why
+# "whichever of /content and /root happens to exist" is not the same thing
+# on every backend. Colab's drive and checkout live under /content; Modal's
+# volume and checkout live under /root.
+WORKSPACE_ROOT = (
+    "/content" if IS_COLAB
+    else ("/root" if (IS_MODAL or os.path.exists("/root")) else os.path.expanduser("~"))
+)
+
 PERSISTENT_ROOT = ""
 if IS_COLAB:
     print("📁 Detected Google Colab environment. Mounting Google Drive for persistence...")
@@ -49,7 +58,7 @@ if IS_COLAB:
         print(f"✅ Google Drive mounted successfully at /content/drive/MyDrive (persistence: {PERSISTENT_ROOT})")
     except Exception as e:
         print(f"⚠️ Google Drive mount notice: {e}")
-        PERSISTENT_ROOT = "/content/tnhcomfy_storage"
+        PERSISTENT_ROOT = os.path.join(WORKSPACE_ROOT, "tnhcomfy_storage")
         os.makedirs(PERSISTENT_ROOT, exist_ok=True)
 elif IS_MODAL or os.path.exists("/mnt/data"):
     print("⚡ Detected Modal Sandbox / Container environment with persistent Volume!")
@@ -117,7 +126,7 @@ try:
         shm_du = shutil.disk_usage("/dev/shm")
         print(f"   • Shared Memory (/dev/shm): {shm_du.total / (1024**3):.1f} GB total | {shm_du.free / (1024**3):.1f} GB free")
 
-    scratch_path = "/content" if os.path.exists("/content") else "/"
+    scratch_path = WORKSPACE_ROOT if os.path.exists(WORKSPACE_ROOT) else "/"
     scratch_du = shutil.disk_usage(scratch_path)
     print(f"   • Local Scratch ({scratch_path}): {scratch_du.total / (1024**3):.1f} GB total | {scratch_du.free / (1024**3):.1f} GB free")
 
@@ -271,7 +280,30 @@ import os
 import shutil
 import subprocess
 
-workspace_root = "/content" if os.path.exists("/content") else "/root"
+# ONE rule for the workspace root, derived from the ENVIRONMENT.
+#
+# It used to be "whichever of /content and /root happens to exist", and that
+# is not the same thing on every backend. On Modal, cell 4 MOUNTS Google Drive
+# at /content/drive - which CREATES /content - so a cell that asked "does
+# /content exist?" would answer differently from the one that cloned the
+# repository. The clone went to /root while every later cell looked in
+# /content, so `remote_agent` was not where anything expected it, and
+# `from ram_manager import ...` failed with ModuleNotFoundError.
+#
+# The rule is now the same in every cell: Colab gets /content (where its
+# drive and its checkout live), Modal gets /root (where its volume and its
+# checkout live), and anything else gets its home directory.
+_IS_MODAL = os.path.exists("/mnt/data") or ("MODAL_ENVIRONMENT" in os.environ)
+_IS_COLAB = False
+try:
+    import google.colab  # noqa: F401
+    _IS_COLAB = True
+except Exception:
+    pass
+workspace_root = (
+    "/content" if _IS_COLAB
+    else ("/root" if (_IS_MODAL or os.path.exists("/root")) else os.path.expanduser("~"))
+)
 repo_dir = os.path.join(workspace_root, "tnhcomfy")
 token = GITHUB_TOKEN.strip() if "GITHUB_TOKEN" in locals() else ""
 
@@ -332,6 +364,15 @@ try:
 except Exception:
     pass
 
+# The workspace root, derived from the ENVIRONMENT - see cell 3 for why
+# "whichever of /content and /root happens to exist" is not the same thing
+# on every backend. Colab's drive and checkout live under /content; Modal's
+# volume and checkout live under /root.
+WORKSPACE_ROOT = (
+    "/content" if is_colab
+    else ("/root" if (is_modal or os.path.exists("/root")) else os.path.expanduser("~"))
+)
+
 if is_colab:
     try:
         from google.colab import drive
@@ -344,7 +385,7 @@ if is_colab:
 elif is_modal:
     gdrive_root = "/mnt/data/tnhcomfy"
 else:
-    gdrive_root = "/content/tnhcomfy_storage"
+    gdrive_root = os.path.join(WORKSPACE_ROOT, "tnhcomfy_storage")
 
 os.makedirs(gdrive_root, exist_ok=True)
 gdrive_bin = f"{gdrive_root}/bin"
@@ -604,12 +645,12 @@ else:
     print("✅ Cloudflared installed.")
 
 # 2. ComfyUI Setup & Custom Nodes
-agent_dir = "/content/tnhcomfy/remote_agent"
+agent_dir = os.path.join(WORKSPACE_ROOT, "tnhcomfy", "remote_agent")
 collected_reqs = [f"{agent_dir}/requirements.txt"]
 extra_packages = []
 
 if mode_key in ("model", "hybrid", "tts"):
-    comfy_dir = "/content/ComfyUI"
+    comfy_dir = os.path.join(WORKSPACE_ROOT, "ComfyUI")
     gdrive_path = GDRIVE_COMFY_PATH.strip()
     
     # Check if running on Modal Volume comfy-storage (/mnt/data/models) or Google Drive
@@ -693,7 +734,7 @@ if mode_key in ("model", "hybrid", "tts"):
             collected_reqs.append(req_file)
 
     # Timing profiler node from repo if present
-    profiler_src = "/content/tnhcomfy/deployables/modal/image/load_profiler_node"
+    profiler_src = os.path.join(WORKSPACE_ROOT, "tnhcomfy", "deployables", "modal", "image", "load_profiler_node")
     profiler_dst = os.path.join(custom_nodes_dir, "tnh_load_profiler")
     if os.path.exists(profiler_src):
         try:
@@ -890,8 +931,8 @@ if mode_key in ("llm", "hybrid"):
     
     llm_dir = "/mnt/data/tnhcomfy/llm_models" if is_modal else (GDRIVE_LLM_PATH.strip() or "/content/drive/MyDrive/tnhcomfy/llm_models")
     os.makedirs(llm_dir, exist_ok=True)
-    os.makedirs("/content/agent-data/llm", exist_ok=True)
-    safe_symlink(llm_dir, "/content/agent-data/llm/models")
+    os.makedirs(os.path.join(WORKSPACE_ROOT, "agent-data", "llm"), exist_ok=True)
+    safe_symlink(llm_dir, os.path.join(WORKSPACE_ROOT, "agent-data", "llm", "models"))
     print(f"✅ LLM storage ready at {llm_dir}")
 
 # 6. System 1 Decision Maker (Laya System 1 GPU/RAM Engine)
@@ -906,7 +947,7 @@ try:
         "laya_english": "convaiinnovations/laya",
     }
     repo_to_fetch = laya_repo_map.get(laya_choice, "convaiinnovations/laya-multilingual")
-    laya_target = f"/content/agent-data/decisions/{laya_choice}"
+    laya_target = os.path.join(WORKSPACE_ROOT, "agent-data", "decisions", str(laya_choice))
     os.makedirs(laya_target, exist_ok=True)
     print(f"⚡ Pre-downloading Laya weights for [{laya_choice}] ({repo_to_fetch}) from Hugging Face...")
     snapshot_download(repo_to_fetch, local_dir=laya_target, token=os.environ.get("HF_TOKEN") or None)
@@ -949,6 +990,15 @@ try:
 except Exception:
     pass
 
+# The workspace root, derived from the ENVIRONMENT - see cell 3 for why
+# "whichever of /content and /root happens to exist" is not the same thing
+# on every backend. Colab's drive and checkout live under /content; Modal's
+# volume and checkout live under /root.
+WORKSPACE_ROOT = (
+    "/content" if is_colab
+    else ("/root" if (is_modal or os.path.exists("/root")) else os.path.expanduser("~"))
+)
+
 if is_colab:
     try:
         from google.colab import drive
@@ -961,7 +1011,7 @@ if is_colab:
 elif is_modal:
     gdrive_root = "/mnt/data/tnhcomfy"
 else:
-    gdrive_root = "/content/tnhcomfy_storage"
+    gdrive_root = os.path.join(WORKSPACE_ROOT, "tnhcomfy_storage")
 
 os.makedirs(gdrive_root, exist_ok=True)
 
@@ -1009,10 +1059,27 @@ else:
 print(f"🧠 Host RAM: {tot_ram_gb:.1f} GB | Models-in-RAM Cache: {'ENABLED (/dev/shm)' if enable_ram_cache else 'DISABLED (Direct Volume Streaming)'}")
 
 # 0d. Expand /dev/shm capacity early for Direct-to-RAM streaming on High-RAM hosts
+#
+# Only when /dev/shm is actually SMALLER than the target, and quietly.
+#
+# The remount needs CAP_SYS_ADMIN, which a Modal container does not have, so
+# it printed the kernel's "mount: /dev/shm: permission denied" and did
+# nothing. On Modal /dev/shm is already 40 GB, so the remount was never
+# wanted in the first place - the check was on the target, not on what is
+# already there.
 if enable_ram_cache and os.path.exists("/dev/shm"):
     try:
         target_shm_gb = min(64, int(tot_ram_gb * 0.82))
-        subprocess.run(["mount", "-o", f"remount,size={target_shm_gb}G", "/dev/shm"], check=False)
+        current_shm_gb = int(shutil.disk_usage("/dev/shm").total / (1024**3))
+        if current_shm_gb < target_shm_gb:
+            subprocess.run(
+                ["mount", "-o", f"remount,size={target_shm_gb}G", "/dev/shm"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            print(f"   • /dev/shm already {current_shm_gb} GB; no remount needed.")
     except Exception:
         pass
 
@@ -1027,12 +1094,12 @@ else:
         f.write(agent_token)
 os.environ["REMOTE_AGENT_TOKEN"] = agent_token
 
-agent_dir = "/content/tnhcomfy/remote_agent"
-scratch_downloads = "/content/tmp_downloads"
+agent_dir = os.path.join(WORKSPACE_ROOT, "tnhcomfy", "remote_agent")
+scratch_downloads = os.path.join(WORKSPACE_ROOT, "tmp_downloads")
 os.makedirs(scratch_downloads, exist_ok=True)
-log_comfy = "/content/comfyui.log"
-log_agent = "/content/agent.log"
-log_llm = "/content/llama_server.log"
+log_comfy = os.path.join(WORKSPACE_ROOT, "comfyui.log")
+log_agent = os.path.join(WORKSPACE_ROOT, "agent.log")
+log_llm = os.path.join(WORKSPACE_ROOT, "llama_server.log")
 comfy_port = 8188
 agent_port = 8001 if mode_key in ("model", "hybrid") else (8003 if mode_key == "llm" else 8002)
 llm_port = 8003
@@ -1366,7 +1433,7 @@ if backend_url_clean:
         print(f"⚠️ Notice: Could not contact backend catalog at {backend_url_clean} after retries. Using local catalog.")
 
 if not catalog:
-    local_cat = "/content/tnhcomfy/backend_v2/modal_llm/models.json"
+    local_cat = os.path.join(WORKSPACE_ROOT, "tnhcomfy", "backend_v2", "modal_llm", "models.json")
     if os.path.exists(local_cat):
         with open(local_cat, "r") as f:
             catalog = json.load(f)
@@ -1412,7 +1479,7 @@ if isinstance(backend_tokens, dict):
 # 4. Check & Auto-Download Active LLM GGUF Weights (Direct RAM Cache, NVMe, or Google Drive)
 storage_strat_key = "direct" if ("STORAGE_STRATEGY" in locals() and "direct" in str(STORAGE_STRATEGY).lower()) else "gdrive"
 llm_gdrive_dir = "/mnt/data/tnhcomfy/llm_models" if is_modal else (GDRIVE_LLM_PATH.strip() or "/content/drive/MyDrive/tnhcomfy/llm_models")
-llm_local_dir = "/content/models/llm"
+llm_local_dir = os.path.join(WORKSPACE_ROOT, "models", "llm")
 os.makedirs(llm_local_dir, exist_ok=True)
 if storage_strat_key == "gdrive":
     os.makedirs(llm_gdrive_dir, exist_ok=True)
@@ -1515,7 +1582,7 @@ for mid in distinct_active_llm:
         resolved_weights[mid] = local_gguf
     else:
         # Fallback candidate scan: only match files corresponding to this model
-        for cdir in [llm_local_dir, llm_gdrive_dir, "/mnt/data/tnhcomfy/llm_models", "/mnt/data/models/llm", "/content/agent-data/llm/models", "/content/ComfyUI/models/llm", "/dev/shm/tnh_ram_cache/llm"]:
+        for cdir in [llm_local_dir, llm_gdrive_dir, "/mnt/data/tnhcomfy/llm_models", "/mnt/data/models/llm", os.path.join(WORKSPACE_ROOT, "agent-data", "llm", "models"), os.path.join(WORKSPACE_ROOT, "ComfyUI", "models", "llm"), "/dev/shm/tnh_ram_cache/llm"]:
             if os.path.exists(cdir):
                 for root, _, files in os.walk(cdir):
                     for f in sorted(files):
@@ -1533,7 +1600,20 @@ try:
     import psutil
     tot_ram = psutil.virtual_memory().total / (1024**3)
     target_shm_gb = min(64, int(tot_ram * 0.82))
-    subprocess.run(["mount", "-o", f"remount,size={target_shm_gb}G", "/dev/shm"], check=False)
+    # Only remount when /dev/shm is smaller than the target, and quietly.
+    #
+    # This one was NOT guarded by the current size, so it ran on every host
+    # and printed the kernel's "mount: /dev/shm: permission denied" wherever
+    # the container had no CAP_SYS_ADMIN. On Modal /dev/shm is already 40 GB.
+    if os.path.exists("/dev/shm"):
+        current_shm_gb = int(shutil.disk_usage("/dev/shm").total / (1024**3))
+        if current_shm_gb < target_shm_gb:
+            subprocess.run(
+                ["mount", "-o", f"remount,size={target_shm_gb}G", "/dev/shm"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
 except Exception:
     pass
 
@@ -1568,8 +1648,8 @@ for m_id, w_path in resolved_weights.items():
             except Exception as exc:
                 print(f"⚠️ Notice during early RAM registration for {m_id}: {exc}")
 
-comfy_dir = "/content/ComfyUI"
-nvme_cache_base = "/content/models/nvme_cache"
+comfy_dir = os.path.join(WORKSPACE_ROOT, "ComfyUI")
+nvme_cache_base = os.path.join(WORKSPACE_ROOT, "models", "nvme_cache")
 nvme_ckpt_dir = f"{nvme_cache_base}/checkpoints"
 os.makedirs(nvme_ckpt_dir, exist_ok=True)
 os.makedirs(f"{nvme_cache_base}/loras", exist_ok=True)
@@ -1832,7 +1912,7 @@ def sync_tier2_warm_cache():
             continue
 
         try:
-            free_gb = shutil.disk_usage("/content").free / (1024**3)
+            free_gb = shutil.disk_usage(WORKSPACE_ROOT).free / (1024**3)
             if free_gb < 20.0:
                 print(f"   ⚠️ [Tier 2] Local NVMe free space is {free_gb:.1f} GB (<20 GB limit); stopping warm cache sync.")
                 break
@@ -1993,7 +2073,7 @@ worker_procs = {}
 def start_remote_agent():
     print(f"🚀 Starting Remote Storage Agent on :{agent_port} (DATA_DIR={comfy_dir})...")
     agent_work_mode = "hybrid" if mode_key == "hybrid" else mode_key
-    data_path = comfy_dir if mode_key in ("hybrid", "model") else ("/content/agent-data/llm/models" if mode_key == "llm" else "/content/agent-data/tts")
+    data_path = comfy_dir if mode_key in ("hybrid", "model") else os.path.join(WORKSPACE_ROOT, "agent-data", "llm" if mode_key == "llm" else "tts")
     os.makedirs(data_path, exist_ok=True)
     env_agent = dict(
         os.environ,
@@ -2199,7 +2279,7 @@ laya_repo_map = {
 
 # Auto-download active Laya weights if needed
 if active_decisions and active_decisions not in ("same_as_util", "disabled"):
-    laya_target_folder = f"/content/agent-data/decisions/{active_decisions}"
+    laya_target_folder = os.path.join(WORKSPACE_ROOT, "agent-data", "decisions", str(active_decisions))
     os.makedirs(laya_target_folder, exist_ok=True)
     if not (os.path.exists(laya_target_folder) and any(os.listdir(laya_target_folder))):
         repo_to_dl = laya_repo_map.get(active_decisions) or models_dict.get(active_decisions, {}).get("repo")
@@ -2218,7 +2298,7 @@ def launch_laya_track():
         return
     print(f"⚡ [Laya Track] Pre-warming Laya [{active_decisions}] into RAM cache...")
     try:
-        laya_dir = f"/content/agent-data/decisions/{active_decisions}"
+        laya_dir = os.path.join(WORKSPACE_ROOT, "agent-data", "decisions", str(active_decisions))
         repo_fallback = laya_repo_map.get(active_decisions) or models_dict.get(active_decisions, {}).get("repo") or "convaiinnovations/laya-multilingual"
         src = laya_dir if (os.path.exists(laya_dir) and any(os.listdir(laya_dir))) else repo_fallback
         if enable_ram_cache:
@@ -2340,7 +2420,7 @@ print(f"   • Anchors in RAM: {[a['model_id'] for a in ram_status['anchor_model
 # 7. Cloudflare Tunnel (if selected)
 if tunnel_key == "cloudflared":
     print("🌐 Starting Cloudflare Named / Quick Tunnel...")
-    cf_log = "/content/cloudflared.log"
+    cf_log = os.path.join(WORKSPACE_ROOT, "cloudflared.log")
     target_tunnel_port = comfy_port if mode_key == "model" else agent_port
     with open(cf_log, "w") as out:
         subprocess.Popen(["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{target_tunnel_port}", "--no-autoupdate"], stdout=out, stderr=out)
@@ -2751,7 +2831,16 @@ try:
     is_colab = True
 except Exception:
     pass
-workspace_root = "/content" if is_colab else ("/root" if os.path.exists("/root") else os.path.expanduser("~"))
+
+# The workspace root, derived from the ENVIRONMENT - see cell 3 for why
+# "whichever of /content and /root happens to exist" is not the same thing
+# on every backend. Colab's drive and checkout live under /content; Modal's
+# volume and checkout live under /root.
+WORKSPACE_ROOT = (
+    "/content" if is_colab
+    else ("/root" if (is_modal or os.path.exists("/root")) else os.path.expanduser("~"))
+)
+workspace_root = WORKSPACE_ROOT
 agent_dir = os.path.join(workspace_root, "tnhcomfy", "remote_agent")
 if agent_dir not in sys.path:
     sys.path.insert(0, agent_dir)

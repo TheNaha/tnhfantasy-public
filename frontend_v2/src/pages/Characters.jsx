@@ -17,13 +17,14 @@ import {
 import { Users, Plus, Upload, Search, X, Loader2, User, Images, Sparkles, Brain, LayoutGrid, Rows3, BookOpen } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, useExportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter, useLorebooks, useWorlds } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, useAnalyzeCharacterCard, useCommitCharacterCard, useExportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter, useLorebooks, useWorlds } from '../hooks/useWorldVault';
 import { CARD_ACCEPT, cardExportFormatLabel } from '../api/characterCards';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { SortableCharacterCard } from '../components/characters/CharacterCard';
 import ModalOverlay from '../components/common/ModalOverlay';
 import CharacterCardImportReport from '../components/characters/CharacterCardImportReport';
+import CharacterCardImportPreview from '../components/characters/CharacterCardImportPreview';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import useSettingsStore from '../store/settingsStore';
 import EmptyState from '../components/EmptyState';
@@ -861,6 +862,11 @@ export default function Characters() {
     const [editingCharacter, setEditingCharacter] = useState(null);
     const [activeTab, setActiveTab] = useState('details');
     const [importReport, setImportReport] = useState(null);
+    // The import is now two-phase: analyze (writes nothing), show what it
+    // would do, then commit. The import used to write immediately, so the
+    // only way to find out what a card would do was to do it.
+    const [importPreview, setImportPreview] = useState(null);
+    const [importPreviewError, setImportPreviewError] = useState(null);
     const fileInputRef = useRef(null);
     const [cloningId, setCloningId] = useState(null);
 
@@ -878,6 +884,8 @@ export default function Characters() {
     const updateCharacter = useUpdateCharacter();
     const deleteCharacter = useDeleteCharacter();
     const importCharacterCard = useImportCharacterCard();
+    const analyzeCharacterCard = useAnalyzeCharacterCard();
+    const commitCharacterCard = useCommitCharacterCard();
     const exportCharacterCard = useExportCharacterCard();
     const reorderCharacters = useReorderCharacters();
     const cloneCharacter = useCloneCharacter();
@@ -962,16 +970,55 @@ export default function Characters() {
     };
 
     const handleImportCard = async (e) => {
-        const file = e.target.files?.[0];
+        const files = Array.from(e.target.files || []);
         e.target.value = '';
-        if (!file) return;
+        if (files.length === 0) return;
 
+        // One at a time, and each one is previewed before it is written.
+        // A folder of cards is a queue, not a bulk insert.
+        const file = files[0];
         try {
-            const { character, compatibility } = await importCharacterCard.mutateAsync(file);
-            setImportReport({ character, compatibility, filename: file.name });
-            toast.success(`"${character?.name || file.name}" imported`);
+            const preview = await analyzeCharacterCard.mutateAsync(file);
+            setImportPreviewError(null);
+            setImportPreview({
+                preview,
+                file,
+                remaining: files.slice(1),
+                seq: (importPreview?.seq ?? 0) + 1,
+            });
         } catch (err) {
-            toast.error(err?.data?.detail || err?.message || 'Failed to import card');
+            toast.error(err?.data?.detail || err?.message || 'Failed to read the card');
+        }
+    };
+
+    const handleCommitImport = async ({ scope, matchAction }) => {
+        if (!importPreview) return;
+        try {
+            const { character, compatibility } = await commitCharacterCard.mutateAsync({
+                file: importPreview.file,
+                scope,
+                matchAction,
+            });
+            setImportPreview(null);
+            if (character) {
+                setImportReport({ character, compatibility, filename: importPreview.file.name });
+                toast.success(`"${character?.name || importPreview.file.name}" imported`);
+            } else {
+                toast.success('World created from the card');
+            }
+            // The next file in the queue.
+            const next = importPreview.remaining?.[0];
+            if (next) {
+                const preview = await analyzeCharacterCard.mutateAsync(next);
+                setImportPreview({
+                    preview,
+                    file: next,
+                    remaining: importPreview.remaining.slice(1),
+                    seq: (importPreview?.seq ?? 0) + 1,
+                });
+            }
+        } catch (err) {
+            setImportPreviewError(err?.data?.detail || err?.message || 'Failed to import the card');
         }
     };
 
@@ -1022,7 +1069,8 @@ export default function Characters() {
                         ref={fileInputRef}
                         type="file"
                         accept={CARD_ACCEPT}
-                        title="Import a SillyTavern card (.png or .json)"
+                        multiple
+                        title="Import SillyTavern cards (.png, .json, .charx) or a TNHComfy bundle"
                         className="hidden"
                         onChange={handleImportCard}
                     />
@@ -1163,6 +1211,21 @@ export default function Characters() {
             />
 
             {/* Post-import compatibility report */}
+            {importPreview && (
+                <CharacterCardImportPreview
+                    key={importPreview.seq}
+                    preview={importPreview.preview}
+                    filename={importPreview.file?.name}
+                    error={importPreviewError}
+                    committing={commitCharacterCard.isPending}
+                    onCancel={() => {
+                        setImportPreview(null);
+                        setImportPreviewError(null);
+                    }}
+                    onCommit={handleCommitImport}
+                />
+            )}
+
             {importReport && (
                 <CharacterCardImportReport
                     character={importReport.character}

@@ -1,7 +1,21 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Characters from './Characters';
+
+// The export action reads the export preview, so the page needs a query
+// client as well as a router.
+const Providers = ({ children }) => {
+    const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+    });
+    return (
+        <QueryClientProvider client={queryClient}>
+            <MemoryRouter>{children}</MemoryRouter>
+        </QueryClientProvider>
+    );
+};
 
 vi.mock('react-router-dom', async () => {
     const actual = await vi.importActual('react-router-dom');
@@ -13,6 +27,8 @@ const mockCreateCharacter = vi.hoisted(() => vi.fn());
 const mockUpdateCharacter = vi.hoisted(() => vi.fn());
 const mockDeleteCharacter = vi.hoisted(() => vi.fn());
 const mockImportCharacterCard = vi.hoisted(() => vi.fn());
+const mockAnalyzeCharacterCard = vi.hoisted(() => vi.fn());
+const mockCommitCharacterCard = vi.hoisted(() => vi.fn());
 const mockExportCharacterCard = vi.hoisted(() => vi.fn());
 const mockUseLorebooks = vi.hoisted(() => vi.fn());
 const mockSetActiveChat = vi.hoisted(() => vi.fn());
@@ -30,6 +46,8 @@ vi.mock('../hooks/useWorldVault', () => ({
     useCharacterCollection: () => ({ data: null }),
     useCharacterCollections: () => ({ data: {} }),
     useImportCharacterCard: () => mockImportCharacterCard(),
+    useAnalyzeCharacterCard: () => mockAnalyzeCharacterCard(),
+    useCommitCharacterCard: () => mockCommitCharacterCard(),
     useExportCharacterCard: () => mockExportCharacterCard(),
     useReorderCharacters: () => ({ mutate: vi.fn(), isPending: false }),
     useAnimateCharacterAvatar: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -109,29 +127,29 @@ describe('Characters page', () => {
     });
 
     it('renders the page heading', () => {
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
         expect(screen.getByText('Character Vault')).toBeInTheDocument();
     });
 
     it('displays character cards with name and description', () => {
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
         expect(screen.getByText('Alice')).toBeInTheDocument();
         expect(screen.getByText('A friendly girl')).toBeInTheDocument();
     });
 
     it('shows visual tags on character cards', () => {
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
         expect(screen.getByText('1girl')).toBeInTheDocument();
         expect(screen.getByText('blonde')).toBeInTheDocument();
     });
 
     it('displays character count', () => {
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
         expect(screen.getByText('1 character')).toBeInTheDocument();
     });
 
     it('filters characters by search query', () => {
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
         const searchInput = screen.getByPlaceholderText(/Search characters/);
         fireEvent.change(searchInput, { target: { value: 'Alice' } });
         expect(screen.getByText('Alice')).toBeInTheDocument();
@@ -142,18 +160,18 @@ describe('Characters page', () => {
 
     it('shows empty state when no characters exist', () => {
         mockUseCharacters.mockReturnValue({ data: [], isLoading: false });
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
         expect(screen.getByTestId('empty-state')).toBeInTheDocument();
     });
 
     it('shows loading spinner while fetching', () => {
         mockUseCharacters.mockReturnValue({ data: [], isLoading: true });
-        const { container } = render(<Characters />, { wrapper: MemoryRouter });
+        const { container } = render(<Characters />, { wrapper: Providers });
         expect(container.querySelector('.animate-spin')).toBeInTheDocument();
     });
 
     it('opens create modal when Create Character is clicked', async () => {
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
         fireEvent.click(screen.getByText('Create Character'));
         await waitFor(() => {
             expect(screen.getByText('Create Character', { selector: 'h2' })).toBeInTheDocument();
@@ -161,19 +179,76 @@ describe('Characters page', () => {
     });
 
     it('shows character personality in italics', () => {
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
         expect(screen.getByText(/Cheerful and kind/)).toBeInTheDocument();
     });
 
     it('accepts both PNG and JSON card files', () => {
-        const { container } = render(<Characters />, { wrapper: MemoryRouter });
+        const { container } = render(<Characters />, { wrapper: Providers });
         const input = container.querySelector('input[type="file"]');
         expect(input.accept).toContain('.png');
         expect(input.accept).toContain('.json');
     });
 
+    it('previews the import before writing anything', async () => {
+        // The import is two-phase now: analyze (which writes nothing), show
+        // what it would do, then commit. The import used to write
+        // immediately, so the only way to find out what a card would do was
+        // to do it.
+        const analyzeAsync = vi.fn().mockResolvedValue({
+            format: 'json',
+            spec: 'chara_card_v3',
+            spec_version: '3.0',
+            name: 'Sable',
+            description: 'A courier',
+            personality: '',
+            scenario: '',
+            first_mes: '',
+            mes_example: '',
+            counts: { lorebook_entries: 2, expressions: 0, alternate_greetings: 1 },
+            match: { character_id: null, name: null, action: 'create', by: null },
+            scopes: [
+                { id: 'character', label: 'Just the character', detail: 'No world.' },
+                { id: 'world', label: 'Into a world', detail: 'World, locations, lorebook.' },
+            ],
+        });
+        mockAnalyzeCharacterCard.mockReturnValue({ mutateAsync: analyzeAsync, isPending: false });
+        mockCommitCharacterCard.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+
+        const { container } = render(<Characters />, { wrapper: Providers });
+        const input = container.querySelector('input[type="file"]');
+        const file = new File(['{}'], 'sable.json', { type: 'application/json' });
+        fireEvent.change(input, { target: { files: [file] } });
+
+        await waitFor(() => expect(screen.getByTestId('card-import-preview')).toBeInTheDocument());
+        expect(analyzeAsync).toHaveBeenCalledWith(file);
+        expect(screen.getByText('Sable')).toBeInTheDocument();
+        // The two scopes are offered.
+        expect(screen.getByText('Just the character')).toBeInTheDocument();
+        expect(screen.getByText('Into a world')).toBeInTheDocument();
+        // And the report has NOT been shown yet - nothing was written.
+        expect(screen.queryByTestId('card-import-report')).not.toBeInTheDocument();
+    });
+
     it('shows the compatibility report after importing a card', async () => {
-        const mutateAsync = vi.fn().mockResolvedValue({
+        const analyzeAsync = vi.fn().mockResolvedValue({
+            format: 'json',
+            spec: 'chara_card_v3',
+            spec_version: '3.0',
+            name: 'Sable',
+            description: 'A courier',
+            personality: '',
+            scenario: '',
+            first_mes: '',
+            mes_example: '',
+            counts: { lorebook_entries: 0, expressions: 0, alternate_greetings: 0 },
+            match: { character_id: null, name: null, action: 'create', by: null },
+            scopes: [
+                { id: 'character', label: 'Just the character', detail: 'No world.' },
+                { id: 'world', label: 'Into a world', detail: 'World, locations, lorebook.' },
+            ],
+        });
+        const commitAsync = vi.fn().mockResolvedValue({
             character: { id: 'imported-1', name: 'Sable' },
             compatibility: {
                 format: 'json',
@@ -182,21 +257,28 @@ describe('Characters page', () => {
                 warnings: [{ id: 'tags', label: 'Tags mapped to visual tags', detail: '' }],
                 lost: [{ id: 'regex_scripts', label: 'regex_scripts', detail: 'no matching feature' }],
                 preserved: [{ id: 'card_metadata', label: 'card_metadata', detail: '' }],
+                inert: [],
                 lorebookConverted: true,
                 unknownExtensionsPreserved: null,
                 hasReport: true,
                 lossless: false,
             },
         });
-        mockImportCharacterCard.mockReturnValue({ mutateAsync, isPending: false });
+        mockAnalyzeCharacterCard.mockReturnValue({ mutateAsync: analyzeAsync, isPending: false });
+        mockCommitCharacterCard.mockReturnValue({ mutateAsync: commitAsync, isPending: false });
 
-        const { container } = render(<Characters />, { wrapper: MemoryRouter });
+        const { container } = render(<Characters />, { wrapper: Providers });
         const input = container.querySelector('input[type="file"]');
         const file = new File(['{}'], 'sable.json', { type: 'application/json' });
         fireEvent.change(input, { target: { files: [file] } });
 
+        await waitFor(() => expect(screen.getByTestId('card-import-preview')).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: /Import the character/i }));
+
         await waitFor(() => expect(screen.getByTestId('card-import-report')).toBeInTheDocument());
-        expect(mutateAsync).toHaveBeenCalledWith(file);
+        expect(commitAsync).toHaveBeenCalledWith(
+            expect.objectContaining({ file, scope: 'character' })
+        );
         expect(screen.getByText('Sable')).toBeInTheDocument();
         expect(screen.getByTestId('card-import-status')).toHaveTextContent(/Imported with warnings/i);
         expect(screen.getByTestId('card-import-warnings')).toHaveTextContent('Tags mapped to visual tags');
@@ -214,7 +296,7 @@ describe('Characters page', () => {
             isPending: false,
         });
 
-        const { container } = render(<Characters />, { wrapper: MemoryRouter });
+        const { container } = render(<Characters />, { wrapper: Providers });
         const input = container.querySelector('input[type="file"]');
         fireEvent.change(input, {
             target: { files: [new File(['{}'], 'card.json', { type: 'application/json' })] },
@@ -227,7 +309,7 @@ describe('Characters page', () => {
         const mutateAsync = vi.fn().mockResolvedValue({ url: '/x', filename: 'Alice_v3.png' });
         mockExportCharacterCard.mockReturnValue({ mutateAsync, isPending: false });
 
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
         fireEvent.click(screen.getByRole('button', { name: /export card for alice/i }));
         fireEvent.click(screen.getByRole('menuitem', { name: /V3 PNG/ }));
 
@@ -240,7 +322,7 @@ describe('Characters page', () => {
         const mutateAsync = vi.fn().mockResolvedValue({ url: '/x', filename: 'Alice_v2.png' });
         mockExportCharacterCard.mockReturnValue({ mutateAsync, isPending: false });
 
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
         fireEvent.click(screen.getByRole('button', { name: /export card for alice/i }));
         fireEvent.click(screen.getByRole('menuitem', { name: /V2 PNG/ }));
 
@@ -260,7 +342,7 @@ describe('Characters page', () => {
             ],
             isLoading: false,
         });
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
 
         const badge = screen.getByTestId('card-spec-badge');
         expect(badge).toHaveTextContent('V2 · 2.0 card');
@@ -268,7 +350,7 @@ describe('Characters page', () => {
     });
 
     it('keeps the drag handle, chat and edit actions', () => {
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
 
         expect(screen.getByRole('button', { name: 'Reorder Alice' })).toBeInTheDocument();
         expect(screen.getByTitle('Start chat with this character')).toBeInTheDocument();
@@ -277,7 +359,7 @@ describe('Characters page', () => {
     });
 
     it('closes the character editor on Escape', async () => {
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
 
         fireEvent.click(screen.getByRole('button', { name: 'Create Character' }));
         await waitFor(() =>
@@ -291,7 +373,7 @@ describe('Characters page', () => {
     });
 
     it('ignores Escape while the character editor is closed', () => {
-        render(<Characters />, { wrapper: MemoryRouter });
+        render(<Characters />, { wrapper: Providers });
 
         // The editor is mounted unconditionally with an `isOpen` prop, so a
         // closed one must not be listening: this used to be a live listener.

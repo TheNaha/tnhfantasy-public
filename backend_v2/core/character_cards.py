@@ -347,12 +347,16 @@ def _residual_card_metadata(root: dict, data: dict, data_wrapper: bool) -> dict:
     residual_data: dict[str, Any] = {}
     for key, value in data.items():
         if key == "extensions" and isinstance(value, dict):
-            # `tnhcomyu` is app-owned: it is written on every export and is
-            # never kept here, so the identity is not carried twice.
+            # The app's own extension (`tnhcomfy`) is PRESERVED here on
+            # purpose: it is the character's identity, and SillyTavern
+            # preserves unknown extensions, so a card that has been through
+            # SillyTavern still knows which character it came from. The
+            # export rewrites the same key with the same value, so it is
+            # never carried twice.
             extra_ext = {
                 k: v
                 for k, v in value.items()
-                if k not in _MAPPED_EXTENSION_KEYS and k != "tnhcomyu"
+                if k not in _MAPPED_EXTENSION_KEYS
             }
             if extra_ext:
                 residual_data[key] = extra_ext

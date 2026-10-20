@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext } from '@dnd-kit/sortable';
 import { describe, it, expect, vi } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 // Local on purpose. `opacity-0` appears in Tailwind class strings and in JSX
@@ -30,8 +31,19 @@ const character = {
 
 const collection = { image_count: 2, images: ['scene_a.png', 'scene_b.png'] };
 
-function renderInDnd(ui) {
+// The card's export action reads the export preview, so the tree needs a
+// query client.
+function renderWithProviders(ui) {
+    const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+    });
     return render(
+        <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    );
+}
+
+function renderInDnd(ui) {
+    return renderWithProviders(
         <DndContext>
             <SortableContext items={[character.id]}>{ui}</SortableContext>
         </DndContext>
@@ -40,7 +52,7 @@ function renderInDnd(ui) {
 
 describe('CharacterCard (shared by the character vault and the avatar gallery)', () => {
     it('renders identity, scene count and avatar for both call sites', () => {
-        render(
+        renderWithProviders(
             <CharacterCard
                 character={character}
                 collection={collection}
@@ -57,7 +69,7 @@ describe('CharacterCard (shared by the character vault and the avatar gallery)',
     });
 
     it('caps the visible tags at 4 and summarises the rest', () => {
-        render(<CharacterCard character={character} onChat={() => {}} />);
+        renderWithProviders(<CharacterCard character={character} onChat={() => {}} />);
 
         // 5 tags exist; the 4th visible is "silver robe" and the 5th is folded
         // into the overflow marker.
@@ -70,7 +82,7 @@ describe('CharacterCard (shared by the character vault and the avatar gallery)',
     it('browse mode offers chat and view, and no management actions', () => {
         const onChat = vi.fn();
         const onOpen = vi.fn();
-        render(<CharacterCard character={character} onChat={onChat} onOpen={onOpen} />);
+        renderWithProviders(<CharacterCard character={character} onChat={onChat} onOpen={onOpen} />);
 
         expect(screen.getByTitle('Start chat with this character')).toBeInTheDocument();
         expect(screen.getByTitle('Open character')).toBeInTheDocument();
@@ -91,7 +103,7 @@ describe('CharacterCard (shared by the character vault and the avatar gallery)',
         const onDelete = vi.fn();
         const onClone = vi.fn();
         const onExport = vi.fn();
-        render(
+        renderWithProviders(
             <CharacterCard
                 character={character}
                 onChat={() => {}}
@@ -116,7 +128,7 @@ describe('CharacterCard (shared by the character vault and the avatar gallery)',
     });
 
     it('disables only the clone button while that character is being cloned', () => {
-        render(
+        renderWithProviders(
             <CharacterCard
                 character={character}
                 onChat={() => {}}

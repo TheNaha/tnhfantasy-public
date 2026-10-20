@@ -150,14 +150,83 @@ export const useImportCharacterCard = () => {
  */
 export const useExportCharacterCard = () => {
     return useMutation({
-        mutationFn: ({ character, format } = {}) => {
-            const url = buildCharacterCardExportUrl(character?.id, format);
+        mutationFn: ({ character, format, include } = {}) => {
+            const url = buildCharacterCardExportUrl(character?.id, format, include);
             if (!url) {
                 throw new Error('Character is required to export a card');
             }
             const filename = buildCharacterCardExportFilename(character, format);
             downloadUrl(url, filename);
             return { url, filename, format: format || DEFAULT_CARD_EXPORT_FORMAT };
+        }
+    });
+};
+
+/**
+ * What an export of this character can and cannot carry.
+ *
+ * The export is a PNG or an archive, so it has nowhere to say "this
+ * character has six expressions and a voice model and the card has
+ * neither". The export menu shows this BEFORE the download, so the user
+ * finds out here rather than by opening the card elsewhere.
+ */
+export const useCharacterExportPreview = (characterId, options = {}) => {
+    return useQuery({
+        queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, characterId, 'export-preview'),
+        queryFn: ({ signal }) =>
+            api.get(`/api/v2/characters/${characterId}/export/preview`, { signal }),
+        enabled: Boolean(characterId),
+        staleTime: 30_000,
+        ...options,
+    });
+};
+
+/**
+ * Preview what importing a card would do. Writes nothing.
+ *
+ * The import used to write immediately, so the only way to find out what a
+ * card would do was to do it — and re-importing a card created a second
+ * character with the same name, silently.
+ */
+export const useAnalyzeCharacterCard = () => {
+    return useMutation({
+        mutationFn: async (payload) => {
+            const file = payload?.file || payload;
+            assertCharacterCardFile(file);
+            const formData = appendCardFile(new FormData(), file);
+            return api.post('/api/v2/characters/import/analyze', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+        }
+    });
+};
+
+/**
+ * Import a card with the scope and the match already chosen.
+ *
+ * `scope` is 'character' (the card's fields and nothing else) or 'world'
+ * (the World Architect's blueprint). `matchAction` is 'auto', 'update' or
+ * 'create'.
+ */
+export const useCommitCharacterCard = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ file, scope = 'character', matchAction = 'auto' } = {}) => {
+            assertCharacterCardFile(file);
+            const formData = appendCardFile(new FormData(), file);
+            formData.append('scope', scope);
+            formData.append('match_action', matchAction);
+            const raw = await api.post('/api/v2/characters/import/commit', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            return raw?.scope === 'world' ? { character: null, compatibility: null, raw } : normalizeCardImportResult(raw);
+        },
+        onSuccess: (result) => {
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
+            if (result?.character?.id) {
+                queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, result.character.id) });
+            }
+            invalidateVaultAggregates(queryClient);
         }
     });
 };

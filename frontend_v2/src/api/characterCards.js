@@ -58,6 +58,13 @@ export const CARD_EXPORT_FORMATS = [
         extension: 'charx',
         description: 'ZIP card with card.json and available avatar assets.',
     },
+    {
+        id: 'bundle',
+        label: 'TNHComfy bundle',
+        extension: 'tnhzip',
+        description:
+            'The whole character: expressions, voice, world, lorebooks and chats, with the card inside.',
+    },
 ];
 
 const EXPORT_SUFFIXES = {
@@ -65,6 +72,7 @@ const EXPORT_SUFFIXES = {
     v3: '_v3.png',
     json: '.json',
     charx: '.charx',
+    bundle: '.tnhzip',
     default: '_v2.png',
 };
 
@@ -244,12 +252,34 @@ export function normalizeCardImportResult(raw) {
     return { character, compatibility };
 }
 
-/** Export URL for a character; `default` sends no `format` query param. */
-export function buildCharacterCardExportUrl(characterId, format = DEFAULT_CARD_EXPORT_FORMAT) {
+/**
+ * Export URL for a character; `default` sends no `format` query param.
+ *
+ * `include` names the optional sections a BUNDLE should carry. It is ignored
+ * for the card formats, which have no such sections.
+ */
+export function buildCharacterCardExportUrl(
+    characterId,
+    format = DEFAULT_CARD_EXPORT_FORMAT,
+    include = []
+) {
     if (!characterId) return null;
     const base = `/api/v2/characters/${characterId}/export`;
-    if (!format || format === DEFAULT_CARD_EXPORT_FORMAT) return base;
-    return `${base}?format=${encodeURIComponent(format)}`;
+    const params = new URLSearchParams();
+    if (format && format !== DEFAULT_CARD_EXPORT_FORMAT) {
+        params.set('format', format);
+    }
+    if (format === 'bundle' && Array.isArray(include) && include.length) {
+        params.set('include', include.join(','));
+    }
+    const query = params.toString();
+    return query ? `${base}?${query}` : base;
+}
+
+/** The URL for the export preview — what a card cannot carry. */
+export function buildCharacterExportPreviewUrl(characterId) {
+    if (!characterId) return null;
+    return `/api/v2/characters/${characterId}/export/preview`;
 }
 
 /** Download filename for an export, preserving the legacy `<name>_v2.png` default. */

@@ -436,3 +436,103 @@ class TestExpressions:
         resp = client.get(f"/api/v2/characters/{body['id']}/export?format=json")
         assets = resp.json()["data"].get("assets") or []
         assert not [a for a in assets if a.get("type") == "expression"]
+
+
+class TestTwoPhaseImport:
+    """Analyze writes nothing; commit does the writing.
+
+    The import used to write immediately, so the only way to find out what a
+    card would do was to do it — and re-importing a card made a SECOND
+    character with the same name, silently.
+    """
+
+    def _card(self, **overrides) -> bytes:
+        import json as _json
+
+        return _json.dumps(_card(**overrides)).encode("utf-8")
+
+    def test_analyze_writes_nothing(self, client, session):
+        from sqlmodel import select
+
+        before = len(session.exec(select(Character)).all())
+        resp = client.post(
+            "/api/v2/characters/import/analyze",
+            files={"file": ("card.json", self._card(), "application/json")},
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(session.exec(select(Character)).all()) == before, (
+            "the analyze endpoint wrote a character"
+        )
+
+    def test_analyze_says_what_the_card_holds(self, client):
+        resp = client.post(
+            "/api/v2/characters/import/analyze",
+            files={"file": ("card.json", self._card(), "application/json")},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["name"] == "Ilse of the Bridge"
+        assert body["description"] == "A courier with a debt."
+        assert body["match"]["action"] == "create"
+        # And the two scopes are offered.
+        scope_ids = [s["id"] for s in body["scopes"]]
+        assert scope_ids == ["character", "world"]
+
+    def test_analyze_finds_the_character_a_card_identifies(self, client, session):
+        char = _import(client, _card())
+        card = client.get(f"/api/v2/characters/{char['id']}/export?format=json").content
+
+        resp = client.post(
+            "/api/v2/characters/import/analyze",
+            files={"file": ("card.json", card, "application/json")},
+        )
+        assert resp.status_code == 200, resp.text
+        match = resp.json()["match"]
+        assert match["character_id"] == char["id"]
+        assert match["action"] == "update"
+        assert match["by"] == "identity"
+
+    def test_commit_writes_the_character(self, client, session):
+        from sqlmodel import select
+
+        resp = client.post(
+            "/api/v2/characters/import/commit",
+            data={"scope": "character", "match_action": "auto"},
+            files={"file": ("card.json", self._card(), "application/json")},
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(session.exec(select(Character)).all()) == 1
+
+    def test_commit_updates_the_character_the_card_identifies(self, client, session):
+        from sqlmodel import select
+
+        char = _import(client, _card())
+        card = client.get(f"/api/v2/characters/{char['id']}/export?format=json").content
+        payload = json.loads(card)
+        payload["data"]["description"] = "A courier with a much bigger debt."
+        updated = json.dumps(payload).encode("utf-8")
+
+        resp = client.post(
+            "/api/v2/characters/import/commit",
+            data={"scope": "character", "match_action": "auto"},
+            files={"file": ("card.json", updated, "application/json")},
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(session.exec(select(Character)).all()) == 1, "the commit duplicated the character"
+        assert resp.json()["description"] == "A courier with a much bigger debt."
+
+    def test_commit_can_force_a_new_character(self, client, session):
+        from sqlmodel import select
+
+        char = _import(client, _card())
+        card = client.get(f"/api/v2/characters/{char['id']}/export?format=json").content
+
+        resp = client.post(
+            "/api/v2/characters/import/commit",
+            data={"scope": "character", "match_action": "create"},
+            files={"file": ("card.json", card, "application/json")},
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(session.exec(select(Character)).all()) == 2, (
+            "an explicit 'create' did not create a second character"
+        )

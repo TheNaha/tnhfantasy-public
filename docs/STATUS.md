@@ -199,7 +199,7 @@ two Dockerfiles (plus `backend_v2/requirements.txt` and
 there because GitHub has no job-level `paths:` — `on.<event>.paths` filters the
 whole workflow — and it is a few minutes on a Dockerfile change.
 
-`docs/api.md` documents **291 of 293** live paths (99.3%) on the 383-operation
+`docs/api.md` documents **294 of 296** live paths (99.3%) on the 386-operation
 router. It had 26 endpoints that did not exist until 2026-09-29, including two
 whole sections under the wrong URL prefix. It is checked against
 `app.openapi()["paths"]`, not against itself — but the check's assertion is
@@ -252,6 +252,78 @@ themselves. See the audit.
 >   offenders are fixed; the architectural cause is not.
 
 ## What was actually wrong, and is now fixed
+
+### The 2026-10-20 character-interchange pass
+
+The card codec was byte-lossless and the PRODUCT was not. `lost_fields` was
+hardcoded `[]` and the UI turned that into *"Fully compatible. All reported
+card data was imported."* while several SillyTavern features were preserved
+and never executed, and one of them crashed the whole import.
+
+**A card could crash the import.** A card carrying
+`extensions.voice_model_id` for a voice model this vault does not have was
+written straight into a foreign key, so the INSERT failed and the entire
+character was lost to a 500. The value is now checked, dropped when it does
+not resolve, and REPORTED as lost. A constraint failure on a card-supplied
+value is a fact about the card, not a server fault.
+
+**The lorebook entry semantics had nowhere to go.** A ST `character_book`
+entry can carry `enabled`, `constant`, `selective` and `secondary_keys`, and
+all four were dropped on import. `constant: true` means "always on" in ST,
+and this vault's always-on test is a KEYLESS entry — so a constant entry
+that also had keys became KEY-GATED and stopped firing. `enabled: false`
+activated anyway. `secondary_keys` were thrown away, so `selective` could
+not be honoured even if it had been stored. `lorebook_entries.enabled` and
+`.secondary_keys` are new (migration 109), and
+`rag_pipeline.entry_matches_keys` is now the single definition of the rules.
+
+**The two tag lists stopped sharing a column.** `data.tags` is the card's
+CHARACTER metadata ("fantasy", "elf") and `visual_tags` is this app's
+IMAGE-GENERATION tag list. They shared one column, so importing a card put
+"elf" into the character's own image prompts. The card's tags are now
+preserved verbatim and written back as `data.tags`.
+
+**The report stopped lying.** Three buckets instead of one: `lost_fields`
+(dropped), `preserved_fields` (kept and written back), and
+`preserved_but_inert` (kept, written back, and NOT ACTED ON here, each with
+the reason). The third bucket did not exist, which is how a card whose
+behaviour differed could still report as fully compatible.
+
+**Expressions, in both directions.** `grep -c expression core/character_cards.py`
+was 0. A V3 card carries its expression images in `data.assets` as base64;
+they were preserved as inert JSON and never turned into images, so
+`Character.expressions` was always empty after an import and an exported card
+never carried them back out. They are materialised as real expression files
+on import, written back on export, and a CHARX export carries them as
+archive members.
+
+**A native bundle, because a character here is bigger than a card.** The
+export offered five formats and ALL FIVE were SillyTavern-shaped, so the only
+way to move a character with expressions, a voice binding, a world and
+chats was to lose most of it, silently. `format=bundle` produces a
+`.tnhzip` carrying the character, the card alongside it, and the sections
+you ask for.
+
+**Re-import merges instead of duplicating.** Re-importing a card used to
+INSERT a second character with the same name, every time, and nothing said so.
+A card exported from this app carries the character's id in the app's own
+`data.extensions.tnhcomfy`, and SillyTavern preserves unknown extensions —
+so a card that has been through SillyTavern still says which character it
+is. A re-import UPDATES it.
+
+**One import entry point, with a preview.** The import used to write
+immediately, so the only way to find out what a card would do was to do it.
+`POST /characters/import/analyze` returns what it would do and writes
+nothing; `POST /characters/import/commit` does the writing, with the scope
+("just the character" or "into a world", which delegates to the World
+Architect) and the match already chosen. The file input takes many cards
+and queues them.
+
+**The export can now say what it cannot carry.**
+`GET /characters/<built-in function id>/export/preview` lists the features a card cannot
+express — the expressions, the voice binding, the world and its
+locations, the vault's lorebooks, the gallery, the chats, the memories —
+and the export menu shows that list before the download.
 
 ### The 2026-10-20 remote-agent reliability pass
 

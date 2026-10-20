@@ -143,6 +143,51 @@ def _redirect_sync_sessions(engine):
 
 
 @pytest.fixture(autouse=True)
+def _stub_embedding_service(monkeypatch):
+    """Never load a real sentence-transformers model in a test.
+
+    `services.embedding_service.EmbeddingService` lazy-loads
+    `all-MiniLM-L6-v2` from HuggingFace on first use. One test that reached
+    an embedding call spent **15 seconds** loading the model, and a cold
+    machine DOWNLOADS it — 1.6 GB of models in `~/.cache/huggingface` after
+    one suite run, on the test path rather than the application path.
+
+    That is a speed problem and a correctness one: a test suite that
+    downloads a model is a suite that fails on a runner without internet, or
+    on one with a small disk, and the failure looks like a test failure
+    rather than a missing dependency.
+
+    The stub returns a deterministic zero vector of the model's dimension.
+    A zero vector is the right no-op here: the production code already
+    returns one for an empty text, and similarity against it is uniformly
+    uninformative, which is what a test wants.
+
+    A test that cares about embedding behaviour patches the service itself
+    (`monkeypatch.setattr` inside the test body runs after this fixture, so
+    the test's own patch wins). `tests/test_data_integrity_fixes.py` already
+    does exactly that.
+    """
+    import services.embedding_service as embedding_module
+
+    class _StubEmbeddingService:
+        dimension = 384
+
+        def _zero(self):
+            return [0.0] * self.dimension
+
+        def generate_embedding(self, text):
+            return self._zero()
+
+        def generate_embeddings(self, texts):
+            return [self._zero() for _ in texts]
+
+    monkeypatch.setattr(
+        embedding_module, "get_embedding_service", lambda: _StubEmbeddingService()
+    )
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_service_caches():
     """Clear the module-level caches in `services.statistics_service` per test.
 

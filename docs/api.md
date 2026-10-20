@@ -199,14 +199,17 @@ pgvector-backed semantic knowledge entries (`LorebookEntry.embedding` is `Vector
 
 - `GET /api/v2/characters` — List characters.
 - `POST /api/v2/characters` — Create a character (character-card JSON).
-- `POST /api/v2/characters/import` — Import a character from a URL/card.
+- `POST /api/v2/characters/import` — Import a character card (PNG, JSON, CHARX) or a TNHComy bundle. Re-importing a card this app exported UPDATES that character — the card carries the character's id in `data.extensions.tnhcomfy`, which SillyTavern preserves — instead of creating a second one.
+- `POST /api/v2/characters/import/analyze` — What importing this card would do: the fields it holds, whether it matches a character that already exists, and the scopes on offer. **Writes nothing.**
+- `POST /api/v2/characters/import/commit` — Import, with the scope and the match already chosen. Form: `scope` (`character` or `world`), `match_action` (`auto`, `update` or `create`).
 - `GET /api/v2/characters/{character_id}` — Fetch a character.
 - `PUT /api/v2/characters/{character_id}` — Update a character.
 - `DELETE /api/v2/characters/{character_id}` — Delete a character.
 - `POST /api/v2/characters/{character_id}/avatar` — Upload/set an avatar.
 - `GET /api/v2/characters/{character_id}/avatar` — Serve the avatar.
 - `POST /api/v2/characters/{character_id}/clone` — Clone a character (returns `Character`).
-- `GET /api/v2/characters/{character_id}/export` — Export a character card.
+- `GET /api/v2/characters/{character_id}/export` — Export a character. `format`: `default`/`v2` (PNG), `v3` (PNG), `json`, `charx`, or `bundle` (the TNHComy bundle, which carries what a card cannot). `include` names the bundle's optional sections: `expressions`, `voice`, `generation`, `world`, `lorebooks`, `chat`.
+- `GET /api/v2/characters/{character_id}/export/preview` — What an export of this character can and cannot carry. The export is a PNG or an archive, so it has nowhere to say this; the export menu asks here first.
 
 ### Scenarios (`/api/v2/scenarios`)
 
@@ -468,6 +471,7 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `POST` `/api/v2/characters/{character_id}/avatar/animate`
 - `POST` `/api/v2/characters/{character_id}/clone`
 - `GET` `/api/v2/characters/{character_id}/export`
+- `GET` `/api/v2/characters/{character_id}/export/preview`
 - `GET` `/api/v2/characters/{character_id}/expressions`
 
 ### Chats

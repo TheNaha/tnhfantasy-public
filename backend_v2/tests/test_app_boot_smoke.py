@@ -508,10 +508,15 @@ async def test_app_serves_requests_after_boot(client, boot):
     # are a fixed set the code looks up by name, so they could not grow and
     # could not be removed. `system_prompt_library` is a list, and these are
     # its four routes.
-    assert len(spec["paths"]) == 293, (
+    # 293 -> 296 for the character interchange: the two-phase import
+    # (`/characters/import/analyze` and `/characters/import/commit`, so an
+    # import can be previewed before it writes) and the export preview
+    # (`/characters/{id}/export/preview`, so the export menu can say what a
+    # card cannot carry before the download).
+    assert len(spec["paths"]) == 296, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 383
+    assert sum(len(ops) for ops in spec["paths"].values()) == 386
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 
