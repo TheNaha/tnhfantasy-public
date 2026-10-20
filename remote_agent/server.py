@@ -1,5 +1,6 @@
 import os
 import asyncio
+import atexit
 import base64
 import json
 import time
@@ -263,7 +264,19 @@ class DownloadRequest(BaseModel):
     #: `models.json` rather than from the caller, so a typo cannot put a file where
     #: the launcher will not find it.
     model_id: Optional[str] = None
-    prewarm: bool = False
+    # Whether to stage the downloaded model into the RAM cache.
+    #
+    # It was False, and no caller ever set it — so the cache was NEVER
+    # populated in the Docker/Modal deployment. The RAM cache is the whole
+    # reason ComfyUI, llama.cpp and Laya can share one 24 GB card: the
+    # weights come from RAM instead of the volume, which is the difference
+    # between a model that loads in ten seconds and one that loads in ten
+    # minutes. With the cache never filled, every reload was a disk read
+    # from a FUSE volume — the "long wait" complaint, with nothing in the
+    # log to explain it.
+    #
+    # A caller that genuinely does not want the copy can still say so.
+    prewarm: bool = True
 
 
 class PrewarmModelSpec(BaseModel):
@@ -744,7 +757,17 @@ async def _download_registry_model(model_id: str):
         mgr = get_ram_manager()
         for f in fetched:
             if f.endswith(".gguf"):
-                mgr.ensure_in_ram(f, model_id=model_id, role=model.role, is_anchor=(model_id in mgr.anchors))
+                # Off the event loop. `ensure_in_ram` copies the whole file,
+                # and doing that inline stalls the worker for the duration —
+                # including the `/health` probe the backend uses for provider
+                # status, so a download would make the provider look dead.
+                await _bounded_to_thread(
+                    mgr.ensure_in_ram,
+                    f,
+                    model_id=model_id,
+                    role=model.role,
+                    is_anchor=(model_id in mgr.anchors),
+                )
     except Exception as exc:
         logger.warning(f"Could not prewarm registry model {model_id} into RAM: {exc}")
     return {"ok": True, "model_id": model_id, "fetched": fetched}
@@ -807,7 +830,9 @@ async def download_model(req: DownloadRequest):
         if req.prewarm and result.get("status") in ("success", "exists", "ok"):
             try:
                 from ram_manager import get_ram_manager
-                get_ram_manager().ensure_in_ram(full_path, model_id=safe_name)
+                mgr = get_ram_manager()
+                # Off the event loop: this copies the whole file.
+                await _bounded_to_thread(mgr.ensure_in_ram, full_path, model_id=safe_name)
             except Exception as exc:
                 logger.warning(f"Could not prewarm model {safe_name} to RAM: {exc}")
         return from_upstream(result)
@@ -1295,6 +1320,16 @@ if WORKER_MODE in ("llm", "hybrid"):
         # wraps it; this sidecar deliberately imports nothing from backend_v2 and
         # gets a plain stdlib Logger, so the style does not transfer.
         logger.info("llm_upstream_configured", extra={"base": UPSTREAM_BASE})
+        # The arbiter must not ALSO start a JIT llama-server: it would load
+        # the same 19.5 GB of weights onto the same card that the operator's
+        # server is already using, and every request goes to the operator's
+        # port anyway.
+        try:
+            from vram_manager import get_vram_manager
+
+            get_vram_manager().llm_served_externally = True
+        except Exception:
+            pass
     elif REGISTRY is None:
         # No registry and no override. There is nothing to serve and nothing to
         # proxy, which is a configuration error rather than an empty answer.
@@ -1317,6 +1352,16 @@ if WORKER_MODE in ("llm", "hybrid"):
         # Nothing to proxy to: requests are routed to whichever loopback port
         # serves the named model. See `_upstream_for`.
         UPSTREAM_BASE = ""
+        # The local stack IS the LLM server, so the arbiter must not start a
+        # JIT llama-server as well. It used to, and the two loaded the same
+        # 19.5 GB of weights onto one 24 GB card — which is an OOM, and it
+        # was the arbiter's copy that lost.
+        try:
+            from vram_manager import get_vram_manager
+
+            get_vram_manager().llm_served_externally = True
+        except Exception:
+            pass
 
     UPSTREAM_TIMEOUT = float(os.getenv("LLM_UPSTREAM_TIMEOUT", "600"))
 
@@ -1396,7 +1441,11 @@ if WORKER_MODE in ("llm", "hybrid"):
             target_model = payload.get("model")
             vmgr = get_vram_manager()
             await _bounded_to_thread(vmgr.prepare_for_workload, "llm", target_model)
-            lease_acquired = await _bounded_to_thread(vmgr.acquire_lease, "llm")
+            # `prepare_for_workload` took the lease. Taking it AGAIN here is
+            # what left `in_flight_count` permanently at 1 — one acquire, one
+            # release, and the counter never returned to zero. The lease is
+            # released once, below, when the request finishes.
+            lease_acquired = True
         except Exception:
             if WORKER_MODE == "hybrid":
                 try:
@@ -1438,7 +1487,17 @@ if WORKER_MODE in ("llm", "hybrid"):
                     "code": 503,
                 },
                 "message": f"Upstream LLM server unreachable on {base}: {exc}",
-                "retryable": False,
+                # RETRYABLE. This was False, which told the backend "this
+                # provider is permanently broken" — so a server that was still
+                # LOADING its weights, or that had been OOM-killed and was
+                # about to be restarted, made the backend fail over to
+                # another provider (spending money) instead of waiting and
+                # retrying this one.
+                #
+                # The genuinely non-retryable case is a model this worker does
+                # not serve, and that is `_unavailable_payload`, which is
+                # still False.
+                "retryable": True,
             }
             return Response(content=json.dumps(err_payload), status_code=503, media_type="application/json")
         except Exception as exc:
@@ -1458,7 +1517,9 @@ if WORKER_MODE in ("llm", "hybrid"):
                     "code": 502,
                 },
                 "message": f"Upstream LLM proxy error: {exc}",
-                "retryable": False,
+                # RETRYABLE — see the 503 above. A proxy error is a transport
+                # failure, not a statement about the provider.
+                "retryable": True,
             }
             return Response(content=json.dumps(err_payload), status_code=502, media_type="application/json")
 
@@ -1555,12 +1616,24 @@ def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dic
     import laya  # type: ignore
 
     repo_or_path = _LAYA_REPO_MAP.get(model_id, model_id)
+    served_from_ram = False
     try:
         from ram_manager import get_ram_manager
         mgr = get_ram_manager()
-        ram_candidate = mgr.ram_dir / "decisions" / model_id
-        if ram_candidate.exists() and any(ram_candidate.iterdir()):
-            repo_or_path = str(ram_candidate)
+        # The RAM copy is only used when the cache says it is COMPLETE.
+        #
+        # The test used to be "the directory exists and is non-empty", which
+        # a half-finished copy passes: `ensure_dir_in_ram` wrote in place and
+        # a copy that died on ENOSPC left a partial directory behind, and the
+        # next request loaded it. `resolve_entry` only knows about entries
+        # the manager published, and the manager only publishes one after a
+        # verified copy.
+        ram_entry = mgr.resolve_entry(model_id)
+        if ram_entry is not None:
+            ram_candidate = Path(ram_entry.ram_path)
+            if ram_candidate.is_dir() and any(ram_candidate.iterdir()):
+                repo_or_path = str(ram_candidate)
+                served_from_ram = True
         persistent_path = os.getenv("PERSISTENT_STORAGE_PATH", "")
         disk_candidates = [
             os.path.join(DATA_ROOT, "decisions", model_id),
@@ -1570,7 +1643,7 @@ def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dic
             f"{os.path.expanduser('~')}/agent-data/decisions/{model_id}",
             f"/content/models/decisions/{model_id}",
         ]
-        for disk_candidate in disk_candidates:
+        for disk_candidate in ([] if served_from_ram else disk_candidates):
             if os.path.isdir(disk_candidate) and os.listdir(disk_candidate):
                 try:
                     ram_synced = mgr.ensure_dir_in_ram(disk_candidate, model_id=model_id, role="decisions", is_anchor=True)
@@ -1759,6 +1832,55 @@ async def _on_startup_prewarm():
             logger.warning(f"laya_prewarm_failed: {exc}")
 
     threading.Thread(target=_prewarm_laya, daemon=True, name="laya-prewarm").start()
+
+
+@app.on_event("shutdown")
+async def _on_shutdown_stop_children():
+    """Stop the child processes this agent started.
+
+    The agent had no teardown at all: no `atexit`, no SIGTERM handler. So when
+    the agent exited — cleanly, by `docker stop`, or by being OOM-killed — its
+    llama-servers were NOT stopped. In Docker the container teardown killed
+    them, but in the Colab deployment the agent is a child of the notebook
+    kernel, so the servers became true orphans that kept the GPU allocated
+    while the notebook's watchdog started a replacement.
+
+    And the orphans' ports are the SAME fixed ports the next agent start
+    binds, so the next start collided with them — which the launch reported
+    as a failure, which used to kill the worker at import.
+    """
+    stopped = 0
+    try:
+        if STACK is not None:
+            stopped = STACK.stop()
+            if stopped:
+                logger.info("llama_stack_stopped", extra={"count": stopped})
+    except Exception as exc:
+        logger.warning("llama_stack_stop_failed", extra={"error": str(exc)})
+
+    try:
+        from vram_manager import get_vram_manager
+
+        get_vram_manager().stop_llama()
+    except Exception as exc:
+        logger.warning("jit_llama_stop_failed", extra={"error": str(exc)})
+
+
+def _atexit_stop_children() -> None:
+    """The backstop for an exit the shutdown event never sees.
+
+    The shutdown event fires on SIGTERM and on a clean exit. It does NOT fire
+    on SIGKILL, on an OOM kill, or on an interpreter crash — and those are
+    exactly the cases where the children need to be reaped.
+    """
+    try:
+        if STACK is not None:
+            STACK.stop()
+    except Exception:
+        pass
+
+
+atexit.register(_atexit_stop_children)
 
 
 # ---------------------------------------------------------------------------

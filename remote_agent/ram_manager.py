@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -128,12 +129,27 @@ class RamModelManager:
         sys_total, sys_avail = _get_system_ram_info()
         self.min_reserve_bytes = int(min_system_reserve_gb * 1024 * 1024 * 1024)
 
-        if budget_gb is not None and budget_gb > 0:
+        # A budget of ZERO means "caching is off", not "the cache holds
+        # nothing". It used to be read as a zero-byte budget, so every
+        # `ensure_in_ram` raised "Insufficient RAM cache space" and every
+        # caller logged a warning and carried on — which is exactly the
+        # behaviour the operator asked for when they set the budget to 0
+        # ("cache off"), except it was reported as a failure.
+        self.enabled = True
+        if budget_gb is not None and budget_gb <= 0:
+            self.enabled = False
+            self.budget_bytes = 0
+        elif budget_gb is not None and budget_gb > 0:
             self.budget_bytes = int(budget_gb * 1024 * 1024 * 1024)
         else:
             env_budget = os.getenv("RAM_CACHE_BUDGET_GB")
-            if env_budget:
-                self.budget_bytes = int(float(env_budget) * 1024 * 1024 * 1024)
+            if env_budget is not None and env_budget.strip() != "":
+                env_value = float(env_budget)
+                if env_value <= 0:
+                    self.enabled = False
+                    self.budget_bytes = 0
+                else:
+                    self.budget_bytes = int(env_value * 1024 * 1024 * 1024)
             else:
                 # Default: 75% of total system RAM, but leave at least min_reserve_bytes
                 default_target = int(sys_total * 0.75)
@@ -197,13 +213,24 @@ class RamModelManager:
                     else:
                         role = "llm"
 
+                # The anchor flag is PRESERVED across a rescan.
+                #
+                # It used to be hard-coded to False here, and a rescan
+                # overwrites the entry — so every rescan silently unpinned
+                # every pinned model. A rescan happens on every model-path
+                # resolution miss, i.e. routinely, exactly when a model is
+                # being loaded. The LRU evictor filters on `is_anchor`, so
+                # after one rescan the "Pinned Anchors (Protected)" list was
+                # empty and the pinned prose model could be evicted — which
+                # meant the next reload had to come off disk.
+                previously_anchored = self.entries.get(mid)
                 entry = CacheEntry(
                     model_id=mid,
                     role=role,
                     source_path=str(item),
                     ram_path=str(item),
                     size_bytes=sz,
-                    is_anchor=False,
+                    is_anchor=bool(previously_anchored.is_anchor) if previously_anchored else False,
                     last_used=mtime,
                 )
                 self.entries[mid] = entry
@@ -256,18 +283,33 @@ class RamModelManager:
                     or any(self.aliases.get(a) == mid for a in self.anchors)
                 )
 
-    def is_cached(self, model_id: str) -> bool:
+    def resolve_entry(self, model_id: str) -> Optional[CacheEntry]:
+        """Find the cache entry for a model id — by alias first.
+
+        `is_cached` could answer True for an entry that is NOT keyed by the
+        requested id (its substring fallback), and the caller then did
+        `mgr.entries[model.id]` — a KeyError, which the caller swallowed, so
+        the prewarm was skipped and the model loaded from the slow volume
+        while the cache claimed it was cached. Resolving through the alias
+        map and returning the ENTRY removes the mismatch between "is it
+        cached?" and "where is it?".
+        """
         with self._lock:
             target_id = self.aliases.get(model_id, model_id)
             entry = self.entries.get(target_id)
-            if not entry:
-                for e in self.entries.values():
-                    if model_id in e.model_id or Path(e.ram_path).name == model_id:
-                        p = Path(e.ram_path)
-                        return p.exists() and p.is_file() and (e.size_bytes <= 0 or p.stat().st_size == e.size_bytes)
-                return False
-            p = Path(entry.ram_path)
-            return p.exists() and p.is_file() and (entry.size_bytes <= 0 or p.stat().st_size == entry.size_bytes)
+            if entry is not None:
+                return entry
+            for e in self.entries.values():
+                if model_id in e.model_id or Path(e.ram_path).name == model_id:
+                    return e
+            return None
+
+    def is_cached(self, model_id: str) -> bool:
+        entry = self.resolve_entry(model_id)
+        if entry is None:
+            return False
+        p = Path(entry.ram_path)
+        return p.exists() and p.is_file() and (entry.size_bytes <= 0 or p.stat().st_size == entry.size_bytes)
 
     def touch(self, model_id: str) -> None:
         """Mark model as recently used."""
@@ -344,6 +386,12 @@ class RamModelManager:
         mid = model_id or src.name
         is_anchor = is_anchor or (mid in self.anchors)
         size_bytes = src.stat().st_size
+
+        # Caching disabled: the caller gets the source path and nothing is
+        # copied. A zero budget means "off", not "hold nothing" — see
+        # `__init__`.
+        if not self.enabled:
+            return src
 
         # 1-3. Cache check, discovery, and headroom reservation under lock
         with self._lock:
@@ -471,7 +519,15 @@ class RamModelManager:
                 )
 
         # 4. Stream / Copy into RAM cache atomically (OUTSIDE lock so other models can stream concurrently)
-        tmp_path = subfolder_dir / f".{dest_filename}.tmp"
+        #
+        # The temp name is PER-ATTEMPT, not derived from the destination.
+        # It used to be `.{dest_filename}.tmp`, which is deterministic — so two
+        # callers resolving to the same model (the notebook prewarms with the
+        # basename, the agent's /download-model prewarms with the basename)
+        # wrote the SAME file concurrently, and the second one's `open(...,
+        # "wb")` truncated the file the first was still writing. The published
+        # result was an interleaved mess that looked like a valid model.
+        tmp_path = subfolder_dir / f".{dest_filename}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
 
         start_time = time.time()
         logger.info(
@@ -624,7 +680,42 @@ class RamModelManager:
             if self.current_usage_bytes + total_bytes > self.budget_bytes:
                 self.evict_lru(total_bytes)
 
-        shutil.copytree(src, dest_dir, dirs_exist_ok=True)
+        # The copy is ATOMIC and VERIFIED.
+        #
+        # It used to be `shutil.copytree(src, dest_dir, dirs_exist_ok=True)`,
+        # which writes IN PLACE and is never checked afterwards. A copy that
+        # died halfway (ENOSPC on a 64 MB /dev/shm, EIO on a FUSE source, the
+        # process killed) left a partial directory on disk — and the Laya
+        # loader's acceptance test was "the directory exists and is
+        # non-empty", so the NEXT request loaded the truncated model. It
+        # produced either a hard load failure or, worse, confident garbage
+        # decisions.
+        #
+        # So: copy to a sibling temp directory, verify the byte count, then
+        # `os.replace` it into place. A reader only ever sees a complete
+        # directory.
+        staging = dest_dir.parent / f".{dest_dir.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.staging"
+        try:
+            shutil.copytree(src, staging)
+            staged_bytes = sum(f.stat().st_size for f in staging.rglob("*") if f.is_file())
+            if staged_bytes != total_bytes:
+                raise RuntimeError(
+                    f"RAM cache copy of {model_id} is incomplete: "
+                    f"{staged_bytes} of {total_bytes} bytes"
+                )
+            # Replace any previous copy wholesale. `dirs_exist_ok=True` MERGED
+            # into the old directory, so files that existed in the cache but
+            # not in the source survived — an updated model was served with a
+            # mixture of new and old weights.
+            if dest_dir.exists():
+                stale = dest_dir.parent / f".{dest_dir.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.stale"
+                os.replace(dest_dir, stale)
+                shutil.rmtree(stale, ignore_errors=True)
+            os.replace(staging, dest_dir)
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
         with self._lock:
             self.entries[model_id] = CacheEntry(
                 model_id=model_id,
@@ -711,8 +802,24 @@ class RamModelManager:
             anchors_set = list(self.anchors)
             models_cnt = len(self.entries)
 
+        # The REAL capacity of the backing store.
+        #
+        # The "budget" is a policy number derived from system RAM. The
+        # backing store is what the files actually live on, and it is often
+        # far smaller: `/dev/shm` is 64 MB in a container with no
+        # `shm_size`, and the agent cannot remount it. A budget of 24 GB over
+        # a 64 MB filesystem means every model fails to stage, and the
+        # failure is invisible without this number.
+        try:
+            store_total = shutil.disk_usage(self.ram_dir).total
+            store_free = shutil.disk_usage(self.ram_dir).free
+        except Exception:
+            store_total = 0
+            store_free = 0
+
         return {
             "ram_dir": str(self.ram_dir),
+            "enabled": self.enabled,
             "budget_bytes": budget,
             "budget_gb": round(budget / (1024 * 1024 * 1024), 2),
             "used_bytes": used,
@@ -722,6 +829,15 @@ class RamModelManager:
             "system_ram": {
                 "total_gb": round(sys_total / (1024 * 1024 * 1024), 2),
                 "available_gb": round(sys_avail / (1024 * 1024 * 1024), 2),
+            },
+            # The store the files actually live on, which is NOT the budget.
+            "store": {
+                "total_gb": round(store_total / (1024 * 1024 * 1024), 2),
+                "free_gb": round(store_free / (1024 * 1024 * 1024), 2),
+                "path": str(self.ram_dir),
+                # A budget the store cannot satisfy is a configuration
+                # problem the operator can fix, and it was invisible.
+                "budget_exceeds_store": bool(store_total and budget > store_total),
             },
             "anchors": anchors_set,
             "models_count": models_cnt,

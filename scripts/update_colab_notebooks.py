@@ -932,6 +932,8 @@ import subprocess
 import json
 import urllib.request
 import urllib.parse
+import urllib.error
+import uuid
 import ssl
 from IPython.display import display, HTML
 
@@ -1332,9 +1334,19 @@ if backend_url_clean:
         return None
 
     print(f"⏳ Syncing Model Catalog from backend ({backend_url_clean})...")
+    # The two catalog paths return the SAME payload: `GET /api/v2/models/catalog`
+    # and `GET /api/v2/llm/catalog` are the same handler under two prefixes.
+    #
+    # The second path used to be `/api/v2/world-vault/llm-config/catalog`,
+    # which has never been a route on any version of the backend — it was a
+    # leftover from before the API v2 migration, and it 404'd on every call.
+    # It was harmless (the first path succeeds and the loop breaks) but it
+    # meant the fallback was dead: when `/api/v2/models/catalog` failed, the
+    # "second chance" was another 404 rather than the LLM catalog.
+    CATALOG_PATHS = ("/api/v2/models/catalog", "/api/v2/llm/catalog")
     for attempt in range(1, 16):
         for cand in candidates:
-            for path in ("/api/v2/models/catalog", "/api/v2/world-vault/llm-config/catalog"):
+            for path in CATALOG_PATHS:
                 cat_endpoint = f"{cand}{path}"
                 cat_data = fetch_backend_json(cat_endpoint, timeout=3)
                 if cat_data and isinstance(cat_data, dict) and ("models" in cat_data or "catalog" in cat_data):
@@ -2162,9 +2174,20 @@ def launch_llm_track():
         PYTHONUNBUFFERED="1",
     )
     if mode_key == "llm":
-        print(f"🚀 [LLM Track] Starting CUDA llama-server on :{llm_port}...")
-        with open(log_llm, "a", buffering=1) as out:
-            worker_procs["llm"] = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
+        # The AGENT serves the LLM in this mode — it launches one llama-server
+        # per distinct primary from the registry, on :8081+, and routes by the
+        # model id in the payload.
+        #
+        # The notebook used to start its OWN llama-server on :{llm_port} as
+        # well, which meant the same 19.5 GB of weights were loaded TWICE (or
+        # three times, when the rp and util models are different files) onto
+        # one 24 GB card. That is an OOM, and it was the single most reliable
+        # way to make this worker die. The agent's own arbiter could make it
+        # worse: it pkills `llama-server` on the LLM port and starts its own.
+        #
+        # One owner. The agent's stack.
+        print("🚀 [LLM Track] The Remote Agent serves the LLM (one llama-server per registry primary on :8081+).")
+        print("   Not starting a second copy here — two copies of a 19.5 GB model on a 24 GB card is an OOM.")
     else:
         print("⚡ [LLM Track] GGUF weights pre-warmed in RAM cache (/dev/shm). llama-server will start Just-In-Time on first LLM request (0 MB idle GPU VRAM reserved)!")
 
@@ -2236,10 +2259,20 @@ services_to_check = [("agent", agent_port, "/health", "Remote Agent")]
 if mode_key in ("hybrid", "model"):
     services_to_check.append(("comfy", comfy_port, "/system_stats", "ComfyUI"))
 if mode_key == "llm":
-    services_to_check.append(("llm", llm_port, "/health", "llama-server"))
+    # The LLM is served by the agent's stack, not by a notebook-owned process,
+    # so the notebook asks the AGENT. `/health` on the agent is static and
+    # says nothing about the models; `/info` reports the stack's served
+    # models per role.
+    services_to_check.append(("llm", agent_port, "/info", "agent LLM stack"))
 
 healthy_services = set()
-for attempt in range(120):
+# The agent launches its llama-servers at IMPORT, before uvicorn starts, so
+# the agent's /health does not answer until the models are loaded. In llm mode
+# that is two models' worth of load, and the weights come from the RAM cache
+# (staged in cell 4) so it is seconds each - but not zero, and the old
+# 120-second budget could expire with the agent about to come up.
+health_attempts = 600 if mode_key == "llm" else 120
+for attempt in range(health_attempts):
     for s_name, s_port, s_path, s_label in services_to_check:
         if s_name in healthy_services:
             continue
@@ -2255,10 +2288,41 @@ for attempt in range(120):
             continue
         try:
             req = urllib.request.Request(f"http://127.0.0.1:{s_port}{s_path}")
+            # `/info` is authenticated (it discloses paths), unlike `/health`.
+            if s_path == "/info":
+                req.add_header("X-Provider-Token", agent_token)
             with urllib.request.urlopen(req, timeout=1) as res:
-                if res.status in (200, 307):
-                    print(f"✅ {s_label} is online and healthy on :{s_port}!")
+                if res.status not in (200, 307):
+                    continue
+                if s_path == "/info":
+                    # The agent answering is not the same as the LLM being
+                    # UP. The agent reports its stack's per-model state, and a
+                    # model that is still loading - or that failed to launch
+                    # - must not be reported as healthy, or the notebook
+                    # declares victory and the first real request fails.
+                    try:
+                        info = json.loads(res.read().decode("utf-8", errors="replace"))
+                    except Exception:
+                        continue
+                    llm_state = info.get("llm") or {}
+                    live = [
+                        mid
+                        for mid, s in (llm_state.get("servers") or {}).items()
+                        if isinstance(s, dict) and s.get("alive")
+                    ]
+                    if not live:
+                        roles = llm_state.get("roles") or {}
+                        reason = "; ".join(
+                            f"{r}: {(v or {}).get('status', 'unknown')}"
+                            for r, v in roles.items()
+                        )
+                        print(f"⏳ {s_label} not serving yet ({reason or 'no models loaded'})")
+                        continue
+                    print(f"✅ {s_label} is serving: {', '.join(live)}")
                     healthy_services.add(s_name)
+                    continue
+                print(f"✅ {s_label} is online and healthy on :{s_port}!")
+                healthy_services.add(s_name)
         except Exception:
             pass
     if len(healthy_services) == len(services_to_check):
@@ -2349,6 +2413,103 @@ elif mode_key == "tts":
     rows_html += _credential_row("Remote TTS Base URL (base_url)", agent_endpoint)
 
 rows_html += _credential_row("Remote Agent Token (agent_token)", agent_token, color="#34d399")
+
+# ---------------------------------------------------------------------------
+# Register this worker with the backend
+# ---------------------------------------------------------------------------
+# The worker used to print its credentials and ask a human to paste them into
+# the Providers page. That is a step that gets forgotten, gets done with the
+# wrong field name, and has to be redone every time the endpoint changes (the
+# NetBird IP is stable, but the ports and the token are not).
+#
+# The provider row is created here instead, and the id is derived from the
+# endpoint, so re-running this cell UPDATES the same provider instead of
+# creating a duplicate.
+provider_type = {
+    "hybrid": "remote_hybrid",
+    "model": "remote_comfy",
+    "llm": "remote_llm",
+    "tts": "remote_tts",
+}.get(mode_key, "remote_hybrid")
+provider_worker_type = {
+    "hybrid": "hybrid",
+    "model": "image",
+    "llm": "llm",
+    "tts": "tts",
+}.get(mode_key, "hybrid")
+provider_capabilities = {
+    "hybrid": ["image", "llm", "tts"],
+    "model": ["image"],
+    "llm": ["llm"],
+    "tts": ["tts"],
+}.get(mode_key, ["image", "llm", "tts"])
+
+if mode_key == "hybrid":
+    provider_config = {
+        "base_url": base_endpoint,
+        "comfy_port": comfy_port,
+        "agent_port": agent_port,
+        "llm_port": llm_port,
+        "concurrency_policy": policy_key,
+    }
+    provider_credentials = {"agent_token": agent_token}
+elif mode_key == "model":
+    provider_config = {"comfy_url": comfy_endpoint, "remote_agent_url": agent_endpoint}
+    provider_credentials = {"remote_agent_token": agent_token}
+elif mode_key == "llm":
+    provider_config = {"agent_url": agent_endpoint, "default_model": active_rp}
+    provider_credentials = {"agent_token": agent_token}
+else:
+    provider_config = {"agent_url": agent_endpoint}
+    provider_credentials = {"agent_token": agent_token}
+
+# A stable id, so a re-run updates rather than duplicates.
+provider_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"tnhcomfy-remote-{mode_key}-{agent_endpoint}"))
+
+def _register_provider():
+    # Create or update this worker's provider row on the backend.
+    api_base = backend_url_clean.rstrip("/")
+    if not api_base or "<" in api_base:
+        return None, "no backend URL"
+    payload = {
+        "id": provider_id,
+        "type": provider_type,
+        "worker_type": provider_worker_type,
+        "declared_capabilities": provider_capabilities,
+        "enabled": True,
+        "priority": 1,
+        "credentials": provider_credentials,
+        "config": provider_config,
+    }
+    headers = {"Content-Type": "application/json"}
+    # An existing row with the same id is updated; a new one is created.
+    for method, url in (
+        ("PUT", f"{api_base}/api/v2/providers/{provider_id}"),
+        ("POST", f"{api_base}/api/v2/providers/"),
+    ):
+        try:
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method=method)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+                return resp.status, body
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 and method == "PUT":
+                continue  # does not exist yet -> create it
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+        except Exception as exc:
+            return None, str(exc)
+    return None, "unreachable"
+
+_reg_status, _reg_body = _register_provider()
+print()
+if _reg_status in (200, 201):
+    print(f"✅ Registered with the backend: provider {provider_id} ({provider_type})")
+elif _reg_status is not None:
+    print(f"⚠️ Could not register with the backend (HTTP {_reg_status}).")
+    print("   Add the provider manually with the values below.")
+else:
+    print(f"⚠️ Could not reach the backend to register: {_reg_body}")
+    print("   Add the provider manually with the values below.")
 
 gpu_topo_badge = f\"\"\"
 <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;">
@@ -2523,7 +2684,14 @@ try:
         if now - last_watchdog > 10.0:
             last_watchdog = now
             proc_llm = worker_procs.get("llm")
-            if mode_key == "llm" and proc_llm and proc_llm.poll() is not None:
+            # The watchdog deliberately does NOT restart a llama-server.
+            #
+            # In llm mode the notebook does not own one — the agent's stack
+            # does — and the old watchdog used to Popen one anyway, while the
+            # agent's arbiter used to pkill one. The two fought over the same
+            # port, and two 19.5 GB models loading at once on a 24 GB card is
+            # an OOM. The agent's own supervisor is the right owner.
+            if False:
                 tag = TAG_COLORS.get("LLM", "[LLM]")
                 print(f"{tag} ⚠️ llama-server process exited (code {proc_llm.returncode}). Auto-restarting...", flush=True)
                 # Ensure ComfyUI yields VRAM before restarting llama-server

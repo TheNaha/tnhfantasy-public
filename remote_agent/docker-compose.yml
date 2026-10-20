@@ -58,6 +58,24 @@ services:
     # default, so the difference is visible in the compose file rather than
     # discovered from a permissions error.
     user: ${CONTAINER_USER:-}
+    # The RAM cache's backing store.
+    #
+    # `/dev/shm` is tmpfs — RAM-BACKED — and inside a container Docker sizes
+    # it to 64 MB unless `shm_size` says otherwise. The agent cannot change
+    # it: `mount -o remount,size=...` needs CAP_SYS_ADMIN, which the agent
+    # does not have, so the `ensure_shm_capacity` attempt fails and the
+    # fallback is `/tmp` (the overlay filesystem — a DISK write, so the
+    # "RAM" cache was never in RAM at all).
+    #
+    # The consequence was silent: the 2-byte write test in the capacity check
+    # passed on a 64 MB filesystem, every multi-GB model failed to stage, the
+    # failure was logged at warning level and ignored, and the agent streamed
+    # from the volume — which is the "long wait" symptom, with nothing in the
+    # log to explain it.
+    #
+    # Size it to roughly the largest model you intend to stage. 8 GB is a
+    # reasonable default for a 32 GB box; raise it for a 19.5 GB GGUF.
+    shm_size: ${AGENT_SHM_SIZE:-8gb}
     volumes:
       # Set DATA_DIR to the absolute path of the ComfyUI models directory on the
       # GPU rig. It is a REQUIRED variable (`:?`) on purpose: the file previously

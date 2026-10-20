@@ -253,6 +253,53 @@ themselves. See the audit.
 
 ## What was actually wrong, and is now fixed
 
+### The 2026-10-20 remote-agent reliability pass
+
+The remote agent was reported as unreliable on its minimum target (an L4, 24 GB
+VRAM): "sometimes it oomed, crashed, underperform (because poor vram management
+and the layers got loaded on ram instead), long wait (due to improper cache
+strategy)".
+
+An audit (— `docs/audit-2026-10-20-remote-agent-reliability.md`) found four
+defects behind those symptoms, each confirmed in the code rather than
+suspected:
+
+1. **The workload lease was taken twice and released once.** `in_flight_count`
+   settled at 1 permanently after the first chat request, so every later
+   IMAGE request saw a conflict, blocked for the full 60 s timeout, and then
+   proceeded anyway — killing the llama-server that might have been
+   streaming an answer. A deterministic 60 s tax on every image.
+2. **The KV-cache type was derived from live free VRAM** and compared against
+   the running server's frozen value. Free VRAM swings by ~10 GB as ComfyUI
+   takes and releases its checkpoint, so a chat request and an image request
+   each decided the 19.5 GB server was misconfigured and reloaded it. The
+   cache had become a reload trigger.
+3. **A model swap started the replacement while the evicted process was still
+   alive and still holding VRAM.** Nothing verified the memory came back, so
+   the replacement started with most of its layers on the CPU — the "layers
+   got loaded on ram instead" complaint, silently and permanently.
+4. **The VRAM reserve was the literal 1800 MB**, calibrated for an 8k context
+   at q8_0 when the registry ships `ctx: 32768`. It is now computed from the
+   model's real geometry, read out of the GGUF header.
+
+Plus: the agent's stack had no stop path and its servers outlived the agent;
+a model that failed to launch killed the worker AT IMPORT (a crash loop);
+`is_multi_gpu` was decided by two device indices that might not exist; the
+"is ComfyUI generating?" probe failed OPEN, so a timeout evicted a live
+generation; the RAM cache was never populated (`prewarm` defaulted to False
+and no caller set it) and `/dev/shm` was Docker's default 64 MB with no
+`shm_size`; an unrecognised file header was treated as a VALID model; and
+the notebook started a SECOND llama-server with the same weights as the
+agent's own — two copies of 19.5 GB on a 24 GB card, an OOM by
+construction.
+
+The notebook now also **registers its own provider** with the backend instead
+of printing credentials for a human to paste, and its dead API path
+(`/api/v2/world-vault/llm-config/catalog`, which has never been a route on
+any version) is fixed.
+
+Backend suite: 3805 passed, 5 skipped, 0 failed.
+
 ### The 2026-10-20 chat-workflow pass — making Laya's decision reach the model
 
 A review of the roleplay subsystem asked one question: does Laya's routing

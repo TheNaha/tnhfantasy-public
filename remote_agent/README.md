@@ -72,6 +72,28 @@ it in `.env.agent` has no effect: `env_file:` populates the container
 environment, and by then the mount has already been resolved. The compose file
 fails fast with a message saying so rather than mounting a placeholder path.
 
+### The RAM cache needs a sized `/dev/shm`
+
+The RAM cache is the reason this worker can share one 24 GB card between
+ComfyUI, the prose model, the utility model and Laya: the weights are staged
+in system RAM, so a reload is a RAM→VRAM copy rather than a re-read from a
+volume.
+
+`/dev/shm` is tmpfs — RAM-backed — and **Docker sizes it to 64 MB by
+default**. The agent cannot change that: `mount -o remount,size=…` needs
+`CAP_SYS_ADMIN`, which it does not have. So the compose file declares it:
+
+```yaml
+shm_size: ${AGENT_SHM_SIZE:-8gb}
+```
+
+Raise it to roughly the largest model you intend to stage — 8 GB is a
+reasonable default on a 32 GB box, and a 19.5 GB GGUF wants more. Without it
+the cache silently cannot hold anything, the agent streams from the volume
+instead, and every model load pays the full disk cost. The agent's
+`/ram-cache/status` reports the store's real capacity against the budget, so
+a mismatch is visible rather than inferred.
+
 ## Storage roots — a different tree per worker
 
 An image worker exposes a ComfyUI **repo root** (`models/`, `output/`, `input/`
@@ -201,6 +223,19 @@ A ready-to-use Jupyter Notebook is provided at [`remote_agent/TNHComfy_Colab_Wor
 5. **Multi-Model LLM Parity**: Serves curated roleplay (`rp`) and utility/tool (`util`) models matching `backend_v2/modal_llm/models.json` via CUDA-accelerated `llama-server`.
 6. **Zero Duplicate Secrets**: `HF_TOKEN` and `CIVITAI_TOKEN` are resolved on-demand directly from your TNHComfy backend per request.
 7. **Connection Card & Keep-Alive**: Renders a styled HTML card with connection parameters, and includes an inaudible audio context keep-alive to prevent Colab idle timeouts.
+8. **Automatic provider registration**: The notebook creates (or updates) the
+   provider row on your backend itself, using a provider id derived from the
+   endpoint, so re-running the cell updates the same row rather than
+   accumulating duplicates. The credentials are still printed, because the
+   backend may be unreachable from the notebook and the manual path has to
+   remain.
+
+**One owner per GPU.** In `llm` mode the agent's stack serves the LLM — one
+`llama-server` per registry primary on adjacent loopback ports — and the
+notebook does not start a second one. The VRAM arbiter also stands down when
+something else is already serving, so the same 19.5 GB of weights are never
+loaded twice onto one 24 GB card. The agent's `/info` reports which models
+are live, and the notebook's health check reads it rather than assuming.
 
 Alternatively, if you prefer running via a direct bash script in a single cell:
 `colab_start.sh` runs the agent directly in a notebook runtime — no Docker, no

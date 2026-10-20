@@ -154,9 +154,15 @@ def test_ram_manager_opportunistic_prewarming(temp_env):
 
 
 def test_server_ram_cache_api(monkeypatch, tmp_path):
-    os.environ["REMOTE_AGENT_TOKEN"] = "test-token"
-    os.environ["DATA_DIR"] = str(tmp_path)
-    os.environ["RAM_CACHE_DIR"] = str(tmp_path / "shm")
+    # `monkeypatch.setenv`, not `os.environ[...]`: a direct assignment is NOT
+    # undone at the end of the test, so `RAM_CACHE_DIR` kept pointing at a
+    # tmp_path that was deleted with the test — and every later test that
+    # resolved a model path saw a cache directory that no longer existed.
+    # That surfaced as three order-dependent failures in
+    # `test_vram_manager_and_arbiter.py`, which passes in isolation.
+    monkeypatch.setenv("REMOTE_AGENT_TOKEN", "test-token")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAM_CACHE_DIR", str(tmp_path / "shm"))
 
     # Import server
     import server

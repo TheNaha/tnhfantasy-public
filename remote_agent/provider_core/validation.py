@@ -115,16 +115,81 @@ def validate_downloaded_file(
                     detected_format = fmt
                     break
 
+            if header_valid and detected_format == "json":
+                # A JSON body is either a MODEL (some formats ship JSON) or a
+                # PROXY ERROR ENVELOPE served with a 200. The header cannot
+                # tell them apart — both start with `{` — so the content
+                # has to.
+                #
+                # The `b"{"` magic is in `VALID_FILE_HEADERS`, so an error
+                # envelope from a gateway (a rate limit, an auth failure, a
+                # Cloudflare interstitial) passed validation and was published
+                # as a model. The failure then surfaced as "llama-server
+                # exited 1" with nothing pointing at the download.
+                try:
+                    # A proxy error envelope is SMALL; a JSON model is not.
+                    # So only a file small enough to be an envelope is worth
+                    # parsing — and it is parsed WHOLE, because a truncated
+                    # prefix of a JSON document does not parse and would
+                    # silently pass.
+                    if actual_size <= 1024 * 1024:
+                        with open(path, "rb") as file_handle:
+                            probe = file_handle.read()
+                        text = probe.decode("utf-8", errors="replace").lstrip()
+                        if text.startswith("{") or text.startswith("["):
+                            try:
+                                parsed = json.loads(text)
+                            except ValueError:
+                                parsed = None
+                            if isinstance(parsed, dict):
+                                errorish = [
+                                    k
+                                    for k in ("error", "errors", "detail", "exception", "traceback")
+                                    if k in parsed
+                                ]
+                                if errorish:
+                                    validation_errors.append(
+                                        "Downloaded a JSON error envelope instead of a model "
+                                        f"(keys: {', '.join(errorish)})"
+                                    )
+                                    header_valid = False
+                                    detected_format = "unknown"
+                except OSError:
+                    pass
+
             if not header_valid:
                 lowered = header.lower()
                 if b"<html" in lowered or b"<!doctype" in lowered:
                     validation_errors.append(
                         "Downloaded HTML instead of model (possible auth error)"
                     )
+                elif b"{" in header[:1] or b"[" in header[:1]:
+                    # A JSON body with a 200 status: a proxy error envelope,
+                    # a rate-limit body, an auth error. Not a model.
+                    validation_errors.append(
+                        "Downloaded JSON instead of model (proxy or auth error)"
+                    )
                 elif unknown_header_log_prefix:
                     logger.warning(
                         f"[{unknown_header_log_prefix}] Unknown format: "
                         f"header={header[:8].hex()}"
+                    )
+                else:
+                    # An UNRECOGNISED header is not a verdict of "valid".
+                    #
+                    # It used to be: the branch above only appended an error
+                    # for HTML, and everything else fell through to
+                    # `header_valid = False` with NO error appended — and the
+                    # caller treats "no errors" as valid. So a CDN that
+                    # answered 200 with a truncated or proxy-generated body was
+                    # published as a model.
+                    #
+                    # It is now an error. A file whose format we do not
+                    # recognise is not something we can load, and pretending
+                    # otherwise moves the failure from "the download is
+                    # broken" to "llama-server exited 1 with no clue why".
+                    validation_errors.append(
+                        f"Unrecognised file header: {header[:8].hex()}"
                     )
         except OSError as exc:
             # A read that fails is an I/O fault, not a corrupt file. These

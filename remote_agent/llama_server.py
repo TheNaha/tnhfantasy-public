@@ -67,6 +67,32 @@ SERVER_PORT_BASE = 8081
 MODEL_LOAD_TIMEOUT_SECONDS = 600
 
 
+def _terminate_and_reap(process: Any, timeout: float = 5.0) -> bool:
+    """Stop a child and WAIT for it, so it cannot keep holding VRAM.
+
+    `terminate()` alone is not a stop: llama.cpp handles SIGTERM deferred, so
+    a server mid-prefill can take seconds to honour it, and a `Popen` that is
+    never `wait()`ed leaves a zombie holding its CUDA context until the parent
+    exits. The escalation is terminate -> poll -> kill -> wait.
+    """
+    try:
+        if process.poll() is None:
+            process.terminate()
+            deadline = time.time() + timeout
+            while time.time() < deadline and process.poll() is None:
+                time.sleep(0.1)
+            if process.poll() is None:
+                process.kill()
+        try:
+            process.wait(timeout=5.0)
+        except Exception:
+            pass
+        return process.poll() is not None
+    except Exception as exc:
+        print(f"terminate_and_reap failed: {exc}", file=sys.stderr, flush=True)
+        return False
+
+
 @dataclass(frozen=True)
 class Model:
     """One registry entry, resolved."""
@@ -301,6 +327,21 @@ class LlamaStack:
         on while the model is still loading, and the first request would arrive
         at a server that is not up yet. The wait is where the load is paid — on
         the worker's own clock, before the first call rather than inside it.
+
+        A model that FAILS TO LAUNCH does not take the worker down with it.
+
+        `_spawn` raises on a bad GGUF, a taken port, or a load that never
+        becomes healthy, and `launch` used to let that propagate. The caller
+        is MODULE-LEVEL code (`server.py`), so the exception killed the import:
+        `uvicorn.run` never executed and the process exited. With
+        `restart: unless-stopped` that is a crash loop, and every iteration
+        launched another llama-server that briefly allocated VRAM before dying
+        — so a single bad model file escalated into a GPU OOM and then a
+        host-level OOM kill of ComfyUI.
+
+        The model is recorded as unavailable instead, and the worker starts and
+        serves everything else. The failure is reported through `unavailable`,
+        which `resolve()` already turns into a clear, non-retryable error.
         """
         self.registry = registry
         started: Dict[str, int] = {}
@@ -312,9 +353,55 @@ class LlamaStack:
                     "use /download-model to fetch them"
                 )
                 continue
-            self._spawn(model, port)
-            started[model.id] = port
+            try:
+                self._spawn(model, port)
+                started[model.id] = port
+            except Exception as exc:
+                self.unavailable[model.id] = (
+                    f"llama-server for {model.id!r} failed to start: {exc}"
+                )
+                print(
+                    f"[{model.id}] launch failed, continuing without it: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
         return started
+
+    def stop(self, timeout: float = 5.0) -> int:
+        """Stop every llama-server this stack started, and reap them.
+
+        The stack had NO stop path at all: `llama_server.py` contained exactly
+        one process-control call. So the servers on :8081+ held their VRAM for
+        the lifetime of the agent, were never stopped when the agent exited,
+        and on the next start collided with the same fixed ports — which the
+        launch then reported as a failure, which used to kill the worker.
+
+        Returns the number of servers stopped.
+        """
+        stopped = 0
+        for model_id, server in list(self.servers.items()):
+            process = getattr(server, "process", None)
+            if process is None:
+                continue
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                    deadline = time.time() + timeout
+                    while time.time() < deadline and process.poll() is None:
+                        time.sleep(0.1)
+                    if process.poll() is None:
+                        process.kill()
+                    try:
+                        process.wait(timeout=5.0)
+                    except Exception:
+                        pass
+                stopped += 1
+            except Exception as exc:
+                print(
+                    f"[{model_id}] stop failed: {exc}", file=sys.stderr, flush=True
+                )
+        self.servers.clear()
+        return stopped
 
     def _spawn(self, model: Model, port: int) -> None:
         # Loopback only: nothing outside the container can reach these ports, and
@@ -330,9 +417,22 @@ class LlamaStack:
         try:
             from ram_manager import get_ram_manager
             mgr = get_ram_manager()
-            if mgr.is_cached(model.id):
-                ram_path = mgr.entries[model.id].ram_path
-            else:
+            # `resolve_entry` — not `is_cached` plus `entries[model.id]`.
+            #
+            # `is_cached` could answer True for an entry that is not keyed by
+            # `model.id` (its substring fallback), and then `entries[model.id]`
+            # raised a KeyError, which this handler swallowed — so the prewarm
+            # was skipped entirely and the model loaded from the slow volume
+            # while the cache believed it was cached. The only trace was the
+            # "RAM pre-warming notice" line.
+            #
+            # The RAM cache is also opt-in: when it is disabled, the model
+            # must load straight from the volume rather than being copied
+            # into a cache that will not be used.
+            entry = mgr.resolve_entry(model.id)
+            if entry is not None and mgr.is_cached(model.id):
+                ram_path = entry.ram_path
+            elif getattr(mgr, "cache_in_ram", True):
                 disk_path = f"{self.models_dir}/{model.volume_dir}/{model.gguf}"
                 if os.path.isfile(disk_path):
                     ram_path = str(mgr.ensure_in_ram(disk_path, model_id=model.id, role=model.role, is_anchor=True))
@@ -386,7 +486,13 @@ class LlamaStack:
             except Exception:
                 pass
             time.sleep(1)
-        process.terminate()
+        # The child is killed AND REAPED. It used to be only `terminate()`d,
+        # with no `kill()` fallback and no `wait()`, so a llama-server that did
+        # not honour SIGTERM stayed alive holding its VRAM — and the agent
+        # could not kill it either. A half-loaded server squatting on 19 GB
+        # while the next launch tried to allocate the same 19 GB is the
+        # OOM.
+        _terminate_and_reap(process)
         raise RuntimeError(
             f"llama-server for {model.id} did not become healthy within "
             f"{MODEL_LOAD_TIMEOUT_SECONDS}s"
